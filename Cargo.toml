@@ -6,7 +6,7 @@ rust-version = "1.85.0"
 description = "A d-dimensional Delaunay triangulation library with generic coordinate support"
 license = "BSD-3-Clause"
 repository = "https://github.com/acgetchell/delaunay"
-keywords = ["delaunay", "triangulation", "computational-geometry", "mesh", "cgal"]
+keywords = ["delaunay", "triangulation", "computational-geometry", "mesh"]
 categories = ["algorithms", "science::mathematics::geometry", "science::physics"]
 authors = ["Adam Getchell <adam@adamgetchell.org>"]
 
@@ -14,10 +14,10 @@ authors = ["Adam Getchell <adam@adamgetchell.org>"]
 
 [dependencies]
 allocation-counter = { version = "0.8.1", optional = true }  # for memory profiling
-anyhow = "1.0.87"
+anyhow = "1.0.99"
 approx = "0.5.1"
 bimap = "0.6.3"
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5.45", features = ["derive"] }
 derive_builder = "0.20.1"
 nalgebra = "0.34.0"
 num-traits = "0.2.19"
@@ -28,8 +28,8 @@ serde = { version = "1.0.210", features = ["derive"] }
 serde_json = "1.0.142"
 serde_test = "1.0.177"
 slotmap = { version = "1.0.7", features = ["serde"] }
-thiserror = "2.0.12"
-uuid = { version = "1.10.0", features = ["v4", "serde"] }
+thiserror = "2.0.14"
+uuid = { version = "1.18.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }

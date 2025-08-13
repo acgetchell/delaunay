@@ -6,7 +6,7 @@
 [![Audit dependencies](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/3cad94f994f5434d877ae77f0daee692)](https://app.codacy.com/gh/acgetchell/delaunay/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
-D-dimensional Delaunay triangulations in [Rust], inspired by [CGAL].
+Delaunay triangulations in [Rust], inspired by [CGAL].
 
 ## Introduction
 
