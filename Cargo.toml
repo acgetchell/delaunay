@@ -3,12 +3,12 @@ name = "delaunay"
 version = "0.3.3"
 edition = "2024"
 rust-version = "1.85.0"
-description = "A d-dimensional Delaunay triangulation library with generic coordinate support"
-license = "BSD-3-Clause"
+authors = ["Adam Getchell <adam@adamgetchell.org>"]
 repository = "https://github.com/acgetchell/delaunay"
+description = "A d-dimensional Delaunay triangulation library with float coordinate support"
+license = "BSD-3-Clause"
 keywords = ["delaunay", "triangulation", "computational-geometry", "mesh"]
 categories = ["algorithms", "science::mathematics::geometry", "science::physics"]
-authors = ["Adam Getchell <adam@adamgetchell.org>"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
