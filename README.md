@@ -35,12 +35,11 @@ See [CHANGELOG.md](CHANGELOG.md) for details.
 This crate was originally maintained at [https://github.com/oovm/shape-rs](https://github.com/oovm/shape-rs) through version `0.1.0`.
 The original implementation provided basic Delaunay triangulation functionality.
 
-Starting with version `0.3.3`, maintenance has been transferred and the crate is now developed at
-[this repository](https://github.com/acgetchell/delaunay) with a completely rewritten d-dimensional
-implementation focused on computational geometry research applications.
+Starting with version `0.3.3`, maintenance transferred to [this repository](https://github.com/acgetchell/delaunay), which hosts a completely
+rewritten d-dimensional implementation focused on computational geometry research applications.
 
-- 📚 Docs for old versions (0.0.0-0.1.0): <https://docs.rs/delaunay/0.1.0/delaunay/>
-- 📚 Docs for current version (0.3.3+): <https://docs.rs/delaunay>
+- 📚 Docs for old versions (≤ 0.1.0): <https://docs.rs/delaunay/0.1.0/delaunay/>
+- 📚 Docs for current version (≥ 0.3.3): <https://docs.rs/delaunay>
 
 ## Development Tools
 
