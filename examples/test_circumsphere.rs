@@ -9,7 +9,8 @@
 //! cargo run --example test_circumsphere [2d|3d|4d|all|help]
 //! ```
 
-use d_delaunay::prelude::*;
+use delaunay::prelude::*;
+use delaunay::geometry::predicates::squared_norm;
 use nalgebra as na;
 use peroxide::fuga::{LinearAlgebra, zeros};
 use serde::{Serialize, de::DeserializeOwned};

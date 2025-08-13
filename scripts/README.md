@@ -1,6 +1,6 @@
 # Scripts Directory
 
-This directory contains utility scripts for building, testing, and benchmarking the d-delaunay library.
+This directory contains utility scripts for building, testing, and benchmarking the delaunay library.
 
 ## Prerequisites
 

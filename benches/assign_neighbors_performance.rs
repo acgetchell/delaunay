@@ -6,7 +6,8 @@
 #![allow(missing_docs, unused_doc_comments, unused_attributes)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use d_delaunay::prelude::*;
+use delaunay::prelude::*;
+use delaunay::vertex;
 use rand::Rng;
 use std::hint::black_box;
 

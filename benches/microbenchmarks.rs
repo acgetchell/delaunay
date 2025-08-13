@@ -1,7 +1,7 @@
-//! Microbenchmarks for key d-delaunay methods
+//! Microbenchmarks for key delaunay methods
 //!
 //! This benchmark suite focuses on measuring the performance of individual key methods
-//! in the d-delaunay triangulation library, particularly those that are performance-critical:
+//! in the delaunay triangulation library, particularly those that are performance-critical:
 //!
 //! 1. **`Tds::new` (Bowyer-Watson triangulation)**: Complete triangulation creation
 //! 2. **`assign_neighbors`**: Neighbor relationship assignment between cells
@@ -13,7 +13,8 @@
 #![allow(missing_docs)] // Criterion macros generate undocumented functions
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use d_delaunay::prelude::*;
+use delaunay::prelude::*;
+use delaunay::{cell, vertex};
 use rand::Rng;
 use std::hint::black_box;
 

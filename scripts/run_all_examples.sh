@@ -9,7 +9,7 @@ error_exit() {
     exit "$code"
 }
 
-# Script to run all examples in the d-delaunay project
+# Script to run all examples in the delaunay project
 
 # Dependency checking function
 check_dependencies() {
@@ -36,7 +36,7 @@ mkdir -p "${PROJECT_ROOT}/benches/results"
 # Ensure we're executing from the project root
 cd "${PROJECT_ROOT}"
 
-echo "Running all examples for d-delaunay project..."
+echo "Running all examples for delaunay project..."
 echo "=============================================="
 
 # Automatically discover all examples from the examples directory

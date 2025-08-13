@@ -14,7 +14,7 @@
 /// # Examples
 ///
 /// ```
-/// use d_delaunay::geometry::FiniteCheck;
+/// use delaunay::geometry::FiniteCheck;
 ///
 /// let valid_value = 3.14f64;
 /// assert!(valid_value.is_finite_generic());
@@ -40,7 +40,7 @@ pub trait FiniteCheck {
     /// # Examples
     ///
     /// ```
-    /// use d_delaunay::geometry::FiniteCheck;
+    /// use delaunay::geometry::FiniteCheck;
     ///
     /// // Valid finite values
     /// assert!(1.0f64.is_finite_generic());

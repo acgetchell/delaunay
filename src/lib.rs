@@ -1,4 +1,4 @@
-//! # d-delaunay
+//! # delaunay
 //!
 //! This is a library for computing the Delaunay triangulation of a set of n-dimensional points
 //! in a [simplicial complex](https://en.wikipedia.org/wiki/Simplicial_complex)

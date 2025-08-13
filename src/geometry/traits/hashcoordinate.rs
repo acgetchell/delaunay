@@ -24,7 +24,7 @@ pub trait HashCoordinate {
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::geometry::HashCoordinate;
+    /// use delaunay::geometry::HashCoordinate;
     /// use std::collections::hash_map::DefaultHasher;
     /// use std::hash::Hasher;
     ///

@@ -17,7 +17,7 @@
 #![allow(missing_docs)]
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use d_delaunay::prelude::*;
+use delaunay::prelude::*;
 use rand::Rng;
 use std::hint::black_box;
 

@@ -17,9 +17,9 @@ use std::ops::{AddAssign, Div, SubAssign};
 /// # Examples
 ///
 /// ```
-/// use d_delaunay::delaunay_core::triangulation_data_structure::Tds;
-/// use d_delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
-/// use d_delaunay::vertex;
+/// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+/// use delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
+/// use delaunay::vertex;
 ///
 /// // Create a simple 3D triangulation (single tetrahedron)
 /// let vertices = vec![
@@ -66,9 +66,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use d_delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use d_delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use d_delaunay::vertex;
+    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
+    /// use delaunay::vertex;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -99,9 +99,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use d_delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use d_delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use d_delaunay::vertex;
+    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
+    /// use delaunay::vertex;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -134,9 +134,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use d_delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use d_delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use d_delaunay::vertex;
+    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
+    /// use delaunay::vertex;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),

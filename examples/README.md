@@ -1,7 +1,7 @@
 # Examples
 
 This directory contains examples demonstrating various features and
-capabilities of the d-delaunay library.
+capabilities of the delaunay library.
 
 ## Available Examples
 
@@ -63,7 +63,7 @@ testing of simplex orientation across multiple dimensions.
 
 ### 3. Implicit Conversion Example (`implicit_conversion.rs`)
 
-Demonstrates the implicit conversion capabilities of the d-delaunay library,
+Demonstrates the implicit conversion capabilities of the delaunay library,
 showing how vertices and points can be automatically converted to coordinate
 arrays using Rust's `From` trait.
 

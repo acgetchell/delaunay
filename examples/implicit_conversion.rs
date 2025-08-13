@@ -20,7 +20,7 @@
 //!
 //! Run this example with: `cargo run --example implicit_conversion`
 
-use d_delaunay::prelude::*;
+use delaunay::prelude::*;
 
 /// Demonstrates implicit conversion from vertices and points to coordinate arrays.
 ///

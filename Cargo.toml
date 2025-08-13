@@ -1,11 +1,11 @@
 [package]
-name = "d-delaunay"
+name = "delaunay"
 version = "0.3.3"
 edition = "2024"
 rust-version = "1.85.0"
 description = "A d-dimensional Delaunay triangulation library with generic coordinate support"
 license = "BSD-3-Clause"
-repository = "https://github.com/acgetchell/d-delaunay"
+repository = "https://github.com/acgetchell/delaunay"
 keywords = ["delaunay", "triangulation", "computational-geometry", "mesh", "cgal"]
 categories = ["algorithms", "science::mathematics::geometry", "science::physics"]
 authors = ["Adam Getchell <adam@adamgetchell.org>"]

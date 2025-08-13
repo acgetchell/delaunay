@@ -1,6 +1,6 @@
 # Performance Benchmarks
 
-This directory contains performance benchmarks for the d-delaunay library, including circumsphere containment algorithms,
+This directory contains performance benchmarks for the delaunay library, including circumsphere containment algorithms,
 triangulation data structure operations, and small-scale triangulation performance testing.
 
 ## Running Benchmarks
