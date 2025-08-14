@@ -1,6 +1,5 @@
 //! General helper utilities
 
-use anyhow::Error;
 use serde::{Serialize, de::DeserializeOwned};
 use slotmap::SlotMap;
 use std::cmp::Ordering;
@@ -15,8 +14,16 @@ use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use num_traits::NumCast;
 
 // =============================================================================
-// UUID VALIDATION
+// ERROR TYPES
 // =============================================================================
+
+/// Errors that can occur when finding extreme coordinates.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum ExtremeCoordinatesError {
+    /// The vertices `SlotMap` is empty.
+    #[error("Cannot find extreme coordinates: vertices SlotMap is empty")]
+    EmptyVertices,
+}
 
 /// Errors that can occur during UUID validation.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -131,7 +138,7 @@ pub fn make_uuid() -> Uuid {
 /// # Example
 ///
 /// ```
-/// use delaunay::core::utilities::find_extreme_coordinates;
+/// use delaunay::core::utilities::{find_extreme_coordinates, ExtremeCoordinatesError};
 /// use delaunay::core::vertex::Vertex;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -151,11 +158,16 @@ pub fn make_uuid() -> Uuid {
 /// let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
 /// # use approx::assert_relative_eq;
 /// assert_relative_eq!(min_coords.as_slice(), [-1.0, -5.0, -9.0].as_slice(), epsilon = 1e-9);
+///
+/// // Error case with empty SlotMap
+/// let empty_slotmap: SlotMap<DefaultKey, Vertex<f64, Option<()>, 3>> = SlotMap::new();
+/// let result = find_extreme_coordinates(&empty_slotmap, Ordering::Less);
+/// assert!(matches!(result, Err(ExtremeCoordinatesError::EmptyVertices)));
 /// ```
 pub fn find_extreme_coordinates<K, T, U, const D: usize>(
     vertices: &SlotMap<K, Vertex<T, U, D>>,
     ordering: Ordering,
-) -> Result<[T; D], Error>
+) -> Result<[T; D], ExtremeCoordinatesError>
 where
     K: slotmap::Key,
     T: CoordinateScalar,
@@ -163,15 +175,11 @@ where
     [T; D]: Default + DeserializeOwned + Serialize + Sized,
 {
     if vertices.is_empty() {
-        return Err(anyhow::Error::msg(
-            "Cannot find extreme coordinates: vertices SlotMap is empty",
-        ));
+        return Err(ExtremeCoordinatesError::EmptyVertices);
     }
 
     let mut iter = vertices.values();
-    let first_vertex = iter
-        .next()
-        .expect("SlotMap is unexpectedly empty despite earlier check");
+    let first_vertex = iter.next().ok_or(ExtremeCoordinatesError::EmptyVertices)?;
     let mut extreme_coords: [T; D] = (*first_vertex).into();
 
     for vertex in iter {
@@ -352,8 +360,8 @@ where
 ///
 /// This utility function generates a proper non-degenerate simplex (e.g., triangle for 2D,
 /// tetrahedron for 3D, 4-simplex for 4D, etc.) that can be used as a supercell in
-/// triangulation algorithms. The simplex is constructed to have vertices positioned
-/// strategically around the center point to ensure geometric validity and avoid degeneracies.
+/// triangulation algorithms. The simplex is constructed so that vertices are positioned
+/// strategically around the provided center to ensure geometric validity and avoid degeneracies.
 ///
 /// # Arguments
 ///
@@ -416,6 +424,7 @@ where
 {
     let mut points = Vec::new();
     let radius_f64: f64 = radius.into();
+    debug_assert!(D > 0, "create_supercell_simplex requires D > 0");
 
     // Use a generic construction that works well for all dimensions
     // This creates D+1 vertices that are guaranteed to be non-degenerate
@@ -602,6 +611,46 @@ mod tests {
         let error5 = UuidValidationError::InvalidVersion { found: 3 };
         assert_ne!(error3, error5);
         assert_ne!(error1, error3);
+    }
+
+    // =============================================================================
+    // EXTREME COORDINATES ERROR TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_extreme_coordinates_error_display() {
+        let error = ExtremeCoordinatesError::EmptyVertices;
+        let error_string = format!("{error}");
+        assert!(error_string.contains("Cannot find extreme coordinates"));
+        assert!(error_string.contains("vertices SlotMap is empty"));
+    }
+
+    #[test]
+    fn test_extreme_coordinates_error_equality() {
+        let error1 = ExtremeCoordinatesError::EmptyVertices;
+        let error2 = ExtremeCoordinatesError::EmptyVertices;
+        assert_eq!(error1, error2);
+    }
+
+    #[test]
+    fn test_extreme_coordinates_error_debug() {
+        let error = ExtremeCoordinatesError::EmptyVertices;
+        let debug_string = format!("{error:?}");
+        assert!(debug_string.contains("EmptyVertices"));
+    }
+
+    #[test]
+    fn test_find_extreme_coordinates_returns_proper_error() {
+        // Test that find_extreme_coordinates returns the correct error type
+        let empty_slotmap: SlotMap<DefaultKey, crate::core::vertex::Vertex<f64, Option<()>, 3>> =
+            SlotMap::new();
+        let result = find_extreme_coordinates(&empty_slotmap, Ordering::Less);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(ExtremeCoordinatesError::EmptyVertices)
+        ));
     }
 
     // =============================================================================

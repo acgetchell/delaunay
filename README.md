@@ -16,7 +16,7 @@ D-dimensional Delaunay triangulations in [Rust], inspired by [CGAL].
 
 This library implements d-dimensional Delaunay triangulations in [Rust]. It is
 inspired by [CGAL], which is a [C++] library for computational geometry,
-and [Spade], a [Rust] library implementing 2D [Delaunay triangulations],
+and [Spade], a [Rust] library that implements 2D [Delaunay triangulations],
 [Constrained Delaunay triangulations], and [Voronoi diagrams]. The goal of this library is to provide a
 lightweight alternative to [CGAL] for the [Rust] ecosystem.
 

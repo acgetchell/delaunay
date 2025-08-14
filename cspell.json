@@ -97,6 +97,7 @@
         "sqlfluff",
         "strsim",
         "supercell",
+        "supercells",
         "swiftlint",
         "thiserror",
         "thrpt",

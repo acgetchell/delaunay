@@ -440,6 +440,43 @@ where
         self.uuid
     }
 
+    /// Clears the neighbors of the [Cell].
+    ///
+    /// This method sets the `neighbors` field to `None`, effectively removing all
+    /// neighbor relationships. This is useful for benchmarking neighbor assignment
+    /// or when rebuilding neighbor relationships from scratch.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::core::cell::Cell;
+    /// use uuid::Uuid;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0]),
+    /// ];
+    /// let mut cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
+    ///
+    /// // Initially neighbors should be None
+    /// assert!(cell.neighbors.is_none());
+    ///
+    /// // Simulate setting some neighbors
+    /// cell.neighbors = Some(vec![Uuid::new_v4(), Uuid::new_v4()]);
+    /// assert!(cell.neighbors.is_some());
+    ///
+    /// // Clear the neighbors
+    /// cell.clear_neighbors();
+    /// assert!(cell.neighbors.is_none());
+    /// ```
+    #[inline]
+    pub fn clear_neighbors(&mut self) {
+        self.neighbors = None;
+    }
+
     /// Returns the list of `VertexKeys` for the [Cell].
     ///
     /// # Arguments
@@ -1372,6 +1409,33 @@ mod tests {
 
         // Human readable output for cargo test -- --nocapture
         println!("Cell: {cell:?}");
+    }
+
+    #[test]
+    fn cell_clear_neighbors() {
+        use uuid::Uuid;
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0]),
+        ];
+        let mut cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
+
+        // Initially neighbors should be None
+        assert!(cell.neighbors.is_none());
+
+        // Simulate setting some neighbors
+        cell.neighbors = Some(vec![Uuid::new_v4(), Uuid::new_v4()]);
+        assert!(cell.neighbors.is_some());
+
+        // Clear the neighbors using the new method
+        cell.clear_neighbors();
+        assert!(cell.neighbors.is_none());
+
+        // Human readable output for cargo test -- --nocapture
+        println!("✓ Cell clear_neighbors method works correctly");
     }
 
     #[test]

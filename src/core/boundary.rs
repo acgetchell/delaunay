@@ -11,7 +11,6 @@ use super::{
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use nalgebra::ComplexField;
 use serde::{Serialize, de::DeserializeOwned};
-use std::collections::HashMap;
 use std::iter::Sum;
 use std::ops::{AddAssign, Div, SubAssign};
 
@@ -68,7 +67,8 @@ where
     fn boundary_facets(&self) -> Vec<Facet<T, U, V, D>> {
         // Build a map from facet keys to the cells that contain them
         let facet_to_cells = self.build_facet_to_cells_hashmap();
-        let mut boundary_facets = Vec::new();
+        // Upper bound on the number of boundary facets is the map size
+        let mut boundary_facets = Vec::with_capacity(facet_to_cells.len());
 
         // Collect all facets that belong to only one cell
         for (_facet_key, cells) in facet_to_cells {
@@ -122,8 +122,8 @@ where
     /// }
     /// ```
     fn is_boundary_facet(&self, facet: &Facet<T, U, V, D>) -> bool {
-        // Use the precomputed facet-to-cells map to check if the facet belongs to only one cell
-        // This avoids recomputing the facet's neighbors and is more efficient
+        // Build the facet-to-cells map to check if the facet belongs to only one cell
+        // Note: This recomputes the map per call; for repeated queries, compute once and reuse.
         let facet_to_cells = self.build_facet_to_cells_hashmap();
         facet_to_cells
             .get(&facet.key())
@@ -158,17 +158,11 @@ where
     /// assert_eq!(tds.number_of_boundary_facets(), 4);
     /// ```
     fn number_of_boundary_facets(&self) -> usize {
-        // Build a map from facet keys to count of cells that contain them
-        let mut facet_counts: HashMap<u64, usize> = HashMap::new();
-
-        for cell in self.cells().values() {
-            for facet in cell.facets() {
-                *facet_counts.entry(facet.key()).or_insert(0) += 1;
-            }
-        }
-
-        // Count facets that appear in only one cell
-        facet_counts.values().filter(|&&count| count == 1).count()
+        // Count facets that belong to exactly one cell
+        self.build_facet_to_cells_hashmap()
+            .values()
+            .filter(|cells| cells.len() == 1)
+            .count()
     }
 }
 
