@@ -27,7 +27,7 @@ use std::{fmt::Debug, hash::Hash};
 /// # Usage
 ///
 /// ```rust
-/// use delaunay::delaunay_core::DataType;
+/// use delaunay::core::DataType;
 ///
 /// fn process_data<T: DataType>(data: T) {
 ///     // T has all the necessary bounds for use as vertex/cell data

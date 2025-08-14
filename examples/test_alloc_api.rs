@@ -4,7 +4,7 @@
 //! in Delaunay triangulation operations.
 
 // Import Delaunay triangulation crate components
-use delaunay::delaunay_core::triangulation_data_structure::Tds;
+use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::geometry::Point;
 
 // Testing utilities

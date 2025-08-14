@@ -18,8 +18,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::delaunay_core::cell::Cell;
-//! use delaunay::delaunay_core::vertex::Vertex;
+//! use delaunay::core::cell::Cell;
 //! use delaunay::geometry::point::Point;
 //! use delaunay::geometry::traits::coordinate::Coordinate;
 //! use delaunay::{cell, vertex};
@@ -43,7 +42,7 @@
 // =============================================================================
 
 use super::{
-    facet::Facet,
+    facet::{Facet, FacetError},
     traits::DataType,
     utilities::{UuidValidationError, make_uuid, validate_uuid},
     vertex::{Vertex, VertexValidationError},
@@ -53,7 +52,6 @@ use crate::prelude::VertexKey;
 use bimap::BiMap;
 use na::ComplexField;
 use nalgebra as na;
-use peroxide::fuga::anyhow;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashMap, fmt::Debug, hash::Hash, iter::Sum};
 use thiserror::Error;
@@ -124,15 +122,15 @@ pub enum CellValidationError {
 ///
 /// ```rust
 /// use delaunay::{cell, vertex};
-/// use delaunay::delaunay_core::cell::Cell;
-/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::core::cell::Cell;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
-/// // Create vertices using the vertex! macro
+/// // Create vertices using the vertex! macro (need 4 vertices for 3D simplex)
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 ///
 /// // Create a cell without data (explicit type annotation required)
@@ -145,7 +143,7 @@ pub enum CellValidationError {
 macro_rules! cell {
     // Pattern 1: Just vertices - no data
     ($vertices:expr) => {
-        $crate::delaunay_core::cell::CellBuilder::default()
+        $crate::core::cell::CellBuilder::default()
             .vertices($vertices)
             .build()
             .expect("Failed to build cell: invalid vertices or builder configuration")
@@ -153,7 +151,7 @@ macro_rules! cell {
 
     // Pattern 2: Vertices with data
     ($vertices:expr, $data:expr) => {
-        $crate::delaunay_core::cell::CellBuilder::default()
+        $crate::core::cell::CellBuilder::default()
             .vertices($vertices)
             .data($data)
             .build()
@@ -333,6 +331,12 @@ where
     }
 }
 
+impl From<CellValidationError> for CellBuilderError {
+    fn from(error: CellValidationError) -> Self {
+        Self::ValidationError(error.to_string())
+    }
+}
+
 impl<T, U, V, const D: usize> CellBuilder<T, U, V, D>
 where
     T: CoordinateScalar,
@@ -340,21 +344,26 @@ where
     V: DataType,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
-    fn validate(&self) -> Result<(), CellBuilderError> {
-        if self
-            .vertices
-            .as_ref()
-            .expect("Must create a Cell with Vertices!")
-            .len()
-            > D + 1
-        {
-            let err = CellBuilderError::ValidationError(
-                "Number of vertices must be less than or equal to D + 1!".to_string(),
-            );
-            Err(err)
-        } else {
-            Ok(())
+    fn validate(&self) -> Result<(), CellValidationError> {
+        let vertices =
+            self.vertices
+                .as_ref()
+                .ok_or_else(|| CellValidationError::InsufficientVertices {
+                    actual: 0,
+                    expected: D + 1,
+                    dimension: D,
+                })?;
+
+        let vertex_count = vertices.len();
+        if vertex_count != D + 1 {
+            return Err(CellValidationError::InsufficientVertices {
+                actual: vertex_count,
+                expected: D + 1,
+                dimension: D,
+            });
         }
+
+        Ok(())
     }
 }
 
@@ -378,15 +387,16 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0]),
     /// ];
     /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
-    /// assert_eq!(cell.number_of_vertices(), 3);
+    /// assert_eq!(cell.number_of_vertices(), 4);
     /// ```
     #[inline]
     pub fn number_of_vertices(&self) -> usize {
@@ -403,15 +413,16 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0]),
     /// ];
     /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
-    /// assert_eq!(cell.vertices().len(), 3);
+    /// assert_eq!(cell.vertices().len(), 4);
     /// ```
     #[inline]
     pub const fn vertices(&self) -> &Vec<Vertex<T, U, D>> {
@@ -428,11 +439,14 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     /// use uuid::Uuid;
     ///
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 1.0])
+    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0]),
     /// ];
     /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
     /// assert_ne!(cell.uuid(), Uuid::nil());
@@ -442,7 +456,48 @@ where
         self.uuid
     }
 
+    /// Clears the neighbors of the [Cell].
+    ///
+    /// This method sets the `neighbors` field to `None`, effectively removing all
+    /// neighbor relationships. This is useful for benchmarking neighbor assignment
+    /// or when rebuilding neighbor relationships from scratch.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::core::cell::Cell;
+    /// use uuid::Uuid;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0]),
+    /// ];
+    /// let mut cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
+    ///
+    /// // Initially neighbors should be None
+    /// assert!(cell.neighbors.is_none());
+    ///
+    /// // Simulate setting some neighbors
+    /// cell.neighbors = Some(vec![Uuid::new_v4(), Uuid::new_v4()]);
+    /// assert!(cell.neighbors.is_some());
+    ///
+    /// // Clear the neighbors
+    /// cell.clear_neighbors();
+    /// assert!(cell.neighbors.is_none());
+    /// ```
+    #[inline]
+    pub fn clear_neighbors(&mut self) {
+        self.neighbors = None;
+    }
+
     /// Returns the list of `VertexKeys` for the [Cell].
+    ///
+    /// This method maps the vertex UUIDs from this cell to their corresponding `VertexKey`s
+    /// using the provided bimap. This is essential for triangulation operations that need
+    /// to work with `SlotMap` keys rather than UUIDs for efficient access.
     ///
     /// # Arguments
     ///
@@ -451,23 +506,60 @@ where
     /// # Returns
     ///
     /// A `Result` containing a `Vec<VertexKey>` if all vertices are found in the bimap,
-    /// or a `String` error message if any vertex is missing.
+    /// or a `FacetError` if any vertex is missing.
     ///
     /// # Errors
     ///
-    /// Returns an error if any vertex UUID in this cell is not found in the provided
-    /// vertex bimap. The error message will include the missing UUID.
+    /// Returns `FacetError::VertexNotFound` if any vertex UUID in this cell is not found
+    /// in the provided vertex bimap. The error will contain the UUID of the missing vertex.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::triangulation_data_structure::VertexKey;
+    /// use bimap::BiMap;
+    /// use uuid::Uuid;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices.clone());
+    ///
+    /// // Create a bimap with the vertex mappings using the cell's vertices
+    /// let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+    /// let mut vertex_keys = Vec::new();
+    ///
+    /// for (i, vertex) in cell.vertices().iter().enumerate() {
+    ///     let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
+    ///     vertex_bimap.insert(vertex.uuid(), key);
+    ///     vertex_keys.push(key);
+    /// }
+    ///
+    /// // Successfully retrieve vertex keys
+    /// let result = cell.vertex_keys(&vertex_bimap).unwrap();
+    /// assert_eq!(result.len(), 4);
+    ///
+    /// // Test with missing vertex
+    /// let mut empty_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+    /// let error_result = cell.vertex_keys(&empty_bimap);
+    /// assert!(error_result.is_err());
+    /// ```
     pub fn vertex_keys(
         &self,
         vertex_bimap: &BiMap<Uuid, VertexKey>,
-    ) -> Result<Vec<VertexKey>, String> {
+    ) -> Result<Vec<VertexKey>, FacetError> {
         self.vertices()
             .iter()
             .map(|v| {
                 vertex_bimap
                     .get_by_left(&v.uuid())
                     .copied()
-                    .ok_or_else(|| format!("Vertex UUID not found in bimap: {}", v.uuid()))
+                    .ok_or_else(|| FacetError::VertexNotFound { uuid: v.uuid() })
             })
             .collect()
     }
@@ -483,19 +575,20 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0]),
     /// ];
     /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
-    /// assert_eq!(cell.dim(), 2);
+    /// assert_eq!(cell.dim(), 3);
     /// ```
     #[inline]
     pub fn dim(&self) -> usize {
-        self.vertices.len() - 1
+        self.vertices.len().saturating_sub(1)
     }
 
     /// The function `contains_vertex` checks if a given vertex is present in
@@ -514,8 +607,8 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
     /// let vertex2: Vertex<f64, i32, 3> = vertex!([0.0, 1.0, 0.0], 1);
@@ -543,8 +636,8 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
     /// let vertex2: Vertex<f64, i32, 3> = vertex!([0.0, 1.0, 0.0], 1);
@@ -568,19 +661,21 @@ where
     ///
     /// # Returns
     ///
-    /// A [Result] type containing the new [Cell] or an error message.
+    /// A `Result` containing a new [Cell] with all vertices from the facet plus the additional vertex,
+    /// or a `CellValidationError` if the vertex already exists in the facet.
     ///
     /// # Errors
     ///
-    /// This function currently does not return errors, but uses `Result` for future extensibility.
+    /// Returns `CellValidationError::DuplicateVertices` if the provided vertex already exists
+    /// in the facet, which would result in a cell with duplicate vertices.
     ///
     /// # Example
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::facet::Facet;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::facet::Facet;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
     /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
@@ -592,15 +687,39 @@ where
     /// let new_cell = Cell::from_facet_and_vertex(&facet, vertex5).unwrap();
     /// assert!(new_cell.vertices().contains(&vertex5));
     /// ```
+    ///
+    /// ```should_panic
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::facet::Facet;
+    /// use delaunay::core::vertex::Vertex;
+    ///
+    /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
+    /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
+    /// let vertex3: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
+    /// let vertex4: Vertex<f64, Option<()>, 3> = vertex!([1.0, 1.0, 1.0]);
+    /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+    /// let facet = Facet::new(cell.clone(), vertex4).unwrap();
+    /// // This should fail because vertex1 is already in the facet
+    /// let new_cell = Cell::from_facet_and_vertex(&facet, vertex1).unwrap();
+    /// ```
     pub fn from_facet_and_vertex(
         facet: &Facet<T, U, V, D>,
         vertex: Vertex<T, U, D>,
-    ) -> Result<Self, anyhow::Error> {
-        let mut vertices = facet.vertices();
+    ) -> Result<Self, CellValidationError> {
+        let facet_vertices = facet.vertices();
+
+        // Check if the vertex already exists in the facet
+        if facet_vertices.contains(&vertex) {
+            return Err(CellValidationError::DuplicateVertices);
+        }
+
+        let mut vertices = facet_vertices;
         vertices.push(vertex);
         let uuid = make_uuid();
         let neighbors = None;
         let data = None;
+
         Ok(Self {
             vertices,
             uuid,
@@ -629,12 +748,22 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     /// use uuid::Uuid;
     ///
-    /// // Create some cells
-    /// let vertices1 = vec![vertex!([0.0, 0.0, 1.0]), vertex!([0.0, 1.0, 0.0])];
-    /// let vertices2 = vec![vertex!([1.0, 0.0, 0.0]), vertex!([1.0, 1.0, 1.0])];
+    /// // Create some cells (need 4 vertices each for 3D simplices)
+    /// let vertices1 = vec![
+    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0]),
+    /// ];
+    /// let vertices2 = vec![
+    ///     vertex!([1.0, 1.0, 1.0]),
+    ///     vertex!([2.0, 1.0, 1.0]),
+    ///     vertex!([1.0, 2.0, 1.0]),
+    ///     vertex!([1.0, 1.0, 2.0]),
+    /// ];
     /// let cell1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices1);
     /// let cell2: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices2);
     ///
@@ -649,7 +778,7 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     ///
     /// // Empty vector produces empty HashMap
     /// let empty_cells: Vec<Cell<f64, Option<()>, Option<()>, 3>> = vec![];
@@ -694,8 +823,8 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
     /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
@@ -746,39 +875,67 @@ where
 {
     /// Returns all facets (faces) of the cell.
     ///
-    /// A facet is a (D-1)-dimensional face of a D-dimensional cell. For example,
-    /// in a 3D tetrahedron, each facet is a 2D triangle. Each facet is created by
-    /// removing one vertex from the cell, resulting in a lower-dimensional simplex.
+    /// A facet is a (D-1)-dimensional face of a D-dimensional cell, obtained by removing
+    /// exactly one vertex from the original cell. This operation creates all possible
+    /// (D-1)-dimensional boundary faces of the D-dimensional simplex.
     ///
-    /// The number of facets equals the number of vertices in the cell, as each
-    /// vertex defines one facet by its absence from the cell.
+    /// ## Mathematical Background
+    ///
+    /// For a D-dimensional cell (D-simplex) with D+1 vertices:
+    /// - Each facet is a (D-1)-dimensional simplex with D vertices
+    /// - The total number of facets equals the number of vertices (D+1)
+    /// - Each vertex defines exactly one facet by its exclusion from the cell
+    ///
+    /// ## Dimensional Examples
+    ///
+    /// - **1D cell (line segment)**: 2 facets, each being a 0D point (vertex)
+    /// - **2D cell (triangle)**: 3 facets, each being a 1D line segment (edge)
+    /// - **3D cell (tetrahedron)**: 4 facets, each being a 2D triangle (face)
+    /// - **4D cell (4-simplex)**: 5 facets, each being a 3D tetrahedron
+    ///
+    /// ## Facet Construction
+    ///
+    /// Each facet is constructed by:
+    /// 1. Taking all vertices from the original cell
+    /// 2. Removing exactly one vertex (the "opposite" vertex)
+    /// 3. Creating a new (D-1)-dimensional simplex from the remaining D vertices
+    ///
+    /// The facet "opposite" to vertex `v` contains all vertices of the cell except `v`.
     ///
     /// # Type Parameters
     ///
     /// This method requires the coordinate type `T` to implement additional traits
     /// beyond the basic `Cell` requirements:
     /// - `Clone + ComplexField<RealField = T> + PartialEq + PartialOrd + Sum`: Required for
-    ///   geometric computations and facet creation.
+    ///   geometric computations and facet creation operations.
     /// - `f64: From<T>`: Enables conversion to `f64` for numerical operations.
     ///
     /// # Returns
     ///
-    /// A `Vec<Facet<T, U, V, D>>` containing all facets of the cell. Each facet
-    /// contains D vertices (one fewer than the original cell's D+1 vertices).
+    /// A `Result<Vec<Facet<T, U, V, D>>, FacetError>` containing all facets of the cell.
+    /// The returned vector has exactly D+1 facets, where each facet contains D vertices
+    /// (one fewer than the original cell's D+1 vertices).
     ///
-    /// # Panics
+    /// The facets are returned in the same order as the vertices in the original cell,
+    /// where `facets[i]` is the facet opposite to `vertices[i]`.
     ///
-    /// Panics if `Facet::new()` fails for any vertex in the cell. This should not
-    /// happen under normal circumstances with valid cell data, as facets are created
-    /// by removing each vertex in turn.
+    /// # Errors
+    ///
+    /// Returns a [`FacetError`] if facet creation fails:
+    /// - [`FacetError::CellDoesNotContainVertex`]: Internal consistency error where
+    ///   a vertex appears to be missing from the cell during facet construction.
+    ///   This should not occur under normal circumstances for properly constructed cells.
+    ///
+    /// Note: For properly constructed cells with D+1 distinct vertices, this method
+    /// should not fail under normal circumstances.
     ///
     /// # Examples
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::vertex::Vertex;
-    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::core::facet::Facet;
     ///
     /// // Create a 3D tetrahedron (4 vertices)
     /// let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
@@ -787,7 +944,7 @@ where
     /// let vertex4: Vertex<f64, i32, 3> = vertex!([1.0, 1.0, 1.0], 2);
     /// let cell: Cell<f64, i32, i32, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4], 42);
     ///
-    /// let facets = cell.facets();
+    /// let facets = cell.facets().expect("Failed to get facets");
     /// assert_eq!(facets.len(), 4); // 4 facets for tetrahedron
     ///
     /// // Each facet should have 3 vertices (triangular faces)
@@ -798,7 +955,7 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     ///
     /// // Create a 2D triangle (3 vertices)
     /// let vertices = vec![
@@ -808,7 +965,7 @@ where
     /// ];
     /// let cell: Cell<f64, Option<()>, Option<()>, 2> = cell!(vertices);
     ///
-    /// let facets = cell.facets();
+    /// let facets = cell.facets().expect("Failed to get facets");
     /// assert_eq!(facets.len(), 3); // 3 facets (edges) for triangle
     ///
     /// // Each facet should have 2 vertices (line segments)
@@ -816,10 +973,10 @@ where
     ///     assert_eq!(facet.vertices().len(), 2);
     /// }
     /// ```
-    pub fn facets(&self) -> Vec<Facet<T, U, V, D>> {
+    pub fn facets(&self) -> Result<Vec<Facet<T, U, V, D>>, FacetError> {
         self.vertices
             .iter()
-            .map(|vertex| Facet::new(self.clone(), *vertex).unwrap())
+            .map(|vertex| Facet::new(self.clone(), *vertex))
             .collect()
     }
 }
@@ -903,7 +1060,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delaunay_core::vertex::vertex;
+    use crate::core::vertex::vertex;
     use crate::geometry::point::Point;
     use crate::geometry::predicates::{
         circumcenter, circumradius, circumradius_with_center, insphere, insphere_distance,
@@ -914,8 +1071,8 @@ mod tests {
     // Type aliases for commonly used types to reduce repetition
     type TestCell3D = Cell<f64, Option<()>, Option<()>, 3>;
     type TestCell2D = Cell<f64, Option<()>, Option<()>, 2>;
-    type TestVertex3D = crate::delaunay_core::vertex::Vertex<f64, Option<()>, 3>;
-    type TestVertex2D = crate::delaunay_core::vertex::Vertex<f64, Option<()>, 2>;
+    type TestVertex3D = crate::core::vertex::Vertex<f64, Option<()>, 3>;
+    type TestVertex2D = crate::core::vertex::Vertex<f64, Option<()>, 2>;
 
     // =============================================================================
     // HELPER FUNCTIONS
@@ -978,12 +1135,13 @@ mod tests {
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]), // Need 4 vertices for 3D cell
         ];
 
         let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices.clone());
 
-        assert_eq!(cell.number_of_vertices(), 3);
-        assert_eq!(cell.dim(), 2);
+        assert_eq!(cell.number_of_vertices(), 4);
+        assert_eq!(cell.dim(), 3);
         assert!(cell.data.is_none());
         assert!(!cell.uuid().is_nil());
 
@@ -1037,20 +1195,22 @@ mod tests {
             vertex!([0.0, 0.0, 0.0], 1),
             vertex!([1.0, 0.0, 0.0], 2),
             vertex!([0.0, 1.0, 0.0], 3),
+            vertex!([0.0, 0.0, 1.0], 4), // Need 4 vertices for 3D cell
         ];
 
         // Use an array of characters to represent "test cell"
         let test_cell_data: [char; 9] = ['t', 'e', 's', 't', ' ', 'c', 'e', 'l', 'l'];
         let cell: Cell<f64, i32, [char; 9], 3> = cell!(vertices, test_cell_data);
 
-        assert_eq!(cell.number_of_vertices(), 3);
-        assert_eq!(cell.dim(), 2);
+        assert_eq!(cell.number_of_vertices(), 4);
+        assert_eq!(cell.dim(), 3);
         assert_eq!(cell.data.unwrap(), test_cell_data);
 
         // Check vertex data
         assert_eq!(cell.vertices()[0].data.unwrap(), 1);
         assert_eq!(cell.vertices()[1].data.unwrap(), 2);
         assert_eq!(cell.vertices()[2].data.unwrap(), 3);
+        assert_eq!(cell.vertices()[3].data.unwrap(), 4);
     }
 
     #[test]
@@ -1138,9 +1298,12 @@ mod tests {
         let vertex1 = vertex!([0.0, 0.0, 1.0]);
         let vertex2 = vertex!([0.0, 1.0, 0.0]);
         let vertex3 = vertex!([1.0, 0.0, 0.0]);
+        let vertex4 = vertex!([0.0, 0.0, 0.0]); // Need 4 vertices for 3D cell
 
-        let cell1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3]);
-        let cell2: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3]);
+        let cell1: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+        let cell2: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
         let mut hasher1 = DefaultHasher::new();
         let mut hasher2 = DefaultHasher::new();
@@ -1164,10 +1327,13 @@ mod tests {
         let vertex1 = vertex!([0.0, 0.0, 1.0]);
         let vertex2 = vertex!([0.0, 1.0, 0.0]);
         let vertex3 = vertex!([1.0, 0.0, 0.0]);
+        let vertex4 = vertex!([0.0, 0.0, 0.0]); // Need 4 vertices for 3D cell
 
         // Create cells with neighbors and data to test hash implementation
-        let mut cell1: Cell<f64, Option<()>, i32, 3> = cell!(vec![vertex1, vertex2, vertex3], 42);
-        let mut cell2: Cell<f64, Option<()>, i32, 3> = cell!(vec![vertex1, vertex2, vertex3], 42);
+        let mut cell1: Cell<f64, Option<()>, i32, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4], 42);
+        let mut cell2: Cell<f64, Option<()>, i32, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4], 42);
 
         // Set different neighbors - Hash implementation ignores neighbors for Eq/Hash contract
         let neighbor_id1 = Uuid::new_v4();
@@ -1197,10 +1363,11 @@ mod tests {
         let vertex1 = vertex!([0.0, 0.0, 1.0]);
         let vertex2 = vertex!([0.0, 1.0, 0.0]);
         let vertex3 = vertex!([1.0, 0.0, 0.0]);
+        let vertex4 = vertex!([0.0, 0.0, 0.0]); // Need 4 vertices for 3D cell
 
         // Create two cells with same vertices but different neighbors
         let mut cell1: Cell<f64, Option<()>, Option<()>, 3> =
-            cell!(vec![vertex1, vertex2, vertex3]);
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
         let mut cell2 = cell1.clone();
 
         // Set different neighbors
@@ -1230,9 +1397,12 @@ mod tests {
         let vertex1 = vertex!([0.0, 0.0, 1.0]);
         let vertex2 = vertex!([0.0, 1.0, 0.0]);
         let vertex3 = vertex!([1.0, 0.0, 0.0]);
+        let vertex4 = vertex!([0.0, 0.0, 0.0]); // Need 4 vertices for 3D cell
 
-        let cell1: Cell<f64, Option<()>, i32, 3> = cell!(vec![vertex1, vertex2, vertex3], 42);
-        let cell2: Cell<f64, Option<()>, i32, 3> = cell!(vec![vertex1, vertex2, vertex3], 24);
+        let cell1: Cell<f64, Option<()>, i32, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4], 42);
+        let cell2: Cell<f64, Option<()>, i32, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4], 24);
 
         let mut hasher1 = DefaultHasher::new();
         let mut hasher2 = DefaultHasher::new();
@@ -1256,9 +1426,12 @@ mod tests {
         let vertex2 = vertex!([0.0, 1.0, 0.0]);
         let vertex3 = vertex!([1.0, 0.0, 0.0]);
         let vertex4 = vertex!([2.0, 2.0, 2.0]);
+        let vertex5 = vertex!([0.0, 0.0, 0.0]); // Need 4 vertices for 3D cells
 
-        let cell1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3]);
-        let cell2: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex4]);
+        let cell1: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex5]);
+        let cell2: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex4, vertex5]);
 
         let mut hasher1 = DefaultHasher::new();
         let mut hasher2 = DefaultHasher::new();
@@ -1290,10 +1463,15 @@ mod tests {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
         let vertex3 = vertex!([0.0, 1.0, 0.0]);
+        let vertex4 = vertex!([0.0, 0.0, 1.0]); // 4th vertex for 3D cells
+        let vertex5 = vertex!([1.0, 1.0, 1.0]); // Alternative vertex for cell3
 
-        let cell1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3]);
-        let cell2: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3]);
-        let cell3: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2]);
+        let cell1: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+        let cell2: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+        let cell3: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex5]); // Different 4th vertex
 
         // Test Eq trait (reflexivity, symmetry) - equality is based on vertices only
         assert_eq!(cell1, cell1); // reflexive
@@ -1307,9 +1485,13 @@ mod tests {
     fn cell_ordering_edge_cases() {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
+        let vertex3 = vertex!([0.0, 1.0, 0.0]);
+        let vertex4 = vertex!([0.0, 0.0, 1.0]);
 
-        let cell1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2]);
-        let cell2: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2]);
+        let cell1: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+        let cell2: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
         // Test that equal cells are not less than each other
         assert_ne!(cell1.partial_cmp(&cell2), Some(std::cmp::Ordering::Less));
@@ -1377,6 +1559,33 @@ mod tests {
     }
 
     #[test]
+    fn cell_clear_neighbors() {
+        use uuid::Uuid;
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0]),
+        ];
+        let mut cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
+
+        // Initially neighbors should be None
+        assert!(cell.neighbors.is_none());
+
+        // Simulate setting some neighbors
+        cell.neighbors = Some(vec![Uuid::new_v4(), Uuid::new_v4()]);
+        assert!(cell.neighbors.is_some());
+
+        // Clear the neighbors using the new method
+        cell.clear_neighbors();
+        assert!(cell.neighbors.is_none());
+
+        // Human readable output for cargo test -- --nocapture
+        println!("✓ Cell clear_neighbors method works correctly");
+    }
+
+    #[test]
     fn cell_facets_contains() {
         let vertices = vec![
             vertex!([0.0, 0.0, 1.0], 1),
@@ -1385,17 +1594,210 @@ mod tests {
             vertex!([1.0, 1.0, 1.0], 2),
         ];
         let cell: Cell<f64, i32, i32, 3> = cell!(vertices, 31);
-        let facets = cell.facets();
+        let facets = cell.facets().expect("Failed to get facets");
 
         assert_eq!(facets.len(), 4);
         for facet in &facets {
             // assert!(cell.facets().contains(facet));
             let facet_vertices = facet.vertices();
-            assert!(cell.facets().iter().any(|f| f.vertices() == facet_vertices));
+            assert!(
+                cell.facets()
+                    .expect("Failed to get facets")
+                    .iter()
+                    .any(|f| f.vertices() == facet_vertices)
+            );
         }
 
         // Human readable output for cargo test -- --nocapture
         println!("Facets: {facets:?}");
+    }
+
+    // =============================================================================
+    // VERTEX_KEYS METHOD TESTS
+    // =============================================================================
+    // Comprehensive tests for the vertex_keys method covering both success
+    // and error cases.
+
+    #[test]
+    fn test_vertex_keys_success() {
+        // Test the vertex_keys method returns correct vertex keys vector
+        let vertex1 = vertex!([0.0, 0.0, 0.0], 10);
+        let vertex2 = vertex!([1.0, 0.0, 0.0], 20);
+        let vertex3 = vertex!([0.0, 1.0, 0.0], 30);
+        let vertex4 = vertex!([0.0, 0.0, 1.0], 40);
+
+        let cell: Cell<f64, i32, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+
+        // Create a BiMap mapping vertex UUIDs to VertexKeys
+        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+        let vertex_keys: Vec<VertexKey> = cell
+            .vertices()
+            .iter()
+            .enumerate()
+            .map(|(i, vertex)| {
+                let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
+                vertex_bimap.insert(vertex.uuid(), key);
+                key
+            })
+            .collect();
+
+        let result = cell.vertex_keys(&vertex_bimap);
+        assert!(result.is_ok());
+
+        let returned_keys = result.unwrap();
+        assert_eq!(returned_keys.len(), 4);
+
+        // Verify that all returned keys match our expected keys
+        for (expected_key, returned_key) in vertex_keys.iter().zip(returned_keys.iter()) {
+            assert_eq!(expected_key, returned_key);
+        }
+
+        println!("✓ vertex_keys method returns correct vertex keys");
+    }
+
+    #[test]
+    fn test_vertex_keys_empty_cell_fails() {
+        // Test that vertex_keys fails gracefully on invalid cell construction
+        // Note: We can't actually create an empty cell via normal means due to validation,
+        // but we can test the method's error handling by creating a cell with insufficient vertices
+
+        // This test documents expected behavior - cell creation with insufficient vertices
+        // should fail during construction, not during vertex_keys() call
+        let vertices = vec![vertex!([0.0, 0.0, 0.0])];
+        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
+            CellBuilder::default().vertices(vertices).build();
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Insufficient vertices"));
+
+        println!("✓ Cell construction properly validates vertex count");
+    }
+
+    #[test]
+    fn test_vertex_keys_2d_cell() {
+        // Test vertex_keys with a 2D cell (triangle)
+        let vertex1 = vertex!([0.0, 0.0], 1);
+        let vertex2 = vertex!([1.0, 0.0], 2);
+        let vertex3 = vertex!([0.5, 1.0], 3);
+
+        let cell: Cell<f64, i32, Option<()>, 2> = cell!(vec![vertex1, vertex2, vertex3]);
+
+        // Create a BiMap mapping vertex UUIDs to VertexKeys
+        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+        let expected_keys: Vec<VertexKey> = cell
+            .vertices()
+            .iter()
+            .enumerate()
+            .map(|(i, vertex)| {
+                let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
+                vertex_bimap.insert(vertex.uuid(), key);
+                key
+            })
+            .collect();
+
+        let result = cell.vertex_keys(&vertex_bimap);
+        assert!(result.is_ok());
+
+        let returned_keys = result.unwrap();
+        assert_eq!(returned_keys.len(), 3);
+
+        // Verify that all returned keys match our expected keys
+        for (expected_key, returned_key) in expected_keys.iter().zip(returned_keys.iter()) {
+            assert_eq!(expected_key, returned_key);
+        }
+
+        println!("✓ vertex_keys works correctly for 2D cells");
+    }
+
+    #[test]
+    fn test_vertex_keys_4d_cell() {
+        // Test vertex_keys with a 4D cell (5-simplex) using integer data
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0], 1),
+            vertex!([1.0, 0.0, 0.0, 0.0], 2),
+            vertex!([0.0, 1.0, 0.0, 0.0], 3),
+            vertex!([0.0, 0.0, 1.0, 0.0], 4),
+            vertex!([0.0, 0.0, 0.0, 1.0], 5),
+        ];
+
+        let cell: Cell<f64, i32, Option<()>, 4> = cell!(vertices);
+
+        // Create a BiMap mapping vertex UUIDs to VertexKeys
+        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+        let expected_keys: Vec<VertexKey> = cell
+            .vertices()
+            .iter()
+            .enumerate()
+            .map(|(i, vertex)| {
+                let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
+                vertex_bimap.insert(vertex.uuid(), key);
+                key
+            })
+            .collect();
+
+        let result = cell.vertex_keys(&vertex_bimap);
+        assert!(result.is_ok());
+
+        let returned_keys = result.unwrap();
+        assert_eq!(returned_keys.len(), 5);
+
+        // Verify all 5 vertices are mapped correctly
+        for (i, (expected_key, returned_key)) in
+            expected_keys.iter().zip(returned_keys.iter()).enumerate()
+        {
+            assert_eq!(expected_key, returned_key);
+            let vertex = cell.vertices().get(i).unwrap();
+            assert_eq!(vertex.data, Some(i32::try_from(i + 1).unwrap()));
+        }
+
+        println!("✓ vertex_keys works correctly for 4D cells");
+    }
+
+    #[test]
+    fn test_vertex_keys_with_f32_coordinates() {
+        // Test vertex_keys with f32 coordinates
+        let vertices = vec![
+            vertex!([0.0f32, 0.0f32, 0.0f32]),
+            vertex!([1.0f32, 0.0f32, 0.0f32]),
+            vertex!([0.0f32, 1.0f32, 0.0f32]),
+            vertex!([0.0f32, 0.0f32, 1.0f32]),
+        ];
+
+        let cell: Cell<f32, Option<()>, Option<()>, 3> = cell!(vertices);
+
+        // Create a BiMap mapping vertex UUIDs to VertexKeys
+        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+        let expected_keys: Vec<VertexKey> = cell
+            .vertices()
+            .iter()
+            .enumerate()
+            .map(|(i, vertex)| {
+                let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
+                vertex_bimap.insert(vertex.uuid(), key);
+                key
+            })
+            .collect();
+
+        let result = cell.vertex_keys(&vertex_bimap);
+        assert!(result.is_ok());
+
+        let returned_keys = result.unwrap();
+        assert_eq!(returned_keys.len(), 4);
+
+        // Verify coordinate type is preserved
+        assert_relative_eq!(
+            cell.vertices()[0].point().to_array()[0],
+            0.0f32,
+            epsilon = f32::EPSILON
+        );
+
+        // Verify that all returned keys match our expected keys
+        for (expected_key, returned_key) in expected_keys.iter().zip(returned_keys.iter()) {
+            assert_eq!(expected_key, returned_key);
+        }
+
+        println!("✓ vertex_keys works correctly with f32 coordinates");
     }
 
     // =============================================================================
@@ -1454,10 +1856,16 @@ mod tests {
 
     #[test]
     fn cell_single_vertex() {
+        // Test that creating a 3D cell with insufficient vertices fails validation
         let vertices = vec![vertex!([0.0, 0.0, 0.0])];
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
+        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, CellBuilderError> =
+            CellBuilder::default().vertices(vertices).build();
 
-        assert_cell_properties(&cell, 1, 0);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Insufficient vertices"));
+        assert!(error_msg.contains("1 vertices"));
+        assert!(error_msg.contains("expected exactly 4"));
     }
 
     #[test]
@@ -1465,9 +1873,12 @@ mod tests {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
         let vertex3 = vertex!([0.0, 1.0, 0.0]);
+        let vertex4 = vertex!([0.0, 0.0, 1.0]); // Need 4 vertices for 3D
 
-        let cell1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3]);
-        let cell2: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3]);
+        let cell1: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+        let cell2: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
         // Same vertices but different UUIDs
         assert_ne!(cell1.uuid(), cell2.uuid());
@@ -1479,8 +1890,11 @@ mod tests {
     fn cell_neighbors_none_by_default() {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
+        let vertex3 = vertex!([0.0, 1.0, 0.0]);
+        let vertex4 = vertex!([0.0, 0.0, 1.0]); // Need 4 vertices for 3D
 
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2]);
+        let cell: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
         assert!(cell.neighbors.is_none());
     }
@@ -1488,8 +1902,12 @@ mod tests {
     #[test]
     fn cell_data_none_by_default() {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
+        let vertex2 = vertex!([1.0, 0.0, 0.0]);
+        let vertex3 = vertex!([0.0, 1.0, 0.0]);
+        let vertex4 = vertex!([0.0, 0.0, 1.0]); // Need 4 vertices for 3D
 
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1]);
+        let cell: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
         assert!(cell.data.is_none());
     }
@@ -1497,8 +1915,12 @@ mod tests {
     #[test]
     fn cell_data_can_be_set() {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
+        let vertex2 = vertex!([1.0, 0.0, 0.0]);
+        let vertex3 = vertex!([0.0, 1.0, 0.0]);
+        let vertex4 = vertex!([0.0, 0.0, 1.0]); // Need 4 vertices for 3D
 
-        let cell: Cell<f64, Option<()>, i32, 3> = cell!(vec![vertex1], 42);
+        let cell: Cell<f64, Option<()>, i32, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4], 42);
 
         assert_eq!(cell.data.unwrap(), 42);
     }
@@ -1516,9 +1938,13 @@ mod tests {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
         let vertex3 = vertex!([0.0, 1.0, 0.0]);
+        let vertex4 = vertex!([0.0, 0.0, 1.0]);
+        let vertex5 = vertex!([1.0, 1.0, 1.0]); // Need 4 vertices for each 3D cell
 
-        let cell1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2]);
-        let cell2: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex2, vertex3]);
+        let cell1: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+        let cell2: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex2, vertex3, vertex4, vertex5]);
 
         let uuid1 = cell1.uuid();
         let uuid2 = cell2.uuid();
@@ -1534,8 +1960,11 @@ mod tests {
     fn cell_debug_format() {
         let vertex1 = vertex!([1.0, 2.0, 3.0]);
         let vertex2 = vertex!([4.0, 5.0, 6.0]);
+        let vertex3 = vertex!([7.0, 8.0, 9.0]);
+        let vertex4 = vertex!([10.0, 11.0, 12.0]); // Need 4 vertices for 3D
 
-        let cell: Cell<f64, Option<()>, i32, 3> = cell!(vec![vertex1, vertex2], 42);
+        let cell: Cell<f64, Option<()>, i32, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4], 42);
         let debug_str = format!("{cell:?}");
 
         assert!(debug_str.contains("Cell"));
@@ -1558,6 +1987,7 @@ mod tests {
             vertex!([1.0, 2.0, 3.0]),
             vertex!([4.0, 5.0, 6.0]),
             vertex!([7.0, 8.0, 9.0]),
+            vertex!([10.0, 11.0, 12.0]), // Need 4 vertices for 3D cell
         ];
         let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
         let serialized = serde_json::to_string(&cell).unwrap();
@@ -1679,33 +2109,42 @@ mod tests {
     fn cell_negative_coordinates() {
         let vertex1 = vertex!([-1.0, -2.0, -3.0]);
         let vertex2 = vertex!([-4.0, -5.0, -6.0]);
+        let vertex3 = vertex!([-7.0, -8.0, -9.0]);
+        let vertex4 = vertex!([-10.0, -11.0, -12.0]); // Need 4 vertices for 3D
 
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2]);
+        let cell: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
-        assert_eq!(cell.number_of_vertices(), 2);
-        assert_eq!(cell.dim(), 1);
+        assert_eq!(cell.number_of_vertices(), 4);
+        assert_eq!(cell.dim(), 3);
     }
 
     #[test]
     fn cell_large_coordinates() {
         let vertex1 = vertex!([1e6, 2e6, 3e6]);
         let vertex2 = vertex!([4e6, 5e6, 6e6]);
+        let vertex3 = vertex!([7e6, 8e6, 9e6]);
+        let vertex4 = vertex!([10e6, 11e6, 12e6]);
 
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2]);
+        let cell: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
-        assert_eq!(cell.number_of_vertices(), 2);
-        assert_eq!(cell.dim(), 1);
+        assert_eq!(cell.number_of_vertices(), 4);
+        assert_eq!(cell.dim(), 3);
     }
 
     #[test]
     fn cell_small_coordinates() {
         let vertex1 = vertex!([1e-6, 2e-6, 3e-6]);
         let vertex2 = vertex!([4e-6, 5e-6, 6e-6]);
+        let vertex3 = vertex!([7e-6, 8e-6, 9e-6]);
+        let vertex4 = vertex!([10e-6, 11e-6, 12e-6]);
 
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2]);
+        let cell: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
-        assert_eq!(cell.number_of_vertices(), 2);
-        assert_eq!(cell.dim(), 1);
+        assert_eq!(cell.number_of_vertices(), 4);
+        assert_eq!(cell.dim(), 3);
     }
 
     #[test]
@@ -1727,11 +2166,15 @@ mod tests {
     fn cell_mixed_positive_negative_coordinates() {
         let vertex1 = vertex!([1.0, -2.0, 3.0, -4.0]);
         let vertex2 = vertex!([-5.0, 6.0, -7.0, 8.0]);
+        let vertex3 = vertex!([9.0, -10.0, 11.0, -12.0]);
+        let vertex4 = vertex!([-13.0, 14.0, -15.0, 16.0]);
+        let vertex5 = vertex!([17.0, -18.0, 19.0, -20.0]);
 
-        let cell: Cell<f64, Option<()>, Option<()>, 4> = cell!(vec![vertex1, vertex2]);
+        let cell: Cell<f64, Option<()>, Option<()>, 4> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4, vertex5]);
 
-        assert_eq!(cell.number_of_vertices(), 2);
-        assert_eq!(cell.dim(), 1);
+        assert_eq!(cell.number_of_vertices(), 5);
+        assert_eq!(cell.dim(), 4);
     }
 
     #[test]
@@ -1739,11 +2182,13 @@ mod tests {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
         let vertex3 = vertex!([0.0, 1.0, 0.0]);
-        let vertex4 = vertex!([2.0, 2.0, 2.0]);
+        let vertex4 = vertex!([0.0, 0.0, 1.0]); // 4th vertex to complete 3D cell
+        let vertex_outside = vertex!([2.0, 2.0, 2.0]);
 
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3]);
+        let cell: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
-        assert!(!cell.contains_vertex(vertex4));
+        assert!(!cell.contains_vertex(vertex_outside));
     }
 
     #[test]
@@ -1751,11 +2196,16 @@ mod tests {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
         let vertex3 = vertex!([0.0, 1.0, 0.0]);
-        let vertex4 = vertex!([2.0, 2.0, 2.0]);
-        let vertex5 = vertex!([3.0, 3.0, 3.0]);
+        let vertex4 = vertex!([0.0, 0.0, 1.0]); // 4th vertex for cell1
+        let vertex5 = vertex!([2.0, 2.0, 2.0]);
+        let vertex6 = vertex!([3.0, 3.0, 3.0]);
+        let vertex7 = vertex!([4.0, 4.0, 4.0]);
+        let vertex8 = vertex!([5.0, 5.0, 5.0]); // 4 vertices for cell2
 
-        let cell1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3]);
-        let cell2: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex4, vertex5]);
+        let cell1: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+        let cell2: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex5, vertex6, vertex7, vertex8]);
 
         assert!(!cell1.contains_vertex_of(&cell2));
     }
@@ -1856,7 +2306,7 @@ mod tests {
         let cell: Cell<f64, Option<()>, Option<()>, 3> =
             cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
-        let facets = cell.facets();
+        let facets = cell.facets().expect("Failed to get facets");
         assert_eq!(facets.len(), 4); // A tetrahedron should have 4 facets
 
         // Each facet should have 3 vertices (for 3D tetrahedron)
@@ -1915,7 +2365,8 @@ mod tests {
         let new_vertex = vertex!([1.0, 1.0, 1.0]);
 
         // Create new cell from facet and vertex
-        let new_cell = Cell::from_facet_and_vertex(&facet, new_vertex).unwrap();
+        let new_cell = Cell::from_facet_and_vertex(&facet, new_vertex)
+            .expect("Failed to create cell from facet and vertex");
 
         // Verify the new cell contains the original facet vertices plus the new vertex
         assert!(new_cell.contains_vertex(vertex1));
@@ -1925,6 +2376,55 @@ mod tests {
         assert!(!new_cell.contains_vertex(vertex4)); // Should not contain the removed vertex
         assert_eq!(new_cell.number_of_vertices(), 4);
         assert_eq!(new_cell.dim(), 3);
+    }
+
+    #[test]
+    fn test_from_facet_and_vertex_duplicate_vertex() {
+        // Test that from_facet_and_vertex returns an error when trying to add a duplicate vertex
+        let vertex1 = vertex!([0.0, 0.0, 1.0]);
+        let vertex2 = vertex!([0.0, 1.0, 0.0]);
+        let vertex3 = vertex!([1.0, 0.0, 0.0]);
+        let vertex4 = vertex!([1.0, 1.0, 1.0]);
+
+        let cell: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+
+        // Create a facet by removing vertex4
+        let facet = Facet::new(cell, vertex4).unwrap();
+
+        // Try to add vertex1 (which is already in the facet) - should fail with DuplicateVertices
+        let result = Cell::from_facet_and_vertex(&facet, vertex1);
+
+        assert!(result.is_err(), "Should return error for duplicate vertex");
+        match result.unwrap_err() {
+            CellValidationError::DuplicateVertices => {
+                println!("✓ Successfully detected duplicate vertex");
+            }
+            other => panic!("Expected DuplicateVertices error, got: {other:?}"),
+        }
+
+        // Also test that a valid (non-duplicate) vertex works
+        let new_vertex = vertex!([0.0, 0.0, 0.0]); // This vertex is not in the facet
+        let valid_result = Cell::from_facet_and_vertex(&facet, new_vertex);
+        assert!(
+            valid_result.is_ok(),
+            "Should succeed with non-duplicate vertex"
+        );
+
+        let new_cell = valid_result.unwrap();
+        assert!(
+            new_cell.contains_vertex(new_vertex),
+            "New cell should contain the new vertex"
+        );
+        assert!(
+            !new_cell.contains_vertex(vertex4),
+            "New cell should not contain the removed vertex"
+        );
+        assert_eq!(
+            new_cell.number_of_vertices(),
+            4,
+            "New cell should have 4 vertices"
+        );
     }
 
     #[test]
@@ -1956,7 +2456,7 @@ mod tests {
 
         assert_eq!(cell.number_of_vertices(), 6);
         assert_eq!(cell.dim(), 5);
-        assert_eq!(cell.facets().len(), 6); // Each vertex creates one facet
+        assert_eq!(cell.facets().expect("Failed to get facets").len(), 6); // Each vertex creates one facet
     }
 
     #[test]
@@ -1965,12 +2465,14 @@ mod tests {
         let vertex1 = vertex!([0.0, 0.0, 0.0], 1);
         let vertex2 = vertex!([1.0, 0.0, 0.0], 2);
         let vertex3 = vertex!([0.0, 1.0, 0.0], 3);
+        let vertex4 = vertex!([0.0, 0.0, 1.0], 4); // Need 4 vertices for 3D cell
 
-        let cell: Cell<f64, i32, u32, 3> = cell!(vec![vertex1, vertex2, vertex3], 42u32);
+        let cell: Cell<f64, i32, u32, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4], 42u32);
 
         assert_eq!(cell.vertices()[0].data.unwrap(), 1);
         assert_eq!(cell.vertices()[1].data.unwrap(), 2);
         assert_eq!(cell.vertices()[2].data.unwrap(), 3);
+        assert_eq!(cell.vertices()[3].data.unwrap(), 4);
         assert_eq!(cell.data.unwrap(), 42u32);
     }
 
@@ -2123,34 +2625,22 @@ mod tests {
 
     #[test]
     fn cell_is_valid_insufficient_vertices_error() {
-        // Test cell is_valid with insufficient vertices (wrong vertex count)
+        // Test that the builder fails when creating a 3D cell with insufficient vertices
         let insufficient_vertices = vec![vertex!([0.0, 0.0, 1.0]), vertex!([0.0, 1.0, 0.0])];
-        let insufficient_cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(insufficient_vertices);
 
-        let insufficient_result = insufficient_cell.is_valid();
-        assert!(insufficient_result.is_err());
+        // Use CellBuilder directly to test validation failure
+        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, CellBuilderError> =
+            CellBuilder::default()
+                .vertices(insufficient_vertices)
+                .build();
 
-        // Verify that we get the correct error type for insufficient vertices
-        match insufficient_result {
-            Err(CellValidationError::InsufficientVertices {
-                actual,
-                expected,
-                dimension,
-            }) => {
-                assert_eq!(actual, 2);
-                assert_eq!(expected, 4); // D+1 = 3+1 = 4
-                assert_eq!(dimension, 3);
-                println!(
-                    "✓ Correctly detected insufficient vertices: {actual} instead of {expected} for {dimension}D"
-                );
-            }
-            Err(other_error) => {
-                panic!("Expected InsufficientVertices error, but got: {other_error:?}");
-            }
-            Ok(()) => {
-                panic!("Expected error for insufficient vertices, but validation passed");
-            }
-        }
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Insufficient vertices"));
+        assert!(error_msg.contains("2 vertices"));
+        assert!(error_msg.contains("expected exactly 4"));
+
+        println!("✓ Correctly detected insufficient vertices during cell creation");
     }
 
     // =============================================================================

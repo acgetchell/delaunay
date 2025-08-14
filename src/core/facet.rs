@@ -16,9 +16,9 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::delaunay_core::facet::Facet;
-//! use delaunay::delaunay_core::cell::Cell;
-//! use delaunay::delaunay_core::vertex::Vertex;
+//! use delaunay::core::facet::Facet;
+//! use delaunay::core::cell::Cell;
+//! use delaunay::core::vertex::Vertex;
 //! use delaunay::{cell, vertex};
 //! use delaunay::geometry::point::Point;
 //!
@@ -42,12 +42,12 @@
 // IMPORTS
 // =============================================================================
 
+use super::traits::data_type::DataType;
+use super::utilities::stable_hash_u64_slice;
 use super::{cell::Cell, triangulation_data_structure::VertexKey, vertex::Vertex};
-use crate::delaunay_core::traits::data_type::DataType;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use serde::{Serialize, de::DeserializeOwned};
 use slotmap::Key;
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use thiserror::Error;
 
@@ -57,13 +57,17 @@ use thiserror::Error;
 
 /// Error type for facet operations.
 #[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FacetError {
     /// The cell does not contain the vertex.
     #[error("The cell does not contain the vertex!")]
     CellDoesNotContainVertex,
-    /// The cell is a 0-simplex with no facet.
-    #[error("The cell is a 0-simplex with no facet!")]
-    CellIsZeroSimplex,
+    /// A vertex UUID was not found in the vertex bimap.
+    #[error("Vertex UUID not found in bimap: {uuid}")]
+    VertexNotFound {
+        /// The UUID that was not found.
+        uuid: uuid::Uuid,
+    },
 }
 
 // =============================================================================
@@ -168,7 +172,9 @@ where
                 let cell = cell.ok_or_else(|| de::Error::missing_field("cell"))?;
                 let vertex = vertex.ok_or_else(|| de::Error::missing_field("vertex"))?;
 
-                Ok(Facet { cell, vertex })
+                Facet::new(cell, vertex).map_err(|e| {
+                    de::Error::custom(format!("Failed to create Facet from cell and vertex: {e}"))
+                })
             }
         }
 
@@ -205,22 +211,21 @@ where
     ///
     /// # Returns
     ///
-    /// A [Result] containing a [Facet] or an error message as to why
+    /// A [Result] containing a [Facet] or a [`FacetError`] as to why
     /// the [Facet] could not be created.
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The cell does not contain the specified vertex
-    /// - The cell is a zero simplex (contains only one vertex)
+    /// Returns a [`FacetError`] if:
+    /// - The cell does not contain the specified vertex ([`FacetError::CellDoesNotContainVertex`])
     ///
     /// # Example
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::facet::Facet;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::facet::Facet;
+    /// use delaunay::core::vertex::Vertex;
     /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
     /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
     /// let vertex3: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
@@ -229,13 +234,9 @@ where
     /// let facet = Facet::new(cell.clone(), vertex1).unwrap();
     /// assert_eq!(facet.cell(), &cell);
     /// ```
-    pub fn new(cell: Cell<T, U, V, D>, vertex: Vertex<T, U, D>) -> Result<Self, anyhow::Error> {
-        if !cell.vertices().contains(&vertex) {
-            return Err(FacetError::CellDoesNotContainVertex.into());
-        }
-
-        if cell.vertices().len() == 1 {
-            return Err(FacetError::CellIsZeroSimplex.into());
+    pub fn new(cell: Cell<T, U, V, D>, vertex: Vertex<T, U, D>) -> Result<Self, FacetError> {
+        if !cell.contains_vertex(vertex) {
+            return Err(FacetError::CellDoesNotContainVertex);
         }
 
         Ok(Self { cell, vertex })
@@ -251,8 +252,8 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::facet::Facet;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
@@ -289,8 +290,8 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::facet::Facet;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
@@ -335,8 +336,8 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::facet::Facet;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
@@ -394,20 +395,31 @@ where
 
     /// Returns a canonical key for the facet.
     ///
-    /// This key is a hash of the sorted vertex UUIDs, ensuring that any two facets
-    /// sharing the same vertices have the same key, regardless of vertex order.
+    /// This key is a stable hash of the vertex UUIDs after sorting the vertices by UUID,
+    /// ensuring any two facets sharing the same vertices have the same key, regardless of input order.
+    /// Uses the same deterministic hash algorithm as `facet_key_from_vertex_keys`.
     ///
     /// # Returns
     ///
     /// A `u64` hash value representing the canonical key of the facet.
     pub fn key(&self) -> u64 {
         let mut vertices = self.vertices();
-        vertices.sort_by_key(super::vertex::Vertex::uuid);
-        let mut hasher = DefaultHasher::new();
+        vertices.sort_by_key(Vertex::uuid);
+
+        // Convert UUIDs to u64 values for hashing
+        let mut uuid_values = Vec::with_capacity(vertices.len() * 2);
         for vertex in vertices {
-            vertex.uuid().hash(&mut hasher);
+            let uuid_bytes = vertex.uuid().as_u128();
+            // Intentionally truncate to u64 to get low bits, then high bits
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                uuid_values.push(uuid_bytes as u64);
+                uuid_values.push((uuid_bytes >> 64) as u64);
+            }
         }
-        hasher.finish()
+
+        // Use the shared stable hash function
+        stable_hash_u64_slice(&uuid_values)
     }
 }
 
@@ -476,8 +488,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::delaunay_core::facet::facet_key_from_vertex_keys;
-/// use delaunay::delaunay_core::triangulation_data_structure::VertexKey;
+/// use delaunay::core::facet::facet_key_from_vertex_keys;
+/// use delaunay::core::triangulation_data_structure::VertexKey;
 /// use slotmap::Key;
 ///
 /// // Create some vertex keys (normally these would come from a TDS)
@@ -510,10 +522,6 @@ where
 /// - Efficient computation with minimal allocations
 #[must_use]
 pub fn facet_key_from_vertex_keys(vertex_keys: &[VertexKey]) -> u64 {
-    // Hash constants for facet key generation
-    const HASH_PRIME: u64 = 1_099_511_628_211; // Large prime (FNV prime)
-    const HASH_OFFSET: u64 = 14_695_981_039_346_656_037; // FNV offset basis
-
     // Handle empty case
     if vertex_keys.is_empty() {
         return 0;
@@ -523,22 +531,8 @@ pub fn facet_key_from_vertex_keys(vertex_keys: &[VertexKey]) -> u64 {
     let mut key_values: Vec<u64> = vertex_keys.iter().map(|key| key.data().as_ffi()).collect();
     key_values.sort_unstable();
 
-    // Use a polynomial rolling hash for efficient combination
-    // Prime constant chosen for good hash distribution
-
-    let mut hash = HASH_OFFSET;
-    for &key_value in &key_values {
-        hash = hash.wrapping_mul(HASH_PRIME).wrapping_add(key_value);
-    }
-
-    // Apply avalanche step for better bit distribution
-    hash ^= hash >> 33;
-    hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
-    hash ^= hash >> 33;
-    hash = hash.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-    hash ^= hash >> 33;
-
-    hash
+    // Use the shared stable hash function
+    stable_hash_u64_slice(&key_values)
 }
 
 /// Generates a canonical facet key from a collection of vertices using their `VertexKeys`.
@@ -561,15 +555,15 @@ pub fn facet_key_from_vertex_keys(vertex_keys: &[VertexKey]) -> u64 {
 ///
 /// # Errors
 ///
-/// Returns an error if any vertex UUID is not found in the provided vertex bimap.
-/// The error message will include the missing UUID.
+/// Returns a `FacetError::VertexNotFound` if any vertex UUID is not found in the provided vertex bimap.
+/// The error will include the missing UUID for debugging purposes.
 ///
 /// # Examples
 ///
 /// ```
-/// use delaunay::delaunay_core::facet::facet_key_from_vertices;
-/// use delaunay::delaunay_core::triangulation_data_structure::VertexKey;
-/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::core::facet::facet_key_from_vertices;
+/// use delaunay::core::triangulation_data_structure::VertexKey;
+/// use delaunay::core::vertex::Vertex;
 /// use delaunay::vertex;
 /// use bimap::BiMap;
 /// use uuid::Uuid;
@@ -596,20 +590,22 @@ pub fn facet_key_from_vertex_keys(vertex_keys: &[VertexKey]) -> u64 {
 pub fn facet_key_from_vertices<T, U, const D: usize>(
     vertices: &[Vertex<T, U, D>],
     vertex_bimap: &bimap::BiMap<uuid::Uuid, VertexKey>,
-) -> Result<u64, String>
+) -> Result<u64, FacetError>
 where
     T: CoordinateScalar,
     U: DataType,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     // Look up VertexKeys for all vertices
-    let vertex_keys: Result<Vec<VertexKey>, String> = vertices
+    let vertex_keys: Result<Vec<VertexKey>, FacetError> = vertices
         .iter()
         .map(|vertex| {
             vertex_bimap
                 .get_by_left(&vertex.uuid())
                 .copied()
-                .ok_or_else(|| format!("UUID not found in bimap: {}", vertex.uuid()))
+                .ok_or_else(|| FacetError::VertexNotFound {
+                    uuid: vertex.uuid(),
+                })
         })
         .collect();
 
@@ -623,7 +619,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delaunay_core::triangulation_data_structure::VertexKey;
+    use crate::core::triangulation_data_structure::VertexKey;
     use crate::{cell, vertex};
     use approx::assert_relative_eq;
     use bimap::BiMap;
@@ -669,19 +665,17 @@ mod tests {
 
     #[test]
     fn test_facet_error_handling() {
-        let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1]);
-
-        // Test zero simplex error
-        assert!(
-            matches!(Facet::new(cell.clone(), vertex1), Err(e) if matches!(e.downcast_ref::<FacetError>(), Some(FacetError::CellIsZeroSimplex)))
-        );
-
         // Test cell does not contain vertex error
-        let vertex3: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
-        assert!(
-            matches!(Facet::new(cell, vertex3), Err(e) if matches!(e.downcast_ref::<FacetError>(), Some(FacetError::CellDoesNotContainVertex)))
-        );
+        let vertex1: Vertex<f64, Option<()>, 1> = vertex!([0.0]);
+        let vertex2: Vertex<f64, Option<()>, 1> = vertex!([1.0]);
+        let cell_1d: Cell<f64, Option<()>, Option<()>, 1> = cell!(vec![vertex1, vertex2]);
+
+        // Test cell does not contain vertex error using the valid 2-vertex cell
+        let vertex3: Vertex<f64, Option<()>, 1> = vertex!([2.0]);
+        assert!(matches!(
+            Facet::new(cell_1d, vertex3),
+            Err(FacetError::CellDoesNotContainVertex)
+        ));
     }
 
     #[test]
@@ -729,14 +723,6 @@ mod tests {
         let vertex5 = vertex!([1.0, 1.0, 1.0]);
 
         assert!(Facet::new(cell, vertex5).is_err());
-    }
-
-    #[test]
-    fn facet_new_with_1_simplex() {
-        let vertex1 = vertex!([0.0, 0.0, 0.0]);
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1]);
-
-        assert!(Facet::new(cell, vertex1).is_err());
     }
 
     #[test]
@@ -951,7 +937,9 @@ mod tests {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
         let vertex3 = vertex!([0.0, 1.0, 0.0]);
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3]);
+        let vertex4 = vertex!([0.0, 0.0, 1.0]);
+        let cell: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
         let facet = Facet::new(cell, vertex1).unwrap();
         let cloned_facet = facet.clone();
 
@@ -978,7 +966,10 @@ mod tests {
     fn facet_debug() {
         let vertex1 = vertex!([1.0, 2.0, 3.0]);
         let vertex2 = vertex!([4.0, 5.0, 6.0]);
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2]);
+        let vertex3 = vertex!([7.0, 8.0, 9.0]);
+        let vertex4 = vertex!([10.0, 11.0, 12.0]);
+        let cell: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
         let facet = Facet::new(cell, vertex1).unwrap();
         let debug_str = format!("{facet:?}");
 
@@ -996,16 +987,18 @@ mod tests {
         let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 0.0], 1);
         let vertex2: Vertex<f64, i32, 3> = vertex!([1.0, 0.0, 0.0], 2);
         let vertex3: Vertex<f64, i32, 3> = vertex!([0.0, 1.0, 0.0], 3);
-        let cell: Cell<f64, i32, i32, 3> = cell!(vec![vertex1, vertex2, vertex3], 3);
+        let vertex4: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 4);
+        let cell: Cell<f64, i32, i32, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4], 3);
         let facet = Facet::new(cell, vertex1).unwrap();
 
         assert_eq!(facet.cell().data, Some(3));
         assert_eq!(facet.vertex().data, Some(1));
 
         let vertices = facet.vertices();
-        assert_eq!(vertices.len(), 2);
+        assert_eq!(vertices.len(), 3); // 3D facet should have 3 vertices (D)
         assert!(vertices.iter().any(|v| v.data == Some(2)));
         assert!(vertices.iter().any(|v| v.data == Some(3)));
+        assert!(vertices.iter().any(|v| v.data == Some(4)));
     }
 
     #[test]
@@ -1061,28 +1054,20 @@ mod tests {
     #[test]
     fn facet_error_display() {
         let cell_error = FacetError::CellDoesNotContainVertex;
-        let simplex_error = FacetError::CellIsZeroSimplex;
 
         assert_eq!(
             cell_error.to_string(),
             "The cell does not contain the vertex!"
-        );
-        assert_eq!(
-            simplex_error.to_string(),
-            "The cell is a 0-simplex with no facet!"
         );
     }
 
     #[test]
     fn facet_error_debug() {
         let cell_error = FacetError::CellDoesNotContainVertex;
-        let simplex_error = FacetError::CellIsZeroSimplex;
 
         let cell_debug = format!("{cell_error:?}");
-        let simplex_debug = format!("{simplex_error:?}");
 
         assert!(cell_debug.contains("CellDoesNotContainVertex"));
-        assert!(simplex_debug.contains("CellIsZeroSimplex"));
     }
 
     #[test]
@@ -1126,19 +1111,25 @@ mod tests {
 
     #[test]
     fn facet_vertices_empty_cell() {
-        // This tests the edge case where a cell might be empty
-        // Although this shouldn't happen in practice due to validation
-        let vertex1 = vertex!([0.0, 0.0, 0.0]);
-        let empty_cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![]);
+        // This tests the edge case of a facet with a minimal cell
+        // We'll use a 1D cell (2 vertices) to test filtering behavior
+        let vertex1 = vertex!([0.0]);
+        let vertex2 = vertex!([1.0]);
+        let minimal_cell: Cell<f64, Option<()>, Option<()>, 1> = cell!(vec![vertex1, vertex2]);
 
-        // Create facet directly without using new() to bypass validation
-        let facet = Facet {
-            cell: empty_cell,
-            vertex: vertex1,
-        };
+        // Create facet with vertex1 as opposite - should have only vertex2 in facet
+        let facet = Facet::new(minimal_cell, vertex1).unwrap();
 
         let vertices = facet.vertices();
-        assert_eq!(vertices.len(), 0);
+        assert_eq!(vertices.len(), 1);
+        assert_eq!(vertices[0], vertex2);
+
+        // Test the opposite case - vertex2 as opposite should have only vertex1 in facet
+        let minimal_cell2: Cell<f64, Option<()>, Option<()>, 1> = cell!(vec![vertex1, vertex2]);
+        let facet2 = Facet::new(minimal_cell2, vertex2).unwrap();
+        let vertices2 = facet2.vertices();
+        assert_eq!(vertices2.len(), 1);
+        assert_eq!(vertices2[0], vertex1);
     }
 
     #[test]
@@ -1416,5 +1407,55 @@ mod tests {
             result.is_err(),
             "Should return an error when vertex is not in bimap"
         );
+    }
+
+    #[test]
+    fn test_facet_error_vertex_not_found() {
+        // Test the new VertexNotFound error variant
+        let vertices: Vec<Vertex<f64, Option<()>, 3>> =
+            vec![vertex!([0.0, 0.0, 0.0]), vertex!([1.0, 0.0, 0.0])];
+
+        // Create an empty vertex bimap (no vertices mapped)
+        let vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+
+        // Try to generate facet key from vertices that aren't in the bimap
+        let result = facet_key_from_vertices(&vertices, &vertex_bimap);
+
+        // Should return FacetError::VertexNotFound
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            FacetError::VertexNotFound { uuid } => {
+                assert_eq!(uuid, vertices[0].uuid());
+                println!("✓ Successfully caught VertexNotFound error for UUID: {uuid}");
+            }
+            other @ FacetError::CellDoesNotContainVertex => {
+                panic!("Expected VertexNotFound error, got: {other:?}")
+            }
+        }
+
+        // Test the error display message
+        let error = FacetError::VertexNotFound {
+            uuid: vertices[0].uuid(),
+        };
+        let error_message = error.to_string();
+        assert!(error_message.contains("Vertex UUID not found in bimap"));
+        assert!(error_message.contains(&vertices[0].uuid().to_string()));
+
+        // Test partial bimap scenario (some vertices found, some not)
+        let mut partial_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+        let mut temp_vertices: SlotMap<VertexKey, ()> = SlotMap::with_key();
+        let key = temp_vertices.insert(());
+        partial_bimap.insert(vertices[0].uuid(), key); // Only map the first vertex
+
+        let result_partial = facet_key_from_vertices(&vertices, &partial_bimap);
+        assert!(result_partial.is_err());
+        match result_partial.unwrap_err() {
+            FacetError::VertexNotFound { uuid } => {
+                assert_eq!(uuid, vertices[1].uuid()); // Second vertex should be the missing one
+            }
+            other @ FacetError::CellDoesNotContainVertex => {
+                panic!("Expected VertexNotFound error, got: {other:?}")
+            }
+        }
     }
 }

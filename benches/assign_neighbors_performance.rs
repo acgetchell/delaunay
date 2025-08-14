@@ -87,7 +87,7 @@ fn benchmark_assign_neighbors_random(c: &mut Criterion) {
                         tds
                     },
                     |mut tds| {
-                        tds.assign_neighbors();
+                        tds.assign_neighbors().unwrap();
                         black_box(tds);
                     },
                 );
@@ -125,7 +125,7 @@ fn benchmark_assign_neighbors_grid(c: &mut Criterion) {
                         tds
                     },
                     |mut tds| {
-                        tds.assign_neighbors();
+                        tds.assign_neighbors().unwrap();
                         black_box(tds);
                     },
                 );
@@ -162,7 +162,7 @@ fn benchmark_assign_neighbors_spherical(c: &mut Criterion) {
                         tds
                     },
                     |mut tds| {
-                        tds.assign_neighbors();
+                        tds.assign_neighbors().unwrap();
                         black_box(tds);
                     },
                 );
@@ -237,7 +237,7 @@ fn benchmark_assign_neighbors_scaling(c: &mut Criterion) {
                         tds
                     },
                     |mut tds| {
-                        tds.assign_neighbors();
+                        tds.assign_neighbors().unwrap();
                         black_box(tds);
                     },
                 );
@@ -283,7 +283,7 @@ fn benchmark_assign_neighbors_2d_vs_3d(c: &mut Criterion) {
                         tds
                     },
                     |mut tds| {
-                        tds.assign_neighbors();
+                        tds.assign_neighbors().unwrap();
                         black_box(tds);
                     },
                 );
@@ -308,7 +308,7 @@ fn benchmark_assign_neighbors_2d_vs_3d(c: &mut Criterion) {
                         tds
                     },
                     |mut tds| {
-                        tds.assign_neighbors();
+                        tds.assign_neighbors().unwrap();
                         black_box(tds);
                     },
                 );

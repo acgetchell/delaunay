@@ -83,12 +83,13 @@ fn benchmark_assign_neighbors(c: &mut Criterion) {
                         let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
                         // Clear existing neighbors to benchmark the assignment process
                         for cell in tds.cells_mut().values_mut() {
-                            cell.neighbors = None;
+                            cell.clear_neighbors();
                         }
                         tds
                     },
                     |mut tds| {
-                        tds.assign_neighbors();
+                        tds.assign_neighbors()
+                            .expect("assign_neighbors failed in benchmark_assign_neighbors");
                         black_box(tds);
                     },
                 );
