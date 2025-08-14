@@ -42,8 +42,8 @@
 // IMPORTS
 // =============================================================================
 
+use super::traits::data_type::DataType;
 use super::{cell::Cell, triangulation_data_structure::VertexKey, vertex::Vertex};
-use crate::core::traits::data_type::DataType;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use serde::{Serialize, de::DeserializeOwned};
 use slotmap::Key;

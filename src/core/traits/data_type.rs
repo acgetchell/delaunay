@@ -6,9 +6,9 @@
 use serde::{Serialize, de::DeserializeOwned};
 use std::{fmt::Debug, hash::Hash};
 
-/// Trait alias for data types that can be stored in vertices and cells.
+/// Marker trait for data types that can be stored in vertices and cells.
 ///
-/// This trait alias captures all the requirements for data types that can be associated
+/// This marker trait captures all the requirements for data types that can be associated
 /// with vertices and cells in the triangulation data structure. Data types must implement
 /// `Copy` to enable efficient passing by value and to avoid ownership complications.
 ///

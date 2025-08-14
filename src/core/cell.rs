@@ -19,7 +19,6 @@
 //!
 //! ```rust
 //! use delaunay::core::cell::Cell;
-//! use delaunay::core::vertex::Vertex;
 //! use delaunay::geometry::point::Point;
 //! use delaunay::geometry::traits::coordinate::Coordinate;
 //! use delaunay::{cell, vertex};
@@ -125,7 +124,6 @@ pub enum CellValidationError {
 /// ```rust
 /// use delaunay::{cell, vertex};
 /// use delaunay::core::cell::Cell;
-/// use delaunay::core::vertex::Vertex;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
 /// // Create vertices using the vertex! macro

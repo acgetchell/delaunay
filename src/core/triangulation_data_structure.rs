@@ -199,6 +199,20 @@ pub enum TriangulationValidationError {
         /// Description of the mapping inconsistency.
         message: String,
     },
+    /// Failed to retrieve vertex keys for a cell during neighbor assignment.
+    #[error("Failed to retrieve vertex keys for cell {cell_id}: {message}")]
+    VertexKeyRetrievalFailed {
+        /// The UUID of the cell that failed.
+        cell_id: Uuid,
+        /// Description of the failure.
+        message: String,
+    },
+    /// Internal data structure inconsistency during neighbor assignment.
+    #[error("Internal data structure inconsistency: {message}")]
+    InconsistentDataStructure {
+        /// Description of the inconsistency.
+        message: String,
+    },
 }
 
 // =============================================================================
@@ -237,8 +251,6 @@ new_key_type! {
 // =============================================================================
 // STRUCT DEFINITIONS
 // =============================================================================
-
-// TODO: Implement `PartialEq` and `Eq` for Tds
 
 #[derive(Clone, Debug, Default, Serialize)]
 /// The `Tds` struct represents a triangulation data structure with vertices
@@ -1115,7 +1127,7 @@ where
             let cell_uuid = self.cells[cell_key].uuid();
             self.cell_bimap.insert(cell_uuid, cell_key);
 
-            self.assign_incident_cells();
+            self.assign_incident_cells()?;
             return Ok(());
         }
 
@@ -1168,8 +1180,8 @@ where
 
         self.remove_cells_containing_supercell_vertices();
         self.remove_duplicate_cells();
-        self.assign_neighbors();
-        self.assign_incident_cells();
+        self.assign_neighbors()?;
+        self.assign_incident_cells()?;
 
         Ok(())
     }
@@ -1302,11 +1314,11 @@ where
     /// - **Time Complexity**: O(N×F) where N is the number of cells and F is the number of facets per cell
     /// - **Space Complexity**: O(N×F) for temporary storage of facet mappings
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// This method panics if the internal data structures are in an inconsistent state,
-    /// specifically if a cell key that was just inserted into the neighbor map cannot be found.
-    /// This should never happen in normal operation.
+    /// Returns a `TriangulationValidationError` if:
+    /// - Vertex key retrieval fails for any cell (`VertexKeyRetrievalFailed`)
+    /// - Internal data structure inconsistencies are detected (`InconsistentDataStructure`)
     ///
     /// # Examples
     ///
@@ -1333,31 +1345,35 @@ where
     /// }
     ///
     /// // Assign neighbor relationships
-    /// tds.assign_neighbors();
+    /// tds.assign_neighbors().unwrap();
     ///
     /// // Verify the assignment worked (a single cell has no neighbors)
     /// for cell in tds.cells().values() {
     ///     assert!(cell.neighbors.is_none() || cell.neighbors.as_ref().unwrap().is_empty());
     /// }
     /// ```
-    pub fn assign_neighbors(&mut self) {
+    pub fn assign_neighbors(&mut self) -> Result<(), TriangulationValidationError> {
         // A map from facet keys to the cells that share that facet.
         // Pre-allocate with estimated capacity: each cell has D+1 facets
         let mut facet_map: HashMap<u64, Vec<CellKey>> =
             HashMap::with_capacity(self.cells.len() * (D + 1));
 
         for (cell_key, cell) in &self.cells {
-            if let Ok(vertex_keys) = cell.vertex_keys(&self.vertex_bimap) {
-                for i in 0..vertex_keys.len() {
-                    // Create a temporary slice excluding the i-th element
-                    let mut temp_keys = vertex_keys.clone();
-                    temp_keys.remove(i);
-                    // Compute facet key for the current subset of vertex keys
-                    let facet_key = facet_key_from_vertex_keys(&temp_keys);
-                    facet_map.entry(facet_key).or_default().push(cell_key);
+            let vertex_keys = cell.vertex_keys(&self.vertex_bimap).map_err(|_| {
+                TriangulationValidationError::VertexKeyRetrievalFailed {
+                    cell_id: cell.uuid(),
+                    message: "Failed to retrieve vertex keys for cell during neighbor assignment"
+                        .to_string(),
                 }
-            } else {
-                eprintln!("Error retrieving vertex keys for cell: {}", cell.uuid());
+            })?;
+
+            for i in 0..vertex_keys.len() {
+                // Create a temporary slice excluding the i-th element
+                let mut temp_keys = vertex_keys.clone();
+                temp_keys.remove(i);
+                // Compute facet key for the current subset of vertex keys
+                let facet_key = facet_key_from_vertex_keys(&temp_keys);
+                facet_map.entry(facet_key).or_default().push(cell_key);
             }
         }
 
@@ -1376,42 +1392,97 @@ where
         for (_, cell_keys) in facet_map.into_iter().filter(|(_, keys)| keys.len() == 2) {
             let key1 = cell_keys[0];
             let key2 = cell_keys[1];
-            neighbor_map.get_mut(&key1).unwrap().insert(key2);
-            neighbor_map.get_mut(&key2).unwrap().insert(key1);
+
+            neighbor_map
+                .get_mut(&key1)
+                .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell key {key1:?} not found in neighbor map during assignment"
+                    ),
+                })?
+                .insert(key2);
+
+            neighbor_map
+                .get_mut(&key2)
+                .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell key {key2:?} not found in neighbor map during assignment"
+                    ),
+                })?
+                .insert(key1);
         }
 
         // Update the cells with their neighbor information.
         for (cell_key, neighbors) in neighbor_map {
-            if let Some(cell) = self.cells.get_mut(cell_key) {
-                if neighbors.is_empty() {
-                    cell.neighbors = None;
-                } else {
-                    // Pre-allocate the neighbor vector with exact capacity
-                    let mut neighbor_vec: Vec<Uuid> = Vec::with_capacity(neighbors.len());
-                    for key in neighbors {
-                        if let Some(uuid) = self.cell_bimap.get_by_right(&key) {
-                            neighbor_vec.push(*uuid);
-                        }
-                    }
-                    cell.neighbors = Some(neighbor_vec);
+            let cell = self.cells.get_mut(cell_key).ok_or_else(|| {
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell key {cell_key:?} not found in cells during neighbor assignment"
+                    ),
                 }
+            })?;
+
+            if neighbors.is_empty() {
+                cell.neighbors = None;
+            } else {
+                // Pre-allocate the neighbor vector with exact capacity
+                let mut neighbor_vec: Vec<Uuid> = Vec::with_capacity(neighbors.len());
+                for key in neighbors {
+                    let uuid = self.cell_bimap.get_by_right(&key)
+                        .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
+                            message: format!("Cell key {key:?} not found in cell bimap during neighbor assignment"),
+                        })?;
+                    neighbor_vec.push(*uuid);
+                }
+                cell.neighbors = Some(neighbor_vec);
             }
         }
+
+        Ok(())
     }
 
-    fn assign_incident_cells(&mut self) {
+    /// Assigns incident cells to vertices in the triangulation.
+    ///
+    /// This method establishes a mapping from each vertex to one of the cells that contains it,
+    /// which is useful for various geometric queries and traversals. For each vertex, an arbitrary
+    /// incident cell is selected from the cells that contain that vertex.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if incident cells were successfully assigned to all vertices,
+    /// otherwise a `TriangulationValidationError`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError` if:
+    /// - A vertex UUID in a cell cannot be found in the vertex bimap (`InconsistentDataStructure`)
+    /// - A cell key cannot be found in the cell bimap (`InconsistentDataStructure`)
+    /// - A vertex key cannot be found in the vertices `SlotMap` (`InconsistentDataStructure`)
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Build a mapping from vertex keys to lists of cell keys that contain each vertex
+    /// 2. For each vertex that appears in at least one cell, assign the first cell as its incident cell
+    /// 3. Update the vertex's `incident_cell` field with the UUID of the selected cell
+    ///
+    fn assign_incident_cells(&mut self) -> Result<(), TriangulationValidationError> {
         // Build vertex_to_cells: HashMap<VertexKey, Vec<CellKey>> by iterating for (cell_key, cell) in &self.cells
         let mut vertex_to_cells: HashMap<VertexKey, Vec<CellKey>> = HashMap::new();
 
         for (cell_key, cell) in &self.cells {
             // For each vertex in cell.vertices(): look up its VertexKey via vertex_uuid_to_key and push cell_key
             for vertex in cell.vertices() {
-                if let Some(&vertex_key) = self.vertex_bimap.get_by_left(&vertex.uuid()) {
-                    vertex_to_cells
-                        .entry(vertex_key)
-                        .or_default()
-                        .push(cell_key);
-                }
+                let vertex_key = self.vertex_bimap.get_by_left(&vertex.uuid())
+                    .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Vertex UUID {:?} not found in vertex bimap during incident cell assignment",
+                            vertex.uuid()
+                        ),
+                    })?;
+                vertex_to_cells
+                    .entry(*vertex_key)
+                    .or_default()
+                    .push(cell_key);
             }
         }
 
@@ -1419,15 +1490,27 @@ where
         for (vertex_key, cell_keys) in vertex_to_cells {
             if !cell_keys.is_empty() {
                 // Convert cell_keys[0] to Uuid via cell_key_to_uuid
-                let cell_uuid = self
-                    .cell_bimap
-                    .get_by_right(&cell_keys[0])
-                    .expect("Cell key must have a corresponding UUID");
+                let cell_uuid = self.cell_bimap.get_by_right(&cell_keys[0]).ok_or_else(|| {
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell key {:?} not found in cell bimap during incident cell assignment",
+                            cell_keys[0]
+                        ),
+                    }
+                })?;
 
-                // Do self.vertices.get_mut(&vertex_key).unwrap().incident_cell = Some(cell_uuid)
-                self.vertices.get_mut(vertex_key).unwrap().incident_cell = Some(*cell_uuid);
+                // Update the vertex's incident cell
+                let vertex = self.vertices.get_mut(vertex_key)
+                    .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Vertex key {vertex_key:?} not found in vertices SlotMap during incident cell assignment"
+                        ),
+                    })?;
+                vertex.incident_cell = Some(*cell_uuid);
             }
         }
+
+        Ok(())
     }
 }
 
@@ -1548,10 +1631,10 @@ where
     ///
     /// # Returns
     ///
-    /// A `HashMap<u64, Vec<(Uuid, usize)>>` where:
+    /// A `HashMap<u64, Vec<(CellKey, usize)>>` where:
     /// - The key is the canonical facet key (u64) computed by `facet.key()`
     /// - The value is a vector of tuples containing:
-    ///   - `Uuid`: The UUID of the cell containing this facet
+    ///   - `CellKey`: The `SlotMap` key of the cell containing this facet
     ///   - `usize`: The index of this facet within the cell (0-based)
     ///
     /// # Examples
@@ -3033,7 +3116,7 @@ mod tests {
         let mut result = tds;
 
         // Manually assign neighbors to test the logic
-        result.assign_neighbors();
+        let _ = result.assign_neighbors();
 
         // Check that at least one cell has neighbors assigned
         let has_neighbors = result.cells.values().any(|cell| {
@@ -3064,7 +3147,7 @@ mod tests {
         let mut result = tds;
 
         // Test incident cell assignment
-        result.assign_incident_cells();
+        result.assign_incident_cells().unwrap();
 
         // Check that vertices have incident cells assigned
         let has_incident_cells = result
@@ -3078,6 +3161,248 @@ mod tests {
                 "Vertices should have incident cells when cells exist"
             );
         }
+    }
+
+    #[test]
+    fn test_assign_incident_cells_vertex_uuid_not_found_error() {
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Create vertices and add them to the TDS
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        // Add vertices to the TDS properly
+        for vertex in &vertices {
+            let vertex_key = tds.vertices.insert(*vertex);
+            tds.vertex_bimap.insert(vertex.uuid(), vertex_key);
+        }
+
+        // Create a cell with vertices
+        let cell = cell!(vertices.clone());
+        let cell_key = tds.cells.insert(cell);
+        let cell_uuid = tds.cells[cell_key].uuid();
+        tds.cell_bimap.insert(cell_uuid, cell_key);
+
+        // Corrupt the vertex bimap by removing a vertex UUID mapping
+        // This will cause assign_incident_cells to fail when looking up vertex keys
+        let first_vertex_uuid = vertices[0].uuid();
+        tds.vertex_bimap.remove_by_left(&first_vertex_uuid);
+
+        // Now assign_incident_cells should fail with InconsistentDataStructure
+        let result = tds.assign_incident_cells();
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            TriangulationValidationError::InconsistentDataStructure { message } => {
+                assert!(
+                    message.contains("Vertex UUID")
+                        && message.contains("not found in vertex bimap"),
+                    "Error message should describe the vertex UUID not found issue, got: {}",
+                    message
+                );
+                println!(
+                    "✓ Successfully caught InconsistentDataStructure error for vertex UUID: {}",
+                    message
+                );
+            }
+            other => panic!("Expected InconsistentDataStructure, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_assign_incident_cells_cell_key_not_found_error() {
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Create vertices and add them to the TDS
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        // Add vertices to the TDS properly
+        for vertex in &vertices {
+            let vertex_key = tds.vertices.insert(*vertex);
+            tds.vertex_bimap.insert(vertex.uuid(), vertex_key);
+        }
+
+        // Create a cell with vertices
+        let cell = cell!(vertices);
+        let cell_key = tds.cells.insert(cell);
+        let cell_uuid = tds.cells[cell_key].uuid();
+        tds.cell_bimap.insert(cell_uuid, cell_key);
+
+        // Corrupt the cell bimap by removing the cell UUID mapping
+        // This will cause assign_incident_cells to fail when looking up cell UUIDs
+        tds.cell_bimap.remove_by_left(&cell_uuid);
+
+        // Now assign_incident_cells should fail with InconsistentDataStructure
+        let result = tds.assign_incident_cells();
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            TriangulationValidationError::InconsistentDataStructure { message } => {
+                assert!(
+                    message.contains("Cell key") && message.contains("not found in cell bimap"),
+                    "Error message should describe the cell key not found issue, got: {}",
+                    message
+                );
+                println!(
+                    "✓ Successfully caught InconsistentDataStructure error for cell key: {}",
+                    message
+                );
+            }
+            other => panic!("Expected InconsistentDataStructure, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_assign_incident_cells_vertex_key_not_found_error() {
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Create vertices and add them to the TDS
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        // Add vertices to the TDS properly
+        for vertex in &vertices {
+            let vertex_key = tds.vertices.insert(*vertex);
+            tds.vertex_bimap.insert(vertex.uuid(), vertex_key);
+        }
+
+        // Create a cell with vertices
+        let cell = cell!(vertices.clone());
+        let cell_key = tds.cells.insert(cell);
+        let cell_uuid = tds.cells[cell_key].uuid();
+        tds.cell_bimap.insert(cell_uuid, cell_key);
+
+        // Get a vertex key and remove the vertex from the SlotMap while keeping the bimap entry
+        // This creates an inconsistent state where the vertex key exists in bimap but not in SlotMap
+        let first_vertex_uuid = vertices[0].uuid();
+        let vertex_key_to_remove = *tds.vertex_bimap.get_by_left(&first_vertex_uuid).unwrap();
+        tds.vertices.remove(vertex_key_to_remove);
+
+        // Now assign_incident_cells should fail with InconsistentDataStructure
+        let result = tds.assign_incident_cells();
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            TriangulationValidationError::InconsistentDataStructure { message } => {
+                assert!(
+                    message.contains("Vertex key")
+                        && message.contains("not found in vertices SlotMap"),
+                    "Error message should describe the vertex key not found issue, got: {}",
+                    message
+                );
+                println!(
+                    "✓ Successfully caught InconsistentDataStructure error for vertex key: {}",
+                    message
+                );
+            }
+            other => panic!("Expected InconsistentDataStructure, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_assign_incident_cells_success_with_multiple_cells() {
+        // Test the success path with multiple cells to ensure proper assignment
+        // Use a 5-point configuration that creates multiple tetrahedra
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),  // A
+            Point::new([1.0, 0.0, 0.0]),  // B
+            Point::new([0.5, 1.0, 0.0]),  // C - forms base triangle ABC
+            Point::new([0.5, 0.5, 1.0]),  // D - above base
+            Point::new([0.5, 0.5, -1.0]), // E - below base
+        ];
+        let vertices = Vertex::from_points(points);
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        // Clear existing incident cells to test assignment
+        for vertex in tds.vertices.values_mut() {
+            vertex.incident_cell = None;
+        }
+
+        // Test incident cell assignment - should succeed
+        let result = tds.assign_incident_cells();
+        assert!(
+            result.is_ok(),
+            "assign_incident_cells should succeed with valid data structure"
+        );
+
+        // Verify that vertices have incident cells assigned when cells exist
+        if tds.number_of_cells() > 0 {
+            let assigned_vertices = tds
+                .vertices
+                .values()
+                .filter(|v| v.incident_cell.is_some())
+                .count();
+
+            assert!(
+                assigned_vertices > 0,
+                "Should have incident cells assigned to some vertices when cells exist"
+            );
+
+            // Verify that assigned incident cells actually exist in the triangulation
+            for vertex in tds.vertices.values() {
+                if let Some(incident_cell_uuid) = vertex.incident_cell {
+                    assert!(
+                        tds.cell_bimap.contains_left(&incident_cell_uuid),
+                        "Incident cell UUID should exist in the triangulation"
+                    );
+                }
+            }
+
+            println!(
+                "✓ Successfully assigned incident cells to {}/{} vertices across {} cells",
+                assigned_vertices,
+                tds.number_of_vertices(),
+                tds.number_of_cells()
+            );
+        }
+    }
+
+    #[test]
+    fn test_assign_incident_cells_empty_triangulation() {
+        // Test assign_incident_cells with empty triangulation (no cells)
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Add some vertices without cells
+        let vertices = vec![vertex!([0.0, 0.0, 0.0]), vertex!([1.0, 0.0, 0.0])];
+
+        for vertex in &vertices {
+            let vertex_key = tds.vertices.insert(*vertex);
+            tds.vertex_bimap.insert(vertex.uuid(), vertex_key);
+        }
+
+        // Should succeed even with no cells
+        let result = tds.assign_incident_cells();
+        assert!(
+            result.is_ok(),
+            "assign_incident_cells should succeed even with no cells"
+        );
+
+        // Verify no incident cells were assigned (since there are no cells)
+        let assigned_count = tds
+            .vertices
+            .values()
+            .filter(|v| v.incident_cell.is_some())
+            .count();
+
+        assert_eq!(
+            assigned_count, 0,
+            "No incident cells should be assigned when no cells exist"
+        );
+
+        println!("✓ Successfully handled empty triangulation case");
     }
 
     // =============================================================================
@@ -3095,7 +3420,7 @@ mod tests {
         let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
         let mut result = tds;
 
-        result.assign_neighbors();
+        result.assign_neighbors().unwrap();
 
         // Ensure no neighbors in a single tetrahedron (expected behavior)
         for cell in result.cells.values() {
@@ -3112,11 +3437,111 @@ mod tests {
         let tds_linear: Tds<f64, usize, usize, 3> = Tds::new(&vertices_linear).unwrap();
         let mut result_linear = tds_linear;
 
-        result_linear.assign_neighbors();
+        result_linear.assign_neighbors().unwrap();
 
         // Line should have no valid neighbors
         for cell in result_linear.cells.values() {
             assert!(cell.neighbors.is_none() || cell.neighbors.as_ref().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_assign_neighbors_vertex_key_retrieval_failed() {
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Create vertices and add them to the TDS
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        // Add vertices to the TDS properly
+        for vertex in &vertices {
+            let vertex_key = tds.vertices.insert(*vertex);
+            tds.vertex_bimap.insert(vertex.uuid(), vertex_key);
+        }
+
+        // Create a cell with vertices
+        let cell = cell!(vertices.clone());
+        let cell_key = tds.cells.insert(cell);
+        let cell_uuid = tds.cells[cell_key].uuid();
+        tds.cell_bimap.insert(cell_uuid, cell_key);
+
+        // Corrupt the vertex bimap by removing a vertex UUID mapping
+        // This will cause vertex_keys() to fail when assign_neighbors tries to retrieve vertex keys
+        let first_vertex_uuid = vertices[0].uuid();
+        tds.vertex_bimap.remove_by_left(&first_vertex_uuid);
+
+        // Now assign_neighbors should fail with VertexKeyRetrievalFailed
+        let result = tds.assign_neighbors();
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            TriangulationValidationError::VertexKeyRetrievalFailed { cell_id, message } => {
+                assert_eq!(cell_id, cell_uuid);
+                assert!(message.contains(
+                    "Failed to retrieve vertex keys for cell during neighbor assignment"
+                ));
+                println!(
+                    "✓ Successfully caught VertexKeyRetrievalFailed error: {}",
+                    message
+                );
+            }
+            other => panic!("Expected VertexKeyRetrievalFailed, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_assign_neighbors_inconsistent_data_structure() {
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Create vertices and add them to the TDS
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        // Add vertices to the TDS properly
+        for vertex in &vertices {
+            let vertex_key = tds.vertices.insert(*vertex);
+            tds.vertex_bimap.insert(vertex.uuid(), vertex_key);
+        }
+
+        // Create two cells to test the neighbor assignment logic
+        let cell1 = cell!(vertices.clone());
+        let cell1_key = tds.cells.insert(cell1);
+        let cell1_uuid = tds.cells[cell1_key].uuid();
+        tds.cell_bimap.insert(cell1_uuid, cell1_key);
+
+        let cell2 = cell!(vertices);
+        let cell2_key = tds.cells.insert(cell2);
+        let cell2_uuid = tds.cells[cell2_key].uuid();
+        tds.cell_bimap.insert(cell2_uuid, cell2_key);
+
+        // Corrupt the cell bimap by removing the mapping for cell2
+        // This will cause the neighbor assignment to fail when it tries to look up the UUID for cell2_key
+        tds.cell_bimap.remove_by_left(&cell2_uuid);
+
+        // Now assign_neighbors should fail with InconsistentDataStructure
+        let result = tds.assign_neighbors();
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            TriangulationValidationError::InconsistentDataStructure { message } => {
+                assert!(
+                    message.contains("Cell key")
+                        && message.contains("not found in cell bimap during neighbor assignment")
+                );
+                println!(
+                    "✓ Successfully caught InconsistentDataStructure error: {}",
+                    message
+                );
+            }
+            other => panic!("Expected InconsistentDataStructure, got: {:?}", other),
         }
     }
 
@@ -3571,7 +3996,7 @@ mod tests {
         }
 
         // Test neighbor assignment
-        result.assign_neighbors();
+        let _ = result.assign_neighbors();
 
         // Verify that neighbors were assigned
         let mut total_neighbor_links = 0;
@@ -3610,7 +4035,7 @@ mod tests {
         }
 
         // Test incident cell assignment
-        result.assign_incident_cells();
+        result.assign_incident_cells().unwrap();
 
         // Verify that incident cells were assigned
         let assigned_count = result
