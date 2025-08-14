@@ -1,6 +1,9 @@
 //! Boundary analysis trait for triangulation data structures.
 
-use crate::core::{facet::Facet, traits::data_type::DataType};
+use crate::core::{
+    facet::{Facet, FacetError},
+    traits::data_type::DataType,
+};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use nalgebra::ComplexField;
 use serde::{Serialize, de::DeserializeOwned};
@@ -31,7 +34,7 @@ use std::ops::{AddAssign, Div, SubAssign};
 /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 ///
 /// // Use the trait methods
-/// let boundary_facets = tds.boundary_facets();
+/// let boundary_facets = tds.boundary_facets().expect("Failed to get boundary facets");
 /// assert_eq!(boundary_facets.len(), 4); // Tetrahedron has 4 boundary faces
 ///
 /// let count = tds.number_of_boundary_facets();
@@ -60,8 +63,12 @@ where
     ///
     /// # Returns
     ///
-    /// A `Vec<Facet<T, U, V, D>>` containing all boundary facets in the triangulation.
+    /// A `Result<Vec<Facet<T, U, V, D>>, FacetError>` containing all boundary facets in the triangulation.
     /// The facets are returned in no particular order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FacetError`] if any boundary facet cannot be created from the cells.
     ///
     /// # Examples
     ///
@@ -79,10 +86,10 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // A single tetrahedron has 4 boundary facets (all facets are on the boundary)
-    /// let boundary_facets = tds.boundary_facets();
+    /// let boundary_facets = tds.boundary_facets().expect("Failed to get boundary facets");
     /// assert_eq!(boundary_facets.len(), 4);
     /// ```
-    fn boundary_facets(&self) -> Vec<Facet<T, U, V, D>>;
+    fn boundary_facets(&self) -> Result<Vec<Facet<T, U, V, D>>, FacetError>;
 
     /// Checks if a specific facet is a boundary facet.
     ///
@@ -113,7 +120,7 @@ where
     ///
     /// // Get a facet from one of the cells
     /// if let Some(cell) = tds.cells().values().next() {
-    ///     let facets = cell.facets();
+    ///     let facets = cell.facets().expect("Failed to get facets from cell");
     ///     if let Some(facet) = facets.first() {
     ///         // In a single tetrahedron, all facets are boundary facets
     ///         assert!(tds.is_boundary_facet(facet));

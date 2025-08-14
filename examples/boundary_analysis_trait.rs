@@ -34,7 +34,9 @@ fn main() {
     println!("\n📊 Boundary Analysis:");
 
     // Method 1: Get all boundary facets
-    let boundary_facets = tds.boundary_facets();
+    let boundary_facets = tds
+        .boundary_facets()
+        .expect("Failed to get boundary facets");
     println!("  - Found {} boundary facets", boundary_facets.len());
 
     // Method 2: Count boundary facets efficiently (without creating the full vector)
@@ -43,7 +45,7 @@ fn main() {
 
     // Method 3: Check if specific facets are boundary facets
     if let Some(cell) = tds.cells().values().next() {
-        let facets = cell.facets();
+        let facets = cell.facets().expect("Failed to get facets from cell");
         println!("  - Testing individual facets from the first cell:");
 
         for (i, facet) in facets.iter().enumerate() {

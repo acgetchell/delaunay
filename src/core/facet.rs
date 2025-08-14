@@ -61,9 +61,6 @@ pub enum FacetError {
     /// The cell does not contain the vertex.
     #[error("The cell does not contain the vertex!")]
     CellDoesNotContainVertex,
-    /// The cell is a 0-simplex with no facet.
-    #[error("The cell is a 0-simplex with no facet!")]
-    CellIsZeroSimplex,
 }
 
 // =============================================================================
@@ -205,14 +202,13 @@ where
     ///
     /// # Returns
     ///
-    /// A [Result] containing a [Facet] or an error message as to why
+    /// A [Result] containing a [Facet] or a [`FacetError`] as to why
     /// the [Facet] could not be created.
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The cell does not contain the specified vertex
-    /// - The cell is a zero simplex (contains only one vertex)
+    /// Returns a [`FacetError`] if:
+    /// - The cell does not contain the specified vertex ([`FacetError::CellDoesNotContainVertex`])
     ///
     /// # Example
     ///
@@ -229,13 +225,9 @@ where
     /// let facet = Facet::new(cell.clone(), vertex1).unwrap();
     /// assert_eq!(facet.cell(), &cell);
     /// ```
-    pub fn new(cell: Cell<T, U, V, D>, vertex: Vertex<T, U, D>) -> Result<Self, anyhow::Error> {
+    pub fn new(cell: Cell<T, U, V, D>, vertex: Vertex<T, U, D>) -> Result<Self, FacetError> {
         if !cell.vertices().contains(&vertex) {
-            return Err(FacetError::CellDoesNotContainVertex.into());
-        }
-
-        if cell.vertices().len() == 1 {
-            return Err(FacetError::CellIsZeroSimplex.into());
+            return Err(FacetError::CellDoesNotContainVertex);
         }
 
         Ok(Self { cell, vertex })
@@ -669,19 +661,17 @@ mod tests {
 
     #[test]
     fn test_facet_error_handling() {
-        let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1]);
-
-        // Test zero simplex error
-        assert!(
-            matches!(Facet::new(cell.clone(), vertex1), Err(e) if matches!(e.downcast_ref::<FacetError>(), Some(FacetError::CellIsZeroSimplex)))
-        );
-
         // Test cell does not contain vertex error
-        let vertex3: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
-        assert!(
-            matches!(Facet::new(cell, vertex3), Err(e) if matches!(e.downcast_ref::<FacetError>(), Some(FacetError::CellDoesNotContainVertex)))
-        );
+        let vertex1: Vertex<f64, Option<()>, 1> = vertex!([0.0]);
+        let vertex2: Vertex<f64, Option<()>, 1> = vertex!([1.0]);
+        let cell_1d: Cell<f64, Option<()>, Option<()>, 1> = cell!(vec![vertex1, vertex2]);
+
+        // Test cell does not contain vertex error using the valid 2-vertex cell
+        let vertex3: Vertex<f64, Option<()>, 1> = vertex!([2.0]);
+        assert!(matches!(
+            Facet::new(cell_1d, vertex3),
+            Err(FacetError::CellDoesNotContainVertex)
+        ));
     }
 
     #[test]
@@ -729,14 +719,6 @@ mod tests {
         let vertex5 = vertex!([1.0, 1.0, 1.0]);
 
         assert!(Facet::new(cell, vertex5).is_err());
-    }
-
-    #[test]
-    fn facet_new_with_1_simplex() {
-        let vertex1 = vertex!([0.0, 0.0, 0.0]);
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1]);
-
-        assert!(Facet::new(cell, vertex1).is_err());
     }
 
     #[test]
@@ -951,7 +933,9 @@ mod tests {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
         let vertex3 = vertex!([0.0, 1.0, 0.0]);
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3]);
+        let vertex4 = vertex!([0.0, 0.0, 1.0]);
+        let cell: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
         let facet = Facet::new(cell, vertex1).unwrap();
         let cloned_facet = facet.clone();
 
@@ -978,7 +962,10 @@ mod tests {
     fn facet_debug() {
         let vertex1 = vertex!([1.0, 2.0, 3.0]);
         let vertex2 = vertex!([4.0, 5.0, 6.0]);
-        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2]);
+        let vertex3 = vertex!([7.0, 8.0, 9.0]);
+        let vertex4 = vertex!([10.0, 11.0, 12.0]);
+        let cell: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
         let facet = Facet::new(cell, vertex1).unwrap();
         let debug_str = format!("{facet:?}");
 
@@ -996,16 +983,18 @@ mod tests {
         let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 0.0], 1);
         let vertex2: Vertex<f64, i32, 3> = vertex!([1.0, 0.0, 0.0], 2);
         let vertex3: Vertex<f64, i32, 3> = vertex!([0.0, 1.0, 0.0], 3);
-        let cell: Cell<f64, i32, i32, 3> = cell!(vec![vertex1, vertex2, vertex3], 3);
+        let vertex4: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 4);
+        let cell: Cell<f64, i32, i32, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4], 3);
         let facet = Facet::new(cell, vertex1).unwrap();
 
         assert_eq!(facet.cell().data, Some(3));
         assert_eq!(facet.vertex().data, Some(1));
 
         let vertices = facet.vertices();
-        assert_eq!(vertices.len(), 2);
+        assert_eq!(vertices.len(), 3); // 3D facet should have 3 vertices (D)
         assert!(vertices.iter().any(|v| v.data == Some(2)));
         assert!(vertices.iter().any(|v| v.data == Some(3)));
+        assert!(vertices.iter().any(|v| v.data == Some(4)));
     }
 
     #[test]
@@ -1061,28 +1050,20 @@ mod tests {
     #[test]
     fn facet_error_display() {
         let cell_error = FacetError::CellDoesNotContainVertex;
-        let simplex_error = FacetError::CellIsZeroSimplex;
 
         assert_eq!(
             cell_error.to_string(),
             "The cell does not contain the vertex!"
-        );
-        assert_eq!(
-            simplex_error.to_string(),
-            "The cell is a 0-simplex with no facet!"
         );
     }
 
     #[test]
     fn facet_error_debug() {
         let cell_error = FacetError::CellDoesNotContainVertex;
-        let simplex_error = FacetError::CellIsZeroSimplex;
 
         let cell_debug = format!("{cell_error:?}");
-        let simplex_debug = format!("{simplex_error:?}");
 
         assert!(cell_debug.contains("CellDoesNotContainVertex"));
-        assert!(simplex_debug.contains("CellIsZeroSimplex"));
     }
 
     #[test]
@@ -1126,19 +1107,25 @@ mod tests {
 
     #[test]
     fn facet_vertices_empty_cell() {
-        // This tests the edge case where a cell might be empty
-        // Although this shouldn't happen in practice due to validation
-        let vertex1 = vertex!([0.0, 0.0, 0.0]);
-        let empty_cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![]);
+        // This tests the edge case of a facet with a minimal cell
+        // We'll use a 1D cell (2 vertices) to test filtering behavior
+        let vertex1 = vertex!([0.0]);
+        let vertex2 = vertex!([1.0]);
+        let minimal_cell: Cell<f64, Option<()>, Option<()>, 1> = cell!(vec![vertex1, vertex2]);
 
-        // Create facet directly without using new() to bypass validation
-        let facet = Facet {
-            cell: empty_cell,
-            vertex: vertex1,
-        };
+        // Create facet with vertex1 as opposite - should have only vertex2 in facet
+        let facet = Facet::new(minimal_cell, vertex1).unwrap();
 
         let vertices = facet.vertices();
-        assert_eq!(vertices.len(), 0);
+        assert_eq!(vertices.len(), 1);
+        assert_eq!(vertices[0], vertex2);
+
+        // Test the opposite case - vertex2 as opposite should have only vertex1 in facet
+        let minimal_cell2: Cell<f64, Option<()>, Option<()>, 1> = cell!(vec![vertex1, vertex2]);
+        let facet2 = Facet::new(minimal_cell2, vertex2).unwrap();
+        let vertices2 = facet2.vertices();
+        assert_eq!(vertices2.len(), 1);
+        assert_eq!(vertices2[0], vertex1);
     }
 
     #[test]

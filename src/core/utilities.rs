@@ -2,7 +2,6 @@
 
 use serde::{Serialize, de::DeserializeOwned};
 use slotmap::SlotMap;
-use std::cmp::Ordering;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -14,6 +13,22 @@ use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use num_traits::NumCast;
 
 // =============================================================================
+// TYPES
+// =============================================================================
+
+/// Specifies which extreme coordinates to find.
+///
+/// This enum provides a more semantic alternative to using `Ordering`
+/// for specifying whether to find minimum or maximum coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExtremeType {
+    /// Find the minimum coordinates across all dimensions.
+    Minimum,
+    /// Find the maximum coordinates across all dimensions.
+    Maximum,
+}
+
+// =============================================================================
 // ERROR TYPES
 // =============================================================================
 
@@ -23,6 +38,12 @@ pub enum ExtremeCoordinatesError {
     /// The vertices `SlotMap` is empty.
     #[error("Cannot find extreme coordinates: vertices SlotMap is empty")]
     EmptyVertices,
+    /// Invalid extreme type was specified (this should not occur with the enum).
+    #[error("Invalid extreme type: {message}")]
+    InvalidExtremeType {
+        /// Description of the invalid extreme type usage.
+        message: String,
+    },
 }
 
 /// Errors that can occur during UUID validation.
@@ -110,16 +131,13 @@ pub fn make_uuid() -> Uuid {
 /// Find the extreme coordinates (minimum or maximum) across all vertices in a `SlotMap`.
 ///
 /// This function takes a `SlotMap` of vertices and returns the minimum or maximum
-/// coordinates based on the specified ordering. This works directly with `SlotMap`
+/// coordinates based on the specified extreme type. This works directly with `SlotMap`
 /// to provide efficient coordinate finding in performance-critical contexts.
 ///
 /// # Arguments
 ///
 /// * `vertices` - A `SlotMap` containing Vertex objects
-/// * `ordering` - The ordering parameter is of type Ordering and is used to
-///   specify whether the function should find the minimum or maximum
-///   coordinates. Ordering is an enum with three possible values: `Less`,
-///   `Equal`, and `Greater`.
+/// * `extreme_type` - Specifies whether to find minimum or maximum coordinates
 ///
 /// # Returns
 ///
@@ -128,7 +146,7 @@ pub fn make_uuid() -> Uuid {
 ///
 /// # Errors
 ///
-/// Returns an error if the vertices `SlotMap` is empty.
+/// Returns `ExtremeCoordinatesError::EmptyVertices` if the vertices `SlotMap` is empty.
 ///
 /// # Panics
 ///
@@ -138,12 +156,11 @@ pub fn make_uuid() -> Uuid {
 /// # Example
 ///
 /// ```
-/// use delaunay::core::utilities::{find_extreme_coordinates, ExtremeCoordinatesError};
+/// use delaunay::core::utilities::{find_extreme_coordinates, ExtremeType, ExtremeCoordinatesError};
 /// use delaunay::core::vertex::Vertex;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 /// use slotmap::{SlotMap, DefaultKey};
-/// use std::cmp::Ordering;
 ///
 /// let points = vec![
 ///     Point::new([-1.0, 2.0, 3.0]),
@@ -155,18 +172,18 @@ pub fn make_uuid() -> Uuid {
 /// for vertex in vertices {
 ///     slotmap.insert(vertex);
 /// }
-/// let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
+/// let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
 /// # use approx::assert_relative_eq;
 /// assert_relative_eq!(min_coords.as_slice(), [-1.0, -5.0, -9.0].as_slice(), epsilon = 1e-9);
 ///
 /// // Error case with empty SlotMap
 /// let empty_slotmap: SlotMap<DefaultKey, Vertex<f64, Option<()>, 3>> = SlotMap::new();
-/// let result = find_extreme_coordinates(&empty_slotmap, Ordering::Less);
+/// let result = find_extreme_coordinates(&empty_slotmap, ExtremeType::Minimum);
 /// assert!(matches!(result, Err(ExtremeCoordinatesError::EmptyVertices)));
 /// ```
 pub fn find_extreme_coordinates<K, T, U, const D: usize>(
     vertices: &SlotMap<K, Vertex<T, U, D>>,
-    ordering: Ordering,
+    extreme_type: ExtremeType,
 ) -> Result<[T; D], ExtremeCoordinatesError>
 where
     K: slotmap::Key,
@@ -185,19 +202,16 @@ where
     for vertex in iter {
         let vertex_coords: [T; D] = (*vertex).into();
         for (i, coord) in vertex_coords.iter().enumerate() {
-            match ordering {
-                Ordering::Less => {
+            match extreme_type {
+                ExtremeType::Minimum => {
                     if *coord < extreme_coords[i] {
                         extreme_coords[i] = *coord;
                     }
                 }
-                Ordering::Greater => {
+                ExtremeType::Maximum => {
                     if *coord > extreme_coords[i] {
                         extreme_coords[i] = *coord;
                     }
-                }
-                Ordering::Equal => {
-                    // For Equal ordering, return the first vertex's coordinates
                 }
             }
         }
@@ -644,7 +658,7 @@ mod tests {
         // Test that find_extreme_coordinates returns the correct error type
         let empty_slotmap: SlotMap<DefaultKey, crate::core::vertex::Vertex<f64, Option<()>, 3>> =
             SlotMap::new();
-        let result = find_extreme_coordinates(&empty_slotmap, Ordering::Less);
+        let result = find_extreme_coordinates(&empty_slotmap, ExtremeType::Minimum);
 
         assert!(result.is_err());
         assert!(matches!(
@@ -668,8 +682,8 @@ mod tests {
             crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
-        let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, Ordering::Greater).unwrap();
+        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
+        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
 
         assert_relative_eq!(
             min_coords.as_slice(),
@@ -694,8 +708,8 @@ mod tests {
             crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
-        let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, Ordering::Greater).unwrap();
+        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
+        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
 
         // With single point, min and max should be the same
         assert_relative_eq!(
@@ -717,8 +731,8 @@ mod tests {
             crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
-        // Using Ordering::Equal should return the first vertex's coordinates unchanged
-        let coords = find_extreme_coordinates(&slotmap, Ordering::Equal).unwrap();
+        // Test with minimum (equivalent to the old behavior)
+        let coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
         // The first vertex in the iteration (order is deterministic in SlotMap)
         // but the result should be one of the input coordinates
         let matches_first = approx::relative_eq!(
@@ -745,8 +759,8 @@ mod tests {
             crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
-        let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, Ordering::Greater).unwrap();
+        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
+        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
 
         assert_relative_eq!(min_coords.as_slice(), [1.0, 2.0].as_slice(), epsilon = 1e-9);
         assert_relative_eq!(max_coords.as_slice(), [3.0, 5.0].as_slice(), epsilon = 1e-9);
@@ -759,8 +773,8 @@ mod tests {
             crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
-        let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, Ordering::Greater).unwrap();
+        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
+        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
 
         assert_relative_eq!(min_coords.as_slice(), [-5.0].as_slice(), epsilon = 1e-9);
         assert_relative_eq!(max_coords.as_slice(), [10.0].as_slice(), epsilon = 1e-9);
@@ -785,8 +799,8 @@ mod tests {
             .collect();
         let slotmap = create_vertex_slotmap(vertices);
 
-        let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, Ordering::Greater).unwrap();
+        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
+        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
 
         assert_relative_eq!(
             min_coords.as_slice(),
@@ -811,8 +825,8 @@ mod tests {
             crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
-        let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, Ordering::Greater).unwrap();
+        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
+        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
 
         // All points are identical, so min and max should be the same
         assert_relative_eq!(
@@ -838,8 +852,8 @@ mod tests {
             crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
-        let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, Ordering::Greater).unwrap();
+        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
+        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
 
         assert_relative_eq!(
             min_coords.as_slice(),
@@ -865,8 +879,8 @@ mod tests {
             crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
-        let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, Ordering::Greater).unwrap();
+        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
+        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
 
         assert_relative_eq!(
             min_coords.as_slice(),
@@ -885,7 +899,7 @@ mod tests {
         // Test that the correct error message is returned for empty slotmap
         let empty_slotmap: SlotMap<DefaultKey, crate::core::vertex::Vertex<f64, Option<()>, 3>> =
             SlotMap::new();
-        let result = find_extreme_coordinates(&empty_slotmap, Ordering::Less);
+        let result = find_extreme_coordinates(&empty_slotmap, ExtremeType::Minimum);
 
         assert!(result.is_err());
         let error_message = result.unwrap_err().to_string();
@@ -902,8 +916,8 @@ mod tests {
 
         let slotmap = create_vertex_slotmap(vertices);
 
-        let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, Ordering::Greater).unwrap();
+        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
+        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
 
         assert_relative_eq!(
             min_coords.as_slice(),
@@ -965,8 +979,8 @@ mod tests {
         let cell1: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points1));
         let cell2: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points2));
 
-        let facets1 = cell1.facets();
-        let facets2 = cell2.facets();
+        let facets1 = cell1.facets().expect("Failed to get facets from cell1");
+        let facets2 = cell2.facets().expect("Failed to get facets from cell2");
 
         // Test adjacency detection
         let mut found_adjacent = false;
@@ -998,7 +1012,7 @@ mod tests {
         ];
 
         let cell3: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points3));
-        let facets3 = cell3.facets();
+        let facets3 = cell3.facets().expect("Failed to get facets from cell3");
 
         let mut found_adjacent2 = false;
         for facet1 in &facets1 {
