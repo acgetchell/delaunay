@@ -17,7 +17,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::delaunay_core::vertex::Vertex;
+//! use delaunay::core::vertex::Vertex;
 //! use delaunay::vertex;
 //!
 //! // Create a simple vertex
@@ -98,7 +98,7 @@ pub enum VertexValidationError {
 ///
 /// ```rust
 /// use delaunay::vertex;
-/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::core::vertex::Vertex;
 ///
 /// // Create a vertex without data (explicit type annotation required)
 /// let v1: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
@@ -110,7 +110,7 @@ pub enum VertexValidationError {
 macro_rules! vertex {
     // Pattern 1: Just coordinates - no data
     ($coords:expr) => {
-        $crate::delaunay_core::vertex::VertexBuilder::default()
+        $crate::core::vertex::VertexBuilder::default()
             .point($crate::geometry::point::Point::from($coords))
             .build()
             .expect("Failed to build vertex: invalid coordinates or builder configuration")
@@ -118,7 +118,7 @@ macro_rules! vertex {
 
     // Pattern 2: Coordinates with data
     ($coords:expr, $data:expr) => {
-        $crate::delaunay_core::vertex::VertexBuilder::default()
+        $crate::core::vertex::VertexBuilder::default()
             .point($crate::geometry::point::Point::from($coords))
             .data($data)
             .build()
@@ -161,7 +161,7 @@ pub use crate::vertex;
 /// Vertices are typically created using the builder pattern for convenience:
 ///
 /// ```rust
-/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::core::vertex::Vertex;
 /// use delaunay::vertex;
 ///
 /// let vertex: Vertex<f64, i32, 3> = vertex!([1.0, 2.0, 3.0], 42);
@@ -332,7 +332,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     /// let points = vec![Point::new([1.0, 2.0, 3.0])];
@@ -365,7 +365,7 @@ where
     ///
     /// ```
     /// use std::collections::HashMap;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     /// let points = vec![Point::new([1.0, 2.0]), Point::new([3.0, 4.0])];
@@ -389,7 +389,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::vertex;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
@@ -439,7 +439,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::vertex;
     /// use uuid::Uuid;
     ///
@@ -490,7 +490,7 @@ where
     ///
     /// # Example
     /// ```
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::vertex;
     ///
     /// let vertex: Vertex<f64, Option<()>, 4> = vertex!([1.0, 2.0, 3.0, 4.0]);
@@ -519,7 +519,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::delaunay_core::vertex::{Vertex, VertexValidationError};
+    /// use delaunay::core::vertex::{Vertex, VertexValidationError};
     /// use delaunay::vertex;
     ///
     /// let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
@@ -665,7 +665,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delaunay_core::utilities::{UuidValidationError, make_uuid};
+    use crate::core::utilities::{UuidValidationError, make_uuid};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use approx::assert_relative_eq;

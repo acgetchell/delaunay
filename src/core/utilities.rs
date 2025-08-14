@@ -7,9 +7,9 @@ use std::cmp::Ordering;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::delaunay_core::facet::Facet;
-use crate::delaunay_core::traits::data_type::DataType;
-use crate::delaunay_core::vertex::Vertex;
+use crate::core::facet::Facet;
+use crate::core::traits::data_type::DataType;
+use crate::core::vertex::Vertex;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use num_traits::NumCast;
@@ -55,7 +55,7 @@ pub enum UuidValidationError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::delaunay_core::utilities::{make_uuid, validate_uuid};
+/// use delaunay::core::utilities::{make_uuid, validate_uuid};
 /// use uuid::Uuid;
 ///
 /// // Valid UUID (version 4)
@@ -91,7 +91,7 @@ pub const fn validate_uuid(uuid: &Uuid) -> Result<(), UuidValidationError> {
 /// # Example
 ///
 /// ```
-/// use delaunay::delaunay_core::utilities::make_uuid;
+/// use delaunay::core::utilities::make_uuid;
 /// let uuid = make_uuid();
 /// assert_eq!(uuid.get_version_num(), 4);
 /// ```
@@ -131,8 +131,8 @@ pub fn make_uuid() -> Uuid {
 /// # Example
 ///
 /// ```
-/// use delaunay::delaunay_core::utilities::find_extreme_coordinates;
-/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::core::utilities::find_extreme_coordinates;
+/// use delaunay::core::vertex::Vertex;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 /// use slotmap::{SlotMap, DefaultKey};
@@ -216,10 +216,10 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::delaunay_core::facet::Facet;
-/// use delaunay::delaunay_core::utilities::facets_are_adjacent;
-/// use delaunay::delaunay_core::vertex::Vertex;
-/// use delaunay::delaunay_core::cell::Cell;
+/// use delaunay::core::facet::Facet;
+/// use delaunay::core::utilities::facets_are_adjacent;
+/// use delaunay::core::vertex::Vertex;
+/// use delaunay::core::cell::Cell;
 /// use delaunay::{cell, vertex};
 ///
 /// let v1: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
@@ -273,8 +273,8 @@ where
 /// This function is made public for testing purposes.
 ///
 /// ```
-/// use delaunay::delaunay_core::utilities::generate_combinations;
-/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::core::utilities::generate_combinations;
+/// use delaunay::core::vertex::Vertex;
 /// use delaunay::vertex;
 ///
 /// let vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![
@@ -379,7 +379,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::delaunay_core::utilities::create_supercell_simplex;
+/// use delaunay::core::utilities::create_supercell_simplex;
 /// use delaunay::geometry::point::Point;
 ///
 /// // Create a 3D tetrahedron centered at origin with radius 10.0
@@ -542,8 +542,8 @@ mod tests {
             Point::new([4.0, -5.0, 6.0]),
             Point::new([7.0, 8.0, -9.0]),
         ];
-        let vertices: Vec<crate::delaunay_core::vertex::Vertex<f64, Option<()>, 3>> =
-            crate::delaunay_core::vertex::Vertex::from_points(points);
+        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 3>> =
+            crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
         let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
@@ -568,8 +568,8 @@ mod tests {
     #[test]
     fn utilities_find_extreme_coordinates_single_point() {
         let points = vec![Point::new([5.0, -3.0, 7.0])];
-        let vertices: Vec<crate::delaunay_core::vertex::Vertex<f64, Option<()>, 3>> =
-            crate::delaunay_core::vertex::Vertex::from_points(points);
+        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 3>> =
+            crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
         let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
@@ -591,8 +591,8 @@ mod tests {
     #[test]
     fn utilities_find_extreme_coordinates_equal_ordering() {
         let points = vec![Point::new([1.0, 2.0, 3.0]), Point::new([4.0, 5.0, 6.0])];
-        let vertices: Vec<crate::delaunay_core::vertex::Vertex<f64, Option<()>, 3>> =
-            crate::delaunay_core::vertex::Vertex::from_points(points);
+        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 3>> =
+            crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
         // Using Ordering::Equal should return the first vertex's coordinates unchanged
@@ -619,8 +619,8 @@ mod tests {
             Point::new([3.0, 2.0]),
             Point::new([2.0, 5.0]),
         ];
-        let vertices: Vec<crate::delaunay_core::vertex::Vertex<f64, Option<()>, 2>> =
-            crate::delaunay_core::vertex::Vertex::from_points(points);
+        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 2>> =
+            crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
         let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
@@ -633,8 +633,8 @@ mod tests {
     #[test]
     fn utilities_find_extreme_coordinates_1d() {
         let points = vec![Point::new([10.0]), Point::new([-5.0]), Point::new([3.0])];
-        let vertices: Vec<crate::delaunay_core::vertex::Vertex<f64, Option<()>, 1>> =
-            crate::delaunay_core::vertex::Vertex::from_points(points);
+        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 1>> =
+            crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
         let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
@@ -651,7 +651,7 @@ mod tests {
             Point::new([4.0, -1.0, 2.0]),
             Point::new([-2.0, 5.0, 1.0]),
         ];
-        let vertices: Vec<crate::delaunay_core::vertex::Vertex<f64, i32, 3>> = points
+        let vertices: Vec<crate::core::vertex::Vertex<f64, i32, 3>> = points
             .into_iter()
             .enumerate()
             .map(|(i, point)| {
@@ -685,8 +685,8 @@ mod tests {
             Point::new([2.0, 3.0, 4.0]),
             Point::new([2.0, 3.0, 4.0]),
         ];
-        let vertices: Vec<crate::delaunay_core::vertex::Vertex<f64, Option<()>, 3>> =
-            crate::delaunay_core::vertex::Vertex::from_points(points);
+        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 3>> =
+            crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
         let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
@@ -712,8 +712,8 @@ mod tests {
             Point::new([-1e9, 1e3, -1e15]),
             Point::new([1e15, 1e9, 1e6]),
         ];
-        let vertices: Vec<crate::delaunay_core::vertex::Vertex<f64, Option<()>, 3>> =
-            crate::delaunay_core::vertex::Vertex::from_points(points);
+        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 3>> =
+            crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
         let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
@@ -739,8 +739,8 @@ mod tests {
             Point::new([0.5f32, 4.5f32, 1.5f32]),
             Point::new([2.5f32, 1.5f32, 2.5f32]),
         ];
-        let vertices: Vec<crate::delaunay_core::vertex::Vertex<f32, Option<()>, 3>> =
-            crate::delaunay_core::vertex::Vertex::from_points(points);
+        let vertices: Vec<crate::core::vertex::Vertex<f32, Option<()>, 3>> =
+            crate::core::vertex::Vertex::from_points(points);
         let slotmap = create_vertex_slotmap(vertices);
 
         let min_coords = find_extreme_coordinates(&slotmap, Ordering::Less).unwrap();
@@ -761,10 +761,8 @@ mod tests {
     #[test]
     fn utilities_find_extreme_coordinates_empty_error_message() {
         // Test that the correct error message is returned for empty slotmap
-        let empty_slotmap: SlotMap<
-            DefaultKey,
-            crate::delaunay_core::vertex::Vertex<f64, Option<()>, 3>,
-        > = SlotMap::new();
+        let empty_slotmap: SlotMap<DefaultKey, crate::core::vertex::Vertex<f64, Option<()>, 3>> =
+            SlotMap::new();
         let result = find_extreme_coordinates(&empty_slotmap, Ordering::Less);
 
         assert!(result.is_err());
@@ -777,8 +775,8 @@ mod tests {
     fn utilities_find_extreme_coordinates_ordering() {
         // Test SlotMap ordering and insertion behavior
         let points = vec![Point::new([1.0, 2.0, 3.0]), Point::new([4.0, 1.0, 2.0])];
-        let vertices: Vec<crate::delaunay_core::vertex::Vertex<f64, Option<()>, 3>> =
-            crate::delaunay_core::vertex::Vertex::from_points(points);
+        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 3>> =
+            crate::core::vertex::Vertex::from_points(points);
 
         let slotmap = create_vertex_slotmap(vertices);
 
@@ -799,7 +797,7 @@ mod tests {
 
     #[test]
     fn test_facets_are_adjacent() {
-        use crate::delaunay_core::{cell::Cell, facet::Facet};
+        use crate::core::{cell::Cell, facet::Facet};
         use crate::{cell, vertex};
 
         let v1: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
@@ -822,7 +820,7 @@ mod tests {
     #[test]
     fn test_facets_are_adjacent_edge_cases() {
         use crate::cell;
-        use crate::delaunay_core::cell::Cell;
+        use crate::core::cell::Cell;
 
         let points1 = vec![
             Point::new([0.0, 0.0, 0.0]),

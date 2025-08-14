@@ -48,7 +48,7 @@
 //! ## Creating a 3D Triangulation
 //!
 //! ```rust
-//! use delaunay::delaunay_core::triangulation_data_structure::Tds;
+//! use delaunay::core::triangulation_data_structure::Tds;
 //! use delaunay::vertex;
 //!
 //! // Create vertices for a tetrahedron
@@ -72,7 +72,7 @@
 //! ## Adding Vertices to Existing Triangulation
 //!
 //! ```rust
-//! use delaunay::delaunay_core::triangulation_data_structure::Tds;
+//! use delaunay::core::triangulation_data_structure::Tds;
 //! use delaunay::vertex;
 //!
 //! // Start with initial vertices
@@ -96,7 +96,7 @@
 //! ## 2D Triangulation
 //!
 //! ```rust
-//! use delaunay::delaunay_core::triangulation_data_structure::Tds;
+//! use delaunay::core::triangulation_data_structure::Tds;
 //! use delaunay::vertex;
 //!
 //! // Create 2D triangulation
@@ -140,7 +140,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 // Crate-internal imports
-use crate::delaunay_core::utilities::{create_supercell_simplex, find_extreme_coordinates};
+use crate::core::utilities::{create_supercell_simplex, find_extreme_coordinates};
 use crate::geometry::predicates::{InSphere, insphere};
 use crate::geometry::{point::Point, traits::coordinate::CoordinateScalar};
 
@@ -275,7 +275,7 @@ new_key_type! {
 /// automatically computes the triangulation.
 ///
 /// ```rust
-/// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+/// use delaunay::core::triangulation_data_structure::Tds;
 /// use delaunay::vertex;
 ///
 /// // Create vertices for a 2D triangulation
@@ -362,7 +362,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -409,7 +409,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -459,8 +459,8 @@ where
     /// Create a new triangulation data structure with 3D vertices:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::vertex;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -501,8 +501,8 @@ where
     /// Create an empty triangulation:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let vertices: Vec<Vertex<f64, usize, 3>> = Vec::new();
     /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
@@ -513,8 +513,8 @@ where
     /// Create a 2D triangulation:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::vertex;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -584,8 +584,8 @@ where
     /// Successfully add a vertex to an empty triangulation:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::vertex;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -601,8 +601,8 @@ where
     /// Attempt to add a vertex with coordinates that already exist:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::vertex;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -619,8 +619,8 @@ where
     /// Add multiple vertices with different coordinates:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::vertex;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -678,7 +678,7 @@ where
     /// Count vertices in an empty triangulation:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
@@ -689,8 +689,8 @@ where
     /// Count vertices after adding them:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::vertex;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -709,9 +709,9 @@ where
     /// Count vertices initialized from points:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
     /// let points = vec![
@@ -742,7 +742,7 @@ where
     /// Dimension of an empty triangulation:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
@@ -753,8 +753,8 @@ where
     /// Dimension progression as vertices are added:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::vertex;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -788,9 +788,9 @@ where
     /// Different dimensional triangulations:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
     /// // 2D triangulation
@@ -836,9 +836,9 @@ where
     /// Count cells in a newly created triangulation:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
     /// let points = vec![
@@ -856,9 +856,9 @@ where
     /// Count cells after triangulation:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
     /// let points = vec![
@@ -876,7 +876,7 @@ where
     /// Empty triangulation has no cells:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
@@ -1007,10 +1007,10 @@ where
     /// Create a simple 3D triangulation:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let points = vec![
     ///     Point::new([0.0, 0.0, 0.0]),
@@ -1030,9 +1030,9 @@ where
     /// Handle empty input:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let points: Vec<Point<f64, 3>> = Vec::new();
     /// let vertices = Vertex::from_points(points);
@@ -1045,10 +1045,10 @@ where
     /// Create a 2D triangulation:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let points = vec![
     ///     Point::new([0.0, 0.0]),
@@ -1066,10 +1066,10 @@ where
     /// Simple 3D triangulation:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let points = vec![
     ///     Point::new([0.0, 0.0, 0.0]),
@@ -1311,7 +1311,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::vertex;
     ///
     /// // Create a simple tetrahedron that avoids degeneracy
@@ -1557,9 +1557,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
     /// // Create a simple 3D triangulation
@@ -1655,7 +1655,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -1725,7 +1725,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -1840,10 +1840,10 @@ where
     /// Validate a properly constructed triangulation:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let points = vec![
     ///     Point::new([0.0, 0.0, 0.0]),
@@ -1862,7 +1862,7 @@ where
     /// Validate an empty triangulation:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
     ///
     /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
@@ -1874,10 +1874,10 @@ where
     /// Validate different dimensional triangulations:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// // 2D triangulation
     /// let points_2d = vec![
@@ -1907,10 +1907,10 @@ where
     /// Example of validation error handling:
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::{Tds, TriangulationValidationError};
+    /// use delaunay::core::triangulation_data_structure::{Tds, TriangulationValidationError};
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::vertex::Vertex;
     /// use delaunay::vertex;
     /// use delaunay::cell;
     ///
@@ -2367,7 +2367,7 @@ where
 #[allow(clippy::uninlined_format_args, clippy::similar_names)]
 mod tests {
     use crate::cell;
-    use crate::delaunay_core::{
+    use crate::core::{
         traits::boundary_analysis::BoundaryAnalysis, utilities::facets_are_adjacent,
         vertex::VertexBuilder,
     };

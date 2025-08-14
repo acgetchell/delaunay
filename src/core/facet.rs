@@ -16,9 +16,9 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::delaunay_core::facet::Facet;
-//! use delaunay::delaunay_core::cell::Cell;
-//! use delaunay::delaunay_core::vertex::Vertex;
+//! use delaunay::core::facet::Facet;
+//! use delaunay::core::cell::Cell;
+//! use delaunay::core::vertex::Vertex;
 //! use delaunay::{cell, vertex};
 //! use delaunay::geometry::point::Point;
 //!
@@ -43,7 +43,7 @@
 // =============================================================================
 
 use super::{cell::Cell, triangulation_data_structure::VertexKey, vertex::Vertex};
-use crate::delaunay_core::traits::data_type::DataType;
+use crate::core::traits::data_type::DataType;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use serde::{Serialize, de::DeserializeOwned};
 use slotmap::Key;
@@ -218,9 +218,9 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::facet::Facet;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::facet::Facet;
+    /// use delaunay::core::vertex::Vertex;
     /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
     /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
     /// let vertex3: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
@@ -251,8 +251,8 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::facet::Facet;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
@@ -289,8 +289,8 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::facet::Facet;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
@@ -335,8 +335,8 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::facet::Facet;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
@@ -476,8 +476,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::delaunay_core::facet::facet_key_from_vertex_keys;
-/// use delaunay::delaunay_core::triangulation_data_structure::VertexKey;
+/// use delaunay::core::facet::facet_key_from_vertex_keys;
+/// use delaunay::core::triangulation_data_structure::VertexKey;
 /// use slotmap::Key;
 ///
 /// // Create some vertex keys (normally these would come from a TDS)
@@ -567,9 +567,9 @@ pub fn facet_key_from_vertex_keys(vertex_keys: &[VertexKey]) -> u64 {
 /// # Examples
 ///
 /// ```
-/// use delaunay::delaunay_core::facet::facet_key_from_vertices;
-/// use delaunay::delaunay_core::triangulation_data_structure::VertexKey;
-/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::core::facet::facet_key_from_vertices;
+/// use delaunay::core::triangulation_data_structure::VertexKey;
+/// use delaunay::core::vertex::Vertex;
 /// use delaunay::vertex;
 /// use bimap::BiMap;
 /// use uuid::Uuid;
@@ -623,7 +623,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delaunay_core::triangulation_data_structure::VertexKey;
+    use crate::core::triangulation_data_structure::VertexKey;
     use crate::{cell, vertex};
     use approx::assert_relative_eq;
     use bimap::BiMap;

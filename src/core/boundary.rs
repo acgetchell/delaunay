@@ -48,8 +48,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
     /// use delaunay::vertex;
     ///
     /// // Create a simple 3D triangulation (single tetrahedron)
@@ -99,9 +99,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
+    /// use delaunay::core::facet::Facet;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -142,8 +142,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -175,7 +175,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::BoundaryAnalysis;
-    use crate::delaunay_core::{triangulation_data_structure::Tds, vertex::Vertex};
+    use crate::core::{triangulation_data_structure::Tds, vertex::Vertex};
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
     use crate::vertex;
     use std::collections::HashMap;

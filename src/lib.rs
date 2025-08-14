@@ -23,11 +23,11 @@
 #[macro_use]
 extern crate derive_builder;
 
-/// The `delaunay_core` module contains the primary data structures and algorithms for building and manipulating Delaunay triangulations.
+/// The `core` module contains the primary data structures and algorithms for building and manipulating Delaunay triangulations.
 ///
 /// It includes the `Tds` struct, which represents the triangulation, as well as `Cell`, `Facet`, and `Vertex` components.
 /// This module also provides traits for customizing vertex and cell data, and a `prelude` for convenient access to commonly used types.
-pub mod delaunay_core {
+pub mod core {
     pub mod boundary;
     pub mod cell;
     pub mod facet;
@@ -41,7 +41,7 @@ pub mod delaunay_core {
         pub use boundary_analysis::*;
         pub use data_type::*;
     }
-    // Re-export the `delaunay_core` modules.
+    // Re-export the `core` modules.
     pub use cell::*;
     pub use facet::*;
     pub use traits::*;
@@ -86,8 +86,8 @@ pub mod geometry {
 /// A prelude module that re-exports commonly used types and macros.
 /// This makes it easier to import the most commonly used items from the crate.
 pub mod prelude {
-    // Re-export from delaunay_core
-    pub use crate::delaunay_core::{
+    // Re-export from core
+    pub use crate::core::{
         cell::*,
         facet::*,
         traits::{boundary_analysis::*, data_type::*},
@@ -124,9 +124,7 @@ pub const fn is_normal<T: Sized + Send + Sync + Unpin>() -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        delaunay_core::{
-            cell::Cell, facet::Facet, triangulation_data_structure::Tds, vertex::Vertex,
-        },
+        core::{cell::Cell, facet::Facet, triangulation_data_structure::Tds, vertex::Vertex},
         geometry::Point,
         is_normal,
     };

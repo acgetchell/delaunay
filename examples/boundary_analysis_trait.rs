@@ -4,7 +4,7 @@
 //! from the Tds struct using a trait-based approach, making the code more modular
 //! and extensible.
 
-use delaunay::delaunay_core::{
+use delaunay::core::{
     traits::boundary_analysis::BoundaryAnalysis, triangulation_data_structure::Tds,
 };
 use delaunay::vertex;

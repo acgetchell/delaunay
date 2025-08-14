@@ -18,8 +18,8 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::delaunay_core::cell::Cell;
-//! use delaunay::delaunay_core::vertex::Vertex;
+//! use delaunay::core::cell::Cell;
+//! use delaunay::core::vertex::Vertex;
 //! use delaunay::geometry::point::Point;
 //! use delaunay::geometry::traits::coordinate::Coordinate;
 //! use delaunay::{cell, vertex};
@@ -124,8 +124,8 @@ pub enum CellValidationError {
 ///
 /// ```rust
 /// use delaunay::{cell, vertex};
-/// use delaunay::delaunay_core::cell::Cell;
-/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::core::cell::Cell;
+/// use delaunay::core::vertex::Vertex;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
 /// // Create vertices using the vertex! macro
@@ -145,7 +145,7 @@ pub enum CellValidationError {
 macro_rules! cell {
     // Pattern 1: Just vertices - no data
     ($vertices:expr) => {
-        $crate::delaunay_core::cell::CellBuilder::default()
+        $crate::core::cell::CellBuilder::default()
             .vertices($vertices)
             .build()
             .expect("Failed to build cell: invalid vertices or builder configuration")
@@ -153,7 +153,7 @@ macro_rules! cell {
 
     // Pattern 2: Vertices with data
     ($vertices:expr, $data:expr) => {
-        $crate::delaunay_core::cell::CellBuilder::default()
+        $crate::core::cell::CellBuilder::default()
             .vertices($vertices)
             .data($data)
             .build()
@@ -378,7 +378,7 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -403,7 +403,7 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -428,7 +428,7 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     /// use uuid::Uuid;
     ///
     /// let vertices = vec![
@@ -483,7 +483,7 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -514,8 +514,8 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
     /// let vertex2: Vertex<f64, i32, 3> = vertex!([0.0, 1.0, 0.0], 1);
@@ -543,8 +543,8 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
     /// let vertex2: Vertex<f64, i32, 3> = vertex!([0.0, 1.0, 0.0], 1);
@@ -578,9 +578,9 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::facet::Facet;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::facet::Facet;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
     /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
@@ -629,7 +629,7 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     /// use uuid::Uuid;
     ///
     /// // Create some cells
@@ -649,7 +649,7 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     ///
     /// // Empty vector produces empty HashMap
     /// let empty_cells: Vec<Cell<f64, Option<()>, Option<()>, 3>> = vec![];
@@ -694,8 +694,8 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::vertex::Vertex;
     ///
     /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
     /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
@@ -776,9 +776,9 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
-    /// use delaunay::delaunay_core::vertex::Vertex;
-    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::core::facet::Facet;
     ///
     /// // Create a 3D tetrahedron (4 vertices)
     /// let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
@@ -798,7 +798,7 @@ where
     ///
     /// ```
     /// use delaunay::{cell, vertex};
-    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::core::cell::Cell;
     ///
     /// // Create a 2D triangle (3 vertices)
     /// let vertices = vec![
@@ -903,7 +903,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delaunay_core::vertex::vertex;
+    use crate::core::vertex::vertex;
     use crate::geometry::point::Point;
     use crate::geometry::predicates::{
         circumcenter, circumradius, circumradius_with_center, insphere, insphere_distance,
@@ -914,8 +914,8 @@ mod tests {
     // Type aliases for commonly used types to reduce repetition
     type TestCell3D = Cell<f64, Option<()>, Option<()>, 3>;
     type TestCell2D = Cell<f64, Option<()>, Option<()>, 2>;
-    type TestVertex3D = crate::delaunay_core::vertex::Vertex<f64, Option<()>, 3>;
-    type TestVertex2D = crate::delaunay_core::vertex::Vertex<f64, Option<()>, 2>;
+    type TestVertex3D = crate::core::vertex::Vertex<f64, Option<()>, 3>;
+    type TestVertex2D = crate::core::vertex::Vertex<f64, Option<()>, 2>;
 
     // =============================================================================
     // HELPER FUNCTIONS

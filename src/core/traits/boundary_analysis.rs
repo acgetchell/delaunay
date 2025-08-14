@@ -1,6 +1,6 @@
 //! Boundary analysis trait for triangulation data structures.
 
-use crate::delaunay_core::{facet::Facet, traits::data_type::DataType};
+use crate::core::{facet::Facet, traits::data_type::DataType};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use nalgebra::ComplexField;
 use serde::{Serialize, de::DeserializeOwned};
@@ -17,8 +17,8 @@ use std::ops::{AddAssign, Div, SubAssign};
 /// # Examples
 ///
 /// ```
-/// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-/// use delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
 /// use delaunay::vertex;
 ///
 /// // Create a simple 3D triangulation (single tetrahedron)
@@ -66,8 +66,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -99,8 +99,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -134,8 +134,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::delaunay_core::triangulation_data_structure::Tds;
-    /// use delaunay::delaunay_core::traits::boundary_analysis::BoundaryAnalysis;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
