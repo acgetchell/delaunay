@@ -17,8 +17,8 @@
 //! # Examples
 //!
 //! ```rust
-//! use d_delaunay::delaunay_core::vertex::Vertex;
-//! use d_delaunay::vertex;
+//! use delaunay::delaunay_core::vertex::Vertex;
+//! use delaunay::vertex;
 //!
 //! // Create a simple vertex
 //! let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
@@ -97,8 +97,8 @@ pub enum VertexValidationError {
 /// # Usage
 ///
 /// ```rust
-/// use d_delaunay::vertex;
-/// use d_delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::vertex;
+/// use delaunay::delaunay_core::vertex::Vertex;
 ///
 /// // Create a vertex without data (explicit type annotation required)
 /// let v1: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
@@ -161,8 +161,8 @@ pub use crate::vertex;
 /// Vertices are typically created using the builder pattern for convenience:
 ///
 /// ```rust
-/// use d_delaunay::delaunay_core::vertex::Vertex;
-/// use d_delaunay::vertex;
+/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::vertex;
 ///
 /// let vertex: Vertex<f64, i32, 3> = vertex!([1.0, 2.0, 3.0], 42);
 /// ```
@@ -332,9 +332,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::delaunay_core::vertex::Vertex;
-    /// use d_delaunay::geometry::point::Point;
-    /// use d_delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
     /// let points = vec![Point::new([1.0, 2.0, 3.0])];
     /// let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(points.clone());
     /// assert_eq!(vertices.len(), 1);
@@ -365,9 +365,9 @@ where
     ///
     /// ```
     /// use std::collections::HashMap;
-    /// use d_delaunay::delaunay_core::vertex::Vertex;
-    /// use d_delaunay::geometry::point::Point;
-    /// use d_delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
     /// let points = vec![Point::new([1.0, 2.0]), Point::new([3.0, 4.0])];
     /// let vertices = Vertex::<f64, Option<()>, 2>::from_points(points.clone());
     /// let map: HashMap<_, _> = Vertex::into_hashmap(vertices);
@@ -389,9 +389,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::delaunay_core::vertex::Vertex;
-    /// use d_delaunay::vertex;
-    /// use d_delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::vertex;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
     /// let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
     /// let retrieved_point = vertex.point();
@@ -439,8 +439,8 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::delaunay_core::vertex::Vertex;
-    /// use d_delaunay::vertex;
+    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::vertex;
     /// use uuid::Uuid;
     ///
     /// let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
@@ -490,8 +490,8 @@ where
     ///
     /// # Example
     /// ```
-    /// use d_delaunay::delaunay_core::vertex::Vertex;
-    /// use d_delaunay::vertex;
+    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::vertex;
     ///
     /// let vertex: Vertex<f64, Option<()>, 4> = vertex!([1.0, 2.0, 3.0, 4.0]);
     /// assert_eq!(vertex.dim(), 4);
@@ -519,8 +519,8 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::delaunay_core::vertex::{Vertex, VertexValidationError};
-    /// use d_delaunay::vertex;
+    /// use delaunay::delaunay_core::vertex::{Vertex, VertexValidationError};
+    /// use delaunay::vertex;
     ///
     /// let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
     /// assert!(vertex.is_valid().is_ok());

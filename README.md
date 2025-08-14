@@ -1,10 +1,14 @@
-# d-delaunay
+# delaunay
 
-[![CI](https://github.com/acgetchell/d-delaunay/actions/workflows/ci.yml/badge.svg)](https://github.com/acgetchell/d-delaunay/actions/workflows/ci.yml)
-[![rust-clippy analyze](https://github.com/acgetchell/d-delaunay/actions/workflows/rust-clippy.yml/badge.svg)](https://github.com/acgetchell/d-delaunay/actions/workflows/rust-clippy.yml)
-[![codecov](https://codecov.io/gh/acgetchell/d-delaunay/graph/badge.svg?token=WT7qZGT9bO)](https://codecov.io/gh/acgetchell/d-delaunay)
-[![Audit dependencies](https://github.com/acgetchell/d-delaunay/actions/workflows/audit.yml/badge.svg)](https://github.com/acgetchell/d-delaunay/actions/workflows/audit.yml)
-[![Codacy Badge](https://app.codacy.com/project/badge/Grade/3cad94f994f5434d877ae77f0daee692)](https://app.codacy.com/gh/acgetchell/d-delaunay/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+[![Crates.io](https://img.shields.io/crates/v/delaunay.svg)](https://crates.io/crates/delaunay)
+[![Downloads](https://img.shields.io/crates/d/delaunay.svg)](https://crates.io/crates/delaunay)
+[![License](https://img.shields.io/crates/l/delaunay.svg)](LICENSE)
+[![Docs.rs](https://docs.rs/delaunay/badge.svg)](https://docs.rs/delaunay)
+[![CI](https://github.com/acgetchell/delaunay/actions/workflows/ci.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/ci.yml)
+[![rust-clippy analyze](https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml)
+[![codecov](https://codecov.io/gh/acgetchell/delaunay/graph/badge.svg?token=WT7qZGT9bO)](https://codecov.io/gh/acgetchell/delaunay)
+[![Audit dependencies](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml)
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/3cad94f994f5434d877ae77f0daee692)](https://app.codacy.com/gh/acgetchell/delaunay/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
 D-dimensional Delaunay triangulations in [Rust], inspired by [CGAL].
 
@@ -24,10 +28,18 @@ the [Rust] ecosystem.
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
 - [x]  Tested for 3-, 4-, and 5-dimensional triangulations
 
-At some point I may merge into another library, such as [Spade] or [delaunay],
-but for now I am developing this to use in my [research] without trying to
-figure out how to mesh with other libraries and coding conventions, and with
-the minimum number of [traits] to do generic computational geometry.
+See [CHANGELOG.md](CHANGELOG.md) for details.
+
+## 🚧 Project History
+
+This crate was originally maintained at [https://github.com/oovm/shape-rs](https://github.com/oovm/shape-rs) through version `0.1.0`.
+The original implementation provided basic Delaunay triangulation functionality.
+
+Starting with version `0.3.3`, maintenance transferred to [this repository](https://github.com/acgetchell/delaunay), which hosts a completely
+rewritten d-dimensional implementation focused on computational geometry research applications.
+
+- 📚 Docs for old versions (≤ 0.1.0): <https://docs.rs/delaunay/0.1.0/delaunay/>
+- 📚 Docs for current version (≥ 0.3.3): <https://docs.rs/delaunay>
 
 ## Development Tools
 
@@ -80,10 +92,7 @@ The library's geometric predicates and algorithms are based on established compu
 [CGAL]: https://www.cgal.org/
 [C++]: https://isocpp.org
 [Spade]: https://github.com/Stoeoef/spade
-[delaunay]: https://crates.io/crates/delaunay
 [JSON]: https://www.json.org/json-en.html
 [Delaunay triangulations]: https://en.wikipedia.org/wiki/Delaunay_triangulation
 [Constrained Delaunay triangulations]: https://en.wikipedia.org/wiki/Constrained_Delaunay_triangulation
 [Voronoi diagrams]: https://en.wikipedia.org/wiki/Voronoi_diagram
-[research]: https://github.com/acgetchell/cdt-rs
-[traits]: https://doc.rust-lang.org/book/ch10-02-traits.html

@@ -16,11 +16,11 @@
 //! # Examples
 //!
 //! ```rust
-//! use d_delaunay::delaunay_core::facet::Facet;
-//! use d_delaunay::delaunay_core::cell::Cell;
-//! use d_delaunay::delaunay_core::vertex::Vertex;
-//! use d_delaunay::{cell, vertex};
-//! use d_delaunay::geometry::point::Point;
+//! use delaunay::delaunay_core::facet::Facet;
+//! use delaunay::delaunay_core::cell::Cell;
+//! use delaunay::delaunay_core::vertex::Vertex;
+//! use delaunay::{cell, vertex};
+//! use delaunay::geometry::point::Point;
 //!
 //! // Create vertices for a tetrahedron
 //! let vertices = vec![
@@ -217,10 +217,10 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
-    /// use d_delaunay::delaunay_core::facet::Facet;
-    /// use d_delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::delaunay_core::vertex::Vertex;
     /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
     /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
     /// let vertex3: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
@@ -250,11 +250,11 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
-    /// use d_delaunay::delaunay_core::facet::Facet;
-    /// use d_delaunay::geometry::point::Point;
-    /// use d_delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
     /// let vertex1 = vertex!([0.0, 0.0, 0.0]);
     /// let vertex2 = vertex!([1.0, 0.0, 0.0]);
@@ -288,11 +288,11 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
-    /// use d_delaunay::delaunay_core::facet::Facet;
-    /// use d_delaunay::geometry::point::Point;
-    /// use d_delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
     /// let vertex1 = vertex!([0.0, 0.0, 0.0]);
     /// let vertex2 = vertex!([1.0, 0.0, 0.0]);
@@ -334,11 +334,11 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
-    /// use d_delaunay::delaunay_core::facet::Facet;
-    /// use d_delaunay::geometry::point::Point;
-    /// use d_delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
     /// // Create a 3D tetrahedron with 4 vertices
     /// let vertex1 = vertex!([0.0, 0.0, 0.0]); // origin
@@ -476,8 +476,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use d_delaunay::delaunay_core::facet::facet_key_from_vertex_keys;
-/// use d_delaunay::delaunay_core::triangulation_data_structure::VertexKey;
+/// use delaunay::delaunay_core::facet::facet_key_from_vertex_keys;
+/// use delaunay::delaunay_core::triangulation_data_structure::VertexKey;
 /// use slotmap::Key;
 ///
 /// // Create some vertex keys (normally these would come from a TDS)
@@ -567,10 +567,10 @@ pub fn facet_key_from_vertex_keys(vertex_keys: &[VertexKey]) -> u64 {
 /// # Examples
 ///
 /// ```
-/// use d_delaunay::delaunay_core::facet::facet_key_from_vertices;
-/// use d_delaunay::delaunay_core::triangulation_data_structure::VertexKey;
-/// use d_delaunay::delaunay_core::vertex::Vertex;
-/// use d_delaunay::vertex;
+/// use delaunay::delaunay_core::facet::facet_key_from_vertices;
+/// use delaunay::delaunay_core::triangulation_data_structure::VertexKey;
+/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::vertex;
 /// use bimap::BiMap;
 /// use uuid::Uuid;
 /// use slotmap::Key;

@@ -55,7 +55,7 @@ pub enum UuidValidationError {
 /// # Examples
 ///
 /// ```
-/// use d_delaunay::delaunay_core::utilities::{make_uuid, validate_uuid};
+/// use delaunay::delaunay_core::utilities::{make_uuid, validate_uuid};
 /// use uuid::Uuid;
 ///
 /// // Valid UUID (version 4)
@@ -91,7 +91,7 @@ pub const fn validate_uuid(uuid: &Uuid) -> Result<(), UuidValidationError> {
 /// # Example
 ///
 /// ```
-/// use d_delaunay::delaunay_core::utilities::make_uuid;
+/// use delaunay::delaunay_core::utilities::make_uuid;
 /// let uuid = make_uuid();
 /// assert_eq!(uuid.get_version_num(), 4);
 /// ```
@@ -131,10 +131,10 @@ pub fn make_uuid() -> Uuid {
 /// # Example
 ///
 /// ```
-/// use d_delaunay::delaunay_core::utilities::find_extreme_coordinates;
-/// use d_delaunay::delaunay_core::vertex::Vertex;
-/// use d_delaunay::geometry::point::Point;
-/// use d_delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::delaunay_core::utilities::find_extreme_coordinates;
+/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
 /// use slotmap::{SlotMap, DefaultKey};
 /// use std::cmp::Ordering;
 ///
@@ -216,11 +216,11 @@ where
 /// # Examples
 ///
 /// ```
-/// use d_delaunay::delaunay_core::facet::Facet;
-/// use d_delaunay::delaunay_core::utilities::facets_are_adjacent;
-/// use d_delaunay::delaunay_core::vertex::Vertex;
-/// use d_delaunay::delaunay_core::cell::Cell;
-/// use d_delaunay::{cell, vertex};
+/// use delaunay::delaunay_core::facet::Facet;
+/// use delaunay::delaunay_core::utilities::facets_are_adjacent;
+/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::delaunay_core::cell::Cell;
+/// use delaunay::{cell, vertex};
 ///
 /// let v1: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
 /// let v2: Vertex<f64, Option<()>, 2> = vertex!([1.0, 0.0]);
@@ -273,9 +273,9 @@ where
 /// This function is made public for testing purposes.
 ///
 /// ```
-/// use d_delaunay::delaunay_core::utilities::generate_combinations;
-/// use d_delaunay::delaunay_core::vertex::Vertex;
-/// use d_delaunay::vertex;
+/// use delaunay::delaunay_core::utilities::generate_combinations;
+/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::vertex;
 ///
 /// let vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![
 ///     vertex!([0.0]),
@@ -379,8 +379,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use d_delaunay::delaunay_core::utilities::create_supercell_simplex;
-/// use d_delaunay::geometry::point::Point;
+/// use delaunay::delaunay_core::utilities::create_supercell_simplex;
+/// use delaunay::geometry::point::Point;
 ///
 /// // Create a 3D tetrahedron centered at origin with radius 10.0
 /// let center = [0.0f64; 3];

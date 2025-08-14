@@ -1,6 +1,6 @@
-# D-Delaunay Module Organizational Patterns Analysis
+# Delaunay Module Organizational Patterns Analysis
 
-This document captures the canonical organizational patterns found across the key modules in the d-delaunay
+This document captures the canonical organizational patterns found across the key modules in the delaunay
 codebase: `cell.rs`, `vertex.rs`, `facet.rs`, `boundary.rs`, and `utilities.rs`.
 
 ## Canonical Section Sequence

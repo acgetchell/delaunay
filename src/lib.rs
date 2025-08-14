@@ -1,4 +1,4 @@
-//! # d-delaunay
+//! # delaunay
 //!
 //! This is a library for computing the Delaunay triangulation of a set of n-dimensional points
 //! in a [simplicial complex](https://en.wikipedia.org/wiki/Simplicial_complex)
@@ -10,6 +10,12 @@
 //! - Generic floating-point coordinate types (supports `f32`, `f64`, and other types implementing `CoordinateScalar`)
 //! - Arbitrary data types associated with vertices and cells
 //! - Serialization/Deserialization with [serde](https://serde.rs)
+//!
+//! ## Project History
+//! Versions ≤ 0.1.0 were maintained at [old repo](https://github.com/oovm/shape-rs).
+//! Versions ≥ 0.3.4 are maintained here.
+//!
+//! See <https://docs.rs/delaunay/0.1.0> for historical documentation.
 
 // Allow multiple crate versions due to transitive dependencies
 #![allow(clippy::multiple_crate_versions)]

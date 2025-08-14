@@ -4,19 +4,19 @@
 //! in Delaunay triangulation operations.
 
 // Import Delaunay triangulation crate components
-use d_delaunay::delaunay_core::triangulation_data_structure::Tds;
-use d_delaunay::geometry::Point;
-use d_delaunay::prelude::*;
+use delaunay::delaunay_core::triangulation_data_structure::Tds;
+use delaunay::geometry::Point;
 
 // Testing utilities
 use rand::Rng;
 
 /// Common test helpers for initializing and working with the allocator
 pub mod test_helpers {
-    use super::{Point, Rng, Tds, vertex};
+    use super::{Point, Rng, Tds};
     #[cfg(feature = "count-allocations")]
     use allocation_counter::measure;
-    use d_delaunay::geometry::Coordinate;
+    use delaunay::geometry::Coordinate;
+    use delaunay::vertex;
 
     /// Initialize a simple allocator test environment
     pub fn init_test_env() {

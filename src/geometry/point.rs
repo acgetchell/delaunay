@@ -186,8 +186,8 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use d_delaunay::geometry::point::Point;
-    /// use d_delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
     /// let point = Point::new([1.0, 2.0]);
     /// let coords: [f64; 2] = point.into();
     /// assert_eq!(coords, [1.0, 2.0]);
@@ -206,8 +206,8 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use d_delaunay::geometry::point::Point;
-    /// use d_delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
     /// let point = Point::new([3.0, 4.0]);
     /// let coords: [f64; 2] = (&point).into();
     /// assert_eq!(coords, [3.0, 4.0]);

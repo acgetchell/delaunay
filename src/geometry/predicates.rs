@@ -60,7 +60,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use d_delaunay::geometry::predicates::hypot;
+/// use delaunay::geometry::predicates::hypot;
 ///
 /// // 2D case - uses std::f64::hypot internally
 /// let distance_2d = hypot([3.0, 4.0]);
@@ -170,9 +170,9 @@ where
 /// # Example
 ///
 /// ```
-/// use d_delaunay::geometry::point::Point;
-/// use d_delaunay::geometry::traits::coordinate::Coordinate;
-/// use d_delaunay::geometry::predicates::circumcenter;
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::geometry::predicates::circumcenter;
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
@@ -256,9 +256,9 @@ where
 /// # Example
 ///
 /// ```
-/// use d_delaunay::geometry::point::Point;
-/// use d_delaunay::geometry::traits::coordinate::Coordinate;
-/// use d_delaunay::geometry::predicates::circumradius;
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::geometry::predicates::circumradius;
 /// use approx::assert_relative_eq;
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
@@ -305,9 +305,9 @@ where
 /// # Example
 ///
 /// ```
-/// use d_delaunay::geometry::point::Point;
-/// use d_delaunay::geometry::traits::coordinate::Coordinate;
-/// use d_delaunay::geometry::predicates::{circumcenter, circumradius_with_center};
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::geometry::predicates::{circumcenter, circumradius_with_center};
 /// use approx::assert_relative_eq;
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
@@ -424,10 +424,10 @@ impl std::fmt::Display for Orientation {
 /// # Example
 ///
 /// ```
-/// use d_delaunay::geometry::Orientation;
-/// use d_delaunay::geometry::point::Point;
-/// use d_delaunay::geometry::traits::coordinate::Coordinate;
-/// use d_delaunay::geometry::predicates::simplex_orientation;
+/// use delaunay::geometry::Orientation;
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::geometry::predicates::simplex_orientation;
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
@@ -528,9 +528,9 @@ where
 /// # Example
 ///
 /// ```
-/// use d_delaunay::geometry::point::Point;
-/// use d_delaunay::geometry::traits::coordinate::Coordinate;
-/// use d_delaunay::geometry::predicates::{insphere_distance, InSphere};
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::geometry::predicates::{insphere_distance, InSphere};
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
@@ -651,10 +651,10 @@ where
 /// # Example
 ///
 /// ```
-/// use d_delaunay::geometry::point::Point;
-/// use d_delaunay::geometry::traits::coordinate::Coordinate;
-/// use d_delaunay::geometry::predicates::insphere;
-/// use d_delaunay::geometry::InSphere;
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::geometry::predicates::insphere;
+/// use delaunay::geometry::InSphere;
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
@@ -840,9 +840,9 @@ where
 /// # Example
 ///
 /// ```
-/// use d_delaunay::geometry::point::Point;
-/// use d_delaunay::geometry::traits::coordinate::Coordinate;
-/// use d_delaunay::geometry::predicates::insphere_lifted;
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::geometry::predicates::insphere_lifted;
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);

@@ -83,7 +83,7 @@ pub const DEFAULT_TOLERANCE_F64: f64 = 1e-15;
 /// # Usage
 ///
 /// ```rust
-/// use d_delaunay::geometry::traits::coordinate::CoordinateScalar;
+/// use delaunay::geometry::traits::coordinate::CoordinateScalar;
 ///
 /// fn process_coordinate<T: CoordinateScalar>(value: T) {
 ///     // T has all the necessary bounds for coordinate operations
@@ -108,7 +108,7 @@ pub trait CoordinateScalar:
     /// # Examples
     ///
     /// ```
-    /// use d_delaunay::geometry::traits::coordinate::CoordinateScalar;
+    /// use delaunay::geometry::traits::coordinate::CoordinateScalar;
     ///
     /// // Get appropriate tolerance for f32
     /// let tolerance_f32 = f32::default_tolerance();
@@ -125,7 +125,7 @@ pub trait CoordinateScalar:
     /// appropriate tolerance values for the specific type being used:
     ///
     /// ```
-    /// use d_delaunay::geometry::traits::coordinate::CoordinateScalar;
+    /// use delaunay::geometry::traits::coordinate::CoordinateScalar;
     ///
     /// fn compare_with_tolerance<T: CoordinateScalar>(a: T, b: T) -> bool {
     ///     (a - b).abs() < T::default_tolerance()
@@ -174,7 +174,7 @@ impl CoordinateScalar for f64 {
 /// # Examples
 ///
 /// ```
-/// use d_delaunay::geometry::{point::Point, traits::coordinate::Coordinate};
+/// use delaunay::geometry::{point::Point, traits::coordinate::Coordinate};
 ///
 /// // Create coordinates using Point (which implements Coordinate)
 /// let coord1: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
@@ -199,7 +199,7 @@ impl CoordinateScalar for f64 {
 ///
 /// ```
 /// // Example of how future implementations could work:
-/// use d_delaunay::geometry::{point::Point, traits::coordinate::Coordinate};
+/// use delaunay::geometry::{point::Point, traits::coordinate::Coordinate};
 /// use std::collections::HashMap;
 ///
 /// // Current Point implementation uses arrays
@@ -234,7 +234,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use d_delaunay::geometry::{point::Point, traits::coordinate::Coordinate};
+    /// use delaunay::geometry::{point::Point, traits::coordinate::Coordinate};
     ///
     /// let coord: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
     /// assert_eq!(coord.dim(), 3);
@@ -276,7 +276,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use d_delaunay::geometry::{point::Point, traits::coordinate::Coordinate};
+    /// use delaunay::geometry::{point::Point, traits::coordinate::Coordinate};
     ///
     /// let coord: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
     /// assert_eq!(coord.get(0), Some(1.0));
@@ -294,7 +294,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use d_delaunay::geometry::{point::Point, traits::coordinate::Coordinate};
+    /// use delaunay::geometry::{point::Point, traits::coordinate::Coordinate};
     ///
     /// let origin: Point<f64, 3> = Coordinate::origin();
     /// assert_eq!(origin.to_array(), [0.0, 0.0, 0.0]);
@@ -323,7 +323,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use d_delaunay::geometry::{point::Point, traits::coordinate::Coordinate};
+    /// use delaunay::geometry::{point::Point, traits::coordinate::Coordinate};
     ///
     /// let valid: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
     /// assert!(valid.validate().is_ok());

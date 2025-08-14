@@ -18,11 +18,11 @@
 //! # Examples
 //!
 //! ```rust
-//! use d_delaunay::delaunay_core::cell::Cell;
-//! use d_delaunay::delaunay_core::vertex::Vertex;
-//! use d_delaunay::geometry::point::Point;
-//! use d_delaunay::geometry::traits::coordinate::Coordinate;
-//! use d_delaunay::{cell, vertex};
+//! use delaunay::delaunay_core::cell::Cell;
+//! use delaunay::delaunay_core::vertex::Vertex;
+//! use delaunay::geometry::point::Point;
+//! use delaunay::geometry::traits::coordinate::Coordinate;
+//! use delaunay::{cell, vertex};
 //!
 //! // Create vertices for a tetrahedron
 //! let vertices = vec![
@@ -123,10 +123,10 @@ pub enum CellValidationError {
 /// # Usage
 ///
 /// ```rust
-/// use d_delaunay::{cell, vertex};
-/// use d_delaunay::delaunay_core::cell::Cell;
-/// use d_delaunay::delaunay_core::vertex::Vertex;
-/// use d_delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::{cell, vertex};
+/// use delaunay::delaunay_core::cell::Cell;
+/// use delaunay::delaunay_core::vertex::Vertex;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
 /// // Create vertices using the vertex! macro
 /// let vertices = vec![
@@ -377,8 +377,8 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -402,8 +402,8 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -427,8 +427,8 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
     /// use uuid::Uuid;
     ///
     /// let vertices = vec![
@@ -482,8 +482,8 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -513,9 +513,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
-    /// use d_delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::delaunay_core::vertex::Vertex;
     ///
     /// let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
     /// let vertex2: Vertex<f64, i32, 3> = vertex!([0.0, 1.0, 0.0], 1);
@@ -542,9 +542,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
-    /// use d_delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::delaunay_core::vertex::Vertex;
     ///
     /// let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
     /// let vertex2: Vertex<f64, i32, 3> = vertex!([0.0, 1.0, 0.0], 1);
@@ -577,10 +577,10 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
-    /// use d_delaunay::delaunay_core::facet::Facet;
-    /// use d_delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::delaunay_core::vertex::Vertex;
     ///
     /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
     /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
@@ -628,8 +628,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
     /// use uuid::Uuid;
     ///
     /// // Create some cells
@@ -648,8 +648,8 @@ where
     /// ```
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
     ///
     /// // Empty vector produces empty HashMap
     /// let empty_cells: Vec<Cell<f64, Option<()>, Option<()>, 3>> = vec![];
@@ -693,9 +693,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
-    /// use d_delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::delaunay_core::vertex::Vertex;
     ///
     /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
     /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
@@ -775,10 +775,10 @@ where
     /// # Examples
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
-    /// use d_delaunay::delaunay_core::vertex::Vertex;
-    /// use d_delaunay::delaunay_core::facet::Facet;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::delaunay_core::vertex::Vertex;
+    /// use delaunay::delaunay_core::facet::Facet;
     ///
     /// // Create a 3D tetrahedron (4 vertices)
     /// let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
@@ -797,8 +797,8 @@ where
     /// ```
     ///
     /// ```
-    /// use d_delaunay::{cell, vertex};
-    /// use d_delaunay::delaunay_core::cell::Cell;
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::delaunay_core::cell::Cell;
     ///
     /// // Create a 2D triangle (3 vertices)
     /// let vertices = vec![
