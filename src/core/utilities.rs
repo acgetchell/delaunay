@@ -350,10 +350,10 @@ where
 
 /// Creates a well-formed simplex centered at the given point with the given radius.
 ///
-/// This utility function generates a proper non-degenerate simplex (e.g., tetrahedron
-/// for 3D) that can be used as a supercell in triangulation algorithms. The simplex
-/// is constructed to have vertices positioned strategically around the center point
-/// to ensure geometric validity and avoid degeneracies.
+/// This utility function generates a proper non-degenerate simplex (e.g., triangle for 2D,
+/// tetrahedron for 3D, 4-simplex for 4D, etc.) that can be used as a supercell in
+/// triangulation algorithms. The simplex is constructed to have vertices positioned
+/// strategically around the center point to ensure geometric validity and avoid degeneracies.
 ///
 /// # Arguments
 ///
@@ -392,18 +392,22 @@ where
 /// let center_2d = [5.0f64, 5.0f64];
 /// let simplex_2d = create_supercell_simplex(&center_2d, 3.0f64);
 /// assert_eq!(simplex_2d.len(), 3); // Triangle has 3 vertices
+///
+/// // Create a 4D 4-simplex
+/// let center_4d = [0.0f64; 4];
+/// let simplex_4d = create_supercell_simplex(&center_4d, 5.0f64);
+/// assert_eq!(simplex_4d.len(), 5); // 4-simplex has 5 vertices
 /// ```
 ///
 /// # Algorithm Details
 ///
-/// - **3D Case**: Creates a regular tetrahedron using the vertices of a cube:
-///   (1,1,1), (1,-1,-1), (-1,1,-1), (-1,-1,1), scaled by radius and translated by center
-/// - **General Case**: For D dimensions, creates D+1 vertices using a systematic
-///   approach that places one vertex with all positive offsets, and D vertices
-///   each with one negative offset dimension
+/// Uses a generic construction that works for all dimensions D ≥ 1:
+/// - Creates D+1 vertices using a systematic approach that ensures good vertex separation
+/// - Uses dimension-aware offsets to avoid degeneracies and ensure non-coplanar vertices
+/// - Distributes vertices with varying offset patterns to guarantee geometric validity
 ///
 /// The resulting simplex is guaranteed to be non-degenerate and suitable for
-/// use as a bounding supercell in triangulation algorithms.
+/// use as a bounding supercell in triangulation algorithms across all dimensions.
 pub fn create_supercell_simplex<T, const D: usize>(center: &[T; D], radius: T) -> Vec<Point<T, D>>
 where
     T: CoordinateScalar + NumCast,
@@ -411,63 +415,44 @@ where
     [T; D]: Default + DeserializeOwned + Serialize + Copy + Sized,
 {
     let mut points = Vec::new();
+    let radius_f64: f64 = radius.into();
 
-    // For 3D, create a regular tetrahedron
-    if D == 3 {
-        // Create a regular tetrahedron with vertices at:
-        // (1, 1, 1), (1, -1, -1), (-1, 1, -1), (-1, -1, 1)
-        // scaled by radius and translated by center
-        let tetrahedron_vertices = [
-            [1.0, 1.0, 1.0],
-            [1.0, -1.0, -1.0],
-            [-1.0, 1.0, -1.0],
-            [-1.0, -1.0, 1.0],
-        ];
+    // Use a generic construction that works well for all dimensions
+    // This creates D+1 vertices that are guaranteed to be non-degenerate
+    // by using dimension-aware offsets that ensure good vertex separation.
 
-        for vertex_coords in &tetrahedron_vertices {
-            let mut coords = [T::default(); D];
-            for i in 0..D {
-                let center_f64: f64 = center[i].into();
-                let radius_f64: f64 = radius.into();
-                let coord_f64 = radius_f64.mul_add(vertex_coords[i], center_f64);
-                coords[i] = NumCast::from(coord_f64).expect("Failed to convert coordinate");
-            }
-            points.push(Point::new(coords));
-        }
-    } else {
-        // For other dimensions, create a simplex using a generalized approach
-        // Create D+1 vertices for a D-dimensional simplex
+    // Use a scaling factor to ensure good separation across all dimensions
+    let scale = radius_f64 * 2.0; // Use 2x radius for better separation
 
-        // Create a regular simplex by placing vertices at the corners of a hypercube
-        // scaled and offset appropriately
-        let radius_f64: f64 = radius.into();
-
-        // First vertex: all coordinates positive
+    for vertex_idx in 0..=D {
         let mut coords = [T::default(); D];
-        for i in 0..D {
-            let center_f64: f64 = center[i].into();
-            coords[i] =
-                NumCast::from(center_f64 + radius_f64).expect("Failed to convert center + radius");
-        }
-        points.push(Point::new(coords));
 
-        // Remaining D vertices: flip one coordinate at a time to negative
-        for dim in 0..D {
-            let mut coords = [T::default(); D];
-            for i in 0..D {
-                let center_f64: f64 = center[i].into();
-                if i == dim {
-                    // This dimension gets negative offset
-                    coords[i] = NumCast::from(center_f64 - radius_f64)
-                        .expect("Failed to convert center - radius");
-                } else {
-                    // Other dimensions get positive offset
-                    coords[i] = NumCast::from(center_f64 + radius_f64)
-                        .expect("Failed to convert center + radius");
+        for coord_idx in 0..D {
+            let center_f64: f64 = center[coord_idx].into();
+
+            // Create a pattern that distributes vertices well in D-space
+            // This construction ensures non-degeneracy by using varying offset patterns
+            let d_f64: f64 = NumCast::from(D).expect("Failed to convert dimension D to f64");
+            let offset = match coord_idx.cmp(&vertex_idx) {
+                std::cmp::Ordering::Less => {
+                    // Negative offset for earlier dimensions - creates good separation
+                    -scale / d_f64
                 }
-            }
-            points.push(Point::new(coords));
+                std::cmp::Ordering::Equal => {
+                    // Positive offset for the main dimension - creates the vertex position
+                    scale
+                }
+                std::cmp::Ordering::Greater => {
+                    // Small positive offset for later dimensions - maintains non-degeneracy
+                    scale / (2.0 * d_f64)
+                }
+            };
+
+            coords[coord_idx] =
+                NumCast::from(center_f64 + offset).expect("Failed to convert coordinate");
         }
+
+        points.push(Point::new(coords));
     }
 
     points
@@ -484,6 +469,10 @@ mod tests {
 
     use super::*;
 
+    // =============================================================================
+    // TEST HELPERS
+    // =============================================================================
+
     fn create_vertex_slotmap<T, U, const D: usize>(
         vertices: Vec<Vertex<T, U, D>>,
     ) -> SlotMap<DefaultKey, Vertex<T, U, D>>
@@ -498,6 +487,10 @@ mod tests {
         }
         slotmap
     }
+
+    // =============================================================================
+    // UUID UTILITIES TESTS
+    // =============================================================================
 
     #[test]
     fn utilities_make_uuid_uniqueness() {
@@ -534,6 +527,86 @@ mod tests {
         assert_eq!(parts[3].len(), 4);
         assert_eq!(parts[4].len(), 12);
     }
+
+    #[test]
+    fn test_validate_uuid_valid() {
+        // Test valid UUID (version 4)
+        let valid_uuid = make_uuid();
+        assert!(validate_uuid(&valid_uuid).is_ok());
+
+        // Test that the function returns Ok for valid UUIDs
+        let result = validate_uuid(&valid_uuid);
+        match result {
+            Ok(()) => (), // Expected
+            Err(e) => panic!("Expected valid UUID to pass validation, got: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_uuid_nil() {
+        // Test nil UUID
+        let nil_uuid = Uuid::nil();
+        let result = validate_uuid(&nil_uuid);
+
+        assert!(result.is_err());
+        match result {
+            Err(UuidValidationError::NilUuid) => (), // Expected
+            Err(other) => panic!("Expected NilUuid error, got: {other:?}"),
+            Ok(()) => panic!("Expected error for nil UUID, but validation passed"),
+        }
+    }
+
+    #[test]
+    fn test_validate_uuid_wrong_version() {
+        // Create a UUID with different version (version 1)
+        let v1_uuid = Uuid::parse_str("550e8400-e29b-11d4-a716-446655440000").unwrap();
+        assert_eq!(v1_uuid.get_version_num(), 1);
+
+        let result = validate_uuid(&v1_uuid);
+        assert!(result.is_err());
+
+        match result {
+            Err(UuidValidationError::InvalidVersion { found }) => {
+                assert_eq!(found, 1);
+            }
+            Err(other) => panic!("Expected InvalidVersion error, got: {other:?}"),
+            Ok(()) => panic!("Expected error for version 1 UUID, but validation passed"),
+        }
+    }
+
+    #[test]
+    fn test_validate_uuid_error_display() {
+        // Test error display formatting
+        let nil_error = UuidValidationError::NilUuid;
+        let nil_error_string = format!("{nil_error}");
+        assert!(nil_error_string.contains("nil"));
+        assert!(nil_error_string.contains("not allowed"));
+
+        let version_error = UuidValidationError::InvalidVersion { found: 3 };
+        let version_error_string = format!("{version_error}");
+        assert!(version_error_string.contains("version 4"));
+        assert!(version_error_string.contains("found version 3"));
+    }
+
+    #[test]
+    fn test_validate_uuid_error_equality() {
+        // Test PartialEq for UuidValidationError
+        let error1 = UuidValidationError::NilUuid;
+        let error2 = UuidValidationError::NilUuid;
+        assert_eq!(error1, error2);
+
+        let error3 = UuidValidationError::InvalidVersion { found: 2 };
+        let error4 = UuidValidationError::InvalidVersion { found: 2 };
+        assert_eq!(error3, error4);
+
+        let error5 = UuidValidationError::InvalidVersion { found: 3 };
+        assert_ne!(error3, error5);
+        assert_ne!(error1, error3);
+    }
+
+    // =============================================================================
+    // COORDINATE UTILITIES TESTS
+    // =============================================================================
 
     #[test]
     fn utilities_find_extreme_coordinates_min_max() {
@@ -795,6 +868,10 @@ mod tests {
         );
     }
 
+    // =============================================================================
+    // FACET UTILITIES TESTS
+    // =============================================================================
+
     #[test]
     fn test_facets_are_adjacent() {
         use crate::core::{cell::Cell, facet::Facet};
@@ -894,81 +971,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_validate_uuid_valid() {
-        // Test valid UUID (version 4)
-        let valid_uuid = make_uuid();
-        assert!(validate_uuid(&valid_uuid).is_ok());
-
-        // Test that the function returns Ok for valid UUIDs
-        let result = validate_uuid(&valid_uuid);
-        match result {
-            Ok(()) => (), // Expected
-            Err(e) => panic!("Expected valid UUID to pass validation, got: {e:?}"),
-        }
-    }
-
-    #[test]
-    fn test_validate_uuid_nil() {
-        // Test nil UUID
-        let nil_uuid = Uuid::nil();
-        let result = validate_uuid(&nil_uuid);
-
-        assert!(result.is_err());
-        match result {
-            Err(UuidValidationError::NilUuid) => (), // Expected
-            Err(other) => panic!("Expected NilUuid error, got: {other:?}"),
-            Ok(()) => panic!("Expected error for nil UUID, but validation passed"),
-        }
-    }
-
-    #[test]
-    fn test_validate_uuid_wrong_version() {
-        // Create a UUID with different version (version 1)
-        let v1_uuid = Uuid::parse_str("550e8400-e29b-11d4-a716-446655440000").unwrap();
-        assert_eq!(v1_uuid.get_version_num(), 1);
-
-        let result = validate_uuid(&v1_uuid);
-        assert!(result.is_err());
-
-        match result {
-            Err(UuidValidationError::InvalidVersion { found }) => {
-                assert_eq!(found, 1);
-            }
-            Err(other) => panic!("Expected InvalidVersion error, got: {other:?}"),
-            Ok(()) => panic!("Expected error for version 1 UUID, but validation passed"),
-        }
-    }
-
-    #[test]
-    fn test_validate_uuid_error_display() {
-        // Test error display formatting
-        let nil_error = UuidValidationError::NilUuid;
-        let nil_error_string = format!("{nil_error}");
-        assert!(nil_error_string.contains("nil"));
-        assert!(nil_error_string.contains("not allowed"));
-
-        let version_error = UuidValidationError::InvalidVersion { found: 3 };
-        let version_error_string = format!("{version_error}");
-        assert!(version_error_string.contains("version 4"));
-        assert!(version_error_string.contains("found version 3"));
-    }
-
-    #[test]
-    fn test_validate_uuid_error_equality() {
-        // Test PartialEq for UuidValidationError
-        let error1 = UuidValidationError::NilUuid;
-        let error2 = UuidValidationError::NilUuid;
-        assert_eq!(error1, error2);
-
-        let error3 = UuidValidationError::InvalidVersion { found: 2 };
-        let error4 = UuidValidationError::InvalidVersion { found: 2 };
-        assert_eq!(error3, error4);
-
-        let error5 = UuidValidationError::InvalidVersion { found: 3 };
-        assert_ne!(error3, error5);
-        assert_ne!(error1, error3);
-    }
+    // =============================================================================
+    // COMBINATION UTILITIES TESTS
+    // =============================================================================
 
     #[test]
     fn test_generate_combinations() {

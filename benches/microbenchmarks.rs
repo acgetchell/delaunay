@@ -88,7 +88,7 @@ fn benchmark_assign_neighbors(c: &mut Criterion) {
                         tds
                     },
                     |mut tds| {
-                        let _ = tds.assign_neighbors();
+                        tds.assign_neighbors().unwrap();
                         black_box(tds);
                     },
                 );
