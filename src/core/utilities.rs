@@ -34,6 +34,7 @@ pub enum ExtremeType {
 
 /// Errors that can occur when finding extreme coordinates.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ExtremeCoordinatesError {
     /// The vertices `SlotMap` is empty.
     #[error("Cannot find extreme coordinates: vertices SlotMap is empty")]
@@ -51,6 +52,39 @@ pub enum UuidValidationError {
     InvalidVersion {
         /// The version number that was found.
         found: usize,
+    },
+}
+
+/// Errors that can occur during supercell creation.
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum SuperCellError {
+    /// The dimension D must be greater than 0.
+    #[error("Invalid dimension: D must be greater than 0, but got {dimension}")]
+    InvalidDimension {
+        /// The invalid dimension value that was provided.
+        dimension: usize,
+    },
+    /// The radius must be greater than 0 to avoid degeneracies.
+    #[error(
+        "Invalid radius: radius must be greater than 0 to avoid degeneracies, but got {radius}"
+    )]
+    InvalidRadius {
+        /// The invalid radius value that was provided.
+        radius: f64,
+    },
+    /// Failed to convert dimension D to f64 for calculations.
+    #[error("Failed to convert dimension {dimension} to f64 for calculations")]
+    DimensionConversionFailed {
+        /// The dimension that failed to convert.
+        dimension: usize,
+    },
+    /// Failed to convert a coordinate value during supercell construction.
+    #[error(
+        "Failed to convert coordinate value {value} from f64 to target type during supercell construction"
+    )]
+    CoordinateConversionFailed {
+        /// The f64 value that failed to convert.
+        value: f64,
     },
 }
 
@@ -374,19 +408,21 @@ where
 ///
 /// # Returns
 ///
-/// A vector of `Point<T, D>` representing the vertices of the simplex.
+/// Returns `Ok(Vec<Point<T, D>>)` containing the vertices of the simplex on success.
 /// For D-dimensional space, returns D+1 vertices forming a valid D-simplex.
+/// Returns `Err(SuperCellError)` if an error occurs during construction.
 ///
 /// # Type Parameters
 ///
 /// * `T` - The coordinate scalar type (e.g., f64, f32)
 /// * `D` - The dimension of the space
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if coordinate conversion from `f64` to type `T` fails during vertex creation.
-/// This can happen if the computed coordinate values exceed the representable range of type `T`
-/// or if the `NumCast::from` conversion fails.
+/// Returns `SuperCellError::InvalidDimension` if D is 0.
+/// Returns `SuperCellError::InvalidRadius` if radius is not positive.
+/// Returns `SuperCellError::DimensionConversionFailed` if converting D to f64 fails.
+/// Returns `SuperCellError::CoordinateConversionFailed` if coordinate conversion fails.
 ///
 /// # Examples
 ///
@@ -397,18 +433,24 @@ where
 /// // Create a 3D tetrahedron centered at origin with radius 10.0
 /// let center = [0.0f64; 3];
 /// let radius = 10.0f64;
-/// let simplex_points = create_supercell_simplex(&center, radius);
+/// let simplex_points = create_supercell_simplex(&center, radius).unwrap();
 /// assert_eq!(simplex_points.len(), 4); // Tetrahedron has 4 vertices
 ///
 /// // Create a 2D triangle
 /// let center_2d = [5.0f64, 5.0f64];
-/// let simplex_2d = create_supercell_simplex(&center_2d, 3.0f64);
+/// let simplex_2d = create_supercell_simplex(&center_2d, 3.0f64).unwrap();
 /// assert_eq!(simplex_2d.len(), 3); // Triangle has 3 vertices
 ///
 /// // Create a 4D 4-simplex
 /// let center_4d = [0.0f64; 4];
-/// let simplex_4d = create_supercell_simplex(&center_4d, 5.0f64);
+/// let simplex_4d = create_supercell_simplex(&center_4d, 5.0f64).unwrap();
 /// assert_eq!(simplex_4d.len(), 5); // 4-simplex has 5 vertices
+///
+/// // Error handling example
+/// let center_invalid = [0.0f64; 0]; // This won't compile due to const generic
+/// // But if dimension could be 0:
+/// // let result = create_supercell_simplex(&center_invalid, 1.0);
+/// // assert!(result.is_err());
 /// ```
 ///
 /// # Algorithm Details
@@ -420,17 +462,35 @@ where
 ///
 /// The resulting simplex is guaranteed to be non-degenerate and suitable for
 /// use as a bounding supercell in triangulation algorithms across all dimensions.
-pub fn create_supercell_simplex<T, const D: usize>(center: &[T; D], radius: T) -> Vec<Point<T, D>>
+pub fn create_supercell_simplex<T, const D: usize>(
+    center: &[T; D],
+    radius: T,
+) -> Result<Vec<Point<T, D>>, SuperCellError>
 where
     T: CoordinateScalar + NumCast,
     f64: From<T>,
     [T; D]: Default + DeserializeOwned + Serialize + Copy + Sized,
 {
+    // Validate dimension
+    if D == 0 {
+        return Err(SuperCellError::InvalidDimension { dimension: D });
+    }
+
+    // Convert radius to f64 for validation and calculations
+    let radius_f64: f64 = radius.into();
+
+    // Validate radius
+    if radius_f64 <= 0.0 {
+        return Err(SuperCellError::InvalidRadius { radius: radius_f64 });
+    }
+
+    // Convert dimension to f64 for calculations
+    let d_f64: f64 =
+        NumCast::from(D).ok_or(SuperCellError::DimensionConversionFailed { dimension: D })?;
+
+    // Initialize result vector
     let mut points = Vec::new();
     points.reserve_exact(D + 1);
-    let radius_f64: f64 = radius.into();
-    assert!(D > 0, "create_supercell_simplex requires D > 0");
-    debug_assert!(radius_f64 > 0.0, "radius must be > 0 to avoid degeneracies");
 
     // Use a generic construction that works well for all dimensions
     // This creates D+1 vertices that are guaranteed to be non-degenerate
@@ -438,7 +498,6 @@ where
 
     // Use a scaling factor to ensure good separation across all dimensions
     let scale = radius_f64 * 2.0; // Use 2x radius for better separation
-    let d_f64: f64 = NumCast::from(D).expect("Failed to convert dimension D to f64");
 
     for vertex_idx in 0..=D {
         let mut coords = [T::default(); D];
@@ -463,14 +522,18 @@ where
                 }
             };
 
-            coords[coord_idx] =
-                NumCast::from(center_f64 + offset).expect("Failed to convert coordinate");
+            let final_coordinate = center_f64 + offset;
+            coords[coord_idx] = NumCast::from(final_coordinate).ok_or(
+                SuperCellError::CoordinateConversionFailed {
+                    value: final_coordinate,
+                },
+            )?;
         }
 
         points.push(Point::new(coords));
     }
 
-    points
+    Ok(points)
 }
 
 // =============================================================================

@@ -57,6 +57,7 @@ use thiserror::Error;
 
 /// Error type for facet operations.
 #[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FacetError {
     /// The cell does not contain the vertex.
     #[error("The cell does not contain the vertex!")]
@@ -171,8 +172,9 @@ where
                 let cell = cell.ok_or_else(|| de::Error::missing_field("cell"))?;
                 let vertex = vertex.ok_or_else(|| de::Error::missing_field("vertex"))?;
 
-                Facet::new(cell, vertex)
-                    .map_err(|_| de::Error::custom("Failed to create Facet from cell and vertex"))
+                Facet::new(cell, vertex).map_err(|e| {
+                    de::Error::custom(format!("Failed to create Facet from cell and vertex: {e}"))
+                })
             }
         }
 
@@ -233,7 +235,7 @@ where
     /// assert_eq!(facet.cell(), &cell);
     /// ```
     pub fn new(cell: Cell<T, U, V, D>, vertex: Vertex<T, U, D>) -> Result<Self, FacetError> {
-        if !cell.vertices().contains(&vertex) {
+        if !cell.contains_vertex(vertex) {
             return Err(FacetError::CellDoesNotContainVertex);
         }
 
@@ -393,8 +395,8 @@ where
 
     /// Returns a canonical key for the facet.
     ///
-    /// This key is a stable hash of the sorted vertex UUIDs, ensuring that any two facets
-    /// sharing the same vertices have the same key, regardless of vertex order.
+    /// This key is a stable hash of the vertex UUIDs after sorting the vertices by UUID,
+    /// ensuring any two facets sharing the same vertices have the same key, regardless of input order.
     /// Uses the same deterministic hash algorithm as `facet_key_from_vertex_keys`.
     ///
     /// # Returns

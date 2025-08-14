@@ -1259,7 +1259,11 @@ where
         let radius = NumCast::from(radius_f64).expect("Failed to convert radius");
 
         // Create a proper non-degenerate simplex (tetrahedron for 3D)
-        let points = create_supercell_simplex(&center, radius);
+        let points = create_supercell_simplex(&center, radius).map_err(|e| {
+            anyhow::Error::new(TriangulationValidationError::FailedToCreateCell {
+                message: format!("Failed to create supercell simplex: {e}"),
+            })
+        })?;
 
         let supercell = CellBuilder::default()
             .vertices(Vertex::from_points(points))
@@ -1274,7 +1278,11 @@ where
     fn create_default_supercell() -> Result<Cell<T, U, V, D>, anyhow::Error> {
         let center = [T::default(); D];
         let radius = NumCast::from(20.0f64).expect("Failed to convert radius"); // Default radius of 20.0
-        let points = create_supercell_simplex(&center, radius);
+        let points = create_supercell_simplex(&center, radius).map_err(|e| {
+            anyhow::Error::new(TriangulationValidationError::FailedToCreateCell {
+                message: format!("Failed to create default supercell simplex: {e}"),
+            })
+        })?;
 
         CellBuilder::default()
             .vertices(Vertex::from_points(points))
@@ -1480,7 +1488,11 @@ where
 
             // Add new cells and their mappings
             for facet in &boundary_facets {
-                let new_cell = Cell::from_facet_and_vertex(facet, vertex);
+                let new_cell = Cell::from_facet_and_vertex(facet, vertex).map_err(|e| {
+                    TriangulationValidationError::FailedToCreateCell {
+                        message: format!("Failed to create cell from facet and vertex: {e}"),
+                    }
+                })?;
                 let new_cell_key = self.cells.insert(new_cell);
                 let new_cell_uuid = self.cells[new_cell_key].uuid();
                 self.cell_bimap.insert(new_cell_uuid, new_cell_key);

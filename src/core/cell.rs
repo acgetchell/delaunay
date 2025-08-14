@@ -495,6 +495,10 @@ where
 
     /// Returns the list of `VertexKeys` for the [Cell].
     ///
+    /// This method maps the vertex UUIDs from this cell to their corresponding `VertexKey`s
+    /// using the provided bimap. This is essential for triangulation operations that need
+    /// to work with `SlotMap` keys rather than UUIDs for efficient access.
+    ///
     /// # Arguments
     ///
     /// * `vertex_bimap` - A reference to the bimap that maps vertex UUIDs to vertex keys
@@ -502,23 +506,60 @@ where
     /// # Returns
     ///
     /// A `Result` containing a `Vec<VertexKey>` if all vertices are found in the bimap,
-    /// or a `String` error message if any vertex is missing.
+    /// or a `FacetError` if any vertex is missing.
     ///
     /// # Errors
     ///
-    /// Returns an error if any vertex UUID in this cell is not found in the provided
-    /// vertex bimap. The error message will include the missing UUID.
+    /// Returns `FacetError::VertexNotFound` if any vertex UUID in this cell is not found
+    /// in the provided vertex bimap. The error will contain the UUID of the missing vertex.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::triangulation_data_structure::VertexKey;
+    /// use bimap::BiMap;
+    /// use uuid::Uuid;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices.clone());
+    ///
+    /// // Create a bimap with the vertex mappings using the cell's vertices
+    /// let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+    /// let mut vertex_keys = Vec::new();
+    ///
+    /// for (i, vertex) in cell.vertices().iter().enumerate() {
+    ///     let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
+    ///     vertex_bimap.insert(vertex.uuid(), key);
+    ///     vertex_keys.push(key);
+    /// }
+    ///
+    /// // Successfully retrieve vertex keys
+    /// let result = cell.vertex_keys(&vertex_bimap).unwrap();
+    /// assert_eq!(result.len(), 4);
+    ///
+    /// // Test with missing vertex
+    /// let mut empty_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+    /// let error_result = cell.vertex_keys(&empty_bimap);
+    /// assert!(error_result.is_err());
+    /// ```
     pub fn vertex_keys(
         &self,
         vertex_bimap: &BiMap<Uuid, VertexKey>,
-    ) -> Result<Vec<VertexKey>, String> {
+    ) -> Result<Vec<VertexKey>, FacetError> {
         self.vertices()
             .iter()
             .map(|v| {
                 vertex_bimap
                     .get_by_left(&v.uuid())
                     .copied()
-                    .ok_or_else(|| format!("Vertex UUID not found in bimap: {}", v.uuid()))
+                    .ok_or_else(|| FacetError::VertexNotFound { uuid: v.uuid() })
             })
             .collect()
     }
@@ -547,7 +588,7 @@ where
     /// ```
     #[inline]
     pub fn dim(&self) -> usize {
-        self.vertices.len() - 1
+        self.vertices.len().saturating_sub(1)
     }
 
     /// The function `contains_vertex` checks if a given vertex is present in
@@ -620,7 +661,13 @@ where
     ///
     /// # Returns
     ///
-    /// A new [Cell] containing all vertices from the facet plus the additional vertex.
+    /// A `Result` containing a new [Cell] with all vertices from the facet plus the additional vertex,
+    /// or a `CellValidationError` if the vertex already exists in the facet.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CellValidationError::DuplicateVertices` if the provided vertex already exists
+    /// in the facet, which would result in a cell with duplicate vertices.
     ///
     /// # Example
     ///
@@ -637,21 +684,48 @@ where
     /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4]);
     /// let facet = Facet::new(cell.clone(), vertex4).unwrap();
     /// let vertex5: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
-    /// let new_cell = Cell::from_facet_and_vertex(&facet, vertex5);
+    /// let new_cell = Cell::from_facet_and_vertex(&facet, vertex5).unwrap();
     /// assert!(new_cell.vertices().contains(&vertex5));
     /// ```
-    pub fn from_facet_and_vertex(facet: &Facet<T, U, V, D>, vertex: Vertex<T, U, D>) -> Self {
-        let mut vertices = facet.vertices();
+    ///
+    /// ```should_panic
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::core::cell::Cell;
+    /// use delaunay::core::facet::Facet;
+    /// use delaunay::core::vertex::Vertex;
+    ///
+    /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
+    /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
+    /// let vertex3: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
+    /// let vertex4: Vertex<f64, Option<()>, 3> = vertex!([1.0, 1.0, 1.0]);
+    /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+    /// let facet = Facet::new(cell.clone(), vertex4).unwrap();
+    /// // This should fail because vertex1 is already in the facet
+    /// let new_cell = Cell::from_facet_and_vertex(&facet, vertex1).unwrap();
+    /// ```
+    pub fn from_facet_and_vertex(
+        facet: &Facet<T, U, V, D>,
+        vertex: Vertex<T, U, D>,
+    ) -> Result<Self, CellValidationError> {
+        let facet_vertices = facet.vertices();
+
+        // Check if the vertex already exists in the facet
+        if facet_vertices.contains(&vertex) {
+            return Err(CellValidationError::DuplicateVertices);
+        }
+
+        let mut vertices = facet_vertices;
         vertices.push(vertex);
         let uuid = make_uuid();
         let neighbors = None;
         let data = None;
-        Self {
+
+        Ok(Self {
             vertices,
             uuid,
             neighbors,
             data,
-        }
+        })
     }
 
     /// Converts a vector of cells into a `HashMap` indexed by their UUIDs.
@@ -1539,6 +1613,194 @@ mod tests {
     }
 
     // =============================================================================
+    // VERTEX_KEYS METHOD TESTS
+    // =============================================================================
+    // Comprehensive tests for the vertex_keys method covering both success
+    // and error cases.
+
+    #[test]
+    fn test_vertex_keys_success() {
+        // Test the vertex_keys method returns correct vertex keys vector
+        let vertex1 = vertex!([0.0, 0.0, 0.0], 10);
+        let vertex2 = vertex!([1.0, 0.0, 0.0], 20);
+        let vertex3 = vertex!([0.0, 1.0, 0.0], 30);
+        let vertex4 = vertex!([0.0, 0.0, 1.0], 40);
+
+        let cell: Cell<f64, i32, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+
+        // Create a BiMap mapping vertex UUIDs to VertexKeys
+        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+        let vertex_keys: Vec<VertexKey> = cell
+            .vertices()
+            .iter()
+            .enumerate()
+            .map(|(i, vertex)| {
+                let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
+                vertex_bimap.insert(vertex.uuid(), key);
+                key
+            })
+            .collect();
+
+        let result = cell.vertex_keys(&vertex_bimap);
+        assert!(result.is_ok());
+
+        let returned_keys = result.unwrap();
+        assert_eq!(returned_keys.len(), 4);
+
+        // Verify that all returned keys match our expected keys
+        for (expected_key, returned_key) in vertex_keys.iter().zip(returned_keys.iter()) {
+            assert_eq!(expected_key, returned_key);
+        }
+
+        println!("✓ vertex_keys method returns correct vertex keys");
+    }
+
+    #[test]
+    fn test_vertex_keys_empty_cell_fails() {
+        // Test that vertex_keys fails gracefully on invalid cell construction
+        // Note: We can't actually create an empty cell via normal means due to validation,
+        // but we can test the method's error handling by creating a cell with insufficient vertices
+
+        // This test documents expected behavior - cell creation with insufficient vertices
+        // should fail during construction, not during vertex_keys() call
+        let vertices = vec![vertex!([0.0, 0.0, 0.0])];
+        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
+            CellBuilder::default().vertices(vertices).build();
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Insufficient vertices"));
+
+        println!("✓ Cell construction properly validates vertex count");
+    }
+
+    #[test]
+    fn test_vertex_keys_2d_cell() {
+        // Test vertex_keys with a 2D cell (triangle)
+        let vertex1 = vertex!([0.0, 0.0], 1);
+        let vertex2 = vertex!([1.0, 0.0], 2);
+        let vertex3 = vertex!([0.5, 1.0], 3);
+
+        let cell: Cell<f64, i32, Option<()>, 2> = cell!(vec![vertex1, vertex2, vertex3]);
+
+        // Create a BiMap mapping vertex UUIDs to VertexKeys
+        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+        let expected_keys: Vec<VertexKey> = cell
+            .vertices()
+            .iter()
+            .enumerate()
+            .map(|(i, vertex)| {
+                let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
+                vertex_bimap.insert(vertex.uuid(), key);
+                key
+            })
+            .collect();
+
+        let result = cell.vertex_keys(&vertex_bimap);
+        assert!(result.is_ok());
+
+        let returned_keys = result.unwrap();
+        assert_eq!(returned_keys.len(), 3);
+
+        // Verify that all returned keys match our expected keys
+        for (expected_key, returned_key) in expected_keys.iter().zip(returned_keys.iter()) {
+            assert_eq!(expected_key, returned_key);
+        }
+
+        println!("✓ vertex_keys works correctly for 2D cells");
+    }
+
+    #[test]
+    fn test_vertex_keys_4d_cell() {
+        // Test vertex_keys with a 4D cell (5-simplex) using integer data
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0], 1),
+            vertex!([1.0, 0.0, 0.0, 0.0], 2),
+            vertex!([0.0, 1.0, 0.0, 0.0], 3),
+            vertex!([0.0, 0.0, 1.0, 0.0], 4),
+            vertex!([0.0, 0.0, 0.0, 1.0], 5),
+        ];
+
+        let cell: Cell<f64, i32, Option<()>, 4> = cell!(vertices);
+
+        // Create a BiMap mapping vertex UUIDs to VertexKeys
+        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+        let expected_keys: Vec<VertexKey> = cell
+            .vertices()
+            .iter()
+            .enumerate()
+            .map(|(i, vertex)| {
+                let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
+                vertex_bimap.insert(vertex.uuid(), key);
+                key
+            })
+            .collect();
+
+        let result = cell.vertex_keys(&vertex_bimap);
+        assert!(result.is_ok());
+
+        let returned_keys = result.unwrap();
+        assert_eq!(returned_keys.len(), 5);
+
+        // Verify all 5 vertices are mapped correctly
+        for (i, (expected_key, returned_key)) in
+            expected_keys.iter().zip(returned_keys.iter()).enumerate()
+        {
+            assert_eq!(expected_key, returned_key);
+            let vertex = cell.vertices().get(i).unwrap();
+            assert_eq!(vertex.data, Some(i32::try_from(i + 1).unwrap()));
+        }
+
+        println!("✓ vertex_keys works correctly for 4D cells");
+    }
+
+    #[test]
+    fn test_vertex_keys_with_f32_coordinates() {
+        // Test vertex_keys with f32 coordinates
+        let vertices = vec![
+            vertex!([0.0f32, 0.0f32, 0.0f32]),
+            vertex!([1.0f32, 0.0f32, 0.0f32]),
+            vertex!([0.0f32, 1.0f32, 0.0f32]),
+            vertex!([0.0f32, 0.0f32, 1.0f32]),
+        ];
+
+        let cell: Cell<f32, Option<()>, Option<()>, 3> = cell!(vertices);
+
+        // Create a BiMap mapping vertex UUIDs to VertexKeys
+        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+        let expected_keys: Vec<VertexKey> = cell
+            .vertices()
+            .iter()
+            .enumerate()
+            .map(|(i, vertex)| {
+                let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
+                vertex_bimap.insert(vertex.uuid(), key);
+                key
+            })
+            .collect();
+
+        let result = cell.vertex_keys(&vertex_bimap);
+        assert!(result.is_ok());
+
+        let returned_keys = result.unwrap();
+        assert_eq!(returned_keys.len(), 4);
+
+        // Verify coordinate type is preserved
+        assert_relative_eq!(
+            cell.vertices()[0].point().to_array()[0],
+            0.0f32,
+            epsilon = f32::EPSILON
+        );
+
+        // Verify that all returned keys match our expected keys
+        for (expected_key, returned_key) in expected_keys.iter().zip(returned_keys.iter()) {
+            assert_eq!(expected_key, returned_key);
+        }
+
+        println!("✓ vertex_keys works correctly with f32 coordinates");
+    }
+
+    // =============================================================================
     // DIMENSIONAL TESTS
     // =============================================================================
     // Tests covering cells in different dimensions (1D, 2D, 3D, 4D+) and
@@ -2103,7 +2365,8 @@ mod tests {
         let new_vertex = vertex!([1.0, 1.0, 1.0]);
 
         // Create new cell from facet and vertex
-        let new_cell = Cell::from_facet_and_vertex(&facet, new_vertex);
+        let new_cell = Cell::from_facet_and_vertex(&facet, new_vertex)
+            .expect("Failed to create cell from facet and vertex");
 
         // Verify the new cell contains the original facet vertices plus the new vertex
         assert!(new_cell.contains_vertex(vertex1));
@@ -2113,6 +2376,55 @@ mod tests {
         assert!(!new_cell.contains_vertex(vertex4)); // Should not contain the removed vertex
         assert_eq!(new_cell.number_of_vertices(), 4);
         assert_eq!(new_cell.dim(), 3);
+    }
+
+    #[test]
+    fn test_from_facet_and_vertex_duplicate_vertex() {
+        // Test that from_facet_and_vertex returns an error when trying to add a duplicate vertex
+        let vertex1 = vertex!([0.0, 0.0, 1.0]);
+        let vertex2 = vertex!([0.0, 1.0, 0.0]);
+        let vertex3 = vertex!([1.0, 0.0, 0.0]);
+        let vertex4 = vertex!([1.0, 1.0, 1.0]);
+
+        let cell: Cell<f64, Option<()>, Option<()>, 3> =
+            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+
+        // Create a facet by removing vertex4
+        let facet = Facet::new(cell, vertex4).unwrap();
+
+        // Try to add vertex1 (which is already in the facet) - should fail with DuplicateVertices
+        let result = Cell::from_facet_and_vertex(&facet, vertex1);
+
+        assert!(result.is_err(), "Should return error for duplicate vertex");
+        match result.unwrap_err() {
+            CellValidationError::DuplicateVertices => {
+                println!("✓ Successfully detected duplicate vertex");
+            }
+            other => panic!("Expected DuplicateVertices error, got: {other:?}"),
+        }
+
+        // Also test that a valid (non-duplicate) vertex works
+        let new_vertex = vertex!([0.0, 0.0, 0.0]); // This vertex is not in the facet
+        let valid_result = Cell::from_facet_and_vertex(&facet, new_vertex);
+        assert!(
+            valid_result.is_ok(),
+            "Should succeed with non-duplicate vertex"
+        );
+
+        let new_cell = valid_result.unwrap();
+        assert!(
+            new_cell.contains_vertex(new_vertex),
+            "New cell should contain the new vertex"
+        );
+        assert!(
+            !new_cell.contains_vertex(vertex4),
+            "New cell should not contain the removed vertex"
+        );
+        assert_eq!(
+            new_cell.number_of_vertices(),
+            4,
+            "New cell should have 4 vertices"
+        );
     }
 
     #[test]
