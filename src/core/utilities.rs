@@ -38,12 +38,6 @@ pub enum ExtremeCoordinatesError {
     /// The vertices `SlotMap` is empty.
     #[error("Cannot find extreme coordinates: vertices SlotMap is empty")]
     EmptyVertices,
-    /// Invalid extreme type was specified (this should not occur with the enum).
-    #[error("Invalid extreme type: {message}")]
-    InvalidExtremeType {
-        /// Description of the invalid extreme type usage.
-        message: String,
-    },
 }
 
 /// Errors that can occur during UUID validation.
@@ -191,16 +185,12 @@ where
     U: DataType,
     [T; D]: Default + DeserializeOwned + Serialize + Sized,
 {
-    if vertices.is_empty() {
-        return Err(ExtremeCoordinatesError::EmptyVertices);
-    }
-
     let mut iter = vertices.values();
     let first_vertex = iter.next().ok_or(ExtremeCoordinatesError::EmptyVertices)?;
-    let mut extreme_coords: [T; D] = (*first_vertex).into();
+    let mut extreme_coords: [T; D] = first_vertex.into();
 
     for vertex in iter {
-        let vertex_coords: [T; D] = (*vertex).into();
+        let vertex_coords: [T; D] = vertex.into();
         for (i, coord) in vertex_coords.iter().enumerate() {
             match extreme_type {
                 ExtremeType::Minimum => {
@@ -437,8 +427,10 @@ where
     [T; D]: Default + DeserializeOwned + Serialize + Copy + Sized,
 {
     let mut points = Vec::new();
+    points.reserve_exact(D + 1);
     let radius_f64: f64 = radius.into();
-    debug_assert!(D > 0, "create_supercell_simplex requires D > 0");
+    assert!(D > 0, "create_supercell_simplex requires D > 0");
+    debug_assert!(radius_f64 > 0.0, "radius must be > 0 to avoid degeneracies");
 
     // Use a generic construction that works well for all dimensions
     // This creates D+1 vertices that are guaranteed to be non-degenerate
@@ -446,6 +438,7 @@ where
 
     // Use a scaling factor to ensure good separation across all dimensions
     let scale = radius_f64 * 2.0; // Use 2x radius for better separation
+    let d_f64: f64 = NumCast::from(D).expect("Failed to convert dimension D to f64");
 
     for vertex_idx in 0..=D {
         let mut coords = [T::default(); D];
@@ -455,7 +448,6 @@ where
 
             // Create a pattern that distributes vertices well in D-space
             // This construction ensures non-degeneracy by using varying offset patterns
-            let d_f64: f64 = NumCast::from(D).expect("Failed to convert dimension D to f64");
             let offset = match coord_idx.cmp(&vertex_idx) {
                 std::cmp::Ordering::Less => {
                     // Negative offset for earlier dimensions - creates good separation
@@ -481,6 +473,79 @@ where
     points
 }
 
+// =============================================================================
+// HASH UTILITIES
+// =============================================================================
+
+/// Applies a stable hash function to a slice of sorted u64 values.
+///
+/// This function uses an FNV-based polynomial rolling hash with an avalanche step
+/// to produce deterministic hash values. The input slice should be pre-sorted to ensure
+/// consistent results regardless of input order.
+///
+/// # Arguments
+///
+/// * `sorted_values` - A slice of u64 values that should be pre-sorted
+///
+/// # Returns
+///
+/// A `u64` hash value representing the stable hash of the input values
+///
+/// # Algorithm
+///
+/// Uses FNV constants with polynomial rolling hash:
+/// 1. Start with FNV offset basis
+/// 2. For each value: `hash = hash.wrapping_mul(PRIME).wrapping_add(value)`
+/// 3. Apply avalanche step for better bit distribution
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::core::utilities::stable_hash_u64_slice;
+/// let values = vec![1u64, 2u64, 3u64];
+/// let hash1 = stable_hash_u64_slice(&values);
+///
+/// let mut reversed = values.clone();
+/// reversed.reverse();
+/// let hash2 = stable_hash_u64_slice(&reversed);
+///
+/// // Different order produces different hash (input should be pre-sorted)
+/// assert_ne!(hash1, hash2);
+///
+/// // Same sorted input produces same hash
+/// let mut sorted1 = values;
+/// sorted1.sort_unstable();
+/// let mut sorted2 = reversed;
+/// sorted2.sort_unstable();
+/// assert_eq!(stable_hash_u64_slice(&sorted1), stable_hash_u64_slice(&sorted2));
+/// ```
+#[must_use]
+pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
+    // Hash constants for facet key generation (FNV-based)
+    const HASH_PRIME: u64 = 1_099_511_628_211; // Large prime (FNV prime)
+    const HASH_OFFSET: u64 = 14_695_981_039_346_656_037; // FNV offset basis
+
+    // Handle empty case
+    if sorted_values.is_empty() {
+        return 0;
+    }
+
+    // Use a polynomial rolling hash for efficient combination
+    let mut hash = HASH_OFFSET;
+    for &value in sorted_values {
+        hash = hash.wrapping_mul(HASH_PRIME).wrapping_add(value);
+    }
+
+    // Apply avalanche step for better bit distribution
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    hash ^= hash >> 33;
+
+    hash
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -489,6 +554,7 @@ mod tests {
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::{DefaultKey, SlotMap};
+    use uuid::Uuid;
 
     use super::*;
 
@@ -733,19 +799,11 @@ mod tests {
 
         // Test with minimum (equivalent to the old behavior)
         let coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
-        // The first vertex in the iteration (order is deterministic in SlotMap)
-        // but the result should be one of the input coordinates
-        let matches_first = approx::relative_eq!(
+        assert!(approx::relative_eq!(
             coords.as_slice(),
             [1.0, 2.0, 3.0].as_slice(),
             epsilon = 1e-9
-        );
-        let matches_second = approx::relative_eq!(
-            coords.as_slice(),
-            [4.0, 5.0, 6.0].as_slice(),
-            epsilon = 1e-9
-        );
-        assert!(matches_first || matches_second);
+        ));
     }
 
     #[test]
@@ -1032,6 +1090,97 @@ mod tests {
             !found_adjacent2,
             "Cells sharing no vertices should not have adjacent facets"
         );
+    }
+
+    // =============================================================================
+    // HASH UTILITIES TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_stable_hash_u64_slice_basic() {
+        let values = vec![1u64, 2u64, 3u64];
+        let hash1 = stable_hash_u64_slice(&values);
+
+        let mut reversed = values.clone();
+        reversed.reverse();
+        let hash2 = stable_hash_u64_slice(&reversed);
+
+        // Different order produces different hash (input should be pre-sorted)
+        assert_ne!(hash1, hash2);
+
+        // Same sorted input produces same hash
+        let mut sorted1 = values;
+        sorted1.sort_unstable();
+        let mut sorted2 = reversed;
+        sorted2.sort_unstable();
+        assert_eq!(
+            stable_hash_u64_slice(&sorted1),
+            stable_hash_u64_slice(&sorted2)
+        );
+    }
+
+    #[test]
+    fn test_stable_hash_u64_slice_empty() {
+        let empty: Vec<u64> = vec![];
+        let hash_empty = stable_hash_u64_slice(&empty);
+        assert_eq!(hash_empty, 0, "Empty slice should produce hash 0");
+    }
+
+    #[test]
+    fn test_stable_hash_u64_slice_single_value() {
+        let single_value = vec![42u64];
+        let hash1 = stable_hash_u64_slice(&single_value);
+
+        let another_single = vec![42u64];
+        let hash2 = stable_hash_u64_slice(&another_single);
+
+        // Same single value should produce same hash
+        assert_eq!(hash1, hash2);
+
+        // Different single value should produce different hash
+        let different_single = vec![43u64];
+        let hash3 = stable_hash_u64_slice(&different_single);
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_stable_hash_u64_slice_deterministic() {
+        let values = vec![100u64, 200u64, 300u64, 400u64];
+        let hash1 = stable_hash_u64_slice(&values);
+        let hash2 = stable_hash_u64_slice(&values);
+        let hash3 = stable_hash_u64_slice(&values);
+
+        // Multiple calls with same input should produce identical results
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash2, hash3);
+        assert_eq!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_stable_hash_u64_slice_different_lengths() {
+        let short = vec![1u64, 2u64];
+        let long = vec![1u64, 2u64, 3u64];
+
+        let hash_short = stable_hash_u64_slice(&short);
+        let hash_long = stable_hash_u64_slice(&long);
+
+        // Different lengths should produce different hashes
+        assert_ne!(hash_short, hash_long);
+    }
+
+    #[test]
+    fn test_stable_hash_u64_slice_large_values() {
+        let large_values = vec![u64::MAX, u64::MAX - 1, u64::MAX - 2];
+        let hash1 = stable_hash_u64_slice(&large_values);
+
+        // Should handle large values without panicking
+        let hash2 = stable_hash_u64_slice(&large_values);
+        assert_eq!(hash1, hash2);
+
+        // Different large values should produce different hashes
+        let different_large = vec![u64::MAX - 3, u64::MAX - 4, u64::MAX - 5];
+        let hash3 = stable_hash_u64_slice(&different_large);
+        assert_ne!(hash1, hash3);
     }
 
     // =============================================================================

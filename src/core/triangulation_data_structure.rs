@@ -1480,11 +1480,7 @@ where
 
             // Add new cells and their mappings
             for facet in &boundary_facets {
-                let new_cell = Cell::from_facet_and_vertex(facet, vertex).map_err(|e| {
-                    TriangulationValidationError::FailedToCreateCell {
-                        message: format!("Error creating cell from facet and vertex: {e}"),
-                    }
-                })?;
+                let new_cell = Cell::from_facet_and_vertex(facet, vertex);
                 let new_cell_key = self.cells.insert(new_cell);
                 let new_cell_uuid = self.cells[new_cell_key].uuid();
                 self.cell_bimap.insert(new_cell_uuid, new_cell_key);

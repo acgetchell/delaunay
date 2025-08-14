@@ -29,7 +29,7 @@ fn main() {
     println!("  - dimension: {}", tds.dim());
 
     // Now using the BoundaryAnalysis trait methods
-    // Note: The trait is automatically in scope due to the prelude
+    // Note: We explicitly import the trait (instead of relying on prelude) for clarity
 
     println!("\n📊 Boundary Analysis:");
 

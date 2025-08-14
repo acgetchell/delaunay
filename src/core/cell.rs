@@ -52,7 +52,6 @@ use crate::prelude::VertexKey;
 use bimap::BiMap;
 use na::ComplexField;
 use nalgebra as na;
-use peroxide::fuga::anyhow;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashMap, fmt::Debug, hash::Hash, iter::Sum};
 use thiserror::Error;
@@ -346,10 +345,14 @@ where
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     fn validate(&self) -> Result<(), CellValidationError> {
-        let vertices = self
-            .vertices
-            .as_ref()
-            .expect("Must create a Cell with Vertices!");
+        let vertices =
+            self.vertices
+                .as_ref()
+                .ok_or_else(|| CellValidationError::InsufficientVertices {
+                    actual: 0,
+                    expected: D + 1,
+                    dimension: D,
+                })?;
 
         let vertex_count = vertices.len();
         if vertex_count != D + 1 {
@@ -617,11 +620,7 @@ where
     ///
     /// # Returns
     ///
-    /// A [Result] type containing the new [Cell] or an error message.
-    ///
-    /// # Errors
-    ///
-    /// This function currently does not return errors, but uses `Result` for future extensibility.
+    /// A new [Cell] containing all vertices from the facet plus the additional vertex.
     ///
     /// # Example
     ///
@@ -638,24 +637,21 @@ where
     /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4]);
     /// let facet = Facet::new(cell.clone(), vertex4).unwrap();
     /// let vertex5: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
-    /// let new_cell = Cell::from_facet_and_vertex(&facet, vertex5).unwrap();
+    /// let new_cell = Cell::from_facet_and_vertex(&facet, vertex5);
     /// assert!(new_cell.vertices().contains(&vertex5));
     /// ```
-    pub fn from_facet_and_vertex(
-        facet: &Facet<T, U, V, D>,
-        vertex: Vertex<T, U, D>,
-    ) -> Result<Self, anyhow::Error> {
+    pub fn from_facet_and_vertex(facet: &Facet<T, U, V, D>, vertex: Vertex<T, U, D>) -> Self {
         let mut vertices = facet.vertices();
         vertices.push(vertex);
         let uuid = make_uuid();
         let neighbors = None;
         let data = None;
-        Ok(Self {
+        Self {
             vertices,
             uuid,
             neighbors,
             data,
-        })
+        }
     }
 
     /// Converts a vector of cells into a `HashMap` indexed by their UUIDs.
@@ -805,32 +801,59 @@ where
 {
     /// Returns all facets (faces) of the cell.
     ///
-    /// A facet is a (D-1)-dimensional face of a D-dimensional cell. For example,
-    /// in a 3D tetrahedron, each facet is a 2D triangle. Each facet is created by
-    /// removing one vertex from the cell, resulting in a lower-dimensional simplex.
+    /// A facet is a (D-1)-dimensional face of a D-dimensional cell, obtained by removing
+    /// exactly one vertex from the original cell. This operation creates all possible
+    /// (D-1)-dimensional boundary faces of the D-dimensional simplex.
     ///
-    /// The number of facets equals the number of vertices in the cell, as each
-    /// vertex defines one facet by its absence from the cell.
+    /// ## Mathematical Background
+    ///
+    /// For a D-dimensional cell (D-simplex) with D+1 vertices:
+    /// - Each facet is a (D-1)-dimensional simplex with D vertices
+    /// - The total number of facets equals the number of vertices (D+1)
+    /// - Each vertex defines exactly one facet by its exclusion from the cell
+    ///
+    /// ## Dimensional Examples
+    ///
+    /// - **1D cell (line segment)**: 2 facets, each being a 0D point (vertex)
+    /// - **2D cell (triangle)**: 3 facets, each being a 1D line segment (edge)
+    /// - **3D cell (tetrahedron)**: 4 facets, each being a 2D triangle (face)
+    /// - **4D cell (4-simplex)**: 5 facets, each being a 3D tetrahedron
+    ///
+    /// ## Facet Construction
+    ///
+    /// Each facet is constructed by:
+    /// 1. Taking all vertices from the original cell
+    /// 2. Removing exactly one vertex (the "opposite" vertex)
+    /// 3. Creating a new (D-1)-dimensional simplex from the remaining D vertices
+    ///
+    /// The facet "opposite" to vertex `v` contains all vertices of the cell except `v`.
     ///
     /// # Type Parameters
     ///
     /// This method requires the coordinate type `T` to implement additional traits
     /// beyond the basic `Cell` requirements:
     /// - `Clone + ComplexField<RealField = T> + PartialEq + PartialOrd + Sum`: Required for
-    ///   geometric computations and facet creation.
+    ///   geometric computations and facet creation operations.
     /// - `f64: From<T>`: Enables conversion to `f64` for numerical operations.
     ///
     /// # Returns
     ///
     /// A `Result<Vec<Facet<T, U, V, D>>, FacetError>` containing all facets of the cell.
-    /// Each facet contains D vertices (one fewer than the original cell's D+1 vertices).
-    /// Returns an error if any facet cannot be created.
+    /// The returned vector has exactly D+1 facets, where each facet contains D vertices
+    /// (one fewer than the original cell's D+1 vertices).
+    ///
+    /// The facets are returned in the same order as the vertices in the original cell,
+    /// where `facets[i]` is the facet opposite to `vertices[i]`.
     ///
     /// # Errors
     ///
-    /// Returns a [`FacetError`] if:
-    /// - The cell is a zero simplex (contains only one vertex) - [`FacetError::CellIsZeroSimplex`]
-    /// - The cell contains duplicate vertices that prevent facet creation - [`FacetError::CellDoesNotContainVertex`]
+    /// Returns a [`FacetError`] if facet creation fails:
+    /// - [`FacetError::CellDoesNotContainVertex`]: Internal consistency error where
+    ///   a vertex appears to be missing from the cell during facet construction.
+    ///   This should not occur under normal circumstances for properly constructed cells.
+    ///
+    /// Note: For properly constructed cells with D+1 distinct vertices, this method
+    /// should not fail under normal circumstances.
     ///
     /// # Examples
     ///
@@ -2080,7 +2103,7 @@ mod tests {
         let new_vertex = vertex!([1.0, 1.0, 1.0]);
 
         // Create new cell from facet and vertex
-        let new_cell = Cell::from_facet_and_vertex(&facet, new_vertex).unwrap();
+        let new_cell = Cell::from_facet_and_vertex(&facet, new_vertex);
 
         // Verify the new cell contains the original facet vertices plus the new vertex
         assert!(new_cell.contains_vertex(vertex1));

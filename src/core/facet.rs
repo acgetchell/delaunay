@@ -43,11 +43,11 @@
 // =============================================================================
 
 use super::traits::data_type::DataType;
+use super::utilities::stable_hash_u64_slice;
 use super::{cell::Cell, triangulation_data_structure::VertexKey, vertex::Vertex};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use serde::{Serialize, de::DeserializeOwned};
 use slotmap::Key;
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use thiserror::Error;
 
@@ -61,6 +61,12 @@ pub enum FacetError {
     /// The cell does not contain the vertex.
     #[error("The cell does not contain the vertex!")]
     CellDoesNotContainVertex,
+    /// A vertex UUID was not found in the vertex bimap.
+    #[error("Vertex UUID not found in bimap: {uuid}")]
+    VertexNotFound {
+        /// The UUID that was not found.
+        uuid: uuid::Uuid,
+    },
 }
 
 // =============================================================================
@@ -165,7 +171,8 @@ where
                 let cell = cell.ok_or_else(|| de::Error::missing_field("cell"))?;
                 let vertex = vertex.ok_or_else(|| de::Error::missing_field("vertex"))?;
 
-                Ok(Facet { cell, vertex })
+                Facet::new(cell, vertex)
+                    .map_err(|_| de::Error::custom("Failed to create Facet from cell and vertex"))
             }
         }
 
@@ -386,20 +393,31 @@ where
 
     /// Returns a canonical key for the facet.
     ///
-    /// This key is a hash of the sorted vertex UUIDs, ensuring that any two facets
+    /// This key is a stable hash of the sorted vertex UUIDs, ensuring that any two facets
     /// sharing the same vertices have the same key, regardless of vertex order.
+    /// Uses the same deterministic hash algorithm as `facet_key_from_vertex_keys`.
     ///
     /// # Returns
     ///
     /// A `u64` hash value representing the canonical key of the facet.
     pub fn key(&self) -> u64 {
         let mut vertices = self.vertices();
-        vertices.sort_by_key(super::vertex::Vertex::uuid);
-        let mut hasher = DefaultHasher::new();
+        vertices.sort_by_key(Vertex::uuid);
+
+        // Convert UUIDs to u64 values for hashing
+        let mut uuid_values = Vec::with_capacity(vertices.len() * 2);
         for vertex in vertices {
-            vertex.uuid().hash(&mut hasher);
+            let uuid_bytes = vertex.uuid().as_u128();
+            // Intentionally truncate to u64 to get low bits, then high bits
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                uuid_values.push(uuid_bytes as u64);
+                uuid_values.push((uuid_bytes >> 64) as u64);
+            }
         }
-        hasher.finish()
+
+        // Use the shared stable hash function
+        stable_hash_u64_slice(&uuid_values)
     }
 }
 
@@ -502,10 +520,6 @@ where
 /// - Efficient computation with minimal allocations
 #[must_use]
 pub fn facet_key_from_vertex_keys(vertex_keys: &[VertexKey]) -> u64 {
-    // Hash constants for facet key generation
-    const HASH_PRIME: u64 = 1_099_511_628_211; // Large prime (FNV prime)
-    const HASH_OFFSET: u64 = 14_695_981_039_346_656_037; // FNV offset basis
-
     // Handle empty case
     if vertex_keys.is_empty() {
         return 0;
@@ -515,22 +529,8 @@ pub fn facet_key_from_vertex_keys(vertex_keys: &[VertexKey]) -> u64 {
     let mut key_values: Vec<u64> = vertex_keys.iter().map(|key| key.data().as_ffi()).collect();
     key_values.sort_unstable();
 
-    // Use a polynomial rolling hash for efficient combination
-    // Prime constant chosen for good hash distribution
-
-    let mut hash = HASH_OFFSET;
-    for &key_value in &key_values {
-        hash = hash.wrapping_mul(HASH_PRIME).wrapping_add(key_value);
-    }
-
-    // Apply avalanche step for better bit distribution
-    hash ^= hash >> 33;
-    hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
-    hash ^= hash >> 33;
-    hash = hash.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-    hash ^= hash >> 33;
-
-    hash
+    // Use the shared stable hash function
+    stable_hash_u64_slice(&key_values)
 }
 
 /// Generates a canonical facet key from a collection of vertices using their `VertexKeys`.
@@ -553,8 +553,8 @@ pub fn facet_key_from_vertex_keys(vertex_keys: &[VertexKey]) -> u64 {
 ///
 /// # Errors
 ///
-/// Returns an error if any vertex UUID is not found in the provided vertex bimap.
-/// The error message will include the missing UUID.
+/// Returns a `FacetError::VertexNotFound` if any vertex UUID is not found in the provided vertex bimap.
+/// The error will include the missing UUID for debugging purposes.
 ///
 /// # Examples
 ///
@@ -588,20 +588,22 @@ pub fn facet_key_from_vertex_keys(vertex_keys: &[VertexKey]) -> u64 {
 pub fn facet_key_from_vertices<T, U, const D: usize>(
     vertices: &[Vertex<T, U, D>],
     vertex_bimap: &bimap::BiMap<uuid::Uuid, VertexKey>,
-) -> Result<u64, String>
+) -> Result<u64, FacetError>
 where
     T: CoordinateScalar,
     U: DataType,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     // Look up VertexKeys for all vertices
-    let vertex_keys: Result<Vec<VertexKey>, String> = vertices
+    let vertex_keys: Result<Vec<VertexKey>, FacetError> = vertices
         .iter()
         .map(|vertex| {
             vertex_bimap
                 .get_by_left(&vertex.uuid())
                 .copied()
-                .ok_or_else(|| format!("UUID not found in bimap: {}", vertex.uuid()))
+                .ok_or_else(|| FacetError::VertexNotFound {
+                    uuid: vertex.uuid(),
+                })
         })
         .collect();
 
@@ -1403,5 +1405,55 @@ mod tests {
             result.is_err(),
             "Should return an error when vertex is not in bimap"
         );
+    }
+
+    #[test]
+    fn test_facet_error_vertex_not_found() {
+        // Test the new VertexNotFound error variant
+        let vertices: Vec<Vertex<f64, Option<()>, 3>> =
+            vec![vertex!([0.0, 0.0, 0.0]), vertex!([1.0, 0.0, 0.0])];
+
+        // Create an empty vertex bimap (no vertices mapped)
+        let vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+
+        // Try to generate facet key from vertices that aren't in the bimap
+        let result = facet_key_from_vertices(&vertices, &vertex_bimap);
+
+        // Should return FacetError::VertexNotFound
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            FacetError::VertexNotFound { uuid } => {
+                assert_eq!(uuid, vertices[0].uuid());
+                println!("✓ Successfully caught VertexNotFound error for UUID: {uuid}");
+            }
+            other @ FacetError::CellDoesNotContainVertex => {
+                panic!("Expected VertexNotFound error, got: {other:?}")
+            }
+        }
+
+        // Test the error display message
+        let error = FacetError::VertexNotFound {
+            uuid: vertices[0].uuid(),
+        };
+        let error_message = error.to_string();
+        assert!(error_message.contains("Vertex UUID not found in bimap"));
+        assert!(error_message.contains(&vertices[0].uuid().to_string()));
+
+        // Test partial bimap scenario (some vertices found, some not)
+        let mut partial_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
+        let mut temp_vertices: SlotMap<VertexKey, ()> = SlotMap::with_key();
+        let key = temp_vertices.insert(());
+        partial_bimap.insert(vertices[0].uuid(), key); // Only map the first vertex
+
+        let result_partial = facet_key_from_vertices(&vertices, &partial_bimap);
+        assert!(result_partial.is_err());
+        match result_partial.unwrap_err() {
+            FacetError::VertexNotFound { uuid } => {
+                assert_eq!(uuid, vertices[1].uuid()); // Second vertex should be the missing one
+            }
+            other @ FacetError::CellDoesNotContainVertex => {
+                panic!("Expected VertexNotFound error, got: {other:?}")
+            }
+        }
     }
 }
