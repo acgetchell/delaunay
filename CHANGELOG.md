@@ -215,7 +215,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The `Coordinate` trait provides a unified interface
 
-## [0.2.0] - 2024-12-19
+## [0.2.0] - 2024-09-13
 
 ### Initial Release
 

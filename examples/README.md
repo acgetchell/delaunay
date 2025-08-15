@@ -95,3 +95,65 @@ let coords: [f64; 3] = (&point).into();
 ```
 
 **Run with:** `cargo run --example implicit_conversion`
+
+### 4. 3D Triangulation with 50 Points (`triangulation_3d_50_points.rs`)
+
+A comprehensive example demonstrating the creation and analysis of a 3D Delaunay
+triangulation using 50 randomly generated points. This example showcases the
+full triangulation workflow from vertex generation to validation and analysis.
+
+**Key Features:**
+
+- **Random vertex generation**: Creates 50 random 3D points with reproducible
+  seeding for consistent results across runs
+- **Delaunay triangulation construction**: Uses the Bowyer-Watson algorithm to
+  build a valid 3D Delaunay triangulation
+- **Comprehensive analysis**: Detailed examination of triangulation properties:
+  - Vertex and cell counts
+  - Dimension verification  
+  - Cell-to-vertex ratios
+  - Individual cell analysis (vertices per cell, neighbor counts)
+- **Validation testing**: Thorough validation of the triangulation including:
+  - Geometric validity of all cells
+  - Neighbor relationship consistency
+  - Absence of duplicate cells
+  - Vertex mapping consistency
+  - Facet sharing validation
+- **Boundary analysis**: Computation and analysis of boundary facets that form
+  the convex hull of the point set
+- **Performance benchmarking**: Detailed performance analysis including:
+  - Validation timing across multiple runs
+  - Boundary computation performance
+  - Memory usage estimation
+  - Performance per vertex/cell ratios
+- **Error handling**: Demonstrates proper error handling and debugging
+  information for triangulation failures
+- **Reproducibility**: Uses fixed random seeds to ensure consistent results
+  for testing and comparison purposes
+
+**Sample Output:**
+
+```text
+3D Delaunay Triangulation Example - 50 Random Points
+=================================================================
+
+Generated 50 vertices:
+  v 0: [   4.123,   -2.456,    7.890]
+  v 1: [  -1.234,    5.678,   -3.210]
+  ... and 48 more vertices
+
+Creating Delaunay triangulation...
+✓ Triangulation created successfully in 2.345ms
+
+Triangulation Analysis:
+======================
+  Number of vertices: 50
+  Number of cells:    234
+  Dimension:          3
+  Vertex/Cell ratio:  0.21
+
+✓ Triangulation is VALID
+  Validation completed in 156μs
+```
+
+**Run with:** `cargo run --example triangulation_3d_50_points`

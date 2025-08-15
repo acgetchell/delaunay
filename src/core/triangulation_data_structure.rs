@@ -2210,6 +2210,18 @@ where
 
     /// Checks whether the triangulation data structure is valid.
     ///
+    /// # ⚠️ Performance Warning
+    ///
+    /// **This method is computationally expensive** and should be used judiciously:
+    /// - **Time Complexity**: O(N×F + N×D) where N is the number of cells, F is facets per cell (D+1),
+    ///   and D is the spatial dimension
+    /// - **Space Complexity**: O(N×F) for building facet-to-cell mappings
+    /// - For large triangulations (>10K cells), this can take significant time
+    /// - Consider using this primarily for debugging, testing, or after major structural changes
+    ///
+    /// For production code, prefer individual validation methods like `validate_cell_mappings()`
+    /// when only specific checks are needed.
+    ///
     /// # Returns
     ///
     /// `Ok(())` if the triangulation is valid, otherwise a `TriangulationValidationError`.
@@ -2226,9 +2238,11 @@ where
     /// # Validation Checks
     ///
     /// This function performs comprehensive validation including:
-    /// 1. Cell validation (calling `is_valid()` on each cell)
-    /// 2. Neighbor relationship validation
-    /// 3. Cell uniqueness validation
+    /// 1. **Mapping consistency**: Validates vertex and cell UUID-to-key bidirectional mappings (O(N+V))
+    /// 2. **Cell uniqueness**: Checks for duplicate cells with identical vertex sets (O(N×D×log(D)))
+    /// 3. **Individual cell validation**: Calls `is_valid()` on each cell (O(N×D))
+    /// 4. **Facet sharing validation**: Ensures no facet is shared by >2 cells (O(N×F))
+    /// 5. **Neighbor relationship validation**: Validates mutual neighbor relationships (O(N×D²))
     ///
     /// # Examples
     ///
@@ -2363,6 +2377,9 @@ where
                 TriangulationValidationError::InvalidCell { cell_id, source }
             })?;
         }
+
+        // Validate facet sharing (each facet should be shared by at most 2 cells)
+        self.validate_facet_sharing()?;
 
         // Finally validate neighbor relationships
         self.validate_neighbors_internal()?;
@@ -5606,6 +5623,119 @@ mod tests {
             "✓ fix_invalid_facet_sharing correctly returned {} removed cells",
             removed_count
         );
+    }
+
+    #[test]
+    fn test_is_valid_detects_improper_facet_sharing() {
+        // This test verifies that tds.is_valid() now properly detects improper facet sharing
+        // (testing our recent addition of facet sharing validation to is_valid)
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Create 3 cells that all share the same facet (geometrically impossible)
+        let shared_vertex1 = vertex!([0.0, 0.0, 0.0]);
+        let shared_vertex2 = vertex!([1.0, 0.0, 0.0]);
+        let shared_vertex3 = vertex!([0.0, 1.0, 0.0]);
+        let unique_vertex1 = vertex!([0.0, 0.0, 1.0]);
+        let unique_vertex2 = vertex!([0.0, 0.0, 2.0]);
+        let unique_vertex3 = vertex!([0.0, 0.0, 3.0]);
+
+        // Add all vertices to the TDS vertex mapping
+        let all_vertices = [
+            shared_vertex1,
+            shared_vertex2,
+            shared_vertex3,
+            unique_vertex1,
+            unique_vertex2,
+            unique_vertex3,
+        ];
+        for vertex in &all_vertices {
+            let vertex_key = tds.vertices.insert(*vertex);
+            tds.vertex_bimap.insert(vertex.uuid(), vertex_key);
+        }
+
+        // Create three cells that all share the same facet
+        let cell1 = cell!(vec![
+            shared_vertex1,
+            shared_vertex2,
+            shared_vertex3,
+            unique_vertex1
+        ]);
+        let cell2 = cell!(vec![
+            shared_vertex1,
+            shared_vertex2,
+            shared_vertex3,
+            unique_vertex2
+        ]);
+        let cell3 = cell!(vec![
+            shared_vertex1,
+            shared_vertex2,
+            shared_vertex3,
+            unique_vertex3
+        ]);
+
+        // Insert cells into the TDS
+        let cell1_key = tds.cells.insert(cell1);
+        let cell1_uuid = tds.cells[cell1_key].uuid();
+        tds.cell_bimap.insert(cell1_uuid, cell1_key);
+
+        let cell2_key = tds.cells.insert(cell2);
+        let cell2_uuid = tds.cells[cell2_key].uuid();
+        tds.cell_bimap.insert(cell2_uuid, cell2_key);
+
+        let cell3_key = tds.cells.insert(cell3);
+        let cell3_uuid = tds.cells[cell3_key].uuid();
+        tds.cell_bimap.insert(cell3_uuid, cell3_key);
+
+        // is_valid() should now detect and fail on improper facet sharing
+        let result = tds.is_valid();
+        assert!(
+            result.is_err(),
+            "is_valid() should fail on improper facet sharing"
+        );
+
+        // Check the specific error type and message
+        match result.unwrap_err() {
+            TriangulationValidationError::InconsistentDataStructure { message } => {
+                assert!(
+                    message.contains("shared by 3 cells") && message.contains("at most 2 cells"),
+                    "Error message should describe the facet sharing issue, got: {}",
+                    message
+                );
+                println!(
+                    "✓ is_valid() successfully detected improper facet sharing: {}",
+                    message
+                );
+            }
+            other => panic!("Expected InconsistentDataStructure, got: {:?}", other),
+        }
+
+        // Fix the invalid facet sharing by removing one cell
+        tds.cells.remove(cell3_key);
+        tds.cell_bimap.remove_by_left(&cell3_uuid);
+
+        // After removing the third cell, facet sharing should now be valid
+        assert!(
+            tds.validate_facet_sharing().is_ok(),
+            "After removing one cell, facet sharing should be valid"
+        );
+
+        // However, is_valid() may still fail on neighbor validation
+        // since the cells may have improper neighbor relationships
+        let _result_after_facet_fix = tds.is_valid();
+
+        // Clear any invalid neighbor relationships to make it fully valid
+        for cell in tds.cells.values_mut() {
+            cell.neighbors = None;
+        }
+
+        // Now it should pass full validation
+        let final_result = tds.is_valid();
+        assert!(
+            final_result.is_ok(),
+            "With proper facet sharing and cleared neighbors, validation should pass"
+        );
+
+        println!("✓ After fixing facet sharing, is_valid() passes validation");
     }
 
     #[test]
