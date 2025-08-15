@@ -82,7 +82,7 @@ fn benchmark_assign_neighbors_random(c: &mut Criterion) {
 
                         // Clear existing neighbors to benchmark the assignment process
                         for cell in tds.cells_mut().values_mut() {
-                            cell.neighbors = None;
+                            cell.clear_neighbors();
                         }
                         tds
                     },
@@ -120,7 +120,7 @@ fn benchmark_assign_neighbors_grid(c: &mut Criterion) {
 
                         // Clear existing neighbors to benchmark the assignment process
                         for cell in tds.cells_mut().values_mut() {
-                            cell.neighbors = None;
+                            cell.clear_neighbors();
                         }
                         tds
                     },
@@ -157,7 +157,7 @@ fn benchmark_assign_neighbors_spherical(c: &mut Criterion) {
 
                         // Clear existing neighbors to benchmark the assignment process
                         for cell in tds.cells_mut().values_mut() {
-                            cell.neighbors = None;
+                            cell.clear_neighbors();
                         }
                         tds
                     },
@@ -232,7 +232,7 @@ fn benchmark_assign_neighbors_scaling(c: &mut Criterion) {
 
                         // Clear existing neighbors to benchmark the assignment process
                         for cell in tds.cells_mut().values_mut() {
-                            cell.neighbors = None;
+                            cell.clear_neighbors();
                         }
                         tds
                     },
@@ -278,7 +278,7 @@ fn benchmark_assign_neighbors_2d_vs_3d(c: &mut Criterion) {
 
                         // Clear existing neighbors
                         for cell in tds.cells_mut().values_mut() {
-                            cell.neighbors = None;
+                            cell.clear_neighbors();
                         }
                         tds
                     },
@@ -303,7 +303,7 @@ fn benchmark_assign_neighbors_2d_vs_3d(c: &mut Criterion) {
 
                         // Clear existing neighbors
                         for cell in tds.cells_mut().values_mut() {
-                            cell.neighbors = None;
+                            cell.clear_neighbors();
                         }
                         tds
                     },

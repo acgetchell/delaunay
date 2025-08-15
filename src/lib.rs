@@ -13,9 +13,10 @@
 //!
 //! ## Project History
 //! Versions ≤ 0.1.0 were maintained at [old repo](https://github.com/oovm/shape-rs).
-//! Versions ≥ 0.3.4 are maintained here.
+//! Versions ≥ 0.3.4 are maintained [here](https://github.com/acgetchell/delaunay).
 //!
 //! See <https://docs.rs/delaunay/0.1.0> for historical documentation.
+//! See <https://docs.rs/delaunay> for the latest documentation.
 
 // Allow multiple crate versions due to transitive dependencies
 #![allow(clippy::multiple_crate_versions)]
@@ -26,7 +27,7 @@ extern crate derive_builder;
 /// The `core` module contains the primary data structures and algorithms for building and manipulating Delaunay triangulations.
 ///
 /// It includes the `Tds` struct, which represents the triangulation, as well as `Cell`, `Facet`, and `Vertex` components.
-/// This module also provides traits for customizing vertex and cell data, and a `prelude` for convenient access to commonly used types.
+/// This module provides traits for customizing vertex and cell data. The crate also includes a `prelude` module for convenient access to commonly used types.
 pub mod core {
     pub mod boundary;
     pub mod cell;

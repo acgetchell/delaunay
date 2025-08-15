@@ -1,0 +1,12 @@
+# type(scope): short description (50 chars or less)
+#
+# Longer explanation of the change (wrap at 72 chars)
+# - Why this change was made
+# - What problem it solves
+# - Any side effects or considerations
+#
+# Reference issues: Fixes #123, Closes #456
+# Breaking changes: BREAKING CHANGE: description
+#
+# Types: feat, fix, perf, refactor, build, ci, revert
+# Scopes: core, geometry, benchmarks, examples, docs

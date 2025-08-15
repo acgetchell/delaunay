@@ -127,12 +127,18 @@ delaunay/
 │   ├── README.md                # Benchmarking guide
 │   └── *.rs                     # Benchmark implementations
 ├── docs/                        # Additional documentation
+│   ├── templates/               # Templates for automated generation
+│   │   ├── README.md            # Templates documentation
+│   │   └── changelog.hbs        # Custom changelog template
 │   ├── code_organization.md     # Code organization patterns
 │   └── optimization_recommendations.md
 ├── scripts/                     # Development and CI scripts
 │   ├── README.md                # Scripts documentation
-│   └── *.sh                     # Utility scripts
+│   ├── generate_changelog.sh    # Generate changelog with commit dates
+│   └── *.sh                     # Other utility scripts
 ├── .github/workflows/           # CI/CD workflows
+├── .auto-changelog              # Auto-changelog configuration
+├── .gitmessage                  # Commit message template
 ├── CHANGELOG.md                 # Version history
 ├── CODE_OF_CONDUCT.md           # Community guidelines
 └── CONTRIBUTING.md              # This file
@@ -170,12 +176,18 @@ git checkout -b docs/doc-improvement
 
 ### 3. Development Process
 
-1. **Make focused commits** with clear messages
-2. **Write or update tests** for your changes
-3. **Update documentation** as needed
-4. **Run the full test suite** before pushing
-5. **Check performance impact** for algorithmic changes
-6. **Push to your fork** and create a pull request to the main repository
+1. **Configure commit message template** (recommended):
+
+   ```bash
+   git config commit.template .gitmessage
+   ```
+
+2. **Make focused commits** with clear messages (see [Commit Message Format](#commit-message-format))
+3. **Write or update tests** for your changes
+4. **Update documentation** as needed
+5. **Run the full test suite** before pushing
+6. **Check performance impact** for algorithmic changes
+7. **Push to your fork** and create a pull request to the main repository
 
 ### 4. Continuous Integration
 
@@ -188,6 +200,94 @@ The project uses comprehensive CI workflows:
 - **Coverage** (`.github/workflows/codecov.yml`): Test coverage tracking
 
 All PRs must pass CI checks before merging.
+
+## Commit Message Format
+
+This project uses [conventional commits](https://www.conventionalcommits.org/) to generate meaningful changelogs automatically.
+A commit message template is provided in `.gitmessage` to help maintain consistency.
+
+### Setup (Recommended)
+
+```bash
+# Configure the template for this repository
+git config commit.template .gitmessage
+```
+
+### Format
+
+```text
+type(scope): short description (50 chars or less)
+
+Optional longer explanation (wrap at 72 chars)
+- Why this change was made
+- What problem it solves
+- Any side effects or considerations
+
+Reference issues: Fixes #123, Closes #456
+Breaking changes: BREAKING CHANGE: description
+```
+
+### Types
+
+| Type | Description | Appears in Changelog |
+|------|-------------|-----------------------|
+| `feat` | New features | ✅ Yes |
+| `fix` | Bug fixes | ✅ Yes |
+| `perf` | Performance improvements | ✅ Yes |
+| `refactor` | Code refactoring | ✅ Yes |
+| `build` | Build system changes | ✅ Yes |
+| `ci` | CI/CD changes | ✅ Yes |
+| `revert` | Reverting changes | ✅ Yes |
+| `chore` | Maintenance tasks | ❌ No (filtered) |
+| `style` | Formatting changes | ❌ No (filtered) |
+| `docs` | Documentation only | ❌ No (filtered) |
+| `test` | Test changes only | ❌ No (filtered) |
+
+### Scopes (Optional)
+
+- `core` - Core triangulation structures
+- `geometry` - Geometric algorithms and predicates
+- `benchmarks` - Performance benchmarks
+- `examples` - Usage examples
+- `docs` - Documentation
+
+### Examples
+
+```bash
+# Features
+feat(core): implement d-dimensional boundary analysis
+feat(geometry): add robust circumsphere predicates
+feat: add 4D triangulation support
+
+# Bug fixes
+fix(core): prevent infinite loop in degenerate triangulations
+fix(geometry): handle NaN coordinates in point validation
+fix: resolve memory leak in vertex insertion
+
+# Performance
+perf(core): optimize Bowyer-Watson algorithm with cell caching
+perf: reduce allocations in neighbor assignment
+
+# Breaking changes
+feat!: redesign Vertex API for better type safety
+fix!: change Point::coordinates() to Point::to_array()
+
+# Maintenance (filtered from changelog)
+chore: update dependencies
+style: fix clippy warnings
+docs: update README examples
+test: add edge case coverage
+```
+
+### PR Titles
+
+Since PR merges appear prominently in the changelog, use the same conventional format for PR titles:
+
+```text
+feat: implement 4D triangulation support
+fix: resolve edge case in Bowyer-Watson algorithm
+perf: optimize boundary facet detection
+```
 
 ## Code Style and Standards
 
@@ -453,11 +553,20 @@ The project follows [semantic versioning][semver] and maintains a detailed [CHAN
 
 ### Release Workflow
 
-1. **Update CHANGELOG.md** with new version
-2. **Update version** in `Cargo.toml`
-3. **Tag release** with version number
-4. **Publish to crates.io** (maintainer only)
+1. **Update version** in `Cargo.toml`
+2. **Tag release** with version number
+3. **Generate updated changelog** with accurate commit dates:
+
+   ```bash
+   ./scripts/generate_changelog.sh
+   ```
+
+4. **Commit changelog updates** if needed
 5. **Update documentation** if needed
+6. **Publish to crates.io** (maintainer only)
+
+**Note**: The project uses `./scripts/generate_changelog.sh` to generate changelogs with commit dates instead of tag creation dates,
+providing more accurate release timing that reflects when development work was completed.
 
 ## Getting Help
 

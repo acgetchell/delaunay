@@ -1,8 +1,8 @@
 {
   "output": "CHANGELOG.md",
-  "template": "keepachangelog",
+  "template": "docs/templates/changelog.hbs",
   "remote": "origin",
   "commitLimit": 20,
   "backfillLimit": 20,
-  "ignoreCommitPattern": "^(chore|style|docs|test):"
+  "ignoreCommitPattern": "^(chore|style|docs|test|build\\(deps\\)):"
 }

@@ -13,6 +13,19 @@
 //! - **On-demand Creation**: Facets are generated dynamically as needed rather than stored persistently in the TDS
 //! - **Serialization Support**: Full serde support for persistence and interoperability
 //!
+//! # Fundamental Invariant
+//!
+//! **A critical invariant of Delaunay triangulations is that each facet is shared by exactly two cells,
+//! except for boundary facets which belong to only one cell.**
+//!
+//! This property ensures the triangulation forms a valid simplicial complex:
+//! - **Interior facets**: Shared by exactly 2 cells (defines proper adjacency)
+//! - **Boundary facets**: Belong to exactly 1 cell (lie on the convex hull)
+//! - **Invalid configurations**: Facets shared by 0, 3, or more cells indicate topological errors
+//!
+//! This invariant is fundamental to many algorithms and is actively validated during triangulation
+//! construction and validation phases.
+//!
 //! # Examples
 //!
 //! ```rust

@@ -157,3 +157,109 @@ Triangulation Analysis:
 ```
 
 **Run with:** `cargo run --example triangulation_3d_50_points`
+
+### 5. Boundary Analysis Trait Demonstration (`boundary_analysis_trait.rs`)
+
+Demonstrates the clean separation of boundary analysis functionality from the main
+`Tds` struct using a trait-based approach. This example showcases the modular
+design of the boundary analysis system.
+
+**Key Features:**
+
+- **Trait-based Design**: Shows how the `BoundaryAnalysis` trait cleanly separates
+  boundary operations from the core triangulation data structure
+- **Multiple Boundary Methods**: Demonstrates different approaches to boundary analysis:
+  - `boundary_facets()` - Get all boundary facets as a collection
+  - `number_of_boundary_facets()` - Efficient counting without creating vectors
+  - `is_boundary_facet()` - Check individual facets
+- **Modular Architecture**: Illustrates benefits of trait-based design including
+  better testability, extensibility, and separation of concerns
+- **Complex Examples**: Shows boundary analysis on both simple (tetrahedron) and
+  complex (multiple tetrahedra) triangulations
+- **Performance Considerations**: Demonstrates efficient boundary detection methods
+
+**Benefits Highlighted:**
+
+- Clean separation of concerns in the codebase
+- Easy extensibility for future boundary algorithms
+- Better IDE support and discoverability
+- Consistent interface across different triangulation types
+
+**Run with:** `cargo run --example boundary_analysis_trait`
+
+### 6. Float Traits Validation (`check_float_traits.rs`)
+
+A technical example that validates and demonstrates which traits are included
+in the `Float` trait from `num_traits`, helping understand the trait bounds
+used throughout the library.
+
+**Key Features:**
+
+- **Trait Analysis**: Compile-time verification of traits included in `Float`
+- **Included Traits**: Confirms `Float` includes `PartialEq`, `PartialOrd`, `Copy`, and `Clone`
+- **Missing Traits**: Demonstrates that `Default` is NOT included in `Float`
+- **Design Rationale**: Explains why `Default` must be explicitly specified in
+  trait bounds even when using `Float`
+- **Educational Value**: Helps developers understand the library's type system
+  and floating-point abstractions
+
+**Technical Insights:**
+
+```rust
+// Float includes these traits automatically:
+fn requires_partial_eq<U: PartialEq>() {}
+fn requires_partial_ord<U: PartialOrd>() {}
+fn requires_copy<U: Copy>() {}
+fn requires_clone<U: Clone>() {}
+
+// But Default must be specified separately:
+// fn requires_default<U: Default>() {} // This would NOT compile with just Float
+```
+
+**Run with:** `cargo run --example check_float_traits`
+
+### 7. Memory Allocation Testing API (`test_alloc_api.rs`)
+
+Comprehensive testing utilities and examples for memory allocation tracking
+in Delaunay triangulation operations. This example provides both a testing
+framework and demonstration of memory usage patterns.
+
+**Key Features:**
+
+- **Allocation Counter Integration**: Shows how to use the `allocation-counter`
+  feature for memory profiling
+- **Comprehensive Test Helpers**: Provides utilities for:
+  - Measuring allocations with error handling
+  - Creating test points in 2D and 3D
+  - Building test triangulations
+  - Printing detailed memory summaries
+- **Feature-Aware Design**: Gracefully handles both enabled and disabled
+  allocation counting modes
+- **Real-World Testing**: Demonstrates allocation patterns for actual
+  triangulation operations
+- **Performance Analysis**: Tools for understanding memory usage in
+  computational geometry operations
+
+**Allocation Testing Categories:**
+
+- Basic vector operations baseline
+- Point creation in multiple dimensions
+- Triangulation data structure initialization
+- Complex triangulation workflows
+
+**Usage Examples:**
+
+```rust
+// Test with allocation counting enabled:
+cargo test --example test_alloc_api --features count-allocations
+
+// View memory usage for operations:
+let (result, info) = measure_with_result(|| {
+    create_test_points_3d(100)
+});
+print_alloc_summary(&info, "3D point creation");
+```
+
+**Run with:** `cargo run --example test_alloc_api`
+
+**Test with allocation tracking:** `cargo test --example test_alloc_api --features count-allocations`

@@ -39,6 +39,12 @@ where
     /// boundary of the triangulation (convex hull). These facets are important for
     /// convex hull computation and boundary analysis.
     ///
+    /// # Triangulation Invariant
+    ///
+    /// This method relies on the fundamental invariant of Delaunay triangulations:
+    /// **every facet is shared by exactly two cells, except boundary facets which belong to exactly one cell.**
+    /// Any facet shared by 0, 3, or more cells indicates a topological error in the triangulation.
+    ///
     /// # Returns
     ///
     /// A `Result<Vec<Facet<T, U, V, D>>, FacetError>` containing all boundary facets in the triangulation.

@@ -133,6 +133,56 @@ Install equivalent packages for `jq`, `find`, `sort`, and `bc` using your system
 
 ---
 
+#### `generate_changelog.sh`
+
+**Purpose**: Generates changelog with commit dates instead of tag creation dates for more accurate release timing.
+
+**Features**:
+
+- Uses custom Handlebars template (`docs/templates/changelog.hbs`) to extract commit timestamps
+- Post-processes auto-changelog output to format ISO 8601 dates to YYYY-MM-DD format
+- Maintains Keep a Changelog formatting standards
+- Automatically finds project root directory when executed from any location
+- Provides more accurate release dates reflecting when development work was completed
+
+**Comparison with Standard auto-changelog**:
+
+```bash
+# Standard auto-changelog (tag creation dates):
+# v0.3.4: 2025-08-14  (all releases show same date)
+# v0.3.3: 2025-08-14
+# v0.3.2: 2025-08-14
+# v0.3.1: 2025-08-14
+
+# generate_changelog.sh (actual commit dates):
+# v0.3.4: 2025-08-15
+# v0.3.3: 2025-08-14  
+# v0.3.2: 2025-08-14
+# v0.3.1: 2025-07-26
+# v0.3.0: 2025-06-17
+```
+
+**Technical Implementation**:
+
+- Uses `docs/templates/changelog.hbs` template configured in `.auto-changelog`
+- Template extracts `commits.[0].date` (ISO 8601 timestamp) instead of default `isoDate` (tag date)
+- Post-processes with `sed` to convert `2025-08-15T04:44:21.000Z` → `2025-08-15`
+- Changes to project root directory to ensure auto-changelog finds configuration files
+
+**Usage**:
+
+```bash
+# Generate changelog with accurate commit dates
+./scripts/generate_changelog.sh
+
+# Alternative: Use standard auto-changelog (less accurate dating)
+npx auto-changelog
+```
+
+**Dependencies**: Requires `npx`, `sed`, auto-changelog npm package, custom template in `docs/templates/changelog.hbs`
+
+---
+
 ### Testing Scripts
 
 #### `run_all_examples.sh`
@@ -217,6 +267,29 @@ git commit -m "Update performance baseline after optimization"
 - **Quick feedback**: Ideal for iterative development
 - **Same accuracy**: Still detects significant performance changes
 - **Settings**: `sample_size=10, measurement_time=2s, warmup_time=1s`
+
+### Changelog Generation Workflow
+
+```bash
+# 1. Make commits and create git tags
+git tag v0.3.5
+git push origin v0.3.5
+
+# 2. Generate updated changelog with accurate commit dates
+./scripts/generate_changelog.sh
+
+# 3. Review and commit the updated changelog
+git add CHANGELOG.md
+git commit -m "Update changelog with commit dates for v0.3.5"
+git push origin main
+```
+
+**Benefits of Using generate_changelog.sh**:
+
+- **Accurate Dating**: Shows when development work was actually completed
+- **Chronological Accuracy**: Releases show their true development timeline
+- **Professional Presentation**: Avoids all releases showing the same tag creation date
+- **Historical Clarity**: Makes it easier to understand project development pace
 
 ### Manual Benchmark Analysis
 
