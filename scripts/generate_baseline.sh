@@ -43,9 +43,23 @@ done
 # Find project root
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
 
+# Check if hardware_info.sh dependency exists
+HARDWARE_INFO_PATH="${PROJECT_ROOT}/scripts/hardware_info.sh"
+if [[ ! -f "$HARDWARE_INFO_PATH" ]]; then
+    error_exit "Required dependency not found: $HARDWARE_INFO_PATH. This script depends on hardware_info.sh for hardware detection."
+fi
+
+# Source the shared hardware detection utility
+# shellcheck disable=SC1091
+source "${PROJECT_ROOT}/scripts/hardware_info.sh"
+
 # Get current date and git commit
 CURRENT_DATE=$(date)
 GIT_COMMIT=$(git rev-parse HEAD)
+
+# Collect hardware information using shared utility
+echo "Collecting hardware information..."
+HARDWARE_INFO=$(get_hardware_info)
 
 # Output file path
 OUTPUT_FILE="${PROJECT_ROOT}/benches/baseline_results.txt"
@@ -99,11 +113,11 @@ fi
 #==============================================================================
 echo "Step 3: Parsing Criterion results and creating baseline file..."
 
-# Create header
-cat > "$OUTPUT_FILE" << EOF
+# Create header with hardware information
+cat > "$OUTPUT_FILE" <<EOF
 Date: $CURRENT_DATE
 Git commit: $GIT_COMMIT
-
+$HARDWARE_INFO
 EOF
 
 # Function to extract timing and throughput from Criterion data

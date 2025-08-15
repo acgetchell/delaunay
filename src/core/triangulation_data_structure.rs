@@ -520,15 +520,17 @@ where
                     }
                 }
 
-                let removed_count = total_cells - valid_cells.len().min(2);
-                if removed_count > 0 {
-                    println!(
-                        "Warning: Facet {} was shared by {} cells, removing {} invalid cells (keeping {} valid)",
-                        facet_key,
-                        total_cells,
-                        removed_count,
-                        valid_cells.len().min(2)
-                    );
+                if cfg!(debug_assertions) {
+                    let removed_count = total_cells - valid_cells.len().min(2);
+                    if removed_count > 0 {
+                        println!(
+                            "Warning: Facet {} was shared by {} cells, removing {} invalid cells (keeping {} valid)",
+                            facet_key,
+                            total_cells,
+                            removed_count,
+                            valid_cells.len().min(2)
+                        );
+                    }
                 }
             }
         }
@@ -1541,7 +1543,7 @@ where
                 message: format!("Failed to fix invalid facet sharing: {e}"),
             }
         })?;
-        if invalid_cells_removed > 0 {
+        if cfg!(debug_assertions) && invalid_cells_removed > 0 {
             println!("Fixed invalid facet sharing by removing {invalid_cells_removed} cells");
         }
 
@@ -2395,16 +2397,18 @@ where
         // Then validate all cells
         for (cell_id, cell) in &self.cells {
             cell.is_valid().map_err(|source| {
-                let cell_id = self
-                    .cell_bimap
-                    .get_by_right(&cell_id)
-                    .copied()
-                    .unwrap_or_else(|| {
-                        // This shouldn't happen if validate_cell_mappings passed
-                        eprintln!("Warning: Cell key {cell_id:?} has no UUID mapping");
-                        Uuid::nil()
-                    });
-                TriangulationValidationError::InvalidCell { cell_id, source }
+                let Some(cell_uuid) = self.cell_bimap.get_by_right(&cell_id).copied() else {
+                    // This shouldn't happen if validate_cell_mappings passed
+                    return TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell key {cell_id:?} has no UUID mapping in bimap during validation"
+                        ),
+                    };
+                };
+                TriangulationValidationError::InvalidCell {
+                    cell_id: cell_uuid,
+                    source,
+                }
             })?;
         }
 

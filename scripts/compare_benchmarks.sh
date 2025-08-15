@@ -62,10 +62,18 @@ if [[ ! -f "$BENCHMARK_PARSER_PATH" ]]; then
     error_exit "Required dependency not found: $BENCHMARK_PARSER_PATH. This script depends on benchmark_parser.sh for parsing functions."
 fi
 
-# Source the shared benchmark parsing utilities
-# Note: We explicitly check file existence above, so disable shellcheck warning
+# Check if hardware_info.sh dependency exists
+HARDWARE_INFO_PATH="${PROJECT_ROOT}/scripts/hardware_info.sh"
+if [[ ! -f "$HARDWARE_INFO_PATH" ]]; then
+    error_exit "Required dependency not found: $HARDWARE_INFO_PATH. This script depends on hardware_info.sh for hardware detection."
+fi
+
+# Source the shared utilities
+# Note: We explicitly check file existence above, so disable shellcheck warnings
 # shellcheck disable=SC1091
 source "${PROJECT_ROOT}/scripts/benchmark_parser.sh"
+# shellcheck disable=SC1091
+source "${PROJECT_ROOT}/scripts/hardware_info.sh"
 
 # Parse command line arguments
 DEV_MODE=false
@@ -107,6 +115,13 @@ echo "Compare file: $COMPARE_FILE"
 CURRENT_DATE=$(date)
 GIT_COMMIT=$(git rev-parse HEAD)
 
+# Collect current hardware information using shared utility
+echo "Collecting current hardware information..."
+CURRENT_HARDWARE=$(get_hardware_info_kv)
+
+# Extract baseline hardware information
+BASELINE_HARDWARE=$(extract_baseline_hardware "$BASELINE_FILE")
+
 # Extract baseline metadata
 BASELINE_DATE=$(grep "^Date:" "$BASELINE_FILE" | cut -d' ' -f2-)
 BASELINE_COMMIT=$(grep "^Git commit:" "$BASELINE_FILE" | cut -d' ' -f3)
@@ -126,8 +141,8 @@ else
     fi
 fi
 
-# Create compare results file with headers
-cat > "$COMPARE_FILE" << EOF
+# Create compare results file with headers and hardware comparison
+cat > "$COMPARE_FILE" <<EOF
 Comparison Results
 ==================
 Current Date: $CURRENT_DATE
@@ -137,6 +152,9 @@ Baseline Date: $BASELINE_DATE
 Baseline Git commit: $BASELINE_COMMIT
 
 EOF
+
+# Add hardware comparison section
+compare_hardware "$CURRENT_HARDWARE" "$BASELINE_HARDWARE" >> "$COMPARE_FILE"
 
 echo "Parsing benchmark results and comparing..."
 

@@ -160,6 +160,7 @@ delaunay/
 │   ├── compare_benchmarks.sh                     # Performance regression testing
 │   ├── generate_baseline.sh                      # Create performance baselines
 │   ├── generate_changelog.sh                     # Generate changelog with commit dates
+│   ├── hardware_info.sh                          # Hardware information and system capabilities
 │   └── run_all_examples.sh                       # Validate all examples
 ├── .cargo/                                       # Cargo configuration
 │   └── config.toml                               # Build configuration
@@ -183,6 +184,7 @@ delaunay/
 ├── CHANGELOG.md                                  # Version history
 ├── CODE_OF_CONDUCT.md                            # Community guidelines
 ├── CONTRIBUTING.md                               # This file
+├── Cargo.lock                                    # Dependency lockfile
 ├── Cargo.toml                                    # Package configuration and dependencies
 ├── LICENSE                                       # MIT License
 ├── README.md                                     # Project overview and getting started
