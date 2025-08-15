@@ -1,0 +1,8 @@
+{
+  "output": "CHANGELOG.md",
+  "template": "keepachangelog",
+  "remote": "origin",
+  "commitLimit": 20,
+  "backfillLimit": 20,
+  "ignoreCommitPattern": "^(chore|style|docs|test):"
+}

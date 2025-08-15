@@ -94,19 +94,22 @@ cargo test -- --nocapture
 
 ```bash
 # Generate complete changelog from all commits and update CHANGELOG.md
-git-cliff --output CHANGELOG.md
+npx auto-changelog
 
-# Generate changelog for latest version only and update CHANGELOG.md
-git-cliff --latest --output CHANGELOG.md
+# Generate changelog with unreleased changes included
+npx auto-changelog --unreleased
 
-# Generate changelog for unreleased changes since last tag
-git-cliff --unreleased --output CHANGELOG.md
+# Generate changelog for specific version
+npx auto-changelog --latest-version v0.3.4
 
-# Prepend new entries to existing CHANGELOG.md (useful for releases)
-git-cliff --prepend CHANGELOG.md
+# Generate changelog with custom commit limit per release
+npx auto-changelog --commit-limit 10
 
-# Generate changelog for specific tag range
-git-cliff v0.3.0..HEAD --output CHANGELOG.md
+# Generate changelog using Keep a Changelog format (default via .auto-changelog config)
+npx auto-changelog --template keepachangelog
+
+# Test changelog generation without writing to file
+npx auto-changelog --stdout
 ```
 
 ## Architecture Overview

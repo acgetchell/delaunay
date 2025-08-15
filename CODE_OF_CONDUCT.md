@@ -148,4 +148,4 @@ for inclusive community building.
 [maintainer]: mailto:adam@adamgetchell.org
 [uc-davis-principles]: https://principles.ucdavis.edu/
 
-Last updated: December 2024
+Last updated: August 2025
