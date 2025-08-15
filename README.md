@@ -42,7 +42,26 @@ rewritten d-dimensional implementation focused on computational geometry researc
 
 ## 🤝 How to Contribute
 
-We welcome contributions! For comprehensive guidelines on development environment setup,
+We welcome contributions! Here's a 30-second quickstart:
+
+```bash
+# Clone and setup
+git clone https://github.com/acgetchell/delaunay.git
+cd delaunay
+
+# Build and test
+cargo build
+cargo test
+
+# Format and lint
+cargo fmt --all
+cargo clippy --all-targets --all-features
+
+# Run examples
+./scripts/run_all_examples.sh
+```
+
+For comprehensive guidelines on development environment setup,
 testing, benchmarking, performance analysis, and development workflow, please see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 This includes information about:

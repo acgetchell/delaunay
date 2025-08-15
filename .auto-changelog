@@ -2,7 +2,13 @@
   "output": "CHANGELOG.md",
   "template": "docs/templates/changelog.hbs",
   "remote": "origin",
-  "commitLimit": 20,
-  "backfillLimit": 20,
-  "ignoreCommitPattern": "^(chore|ci|style|docs|test|build\\(deps\\)):"
+  "commitLimit": 50,
+  "backfillLimit": 50,
+  "ignoreCommitPattern": "^(chore\\(release\\)|ci\\(minor\\)|style\\(fmt\\)|build\\(deps\\)):",
+  "commitUrl": "https://github.com/acgetchell/delaunay/commit/{id}",
+  "compareUrl": "https://github.com/acgetchell/delaunay/compare/{from}...{to}",
+  "issueUrl": "https://github.com/acgetchell/delaunay/issues/{id}",
+  "includeBody": true,
+  "sortCommits": "date",
+  "tagPrefix": "v"
 }

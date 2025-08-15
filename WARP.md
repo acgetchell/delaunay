@@ -105,7 +105,7 @@ npx auto-changelog --latest-version v0.3.4
 # Generate changelog with custom commit limit per release
 npx auto-changelog --commit-limit 10
 
-# Generate changelog using Keep a Changelog format (uses ./docs/templates/changelog.hbs via .auto-changelog config)
+# Generate changelog using Keep a Changelog format overrides the project template configured in .auto-changelog config)
 npx auto-changelog --template keepachangelog
 
 # Test changelog generation without writing to file

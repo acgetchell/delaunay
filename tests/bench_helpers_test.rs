@@ -20,20 +20,15 @@ fn test_clear_all_neighbors() {
     let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
     // Verify triangulation was created with neighbors
-    assert!(tds.assign_neighbors().is_ok());
-
-    // Check that cells initially have neighbors
-    let initial_neighbor_count: usize = tds
-        .cells()
-        .values()
-        .map(|cell| cell.neighbors.as_ref().map_or(0, std::vec::Vec::len))
-        .sum();
+    tds.assign_neighbors()
+        .expect("assign_neighbors() failed; Tds is invalid");
 
     // Should have some neighbors initially
-    assert!(
-        initial_neighbor_count > 0,
-        "Initial triangulation should have neighbors"
-    );
+    let has_neighbors = tds
+        .cells()
+        .values()
+        .any(|cell| cell.neighbors.as_ref().is_some());
+    assert!(has_neighbors, "Initial triangulation should have neighbors");
 
     // Clear all neighbors using our helper function
     clear_all_neighbors(&mut tds);

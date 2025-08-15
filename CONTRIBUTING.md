@@ -178,7 +178,6 @@ delaunay/
 ├── .codecov.yml                                  # CodeCov configuration
 ├── .coderabbit.yml                               # CodeRabbit AI review configuration
 ├── .gitignore                                    # Git ignore patterns
-├── .gitmessage                                   # Commit message template
 ├── .markdownlint.json                            # Markdown linting configuration
 ├── .yamllint                                     # YAML linting configuration
 ├── CHANGELOG.md                                  # Version history
@@ -224,18 +223,12 @@ git checkout -b docs/doc-improvement
 
 ### 3. Development Process
 
-1. **Configure commit message template** (recommended):
-
-   ```bash
-   git config commit.template .gitmessage
-   ```
-
-2. **Make focused commits** with clear messages (see [Commit Message Format](#commit-message-format))
-3. **Write or update tests** for your changes
-4. **Update documentation** as needed
-5. **Run the full test suite** before pushing
-6. **Check performance impact** for algorithmic changes
-7. **Push to your fork** and create a pull request to the main repository
+1. **Make focused commits** with clear messages (see [Commit Message Format](#commit-message-format))
+2. **Write or update tests** for your changes
+3. **Update documentation** as needed
+4. **Run the full test suite** before pushing
+5. **Check performance impact** for algorithmic changes
+6. **Push to your fork** and create a pull request to the main repository
 
 ### 4. Continuous Integration
 
@@ -252,14 +245,6 @@ All PRs must pass CI checks before merging.
 ## Commit Message Format
 
 This project uses [conventional commits](https://www.conventionalcommits.org/) to generate meaningful changelogs automatically.
-A commit message template is provided in `.gitmessage` to help maintain consistency.
-
-### Setup (Recommended)
-
-```bash
-# Configure the template for this repository
-git config commit.template .gitmessage
-```
 
 ### Format
 
@@ -602,16 +587,29 @@ The project follows [semantic versioning][semver] and maintains a detailed [CHAN
 ### Release Workflow
 
 1. **Update version** in `Cargo.toml`
-2. **Tag release** with version number
-3. **Generate updated changelog** with accurate commit dates:
+2. **Generate updated changelog** with accurate commit dates:
 
    ```bash
    ./scripts/generate_changelog.sh
    ```
 
-4. **Commit changelog updates** if needed
-5. **Update documentation** if needed
-6. **Publish to crates.io** (maintainer only)
+3. **Commit changelog updates** if needed
+4. **Update documentation** if needed
+5. **Create and push annotated tag** with specific commit hash:
+
+   ```bash
+   # Create annotated tag pointing to specific commit
+   git tag -a v0.3.5 <commit-hash> -m "delaunay v0.3.5"
+   
+   # Push the tag to origin
+   git push origin v0.3.5
+   ```
+
+6. **Publish to crates.io** (maintainer only):
+
+   ```bash
+   cargo publish
+   ```
 
 **Note**: The project uses `./scripts/generate_changelog.sh` to generate changelogs with commit dates instead of tag creation dates,
 providing more accurate release timing that reflects when development work was completed.
