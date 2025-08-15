@@ -12,7 +12,7 @@
 
 D-dimensional Delaunay triangulations in [Rust], inspired by [CGAL].
 
-## Introduction
+## 📐 Introduction
 
 This library implements d-dimensional Delaunay triangulations in [Rust]. It is
 inspired by [CGAL], which is a [C++] library for computational geometry,
@@ -20,7 +20,7 @@ and [Spade], a [Rust] library that implements 2D [Delaunay triangulations],
 [Constrained Delaunay triangulations], and [Voronoi diagrams]. The goal of this library is to provide a
 lightweight alternative to [CGAL] for the [Rust] ecosystem.
 
-## Features
+## ✨ Features
 
 - [x]  Arbitrary data types associated with vertices and cells
 - [x]  d-dimensional [Delaunay triangulations]
@@ -40,26 +40,39 @@ rewritten d-dimensional implementation focused on computational geometry researc
 - 📚 Docs for old versions (≤ 0.1.0): <https://docs.rs/delaunay/0.1.0/delaunay/>
 - 📚 Docs for current version (≥ 0.3.4): <https://docs.rs/delaunay>
 
-## Development Tools
+## 🤝 How to Contribute
 
-The repository includes utility scripts for development, testing, and performance analysis:
+We welcome contributions! Here's a 30-second quickstart:
 
-### Benchmarking and Performance
+```bash
+# Clone and setup
+git clone https://github.com/acgetchell/delaunay.git
+cd delaunay
 
-- **Automated benchmark execution**: Run triangulation benchmarks across multiple dimensions with GitHub Actions
-- **Baseline generation**: Create performance baselines for regression detection
-- **Performance regression testing**: Compare benchmark results against baseline metrics
+# Build and test
+cargo build
+cargo test
 
-See [benches/README.md](benches/README.md) for detailed performance results, baseline metrics, and analysis.
+# Format and lint
+cargo fmt --all
+cargo clippy --all-targets --all-features
 
-### Testing and Validation
+# Run examples
+./scripts/run_all_examples.sh
+```
 
-- **Example execution**: Run all example programs to verify functionality
-- **Comprehensive testing**: Automated discovery and execution of test suites
+For comprehensive guidelines on development environment setup,
+testing, benchmarking, performance analysis, and development workflow, please see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-See [scripts/README.md](scripts/README.md) for detailed documentation on available development scripts and their usage.
+This includes information about:
 
-## References
+- Building and testing the library
+- Running benchmarks and performance analysis
+- Code style and standards
+- Submitting changes and pull requests
+- Project structure and development tools
+
+## 📚 References
 
 The library's geometric predicates and algorithms are based on established computational geometry literature:
 

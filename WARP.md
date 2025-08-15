@@ -93,8 +93,8 @@ cargo test -- --nocapture
 ### Changelog Generation
 
 ```bash
-# Generate complete changelog from all commits and update CHANGELOG.md
-npx auto-changelog
+# Generate changelog with commit dates (recommended)
+./scripts/generate_changelog.sh
 
 # Generate changelog with unreleased changes included
 npx auto-changelog --unreleased
@@ -105,12 +105,15 @@ npx auto-changelog --latest-version v0.3.4
 # Generate changelog with custom commit limit per release
 npx auto-changelog --commit-limit 10
 
-# Generate changelog using Keep a Changelog format (default via .auto-changelog config)
+# Generate changelog using Keep a Changelog format overrides the project template configured in .auto-changelog config)
 npx auto-changelog --template keepachangelog
 
 # Test changelog generation without writing to file
 npx auto-changelog --stdout
 ```
+
+**Note**: The project uses `./scripts/generate_changelog.sh` to generate changelogs with commit dates instead of tag creation dates.
+This provides more accurate release timing that reflects when the actual work was completed rather than when tags were created.
 
 ## Architecture Overview
 

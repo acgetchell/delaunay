@@ -24,7 +24,74 @@ Install equivalent packages for `jq`, `find`, `sort`, and `bc` using your system
 
 ## Scripts Overview
 
-### Benchmarking Scripts
+### Scripts (Alphabetical)
+
+#### `benchmark_parser.sh`
+
+**Purpose**: Shared utility library for parsing benchmark data across multiple scripts.
+
+**Features**:
+
+- **Reusable Functions**: Common benchmark parsing functions used by other scripts
+- **Multiple Parsing Methods**: Both `while read` and `awk` implementations for different use cases
+- **Robust Regex Patterns**: Handles various benchmark output formats and edge cases
+- **Unit Normalization**: Standardizes time units (µs, us, μs) for consistency
+- **Dependency Validation**: Built-in checks for required tools (`bc`)
+- **Flexible Output**: Configurable output formatting for different consumers
+
+**Key Functions**:
+
+```bash
+# Dependency checking
+check_benchmark_parser_dependencies()    # Validates required tools
+
+# Benchmark detection and parsing
+parse_benchmark_start("line")            # Extracts metadata from "Benchmarking..." lines
+extract_timing_data("line")              # Parses timing data from result lines
+parse_benchmark_identifier("line")       # Extracts point count and dimension
+
+# Output formatting
+format_benchmark_result(...)             # Consistent output formatting
+
+# High-level parsing
+parse_benchmarks_with_while_read()       # Shell-based parsing implementation
+parse_benchmarks_with_awk()             # AWK-based parsing for complex scenarios
+```
+
+**Input Format Support**:
+
+```bash
+# Supports Criterion benchmark output formats:
+# Benchmarking tds_new_2d/tds_new/10
+# tds_new_2d/tds_new/10   time:   [354.30 µs 356.10 µs 357.91 µs]
+#                         thrpt:  [28.135 Kelem/s 28.257 Kelem/s 28.381 Kelem/s]
+```
+
+**Output Format Generated**:
+
+```bash
+# Standardized output for baseline and comparison files:
+=== 10 Points (2D) ===
+Time: [354.30, 356.10, 357.91] μs
+Throughput: [28.135, 28.257, 28.381] Kelem/s
+```
+
+**Usage Example**:
+
+```bash
+# Source the shared functions
+source "$(dirname "$0")/benchmark_parser.sh"
+
+# Check dependencies
+check_benchmark_parser_dependencies || exit 1
+
+# Parse benchmark output
+parse_benchmarks_with_while_read "input.txt" "output.txt"
+```
+
+**Dependencies**: Requires `bc` for numerical calculations
+
+---
 
 #### `compare_benchmarks.sh`
 
@@ -133,7 +200,86 @@ Install equivalent packages for `jq`, `find`, `sort`, and `bc` using your system
 
 ---
 
-### Testing Scripts
+#### `generate_changelog.sh`
+
+**Purpose**: Generates changelog with commit dates instead of tag creation dates for more accurate release timing.
+
+**Features**:
+
+- **Enhanced Error Handling**: Comprehensive validation of prerequisites (npx, git, configuration files)
+- **Backup/Recovery**: Automatic backup creation with rollback capability on failure
+- **Configuration Validation**: Verifies `.auto-changelog` config and custom template existence
+- **Git Repository Validation**: Ensures script runs in valid git repository with history
+- **Safe Processing**: Uses temporary files to prevent partial writes to CHANGELOG.md
+- **Progress Reporting**: Clear status messages and success confirmation with statistics
+- **Robust Date Processing**: Improved regex for converting ISO 8601 to YYYY-MM-DD format
+- **Automatic Root Detection**: Uses `BASH_SOURCE[0]` for reliable project root detection
+
+**Comparison with Standard auto-changelog**:
+
+```bash
+# Standard auto-changelog (tag creation dates):
+# v0.3.4: 2025-08-14  (all releases show same date)
+# v0.3.3: 2025-08-14
+# v0.3.2: 2025-08-14
+# v0.3.1: 2025-08-14
+
+# generate_changelog.sh (actual commit dates):
+# v0.3.4: 2025-08-15
+# v0.3.3: 2025-08-14  
+# v0.3.2: 2025-08-14
+# v0.3.1: 2025-07-26
+# v0.3.0: 2025-06-17
+```
+
+**Technical Implementation**:
+
+- **Configuration**: Uses `docs/templates/changelog.hbs` template configured in `.auto-changelog`
+- **Date Extraction**: Template extracts `commits.[0].date` (ISO 8601 timestamp) instead of `isoDate` (tag date)
+- **Date Processing**: Converts `2025-08-15T04:44:21.000Z` → `2025-08-15` using `sed 's/T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].*Z//g'`
+- **Safety Measures**: Creates `CHANGELOG.md.backup` before modification, restores on failure
+- **Temporary Files**: Uses `CHANGELOG.md.tmp` for atomic writes
+- **Error Capture**: Captures stderr from auto-changelog for debugging
+
+**Safety Features**:
+
+```bash
+# Script creates backups and handles failures gracefully:
+# 1. Backs up existing CHANGELOG.md → CHANGELOG.md.backup
+# 2. Generates to temporary file CHANGELOG.md.tmp
+# 3. Processes dates and writes final output
+# 4. Removes backup only on success
+# 5. Restores backup if any step fails
+```
+
+**Validation Checks**:
+
+- ✅ `npx` command availability (Node.js/npm installation)
+- ✅ Git repository detection (`git rev-parse --git-dir`)
+- ✅ Git history existence (`git log --oneline -n 1`)
+- ✅ `.auto-changelog` configuration file presence
+- ✅ `docs/templates/changelog.hbs` template file existence
+
+**Usage**:
+
+```bash
+# Generate changelog with accurate commit dates (recommended)
+./scripts/generate_changelog.sh
+
+# Alternative: Direct auto-changelog usage (less accurate dating)
+npx auto-changelog
+
+# Manual auto-changelog with specific options
+npx auto-changelog --unreleased --commit-limit 10
+```
+
+**Dependencies**:
+
+- **Required**: `npx` (Node.js), `git`, `sed`
+- **Configuration Files**: `.auto-changelog`, `docs/templates/changelog.hbs`
+- **npm Package**: `auto-changelog` (installed automatically by npx)
+
+---
 
 #### `run_all_examples.sh`
 
@@ -217,6 +363,29 @@ git commit -m "Update performance baseline after optimization"
 - **Quick feedback**: Ideal for iterative development
 - **Same accuracy**: Still detects significant performance changes
 - **Settings**: `sample_size=10, measurement_time=2s, warmup_time=1s`
+
+### Changelog Generation Workflow
+
+```bash
+# 1. Make commits and create git tags
+git tag v0.3.5
+git push origin v0.3.5
+
+# 2. Generate updated changelog with accurate commit dates
+./scripts/generate_changelog.sh
+
+# 3. Review and commit the updated changelog
+git add CHANGELOG.md
+git commit -m "Update changelog with commit dates for v0.3.5"
+git push origin main
+```
+
+**Benefits of Using generate_changelog.sh**:
+
+- **Accurate Dating**: Shows when development work was actually completed
+- **Chronological Accuracy**: Releases show their true development timeline
+- **Professional Presentation**: Avoids all releases showing the same tag creation date
+- **Historical Clarity**: Makes it easier to understand project development pace
 
 ### Manual Benchmark Analysis
 

@@ -43,6 +43,18 @@
 //! D-dimensional cell. This property ensures optimal geometric characteristics for
 //! many applications including mesh generation, interpolation, and spatial analysis.
 //!
+//! # Topological Invariants
+//!
+//! Valid Delaunay triangulations maintain several critical topological invariants:
+//!
+//! - **Facet Sharing Invariant**: Every facet (D-1 dimensional face) is shared by exactly
+//!   two cells, except for boundary facets which belong to exactly one cell. This ensures
+//!   the triangulation forms a valid simplicial complex.
+//! - **Neighbor Consistency**: Adjacent cells properly reference each other through their
+//!   shared facets, maintaining bidirectional neighbor relationships.
+//! - **Vertex Incidence**: Each vertex is incident to a well-defined set of cells that
+//!   form a topologically valid star configuration around the vertex.
+//!
 //! # Examples
 //!
 //! ## Creating a 3D Triangulation
@@ -1296,26 +1308,46 @@ where
             })
     }
 
-    /// Performs the Bowyer-Watson algorithm to triangulate a set of vertices.
+    /// Performs the Bowyer-Watson algorithm to construct a Delaunay triangulation.
+    ///
+    /// This method implements the incremental Bowyer-Watson algorithm for Delaunay triangulation in
+    /// arbitrary dimensions. It iteratively processes vertices and maintains the Delaunay property
+    /// at each step, resulting in a triangulation where no vertex lies inside any cell's circumsphere.
     ///
     /// # Returns
     ///
-    /// A [Result] containing the updated [Tds] with the Delaunay triangulation, or an error message.
+    /// A `Result<(), TriangulationValidationError>` indicating success or containing a detailed error.
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - Supercell creation fails
-    /// - Circumsphere calculations fail during the algorithm
-    /// - Cell creation from facets and vertices fails
+    /// Returns a `TriangulationValidationError` if:
+    /// - There are insufficient vertices to form a valid D-dimensional triangulation (fewer than D+1 vertices)
+    /// - Supercell creation fails due to degenerate vertex configurations
+    /// - Circumsphere calculations fail during the algorithm (e.g., numerical precision issues)
+    /// - Cell creation from facets and vertices fails due to geometric degeneracies
+    /// - Neighbor assignment or incident cell assignment fails
     ///
-    /// # Algorithm
+    /// # Algorithm Details
     ///
-    /// The Bowyer-Watson algorithm works by:
-    /// 1. Creating a supercell that contains all input vertices
-    /// 2. For each input vertex, finding all cells whose circumsphere contains the vertex
-    /// 3. Removing these "bad" cells and creating new cells using the boundary facets
-    /// 4. Cleaning up supercell artifacts and assigning neighbor relationships
+    /// The implementation uses an optimized approach with different paths for different scenarios:
+    ///
+    /// 1. **Empty input**: Returns an empty triangulation immediately
+    /// 2. **Minimal input** (exactly D+1 vertices): Creates a single simplex directly using a combinatorial approach
+    /// 3. **General case** (more than D+1 vertices): Uses the full Bowyer-Watson algorithm:
+    ///    a. Creating a large supercell (D-simplex) that contains all input vertices
+    ///    b. For each input vertex, finding all cells whose circumsphere contains the vertex ("bad cells")
+    ///    c. Identifying the boundary facets of these bad cells to form a "cavity"
+    ///    d. Removing bad cells and creating new cells by connecting the vertex to each boundary facet
+    ///    e. Cleaning up supercell artifacts and duplicate cells
+    ///    f. Enforcing the facet sharing invariant: each facet shared by exactly two cells (or one for boundary)
+    ///    g. Establishing neighbor relationships between adjacent cells
+    ///    h. Assigning incident cells to vertices for efficient traversal
+    ///
+    /// The implementation includes several optimizations for performance and numerical robustness:
+    /// - Buffer reuse to minimize allocations during critical operations
+    /// - Duplicate cell detection and removal after each vertex insertion
+    /// - Detection and correction of invalid facet sharing scenarios
+    /// - Proper handling of numerical edge cases
     ///
     /// # Examples
     ///
@@ -1399,8 +1431,6 @@ where
     /// assert_eq!(result.number_of_vertices(), 4);
     /// assert_eq!(result.number_of_cells(), 1);
     /// ```
-    /// Private method that performs Bowyer-Watson triangulation on a set of vertices
-    /// and returns a vector of cells
     fn bowyer_watson(&mut self) -> Result<(), TriangulationValidationError>
     where
         OPoint<T, Const<D>>: From<[f64; D]>,

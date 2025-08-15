@@ -107,35 +107,88 @@ Understanding the project layout will help you navigate and contribute effective
 
 ```text
 delaunay/
-├── src/                         # Core library code
-│   ├── core/                    # Core triangulation structures
-│   │   ├── triangulation_data_structure.rs
-│   │   ├── vertex.rs            # Vertex implementation
-│   │   ├── cell.rs              # Cell (simplex) implementation  
-│   │   ├── facet.rs             # Facet implementation
-│   │   ├── boundary.rs          # Boundary analysis
-│   │   └── utilities.rs         # General utilities
-│   ├── geometry/                # Geometric algorithms and predicates
-│   │   ├── predicates.rs        # Geometric predicates
-│   │   ├── point.rs             # Point implementation
-│   │   └── traits/              # Geometric traits
-│   └── prelude.rs               # Commonly used imports
-├── examples/                    # Usage examples
-│   ├── README.md                # Examples documentation
-│   └── *.rs                     # Individual examples
-├── benches/                     # Performance benchmarks
-│   ├── README.md                # Benchmarking guide
-│   └── *.rs                     # Benchmark implementations
-├── docs/                        # Additional documentation
-│   ├── code_organization.md     # Code organization patterns
-│   └── optimization_recommendations.md
-├── scripts/                     # Development and CI scripts
-│   ├── README.md                # Scripts documentation
-│   └── *.sh                     # Utility scripts
-├── .github/workflows/           # CI/CD workflows
-├── CHANGELOG.md                 # Version history
-├── CODE_OF_CONDUCT.md           # Community guidelines
-└── CONTRIBUTING.md              # This file
+├── src/                                          # Core library code
+│   ├── core/                                     # Core triangulation structures
+│   │   ├── boundary.rs                           # Boundary analysis and facet detection
+│   │   ├── cell.rs                               # Cell (simplex) implementation
+│   │   ├── facet.rs                              # Facet implementation
+│   │   ├── triangulation_data_structure.rs       # Main Tds struct and Bowyer-Watson
+│   │   ├── utilities.rs                          # Helper functions for triangulation operations
+│   │   ├── vertex.rs                             # Vertex implementation with generic support
+│   │   └── traits/                               # Core traits for data types and boundary analysis
+│   │       ├── boundary_analysis.rs              # Boundary analysis traits
+│   │       └── data_type.rs                      # DataType trait definitions
+│   ├── geometry/                                 # Geometric algorithms and predicates
+│   │   ├── matrix.rs                             # Matrix operations for geometric computations
+│   │   ├── point.rs                              # Generic Point struct with NaN-aware operations
+│   │   ├── predicates.rs                         # Geometric predicates (insphere, orientation)
+│   │   └── traits/                               # Coordinate abstractions and floating-point traits
+│   │       ├── coordinate.rs                     # Core Coordinate trait abstraction
+│   │       ├── finitecheck.rs                    # Finite value validation traits
+│   │       ├── hashcoordinate.rs                 # Floating-point hashing traits
+│   │       └── orderedeq.rs                      # Ordered equality comparison traits
+│   └── lib.rs                                    # Main library file with module declarations
+├── examples/                                     # Usage examples and demonstrations
+│   ├── README.md                                 # Examples documentation
+│   ├── boundary_analysis_trait.rs                # Boundary analysis examples
+│   ├── check_float_traits.rs                     # Floating-point trait examples
+│   ├── implicit_conversion.rs                    # Type conversion examples
+│   ├── point_comparison_and_hashing.rs           # Point operations examples
+│   ├── test_alloc_api.rs                         # Allocation API examples
+│   ├── test_circumsphere.rs                      # Circumsphere computation examples
+│   └── triangulation_3d_50_points.rs             # 3D triangulation example
+├── benches/                                      # Performance benchmarks
+│   ├── README.md                                 # Benchmarking guide and performance results
+│   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
+│   ├── baseline_results.txt                      # Performance baseline data
+│   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
+│   ├── helpers.rs                                # Benchmark helper functions
+│   ├── microbenchmarks.rs                        # Fine-grained performance tests
+│   ├── small_scale_triangulation.rs              # Small triangulation benchmarks
+│   └── triangulation_creation.rs                 # Triangulation creation benchmarks
+├── tests/                                        # Integration tests
+│   └── bench_helpers_test.rs                     # Tests for benchmark helper functions
+├── docs/                                         # Additional documentation
+│   ├── templates/                                # Templates for automated generation
+│   │   ├── README.md                             # Templates documentation
+│   │   └── changelog.hbs                         # Custom changelog template
+│   ├── code_organization.md                      # Code organization patterns
+│   └── optimization_recommendations.md           # Performance optimization guide
+├── scripts/                                      # Development and CI scripts
+│   ├── README.md                                 # Scripts documentation
+│   ├── benchmark_parser.sh                       # Shared benchmark parsing utilities
+│   ├── compare_benchmarks.sh                     # Performance regression testing
+│   ├── generate_baseline.sh                      # Create performance baselines
+│   ├── generate_changelog.sh                     # Generate changelog with commit dates
+│   └── run_all_examples.sh                       # Validate all examples
+├── .cargo/                                       # Cargo configuration
+│   └── config.toml                               # Build configuration
+├── .github/                                      # GitHub configuration
+│   ├── CODEOWNERS                                # Code ownership definitions
+│   ├── dependabot.yml                            # Dependency update configuration
+│   └── workflows/                                # CI/CD workflows
+│       ├── audit.yml                             # Security vulnerability scanning
+│       ├── benchmarks.yml                        # Performance regression testing
+│       ├── ci.yml                                # Main CI pipeline
+│       ├── codacy.yml                            # Code quality analysis
+│       ├── codecov.yml                           # Test coverage tracking
+│       ├── codeql.yml                            # Security analysis
+│       └── rust-clippy.yml                       # Additional clippy analysis
+├── .auto-changelog                               # Auto-changelog configuration
+├── .codecov.yml                                  # CodeCov configuration
+├── .coderabbit.yml                               # CodeRabbit AI review configuration
+├── .gitignore                                    # Git ignore patterns
+├── .markdownlint.json                            # Markdown linting configuration
+├── .yamllint                                     # YAML linting configuration
+├── CHANGELOG.md                                  # Version history
+├── CODE_OF_CONDUCT.md                            # Community guidelines
+├── CONTRIBUTING.md                               # This file
+├── Cargo.toml                                    # Package configuration and dependencies
+├── LICENSE                                       # MIT License
+├── README.md                                     # Project overview and getting started
+├── WARP.md                                       # WARP AI development guidance
+├── cspell.json                                   # Spell checking configuration
+└── rustfmt.toml                                  # Code formatting configuration
 ```
 
 For detailed code organization patterns, see [code organization documentation][code-organization].
@@ -170,7 +223,7 @@ git checkout -b docs/doc-improvement
 
 ### 3. Development Process
 
-1. **Make focused commits** with clear messages
+1. **Make focused commits** with clear messages (see [Commit Message Format](#commit-message-format))
 2. **Write or update tests** for your changes
 3. **Update documentation** as needed
 4. **Run the full test suite** before pushing
@@ -188,6 +241,86 @@ The project uses comprehensive CI workflows:
 - **Coverage** (`.github/workflows/codecov.yml`): Test coverage tracking
 
 All PRs must pass CI checks before merging.
+
+## Commit Message Format
+
+This project uses [conventional commits](https://www.conventionalcommits.org/) to generate meaningful changelogs automatically.
+
+### Format
+
+```text
+type(scope): short description (50 chars or less)
+
+Optional longer explanation (wrap at 72 chars)
+- Why this change was made
+- What problem it solves
+- Any side effects or considerations
+
+Reference issues: Fixes #123, Closes #456
+Breaking changes: BREAKING CHANGE: description
+```
+
+### Types
+
+| Type | Description | Appears in Changelog |
+|------|-------------|-----------------------|
+| `feat` | New features | ✅ Yes |
+| `fix` | Bug fixes | ✅ Yes |
+| `perf` | Performance improvements | ✅ Yes |
+| `refactor` | Code refactoring | ✅ Yes |
+| `build` | Build system changes | ✅ Yes |
+| `ci` | CI/CD changes | ✅ Yes |
+| `revert` | Reverting changes | ✅ Yes |
+| `chore` | Maintenance tasks | ❌ No (filtered) |
+| `style` | Formatting changes | ❌ No (filtered) |
+| `docs` | Documentation only | ❌ No (filtered) |
+| `test` | Test changes only | ❌ No (filtered) |
+
+### Scopes (Optional)
+
+- `core` - Core triangulation structures
+- `geometry` - Geometric algorithms and predicates
+- `benchmarks` - Performance benchmarks
+- `examples` - Usage examples
+- `docs` - Documentation
+
+### Examples
+
+```bash
+# Features
+feat(core): implement d-dimensional boundary analysis
+feat(geometry): add robust circumsphere predicates
+feat: add 4D triangulation support
+
+# Bug fixes
+fix(core): prevent infinite loop in degenerate triangulations
+fix(geometry): handle NaN coordinates in point validation
+fix: resolve memory leak in vertex insertion
+
+# Performance
+perf(core): optimize Bowyer-Watson algorithm with cell caching
+perf: reduce allocations in neighbor assignment
+
+# Breaking changes
+feat!: redesign Vertex API for better type safety
+fix!: change Point::coordinates() to Point::to_array()
+
+# Maintenance (filtered from changelog)
+chore: update dependencies
+style: fix clippy warnings
+docs: update README examples
+test: add edge case coverage
+```
+
+### PR Titles
+
+Since PR merges appear prominently in the changelog, use the same conventional format for PR titles:
+
+```text
+feat: implement 4D triangulation support
+fix: resolve edge case in Bowyer-Watson algorithm
+perf: optimize boundary facet detection
+```
 
 ## Code Style and Standards
 
@@ -453,11 +586,33 @@ The project follows [semantic versioning][semver] and maintains a detailed [CHAN
 
 ### Release Workflow
 
-1. **Update CHANGELOG.md** with new version
-2. **Update version** in `Cargo.toml`
-3. **Tag release** with version number
-4. **Publish to crates.io** (maintainer only)
-5. **Update documentation** if needed
+1. **Update version** in `Cargo.toml`
+2. **Generate updated changelog** with accurate commit dates:
+
+   ```bash
+   ./scripts/generate_changelog.sh
+   ```
+
+3. **Commit changelog updates** if needed
+4. **Update documentation** if needed
+5. **Create and push annotated tag** with specific commit hash:
+
+   ```bash
+   # Create annotated tag pointing to specific commit
+   git tag -a v0.3.5 <commit-hash> -m "delaunay v0.3.5"
+   
+   # Push the tag to origin
+   git push origin v0.3.5
+   ```
+
+6. **Publish to crates.io** (maintainer only):
+
+   ```bash
+   cargo publish
+   ```
+
+**Note**: The project uses `./scripts/generate_changelog.sh` to generate changelogs with commit dates instead of tag creation dates,
+providing more accurate release timing that reflects when development work was completed.
 
 ## Getting Help
 

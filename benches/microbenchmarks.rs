@@ -18,6 +18,9 @@ use delaunay::{cell, vertex};
 use rand::Rng;
 use std::hint::black_box;
 
+mod helpers;
+use helpers::clear_all_neighbors;
+
 /// Creates random points for benchmarking
 fn generate_random_points(n_points: usize) -> Vec<Point<f64, 3>> {
     let mut rng = rand::rng();
@@ -82,9 +85,7 @@ fn benchmark_assign_neighbors(c: &mut Criterion) {
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                         let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
                         // Clear existing neighbors to benchmark the assignment process
-                        for cell in tds.cells_mut().values_mut() {
-                            cell.clear_neighbors();
-                        }
+                        clear_all_neighbors(&mut tds);
                         tds
                     },
                     |mut tds| {
