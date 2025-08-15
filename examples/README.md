@@ -190,8 +190,11 @@ design of the boundary analysis system.
 ### 6. Float Traits Validation (`check_float_traits.rs`)
 
 A technical example that validates and demonstrates which traits are included
-in the `Float` trait from `num_traits`, helping understand the trait bounds
+in the `Float` trait from `num_traits`, helping you understand the trait bounds
 used throughout the library.
+
+**Run with:** `cargo run --example check_float_traits`
+[View source](./check_float_traits.rs)
 
 **Key Features:**
 
@@ -222,7 +225,7 @@ fn requires_clone<U: Clone>() {}
 
 Comprehensive testing utilities and examples for memory allocation tracking
 in Delaunay triangulation operations. This example provides both a testing
-framework and demonstration of memory usage patterns.
+framework and a demonstration of memory usage patterns.
 
 **Key Features:**
 
@@ -249,10 +252,12 @@ framework and demonstration of memory usage patterns.
 
 **Usage Examples:**
 
-```rust
+```sh
 // Test with allocation counting enabled:
 cargo test --example test_alloc_api --features count-allocations
+```
 
+```rust
 // View memory usage for operations:
 let (result, info) = measure_with_result(|| {
     create_test_points_3d(100)
@@ -263,3 +268,4 @@ print_alloc_summary(&info, "3D point creation");
 **Run with:** `cargo run --example test_alloc_api`
 
 **Test with allocation tracking:** `cargo test --example test_alloc_api --features count-allocations`
+[View source](./test_alloc_api.rs)

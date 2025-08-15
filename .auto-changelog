@@ -4,5 +4,5 @@
   "remote": "origin",
   "commitLimit": 20,
   "backfillLimit": 20,
-  "ignoreCommitPattern": "^(chore|style|docs|test|build\\(deps\\)):"
+  "ignoreCommitPattern": "^(chore|ci|style|docs|test|build\\(deps\\)):"
 }

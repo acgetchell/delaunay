@@ -26,6 +26,10 @@
 //! This invariant is fundamental to many algorithms and is actively validated during triangulation
 //! construction and validation phases.
 //!
+//! For a comprehensive discussion of all topological invariants in Delaunay triangulations,
+//! see the [Topological Invariants](crate::core::triangulation_data_structure#topological-invariants)
+//! section in the triangulation data structure documentation.
+//!
 //! # Examples
 //!
 //! ```rust

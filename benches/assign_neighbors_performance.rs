@@ -11,6 +11,9 @@ use delaunay::vertex;
 use rand::Rng;
 use std::hint::black_box;
 
+mod helpers;
+use helpers::clear_all_neighbors;
+
 /// Creates random points for benchmarking
 fn generate_random_points_3d(n_points: usize) -> Vec<Point<f64, 3>> {
     let mut rng = rand::rng();
@@ -81,9 +84,7 @@ fn benchmark_assign_neighbors_random(c: &mut Criterion) {
                         let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
                         // Clear existing neighbors to benchmark the assignment process
-                        for cell in tds.cells_mut().values_mut() {
-                            cell.clear_neighbors();
-                        }
+                        clear_all_neighbors(&mut tds);
                         tds
                     },
                     |mut tds| {
@@ -119,9 +120,7 @@ fn benchmark_assign_neighbors_grid(c: &mut Criterion) {
                         let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
                         // Clear existing neighbors to benchmark the assignment process
-                        for cell in tds.cells_mut().values_mut() {
-                            cell.clear_neighbors();
-                        }
+                        clear_all_neighbors(&mut tds);
                         tds
                     },
                     |mut tds| {
@@ -156,9 +155,7 @@ fn benchmark_assign_neighbors_spherical(c: &mut Criterion) {
                         let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
                         // Clear existing neighbors to benchmark the assignment process
-                        for cell in tds.cells_mut().values_mut() {
-                            cell.clear_neighbors();
-                        }
+                        clear_all_neighbors(&mut tds);
                         tds
                     },
                     |mut tds| {
@@ -231,9 +228,7 @@ fn benchmark_assign_neighbors_scaling(c: &mut Criterion) {
                         let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
                         // Clear existing neighbors to benchmark the assignment process
-                        for cell in tds.cells_mut().values_mut() {
-                            cell.clear_neighbors();
-                        }
+                        clear_all_neighbors(&mut tds);
                         tds
                     },
                     |mut tds| {
@@ -277,9 +272,7 @@ fn benchmark_assign_neighbors_2d_vs_3d(c: &mut Criterion) {
                         let mut tds = Tds::<f64, (), (), 2>::new(&vertices).unwrap();
 
                         // Clear existing neighbors
-                        for cell in tds.cells_mut().values_mut() {
-                            cell.clear_neighbors();
-                        }
+                        clear_all_neighbors(&mut tds);
                         tds
                     },
                     |mut tds| {
@@ -302,9 +295,7 @@ fn benchmark_assign_neighbors_2d_vs_3d(c: &mut Criterion) {
                         let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
                         // Clear existing neighbors
-                        for cell in tds.cells_mut().values_mut() {
-                            cell.clear_neighbors();
-                        }
+                        clear_all_neighbors(&mut tds);
                         tds
                     },
                     |mut tds| {

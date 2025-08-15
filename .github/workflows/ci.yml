@@ -70,5 +70,5 @@ jobs:
 
       - name: Run tests
         run: |
-          cargo test --lib --verbose
+          cargo test --lib --tests --verbose
           cargo test --examples --verbose

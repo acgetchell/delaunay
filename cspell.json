@@ -26,6 +26,8 @@
         "clippy",
         "Codacy",
         "codecov",
+        "CODEOWNERS",
+        "coderabbit",
         "coderabbitai",
         "comjnl",
         "coreutils",
