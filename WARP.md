@@ -26,7 +26,7 @@ cargo test --doc --verbose
 cargo test --examples --verbose
 
 # Run tests with allocation counting feature
-cargo test allocation_counting --features count-allocations
+cargo test --features count-allocations -- allocation_counting 
 ```
 
 ### Code Quality

@@ -7,10 +7,16 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   update-timestamp:
     runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    concurrency:
+      group: update-timestamp
+      cancel-in-progress: true
 
     steps:
       - name: Checkout repository
@@ -24,7 +30,7 @@ jobs:
           CURRENT_DATE=$(date +"%B %Y")
 
           # Update the timestamp in CODE_OF_CONDUCT.md
-          sed -i "s/Last updated: .*/Last updated: $CURRENT_DATE/" CODE_OF_CONDUCT.md
+          sed -i -E "s/^Last updated: .*/Last updated: $CURRENT_DATE/" CODE_OF_CONDUCT.md
 
       - name: Commit changes
         run: |
@@ -32,7 +38,7 @@ jobs:
           git config --local user.name "GitHub Action"
 
           # Check if there are changes to commit
-          if git diff --quiet; then
+          if git diff --quiet -- CODE_OF_CONDUCT.md; then
             echo "No changes to commit"
             exit 0
           fi
