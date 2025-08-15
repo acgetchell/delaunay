@@ -1,0 +1,107 @@
+# cliff.toml for delaunay
+[changelog]
+header = "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\nand this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n"
+body = """
+{% if version %}
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}
+## [Unreleased]
+{% endif %}
+
+{%- if groups.Added %}
+### Added
+{% for commit in groups.Added -%}
+- {{ commit.message }}
+{% endfor -%}
+
+{% endif -%}
+{%- if groups.Changed %}
+### Changed
+{% for commit in groups.Changed -%}
+- {{ commit.message }}
+{% endfor -%}
+
+{% endif -%}
+{%- if groups.Deprecated %}
+### Deprecated
+{% for commit in groups.Deprecated -%}
+- {{ commit.message }}
+{% endfor -%}
+
+{% endif -%}
+{%- if groups.Removed %}
+### Removed
+{% for commit in groups.Removed -%}
+- {{ commit.message }}
+{% endfor -%}
+
+{% endif -%}
+{%- if groups.Fixed %}
+### Fixed
+{% for commit in groups.Fixed -%}
+- {{ commit.message }}
+{% endfor -%}
+
+{% endif -%}
+{%- if groups.Security %}
+### Security
+{% for commit in groups.Security -%}
+- {{ commit.message }}
+{% endfor -%}
+
+{% endif -%}
+{%- if groups.Performance %}
+### Performance
+{% for commit in groups.Performance -%}
+- {{ commit.message }}
+{% endfor -%}
+
+{% endif -%}
+{%- if groups.Technical %}
+### Technical Details
+{% for commit in groups.Technical -%}
+- {{ commit.message }}
+{% endfor -%}
+
+{% endif -%}
+"""
+footer = """
+[Unreleased]: https://github.com/acgetchell/delaunay/compare/{{ latest | default(value="HEAD") }}...HEAD
+"""
+
+[git]
+tag_pattern = "v[0-9]*"
+commit_preprocessors = [
+    # Strip issue numbers to keep messages clean
+    { pattern = "\\(#([0-9]+)\\)", replace = "" },
+]
+commit_parsers = [
+    # Conventional commit prefixes
+    { message = "^feat", group = "Added" },
+    { message = "^add", group = "Added" },
+    { message = "^change", group = "Changed" },
+    { message = "^refactor", group = "Changed" },
+    { message = "^perf", group = "Performance" },
+    { message = "^fix", group = "Fixed" },
+    { message = "^bug", group = "Fixed" },
+    { message = "^security", group = "Security" },
+    { message = "^remove", group = "Removed" },
+    { message = "^deprecate", group = "Deprecated" },
+    # Common patterns in this repository
+    { message = "^Add", group = "Added" },
+    { message = "^Rename", group = "Changed" },
+    { message = "^Update", group = "Changed" },
+    { message = "^Refactor", group = "Changed" },
+    { message = "^Fix", group = "Fixed" },
+    { message = "^Improve", group = "Changed" },
+    { message = "^Remove", group = "Removed" },
+    { message = "^Deprecate", group = "Deprecated" },
+    { message = "^Security", group = "Security" },
+    { message = "^bump", group = "Technical" },
+    { message = "^doc", group = "Technical" },
+    { message = "^test", group = "Technical" },
+    { message = "^chore", group = "Technical" },
+    # Fallback - matches everything else
+    { message = ".*", group = "Technical" },
+]
+

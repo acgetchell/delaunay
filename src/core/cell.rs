@@ -808,9 +808,10 @@ where
     /// - All vertices are valid (coordinates are finite and UUIDs are valid)
     /// - All vertices are distinct from one another
     /// - The cell UUID is valid and not nil
-    /// - The neighbors contain UUIDs of neighboring [Cell]s
-    /// - The neighbors are indexed such that the index of the [Vertex] opposite
-    ///   the neighboring cell is the same
+    /// - The cell has exactly D+1 vertices (forming a proper D-simplex)
+    ///
+    /// Note: This method does not validate neighbor structure, which requires global
+    /// knowledge of the triangulation and is handled by the [`Tds`](crate::core::triangulation_data_structure::Tds).
     ///
     /// # Errors
     ///
@@ -858,9 +859,6 @@ where
         }
 
         Ok(())
-        // TODO: Additional validation can be added here:
-        // - Validate neighbors structure if present
-        // - Validate neighbor indices match vertex ordering
     }
 }
 
