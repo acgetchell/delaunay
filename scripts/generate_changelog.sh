@@ -50,7 +50,9 @@ enhance_ai_commits() {
         ci_section = 0
         chore_section = 0
         other_section = 0
-        # Skip printing this line, we will replace it with categorized sections
+        # Print the Changes header once and continue
+        print $0
+        print ""
         next
     }
     
@@ -61,11 +63,6 @@ enhance_ai_commits() {
     
     # Process commit lines in Changes section
     in_changes_section && /^- \*\*/ {
-        # Print the Changes header if this is the first commit we are processing
-        if (!feat_section && !fix_section && !docs_section && !perf_section && !refactor_section && !test_section && !ci_section && !chore_section && !other_section) {
-            print "### Changes"
-            print ""
-        }
         
         # Extract commit type from subject
         if (match($0, /\*\*feat[\(:].*\*\*/)) {
@@ -165,10 +162,8 @@ enhance_ai_commits() {
         next
     }
     
-    # Print other lines normally, unless we are skipping Changes section
-    !in_changes_section || !/^### Changes$/ {
-        print $0
-    }
+    # Print all other lines normally
+    { print $0 }
     ' "$input_file" > "$output_file"
 }
 
