@@ -25,6 +25,7 @@ where
         + ComplexField<RealField = T>
         + SubAssign<T>
         + Sum
+        + From<f64>
         + DeserializeOwned,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
@@ -185,7 +186,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::BoundaryAnalysis;
-    use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
+    use crate::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
     use std::collections::HashMap;
@@ -682,7 +683,7 @@ mod tests {
         // Single vertex should fail with InsufficientVertices error since 1 < 4 (D+1 for 3D)
         assert!(matches!(
             result_single,
-            Err(TriangulationValidationError::InsufficientVertices { .. })
+            Err(TriangulationConstructionError::InsufficientVertices { .. })
         ));
 
         // Test 2: Collinear points (should fail with InsufficientVertices)
@@ -697,7 +698,7 @@ mod tests {
         // Collinear points should fail with InsufficientVertices error since 3 < 4 (D+1 for 3D)
         assert!(matches!(
             result_collinear,
-            Err(TriangulationValidationError::InsufficientVertices { .. })
+            Err(TriangulationConstructionError::InsufficientVertices { .. })
         ));
 
         // Test 3: Coplanar points in 3D (should fail with InsufficientVertices)

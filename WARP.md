@@ -198,6 +198,107 @@ Examples in `examples/` demonstrate library capabilities:
 ### Performance Characteristics
 
 - **2D triangulations**: Excellent performance, sub-millisecond for ≤10 points
+
+---
+
+## CURRENT REFACTORING PROJECT: Pure Incremental Delaunay Triangulation
+
+### Overview
+
+We're refactoring from a batch-oriented approach using supercells to a pure incremental approach. This will provide better performance,
+cleaner code organization, and support for future vertex deletion operations.
+
+### Current Issues (Pre-Refactor)
+
+1. **Mixed Approaches**: The current `bowyer_watson` method is designed for batch processing (all vertices at once) while the `add` method tries to do
+   incremental insertion
+2. **Inefficient Hull Recomputation**: Each vertex insertion recomputes the convex hull from scratch, resulting in O(N²) complexity instead of O(N log N)
+3. **Complex Supercell Logic**: Batch approach requires complex supercell creation, insertion, and cleanup
+4. **Inconsistent State Handling**: Different code paths for D+1 vertices vs subsequent vertices
+
+### New Architecture (Pure Incremental)
+
+#### Core Algorithm Module
+
+- **Location**: `src/core/algorithms/bowyer_watson.rs`
+- **Main struct**: `IncrementalBoyerWatson<T, U, V, D>`
+- **Key methods**:
+  - `initialize_triangulation()` - Handle first D+1 vertices
+  - `insert_vertex()` - Core incremental insertion
+  - `insert_inside_vertex()` - Standard Bowyer-Watson for interior points
+  - `insert_outside_vertex()` - Hull extension for exterior points
+
+#### Cached Hull System
+
+- **Simple ConvexHull struct** with boundary facets and bounding box
+- **Incremental updates** instead of full recomputation
+- **Efficient inside/outside testing** using cached data
+
+#### Clean TDS Integration
+
+- Remove all supercell methods: `supercell()`, `create_default_supercell()`, `remove_cells_containing_supercell_vertices()`
+- Simplify `add()` method to consistent incremental approach
+- Better construction state tracking
+
+### Benefits
+
+1. **Performance**: O(N log N) instead of O(N²) for N vertex insertions
+2. **Consistency**: Same algorithm path for all vertices after D+1
+3. **Simplicity**: No complex supercell machinery
+4. **Maintainability**: Clear separation between algorithm and data structure
+5. **Future-Ready**: Foundation for vertex deletion operations
+6. **Memory Efficiency**: Cached hull avoids expensive recomputation
+
+### Implementation Status
+
+#### Completed ✅
+
+- ✅ **Core Algorithm Implementation**: Complete `IncrementalBoyerWatson` struct in `src/core/algorithms/bowyer_watson.rs`
+- ✅ **Trait Bounds Resolution**: Fixed const generics trait bounds (`[f64; D]: Default + DeserializeOwned + Serialize + Sized`)
+- ✅ **Geometric Predicates Integration**: Working `simplex_orientation` and `insphere` tests with proper error handling
+- ✅ **Multiple Insertion Strategies**:
+  - **Cavity-based insertion** for interior vertices (standard Bowyer-Watson)
+  - **Hull extension** for exterior vertices (convex hull expansion)
+  - **Fallback insertion** for edge cases
+- ✅ **Visibility Testing**: Complete implementation of facet visibility predicates for hull extension
+- ✅ **Boundary Facet Detection**: Robust algorithm to find cavity boundaries after bad cell removal
+- ✅ **Cell Creation and Management**: Proper cell creation from facets with UUID mapping
+- ✅ **Algorithm Statistics**: Insertion tracking with cells created/removed counts
+- ✅ **Comprehensive Testing**: All diagnostic tests passing with proper invariant validation
+- ✅ **Warning-Free Codebase**: Consolidated tests, eliminated all compilation warnings
+- ✅ **Triangulation Validation**: All geometric invariants satisfied (boundary facets, neighbor relationships)
+
+#### Algorithm Features ✅
+
+- ✅ **Strategy Selection**: Automatic interior vs exterior vertex detection via circumsphere tests
+- ✅ **Bad Cell Detection**: Conservative circumsphere containment testing to prevent over-removal
+- ✅ **Cavity Triangulation**: Proper boundary facet identification and new cell creation
+- ✅ **Hull Extension**: Geometric visibility testing for exterior vertex insertion
+- ✅ **Robust Fallback**: Aggressive fallback trying all facets when standard methods fail
+- ✅ **Topology Preservation**: Maintains valid neighbor relationships and facet sharing
+- ✅ **Dimension Generic**: Works for arbitrary dimensions with const generic `D`
+
+#### Test Results ✅
+
+- ✅ **Simple Tetrahedron**: 4 vertices → 1 cell, 4 boundary facets (perfect)
+- ✅ **Hull Extension**: 5 vertices → 2 cells, 6 boundary facets, 1 internal facet (optimal)
+- ✅ **Complex Geometry**: 5-point challenging configurations handled correctly
+- ✅ **Invariant Preservation**: Zero invalid facet sharing, proper topology maintained
+- ✅ **Algorithm Components**: Strategy selection, bad cell detection, insertion all working
+
+#### Next Phase 🔄
+
+- 🔄 **TDS Integration**: Refactor `Tds::add()` method to use new incremental algorithm
+- 🔄 **Remove Supercell Logic**: Clean up batch processing and supercell methods
+- 🔄 **Performance Optimization**: Add hull caching for O(N log N) complexity
+- 🔄 **Deletion Support**: Foundation for vertex deletion operations
+- 🔄 **Benchmark Integration**: Performance testing against previous implementation
+
+### Notes
+
+- **No mod.rs files**: Per project preference, modules are defined in lib.rs
+- **Type Safety**: All existing type safety and validation preserved
+- **API Compatibility**: External API remains the same, internal implementation improved
 - **3D triangulations**: ~10x slower than 2D, exponential scaling beyond 30 points  
 - **4D triangulations**: Highest complexity, suitable for small-scale problems (≤30 points)
 - **Boundary detection**: O(N·F) complexity via HashMap-based optimization

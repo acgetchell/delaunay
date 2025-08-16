@@ -31,7 +31,12 @@ use std::ops::{AddAssign, Div, SubAssign};
 /// ```
 pub fn clear_all_neighbors<T, U, V, const D: usize>(tds: &mut Tds<T, U, V, D>)
 where
-    T: CoordinateScalar + AddAssign<T> + na::ComplexField<RealField = T> + SubAssign<T> + Sum,
+    T: CoordinateScalar
+        + AddAssign<T>
+        + na::ComplexField<RealField = T>
+        + SubAssign<T>
+        + Sum
+        + From<f64>,
     U: DataType,
     V: DataType,
     f64: From<T>,

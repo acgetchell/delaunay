@@ -7,6 +7,7 @@
 //! # Features
 //!
 //! - d-dimensional Delaunay triangulations
+//! - d-dimensional convex hulls
 //! - Generic floating-point coordinate types (supports `f32`, `f64`, and other types implementing `CoordinateScalar`)
 //! - Arbitrary data types associated with vertices and cells
 //! - Serialization/Deserialization with [serde](https://serde.rs)
@@ -29,6 +30,12 @@ extern crate derive_builder;
 /// It includes the `Tds` struct, which represents the triangulation, as well as `Cell`, `Facet`, and `Vertex` components.
 /// This module provides traits for customizing vertex and cell data. The crate also includes a `prelude` module for convenient access to commonly used types.
 pub mod core {
+    /// Triangulation algorithms for construction, maintenance, and querying
+    pub mod algorithms {
+        /// Pure incremental Bowyer-Watson algorithm for Delaunay triangulation
+        pub mod bowyer_watson;
+        pub use bowyer_watson::*;
+    }
     pub mod boundary;
     pub mod cell;
     pub mod facet;
@@ -59,6 +66,12 @@ pub mod core {
 /// (for `f32`, `f64`, and other types implementing `CoordinateScalar`) with proper NaN
 /// handling, validation, and hashing.
 pub mod geometry {
+    /// Geometric algorithms for triangulations and spatial data structures
+    pub mod algorithms {
+        /// Convex hull operations on d-dimensional triangulations
+        pub mod convex_hull;
+        pub use convex_hull::*;
+    }
     pub mod matrix;
     pub mod point;
     pub mod predicates;
@@ -78,6 +91,7 @@ pub mod geometry {
         pub use hashcoordinate::*;
         pub use orderedeq::*;
     }
+    pub use algorithms::*;
     pub use matrix::*;
     pub use point::*;
     pub use predicates::*;
@@ -99,6 +113,7 @@ pub mod prelude {
 
     // Re-export from geometry
     pub use crate::geometry::{
+        algorithms::*,
         matrix::*,
         point::*,
         predicates::*,
