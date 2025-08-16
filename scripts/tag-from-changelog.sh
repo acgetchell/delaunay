@@ -173,8 +173,6 @@ if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
     exit 0
 fi
 
-TAG_VERSION="$1"
-
 # Run checks
 check_git_repo
 check_changelog
