@@ -15,7 +15,7 @@ get_hardware_info() {
     local os_name
     if [[ "$OSTYPE" == "darwin"* ]]; then
         os_name="macOS"
-    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    elif [[ "$OSTYPE" == "linux"* ]]; then
         os_name="Linux"
     elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
         os_name="Windows"
@@ -35,7 +35,7 @@ get_hardware_info() {
             cpu_cores=$(sysctl -n hw.physicalcpu 2>/dev/null || echo "Unknown")
             cpu_threads=$(sysctl -n hw.logicalcpu 2>/dev/null || echo "Unknown")
         fi
-    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    elif [[ "$OSTYPE" == "linux"* ]]; then
         # Linux
         if [[ -f "/proc/cpuinfo" ]]; then
             cpu_info=$(grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
@@ -48,6 +48,17 @@ get_hardware_info() {
             cpu_info=$(wmic cpu get name /format:list 2>/dev/null | grep "Name=" | cut -d= -f2 | head -1 || echo "Unknown")
             cpu_cores=$(wmic cpu get NumberOfCores /format:list 2>/dev/null | grep "NumberOfCores=" | cut -d= -f2 | head -1 || echo "Unknown")
             cpu_threads=$(wmic cpu get NumberOfLogicalProcessors /format:list 2>/dev/null | grep "NumberOfLogicalProcessors=" | cut -d= -f2 | head -1 || echo "Unknown")
+        elif command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
+            # Fallback to PowerShell
+            local ps_cmd
+            if command -v pwsh >/dev/null 2>&1; then
+                ps_cmd="pwsh"
+            else
+                ps_cmd="powershell"
+            fi
+            cpu_info=$($ps_cmd -Command "Get-WmiObject -Class Win32_Processor | Select-Object -First 1 -ExpandProperty Name" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_cores=$($ps_cmd -Command "Get-WmiObject -Class Win32_Processor | Select-Object -First 1 -ExpandProperty NumberOfCores" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_threads=$($ps_cmd -Command "Get-WmiObject -Class Win32_Processor | Select-Object -First 1 -ExpandProperty NumberOfLogicalProcessors" 2>/dev/null | tr -d '\r' || echo "Unknown")
         fi
     fi
     
@@ -64,7 +75,7 @@ get_hardware_info() {
                 memory_total="${memory_total} GB"
             fi
         fi
-    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    elif [[ "$OSTYPE" == "linux"* ]]; then
         # Linux - extract from /proc/meminfo
         if [[ -f "/proc/meminfo" ]]; then
             local mem_kb
@@ -79,6 +90,20 @@ get_hardware_info() {
         if command -v wmic >/dev/null 2>&1; then
             local mem_bytes
             mem_bytes=$(wmic computersystem get TotalPhysicalMemory /format:list 2>/dev/null | grep "TotalPhysicalMemory=" | cut -d= -f2 | head -1 || echo "0")
+            if [[ "$mem_bytes" -gt 0 ]]; then
+                memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
+                memory_total="${memory_total} GB"
+            fi
+        elif command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
+            # Fallback to PowerShell
+            local ps_cmd
+            if command -v pwsh >/dev/null 2>&1; then
+                ps_cmd="pwsh"
+            else
+                ps_cmd="powershell"
+            fi
+            local mem_bytes
+            mem_bytes=$($ps_cmd -Command "Get-WmiObject -Class Win32_ComputerSystem | Select-Object -ExpandProperty TotalPhysicalMemory" 2>/dev/null | tr -d '\r' || echo "0")
             if [[ "$mem_bytes" -gt 0 ]]; then
                 memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
                 memory_total="${memory_total} GB"
@@ -115,7 +140,7 @@ get_hardware_info_kv() {
     local os_name
     if [[ "$OSTYPE" == "darwin"* ]]; then
         os_name="macOS"
-    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    elif [[ "$OSTYPE" == "linux"* ]]; then
         os_name="Linux"
     elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
         os_name="Windows"
@@ -135,7 +160,7 @@ get_hardware_info_kv() {
             cpu_cores=$(sysctl -n hw.physicalcpu 2>/dev/null || echo "Unknown")
             cpu_threads=$(sysctl -n hw.logicalcpu 2>/dev/null || echo "Unknown")
         fi
-    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    elif [[ "$OSTYPE" == "linux"* ]]; then
         # Linux
         if [[ -f "/proc/cpuinfo" ]]; then
             cpu_info=$(grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
@@ -148,6 +173,17 @@ get_hardware_info_kv() {
             cpu_info=$(wmic cpu get name /format:list 2>/dev/null | grep "Name=" | cut -d= -f2 | head -1 || echo "Unknown")
             cpu_cores=$(wmic cpu get NumberOfCores /format:list 2>/dev/null | grep "NumberOfCores=" | cut -d= -f2 | head -1 || echo "Unknown")
             cpu_threads=$(wmic cpu get NumberOfLogicalProcessors /format:list 2>/dev/null | grep "NumberOfLogicalProcessors=" | cut -d= -f2 | head -1 || echo "Unknown")
+        elif command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
+            # Fallback to PowerShell
+            local ps_cmd
+            if command -v pwsh >/dev/null 2>&1; then
+                ps_cmd="pwsh"
+            else
+                ps_cmd="powershell"
+            fi
+            cpu_info=$($ps_cmd -Command "Get-WmiObject -Class Win32_Processor | Select-Object -First 1 -ExpandProperty Name" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_cores=$($ps_cmd -Command "Get-WmiObject -Class Win32_Processor | Select-Object -First 1 -ExpandProperty NumberOfCores" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_threads=$($ps_cmd -Command "Get-WmiObject -Class Win32_Processor | Select-Object -First 1 -ExpandProperty NumberOfLogicalProcessors" 2>/dev/null | tr -d '\r' || echo "Unknown")
         fi
     fi
     
@@ -164,7 +200,7 @@ get_hardware_info_kv() {
                 memory_total="${memory_total} GB"
             fi
         fi
-    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    elif [[ "$OSTYPE" == "linux"* ]]; then
         # Linux - extract from /proc/meminfo
         if [[ -f "/proc/meminfo" ]]; then
             local mem_kb
@@ -179,6 +215,20 @@ get_hardware_info_kv() {
         if command -v wmic >/dev/null 2>&1; then
             local mem_bytes
             mem_bytes=$(wmic computersystem get TotalPhysicalMemory /format:list 2>/dev/null | grep "TotalPhysicalMemory=" | cut -d= -f2 | head -1 || echo "0")
+            if [[ "$mem_bytes" -gt 0 ]]; then
+                memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
+                memory_total="${memory_total} GB"
+            fi
+        elif command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
+            # Fallback to PowerShell
+            local ps_cmd
+            if command -v pwsh >/dev/null 2>&1; then
+                ps_cmd="pwsh"
+            else
+                ps_cmd="powershell"
+            fi
+            local mem_bytes
+            mem_bytes=$($ps_cmd -Command "Get-WmiObject -Class Win32_ComputerSystem | Select-Object -ExpandProperty TotalPhysicalMemory" 2>/dev/null | tr -d '\r' || echo "0")
             if [[ "$mem_bytes" -gt 0 ]]; then
                 memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
                 memory_total="${memory_total} GB"
@@ -211,16 +261,25 @@ extract_baseline_hardware() {
     
     # Check if baseline has hardware information
     if grep -q "Hardware Information:" "$baseline_file"; then
-        # Extract each piece of hardware info
+        # Extract hardware information block only (from "Hardware Information:" until next empty line or EOF)
+        local hardware_block
+        hardware_block=$(awk '/^Hardware Information:/{flag=1; next} flag && /^$/{exit} flag' "$baseline_file")
+        
+        # If hardware_block is empty, try alternative extraction (handle cases where block doesn't end with empty line)
+        if [[ -z "$hardware_block" ]]; then
+            hardware_block=$(awk '/^Hardware Information:/{flag=1; next} flag && /^[A-Za-z]/ && !/^  /{exit} flag' "$baseline_file")
+        fi
+        
+        # Extract each piece of hardware info from the scoped block
         local baseline_os baseline_cpu baseline_cores baseline_threads baseline_memory baseline_rust baseline_target
         
-        baseline_os=$(grep "  OS:" "$baseline_file" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
-        baseline_cpu=$(grep "  CPU:" "$baseline_file" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
-        baseline_cores=$(grep "  CPU Cores:" "$baseline_file" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
-        baseline_threads=$(grep "  CPU Threads:" "$baseline_file" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
-        baseline_memory=$(grep "  Memory:" "$baseline_file" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
-        baseline_rust=$(grep "  Rust:" "$baseline_file" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
-        baseline_target=$(grep "  Target:" "$baseline_file" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
+        baseline_os=$(echo "$hardware_block" | grep "  OS:" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
+        baseline_cpu=$(echo "$hardware_block" | grep "  CPU:" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
+        baseline_cores=$(echo "$hardware_block" | grep "  CPU Cores:" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
+        baseline_threads=$(echo "$hardware_block" | grep "  CPU Threads:" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
+        baseline_memory=$(echo "$hardware_block" | grep "  Memory:" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
+        baseline_rust=$(echo "$hardware_block" | grep "  Rust:" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
+        baseline_target=$(echo "$hardware_block" | grep "  Target:" | cut -d: -f2- | sed 's/^ *//' || echo "Unknown")
         
         # Return as key=value pairs
         echo "OS=$baseline_os"
@@ -319,6 +378,16 @@ EOF
         warnings_found=true
     fi
     
+    if [[ "$current_threads" != "$baseline_threads" ]] && [[ "$baseline_threads" != "Unknown" ]] && [[ "$current_threads" != "Unknown" ]]; then
+        echo "⚠️  CPU thread count differs: $current_threads vs $baseline_threads threads"
+        warnings_found=true
+    fi
+    
+    if [[ "$current_memory" != "$baseline_memory" ]] && [[ "$baseline_memory" != "Unknown" ]] && [[ "$current_memory" != "Unknown" ]]; then
+        echo "⚠️  Memory differs: $current_memory vs $baseline_memory"
+        warnings_found=true
+    fi
+    
     if [[ "$current_rust" != "$baseline_rust" ]] && [[ "$baseline_rust" != "Unknown" ]]; then
         echo "⚠️  Rust version differs: Performance may be affected by compiler changes"
         warnings_found=true
@@ -335,3 +404,44 @@ EOF
     
     echo ""
 }
+
+# Command-line interface for interactive testing
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    # Script is being executed directly, not sourced
+    case "${1:-}" in
+        "--kv" | "-k")
+            echo "Hardware Information (Key=Value format):"
+            echo "=========================================="
+            get_hardware_info_kv
+            ;;
+        "--help" | "-h")
+            cat <<EOF
+Usage: $0 [OPTIONS]
+
+Cross-platform hardware information detection utility for delaunay benchmarking.
+
+OPTIONS:
+    (no args)    Display hardware information in formatted block
+    --kv, -k     Display hardware information as key=value pairs
+    --help, -h   Show this help message
+
+EXAMPLES:
+    $0                    # Show formatted hardware info
+    $0 --kv               # Show key=value format
+    source $0             # Source functions for use in other scripts
+
+NOTE:
+    This script can also be sourced to make its functions available:
+    - get_hardware_info()           # Returns formatted hardware block
+    - get_hardware_info_kv()        # Returns key=value pairs
+    - extract_baseline_hardware()   # Extracts hardware from baseline files
+    - compare_hardware()            # Compares two hardware configurations
+EOF
+            ;;
+        *)
+            echo "Current Hardware Information:"
+            echo "============================"
+            get_hardware_info
+            ;;
+    esac
+fi

@@ -171,8 +171,8 @@ current_time_change=""
 current_thrpt_change=""
 
 while IFS= read -r line; do
-    # Detect benchmark result lines - handle both μ (U+03BC) and µ (U+00B5) micro symbols and nanoseconds
-    if [[ "$line" =~ ^(tds_new_([0-9]+)d/tds_new/([0-9]+))[[:space:]]+time:[[:space:]]+\[([0-9.]+)[[:space:]](ns|[μµ]s|ms|s)[[:space:]]([0-9.]+)[[:space:]](ns|[μµ]s|ms|s)[[:space:]]([0-9.]+)[[:space:]](ns|[μµ]s|ms|s)\] ]]; then
+    # Detect benchmark result lines - handle both μ (U+03BC) and µ (U+00B5) micro symbols, us, and nanoseconds
+    if [[ "$line" =~ ^(tds_new_([0-9]+)d/tds_new/([0-9]+))[[:space:]]+time:[[:space:]]+\[([0-9.]+)[[:space:]](ns|us|[μµ]s|ms|s)[[:space:]]([0-9.]+)[[:space:]](ns|us|[μµ]s|ms|s)[[:space:]]([0-9.]+)[[:space:]](ns|us|[μµ]s|ms|s)\] ]]; then
         current_benchmark="${BASH_REMATCH[1]}"
         current_dimension="${BASH_REMATCH[2]}D"
         current_points="${BASH_REMATCH[3]}"
@@ -187,12 +187,14 @@ while IFS= read -r line; do
         normalized_unit="$time_unit"
         if [[ "$time_unit" == "µs" ]]; then
             normalized_unit="μs"
+        elif [[ "$time_unit" == "us" ]]; then
+            normalized_unit="μs"
         fi
         
         current_time_vals="[$time_low, $time_mean, $time_high] $normalized_unit"
         
     # Detect throughput lines
-    elif [[ "$line" =~ ^[[:space:]]+thrpt:[[:space:]]+\[([0-9.]+)[[:space:]](Kelem/s|elem/s)[[:space:]]([0-9.]+)[[:space:]](Kelem/s|elem/s)[[:space:]]([0-9.]+)[[:space:]](Kelem/s|elem/s)\] ]] && [[ -n "$current_points" ]]; then
+    elif [[ "$line" =~ ^[[:space:]]+thrpt:[[:space:]]+\[([0-9.]+)[[:space:]](K?elem/s)[[:space:]]([0-9.]+)[[:space:]](K?elem/s)[[:space:]]([0-9.]+)[[:space:]](K?elem/s)\] ]] && [[ -n "$current_points" ]]; then
         thrpt_low="${BASH_REMATCH[1]}"
         thrpt_unit="${BASH_REMATCH[2]}"
         thrpt_mean="${BASH_REMATCH[3]}"
@@ -209,7 +211,7 @@ while IFS= read -r line; do
         current_time_change="[$time_change_low%, $time_change_mean%, $time_change_high%]"
         
     # Detect throughput change lines
-    elif [[ "$line" =~ ^[[:space:]]+thrpt:[[:space:]]+\[([+−+-]?[0-9.]+)%[[:space:]]([+−+-]?[0-9.]+)%[[:space:]]([+−+-]?[0-9.]+)%\] ]] && [[ -n "$current_points" ]]; then
+    elif [[ "$line" =~ ^[[:space:]]+thrpt:[[:space:]]+\[([-+−]?[0-9.]+)%[[:space:]]([-+−]?[0-9.]+)%[[:space:]]([-+−]?[0-9.]+)%\] ]] && [[ -n "$current_points" ]]; then
         thrpt_change_low="${BASH_REMATCH[1]}"
         thrpt_change_mean="${BASH_REMATCH[2]}"
         thrpt_change_high="${BASH_REMATCH[3]}"

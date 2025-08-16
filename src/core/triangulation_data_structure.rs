@@ -520,7 +520,8 @@ where
                     }
                 }
 
-                if cfg!(debug_assertions) {
+                #[cfg(debug_assertions)]
+                {
                     let removed_count = total_cells - valid_cells.len().min(2);
                     if removed_count > 0 {
                         println!(
@@ -1543,7 +1544,8 @@ where
                 message: format!("Failed to fix invalid facet sharing: {e}"),
             }
         })?;
-        if cfg!(debug_assertions) && invalid_cells_removed > 0 {
+        #[cfg(debug_assertions)]
+        if invalid_cells_removed > 0 {
             println!("Fixed invalid facet sharing by removing {invalid_cells_removed} cells");
         }
 
@@ -2245,40 +2247,41 @@ where
     /// # ⚠️ Performance Warning
     ///
     /// **This method is computationally expensive** and should be used judiciously:
-    /// - **Time Complexity**: O(N×F + N×D) where N is the number of cells, F is facets per cell (D+1),
+    /// - **Time Complexity**: O(N×F + N×D²) where N is the number of cells, F is facets per cell (D+1),
     ///   and D is the spatial dimension
     /// - **Space Complexity**: O(N×F) for building facet-to-cell mappings
     /// - For large triangulations (>10K cells), this can take significant time
     /// - Consider using this primarily for debugging, testing, or after major structural changes
     ///
-    /// For production code, prefer individual validation methods like `validate_cell_mappings()`
+    /// For production code, prefer individual validation methods like [`validate_cell_mappings()`](Self::validate_cell_mappings)
     /// when only specific checks are needed.
     ///
     /// # Returns
     ///
-    /// `Ok(())` if the triangulation is valid, otherwise a `TriangulationValidationError`.
+    /// `Ok(())` if the triangulation is valid, otherwise a [`TriangulationValidationError`].
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if:
+    /// Returns a [`TriangulationValidationError`] if:
+    /// - Vertex or cell UUID-to-key mappings are inconsistent
     /// - Any cell is invalid (contains invalid vertices, has nil UUID, or contains duplicate vertices)
+    /// - Duplicate cells exist (cells with identical vertex sets)
+    /// - Any facet is shared by more than 2 cells
     /// - Neighbor relationships are not mutual between cells
     /// - Cells have too many neighbors for their dimension
-    /// - Neighboring cells don't share the proper number of vertices
-    /// - Duplicate cells exist (cells with identical vertex sets)
     ///
     /// # Validation Checks
     ///
     /// This function performs comprehensive validation including:
-    /// 1. **Mapping consistency**: Validates vertex and cell UUID-to-key bidirectional mappings (O(N+V))
-    /// 2. **Cell uniqueness**: Checks for duplicate cells with identical vertex sets (O(N×D×log(D)))
-    /// 3. **Individual cell validation**: Calls `is_valid()` on each cell (O(N×D))
-    /// 4. **Facet sharing validation**: Ensures no facet is shared by >2 cells (O(N×F))
-    /// 5. **Neighbor relationship validation**: Validates mutual neighbor relationships (O(N×D²))
+    /// 1. **Mapping consistency**: Validates vertex and cell UUID-to-key bidirectional mappings
+    /// 2. **Cell uniqueness**: Checks for duplicate cells with identical vertex sets
+    /// 3. **Individual cell validation**: Calls [`is_valid()`](crate::core::cell::Cell::is_valid) on each cell
+    /// 4. **Facet sharing validation**: Ensures no facet is shared by >2 cells
+    /// 5. **Neighbor relationship validation**: Validates mutual neighbor relationships
     ///
     /// # Examples
     ///
-    /// Validate a properly constructed triangulation:
+    /// Basic usage with a 3D triangulation:
     ///
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
@@ -2295,65 +2298,23 @@ where
     ///
     /// let vertices = Vertex::from_points(points);
     /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-    /// // Note: triangulation is automatically performed in Tds::new
-    /// // Validation should pass for a properly triangulated structure
     /// assert!(tds.is_valid().is_ok());
     /// ```
     ///
-    /// Validate an empty triangulation:
+    /// Empty triangulations are valid:
     ///
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::point::Point;
     ///
     /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
-    ///
-    /// // Empty triangulation should be valid
     /// assert!(tds.is_valid().is_ok());
     /// ```
     ///
-    /// Validate different dimensional triangulations:
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
-    /// use delaunay::core::vertex::Vertex;
-    ///
-    /// // 2D triangulation
-    /// let points_2d = vec![
-    ///     Point::new([0.0, 0.0]),
-    ///     Point::new([1.0, 0.0]),
-    ///     Point::new([0.5, 1.0]),
-    /// ];
-    /// let vertices_2d = Vertex::from_points(points_2d);
-    /// let tds_2d: Tds<f64, usize, usize, 2> = Tds::new(&vertices_2d).unwrap();
-    /// // Note: triangulation is automatically performed in Tds::new
-    /// assert!(tds_2d.is_valid().is_ok());
-    ///
-    /// // 4D triangulation
-    /// let points_4d = vec![
-    ///     Point::new([0.0, 0.0, 0.0, 0.0]),
-    ///     Point::new([1.0, 0.0, 0.0, 0.0]),
-    ///     Point::new([0.0, 1.0, 0.0, 0.0]),
-    ///     Point::new([0.0, 0.0, 1.0, 0.0]),
-    ///     Point::new([0.0, 0.0, 0.0, 1.0]),
-    /// ];
-    /// let vertices_4d = Vertex::from_points(points_4d);
-    /// let tds_4d: Tds<f64, usize, usize, 4> = Tds::new(&vertices_4d).unwrap();
-    /// // Note: triangulation is automatically performed in Tds::new
-    /// assert!(tds_4d.is_valid().is_ok());
-    /// ```
-    ///
-    /// Example of validation error handling:
+    /// Error handling example:
     ///
     /// ```
     /// use delaunay::core::triangulation_data_structure::{Tds, TriangulationValidationError};
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::vertex;
-    /// use delaunay::cell;
+    /// use delaunay::{vertex, cell};
     ///
     /// let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
     ///
@@ -2370,19 +2331,14 @@ where
     /// let cell_uuid = tds.cells().get(cell_key).unwrap().uuid();
     /// tds.cell_bimap.insert(cell_uuid, cell_key);
     ///
-    /// // Validation should fail
+    /// // Validation should fail due to infinite coordinate
     /// match tds.is_valid() {
     ///     Err(TriangulationValidationError::InvalidCell { .. }) => {
-    ///         // Expected error due to infinite coordinate
+    ///         // Expected error
     ///     }
     ///     _ => panic!("Expected InvalidCell error"),
     /// }
     /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if internal data structures are inconsistent (e.g., a cell key
-    /// doesn't have a corresponding UUID in the bimap).
     pub fn is_valid(&self) -> Result<(), TriangulationValidationError>
     where
         [T; D]: DeserializeOwned + Serialize + Sized,

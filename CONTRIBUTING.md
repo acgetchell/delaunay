@@ -588,26 +588,46 @@ The project follows [semantic versioning][semver] and maintains a detailed [CHAN
 
 ### Release Workflow
 
-1. **Update version** in `Cargo.toml`
-2. **Generate updated changelog** with accurate commit dates:
+1. **Update version** in `Cargo.toml` and any documentation if needed
+2. **Create temporary tag** to enable changelog generation:
+
+   ```bash
+   git tag -a v0.3.5 -m "delaunay v0.3.5"
+   ```
+
+3. **Generate changelog**:
 
    ```bash
    ./scripts/generate_changelog.sh
    ```
 
-3. **Commit changelog updates** if needed
-4. **Update documentation** if needed
-5. **Create and push annotated tag** with specific commit hash:
+4. **Commit all changes together**:
 
    ```bash
-   # Create annotated tag pointing to specific commit
-   git tag -a v0.3.5 <commit-hash> -m "delaunay v0.3.5"
+   git add Cargo.toml CHANGELOG.md docs/ # Add any updated files
+   git commit -m "chore(release): release v0.3.5
    
-   # Push the tag to origin
+   - Bump version to v0.3.5
+   - Update changelog with latest changes  
+   - Update documentation for release"
+   ```
+
+5. **Move tag to final release commit**:
+
+   ```bash
+   # Delete temporary tag and recreate pointing to release commit
+   git tag -d v0.3.5
+   git tag -a v0.3.5 -m "delaunay v0.3.5"
+   ```
+
+6. **Push changes and tag**:
+
+   ```bash
+   git push origin main
    git push origin v0.3.5
    ```
 
-6. **Publish to crates.io** (maintainer only):
+7. **Publish to crates.io** (maintainer only):
 
    ```bash
    cargo publish
