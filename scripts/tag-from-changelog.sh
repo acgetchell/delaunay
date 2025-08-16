@@ -9,8 +9,8 @@
 #   ./scripts/tag-from-changelog.sh v0.3.5
 #   ./scripts/tag-from-changelog.sh v0.3.5 --force  # Force recreate existing tag
 #
-# The script extracts the first changelog section from CHANGELOG.md and uses it
-# as the tag message, making it easy to create GitHub releases with proper content.
+# The script extracts the changelog section matching the specified version from CHANGELOG.md
+# and uses it as the tag message, making it easy to create GitHub releases with proper content.
 
 set -euo pipefail
 
@@ -35,8 +35,8 @@ usage() {
     echo "  $0 v0.3.5"
     echo "  $0 v0.3.5 --force"
     echo ""
-    echo "The script extracts the first changelog section from CHANGELOG.md"
-    echo "and uses it as the tag message for GitHub release integration."
+    echo "The script extracts the changelog section matching the specified version"
+    echo "from CHANGELOG.md and uses it as the tag message for GitHub release integration."
 }
 
 # Check if we're in a git repository
@@ -65,18 +65,51 @@ check_changelog() {
     CHANGELOG_PATH="$changelog_path"
 }
 
-# Extract changelog content for the tag
+# Extract changelog content for the specific tag version
 extract_changelog() {
+    local tag_version="$1"
+    local version_number
     local changelog_content
-    changelog_content=$(awk '/^## \[/{f=!f; next} f' "$CHANGELOG_PATH")
     
+    # Strip 'v' prefix if present to get version number
+    version_number="${tag_version#v}"
+    
+    # Use awk to find the specific version section and extract until next ## header
+    # Support formats: "## [0.3.5] ...", "## v0.3.5 ...", "## 0.3.5 ..."
+    changelog_content=$(awk -v version="$version_number" '
+        BEGIN { found = 0; printing = 0 }
+        /^## / {
+            if (printing) {
+                # Stop printing when we hit the next ## header
+                exit
+            }
+            # Check if this header matches our version
+            if ($0 ~ "## \\[v?" version "\\]" || $0 ~ "## v?" version " " || $0 ~ "## v?" version "$") {
+                found = 1
+                printing = 1
+                next  # Skip the header itself
+            }
+        }
+        printing { print }
+        END { 
+            if (!found) {
+                print "VERSION_NOT_FOUND" > "/dev/stderr"
+            }
+        }
+    ' "$CHANGELOG_PATH")
+    
+    # Check if version was found
     if [[ -z "$changelog_content" ]]; then
-        echo -e "${YELLOW}Warning: No changelog content found${NC}" >&2
-        echo "Make sure $CHANGELOG_PATH has at least one release section starting with '## ['" >&2
+        echo -e "${YELLOW}Warning: No changelog content found for version $tag_version${NC}" >&2
+        echo "Searched for version patterns:" >&2
+        echo "  - ## [$version_number] ..." >&2
+        echo "  - ## v$version_number ..." >&2
+        echo "  - ## $version_number ..." >&2
         echo "Using minimal tag message instead." >&2
-        echo "$TAG_VERSION"
+        echo "$tag_version"
     else
-        echo "$changelog_content"
+        # Clean up the content - remove any leading/trailing whitespace
+        echo "$changelog_content" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
     fi
 }
 
@@ -107,7 +140,7 @@ main() {
     # Extract changelog content
     echo -e "${BLUE}Extracting changelog content...${NC}"
     local tag_message
-    tag_message=$(extract_changelog)
+    tag_message=$(extract_changelog "$tag_version")
     
     # Show preview of tag message
     echo -e "${BLUE}Tag message preview:${NC}"

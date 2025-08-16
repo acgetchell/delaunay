@@ -527,7 +527,7 @@ where
                 {
                     let removed_count = total_cells - valid_cells.len().min(2);
                     if removed_count > 0 {
-                        println!(
+                        eprintln!(
                             "Warning: Facet {} was shared by {} cells, removing {} invalid cells (keeping {} valid)",
                             facet_key,
                             total_cells,
@@ -1542,21 +1542,16 @@ where
         self.remove_duplicate_cells();
 
         // Fix invalid facet sharing by removing problematic cells
-        #[cfg(debug_assertions)]
+        #[allow(unused_variables)] // Used only in debug builds
         let invalid_cells_removed = self.fix_invalid_facet_sharing().map_err(|e| {
             TriangulationValidationError::FailedToCreateCell {
                 message: format!("Failed to fix invalid facet sharing: {e}"),
             }
         })?;
-        #[cfg(not(debug_assertions))]
-        self.fix_invalid_facet_sharing().map_err(|e| {
-            TriangulationValidationError::FailedToCreateCell {
-                message: format!("Failed to fix invalid facet sharing: {e}"),
-            }
-        })?;
+
         #[cfg(debug_assertions)]
         if invalid_cells_removed > 0 {
-            println!("Fixed invalid facet sharing by removing {invalid_cells_removed} cells");
+            eprintln!("Fixed invalid facet sharing by removing {invalid_cells_removed} cells");
         }
 
         self.assign_neighbors()?;

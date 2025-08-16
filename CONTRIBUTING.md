@@ -602,6 +602,8 @@ The project follows [semantic versioning][semver] and maintains a detailed [CHAN
    ./scripts/generate_changelog.sh
    ```
 
+   Note: do not push this temporary tag, it will be recreated later with full changelog content
+
 4. **Commit all changes together**:
 
    ```bash
@@ -621,6 +623,12 @@ The project follows [semantic versioning][semver] and maintains a detailed [CHAN
    ./scripts/tag-from-changelog.sh v0.3.5 --force
    ```
 
+   The `tag-from-changelog.sh` script extracts the changelog section that matches
+   the specified version (v0.3.5) from CHANGELOG.md and uses it as the tag message.
+   It supports common changelog formats including `## [v0.3.5] ...`, `## v0.3.5 ...`,
+   and `## 0.3.5 ...`. The script ensures you get the correct version's changelog
+   content rather than an unrelated section.
+
 6. **Verify tag annotation** (optional but recommended):
 
    ```bash
@@ -633,13 +641,13 @@ The project follows [semantic versioning][semver] and maintains a detailed [CHAN
 7. **Push changes and tag**:
 
    ```bash
-   git push origin main
-   git push origin v0.3.5
+   git push --atomic origin main v0.3.5
    ```
 
 8. **Publish to crates.io** (maintainer only):
 
    ```bash
+   cargo publish --dry-run # Validate package
    cargo publish
    ```
 
