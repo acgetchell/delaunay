@@ -340,14 +340,14 @@ new_key_type! {
 ///   Each [`Cell`] has one or more [`Vertex`] objects with cell data of type V.
 ///   Note the dimensionality of the cell may differ from D, though the [`Tds`]
 ///   only stores cells of maximal dimensionality D and infers other lower
-///   dimensional cells (cf. [`Facet`]) from the maximal cells and their vertices.
+///   dimensional cells (cf. [`Facet`](crate::core::facet::Facet)) from the maximal cells and their vertices.
 ///
 /// For example, in 3 dimensions:
 ///
 /// - A 0-dimensional cell is a [`Vertex`].
 /// - A 1-dimensional cell is an `Edge` given by the `Tetrahedron` and two
 ///   [`Vertex`] endpoints.
-/// - A 2-dimensional cell is a [`Facet`] given by the `Tetrahedron` and the
+/// - A 2-dimensional cell is a [`Facet`](crate::core::facet::Facet) given by the `Tetrahedron` and the
 ///   opposite [`Vertex`].
 /// - A 3-dimensional cell is a `Tetrahedron`, the maximal cell.
 ///
@@ -652,7 +652,13 @@ where
     }
 
     /// The `add` function checks if a [Vertex] with the same coordinates already
-    /// exists in the [`HashMap`], and if not, inserts the [Vertex].
+    /// exists in the triangulation, and if not, inserts the [Vertex] and updates
+    /// the triangulation topology as needed.
+    ///
+    /// This method handles incremental triangulation construction, transitioning from
+    /// an unconstructed state (fewer than D+1 vertices) to a constructed state with
+    /// proper cells and topology. Once constructed, new vertices are inserted using
+    /// the Bowyer-Watson algorithm to maintain the Delaunay property.
     ///
     /// # Arguments
     ///
@@ -661,7 +667,7 @@ where
     /// # Returns
     ///
     /// The function `add` returns `Ok(())` if the vertex was successfully
-    /// added to the [`HashMap`], or an error message if the vertex already
+    /// added to the triangulation, or an error message if the vertex already
     /// exists or if there is a [Uuid] collision.
     ///
     /// # Errors
@@ -730,6 +736,59 @@ where
     ///
     /// assert_eq!(tds.number_of_vertices(), 3);
     /// assert_eq!(tds.dim(), 2);
+    /// ```
+    ///
+    /// **Demonstrating triangulation state progression from unconstructed to constructed:**
+    ///
+    /// This example shows how the triangulation evolves as vertices are added incrementally,
+    /// transitioning from an unconstructed state to a constructed state with proper cells.
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::{Tds, TriangulationConstructionState};
+    /// use delaunay::vertex;
+    ///
+    /// // Start with empty triangulation (3D)
+    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+    ///
+    /// // Initially: empty, unconstructed
+    /// assert_eq!(tds.number_of_vertices(), 0);
+    /// assert_eq!(tds.number_of_cells(), 0);
+    /// assert_eq!(tds.dim(), -1);
+    /// assert!(matches!(tds.construction_state, TriangulationConstructionState::Incomplete(0)));
+    ///
+    /// // Add first vertex: still unconstructed, tracks vertex count
+    /// tds.add(vertex!([0.0, 0.0, 0.0])).unwrap();
+    /// assert_eq!(tds.number_of_vertices(), 1);
+    /// assert_eq!(tds.number_of_cells(), 0);  // No cells yet
+    /// assert_eq!(tds.dim(), 0);
+    /// // Note: construction_state is not updated by add() - it tracks initial state
+    ///
+    /// // Add second vertex: still unconstructed
+    /// tds.add(vertex!([1.0, 0.0, 0.0])).unwrap();
+    /// assert_eq!(tds.number_of_vertices(), 2);
+    /// assert_eq!(tds.number_of_cells(), 0);  // Still no cells
+    /// assert_eq!(tds.dim(), 1);
+    ///
+    /// // Add third vertex: still unconstructed (need D+1=4 vertices for 3D)
+    /// tds.add(vertex!([0.0, 1.0, 0.0])).unwrap();
+    /// assert_eq!(tds.number_of_vertices(), 3);
+    /// assert_eq!(tds.number_of_cells(), 0);  // Still no cells
+    /// assert_eq!(tds.dim(), 2);
+    ///
+    /// // Add fourth vertex: TRANSITION TO CONSTRUCTED STATE!
+    /// // This creates the first cell (tetrahedron) from all 4 vertices
+    /// tds.add(vertex!([0.0, 0.0, 1.0])).unwrap();
+    /// assert_eq!(tds.number_of_vertices(), 4);
+    /// assert_eq!(tds.number_of_cells(), 1);  // First cell created!
+    /// assert_eq!(tds.dim(), 3);
+    ///
+    /// // Add fifth vertex: triangulation updates via Bowyer-Watson
+    /// // This should create additional cells as the new vertex splits existing cells
+    /// tds.add(vertex!([0.25, 0.25, 0.25])).unwrap();  // Interior point
+    /// assert_eq!(tds.number_of_vertices(), 5);
+    /// assert!(tds.number_of_cells() > 1);  // Multiple cells now!
+    /// assert_eq!(tds.dim(), 3);
+    /// assert!(tds.is_valid().is_ok());  // Triangulation remains valid
     /// ```
     pub fn add(&mut self, vertex: Vertex<T, U, D>) -> Result<(), &'static str>
     where

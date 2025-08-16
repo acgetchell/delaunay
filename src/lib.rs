@@ -12,6 +12,35 @@
 //! - Arbitrary data types associated with vertices and cells
 //! - Serialization/Deserialization with [serde](https://serde.rs)
 //!
+//! # Basic Usage
+//!
+//! This library handles **arbitrary dimensions** (subject to numerical issues). Here's a 4D triangulation example:
+//!
+//! ```rust
+//! use delaunay::core::triangulation_data_structure::Tds;
+//! use delaunay::vertex;
+//!
+//! // Create a 4D triangulation (4-dimensional space!)
+//! let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::default();
+//!
+//! // Add vertices incrementally - triangulation evolves automatically
+//! tds.add(vertex!([0.0, 0.0, 0.0, 0.0])).unwrap();  // 1 vertex, 0 cells
+//! tds.add(vertex!([1.0, 0.0, 0.0, 0.0])).unwrap();  // 2 vertices, 0 cells
+//! tds.add(vertex!([0.0, 1.0, 0.0, 0.0])).unwrap();  // 3 vertices, 0 cells
+//! tds.add(vertex!([0.0, 0.0, 1.0, 0.0])).unwrap();  // 4 vertices, 0 cells
+//! tds.add(vertex!([0.0, 0.0, 0.0, 1.0])).unwrap();  // 5 vertices, 1 cell (first 4-simplex!)
+//! tds.add(vertex!([0.2, 0.2, 0.2, 0.2])).unwrap();  // 6 vertices, multiple cells
+//!
+//! assert_eq!(tds.number_of_vertices(), 6);
+//! assert_eq!(tds.dim(), 4);                    // Full 4D triangulation
+//! assert!(tds.number_of_cells() > 1);          // Bowyer-Watson creates additional 4-simplices
+//! assert!(tds.is_valid().is_ok());             // Maintains Delaunay property in 4D
+//! ```
+//!
+//! **Key insight**: The transition happens at D+1 vertices (5 vertices for 4D), where the first
+//! 4-simplex (5-vertex cell) is created. Additional vertices trigger the Bowyer-Watson algorithm
+//! to maintain the 4D Delaunay triangulation.
+//!
 //! # Triangulation Invariants
 //!
 //! The library maintains several critical triangulation invariants that ensure geometric and topological correctness:

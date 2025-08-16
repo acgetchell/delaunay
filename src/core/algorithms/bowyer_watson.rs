@@ -40,6 +40,56 @@
 //! - **Flexible**: Supports both interior and exterior vertex insertion
 //! - **Efficient**: Expected O(1) amortized time per insertion
 //! - **Maintainable**: Clean separation of algorithm logic and data structures
+//!
+//! # References
+//!
+//! The Bowyer-Watson algorithm was independently developed by Adrian Bowyer and David Watson
+//! in 1981. This implementation draws from both foundational papers and modern computational
+//! geometry literature:
+//!
+//! ## Original Papers
+//!
+//! - **Bowyer, A.** "Computing Dirichlet tessellations." *The Computer Journal* 24.2 (1981): 162-166.
+//!   DOI: [10.1093/comjnl/24.2.162](https://doi.org/10.1093/comjnl/24.2.162)
+//!
+//! - **Watson, D.F.** "Computing the n-dimensional Delaunay tessellation with application to
+//!   Voronoi polytopes." *The Computer Journal* 24.2 (1981): 167-172.
+//!   DOI: [10.1093/comjnl/24.2.167](https://doi.org/10.1093/comjnl/24.2.167)
+//!
+//! ## Modern References
+//!
+//! - **de Berg, M., Cheong, O., van Kreveld, M., and Overmars, M.**
+//!   *Computational Geometry: Algorithms and Applications.* 3rd ed. Springer-Verlag, 2008.
+//!   Chapter 9: Delaunay Triangulations. ISBN: 978-3-540-77973-5
+//!
+//! - **Fortune, S.** "A sweepline algorithm for Voronoi diagrams."
+//!   *Algorithmica* 2.1-4 (1987): 153-174. DOI: [10.1007/BF01840357](https://doi.org/10.1007/BF01840357)
+//!
+//! - **Guibas, L. and Stolfi, J.** "Primitives for the manipulation of general subdivisions
+//!   and the computation of Voronoi diagrams." *ACM Transactions on Graphics* 4.2 (1985): 74-123.
+//!   DOI: [10.1145/282918.282923](https://doi.org/10.1145/282918.282923)
+//!
+//! ## Implementation References
+//!
+//! - **CGAL Editorial Board.** *CGAL User and Reference Manual.* 5.6 edition, 2023.
+//!   Available: [https://doc.cgal.org/latest/Triangulation_2/](https://doc.cgal.org/latest/Triangulation_2/)
+//!
+//! - **Shewchuk, J.R.** "Delaunay refinement algorithms for triangular mesh generation."
+//!   *Computational Geometry* 22.1-3 (2002): 21-74.
+//!   DOI: [10.1016/S0925-7721(01)00047-5](https://doi.org/10.1016/S0925-7721(01)00047-5)
+//!
+//! - **Edelsbrunner, H.** *Geometry and Topology for Mesh Generation.*
+//!   Cambridge University Press, 2001. ISBN: 978-0-521-79309-4
+//!
+//! ## Numerical Stability References
+//!
+//! - **Shewchuk, J.R.** "Adaptive precision floating-point arithmetic and fast robust
+//!   geometric predicates." *Discrete & Computational Geometry* 18.3 (1997): 305-363.
+//!   DOI: [10.1007/PL00009321](https://doi.org/10.1007/PL00009321)
+//!
+//! - **Fortune, S. and Van Wyk, C.J.** "Efficient exact arithmetic for computational geometry."
+//!   *Proceedings of the ninth annual symposium on Computational geometry* (1993): 163-172.
+//!   DOI: [10.1145/160985.161140](https://doi.org/10.1145/160985.161140)
 
 use crate::core::{
     cell::CellBuilder,
