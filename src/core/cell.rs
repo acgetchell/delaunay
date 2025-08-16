@@ -345,6 +345,8 @@ where
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     fn validate(&self) -> Result<(), CellValidationError> {
+        use std::collections::HashSet;
+
         let vertices =
             self.vertices
                 .as_ref()
@@ -361,6 +363,14 @@ where
                 expected: D + 1,
                 dimension: D,
             });
+        }
+
+        // Check for duplicate vertices by comparing UUIDs
+        let mut seen_uuids = HashSet::new();
+        for vertex in vertices {
+            if !seen_uuids.insert(vertex.uuid()) {
+                return Err(CellValidationError::DuplicateVertices);
+            }
         }
 
         Ok(())
@@ -2592,15 +2602,26 @@ mod tests {
     #[test]
     fn cell_is_valid_duplicate_vertices_error() {
         // Test cell is_valid with duplicate vertices
-        let vertex_dup = vertex!([0.0, 0.0, 1.0]);
-        let vertex_distinct1 = vertex!([1.0, 0.0, 0.0]);
-        let vertex_distinct2 = vertex!([0.0, 1.0, 0.0]);
-        let duplicate_cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![
-            vertex_dup,
-            vertex_dup,
-            vertex_distinct1,
-            vertex_distinct2,
-        ]);
+        // Note: We now correctly prevent duplicate vertices at build time,
+        // so we need to manually create a cell with duplicates to test is_valid()
+        let vertex_dup: crate::core::vertex::Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
+        let vertex_distinct1: crate::core::vertex::Vertex<f64, Option<()>, 3> =
+            vertex!([1.0, 0.0, 0.0]);
+        let vertex_distinct2: crate::core::vertex::Vertex<f64, Option<()>, 3> =
+            vertex!([0.0, 1.0, 0.0]);
+
+        // Create a cell manually to bypass builder validation
+        let duplicate_cell: Cell<f64, Option<()>, Option<()>, 3> = Cell {
+            vertices: vec![
+                vertex_dup,
+                vertex_dup, // Duplicate vertex
+                vertex_distinct1,
+                vertex_distinct2,
+            ],
+            uuid: make_uuid(),
+            neighbors: None,
+            data: None,
+        };
 
         // Human readable output for cargo test -- --nocapture
         println!("Duplicate Vertices Cell: {duplicate_cell:?}");
