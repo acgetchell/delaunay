@@ -12,6 +12,28 @@
 //! - Arbitrary data types associated with vertices and cells
 //! - Serialization/Deserialization with [serde](https://serde.rs)
 //!
+//! # Triangulation Invariants
+//!
+//! The library maintains several critical triangulation invariants that ensure geometric and topological correctness:
+//!
+//! ## Invariant Enforcement
+//!
+//! | Invariant Type | Enforcement Location | Method | Timing |
+//! |---|---|---|---|
+//! | **Delaunay Property** | `bowyer_watson::find_bad_cells()` | Empty circumsphere test using `insphere()` | **Proactive** (during construction) |
+//! | **Facet Sharing** | `validate_facet_sharing()` | Each facet shared by ≤ 2 cells | **Reactive** (via validation) |
+//! | **No Duplicate Cells** | `validate_no_duplicate_cells()` | No cells with identical vertex sets | **Reactive** (via validation) |
+//! | **Neighbor Consistency** | `validate_neighbors_internal()` | Mutual neighbor relationships | **Reactive** (via validation) |
+//! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + [`cell.is_valid()`](core::cell::Cell::is_valid) (comprehensive) | Construction + runtime validation | **Both** (construction + validation) |
+//! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation | **Both** (construction + validation) |
+//!
+//! The **Delaunay property** (empty circumsphere) is enforced **proactively** during construction by removing
+//! violating cells, while **structural invariants** are enforced **reactively** through validation methods.
+//!
+//! For detailed information, see:
+//! - [`core::algorithms::bowyer_watson`] - Primary invariant enforcement during triangulation construction
+//! - [`core::triangulation_data_structure::Tds::is_valid`] - Comprehensive validation of all invariants
+//!
 //! ## Project History
 //! Versions ≤ 0.1.0 were maintained at [old repo](https://github.com/oovm/shape-rs).
 //! Versions ≥ 0.3.4 are maintained [here](https://github.com/acgetchell/delaunay).

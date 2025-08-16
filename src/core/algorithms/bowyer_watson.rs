@@ -16,6 +16,23 @@
 //!    - Maintain Delaunay property through circumsphere tests
 //! 3. **Cleanup**: Remove degenerate cells and establish neighbor relationships
 //!
+//! # Triangulation Invariant Enforcement
+//!
+//! The Delaunay property and other triangulation invariants are enforced in specific locations:
+//!
+//! | Invariant Type | Enforcement Location | Method |
+//! |---|---|---|
+//! | **Delaunay Property** | `find_bad_cells()` | Empty circumsphere test using `insphere()` |
+//! | **Facet Sharing** | `validate_facet_sharing()` | Each facet shared by ≤ 2 cells |
+//! | **No Duplicate Cells** | `validate_no_duplicate_cells()` | No cells with identical vertex sets |
+//! | **Neighbor Consistency** | `validate_neighbors_internal()` | Mutual neighbor relationships |
+//! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + `cell.is_valid()` (comprehensive) | Construction + runtime validation |
+//! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
+//!
+//! The Delaunay property (empty circumsphere) is enforced **proactively** during construction in
+//! `find_bad_cells()`, while structural invariants are enforced **reactively** through validation
+//! in `is_valid()` and related methods.
+//!
 //! # Key Features
 //!
 //! - **Pure Incremental**: No supercells or batch processing

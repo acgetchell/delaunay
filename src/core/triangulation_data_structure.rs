@@ -54,6 +54,21 @@
 //!   shared facets, maintaining bidirectional neighbor relationships.
 //! - **Vertex Incidence**: Each vertex is incident to a well-defined set of cells that
 //!   form a topologically valid star configuration around the vertex.
+//! - **Delaunay Property**: No vertex lies inside the circumsphere of any D-dimensional cell.
+//!
+//! ## Invariant Enforcement
+//!
+//! | Invariant Type | Enforcement Location | Method |
+//! |---|---|---|
+//! | **Delaunay Property** | `bowyer_watson::find_bad_cells()` | Empty circumsphere test using `insphere()` |
+//! | **Facet Sharing** | `validate_facet_sharing()` | Each facet shared by ≤ 2 cells |
+//! | **No Duplicate Cells** | `validate_no_duplicate_cells()` | No cells with identical vertex sets |
+//! | **Neighbor Consistency** | `validate_neighbors_internal()` | Mutual neighbor relationships |
+//! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + `cell.is_valid()` (comprehensive) | Construction + runtime validation |
+//! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
+//!
+//! The Delaunay property is enforced **proactively** during construction, while structural
+//! invariants are enforced **reactively** through validation methods.
 //!
 //! # Examples
 //!
@@ -151,16 +166,12 @@ use thiserror::Error;
 use uuid::Uuid;
 
 // Crate-internal imports
-use crate::geometry::predicates::{InSphere, insphere, insphere_distance};
-use crate::geometry::{
-    point::Point,
-    traits::coordinate::{Coordinate, CoordinateScalar},
-};
+use crate::geometry::traits::coordinate::CoordinateScalar;
 
 // Parent module imports
 use super::{
     cell::{Cell, CellBuilder, CellValidationError},
-    facet::{Facet, facet_key_from_vertex_keys},
+    facet::facet_key_from_vertex_keys,
     traits::data_type::DataType,
     vertex::Vertex,
 };
@@ -317,328 +328,6 @@ new_key_type! {
     pub struct CellKey;
 }
 
-// Helper functions for Bowyer-Watson algorithm
-impl<T, U, V, const D: usize> Tds<T, U, V, D>
-where
-    T: CoordinateScalar + AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum,
-    U: DataType,
-    V: DataType,
-    f64: From<T>,
-    T: From<f64>,
-    for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
-{
-    /// Finds cells whose circumsphere contains the given vertex.
-    ///
-    /// This method is a core part of the Bowyer-Watson Delaunay triangulation algorithm.
-    /// It identifies "bad" cells - those whose circumsphere contains the new vertex being
-    /// inserted. These cells violate the Delaunay property and must be removed during
-    /// triangulation construction.
-    ///
-    /// # Arguments
-    ///
-    /// * `vertex` - The vertex to test against existing cell circumspheres
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing a vector of `CellKey`s identifying the bad cells, or an error
-    /// if circumsphere computation fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TriangulationValidationError::FailedToCreateCell` if:
-    /// - Circumsphere computation fails for any cell due to geometric degeneracies
-    /// - Invalid coordinates are encountered (NaN, infinity)
-    /// - Numerical precision issues prevent reliable geometric predicate evaluation
-    fn find_bad_cells(
-        &mut self,
-        vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<CellKey>, TriangulationValidationError>
-    where
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
-    {
-        self.bad_cells_buffer.clear();
-
-        for (cell_key, cell) in &self.cells {
-            self.vertex_points_buffer.clear();
-            self.vertex_points_buffer
-                .extend(cell.vertices().iter().map(|v| *v.point()));
-
-            // Try the determinant-based method first (more robust)
-            let contains = match insphere(&self.vertex_points_buffer, *vertex.point()) {
-                Ok(result) => result,
-                Err(e) => {
-                    // Handle degenerate cases by falling back to distance-based method
-                    if e.to_string().contains("degenerate") {
-                        // Use distance-based method as fallback for degenerate simplices
-                        insphere_distance(&self.vertex_points_buffer, *vertex.point()).map_err(|e2| {
-                            TriangulationValidationError::FailedToCreateCell {
-                                message: format!(
-                                    "Both determinant and distance methods failed for cell {:?}. Determinant error: {}. Distance error: {}",
-                                    cell.uuid(),
-                                    e,
-                                    e2
-                                ),
-                            }
-                        })?
-                    } else {
-                        return Err(TriangulationValidationError::FailedToCreateCell {
-                            message: format!(
-                                "Error computing circumsphere for cell {:?}: {}",
-                                cell.uuid(),
-                                e
-                            ),
-                        });
-                    }
-                }
-            };
-
-            if matches!(contains, InSphere::INSIDE) {
-                self.bad_cells_buffer.push(cell_key);
-            }
-        }
-
-        Ok(self.bad_cells_buffer.clone())
-    }
-
-    /// Finds the boundary facets for a set of bad cells.
-    ///
-    /// This method is used in the Bowyer-Watson algorithm to identify the boundary facets
-    /// of the cavity created by removing bad cells. These boundary facets will be used to
-    /// create new cells by connecting them to the newly inserted vertex.
-    ///
-    /// A boundary facet is one that belongs to exactly one bad cell - it forms part of
-    /// the boundary between the cavity (bad cells) and the rest of the triangulation.
-    /// Facets shared by multiple bad cells are internal to the cavity and should not
-    /// be part of the boundary.
-    ///
-    /// # Arguments
-    ///
-    /// * `bad_cells` - Slice of cell keys identifying the bad cells to analyze
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing a vector of boundary `Facet`s, or an error if the operation fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TriangulationValidationError::InconsistentDataStructure` if:
-    /// - A bad cell key is not found in the triangulation's cell storage
-    /// - Facet-to-cells mapping is corrupted or inconsistent
-    /// - Internal data structure invariants are violated
-    ///
-    /// # Algorithm
-    ///
-    /// 1. Collects all facets from the bad cells
-    /// 2. Builds a mapping from facet keys to all cells containing each facet
-    /// 3. Identifies facets that belong to exactly one bad cell (boundary facets)
-    /// 4. Returns the collection of boundary facets
-    fn find_boundary_facets(
-        &mut self,
-        bad_cells: &[CellKey],
-    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError> {
-        self.boundary_facets_buffer.clear();
-        self.bad_cell_facets_buffer.clear();
-
-        let bad_cell_keys: HashSet<CellKey> = bad_cells.iter().copied().collect();
-
-        // Collect facets from all bad cells
-        for &bad_cell_key in bad_cells {
-            if let Some(bad_cell) = self.cells.get(bad_cell_key) {
-                let facets = bad_cell.facets().map_err(|e| {
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: format!("Failed to get facets for bad cell {bad_cell_key:?}: {e}"),
-                    }
-                })?;
-                self.bad_cell_facets_buffer.insert(bad_cell_key, facets);
-            } else {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Bad cell key {bad_cell_key:?} not found in cells during boundary facet computation"
-                    ),
-                });
-            }
-        }
-
-        // Map facet keys to all cells containing them
-        let mut all_facet_to_cells: HashMap<u64, Vec<CellKey>> = HashMap::new();
-        for (cell_key, cell) in &self.cells {
-            let facets = cell.facets().map_err(|e| {
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!("Failed to get facets for cell {cell_key:?}: {e}"),
-                }
-            })?;
-            for facet in facets {
-                let facet_key = facet.key();
-                all_facet_to_cells
-                    .entry(facet_key)
-                    .or_default()
-                    .push(cell_key);
-            }
-        }
-
-        // Identify boundary facets: facets from bad cells that are shared by exactly one bad cell
-        // i.e., facets that are not shared exclusively among bad cells
-        let mut processed_boundary_facets: HashSet<u64> = HashSet::new();
-
-        for (&bad_cell_key, facets) in &self.bad_cell_facets_buffer {
-            for facet in facets {
-                let facet_key = facet.key();
-                if processed_boundary_facets.contains(&facet_key) {
-                    continue;
-                }
-                if let Some(sharing_cells) = all_facet_to_cells.get(&facet_key) {
-                    let bad_cells_sharing_count = sharing_cells
-                        .iter()
-                        .filter(|&&ck| bad_cell_keys.contains(&ck))
-                        .count();
-                    if bad_cells_sharing_count == 1 {
-                        self.boundary_facets_buffer.push(facet.clone());
-                        processed_boundary_facets.insert(facet_key);
-                    }
-                } else {
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Facet key {facet_key} from bad cell {bad_cell_key:?} not found in facet-to-cells mapping"
-                        ),
-                    });
-                }
-            }
-        }
-
-        Ok(self.boundary_facets_buffer.clone())
-    }
-
-    /// Fixes invalid facet sharing by removing problematic cells
-    ///
-    /// This method first checks if there are any invalid facet sharing issues using
-    /// `validate_facet_sharing()`. If validation passes, no action is needed.
-    /// Otherwise, it identifies facets that are shared by more than 2 cells (which is
-    /// geometrically impossible in a valid triangulation) and removes the excess cells.
-    /// It intelligently determines which cells actually contain the vertices of the facet
-    /// and removes cells that don't properly contain those vertices.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing the number of invalid cells that were removed during the cleanup process.
-    /// Returns `Ok(0)` if no fixes were needed.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `FacetError` if facet creation fails during the validation process.
-    ///
-    /// # Algorithm
-    ///
-    /// 1. Use `validate_facet_sharing()` to check if there are any issues
-    /// 2. If validation passes, return early (no fix needed)
-    /// 3. Otherwise, build a map from facet keys to the cells that contain them
-    /// 4. For each facet shared by more than 2 cells:
-    ///    - Extract the actual facet vertices from one of the cells using `Facet::vertices()`
-    ///    - Verify which cells truly contain all vertices of that facet using `Cell::vertices()`
-    ///    - Keep only the valid cells (up to 2) and remove invalid ones
-    /// 5. Remove the excess/invalid cells and update the cell bimap accordingly
-    /// 6. Clean up any resulting duplicate cells
-    pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, super::facet::FacetError> {
-        // First check if there are any facet sharing issues using the validation function
-        if self.validate_facet_sharing().is_ok() {
-            // No facet sharing issues found, no fix needed
-            return Ok(0);
-        }
-
-        // There are facet sharing issues, proceed with the fix
-        let facet_to_cells = self.build_facet_to_cells_hashmap();
-        let mut cells_to_remove: HashSet<CellKey> = HashSet::new();
-
-        // Find facets that are shared by more than 2 cells and validate which ones are correct
-        for (facet_key, cell_facet_pairs) in facet_to_cells {
-            if cell_facet_pairs.len() > 2 {
-                // Get the actual facet from the first cell to determine its vertices
-                let (first_cell_key, first_facet_index) = cell_facet_pairs[0];
-                let first_cell = &self.cells[first_cell_key];
-                let facets = first_cell.facets()?;
-                let reference_facet = &facets[first_facet_index];
-
-                // Get the vertices that make up this facet using Facet::vertices()
-                let facet_vertices = reference_facet.vertices();
-                let facet_vertex_uuids: HashSet<uuid::Uuid> = facet_vertices
-                    .iter()
-                    .map(super::vertex::Vertex::uuid)
-                    .collect();
-
-                let mut valid_cells = Vec::new();
-
-                // Check each cell to see if it truly contains all vertices of this facet
-                for &(cell_key, _facet_index) in &cell_facet_pairs {
-                    let cell = &self.cells[cell_key];
-
-                    // Get cell vertices using Cell::vertices()
-                    let cell_vertex_uuids: HashSet<uuid::Uuid> = cell
-                        .vertices()
-                        .iter()
-                        .map(super::vertex::Vertex::uuid)
-                        .collect();
-
-                    // A cell is valid if it contains all the vertices of the facet
-                    if facet_vertex_uuids.is_subset(&cell_vertex_uuids) {
-                        valid_cells.push(cell_key);
-                    } else {
-                        // This cell doesn't actually contain all the facet vertices - mark for removal
-                        cells_to_remove.insert(cell_key);
-                    }
-                }
-
-                // If we still have more than 2 valid cells, remove the excess ones
-                // (This shouldn't happen in a proper triangulation, but handle it just in case)
-                if valid_cells.len() > 2 {
-                    for &cell_key in valid_cells.iter().skip(2) {
-                        cells_to_remove.insert(cell_key);
-                    }
-                }
-
-                if cfg!(debug_assertions) {
-                    let total_cells = cell_facet_pairs.len();
-                    let removed_count = total_cells - valid_cells.len().min(2);
-                    if removed_count > 0 {
-                        eprintln!(
-                            "Warning: Facet {} was shared by {} cells, removing {} invalid cells (keeping {} valid)",
-                            facet_key,
-                            total_cells,
-                            removed_count,
-                            valid_cells.len().min(2)
-                        );
-                    }
-                }
-            }
-        }
-
-        // Remove the invalid/excess cells and their bimap entries
-        let mut actually_removed = 0;
-        for cell_key in cells_to_remove {
-            if let Some(removed_cell) = self.cells.remove(cell_key) {
-                self.cell_bimap.remove_by_left(&removed_cell.uuid());
-                actually_removed += 1;
-            }
-        }
-
-        // Clean up any resulting duplicate cells
-        let duplicate_cells_removed = self.remove_duplicate_cells();
-
-        Ok(actually_removed + duplicate_cells_removed)
-    }
-}
-
-// =============================================================================
-// CONSTANTS
-// =============================================================================
-
-// TODO: Add constants if needed
-
-// =============================================================================
-// STRUCT DEFINITIONS
-// =============================================================================
-
 #[derive(Clone, Debug, Default, Serialize)]
 /// The `Tds` struct represents a triangulation data structure with vertices
 /// and cells, where the vertices and cells are identified by UUIDs.
@@ -646,26 +335,26 @@ where
 /// # Properties
 ///
 /// - `vertices`: A [`SlotMap`] that stores vertices with stable keys for efficient access.
-///   Each [Vertex] has a [Point] of type T, vertex data of type U, and a constant D representing the dimension.
-/// - `cells`: The `cells` property is a [`SlotMap`] that stores [Cell] objects with stable keys.
-///   Each [Cell] has one or more [Vertex] objects with cell data of type V.
-///   Note the dimensionality of the cell may differ from D, though the [Tds]
+///   Each [`Vertex`] has a [`Point`](crate::geometry::point::Point) of type T, vertex data of type U, and a constant D representing the dimension.
+/// - `cells`: The `cells` property is a [`SlotMap`] that stores [`Cell`] objects with stable keys.
+///   Each [`Cell`] has one or more [`Vertex`] objects with cell data of type V.
+///   Note the dimensionality of the cell may differ from D, though the [`Tds`]
 ///   only stores cells of maximal dimensionality D and infers other lower
-///   dimensional cells (cf. [Facet]) from the maximal cells and their vertices.
+///   dimensional cells (cf. [`Facet`]) from the maximal cells and their vertices.
 ///
 /// For example, in 3 dimensions:
 ///
-/// - A 0-dimensional cell is a [Vertex].
+/// - A 0-dimensional cell is a [`Vertex`].
 /// - A 1-dimensional cell is an `Edge` given by the `Tetrahedron` and two
-///   [Vertex] endpoints.
-/// - A 2-dimensional cell is a [Facet] given by the `Tetrahedron` and the
-///   opposite [Vertex].
+///   [`Vertex`] endpoints.
+/// - A 2-dimensional cell is a [`Facet`] given by the `Tetrahedron` and the
+///   opposite [`Vertex`].
 /// - A 3-dimensional cell is a `Tetrahedron`, the maximal cell.
 ///
 /// A similar pattern holds for higher dimensions.
 ///
 /// In general, vertices are embedded into D-dimensional Euclidean space,
-/// and so the [Tds] is a finite simplicial complex.
+/// and so the [`Tds`] is a finite simplicial complex.
 ///
 /// # Usage
 ///
@@ -723,17 +412,6 @@ where
     /// D-dimensional triangulation or if it's still being incrementally built.
     #[serde(skip)] // Skip serialization - only constructed triangulations should be serialized
     pub construction_state: TriangulationConstructionState,
-
-    // Reusable buffers to minimize allocations during Bowyer-Watson algorithm
-    // These are kept as part of the struct to avoid repeated allocations
-    #[serde(skip)]
-    bad_cells_buffer: Vec<CellKey>,
-    #[serde(skip)]
-    boundary_facets_buffer: Vec<Facet<T, U, V, D>>,
-    #[serde(skip)]
-    vertex_points_buffer: Vec<Point<T, D>>,
-    #[serde(skip)]
-    bad_cell_facets_buffer: HashMap<CellKey, Vec<Facet<T, U, V, D>>>,
 }
 
 // =============================================================================
@@ -957,11 +635,6 @@ where
             } else {
                 TriangulationConstructionState::Constructed
             },
-            // Initialize reusable buffers
-            bad_cells_buffer: Vec::new(),
-            boundary_facets_buffer: Vec::new(),
-            vertex_points_buffer: Vec::new(),
-            bad_cell_facets_buffer: HashMap::new(),
         };
 
         // Add vertices to SlotMap and create bidirectional UUID-to-key mappings
@@ -1112,10 +785,13 @@ where
             return Ok(());
         }
 
-        // Case 3: Adding to existing triangulation - use Bowyer-Watson
+        // Case 3: Adding to existing triangulation - use IncrementalBoyerWatson
         if self.number_of_cells() > 0 {
-            // Insert the vertex into the existing triangulation using Bowyer-Watson algorithm
-            self.insert_vertex_bowyer_watson(vertex)
+            // Insert the vertex into the existing triangulation using the new algorithm
+            use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
+            let mut algorithm = IncrementalBoyerWatson::new();
+            algorithm
+                .insert_vertex(self, vertex)
                 .map_err(|_| "Failed to insert vertex into triangulation")?;
 
             // Update neighbor relationships and incident cells
@@ -1446,279 +1122,6 @@ where
 
         // Update construction state
         self.construction_state = TriangulationConstructionState::Constructed;
-
-        Ok(())
-    }
-
-    /// Inserts a single vertex into the existing triangulation using the Bowyer-Watson algorithm.
-    ///
-    /// This method performs the core Bowyer-Watson vertex insertion operation:
-    /// 1. Determines if vertex is inside or outside the existing convex hull
-    /// 2. For inside vertices: finds bad cells and boundary facets using standard method
-    /// 3. For outside vertices: finds visible hull facets and extends triangulation
-    /// 4. Creates new cells by connecting boundary/visible facets to the new vertex
-    /// 5. Cleans up any duplicate cells that may have been created
-    ///
-    /// This method assumes:
-    /// - The triangulation already exists (not empty)
-    /// - The vertex is not already part of the triangulation
-    /// - The triangulation is valid before insertion
-    ///
-    /// # Arguments
-    ///
-    /// * `vertex` - The vertex to insert into the triangulation
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if the vertex was successfully inserted, or a `TriangulationValidationError`
-    /// if any step of the insertion process fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TriangulationValidationError` if:
-    /// - Convex hull extraction or visibility tests fail
-    /// - Finding bad cells fails (geometric predicate errors)
-    /// - Finding boundary facets fails (topological errors)
-    /// - Creating new cells from facets and vertex fails
-    /// - Internal data structure inconsistencies are detected
-    fn insert_vertex_bowyer_watson(
-        &mut self,
-        vertex: Vertex<T, U, D>,
-    ) -> Result<(), TriangulationValidationError>
-    where
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
-    {
-        use crate::geometry::algorithms::convex_hull::ConvexHull;
-
-        println!(
-            "DEBUG: Starting Bowyer-Watson insertion for vertex: {:?}",
-            vertex.point()
-        );
-
-        // Verify that we have at least one cell to work with
-        if self.number_of_cells() == 0 {
-            return Err(TriangulationValidationError::FailedToCreateCell {
-                message: "Cannot insert vertex into empty triangulation - no existing cells to extend from".to_string(),
-            });
-        }
-
-        // Create convex hull from current triangulation to determine vertex position
-        let hull = ConvexHull::from_triangulation(self).map_err(|e| {
-            TriangulationValidationError::FailedToCreateCell {
-                message: format!(
-                    "Failed to create convex hull from triangulation with {} cells: {e}",
-                    self.number_of_cells()
-                ),
-            }
-        })?;
-
-        let is_outside = hull.is_point_outside(vertex.point()).map_err(|e| {
-            TriangulationValidationError::FailedToCreateCell {
-                message: format!(
-                    "Failed to test if point {:?} is outside convex hull: {e}",
-                    vertex.point().to_array()
-                ),
-            }
-        })?;
-
-        // Perform the insertion with improved error context
-        let result = if is_outside {
-            println!("DEBUG: Vertex is outside convex hull - using hull extension method");
-            self.insert_outside_vertex_via_hull(&vertex, &hull)
-                .map_err(|e| match e {
-                    TriangulationValidationError::FailedToCreateCell { message } => {
-                        TriangulationValidationError::FailedToCreateCell {
-                            message: format!(
-                                "Outside vertex insertion failed for point {:?}: {}",
-                                vertex.point().to_array(),
-                                message
-                            ),
-                        }
-                    }
-                    other => other,
-                })
-        } else {
-            println!("DEBUG: Vertex is inside convex hull - using standard Bowyer-Watson");
-            self.insert_inside_vertex_standard(&vertex)
-                .map_err(|e| match e {
-                    TriangulationValidationError::FailedToCreateCell { message } => {
-                        TriangulationValidationError::FailedToCreateCell {
-                            message: format!(
-                                "Inside vertex insertion failed for point {:?}: {}",
-                                vertex.point().to_array(),
-                                message
-                            ),
-                        }
-                    }
-                    other => other,
-                })
-        };
-
-        // Log the result for debugging
-        match &result {
-            Ok(()) => println!(
-                "DEBUG: Successfully inserted vertex at {:?}",
-                vertex.point().to_array()
-            ),
-            Err(e) => println!(
-                "DEBUG: Failed to insert vertex at {:?}: {}",
-                vertex.point().to_array(),
-                e
-            ),
-        }
-
-        result
-    }
-
-    /// Inserts a vertex that lies outside the current convex hull by extending the triangulation.
-    ///
-    /// This method handles vertices that are outside the existing triangulation by:
-    /// 1. Finding visible hull facets from the new vertex
-    /// 2. Creating new cells by connecting the vertex to these visible facets
-    /// 3. Updating the triangulation to include the new vertex
-    ///
-    /// # Arguments
-    ///
-    /// * `vertex` - The vertex to insert (must be outside the current hull)
-    /// * `hull` - The convex hull of the current triangulation
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if the vertex was successfully inserted, or a `TriangulationValidationError`
-    /// if the insertion fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TriangulationValidationError` if:
-    /// - Finding visible hull facets fails
-    /// - Creating new cells fails
-    /// - Data structure updates fail
-    fn insert_outside_vertex_via_hull(
-        &mut self,
-        vertex: &Vertex<T, U, D>,
-        hull: &crate::geometry::algorithms::convex_hull::ConvexHull<T, U, V, D>,
-    ) -> Result<(), TriangulationValidationError>
-    where
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
-    {
-        println!("DEBUG: Inserting outside vertex via hull extension");
-
-        // Find visible hull facets from the new vertex
-        let visible_facet_indices = hull.find_visible_facets(vertex.point()).map_err(|e| {
-            TriangulationValidationError::FailedToCreateCell {
-                message: format!("Failed to find visible hull facets: {e}"),
-            }
-        })?;
-
-        println!(
-            "DEBUG: Found {} visible facets",
-            visible_facet_indices.len()
-        );
-
-        // Create new cells by connecting the vertex to each visible facet
-        for &visible_facet_index in &visible_facet_indices {
-            let visible_facet = hull.get_facet(visible_facet_index).ok_or_else(|| {
-                TriangulationValidationError::FailedToCreateCell {
-                    message: format!("Invalid facet index: {visible_facet_index}"),
-                }
-            })?;
-            let mut facet_vertices = visible_facet.vertices().clone();
-            facet_vertices.push(*vertex);
-
-            let new_cell = CellBuilder::default()
-                .vertices(facet_vertices)
-                .build()
-                .map_err(|e| TriangulationValidationError::FailedToCreateCell {
-                    message: format!("Failed to create cell from visible facet: {e}"),
-                })?;
-
-            let cell_key = self.cells.insert(new_cell);
-            let cell_uuid = self.cells[cell_key].uuid();
-            self.cell_bimap.insert(cell_uuid, cell_key);
-        }
-
-        // Clean up any duplicate cells that may have been created
-        self.remove_duplicate_cells();
-
-        Ok(())
-    }
-
-    /// Inserts a vertex that lies inside the current triangulation using standard Bowyer-Watson.
-    ///
-    /// This method handles vertices inside the existing triangulation by:
-    /// 1. Finding all "bad" cells whose circumsphere contains the new vertex
-    /// 2. Finding the boundary facets of these bad cells
-    /// 3. Removing the bad cells
-    /// 4. Creating new cells by connecting the vertex to each boundary facet
-    ///
-    /// # Arguments
-    ///
-    /// * `vertex` - The vertex to insert (must be inside the current triangulation)
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if the vertex was successfully inserted, or a `TriangulationValidationError`
-    /// if the insertion fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TriangulationValidationError` if:
-    /// - Finding bad cells fails (geometric predicate errors)
-    /// - Finding boundary facets fails (topological errors)
-    /// - Creating new cells fails
-    /// - Data structure updates fail
-    fn insert_inside_vertex_standard(
-        &mut self,
-        vertex: &Vertex<T, U, D>,
-    ) -> Result<(), TriangulationValidationError>
-    where
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
-    {
-        println!("DEBUG: Inserting inside vertex using standard Bowyer-Watson");
-
-        // Find bad cells whose circumsphere contains the new vertex
-        let bad_cells = self.find_bad_cells(vertex)?;
-        println!("DEBUG: Found {} bad cells", bad_cells.len());
-
-        if bad_cells.is_empty() {
-            return Err(TriangulationValidationError::FailedToCreateCell {
-                message: "No bad cells found for interior vertex insertion".to_string(),
-            });
-        }
-
-        // Find boundary facets of the bad cells
-        let boundary_facets = self.find_boundary_facets(&bad_cells)?;
-        println!("DEBUG: Found {} boundary facets", boundary_facets.len());
-
-        // Remove bad cells and their mappings
-        for &bad_cell_key in &bad_cells {
-            if let Some(removed_cell) = self.cells.remove(bad_cell_key) {
-                self.cell_bimap.remove_by_left(&removed_cell.uuid());
-            }
-        }
-
-        // Create new cells by connecting the vertex to each boundary facet
-        for boundary_facet in boundary_facets {
-            let mut facet_vertices = boundary_facet.vertices().clone();
-            facet_vertices.push(*vertex);
-
-            let new_cell = CellBuilder::default()
-                .vertices(facet_vertices)
-                .build()
-                .map_err(|e| TriangulationValidationError::FailedToCreateCell {
-                    message: format!("Failed to create cell from boundary facet: {e}"),
-                })?;
-
-            let cell_key = self.cells.insert(new_cell);
-            let cell_uuid = self.cells[cell_key].uuid();
-            self.cell_bimap.insert(cell_uuid, cell_key);
-        }
-
-        // Clean up any duplicate cells that may have been created
-        self.remove_duplicate_cells();
 
         Ok(())
     }
@@ -2131,6 +1534,123 @@ where
         }
 
         facet_to_cells
+    }
+
+    /// Fixes invalid facet sharing by removing problematic cells
+    ///
+    /// This method first checks if there are any invalid facet sharing issues using
+    /// `validate_facet_sharing()`. If validation passes, no action is needed.
+    /// Otherwise, it identifies facets that are shared by more than 2 cells (which is
+    /// geometrically impossible in a valid triangulation) and removes the excess cells.
+    /// It intelligently determines which cells actually contain the vertices of the facet
+    /// and removes cells that don't properly contain those vertices.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the number of invalid cells that were removed during the cleanup process.
+    /// Returns `Ok(0)` if no fixes were needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `FacetError` if facet creation fails during the validation process.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Use `validate_facet_sharing()` to check if there are any issues
+    /// 2. If validation passes, return early (no fix needed)
+    /// 3. Otherwise, build a map from facet keys to the cells that contain them
+    /// 4. For each facet shared by more than 2 cells:
+    ///    - Extract the actual facet vertices from one of the cells using `Facet::vertices()`
+    ///    - Verify which cells truly contain all vertices of that facet using `Cell::vertices()`
+    ///    - Keep only the valid cells (up to 2) and remove invalid ones
+    /// 5. Remove the excess/invalid cells and update the cell bimap accordingly
+    /// 6. Clean up any resulting duplicate cells
+    pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, super::facet::FacetError> {
+        // First check if there are any facet sharing issues using the validation function
+        if self.validate_facet_sharing().is_ok() {
+            // No facet sharing issues found, no fix needed
+            return Ok(0);
+        }
+
+        // There are facet sharing issues, proceed with the fix
+        let facet_to_cells = self.build_facet_to_cells_hashmap();
+        let mut cells_to_remove: HashSet<CellKey> = HashSet::new();
+
+        // Find facets that are shared by more than 2 cells and validate which ones are correct
+        for (facet_key, cell_facet_pairs) in facet_to_cells {
+            if cell_facet_pairs.len() > 2 {
+                // Get the actual facet from the first cell to determine its vertices
+                let (first_cell_key, first_facet_index) = cell_facet_pairs[0];
+                let first_cell = &self.cells[first_cell_key];
+                let facets = first_cell.facets()?;
+                let reference_facet = &facets[first_facet_index];
+
+                // Get the vertices that make up this facet using Facet::vertices()
+                let facet_vertices = reference_facet.vertices();
+                let facet_vertex_uuids: HashSet<uuid::Uuid> = facet_vertices
+                    .iter()
+                    .map(super::vertex::Vertex::uuid)
+                    .collect();
+
+                let mut valid_cells = Vec::new();
+
+                // Check each cell to see if it truly contains all vertices of this facet
+                for &(cell_key, _facet_index) in &cell_facet_pairs {
+                    let cell = &self.cells[cell_key];
+
+                    // Get cell vertices using Cell::vertices()
+                    let cell_vertex_uuids: HashSet<uuid::Uuid> = cell
+                        .vertices()
+                        .iter()
+                        .map(super::vertex::Vertex::uuid)
+                        .collect();
+
+                    // A cell is valid if it contains all the vertices of the facet
+                    if facet_vertex_uuids.is_subset(&cell_vertex_uuids) {
+                        valid_cells.push(cell_key);
+                    } else {
+                        // This cell doesn't actually contain all the facet vertices - mark for removal
+                        cells_to_remove.insert(cell_key);
+                    }
+                }
+
+                // If we still have more than 2 valid cells, remove the excess ones
+                // (This shouldn't happen in a proper triangulation, but handle it just in case)
+                if valid_cells.len() > 2 {
+                    for &cell_key in valid_cells.iter().skip(2) {
+                        cells_to_remove.insert(cell_key);
+                    }
+                }
+
+                if cfg!(debug_assertions) {
+                    let total_cells = cell_facet_pairs.len();
+                    let removed_count = total_cells - valid_cells.len().min(2);
+                    if removed_count > 0 {
+                        eprintln!(
+                            "Warning: Facet {} was shared by {} cells, removing {} invalid cells (keeping {} valid)",
+                            facet_key,
+                            total_cells,
+                            removed_count,
+                            valid_cells.len().min(2)
+                        );
+                    }
+                }
+            }
+        }
+
+        // Remove the invalid/excess cells and their bimap entries
+        let mut actually_removed = 0;
+        for cell_key in cells_to_remove {
+            if let Some(removed_cell) = self.cells.remove(cell_key) {
+                self.cell_bimap.remove_by_left(&removed_cell.uuid());
+                actually_removed += 1;
+            }
+        }
+
+        // Clean up any resulting duplicate cells
+        let duplicate_cells_removed = self.remove_duplicate_cells();
+
+        Ok(actually_removed + duplicate_cells_removed)
     }
 }
 
@@ -2808,11 +2328,6 @@ where
                     // Since only constructed triangulations should be serialized,
                     // we assume the deserialized triangulation is constructed
                     construction_state: TriangulationConstructionState::Constructed,
-                    // Initialize reusable buffers (these are marked with #[serde(skip)])
-                    bad_cells_buffer: Vec::new(),
-                    boundary_facets_buffer: Vec::new(),
-                    vertex_points_buffer: Vec::new(),
-                    bad_cell_facets_buffer: HashMap::new(),
                 })
             }
         }
@@ -2892,7 +2407,7 @@ mod tests {
         traits::boundary_analysis::BoundaryAnalysis, utilities::facets_are_adjacent,
         vertex::VertexBuilder,
     };
-    use crate::geometry::traits::coordinate::Coordinate;
+    use crate::geometry::{point::Point, traits::coordinate::Coordinate};
     use crate::vertex;
 
     use super::*;
@@ -4689,64 +4204,6 @@ mod tests {
     }
 
     #[test]
-    fn test_find_bad_cells() {
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-
-        let vertices = Vertex::from_points(points);
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-
-        if tds.number_of_cells() > 0 {
-            // Create a test vertex that might be inside/outside existing cells
-            let test_vertex = vertex!([0.25, 0.25, 0.25]);
-
-            // Test the bad cells detection
-            let bad_cells_result = tds.find_bad_cells(&test_vertex);
-            assert!(bad_cells_result.is_ok());
-
-            let bad_cells = bad_cells_result.unwrap();
-            println!("Found {} bad cells", bad_cells.len());
-        }
-    }
-
-    #[test]
-    fn test_find_boundary_facets() {
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-
-        let vertices = Vertex::from_points(points);
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-
-        if tds.number_of_cells() > 0 {
-            // Get all cell keys as "bad cells" for testing
-            let all_cell_keys: Vec<CellKey> = tds.cells.keys().collect();
-
-            // Test the boundary facets detection
-            let boundary_facets_result = tds.find_boundary_facets(&all_cell_keys);
-            assert!(boundary_facets_result.is_ok());
-            let boundary_facets = boundary_facets_result.unwrap();
-            println!("Found {} boundary facets", boundary_facets.len());
-
-            // For a single cell, all facets should be boundary facets
-            if tds.number_of_cells() == 1 {
-                assert_eq!(
-                    boundary_facets.len(),
-                    4,
-                    "Single tetrahedron should have 4 boundary facets"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn test_triangulation_coordinate_handling() {
         // Test with points that exercise coordinate handling logic
         // Use 4 non-degenerate points to form a proper 3D simplex
@@ -4990,55 +4447,6 @@ mod tests {
         // Should be back to original count and have removed exactly 3 duplicates
         assert_eq!(result.number_of_cells(), original_cell_count);
         assert_eq!(duplicates_removed, 3);
-    }
-
-    #[test]
-    fn test_find_bad_cells_comprehensive() {
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([2.0, 0.0, 0.0]),
-            Point::new([0.0, 2.0, 0.0]),
-            Point::new([0.0, 0.0, 2.0]),
-        ];
-        let vertices = Vertex::from_points(points);
-        let mut result: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-        // let mut result = tds.bowyer_watson().unwrap();
-
-        if result.number_of_cells() > 0 {
-            // Test with a vertex that should be inside the circumsphere
-            let inside_vertex = vertex!([0.5, 0.5, 0.5]);
-
-            let bad_cells_result = result.find_bad_cells(&inside_vertex);
-            assert!(bad_cells_result.is_ok());
-            let bad_cells = bad_cells_result.unwrap();
-
-            let boundary_facets_result = result.find_boundary_facets(&bad_cells);
-            assert!(boundary_facets_result.is_ok());
-            let boundary_facets = boundary_facets_result.unwrap();
-
-            println!(
-                "Inside vertex - Bad cells: {}, Boundary facets: {}",
-                bad_cells.len(),
-                boundary_facets.len()
-            );
-
-            // Test with a vertex that should be outside all circumspheres
-            let outside_vertex = vertex!([10.0, 10.0, 10.0]);
-
-            let bad_cells_result2 = result.find_bad_cells(&outside_vertex);
-            assert!(bad_cells_result2.is_ok());
-            let bad_cells2 = bad_cells_result2.unwrap();
-
-            let boundary_facets_result2 = result.find_boundary_facets(&bad_cells2);
-            assert!(boundary_facets_result2.is_ok());
-            let boundary_facets2 = boundary_facets_result2.unwrap();
-
-            println!(
-                "Outside vertex - Bad cells: {}, Boundary facets: {}",
-                bad_cells2.len(),
-                boundary_facets2.len()
-            );
-        }
     }
 
     #[test]
