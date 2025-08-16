@@ -127,7 +127,7 @@ delaunay/
 │   │       ├── finitecheck.rs                    # Finite value validation traits
 │   │       ├── hashcoordinate.rs                 # Floating-point hashing traits
 │   │       └── orderedeq.rs                      # Ordered equality comparison traits
-│   └── lib.rs                                    # Main library file with module declarations
+│   └── lib.rs                                    # Main library file with module declarations and prelude
 ├── examples/                                     # Usage examples and demonstrations
 │   ├── README.md                                 # Examples documentation
 │   ├── boundary_analysis_trait.rs                # Boundary analysis examples
@@ -160,7 +160,9 @@ delaunay/
 │   ├── compare_benchmarks.sh                     # Performance regression testing
 │   ├── generate_baseline.sh                      # Create performance baselines
 │   ├── generate_changelog.sh                     # Generate changelog with commit dates
-│   └── run_all_examples.sh                       # Validate all examples
+│   ├── hardware_info.sh                          # Hardware information and system capabilities
+│   ├── run_all_examples.sh                       # Validate all examples
+│   └── tag-from-changelog.sh                     # Create git tags from changelog content
 ├── .cargo/                                       # Cargo configuration
 │   └── config.toml                               # Build configuration
 ├── .github/                                      # GitHub configuration
@@ -183,12 +185,13 @@ delaunay/
 ├── CHANGELOG.md                                  # Version history
 ├── CODE_OF_CONDUCT.md                            # Community guidelines
 ├── CONTRIBUTING.md                               # This file
+├── Cargo.lock                                    # Dependency lockfile
 ├── Cargo.toml                                    # Package configuration and dependencies
+├── cspell.json                                   # Spell checking configuration
 ├── LICENSE                                       # MIT License
 ├── README.md                                     # Project overview and getting started
-├── WARP.md                                       # WARP AI development guidance
-├── cspell.json                                   # Spell checking configuration
-└── rustfmt.toml                                  # Code formatting configuration
+├── rustfmt.toml                                  # Code formatting configuration
+└── WARP.md                                       # WARP AI development guidance
 ```
 
 For detailed code organization patterns, see [code organization documentation][code-organization].
@@ -586,29 +589,73 @@ The project follows [semantic versioning][semver] and maintains a detailed [CHAN
 
 ### Release Workflow
 
-1. **Update version** in `Cargo.toml`
-2. **Generate updated changelog** with accurate commit dates:
+1. **Update version** in `Cargo.toml` and any documentation if needed
+2. **Create temporary tag** to enable changelog generation:
+
+   ```bash
+   git tag -a v0.3.5 -m "delaunay v0.3.5"
+   ```
+
+3. **Generate changelog**:
 
    ```bash
    ./scripts/generate_changelog.sh
    ```
 
-3. **Commit changelog updates** if needed
-4. **Update documentation** if needed
-5. **Create and push annotated tag** with specific commit hash:
+   Note: do not push this temporary tag, it will be recreated later with full changelog content
+
+4. **Commit all changes together**:
 
    ```bash
-   # Create annotated tag pointing to specific commit
-   git tag -a v0.3.5 <commit-hash> -m "delaunay v0.3.5"
+   git add Cargo.toml CHANGELOG.md docs/ # Add any updated files
+   git commit -m "chore(release): release v0.3.5
    
-   # Push the tag to origin
-   git push origin v0.3.5
+   - Bump version to v0.3.5
+   - Update changelog with latest changes  
+   - Update documentation for release"
    ```
 
-6. **Publish to crates.io** (maintainer only):
+5. **Move tag to final release commit with changelog content**:
 
    ```bash
+   # Delete temporary tag and recreate with changelog content
+   git tag -d v0.3.5
+   ./scripts/tag-from-changelog.sh v0.3.5 --force
+   ```
+
+   The `tag-from-changelog.sh` script extracts the changelog section that matches
+   the specified version (v0.3.5) from CHANGELOG.md and uses it as the tag message.
+   It supports common changelog formats including `## [v0.3.5] ...`, `## v0.3.5 ...`,
+   and `## 0.3.5 ...`. The script ensures you get the correct version's changelog
+   content rather than an unrelated section.
+
+6. **Verify tag annotation** (optional but recommended):
+
+   ```bash
+   # View the tag message content that will be used for GitHub release
+   git tag -l --format='%(contents)' v0.3.5
+   ```
+
+   This shows exactly what content will be used when creating the GitHub release.
+
+7. **Push changes and tag**:
+
+   ```bash
+   git push --atomic origin main v0.3.5
+   ```
+
+8. **Publish to crates.io** (maintainer only):
+
+   ```bash
+   cargo publish --dry-run # Validate package
    cargo publish
+   ```
+
+9. **Create GitHub release** (maintainer only):
+
+   ```bash
+   # Create release using changelog content from tag message
+   gh release create v0.3.5 --notes-from-tag
    ```
 
 **Note**: The project uses `./scripts/generate_changelog.sh` to generate changelogs with commit dates instead of tag creation dates,

@@ -43,9 +43,30 @@ done
 # Find project root
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
 
+# Check if hardware_info.sh dependency exists
+HARDWARE_INFO_PATH="${PROJECT_ROOT}/scripts/hardware_info.sh"
+if [[ ! -f "$HARDWARE_INFO_PATH" ]]; then
+    error_exit "Required dependency not found: $HARDWARE_INFO_PATH. This script depends on hardware_info.sh for hardware detection."
+fi
+
+# Source the shared hardware detection utility
+# shellcheck disable=SC1091
+source "${PROJECT_ROOT}/scripts/hardware_info.sh"
+
+# Check mandatory tools first (bc is required by hardware detection)
+for cmd in jq bc; do
+    if ! command -v "$cmd" > /dev/null 2>&1; then
+        error_exit "Required command '$cmd' is not installed. Please install it to proceed."
+    fi
+done
+
 # Get current date and git commit
 CURRENT_DATE=$(date)
 GIT_COMMIT=$(git rev-parse HEAD)
+
+# Collect hardware information using shared utility (requires bc for memory calculations)
+echo "Collecting hardware information..."
+HARDWARE_INFO=$(get_hardware_info)
 
 # Output file path
 OUTPUT_FILE="${PROJECT_ROOT}/benches/baseline_results.txt"
@@ -56,13 +77,6 @@ else
     echo "Generating baseline results from fresh benchmark run..."
 fi
 echo "Output file: $OUTPUT_FILE"
-
-# Check mandatory tools
-for cmd in jq bc; do
-    if ! command -v "$cmd" > /dev/null 2>&1; then
-        error_exit "Required command '$cmd' is not installed. Please install it to proceed."
-    fi
-done
 
 # Change to project root directory for cargo commands
 echo "Changing to project root: $PROJECT_ROOT"
@@ -99,11 +113,11 @@ fi
 #==============================================================================
 echo "Step 3: Parsing Criterion results and creating baseline file..."
 
-# Create header
-cat > "$OUTPUT_FILE" << EOF
+# Create header with hardware information
+cat > "$OUTPUT_FILE" <<EOF
 Date: $CURRENT_DATE
 Git commit: $GIT_COMMIT
-
+$HARDWARE_INFO
 EOF
 
 # Function to extract timing and throughput from Criterion data
@@ -199,9 +213,6 @@ done
 #==============================================================================
 echo "Step 5: Cleaning up temporary files..."
 rm -f "$BENCHMARKS_FILE"
-
-# Return to original directory
-popd > /dev/null
 
 echo ""
 echo "Baseline results generated successfully!"
