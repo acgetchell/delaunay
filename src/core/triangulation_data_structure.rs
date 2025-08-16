@@ -474,7 +474,10 @@ where
 
         // Find facets that are shared by more than 2 cells and validate which ones are correct
         for (facet_key, cell_facet_pairs) in facet_to_cells {
+            #[cfg(not(debug_assertions))]
+            let _ = &facet_key; // Prevent unused variable warning in release mode
             if cell_facet_pairs.len() > 2 {
+                #[cfg(debug_assertions)]
                 let total_cells = cell_facet_pairs.len();
 
                 // Get the actual facet from the first cell to determine its vertices
@@ -1539,7 +1542,14 @@ where
         self.remove_duplicate_cells();
 
         // Fix invalid facet sharing by removing problematic cells
+        #[cfg(debug_assertions)]
         let invalid_cells_removed = self.fix_invalid_facet_sharing().map_err(|e| {
+            TriangulationValidationError::FailedToCreateCell {
+                message: format!("Failed to fix invalid facet sharing: {e}"),
+            }
+        })?;
+        #[cfg(not(debug_assertions))]
+        self.fix_invalid_facet_sharing().map_err(|e| {
             TriangulationValidationError::FailedToCreateCell {
                 message: format!("Failed to fix invalid facet sharing: {e}"),
             }

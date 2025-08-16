@@ -136,7 +136,7 @@ This provides more accurate release timing that reflects when the actual work wa
 - **`matrix.rs`** - Matrix operations for geometric computations
 - **`traits/`** - Coordinate abstractions and floating-point traits
 
-**`src/prelude.rs`** - Re-exports commonly used types and macros for convenience
+**`src/lib.rs`** - Main library file with module declarations and prelude module
 
 ### Key Relationships
 
@@ -191,8 +191,9 @@ Examples in `examples/` demonstrate library capabilities:
 
 - **`circumsphere_containment`** - Geometric predicate performance across methods
 - **`small_scale_triangulation`** - Triangulation creation for 10-50 points in 2D/3D/4D
-- **`boundary_facets_performance`** - Boundary detection algorithm performance
 - **`assign_neighbors_performance`** - Neighbor relationship computation
+- **`microbenchmarks`** - Fine-grained performance tests for specific operations
+- **`triangulation_creation`** - Basic triangulation creation benchmarks
 
 ### Performance Characteristics
 

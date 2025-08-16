@@ -127,7 +127,7 @@ delaunay/
 │   │       ├── finitecheck.rs                    # Finite value validation traits
 │   │       ├── hashcoordinate.rs                 # Floating-point hashing traits
 │   │       └── orderedeq.rs                      # Ordered equality comparison traits
-│   └── lib.rs                                    # Main library file with module declarations
+│   └── lib.rs                                    # Main library file with module declarations and prelude
 ├── examples/                                     # Usage examples and demonstrations
 │   ├── README.md                                 # Examples documentation
 │   ├── boundary_analysis_trait.rs                # Boundary analysis examples
@@ -161,7 +161,8 @@ delaunay/
 │   ├── generate_baseline.sh                      # Create performance baselines
 │   ├── generate_changelog.sh                     # Generate changelog with commit dates
 │   ├── hardware_info.sh                          # Hardware information and system capabilities
-│   └── run_all_examples.sh                       # Validate all examples
+│   ├── run_all_examples.sh                       # Validate all examples
+│   └── tag-from-changelog.sh                     # Create git tags from changelog content
 ├── .cargo/                                       # Cargo configuration
 │   └── config.toml                               # Build configuration
 ├── .github/                                      # GitHub configuration
@@ -186,11 +187,11 @@ delaunay/
 ├── CONTRIBUTING.md                               # This file
 ├── Cargo.lock                                    # Dependency lockfile
 ├── Cargo.toml                                    # Package configuration and dependencies
+├── cspell.json                                   # Spell checking configuration
 ├── LICENSE                                       # MIT License
 ├── README.md                                     # Project overview and getting started
-├── WARP.md                                       # WARP AI development guidance
-├── cspell.json                                   # Spell checking configuration
-└── rustfmt.toml                                  # Code formatting configuration
+├── rustfmt.toml                                  # Code formatting configuration
+└── WARP.md                                       # WARP AI development guidance
 ```
 
 For detailed code organization patterns, see [code organization documentation][code-organization].
@@ -612,25 +613,41 @@ The project follows [semantic versioning][semver] and maintains a detailed [CHAN
    - Update documentation for release"
    ```
 
-5. **Move tag to final release commit**:
+5. **Move tag to final release commit with changelog content**:
 
    ```bash
-   # Delete temporary tag and recreate pointing to release commit
+   # Delete temporary tag and recreate with changelog content
    git tag -d v0.3.5
-   git tag -a v0.3.5 -m "delaunay v0.3.5"
+   ./scripts/tag-from-changelog.sh v0.3.5 --force
    ```
 
-6. **Push changes and tag**:
+6. **Verify tag annotation** (optional but recommended):
+
+   ```bash
+   # View the tag message content that will be used for GitHub release
+   git tag -l --format='%(contents)' v0.3.5
+   ```
+
+   This shows exactly what content will be used when creating the GitHub release.
+
+7. **Push changes and tag**:
 
    ```bash
    git push origin main
    git push origin v0.3.5
    ```
 
-7. **Publish to crates.io** (maintainer only):
+8. **Publish to crates.io** (maintainer only):
 
    ```bash
    cargo publish
+   ```
+
+9. **Create GitHub release** (maintainer only):
+
+   ```bash
+   # Create release using changelog content from tag message
+   gh release create v0.3.5 --notes-from-tag
    ```
 
 **Note**: The project uses `./scripts/generate_changelog.sh` to generate changelogs with commit dates instead of tag creation dates,
