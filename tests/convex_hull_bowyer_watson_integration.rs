@@ -11,8 +11,8 @@
 //! - Performance characteristics of the integration
 
 use delaunay::core::{
-    algorithms::bowyer_watson::{IncrementalBoyerWatson, InsertionStrategy},
-    triangulation_data_structure::Tds,
+    algorithms::bowyer_watson::IncrementalBoyerWatson,
+    traits::insertion_algorithm::InsertionStrategy, triangulation_data_structure::Tds,
 };
 use delaunay::vertex;
 
@@ -253,6 +253,7 @@ fn test_multiple_hull_extensions() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn test_mixed_insertion_strategies() {
     println!("=== MIXED INSERTION STRATEGIES TEST ===");
 
@@ -321,9 +322,14 @@ fn test_mixed_insertion_strategies() {
 
                 // Count strategies used
                 match info.strategy {
-                    InsertionStrategy::CavityBased => cavity_insertions += 1,
+                    InsertionStrategy::CavityBased | InsertionStrategy::Standard => {
+                        cavity_insertions += 1;
+                    } // Standard is like cavity-based
                     InsertionStrategy::HullExtension => hull_insertions += 1,
-                    InsertionStrategy::Fallback => fallback_insertions += 1,
+                    InsertionStrategy::Fallback | InsertionStrategy::Perturbation => {
+                        fallback_insertions += 1;
+                    } // Count as fallback
+                    InsertionStrategy::Skip => {} // Don't count skipped insertions
                 }
 
                 // Verify triangulation remains valid after each insertion

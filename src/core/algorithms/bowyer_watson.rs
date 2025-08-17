@@ -94,7 +94,10 @@
 use crate::core::{
     cell::CellBuilder,
     facet::Facet,
-    traits::data_type::DataType,
+    traits::{
+        data_type::DataType,
+        insertion_algorithm::{InsertionAlgorithm, InsertionInfo, InsertionStrategy},
+    },
     triangulation_data_structure::{
         CellKey, Tds, TriangulationConstructionError, TriangulationValidationError,
     },
@@ -117,29 +120,7 @@ use std::{
 /// Result type for Bowyer-Watson operations
 pub type BoyerWatsonResult<T> = Result<T, TriangulationConstructionError>;
 
-/// Strategies for inserting vertices into the triangulation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InsertionStrategy {
-    /// Vertex is inside the triangulation - use cavity-based insertion
-    CavityBased,
-    /// Vertex is outside the triangulation - extend the convex hull
-    HullExtension,
-    /// Use fallback method for difficult cases
-    Fallback,
-}
-
-/// Information about a vertex insertion operation
-#[derive(Debug, Clone)]
-pub struct InsertionInfo {
-    /// Strategy used for insertion
-    pub strategy: InsertionStrategy,
-    /// Number of cells removed during insertion
-    pub cells_removed: usize,
-    /// Number of new cells created
-    pub cells_created: usize,
-    /// Whether the insertion was successful
-    pub success: bool,
-}
+// InsertionStrategy and InsertionInfo are now imported from traits::insertion_algorithm
 
 /// Incremental Bowyer-Watson algorithm implementation
 ///
@@ -405,9 +386,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::algorithms::bowyer_watson::{
-    ///     IncrementalBoyerWatson, InsertionStrategy
-    /// };
+    /// use delaunay::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
+    /// use delaunay::core::traits::insertion_algorithm::InsertionStrategy;
     /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::vertex;
     ///
@@ -454,9 +434,17 @@ where
         let strategy = self.determine_insertion_strategy(tds, &vertex);
 
         let result = match strategy {
+            InsertionStrategy::Standard => {
+                // For Standard strategy, use CavityBased as default
+                self.insert_vertex_cavity_based(tds, &vertex)
+            }
             InsertionStrategy::CavityBased => self.insert_vertex_cavity_based(tds, &vertex),
             InsertionStrategy::HullExtension => self.insert_vertex_hull_extension(tds, &vertex),
             InsertionStrategy::Fallback => self.insert_vertex_fallback(tds, &vertex),
+            InsertionStrategy::Perturbation | InsertionStrategy::Skip => {
+                // These strategies are for robust algorithms - fallback to basic methods
+                self.insert_vertex_fallback(tds, &vertex)
+            }
         };
 
         // Update statistics on successful insertion
@@ -589,6 +577,7 @@ where
             cells_removed,
             cells_created,
             success: true,
+            degenerate_case_handled: false,
         })
     }
 
@@ -634,6 +623,7 @@ where
             cells_removed: 0,
             cells_created,
             success: true,
+            degenerate_case_handled: false,
         })
     }
 
@@ -678,6 +668,7 @@ where
                                     cells_removed: 0,
                                     cells_created: 1,
                                     success: true,
+                                    degenerate_case_handled: false,
                                 });
                             }
                         }
@@ -701,6 +692,7 @@ where
                                     cells_removed: 0,
                                     cells_created: 1,
                                     success: true,
+                                    degenerate_case_handled: false,
                                 });
                             }
                         }
@@ -920,10 +912,12 @@ where
             .filter(|(_, cells)| cells.len() == 1)
             .collect();
 
-        println!(
-            "  Testing {} boundary facets for visibility",
-            boundary_facets.len()
-        );
+        if cfg!(debug_assertions) {
+            println!(
+                "  Testing {} boundary facets for visibility",
+                boundary_facets.len()
+            );
+        }
 
         for (_facet_key, cells) in boundary_facets {
             let (cell_key, facet_index) = cells[0];
@@ -934,9 +928,11 @@ where
 
                         // Use proper visibility test based on orientation
                         if self.is_facet_visible_from_vertex(tds, facet, vertex, cell_key) {
-                            println!("    Facet is visible");
+                            if cfg!(debug_assertions) {
+                                println!("    Facet is visible");
+                            }
                             visible_facets.push(facet.clone());
-                        } else {
+                        } else if cfg!(debug_assertions) {
                             println!("    Facet is not visible");
                         }
                     }
@@ -1205,6 +1201,80 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// Implementation of the InsertionAlgorithm trait
+impl<T, U, V, const D: usize> InsertionAlgorithm<T, U, V, D> for IncrementalBoyerWatson<T, U, V, D>
+where
+    T: CoordinateScalar
+        + AddAssign<T>
+        + ComplexField<RealField = T>
+        + SubAssign<T>
+        + Sum
+        + From<f64>,
+    U: DataType + DeserializeOwned,
+    V: DataType + DeserializeOwned,
+    f64: From<T>,
+    for<'a> &'a T: Div<T>,
+    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    ordered_float::OrderedFloat<f64>: From<T>,
+    nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
+    [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+{
+    /// Insert a single vertex into the triangulation
+    fn insert_vertex(
+        &mut self,
+        tds: &mut Tds<T, U, V, D>,
+        vertex: Vertex<T, U, D>,
+    ) -> Result<InsertionInfo, TriangulationValidationError> {
+        // Determine insertion strategy
+        let strategy = self.determine_insertion_strategy(tds, &vertex);
+
+        let result = match strategy {
+            InsertionStrategy::Standard => {
+                // For Standard strategy, use CavityBased as default
+                self.insert_vertex_cavity_based(tds, &vertex)
+            }
+            InsertionStrategy::CavityBased => self.insert_vertex_cavity_based(tds, &vertex),
+            InsertionStrategy::HullExtension => self.insert_vertex_hull_extension(tds, &vertex),
+            InsertionStrategy::Fallback => self.insert_vertex_fallback(tds, &vertex),
+            InsertionStrategy::Perturbation | InsertionStrategy::Skip => {
+                // These strategies are for robust algorithms - fallback to basic methods
+                self.insert_vertex_fallback(tds, &vertex)
+            }
+        };
+
+        // Update statistics on successful insertion
+        if let Ok(ref info) = result {
+            self.insertion_count += 1;
+            self.total_cells_created += info.cells_created;
+            self.total_cells_removed += info.cells_removed;
+        }
+
+        result
+    }
+
+    /// Get statistics about the insertion algorithm's performance
+    fn get_statistics(&self) -> (usize, usize, usize) {
+        // Use the existing get_statistics implementation
+        self.get_statistics()
+    }
+
+    /// Reset the algorithm state for reuse
+    fn reset(&mut self) {
+        // Use the existing reset implementation
+        self.reset();
+    }
+
+    /// Determine the appropriate insertion strategy for a given vertex
+    fn determine_strategy(
+        &self,
+        tds: &Tds<T, U, V, D>,
+        vertex: &Vertex<T, U, D>,
+    ) -> InsertionStrategy {
+        // Use the existing determine_insertion_strategy implementation
+        self.determine_insertion_strategy(tds, vertex)
     }
 }
 

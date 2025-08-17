@@ -85,7 +85,10 @@ pub mod core {
     pub mod algorithms {
         /// Pure incremental Bowyer-Watson algorithm for Delaunay triangulation
         pub mod bowyer_watson;
+        /// Robust Bowyer-Watson implementation with enhanced numerical stability
+        pub mod robust_bowyer_watson;
         pub use bowyer_watson::*;
+        pub use robust_bowyer_watson::*;
     }
     pub mod boundary;
     pub mod cell;
@@ -97,8 +100,10 @@ pub mod core {
     pub mod traits {
         pub mod boundary_analysis;
         pub mod data_type;
+        pub mod insertion_algorithm;
         pub use boundary_analysis::*;
         pub use data_type::*;
+        pub use insertion_algorithm::*;
     }
     // Re-export the `core` modules.
     pub use cell::*;
@@ -126,6 +131,8 @@ pub mod geometry {
     pub mod matrix;
     pub mod point;
     pub mod predicates;
+    /// Enhanced predicates with improved numerical robustness
+    pub mod robust_predicates;
     /// Traits module containing coordinate abstractions and reusable trait definitions.
     ///
     /// This module contains the core `Coordinate` trait that abstracts coordinate
@@ -156,7 +163,7 @@ pub mod prelude {
     pub use crate::core::{
         cell::*,
         facet::*,
-        traits::{boundary_analysis::*, data_type::*},
+        traits::{boundary_analysis::*, data_type::*, insertion_algorithm::*},
         triangulation_data_structure::*,
         utilities::*,
         vertex::*,
@@ -168,6 +175,7 @@ pub mod prelude {
         matrix::*,
         point::*,
         predicates::*,
+        robust_predicates::*,
         traits::{coordinate::*, finitecheck::*, hashcoordinate::*, orderedeq::*},
     };
 

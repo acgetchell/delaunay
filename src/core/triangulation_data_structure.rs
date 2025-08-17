@@ -3277,12 +3277,7 @@ mod tests {
         }
     }
 
-    // TODO: This test has a race condition that occasionally fails due to non-deterministic
-    // behavior in the Bowyer-Watson algorithm with random points. The algorithm itself is
-    // correct, but the test needs to be rewritten to use deterministic points or handle
-    // the randomness more robustly.
     #[test]
-    #[ignore = "Test has a race condition with random points that occasionally causes failures"]
     fn tds_small_triangulation() {
         use rand::Rng;
 
@@ -5662,65 +5657,5 @@ mod tests {
             deserialized_tds.number_of_cells()
         );
         println!("  - Both triangulations are valid and equivalent");
-    }
-
-    #[test]
-    #[ignore = "Benchmark test is time-consuming and not suitable for regular test runs"]
-    fn benchmark_boundary_facets_performance() {
-        use rand::Rng;
-        use std::time::Instant;
-
-        // Smaller point counts for reasonable test time
-        let point_counts = [20, 40, 60, 80];
-
-        println!("\nBenchmarking boundary_facets() performance:");
-        println!(
-            "Note: This demonstrates the O(N·F) complexity where N = cells, F = facets per cell"
-        );
-
-        for &n_points in &point_counts {
-            // Create a number of random points in 3D
-            let mut rng = rand::rng();
-            let points: Vec<Point<f64, 3>> = (0..n_points)
-                .map(|_| {
-                    Point::new([
-                        rng.random::<f64>() * 100.0,
-                        rng.random::<f64>() * 100.0,
-                        rng.random::<f64>() * 100.0,
-                    ])
-                })
-                .collect();
-
-            let vertices = Vertex::from_points(points);
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-            // Time multiple runs to get more stable measurements
-            let mut total_time = std::time::Duration::ZERO;
-            let runs: u32 = 10;
-
-            for _ in 0..runs {
-                let start = Instant::now();
-                let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-                total_time += start.elapsed();
-
-                // Prevent optimization away
-                std::hint::black_box(boundary_facets);
-            }
-
-            let avg_time = total_time / runs;
-
-            println!(
-                "Points: {:3} | Cells: {:4} | Boundary Facets: {:4} | Avg Time: {:?}",
-                n_points,
-                tds.number_of_cells(),
-                tds.number_of_boundary_facets(),
-                avg_time
-            );
-        }
-
-        println!("\nOptimization achieved:");
-        println!("- Single pass over all cells and facets: O(N·F)");
-        println!("- HashMap-based facet-to-cells mapping");
-        println!("- Direct facet cloning instead of repeated computation");
     }
 }
