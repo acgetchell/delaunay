@@ -12,7 +12,8 @@
 
 use delaunay::core::{
     algorithms::bowyer_watson::IncrementalBoyerWatson,
-    traits::insertion_algorithm::InsertionStrategy, triangulation_data_structure::Tds,
+    traits::insertion_algorithm::{InsertionAlgorithm, InsertionStrategy},
+    triangulation_data_structure::Tds,
 };
 use delaunay::vertex;
 

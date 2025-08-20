@@ -28,6 +28,7 @@
 //! tds.add(vertex!([1.0, 0.0, 0.0, 0.0])).unwrap();  // 2 vertices, 0 cells
 //! tds.add(vertex!([0.0, 1.0, 0.0, 0.0])).unwrap();  // 3 vertices, 0 cells
 //! tds.add(vertex!([0.0, 0.0, 1.0, 0.0])).unwrap();  // 4 vertices, 0 cells
+//! assert_eq!(tds.number_of_cells(), 0);
 //! tds.add(vertex!([0.0, 0.0, 0.0, 1.0])).unwrap();  // 5 vertices, 1 cell (first 4-simplex!)
 //! tds.add(vertex!([0.2, 0.2, 0.2, 0.2])).unwrap();  // 6 vertices, multiple cells
 //!
@@ -40,6 +41,64 @@
 //! **Key insight**: The transition happens at D+1 vertices (5 vertices for 4D), where the first
 //! 4-simplex (5-vertex cell) is created. Additional vertices trigger the Bowyer-Watson algorithm
 //! to maintain the 4D Delaunay triangulation.
+//!
+//! # Convex Hull Extraction
+//!
+//! Extract d-dimensional convex hulls from Delaunay triangulations:
+//!
+//! ```rust
+//! use delaunay::core::triangulation_data_structure::Tds;
+//! use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+//! use delaunay::geometry::point::Point;
+//! use delaunay::geometry::traits::coordinate::Coordinate;
+//! use delaunay::vertex;
+//!
+//! // Create two tetrahedrons sharing a triangular facet (double tetrahedron)
+//! let vertices = vec![
+//!     // Shared triangular facet vertices (forms base of both tetrahedrons)
+//!     vertex!([0.0, 0.0, 0.0]),    // Shared vertex A
+//!     vertex!([2.0, 0.0, 0.0]),    // Shared vertex B
+//!     vertex!([1.0, 2.0, 0.0]),    // Shared vertex C
+//!     // Apex of first tetrahedron (above the shared facet)
+//!     vertex!([1.0, 0.7, 1.5]),    // First tet apex
+//!     // Apex of second tetrahedron (below the shared facet)
+//!     vertex!([1.0, 0.7, -1.5]),   // Second tet apex
+//! ];
+//!
+//! let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+//!
+//! // Extract the convex hull (boundary facets of the triangulation)
+//! let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+//!     ConvexHull::from_triangulation(&tds).unwrap();
+//!
+//! println!("Convex hull has {} facets in {}D", hull.facet_count(), hull.dimension());
+//!
+//! // Test point containment
+//! let inside_point = Point::new([1.0, 0.5, 0.5]);
+//! let outside_point = Point::new([3.0, 3.0, 3.0]);
+//!
+//! assert!(!hull.is_point_outside(&inside_point, &tds).unwrap());  // Inside the hull
+//! assert!(hull.is_point_outside(&outside_point, &tds).unwrap());   // Outside the hull
+//!
+//! // Find visible facets from an external point (useful for incremental construction)
+//! let visible_facets = hull.find_visible_facets(&outside_point, &tds).unwrap();
+//! println!("Point sees {} out of {} facets", visible_facets.len(), hull.facet_count());
+//!
+//! // Works in any dimension!
+//! let vertices_4d = vec![
+//!     vertex!([0.0, 0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 0.0, 1.0]),
+//! ];
+//! let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+//! let hull_4d: ConvexHull<f64, Option<()>, Option<()>, 4> =
+//!     ConvexHull::from_triangulation(&tds_4d).unwrap();
+//!
+//! assert_eq!(hull_4d.facet_count(), 5);  // 4-simplex has 5 boundary facets
+//! assert_eq!(hull_4d.dimension(), 4);     // 4D convex hull
+//! ```
 //!
 //! # Triangulation Invariants
 //!
@@ -94,7 +153,7 @@ pub mod core {
     pub mod cell;
     pub mod facet;
     pub mod triangulation_data_structure;
-    pub mod utilities;
+    pub mod util;
     pub mod vertex;
     /// Traits for Delaunay triangulation data structures.
     pub mod traits {
@@ -110,7 +169,7 @@ pub mod core {
     pub use facet::*;
     pub use traits::*;
     pub use triangulation_data_structure::*;
-    pub use utilities::*;
+    pub use util::*;
     pub use vertex::*;
 }
 
@@ -133,6 +192,8 @@ pub mod geometry {
     pub mod predicates;
     /// Enhanced predicates with improved numerical robustness
     pub mod robust_predicates;
+    /// Geometric utility functions for d-dimensional geometry calculations
+    pub mod util;
     /// Traits module containing coordinate abstractions and reusable trait definitions.
     ///
     /// This module contains the core `Coordinate` trait that abstracts coordinate
@@ -154,6 +215,7 @@ pub mod geometry {
     pub use point::*;
     pub use predicates::*;
     pub use traits::*;
+    pub use util::*;
 }
 
 /// A prelude module that re-exports commonly used types and macros.
@@ -165,7 +227,7 @@ pub mod prelude {
         facet::*,
         traits::{boundary_analysis::*, data_type::*, insertion_algorithm::*},
         triangulation_data_structure::*,
-        utilities::*,
+        util::*,
         vertex::*,
     };
 
@@ -177,6 +239,7 @@ pub mod prelude {
         predicates::*,
         robust_predicates::*,
         traits::{coordinate::*, finitecheck::*, hashcoordinate::*, orderedeq::*},
+        util::*,
     };
 
     // Convenience macros

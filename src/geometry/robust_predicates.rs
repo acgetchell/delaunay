@@ -10,7 +10,8 @@ use num_traits::{Float, NumCast, Zero};
 use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
 
-use super::predicates::{InSphere, Orientation, squared_norm};
+use super::predicates::{InSphere, Orientation};
+use super::util::squared_norm;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 
@@ -36,10 +37,10 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
     fn default() -> Self {
         Self {
             base_tolerance: T::default_tolerance(),
-            relative_tolerance_factor: T::from(1e-12).unwrap_or_else(T::default_tolerance),
+            relative_tolerance_factor: NumCast::from(1e-12).unwrap_or_else(T::default_tolerance),
             max_refinement_iterations: 3,
-            exact_arithmetic_threshold: T::from(1e-10).unwrap_or_else(T::default_tolerance),
-            perturbation_scale: T::from(1e-10).unwrap_or_else(T::default_tolerance),
+            exact_arithmetic_threshold: NumCast::from(1e-10).unwrap_or_else(T::default_tolerance),
+            perturbation_scale: NumCast::from(1e-10).unwrap_or_else(T::default_tolerance),
         }
     }
 }
@@ -156,7 +157,7 @@ where
     let (conditioned_matrix, scale_factor) = condition_matrix(matrix, config);
 
     // Calculate determinant with scale correction
-    let det = conditioned_matrix.determinant() / scale_factor;
+    let det = conditioned_matrix.determinant() * scale_factor;
 
     // Use base tolerance since matrix is now better conditioned
     let tolerance = config.base_tolerance;
@@ -339,7 +340,7 @@ where
 
     let adaptive_tol = rel_factor.mul_add(max_row_sum, base_tol);
 
-    T::from(adaptive_tol).unwrap_or(config.base_tolerance)
+    NumCast::from(adaptive_tol).unwrap_or(config.base_tolerance)
 }
 
 /// Simplified version for matrix-based tolerance computation.
@@ -526,16 +527,17 @@ where
 /// Factory function to create robust predicate configurations for different use cases.
 pub mod config_presets {
     use super::{CoordinateScalar, RobustPredicateConfig};
+    use num_traits::NumCast;
 
     /// Configuration optimized for general-purpose triangulation.
     #[must_use]
     pub fn general_triangulation<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
         RobustPredicateConfig {
             base_tolerance: T::default_tolerance(),
-            relative_tolerance_factor: T::from(1e-12).unwrap_or_else(T::default_tolerance),
+            relative_tolerance_factor: NumCast::from(1e-12).unwrap_or_else(T::default_tolerance),
             max_refinement_iterations: 3,
-            exact_arithmetic_threshold: T::from(1e-10).unwrap_or_else(T::default_tolerance),
-            perturbation_scale: T::from(1e-10).unwrap_or_else(T::default_tolerance),
+            exact_arithmetic_threshold: NumCast::from(1e-10).unwrap_or_else(T::default_tolerance),
+            perturbation_scale: NumCast::from(1e-10).unwrap_or_else(T::default_tolerance),
         }
     }
 
@@ -544,11 +546,11 @@ pub mod config_presets {
     pub fn high_precision<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
         let base_tol = T::default_tolerance();
         RobustPredicateConfig {
-            base_tolerance: base_tol / T::from(100.0).unwrap_or_else(T::one),
-            relative_tolerance_factor: T::from(1e-14).unwrap_or(base_tol),
+            base_tolerance: base_tol / NumCast::from(100.0).unwrap_or_else(T::one),
+            relative_tolerance_factor: NumCast::from(1e-14).unwrap_or(base_tol),
             max_refinement_iterations: 5,
-            exact_arithmetic_threshold: T::from(1e-12).unwrap_or(base_tol),
-            perturbation_scale: T::from(1e-12).unwrap_or(base_tol),
+            exact_arithmetic_threshold: NumCast::from(1e-12).unwrap_or(base_tol),
+            perturbation_scale: NumCast::from(1e-12).unwrap_or(base_tol),
         }
     }
 
@@ -557,11 +559,11 @@ pub mod config_presets {
     pub fn degenerate_robust<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
         let base_tol = T::default_tolerance();
         RobustPredicateConfig {
-            base_tolerance: base_tol * T::from(100.0).unwrap_or_else(T::one),
-            relative_tolerance_factor: T::from(1e-10).unwrap_or(base_tol),
+            base_tolerance: base_tol * NumCast::from(100.0).unwrap_or_else(T::one),
+            relative_tolerance_factor: NumCast::from(1e-10).unwrap_or(base_tol),
             max_refinement_iterations: 2,
-            exact_arithmetic_threshold: T::from(1e-8).unwrap_or(base_tol),
-            perturbation_scale: T::from(1e-8).unwrap_or(base_tol),
+            exact_arithmetic_threshold: NumCast::from(1e-8).unwrap_or(base_tol),
+            perturbation_scale: NumCast::from(1e-8).unwrap_or(base_tol),
         }
     }
 }

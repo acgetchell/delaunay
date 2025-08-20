@@ -1,16 +1,20 @@
 # Numerical Robustness Guide for Delaunay Triangulation
 
-This guide explains how to improve numerical robustness in geometric predicates to address the "No cavity boundary facets found" error and other stability issues in Delaunay triangulation.
+This guide explains the numerical robustness improvements implemented in the delaunay library to address geometric predicate stability
+issues, including the "No cavity boundary facets found" error and other precision-related problems.
 
 ## Table of Contents
 
 1. [Problem Overview](#problem-overview)
-2. [Root Causes](#root-causes)
-3. [Solution Strategies](#solution-strategies)
-4. [Implementation Details](#implementation-details)
-5. [Integration Examples](#integration-examples)
-6. [Testing and Validation](#testing-and-validation)
-7. [Performance Considerations](#performance-considerations)
+2. [Current Implementation Status](#current-implementation-status)
+3. [Implemented Solutions](#implemented-solutions)
+4. [Robust Predicates](#robust-predicates)
+5. [Matrix Conditioning](#matrix-conditioning)
+6. [Usage Examples](#usage-examples)
+7. [Convex Hull Robustness](#convex-hull-robustness)
+8. [Testing and Validation](#testing-and-validation)
+9. [Performance Considerations](#performance-considerations)
+10. [Migration Strategy](#migration-strategy)
 
 ## Problem Overview
 
@@ -21,144 +25,202 @@ The "No cavity boundary facets found for X bad cells" error occurs in the Bowyer
 3. **Algorithm cannot proceed** (cannot create new cells to fill the cavity)
 
 This typically happens with:
+
 - Random point configurations that create degenerate geometry
 - Points that are nearly coplanar or cospherical
 - Very large or very small coordinate values
 - Points at circumsphere boundaries (numerical precision issues)
 
-## Root Causes
+## Current Implementation Status
 
-### 1. Floating-Point Precision Issues
+As of version 0.3.5, the delaunay library includes several robustness improvements:
 
-Standard geometric predicates use fixed tolerances that may be inappropriate for the scale of the problem:
+### ✅ Implemented Features
+
+1. **Robust Predicates Module** (`src/geometry/robust_predicates.rs`)
+   - Enhanced `insphere` predicate with adaptive tolerances
+   - Matrix conditioning for improved numerical stability
+   - Multiple fallback strategies for degenerate cases
+   - Scale-factor recovery for proper determinant interpretation
+
+2. **Configuration System** (`src/geometry/robust_predicates.rs`)
+   - `RobustPredicateConfig` for customizable tolerance settings
+   - Predefined configuration presets for different use cases
+   - Adaptive tolerance computation based on input scale
+
+3. **Convex Hull Robustness** (`src/geometry/algorithms/convex_hull.rs`)
+   - Fallback visibility tests for degenerate orientation cases
+   - Distance-based heuristics when geometric predicates fail
+   - Comprehensive error handling for edge cases
+
+4. **Enhanced Error Handling**
+   - Detailed error types with diagnostic information
+   - Graceful degradation for numerical edge cases
+   - Comprehensive validation and consistency checks
+
+### 🚧 In Progress
+
+1. **Robust Bowyer-Watson Algorithm**
+   - Integration of robust predicates into triangulation construction
+   - Recovery strategies for cavity boundary detection failures
+   - Statistics tracking for algorithm performance analysis
+
+2. **Exact Arithmetic Fallback**
+   - High-precision arithmetic for extreme degenerate cases
+   - Automatic switching thresholds based on condition numbers
+
+### 📋 Planned Features
+
+1. **Adaptive Algorithm Selection**
+   - Automatic switching between standard and robust predicates
+   - Performance-based predicate selection
+
+2. **Advanced Matrix Conditioning**
+   - Pivoting strategies for better numerical stability
+   - Iterative refinement for high-precision results
+
+## Implemented Solutions
+
+The library now includes several robust numerical methods to address these issues:
+
+### 1. Enhanced Geometric Predicates
+
+Location: `src/geometry/robust_predicates.rs`
+
+The robust predicates module provides improved versions of geometric tests:
 
 ```rust
-// Problematic: Fixed tolerance
-let tolerance = 1e-15;
-if determinant.abs() < tolerance {
-    return Degenerate;
-}
+use delaunay::geometry::robust_predicates::{robust_insphere, RobustPredicateConfig};
+use delaunay::geometry::robust_predicates::config_presets;
 
-// Better: Scale-aware tolerance
-let adaptive_tolerance = base_tolerance * matrix_scale;
+// Create configuration for your use case
+let config = config_presets::general_triangulation();
+
+// Use robust insphere test
+let result = robust_insphere(&simplex_points, &test_point, &config)?;
 ```
 
-### 2. Inconsistent Predicate Results
+### 2. Matrix Conditioning System
 
-Different geometric tests may give inconsistent results due to numerical errors:
+Implemented matrix conditioning improves numerical stability:
 
 ```rust
-// Point might be classified as INSIDE by circumsphere test
-// but OUTSIDE by distance-based test
-let insphere_result = insphere(&simplex, point);          // INSIDE
-let distance_result = circumsphere_contains(&simplex, point); // OUTSIDE (inconsistent!)
+// The robust predicates automatically apply conditioning:
+// 1. Row scaling to normalize matrix entries
+// 2. Scale factor tracking for determinant recovery
+// 3. Adaptive tolerance computation based on matrix scale
 ```
 
-### 3. Degenerate Configurations
+### 3. Convex Hull Robustness
 
-When points are exactly or nearly cocircular/cospherical:
-- Circumcenter computation becomes unstable
-- Determinants approach zero
-- Facet sharing relationships become inconsistent
+Location: `src/geometry/algorithms/convex_hull.rs`
 
-### 4. Matrix Conditioning Issues
-
-The matrices used in geometric predicates can become poorly conditioned:
-- Very large condition numbers amplify numerical errors
-- Small perturbations in input cause large changes in output
-
-## Solution Strategies
-
-### 1. Adaptive Tolerances
-
-Scale tolerances based on operand magnitude:
+Robust convex hull operations with fallback strategies:
 
 ```rust
-/// Compute tolerance that adapts to the scale of the problem
-fn compute_adaptive_tolerance<T>(
-    matrix: &DMatrix<f64>,
-    config: &RobustPredicateConfig<T>,
-) -> T {
-    // Use matrix infinity norm as scale indicator
-    let matrix_scale = compute_matrix_infinity_norm(matrix);
-    let base_tolerance = config.base_tolerance;
-    let relative_factor = config.relative_tolerance_factor;
+use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+
+// Robust point-in-hull testing with fallback for degenerate cases
+let is_outside = hull.is_point_outside(&test_point, &tds)?;
+
+// Fallback visibility testing when orientation predicates fail
+let visible_facets = hull.find_visible_facets(&external_point, &tds)?;
+```
+
+## Robust Predicates
+
+### Core Implementation
+
+The `robust_insphere` function in `src/geometry/robust_predicates.rs` provides:
+
+1. **Adaptive Tolerance Computation**
+
+   ```rust
+   let adaptive_tolerance = compute_adaptive_tolerance(&matrix, &config);
+   ```
+
+2. **Matrix Conditioning**
+
+   ```rust
+   let (conditioned_matrix, scale_factor) = condition_matrix(matrix, &config);
+   let determinant = conditioned_matrix.determinant() * scale_factor;
+   ```
+
+3. **Multiple Fallback Strategies**
+   - Standard determinant with adaptive tolerance
+   - Matrix conditioning when standard method fails
+   - Symbolic perturbation for extreme degenerate cases
+
+### Configuration Options
+
+Three predefined configurations are available:
+
+```rust
+// Balanced performance and robustness
+let config = config_presets::general_triangulation();
+
+// Maximum precision for critical applications
+let config = config_presets::high_precision();
+
+// Robust handling of degenerate inputs
+let config = config_presets::degenerate_robust();
+```
+
+### Usage in Triangulation
+
+The robust predicates are designed for integration with the Bowyer-Watson algorithm:
+
+```rust
+// In bowyer_watson.rs - find_bad_cells() can use robust predicates
+for cell_key in &tds.cells().indices().collect::<Vec<_>>() {
+    let cell = &tds.cells()[*cell_key];
     
-    base_tolerance + relative_factor * T::from(matrix_scale)
-}
-```
-
-### 2. Multiple Predicate Strategies
-
-Use multiple approaches and verify consistency:
-
-```rust
-/// Enhanced insphere test with multiple strategies
-pub fn robust_insphere<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-    test_point: Point<T, D>,
-    config: &RobustPredicateConfig<T>,
-) -> Result<InSphere, Error> {
-    // Strategy 1: Standard determinant with adaptive tolerance
-    if let Ok(result) = adaptive_tolerance_insphere(simplex_points, test_point, config) {
-        // Strategy 2: Verify with distance-based method
-        if verify_consistency(simplex_points, test_point, result)? {
-            return Ok(result);
+    // Use robust insphere test for stability
+    let config = config_presets::general_triangulation();
+    match robust_insphere(&cell.vertices_as_points(), vertex.point(), &config) {
+        Ok(InSphere::INSIDE) => bad_cells.push(*cell_key),
+        Ok(InSphere::OUTSIDE) => continue,
+        Ok(InSphere::BOUNDARY) => {
+            // Handle boundary case with additional logic
+            if should_include_boundary_cell(cell, vertex) {
+                bad_cells.push(*cell_key);
+            }
+        }
+        Err(_) => {
+            // Log error but continue with next cell
+            continue;
         }
     }
-    
-    // Strategy 3: Matrix conditioning
-    conditioned_insphere(simplex_points, test_point, config)
 }
 ```
 
-### 3. Symbolic Perturbation
+## Matrix Conditioning
 
-For degenerate cases, apply tiny perturbations deterministically:
+### Current Implementation
 
-```rust
-/// Handle degenerate cases with symbolic perturbation
-fn symbolic_perturbation_insphere<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-    test_point: Point<T, D>,
-    config: &RobustPredicateConfig<T>,
-) -> Result<InSphere, Error> {
-    let perturbation_directions = generate_unit_directions::<T, D>();
-    
-    for direction in perturbation_directions {
-        let perturbed_point = apply_perturbation(
-            test_point, 
-            direction, 
-            config.perturbation_scale
-        );
-        
-        match standard_insphere(simplex_points, &perturbed_point) {
-            Ok(InSphere::BOUNDARY) => continue, // Try next direction
-            Ok(result) => return Ok(result),
-            Err(_) => continue,
-        }
-    }
-    
-    // Fallback to deterministic tie-breaking
-    deterministic_tie_breaking(simplex_points, test_point)
-}
-```
-
-### 4. Matrix Conditioning
-
-Improve matrix stability before computing determinants:
+The `condition_matrix` function in `src/geometry/robust_predicates.rs` implements row scaling:
 
 ```rust
 /// Apply conditioning to improve matrix stability
-fn condition_matrix(mut matrix: DMatrix<f64>) -> (DMatrix<f64>, f64) {
+fn condition_matrix(
+    mut matrix: na::DMatrix<f64>,
+    _config: &RobustPredicateConfig<T>,
+) -> (na::DMatrix<f64>, f64) {
     let mut scale_factor = 1.0;
     
-    // Row scaling: normalize each row by its maximum element
+    // Row scaling - normalize each row by its maximum element
     for i in 0..matrix.nrows() {
-        let row_max = matrix.row(i).iter().map(|x| x.abs()).fold(0.0, f64::max);
-        if row_max > 1e-100 {
-            matrix.row_mut(i) /= row_max;
-            scale_factor *= row_max;
+        let mut max_element = 0.0;
+        for j in 0..matrix.ncols() {
+            max_element = max_element.max(matrix[(i, j)].abs());
+        }
+        
+        if max_element > 1e-100 {
+            // Scale the row and track the scale factor
+            for j in 0..matrix.ncols() {
+                matrix[(i, j)] /= max_element;
+            }
+            scale_factor *= max_element;
         }
     }
     
@@ -166,208 +228,223 @@ fn condition_matrix(mut matrix: DMatrix<f64>) -> (DMatrix<f64>, f64) {
 }
 ```
 
-## Implementation Details
+### Benefits
 
-### Configuration System
+1. **Improved Condition Numbers**: Row scaling reduces condition numbers
+2. **Scale Factor Recovery**: Proper determinant calculation after conditioning
+3. **Numerical Stability**: Reduces amplification of floating-point errors
+4. **Zero Division Protection**: Handles near-zero matrix elements safely
 
-Create configurable predicate settings:
+### Integration with NumCast
+
+The implementation properly uses `NumCast::from` for type conversions:
 
 ```rust
-#[derive(Debug, Clone)]
-pub struct RobustPredicateConfig<T> {
-    /// Base tolerance for degenerate case detection
-    pub base_tolerance: T,
-    /// Relative tolerance factor (multiplied by magnitude of operands)
-    pub relative_tolerance_factor: T,
-    /// Maximum number of refinement iterations
-    pub max_refinement_iterations: usize,
-    /// Threshold for switching to exact arithmetic
-    pub exact_arithmetic_threshold: T,
-    /// Scale factor for perturbation
-    pub perturbation_scale: T,
-}
+use num_traits::cast::NumCast;
 
-impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
-    fn default() -> Self {
-        Self {
-            base_tolerance: T::default_tolerance(),
-            relative_tolerance_factor: T::from(1e-12).unwrap_or(T::default_tolerance()),
-            max_refinement_iterations: 3,
-            exact_arithmetic_threshold: T::from(1e-10).unwrap_or(T::default_tolerance()),
-            perturbation_scale: T::from(1e-10).unwrap_or(T::default_tolerance()),
-        }
-    }
-}
+// Safe type conversion with fallback
+let tolerance_f64 = NumCast::from(config.base_tolerance)
+    .unwrap_or(f64::EPSILON * 1000.0);
+
+// Proper scale factor application
+let final_determinant = conditioned_determinant * scale_factor;
+let result_determinant = NumCast::from(final_determinant)
+    .unwrap_or_else(T::zero);
 ```
 
-### Predefined Configurations
+## Usage Examples
 
-Provide presets for different scenarios:
-
-```rust
-pub mod config_presets {
-    /// General-purpose triangulation (balanced robustness/performance)
-    pub fn general_triangulation<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
-        RobustPredicateConfig::default()
-    }
-
-    /// High-precision triangulation (stricter tolerances)
-    pub fn high_precision<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
-        let base_tol = T::default_tolerance();
-        RobustPredicateConfig {
-            base_tolerance: base_tol / T::from(100.0).unwrap_or(T::one()),
-            relative_tolerance_factor: T::from(1e-14).unwrap_or(base_tol),
-            // ... other fields
-        }
-    }
-
-    /// Degenerate-robust (more lenient tolerances)
-    pub fn degenerate_robust<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
-        let base_tol = T::default_tolerance();
-        RobustPredicateConfig {
-            base_tolerance: base_tol * T::from(100.0).unwrap_or(T::one()),
-            relative_tolerance_factor: T::from(1e-10).unwrap_or(base_tol),
-            // ... other fields
-        }
-    }
-}
-```
-
-### Enhanced Bowyer-Watson Integration
-
-Create a robust version of the Bowyer-Watson algorithm:
+### Basic Robust Triangulation
 
 ```rust
-pub struct RobustBoyerWatson<T, U, V, const D: usize> {
-    predicate_config: RobustPredicateConfig<T>,
-    stats: RobustBoyerWatsonStats,
-}
+use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::geometry::robust_predicates::config_presets;
+use delaunay::vertex;
 
-impl<T, U, V, const D: usize> RobustBoyerWatson<T, U, V, D> {
-    pub fn robust_insert_vertex(
-        &mut self,
-        tds: &mut Tds<T, U, V, D>,
-        vertex: Vertex<T, U, D>,
-    ) -> Result<RobustInsertionInfo, TriangulationValidationError> {
-        // Step 1: Find bad cells using robust predicates
-        let bad_cells = self.robust_find_bad_cells(tds, &vertex)?;
+// For problematic point sets, use robust configuration
+let vertices = vec![
+    vertex!([1e10, 1e10, 1e10]),           // Large coordinates
+    vertex!([1e10 + 1.0, 1e10, 1e10]),     // Small relative differences
+    vertex!([1e10, 1e10 + 1.0, 1e10]),
+    vertex!([1e10, 1e10, 1e10 + 1.0]),
+    vertex!([1e10 + 0.5, 1e10 + 0.5, 1e10 + 0.5]),
+];
 
-        // Step 2: Find boundary facets with fallback strategies
-        let boundary_facets = match self.robust_find_cavity_boundary_facets(tds, &bad_cells) {
-            Ok(facets) => facets,
-            Err(_) => {
-                // Primary strategy failed - try recovery
-                self.recover_cavity_boundary_facets(tds, &bad_cells, &vertex)?
-            }
-        };
-
-        // Step 3: Handle degenerate cases
-        if boundary_facets.is_empty() {
-            return self.handle_degenerate_insertion_case(tds, &vertex, &bad_cells);
-        }
-
-        // Step 4: Execute insertion
-        self.execute_cavity_insertion(tds, &boundary_facets, &vertex, &bad_cells)
-    }
-}
-```
-
-## Integration Examples
-
-### Drop-in Replacement
-
-For existing code using standard predicates:
-
-```rust
-// Before: Standard predicates
-let result = insphere(&simplex_points, test_point)?;
-
-// After: Robust predicates
-let config = config_presets::general_triangulation();
-let result = robust_insphere(&simplex_points, test_point, &config)?;
-```
-
-### Triangulation Construction
-
-Replace the triangulation algorithm:
-
-```rust
-// Before: Standard Tds::new()
-let tds = Tds::new(&vertices)?;
-
-// After: Robust construction
-let mut robust_algorithm = RobustBoyerWatson::for_degenerate_cases();
-let mut tds = Tds::default();
-
-// Add vertices to TDS mapping
-for vertex in &vertices {
-    let key = tds.vertices.insert(*vertex);
-    tds.vertex_bimap.insert(vertex.uuid(), key);
-}
-
-// Use robust triangulation
-for vertex in &vertices[4..] { // Skip initial simplex
-    robust_algorithm.robust_insert_vertex(&mut tds, *vertex)?;
-}
-```
-
-### Benchmark Test Fix
-
-For the failing benchmark test:
-
-```rust
-#[test]
-#[ignore = "Benchmark test with robust error handling"]
-fn benchmark_boundary_facets_performance_robust() {
-    let point_counts = [20, 40, 60, 80];
+// Standard construction might fail
+let tds_result = Tds::new(&vertices);
+if tds_result.is_err() {
+    println!("Standard triangulation failed, using robust approach");
     
-    for &n_points in &point_counts {
-        let mut rng = rand::rng();
-        let points: Vec<Point<f64, 3>> = (0..n_points)
-            .map(|_| Point::new([
-                rng.random::<f64>() * 100.0,
-                rng.random::<f64>() * 100.0,
-                rng.random::<f64>() * 100.0,
-            ]))
-            .collect();
+    // TODO: Use robust Bowyer-Watson when implemented
+    // let config = config_presets::degenerate_robust();
+    // let tds = robust_triangulation(&vertices, &config)?;
+}
+```
 
-        let vertices = Vertex::from_points(points);
+### Robust Predicate Testing
+
+```rust
+use delaunay::geometry::robust_predicates::{robust_insphere, config_presets};
+use delaunay::geometry::point::Point;
+use delaunay::geometry::traits::coordinate::Coordinate;
+
+// Test nearly coplanar points
+let simplex = vec![
+    Point::new([0.0, 0.0, 0.0]),
+    Point::new([1.0, 0.0, 0.0]),
+    Point::new([0.0, 1.0, 0.0]),
+    Point::new([0.5, 0.5, 1e-15]), // Very small z-coordinate
+];
+
+let test_point = Point::new([0.25, 0.25, 0.25]);
+
+// Use robust configuration for stability
+let config = config_presets::degenerate_robust();
+let result = robust_insphere(&simplex, &test_point, &config)?;
+
+match result {
+    InSphere::INSIDE => println!("Point is inside circumsphere"),
+    InSphere::OUTSIDE => println!("Point is outside circumsphere"),
+    InSphere::BOUNDARY => println!("Point is on circumsphere boundary"),
+}
+```
+
+### Error Recovery in Applications
+
+```rust
+use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::geometry::robust_predicates::config_presets;
+
+pub fn create_triangulation_with_fallback(
+    vertices: &[Vertex<f64, Option<()>, 3>]
+) -> Result<Tds<f64, Option<()>, Option<()>, 3>, String> {
+    // Strategy 1: Try standard triangulation
+    if let Ok(tds) = Tds::new(vertices) {
+        return Ok(tds);
+    }
+    
+    // Strategy 2: Try with general robust config
+    // (Implementation pending robust Bowyer-Watson)
+    
+    // Strategy 3: Try with maximum robustness
+    // (Implementation pending robust Bowyer-Watson)
+    
+    // Strategy 4: Preprocess points and retry
+    let filtered_vertices = remove_duplicate_and_near_duplicate_points(vertices);
+    Tds::new(&filtered_vertices)
+        .map_err(|e| format!("All triangulation strategies failed: {}", e))
+}
+
+fn remove_duplicate_and_near_duplicate_points(
+    vertices: &[Vertex<f64, Option<()>, 3>]
+) -> Vec<Vertex<f64, Option<()>, 3>> {
+    // Simple deduplication based on coordinate proximity
+    let mut filtered = Vec::new();
+    let tolerance = 1e-10;
+    
+    for vertex in vertices {
+        let is_duplicate = filtered.iter().any(|existing: &Vertex<f64, Option<()>, 3>| {
+            let existing_coords: [f64; 3] = existing.point().into();
+            let vertex_coords: [f64; 3] = vertex.point().into();
+            
+            existing_coords.iter().zip(vertex_coords.iter())
+                .all(|(a, b)| (a - b).abs() < tolerance)
+        });
         
-        // Use robust algorithm with degenerate handling
-        match create_robust_triangulation(&vertices) {
-            Ok(tds) => {
-                println!("Points: {} | Cells: {} | Success", 
-                         n_points, tds.number_of_cells());
-                
-                // Run benchmark tests on successful triangulation
-                benchmark_boundary_operations(&tds);
-            }
-            Err(e) => {
-                println!("Points: {} | Failed: {} | Handled gracefully", 
-                         n_points, e);
-                // Continue with next test instead of failing
-            }
+        if !is_duplicate {
+            filtered.push(*vertex);
         }
     }
+    
+    filtered
 }
+```
 
-fn create_robust_triangulation(
-    vertices: &[Vertex<f64, (), 3>]
-) -> Result<Tds<f64, Option<()>, Option<()>, 3>, Box<dyn std::error::Error>> {
-    let config = config_presets::degenerate_robust();
-    
-    // Try multiple strategies
-    if let Ok(tds) = try_standard_construction(vertices) {
-        return Ok(tds);
+## Convex Hull Robustness
+
+### Fallback Visibility Testing
+
+The convex hull implementation includes robust visibility tests:
+
+```rust
+// In ConvexHull::is_facet_visible_from_point()
+// When geometric orientation predicates fail:
+match (orientation_inside, orientation_test) {
+    (Orientation::NEGATIVE, Orientation::POSITIVE)
+    | (Orientation::POSITIVE, Orientation::NEGATIVE) => Ok(true),
+    (Orientation::DEGENERATE, _) | (_, Orientation::DEGENERATE) => {
+        // Fallback to distance-based heuristic
+        Ok(Self::fallback_visibility_test(facet, point))
     }
-    
-    if let Ok(tds) = try_robust_construction(vertices, &config) {
-        return Ok(tds);
-    }
-    
-    // Final fallback: subset of points
-    try_subset_construction(vertices, &config)
+    _ => Ok(false),
 }
+```
+
+### Distance-Based Fallback
+
+When orientation predicates become degenerate, the hull uses distance-based heuristics:
+
+```rust
+/// Fallback visibility test for degenerate cases
+fn fallback_visibility_test(
+    facet: &Facet<T, U, V, D>, 
+    point: &Point<T, D>
+) -> bool {
+    // Calculate facet centroid
+    let facet_vertices = facet.vertices();
+    let mut centroid_coords = [T::zero(); D];
+    
+    for vertex_point in &vertex_points {
+        let coords: [T; D] = vertex_point.into();
+        for (i, &coord) in coords.iter().enumerate() {
+            centroid_coords[i] += coord;
+        }
+    }
+    
+    let num_vertices = T::from_usize(vertex_points.len()).unwrap_or_else(T::one);
+    for coord in &mut centroid_coords {
+        *coord /= num_vertices;
+    }
+    
+    // Use distance threshold for visibility determination
+    let point_coords: [T; D] = point.into();
+    let mut diff_coords = [T::zero(); D];
+    for i in 0..D {
+        diff_coords[i] = point_coords[i] - centroid_coords[i];
+    }
+    let distance_squared = squared_norm(diff_coords);
+    
+    // Simple threshold-based visibility
+    let threshold = T::from_f64(1.0).unwrap_or_else(T::one);
+    distance_squared > threshold
+}
+```
+
+### Robust Hull Operations
+
+All convex hull operations include error handling for edge cases:
+
+1. **Point-in-Hull Testing**: Graceful handling when visibility tests fail
+2. **Facet Enumeration**: Robust iteration over boundary facets
+3. **Visible Facet Finding**: Multiple strategies for facet visibility
+4. **Nearest Facet Search**: Distance-based selection with numerical stability
+
+### Multi-Dimensional Support
+
+The robustness improvements work across all dimensions:
+
+```rust
+// 2D triangulations with robust hull extraction
+let hull_2d: ConvexHull<f64, Option<()>, Option<()>, 2> = 
+    ConvexHull::from_triangulation(&tds_2d)?;
+
+// 4D and higher dimensions
+let hull_4d: ConvexHull<f64, Option<()>, Option<()>, 4> = 
+    ConvexHull::from_triangulation(&tds_4d)?;
+
+// All use the same robust visibility algorithms
+let is_outside_2d = hull_2d.is_point_outside(&point_2d, &tds_2d)?;
+let is_outside_4d = hull_4d.is_point_outside(&point_4d, &tds_4d)?;
 ```
 
 ## Testing and Validation
@@ -392,7 +469,7 @@ mod robustness_tests {
         
         // Should handle gracefully without panicking
         let test_point = Point::new([0.25, 0.25, 1e-16]);
-        let result = robust_insphere(&points, test_point, &config);
+        let result = robust_insphere(&points, &test_point, &config);
         
         assert!(result.is_ok());
     }
@@ -409,7 +486,7 @@ mod robustness_tests {
         let config = config_presets::general_triangulation();
         let test_point = Point::new([1e10 + 0.5, 1e10 + 0.5, 1e10 + 0.5]);
         
-        let result = robust_insphere(&points, test_point, &config);
+        let result = robust_insphere(&points, &test_point, &config);
         assert!(result.is_ok());
     }
 
@@ -421,7 +498,7 @@ mod robustness_tests {
         let config = config_presets::general_triangulation();
         
         // Test that different methods give consistent results
-        let robust_result = robust_insphere(&points, test_point, &config).unwrap();
+        let robust_result = robust_insphere(&points, &test_point, &config).unwrap();
         let standard_result = insphere(&points, test_point).unwrap();
         
         // Results should be consistent (allowing for boundary differences)
@@ -457,7 +534,7 @@ mod performance_tests {
         
         group.bench_function("robust_insphere", |b| {
             b.iter(|| {
-                black_box(robust_insphere(&points, test_point, &config))
+                black_box(robust_insphere(&points, &test_point, &config))
             })
         });
         
@@ -493,21 +570,25 @@ The robust predicates add computational overhead:
 ## Migration Strategy
 
 ### Phase 1: Add Robust Predicates
+
 1. Implement robust predicate functions
 2. Add comprehensive tests
 3. Benchmark performance impact
 
 ### Phase 2: Selective Integration
+
 1. Use robust predicates only for error recovery
 2. Add configuration options
 3. Monitor improvement in success rates
 
 ### Phase 3: Full Integration
+
 1. Make robust predicates the default for new triangulations
 2. Provide migration path for existing code
 3. Deprecate problematic APIs
 
 ### Phase 4: Optimization
+
 1. Profile performance bottlenecks
 2. Add specialized fast paths for common cases
 3. Implement caching strategies

@@ -109,19 +109,27 @@ Understanding the project layout will help you navigate and contribute effective
 delaunay/
 ├── src/                                          # Core library code
 │   ├── core/                                     # Core triangulation structures
+│   │   ├── algorithms/                           # Triangulation algorithms
+│   │   │   ├── bowyer_watson.rs                  # Incremental Bowyer-Watson algorithm
+│   │   │   └── robust_bowyer_watson.rs           # Robust geometric predicates version
 │   │   ├── boundary.rs                           # Boundary analysis and facet detection
 │   │   ├── cell.rs                               # Cell (simplex) implementation
 │   │   ├── facet.rs                              # Facet implementation
-│   │   ├── triangulation_data_structure.rs       # Main Tds struct and Bowyer-Watson
-│   │   ├── utilities.rs                          # Helper functions for triangulation operations
+│   │   ├── triangulation_data_structure.rs       # Main Tds struct
+│   │   ├── util.rs                               # Helper functions for triangulation operations
 │   │   ├── vertex.rs                             # Vertex implementation with generic support
-│   │   └── traits/                               # Core traits for data types and boundary analysis
+│   │   └── traits/                               # Core traits for data types and algorithms
 │   │       ├── boundary_analysis.rs              # Boundary analysis traits
-│   │       └── data_type.rs                      # DataType trait definitions
+│   │       ├── data_type.rs                      # DataType trait definitions
+│   │       └── insertion_algorithm.rs            # Insertion algorithm traits
 │   ├── geometry/                                 # Geometric algorithms and predicates
+│   │   ├── algorithms/                           # Geometric algorithms
+│   │   │   └── convex_hull.rs                    # Convex hull computation
 │   │   ├── matrix.rs                             # Matrix operations for geometric computations
 │   │   ├── point.rs                              # Generic Point struct with NaN-aware operations
 │   │   ├── predicates.rs                         # Geometric predicates (insphere, orientation)
+│   │   ├── robust_predicates.rs                  # Robust geometric predicates
+│   │   ├── util.rs                               # Geometric utility functions
 │   │   └── traits/                               # Coordinate abstractions and floating-point traits
 │   │       ├── coordinate.rs                     # Core Coordinate trait abstraction
 │   │       ├── finitecheck.rs                    # Finite value validation traits
@@ -147,7 +155,11 @@ delaunay/
 │   ├── small_scale_triangulation.rs              # Small triangulation benchmarks
 │   └── triangulation_creation.rs                 # Triangulation creation benchmarks
 ├── tests/                                        # Integration tests
-│   └── bench_helpers_test.rs                     # Tests for benchmark helper functions
+│   ├── bench_helpers_test.rs                     # Tests for benchmark helper functions
+│   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
+│   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
+│   ├── robust_predicates_showcase.rs             # Robust predicates demonstration tests
+│   └── test_cavity_boundary_error.rs             # Cavity boundary error reproduction tests
 ├── docs/                                         # Additional documentation
 │   ├── templates/                                # Templates for automated generation
 │   │   ├── README.md                             # Templates documentation

@@ -846,8 +846,9 @@ where
 
         // Case 3: Adding to existing triangulation - use IncrementalBoyerWatson
         if self.number_of_cells() > 0 {
-            // Insert the vertex into the existing triangulation using the new algorithm
+            // Insert the vertex into the existing triangulation using the trait method
             use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
+            use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
             let mut algorithm = IncrementalBoyerWatson::new();
             algorithm
                 .insert_vertex(self, vertex)
@@ -1169,6 +1170,7 @@ where
         [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     {
         use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
+        use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
 
         let vertices: Vec<_> = self.vertices.values().copied().collect();
         if vertices.is_empty() {
@@ -2463,7 +2465,7 @@ where
 mod tests {
     use crate::cell;
     use crate::core::{
-        traits::boundary_analysis::BoundaryAnalysis, utilities::facets_are_adjacent,
+        traits::boundary_analysis::BoundaryAnalysis, util::facets_are_adjacent,
         vertex::VertexBuilder,
     };
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};

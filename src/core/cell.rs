@@ -44,7 +44,7 @@
 use super::{
     facet::{Facet, FacetError},
     traits::DataType,
-    utilities::{UuidValidationError, make_uuid, validate_uuid},
+    util::{UuidValidationError, make_uuid, validate_uuid},
     vertex::{Vertex, VertexValidationError},
 };
 use crate::geometry::{point::Point, traits::coordinate::CoordinateScalar};
@@ -1070,10 +1070,9 @@ mod tests {
     use super::*;
     use crate::core::vertex::vertex;
     use crate::geometry::point::Point;
-    use crate::geometry::predicates::{
-        circumcenter, circumradius, circumradius_with_center, insphere, insphere_distance,
-    };
+    use crate::geometry::predicates::{insphere, insphere_distance};
     use crate::geometry::traits::coordinate::Coordinate;
+    use crate::geometry::util::{circumcenter, circumradius, circumradius_with_center};
     use approx::assert_relative_eq;
 
     // Type aliases for commonly used types to reduce repetition

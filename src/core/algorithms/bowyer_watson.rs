@@ -195,268 +195,6 @@ where
         }
     }
 
-    /// Constructs a Delaunay triangulation from the given vertices
-    ///
-    /// This is the main entry point for triangulation construction.
-    /// It handles the complete process from initialization to finalization.
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - Mutable reference to the triangulation data structure
-    /// * `vertices` - Vector of vertices to triangulate
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` on successful triangulation, or an error if construction fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - Insufficient vertices provided (< D+1)
-    /// - Initial simplex creation fails
-    /// - Vertex insertion fails
-    /// - Triangulation finalization fails
-    ///
-    /// # Examples
-    ///
-    /// Basic usage with a simple tetrahedron:
-    ///
-    /// ```
-    /// use delaunay::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::vertex;
-    ///
-    /// // Create a 3D tetrahedron
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    ///
-    /// // Use Tds::new to properly initialize with vertices
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> =
-    ///     Tds::new(&vertices).unwrap();
-    ///     
-    /// // Verify the triangulation was created
-    /// assert_eq!(tds.number_of_vertices(), 4);
-    /// assert_eq!(tds.number_of_cells(), 1); // Single tetrahedron
-    /// assert!(tds.is_valid().is_ok());
-    /// ```
-    ///
-    /// Using the algorithm for incremental construction:
-    ///
-    /// ```
-    /// use delaunay::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::vertex;
-    ///
-    /// let mut algorithm: IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> =
-    ///     IncrementalBoyerWatson::new();
-    ///
-    /// // Start with empty TDS and build incrementally
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    ///     vertex!([0.5, 0.5, 0.5]), // Interior point
-    ///
-    /// ];
-    ///
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
-    /// algorithm.triangulate(&mut tds, &vertices).unwrap();
-    ///
-    /// assert_eq!(tds.number_of_vertices(), 5);
-    /// assert!(tds.number_of_cells() > 1); // Multiple cells after incremental insertion
-    ///
-    /// let (insertions, created, _) = algorithm.get_statistics();
-    /// assert_eq!(insertions, 1); // One incremental insertion beyond initial simplex
-    /// assert!(created > 1);       // Multiple cells created
-    /// ```
-    pub fn triangulate(
-        &mut self,
-        tds: &mut Tds<T, U, V, D>,
-        vertices: &[Vertex<T, U, D>],
-    ) -> BoyerWatsonResult<()>
-    where
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
-    {
-        if vertices.is_empty() {
-            return Ok(());
-        }
-
-        // Check for sufficient vertices
-        if vertices.len() < D + 1 {
-            return Err(TriangulationConstructionError::InsufficientVertices {
-                dimension: D,
-                source: crate::core::cell::CellValidationError::InsufficientVertices {
-                    actual: vertices.len(),
-                    expected: D + 1,
-                    dimension: D,
-                },
-            });
-        }
-
-        // Step 1: Initialize with first D+1 vertices
-        let (initial_vertices, remaining_vertices) = vertices.split_at(D + 1);
-        self.create_initial_simplex(tds, initial_vertices.to_vec())?;
-
-        // Step 2: Insert remaining vertices incrementally
-        for vertex in remaining_vertices {
-            let insertion_info = self
-                .insert_vertex(tds, *vertex)
-                .map_err(TriangulationConstructionError::ValidationError)?;
-
-            // Note: insertion_count is already incremented in insert_vertex method
-            self.total_cells_created += insertion_info.cells_created;
-            self.total_cells_removed += insertion_info.cells_removed;
-        }
-
-        // Step 3: Finalize the triangulation
-        Self::finalize_triangulation(tds)?;
-
-        Ok(())
-    }
-
-    /// Creates the initial simplex from the first D+1 vertices
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - Mutable reference to the triangulation data structure
-    /// * `vertices` - Exactly D+1 vertices to form the initial simplex
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` on successful creation, or an error if the simplex cannot be created.
-    fn create_initial_simplex(
-        &mut self,
-        tds: &mut Tds<T, U, V, D>,
-        vertices: Vec<Vertex<T, U, D>>,
-    ) -> BoyerWatsonResult<()> {
-        assert_eq!(
-            vertices.len(),
-            D + 1,
-            "Initial simplex requires exactly D+1 vertices"
-        );
-
-        // Ensure all vertices are registered in the TDS vertex mapping
-        for vertex in &vertices {
-            if !tds.vertex_bimap.contains_left(&vertex.uuid()) {
-                let vertex_key = tds.vertices.insert(*vertex);
-                tds.vertex_bimap.insert(vertex.uuid(), vertex_key);
-            }
-        }
-
-        let cell = CellBuilder::default()
-            .vertices(vertices)
-            .build()
-            .map_err(|e| TriangulationConstructionError::FailedToCreateCell {
-                message: format!("Failed to create initial simplex: {e}"),
-            })?;
-
-        let cell_key = tds.cells_mut().insert(cell);
-        let cell_uuid = tds.cells()[cell_key].uuid();
-        tds.cell_bimap.insert(cell_uuid, cell_key);
-
-        self.total_cells_created += 1;
-
-        Ok(())
-    }
-
-    /// Inserts a single vertex into the triangulation
-    ///
-    /// This method determines the appropriate insertion strategy and
-    /// executes the insertion while maintaining the Delaunay property.
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - Mutable reference to the triangulation data structure
-    /// * `vertex` - The vertex to insert
-    ///
-    /// # Returns
-    ///
-    /// `InsertionInfo` describing the insertion operation, or an error on failure.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if vertex insertion fails due to geometric degeneracy or topology issues.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
-    /// use delaunay::core::traits::insertion_algorithm::InsertionStrategy;
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::vertex;
-    ///
-    /// // Create initial triangulation with a tetrahedron
-    /// let initial_vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([2.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 2.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 2.0]),
-    /// ];
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> =
-    ///     Tds::new(&initial_vertices).unwrap();
-    /// let mut algorithm: IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> =
-    ///     IncrementalBoyerWatson::new();
-    ///
-    /// let initial_cells = tds.number_of_cells();
-    ///
-    /// // Insert an interior vertex (should use cavity-based strategy)
-    /// let interior_vertex = vertex!([0.5, 0.5, 0.5]);
-    /// let insertion_info = algorithm
-    ///     .insert_vertex(&mut tds, interior_vertex)
-    ///     .unwrap();
-    ///
-    /// assert_eq!(insertion_info.strategy, InsertionStrategy::CavityBased);
-    /// assert!(insertion_info.success);
-    /// assert!(insertion_info.cells_created > 0);
-    /// assert!(tds.number_of_cells() > initial_cells);
-    ///
-    /// // Check that algorithm statistics are updated
-    /// let (insertions, created, removed) = algorithm.get_statistics();
-    /// assert_eq!(insertions, 1);
-    /// assert!(created > 0);
-    /// ```
-    pub fn insert_vertex(
-        &mut self,
-        tds: &mut Tds<T, U, V, D>,
-        vertex: Vertex<T, U, D>,
-    ) -> Result<InsertionInfo, TriangulationValidationError>
-    where
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
-    {
-        // Determine insertion strategy
-        let strategy = self.determine_insertion_strategy(tds, &vertex);
-
-        let result = match strategy {
-            InsertionStrategy::Standard => {
-                // For Standard strategy, use CavityBased as default
-                self.insert_vertex_cavity_based(tds, &vertex)
-            }
-            InsertionStrategy::CavityBased => self.insert_vertex_cavity_based(tds, &vertex),
-            InsertionStrategy::HullExtension => self.insert_vertex_hull_extension(tds, &vertex),
-            InsertionStrategy::Fallback => self.insert_vertex_fallback(tds, &vertex),
-            InsertionStrategy::Perturbation | InsertionStrategy::Skip => {
-                // These strategies are for robust algorithms - fallback to basic methods
-                self.insert_vertex_fallback(tds, &vertex)
-            }
-        };
-
-        // Update statistics on successful insertion
-        if let Ok(ref info) = result {
-            self.insertion_count += 1;
-            self.total_cells_created += info.cells_created;
-            self.total_cells_removed += info.cells_removed;
-        }
-
-        result
-    }
-
     /// Determines the appropriate insertion strategy for a vertex
     ///
     /// # Arguments
@@ -542,8 +280,10 @@ where
         let bad_cells = self.find_bad_cells(tds, vertex);
 
         if bad_cells.is_empty() {
-            // No bad cells found - try hull extension instead
-            return self.insert_vertex_hull_extension(tds, vertex);
+            // No bad cells found - this method is not applicable
+            return Err(TriangulationValidationError::FailedToCreateCell {
+                message: "Cavity-based insertion failed: no bad cells found for vertex".to_string(),
+            });
         }
 
         // Find boundary facets of the cavity
@@ -606,8 +346,12 @@ where
         let visible_facets = self.find_visible_boundary_facets(tds, vertex);
 
         if visible_facets.is_empty() {
-            // No visible facets - try fallback method
-            return self.insert_vertex_fallback(tds, vertex);
+            // No visible facets - this method is not applicable
+            return Err(TriangulationValidationError::FailedToCreateCell {
+                message:
+                    "Hull extension insertion failed: no visible boundary facets found for vertex"
+                        .to_string(),
+            });
         }
 
         // Create new cells from visible facets
@@ -771,6 +515,7 @@ where
         if self.bad_cells_buffer.len() == tds.cells().len() && tds.cells().len() > 1 {
             // If we're removing all cells in a multi-cell triangulation, something is wrong
             // This likely means the circumsphere test is failing or the vertex is degenerate
+            #[cfg(debug_assertions)]
             eprintln!(
                 "Warning: Circumsphere test marked all {} cells as bad for vertex {:?}",
                 tds.cells().len(),
@@ -912,12 +657,11 @@ where
             .filter(|(_, cells)| cells.len() == 1)
             .collect();
 
-        if cfg!(debug_assertions) {
-            println!(
-                "  Testing {} boundary facets for visibility",
-                boundary_facets.len()
-            );
-        }
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "  Testing {} boundary facets for visibility",
+            boundary_facets.len()
+        );
 
         for (_facet_key, cells) in boundary_facets {
             let (cell_key, facet_index) = cells[0];
@@ -928,19 +672,20 @@ where
 
                         // Use proper visibility test based on orientation
                         if self.is_facet_visible_from_vertex(tds, facet, vertex, cell_key) {
-                            if cfg!(debug_assertions) {
-                                println!("    Facet is visible");
-                            }
+                            #[cfg(debug_assertions)]
+                            eprintln!("    Facet is visible");
                             visible_facets.push(facet.clone());
-                        } else if cfg!(debug_assertions) {
-                            println!("    Facet is not visible");
+                        } else {
+                            #[cfg(debug_assertions)]
+                            eprintln!("    Facet is not visible");
                         }
                     }
                 }
             }
         }
 
-        println!("  Found {} visible boundary facets", visible_facets.len());
+        #[cfg(debug_assertions)]
+        eprintln!("  Found {} visible boundary facets", visible_facets.len());
         visible_facets
     }
 
@@ -1131,37 +876,6 @@ where
         }
     }
 
-    /// Finalizes the triangulation by cleaning up and establishing relationships
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - Mutable reference to the triangulation data structure
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` on successful finalization, or an error if finalization fails.
-    fn finalize_triangulation(tds: &mut Tds<T, U, V, D>) -> BoyerWatsonResult<()> {
-        // Remove duplicate cells
-        tds.remove_duplicate_cells();
-
-        // Fix invalid facet sharing
-        tds.fix_invalid_facet_sharing().map_err(|e| {
-            TriangulationConstructionError::FailedToCreateCell {
-                message: format!("Failed to fix invalid facet sharing: {e}"),
-            }
-        })?;
-
-        // Assign neighbor relationships
-        tds.assign_neighbors()
-            .map_err(TriangulationConstructionError::ValidationError)?;
-
-        // Assign incident cells to vertices
-        tds.assign_incident_cells()
-            .map_err(TriangulationConstructionError::ValidationError)?;
-
-        Ok(())
-    }
-
     /// Returns statistics about the triangulation construction process
     #[must_use]
     pub const fn get_statistics(&self) -> (usize, usize, usize) {
@@ -1231,7 +945,8 @@ where
         // Determine insertion strategy
         let strategy = self.determine_insertion_strategy(tds, &vertex);
 
-        let result = match strategy {
+        // Try the primary strategy first
+        let mut result = match strategy {
             InsertionStrategy::Standard => {
                 // For Standard strategy, use CavityBased as default
                 self.insert_vertex_cavity_based(tds, &vertex)
@@ -1244,6 +959,27 @@ where
                 self.insert_vertex_fallback(tds, &vertex)
             }
         };
+
+        // If the primary strategy failed, try fallback strategies
+        if result.is_err() {
+            match strategy {
+                InsertionStrategy::CavityBased => {
+                    // If cavity-based failed, try hull extension
+                    result = self.insert_vertex_hull_extension(tds, &vertex);
+                    if result.is_err() {
+                        // If hull extension also failed, try fallback
+                        result = self.insert_vertex_fallback(tds, &vertex);
+                    }
+                }
+                InsertionStrategy::HullExtension => {
+                    // If hull extension failed, try fallback
+                    result = self.insert_vertex_fallback(tds, &vertex);
+                }
+                _ => {
+                    // For other strategies that already failed, no additional fallback
+                }
+            }
+        }
 
         // Update statistics on successful insertion
         if let Ok(ref info) = result {
@@ -1267,6 +1003,16 @@ where
         self.reset();
     }
 
+    /// Update the cell creation counter
+    fn increment_cells_created(&mut self, count: usize) {
+        self.total_cells_created += count;
+    }
+
+    /// Update the cell removal counter
+    fn increment_cells_removed(&mut self, count: usize) {
+        self.total_cells_removed += count;
+    }
+
     /// Determine the appropriate insertion strategy for a given vertex
     fn determine_strategy(
         &self,
@@ -1288,24 +1034,28 @@ mod tests {
     use crate::vertex;
 
     /// Helper function to analyze a triangulation's state for debugging
+    #[allow(unused_variables)]
     fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>, label: &str) {
-        println!(
-            "  {} - Vertices: {}, Cells: {}",
-            label,
-            tds.number_of_vertices(),
-            tds.number_of_cells()
-        );
+        #[cfg(debug_assertions)]
+        {
+            eprintln!(
+                "  {} - Vertices: {}, Cells: {}",
+                label,
+                tds.number_of_vertices(),
+                tds.number_of_cells()
+            );
 
-        let boundary = count_boundary_facets(tds);
-        let internal = count_internal_facets(tds);
-        let invalid = count_invalid_facets(tds);
+            let boundary = count_boundary_facets(tds);
+            let internal = count_internal_facets(tds);
+            let invalid = count_invalid_facets(tds);
 
-        println!("  {label} - Boundary: {boundary}, Internal: {internal}, Invalid: {invalid}");
+            eprintln!("  {label} - Boundary: {boundary}, Internal: {internal}, Invalid: {invalid}");
 
-        if let Ok(bf) = tds.boundary_facets() {
-            println!("  {} - boundary_facets() reports: {}", label, bf.len());
-        } else {
-            println!("  {label} - boundary_facets() failed");
+            if let Ok(bf) = tds.boundary_facets() {
+                eprintln!("  {} - boundary_facets() reports: {}", label, bf.len());
+            } else {
+                eprintln!("  {label} - boundary_facets() failed");
+            }
         }
     }
 
@@ -1336,7 +1086,8 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn diagnose_triangulation_invariant_violations() {
-        println!("=== DELAUNAY TRIANGULATION DIAGNOSTIC ===\n");
+        #[cfg(debug_assertions)]
+        eprintln!("=== DELAUNAY TRIANGULATION DIAGNOSTIC ===\n");
 
         // The problematic point configuration from failing tests
         let points = vec![
@@ -1347,109 +1098,135 @@ mod tests {
             Point::new([0.5, 0.5, -1.0]), // E - below the triangle
         ];
 
-        println!("Input Points:");
-        for (i, point) in points.iter().enumerate() {
-            println!("  {}: {:?}", i, point.to_array());
+        #[cfg(debug_assertions)]
+        {
+            eprintln!("Input Points:");
+            for (i, point) in points.iter().enumerate() {
+                eprintln!("  {}: {:?}", i, point.to_array());
+            }
         }
 
         let vertices = Vertex::from_points(points);
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
-        println!("\n=== BASIC STATISTICS ===");
-        println!("Vertices: {}", tds.number_of_vertices());
-        println!("Cells: {}", tds.number_of_cells());
-        println!("Dimension: {}", tds.dim());
-
-        // Analyze each cell
-        println!("\n=== CELL ANALYSIS ===");
-        for (i, cell) in tds.cells().values().enumerate() {
-            let vertex_coords: Vec<[f64; 3]> = cell
-                .vertices()
-                .iter()
-                .map(|v| v.point().to_array())
-                .collect();
-            println!("Cell {i}: {vertex_coords:?}");
-
-            // Check if cell has neighbors
-            match &cell.neighbors {
-                Some(neighbors) => {
-                    println!("  Neighbors: {} cells", neighbors.len());
-                }
-                None => {
-                    println!("  Neighbors: None");
-                }
-            }
+        #[cfg(debug_assertions)]
+        {
+            eprintln!("\n=== BASIC STATISTICS ===");
+            eprintln!("Vertices: {}", tds.number_of_vertices());
+            eprintln!("Cells: {}", tds.number_of_cells());
+            eprintln!("Dimension: {}", tds.dim());
         }
 
-        // Detailed facet sharing analysis
-        println!("\n=== FACET SHARING ANALYSIS ===");
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        // Analyze each cell
+        #[cfg(debug_assertions)]
+        {
+            eprintln!("\n=== CELL ANALYSIS ===");
+            for (i, cell) in tds.cells().values().enumerate() {
+                let vertex_coords: Vec<[f64; 3]> = cell
+                    .vertices()
+                    .iter()
+                    .map(|v| v.point().to_array())
+                    .collect();
+                eprintln!("Cell {i}: {vertex_coords:?}");
 
-        let mut invalid_sharing = 0;
-        let mut boundary_facets = 0;
-        let mut internal_facets = 0;
+                // Check if cell has neighbors
+                match &cell.neighbors {
+                    Some(neighbors) => {
+                        eprintln!("  Neighbors: {} cells", neighbors.len());
+                    }
+                    None => {
+                        eprintln!("  Neighbors: None");
+                    }
+                }
+            }
 
-        for (facet_key, cells) in &facet_to_cells {
-            let cell_count = cells.len();
-            match cell_count {
-                1 => boundary_facets += 1,
-                2 => internal_facets += 1,
-                _ => {
-                    invalid_sharing += 1;
-                    println!("❌ INVALID: Facet {facet_key} shared by {cell_count} cells");
-                    for (cell_key, facet_index) in cells {
-                        if let Some(cell) = tds.cells().get(*cell_key) {
-                            println!("   Cell {:?} at facet index {}", cell.uuid(), facet_index);
+            // Detailed facet sharing analysis
+            eprintln!("\n=== FACET SHARING ANALYSIS ===");
+            let facet_to_cells = tds.build_facet_to_cells_hashmap();
+
+            let mut invalid_sharing = 0;
+            let mut boundary_facets = 0;
+            let mut internal_facets = 0;
+
+            for (facet_key, cells) in &facet_to_cells {
+                let cell_count = cells.len();
+                match cell_count {
+                    1 => boundary_facets += 1,
+                    2 => internal_facets += 1,
+                    _ => {
+                        invalid_sharing += 1;
+                        eprintln!("❌ INVALID: Facet {facet_key} shared by {cell_count} cells");
+                        for (cell_key, facet_index) in cells {
+                            if let Some(cell) = tds.cells().get(*cell_key) {
+                                eprintln!(
+                                    "   Cell {:?} at facet index {}",
+                                    cell.uuid(),
+                                    facet_index
+                                );
+                            }
                         }
                     }
                 }
             }
-        }
 
-        println!("Boundary facets (1 cell): {boundary_facets}");
-        println!("Internal facets (2 cells): {internal_facets}");
-        println!("Invalid facets (3+ cells): {invalid_sharing}");
+            eprintln!("Boundary facets (1 cell): {boundary_facets}");
+            eprintln!("Internal facets (2 cells): {internal_facets}");
+            eprintln!("Invalid facets (3+ cells): {invalid_sharing}");
 
-        // Boundary analysis
-        println!("\n=== BOUNDARY ANALYSIS ===");
-        match tds.boundary_facets() {
-            Ok(bf) => {
-                println!("Boundary facets found: {}", bf.len());
-                if bf.len() != boundary_facets {
-                    println!(
-                        "❌ MISMATCH: Direct count ({}) vs boundary_facets() ({})",
-                        boundary_facets,
-                        bf.len()
-                    );
+            // Boundary analysis
+            eprintln!("\n=== BOUNDARY ANALYSIS ===");
+            match tds.boundary_facets() {
+                Ok(bf) => {
+                    eprintln!("Boundary facets found: {}", bf.len());
+                    if bf.len() != boundary_facets {
+                        eprintln!(
+                            "❌ MISMATCH: Direct count ({}) vs boundary_facets() ({})",
+                            boundary_facets,
+                            bf.len()
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("❌ ERROR: Failed to get boundary facets: {e:?}");
                 }
             }
-            Err(e) => {
-                println!("❌ ERROR: Failed to get boundary facets: {e:?}");
+
+            // Validation check
+            eprintln!("\n=== VALIDATION CHECK ===");
+            match tds.is_valid() {
+                Ok(()) => eprintln!("✅ Triangulation reports as valid"),
+                Err(e) => eprintln!("❌ Triangulation is invalid: {e:?}"),
+            }
+
+            // Expected vs Actual analysis
+            eprintln!("\n=== GEOMETRIC ANALYSIS ===");
+            eprintln!("Expected for 5 points in general position in 3D:");
+            eprintln!("  - Convex hull should have 6-8 triangular faces");
+            eprintln!("  - Should create 2-3 tetrahedra for optimal triangulation");
+            eprintln!("  - Each internal facet shared by exactly 2 cells");
+            eprintln!("  - Boundary facets shared by exactly 1 cell");
+
+            eprintln!("\nActual results:");
+            eprintln!("  - {} tetrahedra created", tds.number_of_cells());
+            eprintln!("  - {invalid_sharing} invalid facet sharings (3+ cells)");
+            eprintln!("  - {boundary_facets} boundary facets");
+            eprintln!("  - {internal_facets} internal facets");
+        }
+
+        // Critical issue detection
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        let mut invalid_sharing = 0;
+        let mut boundary_facets = 0;
+
+        for cells in facet_to_cells.values() {
+            let cell_count = cells.len();
+            match cell_count {
+                1 => boundary_facets += 1,
+                2 => {} // internal facets
+                _ => invalid_sharing += 1,
             }
         }
 
-        // Validation check
-        println!("\n=== VALIDATION CHECK ===");
-        match tds.is_valid() {
-            Ok(()) => println!("✅ Triangulation reports as valid"),
-            Err(e) => println!("❌ Triangulation is invalid: {e:?}"),
-        }
-
-        // Expected vs Actual analysis
-        println!("\n=== GEOMETRIC ANALYSIS ===");
-        println!("Expected for 5 points in general position in 3D:");
-        println!("  - Convex hull should have 6-8 triangular faces");
-        println!("  - Should create 2-3 tetrahedra for optimal triangulation");
-        println!("  - Each internal facet shared by exactly 2 cells");
-        println!("  - Boundary facets shared by exactly 1 cell");
-
-        println!("\nActual results:");
-        println!("  - {} tetrahedra created", tds.number_of_cells());
-        println!("  - {invalid_sharing} invalid facet sharings (3+ cells)");
-        println!("  - {boundary_facets} boundary facets");
-        println!("  - {internal_facets} internal facets");
-
-        // Critical issue detection
         let mut issues = Vec::new();
 
         if invalid_sharing > 0 {
@@ -1464,21 +1241,24 @@ mod tests {
             issues.push("Too many cells created (over-triangulation)");
         }
 
-        if issues.is_empty() {
-            println!("\n✅ All triangulation invariants appear to be satisfied");
-        } else {
-            println!("\n🚨 CRITICAL ISSUES DETECTED:");
-            for issue in &issues {
-                println!("  - {issue}");
+        #[cfg(debug_assertions)]
+        {
+            if issues.is_empty() {
+                eprintln!("\n✅ All triangulation invariants appear to be satisfied");
+            } else {
+                eprintln!("\n🚨 CRITICAL ISSUES DETECTED:");
+                for issue in &issues {
+                    eprintln!("  - {issue}");
+                }
+                eprintln!("  - Bowyer-Watson algorithm implementation has serious bugs");
             }
-            println!("  - Bowyer-Watson algorithm implementation has serious bugs");
-
-            // This test should fail to highlight the issues
-            panic!(
-                "Triangulation violates Delaunay invariants: {} issues found: {issues:?}",
-                issues.len()
-            );
         }
+
+        assert!(
+            issues.is_empty(),
+            "Triangulation violates Delaunay invariants: {} issues found: {issues:?}",
+            issues.len()
+        );
     }
 
     #[test]
@@ -2407,5 +2187,63 @@ mod tests {
         }
 
         println!("✓ Algorithm buffers are properly reused");
+    }
+
+    #[test]
+    fn test_simple_double_counting_fix() {
+        println!("Testing simple case for double counting fix");
+
+        let mut algorithm = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Create a basic triangulation with exactly 4 vertices (minimum for 3D)
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+
+        // Test the triangulate method (this is where double counting would occur)
+        algorithm.triangulate(&mut tds, &vertices).unwrap();
+
+        let (insertions, created, removed) = algorithm.get_statistics();
+
+        println!("Simple triangulation results:");
+        println!("  Vertices in input: {}", vertices.len());
+        println!("  Vertices in TDS: {}", tds.number_of_vertices());
+        println!("  Cells in TDS: {}", tds.number_of_cells());
+        println!("  Algorithm insertions: {insertions}");
+        println!("  Algorithm cells created: {created}");
+        println!("  Algorithm cells removed: {removed}");
+
+        // For a basic tetrahedron with 4 vertices:
+        // - No incremental insertions (all 4 used for initial simplex)
+        // - 1 cell created (the tetrahedron itself)
+        // - 0 cells removed (no existing cells to remove)
+        assert_eq!(
+            insertions, 0,
+            "No incremental insertions for minimal tetrahedron"
+        );
+        assert_eq!(
+            created, 1,
+            "Exactly one cell (tetrahedron) should be created"
+        );
+        assert_eq!(removed, 0, "No cells should be removed");
+
+        // Verify the TDS is in a good state
+        assert_eq!(
+            tds.number_of_vertices(),
+            4,
+            "TDS should contain all 4 vertices"
+        );
+        assert_eq!(
+            tds.number_of_cells(),
+            1,
+            "TDS should contain exactly 1 tetrahedron"
+        );
+
+        println!("✓ Simple double counting fix test passed - statistics are correct");
     }
 }

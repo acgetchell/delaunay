@@ -111,7 +111,7 @@ pub enum SuperCellError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::utilities::{make_uuid, validate_uuid};
+/// use delaunay::core::util::{make_uuid, validate_uuid};
 /// use uuid::Uuid;
 ///
 /// // Valid UUID (version 4)
@@ -147,7 +147,7 @@ pub const fn validate_uuid(uuid: &Uuid) -> Result<(), UuidValidationError> {
 /// # Example
 ///
 /// ```
-/// use delaunay::core::utilities::make_uuid;
+/// use delaunay::core::util::make_uuid;
 /// let uuid = make_uuid();
 /// assert_eq!(uuid.get_version_num(), 4);
 /// ```
@@ -184,7 +184,7 @@ pub fn make_uuid() -> Uuid {
 /// # Example
 ///
 /// ```
-/// use delaunay::core::utilities::{find_extreme_coordinates, ExtremeType, ExtremeCoordinatesError};
+/// use delaunay::core::util::{find_extreme_coordinates, ExtremeType, ExtremeCoordinatesError};
 /// use delaunay::core::vertex::Vertex;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -263,7 +263,7 @@ where
 ///
 /// ```
 /// use delaunay::core::facet::Facet;
-/// use delaunay::core::utilities::facets_are_adjacent;
+/// use delaunay::core::util::facets_are_adjacent;
 /// use delaunay::core::vertex::Vertex;
 /// use delaunay::core::cell::Cell;
 /// use delaunay::{cell, vertex};
@@ -319,7 +319,7 @@ where
 /// This function is made public for testing purposes.
 ///
 /// ```
-/// use delaunay::core::utilities::generate_combinations;
+/// use delaunay::core::util::generate_combinations;
 /// use delaunay::core::vertex::Vertex;
 /// use delaunay::vertex;
 ///
@@ -427,7 +427,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::utilities::create_supercell_simplex;
+/// use delaunay::core::util::create_supercell_simplex;
 /// use delaunay::geometry::point::Point;
 ///
 /// // Create a 3D tetrahedron centered at origin with radius 10.0
@@ -564,7 +564,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::utilities::stable_hash_u64_slice;
+/// use delaunay::core::util::stable_hash_u64_slice;
 /// let values = vec![1u64, 2u64, 3u64];
 /// let hash1 = stable_hash_u64_slice(&values);
 ///

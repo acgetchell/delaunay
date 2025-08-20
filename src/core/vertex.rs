@@ -33,7 +33,7 @@
 
 use super::{
     traits::DataType,
-    utilities::{UuidValidationError, make_uuid, validate_uuid},
+    util::{UuidValidationError, make_uuid, validate_uuid},
 };
 use crate::geometry::{
     point::Point,
@@ -665,7 +665,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::utilities::{UuidValidationError, make_uuid};
+    use crate::core::util::{UuidValidationError, make_uuid};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use approx::assert_relative_eq;

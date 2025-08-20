@@ -5,11 +5,19 @@
 //! Bowyer-Watson algorithm and robust variants with enhanced numerical stability.
 
 use crate::core::{
-    triangulation_data_structure::{Tds, TriangulationValidationError},
+    cell::CellBuilder,
+    triangulation_data_structure::{
+        Tds, TriangulationConstructionError, TriangulationValidationError,
+    },
     vertex::Vertex,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
+use nalgebra::{ComplexField, Const, OPoint};
 use serde::{Serialize, de::DeserializeOwned};
+use std::{
+    iter::Sum,
+    ops::{AddAssign, Div, SubAssign},
+};
 
 /// Strategy used for vertex insertion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +92,45 @@ where
     /// Reset the algorithm state for reuse
     fn reset(&mut self);
 
+    /// Update the cell creation counter
+    ///
+    /// This method increments the internal cell creation counter. Concrete
+    /// implementations should override this to update their statistics.
+    ///
+    /// # Arguments
+    ///
+    /// * `count` - Number of cells to add to the creation counter
+    fn increment_cells_created(&mut self, _count: usize) {
+        // Default implementation does nothing - concrete implementations should override
+    }
+
+    /// Update the cell removal counter
+    ///
+    /// This method increments the internal cell removal counter. Concrete
+    /// implementations should override this to update their statistics.
+    ///
+    /// # Arguments
+    ///
+    /// * `count` - Number of cells to add to the removal counter
+    fn increment_cells_removed(&mut self, _count: usize) {
+        // Default implementation does nothing - concrete implementations should override
+    }
+
+    /// Update statistics after creating cells
+    ///
+    /// This is a protected method that concrete implementations can use to update
+    /// their internal statistics tracking. It should be called after operations
+    /// that create or remove cells outside of the normal `insert_vertex` flow.
+    ///
+    /// # Arguments
+    ///
+    /// * `cells_created` - Number of cells that were created
+    /// * `cells_removed` - Number of cells that were removed
+    fn update_statistics(&mut self, cells_created: usize, cells_removed: usize) {
+        self.increment_cells_created(cells_created);
+        self.increment_cells_removed(cells_removed);
+    }
+
     /// Determine the appropriate insertion strategy for a given vertex
     ///
     /// This method analyzes the vertex position relative to the current
@@ -107,6 +154,8 @@ where
     ///
     /// This method provides a complete triangulation solution by inserting
     /// all vertices in the collection into the given triangulation data structure.
+    /// This advanced implementation handles initial simplex creation, incremental
+    /// insertion, and finalization steps.
     ///
     /// # Arguments
     ///
@@ -120,19 +169,193 @@ where
     /// # Errors
     ///
     /// Returns an error if triangulation fails due to:
+    /// - Insufficient vertices for the given dimension (< D+1)
+    /// - Initial simplex creation fails
+    /// - Vertex insertion fails
+    /// - Triangulation finalization fails
     /// - Geometric degeneracy
     /// - Numerical precision issues
-    /// - Insufficient vertices for the given dimension
     /// - Topological constraints
     fn triangulate(
         &mut self,
         tds: &mut Tds<T, U, V, D>,
         vertices: &[Vertex<T, U, D>],
-    ) -> Result<(), TriangulationValidationError> {
-        // Default implementation: insert vertices one by one
-        for vertex in vertices {
-            self.insert_vertex(tds, *vertex)?;
+    ) -> Result<(), TriangulationConstructionError>
+    where
+        T: AddAssign<T>
+            + ComplexField<RealField = T>
+            + SubAssign<T>
+            + Sum
+            + From<f64>
+            + DeserializeOwned,
+        U: DeserializeOwned,
+        V: DeserializeOwned,
+        f64: From<T>,
+        for<'a> &'a T: Div<T>,
+        ordered_float::OrderedFloat<f64>: From<T>,
+        OPoint<T, Const<D>>: From<[f64; D]>,
+        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+    {
+        if vertices.is_empty() {
+            return Ok(());
         }
+
+        // Check for sufficient vertices
+        if vertices.len() < D + 1 {
+            return Err(TriangulationConstructionError::InsufficientVertices {
+                dimension: D,
+                source: crate::core::cell::CellValidationError::InsufficientVertices {
+                    actual: vertices.len(),
+                    expected: D + 1,
+                    dimension: D,
+                },
+            });
+        }
+
+        // Step 1: Initialize with first D+1 vertices
+        let (initial_vertices, remaining_vertices) = vertices.split_at(D + 1);
+        Self::create_initial_simplex(tds, initial_vertices.to_vec())?;
+
+        // Update statistics for initial simplex creation
+        self.update_statistics(1, 0); // Initial simplex creates one cell, removes zero
+
+        // Step 2: Insert remaining vertices incrementally
+        for vertex in remaining_vertices {
+            self.insert_vertex(tds, *vertex)
+                .map_err(TriangulationConstructionError::ValidationError)?;
+        }
+
+        // Step 3: Finalize the triangulation
+        Self::finalize_triangulation(tds)?;
+
+        Ok(())
+    }
+
+    /// Creates the initial simplex from the first D+1 vertices
+    ///
+    /// This is a helper method used by the default triangulate implementation.
+    /// Implementations can override this if they need specialized simplex creation.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Mutable reference to the triangulation data structure
+    /// * `vertices` - Exactly D+1 vertices to form the initial simplex
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on successful creation, or an error if the simplex cannot be created.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError::FailedToCreateCell` if:
+    /// - The number of vertices provided is not exactly D+1.
+    /// - The `CellBuilder` fails to create the initial cell.
+    fn create_initial_simplex(
+        tds: &mut Tds<T, U, V, D>,
+        vertices: Vec<Vertex<T, U, D>>,
+    ) -> Result<(), TriangulationConstructionError>
+    where
+        T: AddAssign<T>
+            + ComplexField<RealField = T>
+            + SubAssign<T>
+            + Sum
+            + From<f64>
+            + DeserializeOwned,
+        U: DeserializeOwned,
+        V: DeserializeOwned,
+        f64: From<T>,
+        for<'a> &'a T: Div<T>,
+        ordered_float::OrderedFloat<f64>: From<T>,
+    {
+        if vertices.len() != D + 1 {
+            return Err(TriangulationConstructionError::InsufficientVertices {
+                dimension: D,
+                source: crate::core::cell::CellValidationError::InsufficientVertices {
+                    actual: vertices.len(),
+                    expected: D + 1,
+                    dimension: D,
+                },
+            });
+        }
+
+        // Ensure all vertices are registered in the TDS vertex mapping
+        for vertex in &vertices {
+            if !tds.vertex_bimap.contains_left(&vertex.uuid()) {
+                let vertex_key = tds.vertices.insert(*vertex);
+                tds.vertex_bimap.insert(vertex.uuid(), vertex_key);
+            }
+        }
+
+        let cell = CellBuilder::default()
+            .vertices(vertices)
+            .build()
+            .map_err(|e| TriangulationConstructionError::FailedToCreateCell {
+                message: format!("Failed to create initial simplex: {e}"),
+            })?;
+
+        let cell_key = tds.cells_mut().insert(cell);
+        let cell_uuid = tds.cells()[cell_key].uuid();
+        tds.cell_bimap.insert(cell_uuid, cell_key);
+
+        Ok(())
+    }
+
+    /// Finalizes the triangulation by cleaning up and establishing relationships
+    ///
+    /// This method performs post-processing steps to ensure the triangulation
+    /// is complete and consistent. Implementations can override this for custom
+    /// finalization procedures.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Mutable reference to the triangulation data structure
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on successful finalization, or an error if finalization fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError` if:
+    /// - Fixing invalid facet sharing fails.
+    /// - Assigning neighbor relationships fails.
+    /// - Assigning incident cells to vertices fails.
+    fn finalize_triangulation(
+        tds: &mut Tds<T, U, V, D>,
+    ) -> Result<(), TriangulationConstructionError>
+    where
+        T: AddAssign<T>
+            + ComplexField<RealField = T>
+            + SubAssign<T>
+            + Sum
+            + From<f64>
+            + DeserializeOwned,
+        U: DeserializeOwned,
+        V: DeserializeOwned,
+        f64: From<T>,
+        for<'a> &'a T: Div<T>,
+        ordered_float::OrderedFloat<f64>: From<T>,
+    {
+        // Remove duplicate cells
+        tds.remove_duplicate_cells();
+
+        // Fix invalid facet sharing
+        tds.fix_invalid_facet_sharing().map_err(|e| {
+            TriangulationConstructionError::ValidationError(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Failed to fix invalid facet sharing: {e}"),
+                },
+            )
+        })?;
+
+        // Assign neighbor relationships
+        tds.assign_neighbors()
+            .map_err(TriangulationConstructionError::ValidationError)?;
+
+        // Assign incident cells to vertices
+        tds.assign_incident_cells()
+            .map_err(TriangulationConstructionError::ValidationError)?;
+
         Ok(())
     }
 
@@ -179,30 +402,21 @@ where
     ///
     /// let mut algorithm: RobustBoyerWatson<f64, Option<()>, Option<()>, 3> = RobustBoyerWatson::new();
     /// let tds = algorithm.new_triangulation(&vertices)?;
-    /// # Ok::<(), delaunay::core::triangulation_data_structure::TriangulationValidationError>(())
+    /// # Ok::<(), delaunay::core::triangulation_data_structure::TriangulationConstructionError>(())
     /// ```
     fn new_triangulation(
         &mut self,
         vertices: &[Vertex<T, U, D>],
-    ) -> Result<Tds<T, U, V, D>, TriangulationValidationError>
+    ) -> Result<Tds<T, U, V, D>, TriangulationConstructionError>
     where
-        T: std::ops::AddAssign<T>
-            + nalgebra::ComplexField<RealField = T>
-            + std::ops::SubAssign<T>
-            + std::iter::Sum
-            + From<f64>
-            + serde::de::DeserializeOwned,
-        U: serde::de::DeserializeOwned,
-        V: serde::de::DeserializeOwned,
+        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        for<'a> &'a T: std::ops::Div<T>,
+        for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     {
         // Default implementation: use the regular Tds::new constructor
-        Tds::new(vertices).map_err(|e| TriangulationValidationError::FailedToCreateCell {
-            message: format!("Failed to create triangulation: {e}"),
-        })
+        Tds::new(vertices)
     }
 }

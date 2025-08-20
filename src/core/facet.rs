@@ -60,7 +60,7 @@
 // =============================================================================
 
 use super::traits::data_type::DataType;
-use super::utilities::stable_hash_u64_slice;
+use super::util::stable_hash_u64_slice;
 use super::{cell::Cell, triangulation_data_structure::VertexKey, vertex::Vertex};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use serde::{Serialize, de::DeserializeOwned};

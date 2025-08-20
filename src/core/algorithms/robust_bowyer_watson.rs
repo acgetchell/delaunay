@@ -13,7 +13,9 @@ use crate::core::traits::insertion_algorithm::{
 use crate::core::{
     cell::CellBuilder,
     facet::Facet,
-    triangulation_data_structure::{CellKey, Tds, TriangulationValidationError},
+    triangulation_data_structure::{
+        CellKey, Tds, TriangulationConstructionError, TriangulationValidationError,
+    },
     vertex::Vertex,
 };
 use crate::geometry::{
@@ -519,6 +521,57 @@ where
 
         cells_created
     }
+
+    #[allow(dead_code)]
+    /// Determines if a vertex needs robust handling based on geometric properties
+    ///
+    /// This is a helper method for the `hybrid_insert_vertex` example that shows
+    /// how a robust algorithm could selectively use enhanced predicates only
+    /// when needed for performance optimization.
+    #[allow(clippy::unused_self)]
+    fn vertex_needs_robust_handling(
+        &self,
+        tds: &Tds<T, U, V, D>,
+        vertex: &Vertex<T, U, D>,
+    ) -> bool {
+        // Example heuristics for when robust handling might be needed:
+        // 1. Very small coordinates that might cause precision issues
+        // 2. Vertex very close to existing circumspheres
+        // 3. High vertex density in the insertion area
+        // 4. Previous insertions in this area required fallback strategies
+
+        // For this example, use a simple heuristic based on coordinate magnitude
+        let coords: [T; D] = vertex.point().to_array();
+        let has_small_coords = coords.iter().any(|&c| {
+            let c_f64: f64 = c.into();
+            c_f64.abs() < 1e-10
+        });
+
+        let has_large_coords = coords.iter().any(|&c| {
+            let c_f64: f64 = c.into();
+            c_f64.abs() > 1e6
+        });
+
+        // Also check if we're in a high-density area
+        let nearby_vertices = tds
+            .vertices
+            .values()
+            .filter(|v| {
+                let v_coords: [T; D] = (*v).into();
+                let distance_squared: f64 = coords
+                    .iter()
+                    .zip(v_coords.iter())
+                    .map(|(&a, &b)| {
+                        let diff: f64 = (a - b).into();
+                        diff * diff
+                    })
+                    .sum();
+                distance_squared < 1e-6 // Very close vertices
+            })
+            .count();
+
+        has_small_coords || has_large_coords || nearby_vertices > 3
+    }
 }
 
 /// Information about a robust vertex insertion operation.
@@ -553,7 +606,8 @@ where
         tds: &mut Tds<T, U, V, D>,
         vertex: Vertex<T, U, D>,
     ) -> Result<InsertionInfo, TriangulationValidationError> {
-        // Call our robust_insert_vertex method and convert the result
+        // For robust insertion, we use our specialized robust_insert_vertex method
+        // This provides enhanced geometric predicates and fallback strategies
         let robust_result = self.robust_insert_vertex(tds, vertex)?;
 
         // Convert RobustInsertionInfo to InsertionInfo
@@ -590,7 +644,7 @@ where
     fn new_triangulation(
         &mut self,
         vertices: &[Vertex<T, U, D>],
-    ) -> Result<Tds<T, U, V, D>, TriangulationValidationError> {
+    ) -> Result<Tds<T, U, V, D>, TriangulationConstructionError> {
         // First, try the regular triangulation approach
         Tds::new(vertices).map_or_else(
             |_| {
@@ -598,8 +652,12 @@ where
                 // Note: For now, we still fall back to the regular approach
                 // but this is where we would implement more sophisticated
                 // robust triangulation strategies
-                Tds::new(vertices).map_err(|e| TriangulationValidationError::FailedToCreateCell {
-                    message: format!("Robust triangulation failed: {e}"),
+                Tds::new(vertices).map_err(|e| {
+                    TriangulationConstructionError::ValidationError(
+                        TriangulationValidationError::FailedToCreateCell {
+                            message: format!("Robust triangulation failed: {e}"),
+                        },
+                    )
                 })
             },
             Ok,
@@ -638,5 +696,94 @@ mod tests {
 
         let result = algorithm.robust_insert_vertex(&mut tds, problematic_vertex);
         assert!(result.is_ok() || result.is_err()); // Should handle gracefully
+    }
+
+    #[test]
+    fn test_no_double_counting_statistics() {
+        println!("Testing that robust vertex insertion statistics are not double counted");
+
+        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Create initial triangulation with exactly 4 vertices (minimum for a tetrahedron)
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // After initial creation, algorithm stats should be zero since no insertions have been performed yet
+        let (insertions_after_initial, created_after_initial, removed_after_initial) =
+            algorithm.get_statistics();
+
+        println!("After initial tetrahedron:");
+        println!("  Insertions: {insertions_after_initial}");
+        println!("  Cells created: {created_after_initial}");
+        println!("  Cells removed: {removed_after_initial}");
+
+        assert_eq!(insertions_after_initial, 0, "No insertions performed yet");
+        assert_eq!(
+            created_after_initial, 0,
+            "Algorithm didn't create the initial cells"
+        );
+        assert_eq!(removed_after_initial, 0, "No cells removed yet");
+
+        // Now add additional vertices one by one
+        let additional_vertices = [
+            vertex!([0.5, 0.5, 0.5]), // Interior point
+            vertex!([2.0, 0.0, 0.0]), // Exterior point
+        ];
+
+        for (i, &new_vertex) in additional_vertices.iter().enumerate() {
+            // Track statistics before insertion
+            let (before_insertions, _before_created, _before_removed) = algorithm.get_statistics();
+
+            // Insert using the robust algorithm
+            let insertion_result = algorithm.insert_vertex(&mut tds, new_vertex);
+
+            assert!(
+                insertion_result.is_ok(),
+                "Robust insertion should succeed for vertex {}",
+                i + 1
+            );
+
+            let (after_insertions, after_created, after_removed) = algorithm.get_statistics();
+            let insertion_info = insertion_result.unwrap();
+
+            println!(
+                "\nAfter adding vertex {} ({:?}):",
+                i + 1,
+                new_vertex.point().to_array()
+            );
+            println!("  Insertions: {after_insertions}");
+            println!("  Cells created: {after_created}");
+            println!("  Cells removed: {after_removed}");
+            println!("  Total cells in TDS: {}", tds.number_of_cells());
+            println!(
+                "  InsertionInfo: created={}, removed={}",
+                insertion_info.cells_created, insertion_info.cells_removed
+            );
+
+            // Critical test: insertion count should increment by exactly 1
+            assert_eq!(
+                after_insertions - before_insertions,
+                1,
+                "Insertion count should increment by exactly 1 (vertex {})",
+                i + 1
+            );
+
+            // The robust algorithm doesn't track cells_created/removed totals (returns 0)
+            // But the insertion should succeed and provide valid insertion info
+            assert!(insertion_info.success, "Insertion should be successful");
+            assert!(
+                insertion_info.cells_created > 0,
+                "Should create at least some cells"
+            );
+        }
+
+        println!(
+            "✓ No double counting detected in robust algorithm - statistics are accurate and consistent"
+        );
     }
 }

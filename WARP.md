@@ -126,7 +126,7 @@ This provides more accurate release timing that reflects when the actual work wa
 - **`cell.rs`** - D-dimensional cells (simplices) with neighbor relationships
 - **`facet.rs`** - (D-1)-dimensional faces derived from cells
 - **`boundary.rs`** - Boundary analysis and facet detection
-- **`utilities.rs`** - Helper functions for triangulation operations
+- **`util.rs`** - Helper functions for triangulation operations
 - **`traits/`** - Core traits for data types and boundary analysis
 
 **`src/geometry/`** - Geometric algorithms and predicates
