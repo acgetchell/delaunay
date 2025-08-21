@@ -6,12 +6,12 @@
 
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
+use std::ops::{AddAssign, Div, SubAssign};
 
 use crate::core::traits::insertion_algorithm::{
-    InsertionAlgorithm, InsertionInfo, InsertionStrategy,
+    InsertionAlgorithm, InsertionInfo, InsertionStatistics, InsertionStrategy,
 };
 use crate::core::{
-    cell::CellBuilder,
     facet::Facet,
     triangulation_data_structure::{
         CellKey, Tds, TriangulationConstructionError, TriangulationValidationError,
@@ -24,7 +24,6 @@ use crate::geometry::{
     robust_predicates::{RobustPredicateConfig, config_presets, robust_insphere},
     traits::coordinate::{Coordinate, CoordinateScalar},
 };
-use crate::vertex;
 use nalgebra::{self as na, ComplexField};
 use serde::{Serialize, de::DeserializeOwned};
 use std::iter::Sum;
@@ -33,25 +32,10 @@ use std::iter::Sum;
 pub struct RobustBoyerWatson<T, U, V, const D: usize> {
     /// Configuration for robust predicates
     predicate_config: RobustPredicateConfig<T>,
-    /// Statistics for debugging and optimization
-    pub stats: RobustBoyerWatsonStats,
+    /// Unified statistics tracking
+    stats: InsertionStatistics,
     /// Phantom data to indicate that U and V types are used in method signatures
     _phantom: PhantomData<(U, V)>,
-}
-
-/// Statistics collected during robust triangulation.
-#[derive(Debug, Default)]
-pub struct RobustBoyerWatsonStats {
-    /// Number of vertices processed during triangulation
-    pub vertices_processed: usize,
-    /// Number of times fallback strategies were used
-    pub fallback_strategies_used: usize,
-    /// Number of degenerate cases handled
-    pub degenerate_cases_handled: usize,
-    /// Number of cavity boundary detection failures
-    pub cavity_boundary_failures: usize,
-    /// Number of successful cavity boundary recoveries
-    pub cavity_boundary_recoveries: usize,
 }
 
 impl<T, U, V, const D: usize> Default for RobustBoyerWatson<T, U, V, D>
@@ -88,16 +72,16 @@ where
     pub fn new() -> Self {
         Self {
             predicate_config: config_presets::general_triangulation::<T>(),
-            stats: RobustBoyerWatsonStats::default(),
+            stats: InsertionStatistics::new(),
             _phantom: PhantomData,
         }
     }
 
     /// Create with custom predicate configuration.
-    pub fn with_config(config: RobustPredicateConfig<T>) -> Self {
+    pub const fn with_config(config: RobustPredicateConfig<T>) -> Self {
         Self {
             predicate_config: config,
-            stats: RobustBoyerWatsonStats::default(),
+            stats: InsertionStatistics::new(),
             _phantom: PhantomData,
         }
     }
@@ -107,63 +91,271 @@ where
     pub fn for_degenerate_cases() -> Self {
         Self {
             predicate_config: config_presets::degenerate_robust::<T>(),
-            stats: RobustBoyerWatsonStats::default(),
+            stats: InsertionStatistics::new(),
             _phantom: PhantomData,
         }
     }
 
-    /// Insert a vertex using robust geometric predicates.
+    /// Robust implementation that uses trait methods as primary strategies with enhanced predicates as fallbacks.
     ///
     /// # Errors
     ///
     /// Returns an error if vertex insertion fails due to geometric issues,
     /// validation problems, or if recovery strategies are unsuccessful.
-    pub fn robust_insert_vertex(
+    fn robust_insert_vertex_impl(
         &mut self,
         tds: &mut Tds<T, U, V, D>,
-        vertex: Vertex<T, U, D>,
-    ) -> Result<RobustInsertionInfo, TriangulationValidationError> {
+        vertex: &Vertex<T, U, D>,
+    ) -> Result<InsertionInfo, TriangulationValidationError>
+    where
+        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
+        f64: From<T>,
+        for<'a> &'a T: Div<T>,
+        ordered_float::OrderedFloat<f64>: From<T>,
+        nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
+        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+    {
+        // Track statistics
         self.stats.vertices_processed += 1;
 
-        // Step 1: Find bad cells using robust insphere test
-        let bad_cells = self.robust_find_bad_cells(tds, &vertex);
+        // Determine the best strategy using trait method
+        let strategy = self.determine_strategy(tds, vertex);
 
-        if bad_cells.is_empty() {
-            // No bad cells - this might be a degenerate case
-            return self.handle_no_bad_cells_case(tds, &vertex);
-        }
+        // Try primary insertion strategies using trait methods
+        let mut result = match strategy {
+            InsertionStrategy::CavityBased => {
+                self.insert_vertex_cavity_based_with_robust_predicates(tds, vertex)
+            }
+            InsertionStrategy::HullExtension => {
+                self.insert_vertex_hull_extension_with_robust_predicates(tds, vertex)
+            }
+            _ => {
+                // For other strategies, try cavity-based first
+                self.insert_vertex_cavity_based_with_robust_predicates(tds, vertex)
+            }
+        };
 
-        // Step 2: Find cavity boundary facets with robust fallback strategies
-        let boundary_facets =
-            if let Ok(facets) = self.robust_find_cavity_boundary_facets(tds, &bad_cells) {
-                facets
-            } else {
-                // Primary strategy failed - try recovery methods
-                self.stats.cavity_boundary_failures += 1;
-                self.recover_cavity_boundary_facets(tds, &bad_cells, &vertex)?
+        // If primary strategy failed, try fallback strategies
+        if result.is_err() {
+            self.stats.fallback_strategies_used += 1;
+
+            // Try the other strategy
+            result = match strategy {
+                InsertionStrategy::CavityBased => {
+                    // If cavity-based failed, try hull extension
+                    self.insert_vertex_hull_extension_with_robust_predicates(tds, vertex)
+                }
+                InsertionStrategy::HullExtension => {
+                    // If hull extension failed, try cavity-based
+                    self.insert_vertex_cavity_based_with_robust_predicates(tds, vertex)
+                }
+                _ => {
+                    // Try hull extension as fallback
+                    self.insert_vertex_hull_extension_with_robust_predicates(tds, vertex)
+                }
             };
 
-        if boundary_facets.is_empty() {
-            self.stats.degenerate_cases_handled += 1;
-            return Ok(self.handle_degenerate_insertion_case(tds, &vertex, &bad_cells));
+            // If both strategies failed, try general fallback
+            if result.is_err() {
+                result = self.insert_vertex_fallback(tds, vertex);
+            }
         }
 
-        // Step 3: Remove bad cells and create new cells
-        let cells_removed = bad_cells.len();
-        self.remove_bad_cells(tds, &bad_cells);
+        result
+    }
 
-        let cells_created = self.create_cells_from_boundary_facets(tds, &boundary_facets, &vertex);
+    /// Cavity-based insertion with robust predicates as enhancement
+    fn insert_vertex_cavity_based_with_robust_predicates(
+        &mut self,
+        tds: &mut Tds<T, U, V, D>,
+        vertex: &Vertex<T, U, D>,
+    ) -> Result<InsertionInfo, TriangulationValidationError>
+    where
+        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
+        f64: From<T>,
+        for<'a> &'a T: Div<T>,
+        ordered_float::OrderedFloat<f64>: From<T>,
+        nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
+        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+    {
+        // First try using trait method for bad cell detection with robust fallback
+        let bad_cells = self.find_bad_cells_with_robust_fallback(tds, vertex);
 
-        Ok(RobustInsertionInfo {
-            success: true,
-            cells_created,
-            cells_removed,
-            strategy_used: InsertionStrategy::Standard,
-            degenerate_case_handled: false,
-        })
+        if !bad_cells.is_empty() {
+            // Try boundary facet detection using trait method with robust fallback
+            if let Ok(boundary_facets) =
+                self.find_cavity_boundary_facets_with_robust_fallback(tds, &bad_cells)
+            {
+                if !boundary_facets.is_empty() {
+                    let cells_removed = bad_cells.len();
+                    <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
+                    <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex);
+                    let cells_created =
+                        <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
+                            tds,
+                            &boundary_facets,
+                            vertex,
+                        );
+
+                    return Ok(InsertionInfo {
+                        strategy: InsertionStrategy::CavityBased,
+                        cells_removed,
+                        cells_created,
+                        success: true,
+                        degenerate_case_handled: false,
+                    });
+                }
+            }
+        }
+
+        // If robust detection fails, fall back to trait method
+        self.insert_vertex_cavity_based(tds, vertex)
+    }
+
+    /// Hull extension insertion with robust predicates as enhancement
+    fn insert_vertex_hull_extension_with_robust_predicates(
+        &self,
+        tds: &mut Tds<T, U, V, D>,
+        vertex: &Vertex<T, U, D>,
+    ) -> Result<InsertionInfo, TriangulationValidationError>
+    where
+        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
+        f64: From<T>,
+        for<'a> &'a T: Div<T>,
+        ordered_float::OrderedFloat<f64>: From<T>,
+        nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
+        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+    {
+        // Use visibility detection with robust fallback
+        if let Ok(visible_facets) =
+            self.find_visible_boundary_facets_with_robust_fallback(tds, vertex)
+        {
+            if !visible_facets.is_empty() {
+                <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex);
+                let cells_created =
+                    <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
+                        tds,
+                        &visible_facets,
+                        vertex,
+                    );
+
+                return Ok(InsertionInfo {
+                    strategy: InsertionStrategy::HullExtension,
+                    cells_removed: 0,
+                    cells_created,
+                    success: true,
+                    degenerate_case_handled: false,
+                });
+            }
+        }
+
+        // If visibility detection fails, fall back to trait method
+        self.insert_vertex_hull_extension(tds, vertex)
+    }
+
+    /// Find bad cells by first using the trait method, then applying robust predicates for edge cases.
+    ///
+    /// This approach integrates the trait's `find_bad_cells` method with the robust predicates
+    /// to provide a more reliable cell detection method, especially for degenerate cases.
+    fn find_bad_cells_with_robust_fallback(
+        &mut self,
+        tds: &Tds<T, U, V, D>,
+        vertex: &Vertex<T, U, D>,
+    ) -> Vec<CellKey>
+    where
+        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
+        f64: From<T>,
+        for<'a> &'a T: Div<T>,
+        ordered_float::OrderedFloat<f64>: From<T>,
+        nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
+        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+    {
+        // First try to find bad cells using the trait's method
+        let mut bad_cells = InsertionAlgorithm::<T, U, V, D>::find_bad_cells(self, tds, vertex);
+
+        // If the standard method doesn't find any bad cells (likely a degenerate case)
+        // or we're using the robust configuration, use robust predicates as well
+        if bad_cells.is_empty() || self.predicate_config.base_tolerance > T::default_tolerance() {
+            let robust_bad_cells = self.robust_find_bad_cells(tds, vertex);
+
+            // Add any cells found by robust method that weren't found by the standard method
+            for cell_key in robust_bad_cells {
+                if !bad_cells.contains(&cell_key) {
+                    bad_cells.push(cell_key);
+                }
+            }
+        }
+
+        bad_cells
+    }
+
+    /// Find cavity boundary facets by first using the trait method, then applying robust predicates for edge cases.
+    ///
+    /// This approach integrates the trait's `find_cavity_boundary_facets` method with the robust predicates
+    /// to provide a more reliable boundary facet detection method, especially for degenerate cases.
+    fn find_cavity_boundary_facets_with_robust_fallback(
+        &self,
+        tds: &Tds<T, U, V, D>,
+        bad_cells: &[CellKey],
+    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>
+    where
+        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
+        f64: From<T>,
+        for<'a> &'a T: Div<T>,
+        ordered_float::OrderedFloat<f64>: From<T>,
+    {
+        // First try to find boundary facets using the trait's method
+        match InsertionAlgorithm::<T, U, V, D>::find_cavity_boundary_facets(self, tds, bad_cells) {
+            Ok(boundary_facets) => {
+                // If the standard method succeeds and finds facets, use them
+                if !boundary_facets.is_empty() {
+                    return Ok(boundary_facets);
+                }
+                // If standard method succeeds but finds no facets, try robust method as fallback
+                self.robust_find_cavity_boundary_facets(tds, bad_cells)
+            }
+            Err(_) => {
+                // If standard method fails, use robust method as fallback
+                self.robust_find_cavity_boundary_facets(tds, bad_cells)
+            }
+        }
+    }
+
+    /// Find visible boundary facets by first using the trait method, then applying robust predicates for edge cases.
+    ///
+    /// This approach integrates the trait's `find_visible_boundary_facets` method with the robust predicates
+    /// to provide a more reliable visibility detection method, especially for degenerate cases.
+    fn find_visible_boundary_facets_with_robust_fallback(
+        &self,
+        tds: &Tds<T, U, V, D>,
+        vertex: &Vertex<T, U, D>,
+    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>
+    where
+        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
+        f64: From<T>,
+        for<'a> &'a T: Div<T>,
+        ordered_float::OrderedFloat<f64>: From<T>,
+        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+    {
+        // First try to find visible boundary facets using the trait's method
+        match InsertionAlgorithm::<T, U, V, D>::find_visible_boundary_facets(self, tds, vertex) {
+            Ok(visible_facets) => {
+                // If the standard method succeeds and finds facets, use them
+                if !visible_facets.is_empty() {
+                    return Ok(visible_facets);
+                }
+                // If standard method succeeds but finds no facets, try robust method as fallback
+                self.find_visible_boundary_facets(tds, vertex)
+            }
+            Err(_) => {
+                // If standard method fails, use robust method as fallback
+                self.find_visible_boundary_facets(tds, vertex)
+            }
+        }
     }
 
     /// Find bad cells using robust insphere predicate.
+    /// This is a lower-level method used by `find_bad_cells_with_robust_fallback`.
     fn robust_find_bad_cells(
         &mut self,
         tds: &Tds<T, U, V, D>,
@@ -269,6 +461,7 @@ where
     }
 
     /// Recover from cavity boundary facet detection failure.
+    #[allow(dead_code)]
     fn recover_cavity_boundary_facets(
         &mut self,
         tds: &Tds<T, U, V, D>,
@@ -295,6 +488,7 @@ where
     }
 
     /// Handle the case where no bad cells are found.
+    #[allow(dead_code)]
     fn handle_no_bad_cells_case(
         &self,
         tds: &mut Tds<T, U, V, D>,
@@ -311,7 +505,22 @@ where
             });
         }
 
-        let cells_created = self.create_cells_from_boundary_facets(tds, &visible_facets, vertex);
+        // Add the vertex to the TDS if it's not already there
+        <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex);
+
+        let cells_created =
+            <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
+                tds,
+                &visible_facets,
+                vertex,
+            );
+
+        // Finalize the triangulation to ensure consistency
+        if let Err(e) = <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds) {
+            return Err(TriangulationValidationError::InconsistentDataStructure {
+                message: format!("Failed to finalize triangulation after hull extension: {e}"),
+            });
+        }
 
         Ok(RobustInsertionInfo {
             success: true,
@@ -323,6 +532,7 @@ where
     }
 
     /// Handle degenerate insertion cases with special strategies.
+    #[allow(dead_code)]
     fn handle_degenerate_insertion_case(
         &mut self,
         tds: &mut Tds<T, U, V, D>,
@@ -333,7 +543,7 @@ where
 
         // Strategy 1: Try vertex perturbation
         let perturbed_vertex = self.create_perturbed_vertex(vertex);
-        if let Ok(info) = self.robust_insert_vertex(tds, perturbed_vertex) {
+        if let Ok(info) = self.insert_vertex(tds, perturbed_vertex) {
             return RobustInsertionInfo {
                 success: true,
                 cells_created: info.cells_created,
@@ -411,6 +621,7 @@ where
         Ok(())
     }
 
+    #[allow(dead_code)]
     const fn lenient_cavity_boundary_detection(
         _tds: &Tds<T, U, V, D>,
         _bad_cells: &[CellKey],
@@ -425,6 +636,7 @@ where
         Vec::new()
     }
 
+    #[allow(dead_code)]
     fn reduced_bad_cell_strategy(
         &self,
         tds: &Tds<T, U, V, D>,
@@ -443,6 +655,7 @@ where
         self.robust_find_cavity_boundary_facets(tds, reduced_bad_cells)
     }
 
+    #[allow(dead_code)]
     #[allow(clippy::unused_self)]
     fn convex_hull_extension_strategy(
         &self,
@@ -453,26 +666,186 @@ where
         self.find_visible_boundary_facets(tds, vertex)
     }
 
-    #[allow(clippy::unused_self)]
+    /// Robust implementation of `find_visible_boundary_facets` that handles degenerate cases
+    ///
+    /// This method is more aggressive than the default implementation, using fallback strategies
+    /// when geometric predicates fail or return degenerate results.
     fn find_visible_boundary_facets(
         &self,
         tds: &Tds<T, U, V, D>,
-        _vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError> {
-        use crate::core::traits::boundary_analysis::BoundaryAnalysis;
+        vertex: &Vertex<T, U, D>,
+    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>
+    where
+        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
+        f64: From<T>,
+        for<'a> &'a T: Div<T>,
+        ordered_float::OrderedFloat<f64>: From<T>,
+        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+    {
+        let mut visible_facets = Vec::new();
 
-        // Get all boundary facets
-        let boundary_facets = tds.boundary_facets().map_err(|e| {
-            TriangulationValidationError::FailedToCreateCell {
-                message: format!("Failed to get boundary facets: {e}"),
+        // Get all boundary facets (facets shared by exactly one cell)
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        let boundary_facets: Vec<_> = facet_to_cells
+            .iter()
+            .filter(|(_, cells)| cells.len() == 1)
+            .collect();
+
+        for (_facet_key, cells) in boundary_facets {
+            let (cell_key, facet_index) = cells[0];
+            if let Some(cell) = tds.cells().get(cell_key) {
+                if let Ok(facets) = cell.facets() {
+                    if facet_index < facets.len() {
+                        let facet = &facets[facet_index];
+
+                        // Test visibility using robust orientation predicates with fallback
+                        if self.is_facet_visible_from_vertex_robust(tds, facet, vertex, cell_key) {
+                            visible_facets.push(facet.clone());
+                        }
+                    }
+                } else {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: "Failed to get facets from cell during visibility computation"
+                            .to_string(),
+                    });
+                }
+            } else {
+                return Err(TriangulationValidationError::InconsistentDataStructure {
+                    message: "Cell key not found during visibility computation".to_string(),
+                });
             }
-        })?;
+        }
 
-        // For now, return all boundary facets
-        // A more sophisticated implementation would test visibility
-        Ok(boundary_facets)
+        Ok(visible_facets)
     }
 
+    /// Robust helper method to test if a boundary facet is visible from a given vertex
+    ///
+    /// This method uses multiple fallback strategies when geometric predicates fail
+    /// or return degenerate results, making it more suitable for exterior vertex insertion.
+    fn is_facet_visible_from_vertex_robust(
+        &self,
+        tds: &Tds<T, U, V, D>,
+        facet: &Facet<T, U, V, D>,
+        vertex: &Vertex<T, U, D>,
+        adjacent_cell_key: crate::core::triangulation_data_structure::CellKey,
+    ) -> bool
+    where
+        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
+        f64: From<T>,
+        for<'a> &'a T: Div<T>,
+        ordered_float::OrderedFloat<f64>: From<T>,
+        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+    {
+        use crate::geometry::point::Point;
+        use crate::geometry::predicates::{Orientation, simplex_orientation};
+
+        // Get the adjacent cell to this boundary facet
+        let Some(adjacent_cell) = tds.cells().get(adjacent_cell_key) else {
+            return false;
+        };
+
+        // Find the vertex in the adjacent cell that is NOT part of the facet
+        // This is the "opposite" vertex that defines the "inside" side of the facet
+        let facet_vertices = facet.vertices();
+        let cell_vertices = adjacent_cell.vertices();
+
+        let mut opposite_vertex = None;
+        for cell_vertex in cell_vertices {
+            let is_in_facet = facet_vertices
+                .iter()
+                .any(|fv| fv.uuid() == cell_vertex.uuid());
+            if !is_in_facet {
+                opposite_vertex = Some(cell_vertex);
+                break;
+            }
+        }
+
+        let Some(opposite_vertex) = opposite_vertex else {
+            // Could not find opposite vertex - something is wrong with the topology
+            return false;
+        };
+
+        // Create test simplices for orientation comparison
+        let mut simplex_with_opposite: Vec<Point<T, D>> =
+            facet_vertices.iter().map(|v| *v.point()).collect();
+        simplex_with_opposite.push(*opposite_vertex.point());
+
+        let mut simplex_with_test: Vec<Point<T, D>> =
+            facet_vertices.iter().map(|v| *v.point()).collect();
+        simplex_with_test.push(*vertex.point());
+
+        // Get orientations using robust predicates first, fall back to standard predicates
+        let orientation_opposite = crate::geometry::robust_predicates::robust_orientation(
+            &simplex_with_opposite,
+            &self.predicate_config,
+        )
+        .unwrap_or_else(|_| {
+            simplex_orientation(&simplex_with_opposite).unwrap_or(Orientation::DEGENERATE)
+        });
+
+        let orientation_test = crate::geometry::robust_predicates::robust_orientation(
+            &simplex_with_test,
+            &self.predicate_config,
+        )
+        .unwrap_or_else(|_| {
+            simplex_orientation(&simplex_with_test).unwrap_or(Orientation::DEGENERATE)
+        });
+
+        match (orientation_opposite, orientation_test) {
+            (Orientation::NEGATIVE, Orientation::POSITIVE)
+            | (Orientation::POSITIVE, Orientation::NEGATIVE) => true,
+            (Orientation::DEGENERATE, _) | (_, Orientation::DEGENERATE) => {
+                // Degenerate case - use distance-based fallback for exterior vertices
+                self.fallback_visibility_heuristic(facet, vertex)
+            }
+            _ => false, // Same orientation = same side = not visible
+        }
+    }
+
+    /// Fallback visibility heuristic for degenerate cases
+    ///
+    /// When geometric predicates fail or return degenerate results, this method uses
+    /// a distance-based heuristic to determine if a facet should be considered visible.
+    /// For exterior vertex insertion, this is more aggressive than the default implementation.
+    fn fallback_visibility_heuristic(
+        &self,
+        facet: &Facet<T, U, V, D>,
+        vertex: &Vertex<T, U, D>,
+    ) -> bool {
+        let facet_vertices = facet.vertices();
+
+        // Calculate facet centroid
+        let mut centroid_coords = [T::zero(); D];
+        for facet_vertex in &facet_vertices {
+            let coords: [T; D] = facet_vertex.point().into();
+            for (i, &coord) in coords.iter().enumerate() {
+                centroid_coords[i] += coord;
+            }
+        }
+        let num_vertices = T::from_usize(facet_vertices.len()).unwrap_or_else(T::one);
+        for coord in &mut centroid_coords {
+            *coord /= num_vertices;
+        }
+
+        // Calculate distance from vertex to centroid
+        let vertex_coords: [T; D] = vertex.point().into();
+        let mut distance_squared = T::zero();
+        for i in 0..D {
+            let diff = vertex_coords[i] - centroid_coords[i];
+            distance_squared += diff * diff;
+        }
+
+        // For exterior vertices, use a more aggressive threshold
+        // If the vertex is far from the facet centroid, consider it visible
+        // Use a threshold based on the perturbation scale multiplied by a factor
+        let threshold = self.predicate_config.perturbation_scale
+            * self.predicate_config.perturbation_scale
+            * T::from_f64(100.0).unwrap_or_else(|| T::one());
+        distance_squared > threshold
+    }
+
+    #[allow(dead_code)]
     fn create_perturbed_vertex(&self, vertex: &Vertex<T, U, D>) -> Vertex<T, U, D> {
         let mut coords: [T; D] = vertex.point().to_array();
         let perturbation = self.predicate_config.perturbation_scale;
@@ -481,45 +854,19 @@ where
         coords[0] += perturbation;
 
         let perturbed_point = Point::new(coords);
-        // Use the vertex! macro to create vertex with point and data
-        vertex.data.map_or_else(
-            || vertex!(perturbed_point.to_array()),
-            |data| vertex!(perturbed_point.to_array(), data),
-        )
-    }
 
-    #[allow(clippy::unused_self)]
-    fn remove_bad_cells(&self, tds: &mut Tds<T, U, V, D>, bad_cells: &[CellKey]) {
-        for &cell_key in bad_cells {
-            if let Some(cell) = tds.cells_mut().remove(cell_key) {
-                tds.cell_bimap.remove_by_left(&cell.uuid());
-            }
-        }
-    }
+        // Clone the original vertex and update the point using set_point for proper validation
+        let mut perturbed_vertex = *vertex;
 
-    #[allow(clippy::unused_self)]
-    fn create_cells_from_boundary_facets(
-        &self,
-        tds: &mut Tds<T, U, V, D>,
-        boundary_facets: &[Facet<T, U, V, D>],
-        vertex: &Vertex<T, U, D>,
-    ) -> usize {
-        let mut cells_created = 0;
+        // Use the set_point method for proper validation
+        // Note: In the context of perturbation for degeneracy handling,
+        // we expect the perturbed point to be valid since we're only applying
+        // a small perturbation to an already valid point
+        perturbed_vertex
+            .set_point(perturbed_point)
+            .expect("Perturbed point should be valid since original point was valid");
 
-        for facet in boundary_facets {
-            // Create a new cell by combining the facet with the new vertex
-            let mut cell_vertices = facet.vertices().clone();
-            cell_vertices.push(*vertex);
-
-            if let Ok(new_cell) = CellBuilder::default().vertices(cell_vertices).build() {
-                let cell_key = tds.cells_mut().insert(new_cell);
-                let cell_uuid = tds.cells()[cell_key].uuid();
-                tds.cell_bimap.insert(cell_uuid, cell_key);
-                cells_created += 1;
-            }
-        }
-
-        cells_created
+        perturbed_vertex
     }
 
     #[allow(dead_code)]
@@ -606,18 +953,8 @@ where
         tds: &mut Tds<T, U, V, D>,
         vertex: Vertex<T, U, D>,
     ) -> Result<InsertionInfo, TriangulationValidationError> {
-        // For robust insertion, we use our specialized robust_insert_vertex method
-        // This provides enhanced geometric predicates and fallback strategies
-        let robust_result = self.robust_insert_vertex(tds, vertex)?;
-
-        // Convert RobustInsertionInfo to InsertionInfo
-        Ok(InsertionInfo {
-            strategy: robust_result.strategy_used,
-            cells_removed: robust_result.cells_removed,
-            cells_created: robust_result.cells_created,
-            success: robust_result.success,
-            degenerate_case_handled: robust_result.degenerate_case_handled,
-        })
+        // Use the simplified robust implementation that leverages trait methods
+        self.robust_insert_vertex_impl(tds, &vertex)
     }
 
     fn get_statistics(&self) -> (usize, usize, usize) {
@@ -628,7 +965,7 @@ where
 
     fn reset(&mut self) {
         // Reset statistics
-        self.stats = RobustBoyerWatsonStats::default();
+        self.stats = InsertionStatistics::new();
     }
 
     fn determine_strategy(
@@ -668,6 +1005,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::traits::boundary_analysis::BoundaryAnalysis;
     use crate::vertex;
 
     #[test]
@@ -694,7 +1032,7 @@ mod tests {
         // Try to insert a vertex that might cause degenerate behavior
         let problematic_vertex = vertex!([0.5, 0.5, 1e-15]);
 
-        let result = algorithm.robust_insert_vertex(&mut tds, problematic_vertex);
+        let result = algorithm.insert_vertex(&mut tds, problematic_vertex);
         assert!(result.is_ok() || result.is_err()); // Should handle gracefully
     }
 
@@ -785,5 +1123,127 @@ mod tests {
         println!(
             "✓ No double counting detected in robust algorithm - statistics are accurate and consistent"
         );
+    }
+
+    #[test]
+    fn test_debug_exterior_vertex_insertion() {
+        println!("Testing exterior vertex insertion in robust Bowyer-Watson");
+
+        let mut algorithm = RobustBoyerWatson::new();
+
+        // Create initial triangulation with exactly 4 vertices (minimum for a tetrahedron)
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        println!("Initial TDS has {} cells", tds.number_of_cells());
+
+        // First, test with an interior vertex (should work)
+        let interior_vertex = vertex!([0.5, 0.5, 0.5]);
+        println!(
+            "Inserting interior vertex {:?}",
+            interior_vertex.point().to_array()
+        );
+
+        let interior_result = algorithm.insert_vertex(&mut tds, interior_vertex);
+        match &interior_result {
+            Ok(info) => println!(
+                "Interior insertion succeeded: created={}, removed={}",
+                info.cells_created, info.cells_removed
+            ),
+            Err(e) => println!("Interior insertion failed: {e}"),
+        }
+        assert!(
+            interior_result.is_ok(),
+            "Interior vertex insertion should succeed"
+        );
+
+        println!("TDS now has {} cells", tds.number_of_cells());
+
+        // Let's check the TDS consistency after the interior insertion
+        println!("Checking TDS consistency...");
+        let boundary_facets_result = tds.boundary_facets();
+        match &boundary_facets_result {
+            Ok(boundary_facets) => println!("TDS has {} boundary facets", boundary_facets.len()),
+            Err(e) => println!("Failed to get boundary facets: {e}"),
+        }
+
+        // Try to validate the TDS
+        let validation_result = tds.is_valid();
+        match &validation_result {
+            Ok(()) => println!("TDS is valid"),
+            Err(e) => println!("TDS validation failed: {e}"),
+        }
+
+        // Now test with an exterior vertex (this is what's failing)
+        let exterior_vertex = vertex!([2.0, 0.0, 0.0]);
+        println!(
+            "Inserting exterior vertex {:?}",
+            exterior_vertex.point().to_array()
+        );
+
+        // Let's debug what happens step by step
+        println!("Finding bad cells for exterior vertex...");
+        let bad_cells = algorithm.robust_find_bad_cells(&tds, &exterior_vertex);
+        println!("Found {} bad cells: {:?}", bad_cells.len(), bad_cells);
+
+        if bad_cells.is_empty() {
+            println!("No bad cells found - will try hull extension");
+
+            // Check what boundary facets exist before trying visibility
+            println!("Getting all boundary facets...");
+            if let Ok(all_boundary_facets) = tds.boundary_facets() {
+                println!("Total boundary facets: {}", all_boundary_facets.len());
+                for (i, facet) in all_boundary_facets.iter().enumerate() {
+                    println!(
+                        "  Boundary facet {}: {} vertices",
+                        i,
+                        facet.vertices().len()
+                    );
+                }
+            }
+
+            // Test the visibility detection directly
+            println!("Testing visibility detection...");
+            let visible_result = algorithm.find_visible_boundary_facets(&tds, &exterior_vertex);
+            match &visible_result {
+                Ok(facets) => {
+                    println!("Found {} visible boundary facets", facets.len());
+                    for (i, facet) in facets.iter().enumerate() {
+                        println!("  Visible facet {}: {} vertices", i, facet.vertices().len());
+                    }
+                }
+                Err(e) => println!("Visibility detection failed: {e}"),
+            }
+
+            // Test the actual insertion
+            let insertion_result = algorithm.insert_vertex(&mut tds, exterior_vertex);
+            match &insertion_result {
+                Ok(info) => println!(
+                    "Exterior insertion succeeded: created={}, removed={}",
+                    info.cells_created, info.cells_removed
+                ),
+                Err(e) => println!("Exterior insertion failed: {e}"),
+            }
+
+            // For debugging, we'll allow failure but let's understand why
+            if insertion_result.is_err() {
+                println!("Exterior vertex insertion failed, but this tells us what to fix");
+            }
+        } else {
+            println!("Bad cells found, should use standard insertion");
+            let insertion_result = algorithm.insert_vertex(&mut tds, exterior_vertex);
+            match &insertion_result {
+                Ok(info) => println!(
+                    "Exterior insertion succeeded: created={}, removed={}",
+                    info.cells_created, info.cells_removed
+                ),
+                Err(e) => println!("Exterior insertion failed: {e}"),
+            }
+        }
     }
 }

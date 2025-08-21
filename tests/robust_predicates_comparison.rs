@@ -217,7 +217,7 @@ fn test_vertex_insertion_robustness() {
         println!("Attempting to insert vertex {vertex_idx}: {vertex_array:?}");
 
         let start_time = Instant::now();
-        let result = robust_algorithm.robust_insert_vertex(&mut tds, vertex);
+        let result = robust_algorithm.insert_vertex(&mut tds, vertex);
         let duration = start_time.elapsed();
 
         match result {
@@ -230,7 +230,7 @@ fn test_vertex_insertion_robustness() {
                     "  ✓ Success: {} cells created, {} cells removed, strategy: {strategy:?}, degenerate: {degenerate} (took {duration:?})",
                     info.cells_created,
                     info.cells_removed,
-                    strategy = info.strategy_used,
+                    strategy = info.strategy,
                     degenerate = info.degenerate_case_handled
                 );
             }
@@ -245,7 +245,10 @@ fn test_vertex_insertion_robustness() {
     println!("Successful insertions: {successful_insertions}");
     println!("Failed insertions: {failed_insertions}");
     println!("Degenerate cases handled: {degenerate_cases_handled}");
-    println!("Final stats: {:?}", robust_algorithm.stats);
+    let (vertices_processed, cells_created, cells_removed) = robust_algorithm.get_statistics();
+    println!(
+        "Final stats: vertices_processed={vertices_processed}, cells_created={cells_created}, cells_removed={cells_removed}"
+    );
 
     // The robust algorithm should handle at least some of these challenging cases
     assert!(

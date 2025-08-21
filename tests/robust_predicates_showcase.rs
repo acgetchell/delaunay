@@ -428,13 +428,13 @@ fn triangulation_scenario_demo() {
         let cells_before = tds.cells().len();
         let start_time = Instant::now();
 
-        match robust_algorithm.robust_insert_vertex(&mut tds, vertex) {
+        match robust_algorithm.insert_vertex(&mut tds, vertex) {
             Ok(info) => {
                 let duration = start_time.elapsed();
                 successful_insertions += 1;
 
                 println!("   ✅ SUCCESS in {duration:?}");
-                println!("      Strategy: {:?}", info.strategy_used);
+                println!("      Strategy: {:?}", info.strategy);
                 let cells_created_i32 = NumCast::from(info.cells_created).unwrap_or(0i32);
                 let cells_removed_i32 = NumCast::from(info.cells_removed).unwrap_or(0i32);
                 let cell_change = cells_created_i32 - cells_removed_i32;
@@ -465,7 +465,10 @@ fn triangulation_scenario_demo() {
     let total_cells_before_i32 = NumCast::from(total_cells_before).unwrap_or(0i32);
     let total_cell_change = total_cells_after_i32 - total_cells_before_i32;
     println!("   Total cells: {total_cells_before} → {total_cells_after} ({total_cell_change:+})");
-    println!("   Algorithm stats: {:?}", robust_algorithm.stats);
+    let (vertices_processed, cells_created, cells_removed) = robust_algorithm.get_statistics();
+    println!(
+        "   Algorithm stats: vertices_processed={vertices_processed}, cells_created={cells_created}, cells_removed={cells_removed}"
+    );
 
     // This would commonly fail with standard Bowyer-Watson on such degenerate cases
     assert!(
