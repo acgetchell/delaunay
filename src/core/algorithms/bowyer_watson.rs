@@ -795,7 +795,8 @@ mod tests {
                     .iter()
                     .map(|v| v.point().to_array())
                     .collect();
-                println!("  Bad cell {:?}: {:?}", cell.uuid(), coords);
+                #[cfg(debug_assertions)]
+                eprintln!("  Bad cell {:?}: {:?}", cell.uuid(), coords);
             }
         }
 

@@ -1384,6 +1384,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn test_hull_extension_insertion_consistency() {
         println!("Testing hull extension insertion maintains TDS consistency");
 
@@ -1544,6 +1545,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn test_finalization_prevents_inconsistencies() {
         println!("Testing that finalization prevents data structure inconsistencies");
 
@@ -1600,12 +1602,17 @@ mod tests {
                     .collect();
                 vertex_uuids.sort();
                 let signature = format!("{vertex_uuids:?}");
-                assert!(
-                    cell_signatures.insert(signature.clone()),
-                    "Duplicate cell found after insertion {}: {}",
-                    i + 1,
-                    signature
-                );
+
+                let inserted = cell_signatures.insert(signature.clone());
+                if !inserted {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Duplicate cell found after insertion {}: {}",
+                        i + 1,
+                        signature
+                    );
+                }
+                assert!(inserted, "Duplicate cell found after insertion {}", i + 1);
             }
 
             // 3. All facets should be properly shared
