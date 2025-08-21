@@ -494,7 +494,7 @@ where
         let mut vertex_count = 0;
 
         for existing_vertex in tds.vertices.values() {
-            let coords: [T; D] = existing_vertex.into();
+            let coords: [T; D] = existing_vertex.point().into();
             vertex_count += 1;
 
             for i in 0..D {

@@ -197,6 +197,16 @@ where
                             vertex,
                         );
 
+                    // Maintain invariants after structural changes
+                    <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds)
+                        .map_err(|e| {
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Failed to finalize triangulation after cavity-based insertion: {e}"
+                                ),
+                            }
+                        })?;
+
                     return Ok(InsertionInfo {
                         strategy: InsertionStrategy::CavityBased,
                         cells_removed,
@@ -238,6 +248,15 @@ where
                         &visible_facets,
                         vertex,
                     );
+
+                // Maintain invariants after structural changes
+                <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
+                    |e| TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Failed to finalize triangulation after hull extension insertion: {e}"
+                        ),
+                    },
+                )?;
 
                 return Ok(InsertionInfo {
                     strategy: InsertionStrategy::HullExtension,
@@ -1245,5 +1264,417 @@ mod tests {
                 Err(e) => println!("Exterior insertion failed: {e}"),
             }
         }
+    }
+
+    #[test]
+    fn test_cavity_based_insertion_consistency() {
+        println!("Testing cavity-based insertion maintains TDS consistency");
+
+        let mut algorithm = RobustBoyerWatson::new();
+
+        // Create initial triangulation
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([0.0, 2.0, 0.0]),
+            vertex!([0.0, 0.0, 2.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Verify initial TDS is valid
+        assert!(tds.is_valid().is_ok(), "Initial TDS should be valid");
+        let initial_cells = tds.number_of_cells();
+        println!("Initial TDS has {initial_cells} cells");
+
+        // Insert interior vertices that should trigger cavity-based insertion
+        let test_vertices = [
+            vertex!([0.5, 0.5, 0.5]), // Interior point
+            vertex!([0.3, 0.3, 0.3]), // Another interior point
+            vertex!([0.7, 0.2, 0.1]), // Interior point near boundary
+        ];
+
+        for (i, test_vertex) in test_vertices.iter().enumerate() {
+            println!(
+                "\nInserting vertex {} at {:?}",
+                i + 1,
+                test_vertex.point().to_array()
+            );
+
+            let cells_before = tds.number_of_cells();
+
+            // Insert the vertex
+            let result = algorithm.insert_vertex(&mut tds, *test_vertex);
+
+            // Verify insertion succeeded
+            assert!(
+                result.is_ok(),
+                "Cavity-based insertion {} should succeed",
+                i + 1
+            );
+            let info = result.unwrap();
+
+            println!(
+                "  Result: created={}, removed={}",
+                info.cells_created, info.cells_removed
+            );
+
+            // Verify TDS consistency after insertion
+            let validation_result = tds.is_valid();
+            assert!(
+                validation_result.is_ok(),
+                "TDS should be valid after cavity-based insertion {}: {:?}",
+                i + 1,
+                validation_result.err()
+            );
+
+            let cells_after = tds.number_of_cells();
+            println!("  Cells before: {cells_before}, after: {cells_after}");
+
+            // Verify cells were created (cavity-based should create cells)
+            assert!(info.cells_created > 0, "Should create at least one cell");
+
+            // Verify neighbor relationships are consistent
+            for (cell_key, cell) in tds.cells() {
+                if let Some(neighbors) = &cell.neighbors {
+                    for neighbor_uuid in neighbors {
+                        if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid) {
+                            if let Some(neighbor) = tds.cells().get(*neighbor_key) {
+                                // Each neighbor should also reference this cell as a neighbor
+                                if let Some(neighbor_neighbors) = &neighbor.neighbors {
+                                    let cell_uuid = tds
+                                        .cell_bimap
+                                        .get_by_right(&cell_key)
+                                        .expect("Cell should have UUID");
+                                    assert!(
+                                        neighbor_neighbors.contains(cell_uuid),
+                                        "Neighbor relationship should be symmetric after insertion {}",
+                                        i + 1
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Verify boundary facets are consistent
+            let boundary_result = tds.boundary_facets();
+            assert!(
+                boundary_result.is_ok(),
+                "Should be able to compute boundary facets after insertion {}",
+                i + 1
+            );
+
+            if let Ok(boundary_facets) = boundary_result {
+                println!("  Boundary facets: {}", boundary_facets.len());
+
+                // Each boundary facet should have exactly 3 vertices (for 3D)
+                for facet in &boundary_facets {
+                    assert_eq!(
+                        facet.vertices().len(),
+                        3,
+                        "Boundary facet should have 3 vertices after insertion {}",
+                        i + 1
+                    );
+                }
+            }
+        }
+
+        println!("✓ All cavity-based insertions maintain TDS consistency");
+    }
+
+    #[test]
+    fn test_hull_extension_insertion_consistency() {
+        println!("Testing hull extension insertion maintains TDS consistency");
+
+        let mut algorithm = RobustBoyerWatson::new();
+
+        // Create initial triangulation
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Verify initial TDS is valid
+        assert!(tds.is_valid().is_ok(), "Initial TDS should be valid");
+        let initial_cells = tds.number_of_cells();
+        println!("Initial TDS has {initial_cells} cells");
+
+        // Insert exterior vertices that should trigger hull extension
+        let test_vertices = vec![
+            vertex!([2.0, 0.0, 0.0]),  // Exterior point extending in x
+            vertex!([-1.0, 0.0, 0.0]), // Exterior point in negative x
+            vertex!([0.0, 2.0, 0.0]),  // Exterior point extending in y
+            vertex!([0.0, 0.0, -1.0]), // Exterior point in negative z
+            vertex!([1.5, 1.5, 0.0]),  // Exterior point in xy plane
+        ];
+
+        for (i, test_vertex) in test_vertices.iter().enumerate() {
+            println!(
+                "\nInserting exterior vertex {} at {:?}",
+                i + 1,
+                test_vertex.point().to_array()
+            );
+
+            let cells_before = tds.number_of_cells();
+            let initial_boundary_facets = tds.boundary_facets().unwrap().len();
+
+            // Insert the vertex
+            let result = algorithm.insert_vertex(&mut tds, *test_vertex);
+
+            // Verify insertion succeeded
+            assert!(
+                result.is_ok(),
+                "Hull extension insertion {} should succeed",
+                i + 1
+            );
+            let info = result.unwrap();
+
+            println!(
+                "  Result: created={}, removed={}",
+                info.cells_created, info.cells_removed
+            );
+
+            // Verify TDS consistency after insertion
+            let validation_result = tds.is_valid();
+            assert!(
+                validation_result.is_ok(),
+                "TDS should be valid after hull extension insertion {}: {:?}",
+                i + 1,
+                validation_result.err()
+            );
+
+            let cells_after = tds.number_of_cells();
+            println!("  Cells before: {cells_before}, after: {cells_after}");
+
+            // Verify cells were created
+            assert!(info.cells_created > 0, "Should create at least one cell");
+
+            // Verify the triangulation expanded (more cells added overall)
+            // Note: Even "exterior" vertices might trigger cavity-based insertion if they're
+            // inside the circumsphere of existing cells, so we can't guarantee pure hull extension
+            assert!(
+                cells_after > cells_before,
+                "Insertion should increase cell count overall"
+            );
+
+            // Print information about the insertion strategy used
+            if info.cells_removed > 0 {
+                println!(
+                    "    Note: Vertex {} used cavity-based insertion (removed {} cells)",
+                    i + 1,
+                    info.cells_removed
+                );
+            } else {
+                println!(
+                    "    Note: Vertex {} used pure hull extension (no cells removed)",
+                    i + 1
+                );
+            }
+
+            // Verify neighbor relationships are consistent
+            for (cell_key, cell) in tds.cells() {
+                if let Some(neighbors) = &cell.neighbors {
+                    for neighbor_uuid in neighbors {
+                        if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid) {
+                            if let Some(neighbor) = tds.cells().get(*neighbor_key) {
+                                // Each neighbor should also reference this cell as a neighbor
+                                if let Some(neighbor_neighbors) = &neighbor.neighbors {
+                                    let cell_uuid = tds
+                                        .cell_bimap
+                                        .get_by_right(&cell_key)
+                                        .expect("Cell should have UUID");
+                                    assert!(
+                                        neighbor_neighbors.contains(cell_uuid),
+                                        "Neighbor relationship should be symmetric after hull extension {}",
+                                        i + 1
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Verify boundary facets are consistent
+            let boundary_result = tds.boundary_facets();
+            assert!(
+                boundary_result.is_ok(),
+                "Should be able to compute boundary facets after hull extension {}",
+                i + 1
+            );
+
+            if let Ok(boundary_facets) = boundary_result {
+                let final_boundary_facets = boundary_facets.len();
+                println!(
+                    "  Initial boundary facets: {initial_boundary_facets}, final: {final_boundary_facets}"
+                );
+
+                // Each boundary facet should have exactly 3 vertices (for 3D)
+                for facet in &boundary_facets {
+                    assert_eq!(
+                        facet.vertices().len(),
+                        3,
+                        "Boundary facet should have 3 vertices after hull extension {}",
+                        i + 1
+                    );
+                }
+
+                // The newly inserted vertex should be in the triangulation
+                let vertex_found = tds.vertices.values().any(|v| {
+                    let v_coords: [f64; 3] = (*v).into();
+                    let test_coords: [f64; 3] = test_vertex.point().into();
+                    v_coords
+                        .iter()
+                        .zip(test_coords.iter())
+                        .all(|(a, b)| (a - b).abs() < f64::EPSILON)
+                });
+                assert!(
+                    vertex_found,
+                    "Inserted vertex should be found in TDS after hull extension {}",
+                    i + 1
+                );
+            }
+        }
+
+        println!("✓ All hull extension insertions maintain TDS consistency");
+    }
+
+    #[test]
+    fn test_finalization_prevents_inconsistencies() {
+        println!("Testing that finalization prevents data structure inconsistencies");
+
+        let mut algorithm = RobustBoyerWatson::new();
+
+        // Create initial triangulation
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([3.0, 0.0, 0.0]),
+            vertex!([0.0, 3.0, 0.0]),
+            vertex!([0.0, 0.0, 3.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Test a sequence of insertions that could create inconsistencies without proper finalization
+        let test_sequence = vec![
+            vertex!([1.0, 1.0, 1.0]),   // Interior
+            vertex!([4.0, 0.0, 0.0]),   // Exterior
+            vertex!([0.5, 0.5, 0.5]),   // Interior
+            vertex!([0.0, 4.0, 0.0]),   // Exterior
+            vertex!([2.0, 2.0, 0.1]),   // Near boundary
+            vertex!([-1.0, -1.0, 0.0]), // Exterior negative
+        ];
+
+        for (i, test_vertex) in test_sequence.iter().enumerate() {
+            println!(
+                "\nInsertion {} at {:?}",
+                i + 1,
+                test_vertex.point().to_array()
+            );
+
+            // Insert vertex
+            let result = algorithm.insert_vertex(&mut tds, *test_vertex);
+            assert!(result.is_ok(), "Insertion {} should succeed", i + 1);
+
+            // Immediately verify all critical invariants that finalization should maintain
+
+            // 1. TDS validation should pass
+            let validation = tds.is_valid();
+            assert!(
+                validation.is_ok(),
+                "TDS validation should pass after insertion {}: {:?}",
+                i + 1,
+                validation.err()
+            );
+
+            // 2. No duplicate cells should exist
+            let mut cell_signatures = std::collections::HashSet::new();
+            for (_, cell) in tds.cells() {
+                let mut vertex_uuids: Vec<_> = cell
+                    .vertices()
+                    .iter()
+                    .map(crate::core::vertex::Vertex::uuid)
+                    .collect();
+                vertex_uuids.sort();
+                let signature = format!("{vertex_uuids:?}");
+                assert!(
+                    cell_signatures.insert(signature.clone()),
+                    "Duplicate cell found after insertion {}: {}",
+                    i + 1,
+                    signature
+                );
+            }
+
+            // 3. All facets should be properly shared
+            let facet_to_cells = tds.build_facet_to_cells_hashmap();
+            for (facet_key, cells) in &facet_to_cells {
+                assert!(
+                    cells.len() <= 2,
+                    "Facet {} shared by more than 2 cells after insertion {}: {} cells",
+                    facet_key,
+                    i + 1,
+                    cells.len()
+                );
+
+                // If shared by 2 cells, both should reference each other as neighbors
+                if cells.len() == 2 {
+                    let (cell1_key, _) = cells[0];
+                    let (cell2_key, _) = cells[1];
+
+                    if let (Some(cell1), Some(cell2)) =
+                        (tds.cells().get(cell1_key), tds.cells().get(cell2_key))
+                    {
+                        if let (Some(neighbors1), Some(neighbors2)) =
+                            (&cell1.neighbors, &cell2.neighbors)
+                        {
+                            let cell2_uuid = tds
+                                .cell_bimap
+                                .get_by_right(&cell2_key)
+                                .expect("Cell2 should have UUID");
+                            let cell1_uuid = tds
+                                .cell_bimap
+                                .get_by_right(&cell1_key)
+                                .expect("Cell1 should have UUID");
+                            assert!(
+                                neighbors1.contains(cell2_uuid),
+                                "Cell1 should reference cell2 as neighbor after insertion {}",
+                                i + 1
+                            );
+                            assert!(
+                                neighbors2.contains(cell1_uuid),
+                                "Cell2 should reference cell1 as neighbor after insertion {}",
+                                i + 1
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 4. All vertices should have proper incident cells assigned
+            for (_, vertex) in &tds.vertices {
+                if let Some(incident_cell_uuid) = vertex.incident_cell {
+                    if let Some(incident_cell_key) = tds.cell_bimap.get_by_left(&incident_cell_uuid)
+                    {
+                        if let Some(incident_cell) = tds.cells().get(*incident_cell_key) {
+                            let cell_vertices = incident_cell.vertices();
+                            let vertex_is_in_cell =
+                                cell_vertices.iter().any(|v| v.uuid() == vertex.uuid());
+                            assert!(
+                                vertex_is_in_cell,
+                                "Vertex incident cell should contain the vertex after insertion {}",
+                                i + 1
+                            );
+                        }
+                    }
+                }
+            }
+
+            println!("  ✓ All invariants maintained after insertion {}", i + 1);
+        }
+
+        println!("✓ Finalization successfully prevents all tested inconsistencies");
     }
 }
