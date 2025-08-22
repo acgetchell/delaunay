@@ -4,7 +4,6 @@
 // IMPORTS
 // =============================================================================
 
-use anyhow::Result;
 use peroxide::prelude::*;
 use thiserror::Error;
 
@@ -13,7 +12,7 @@ use thiserror::Error;
 // =============================================================================
 
 /// Error type for matrix operations.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum MatrixError {
     /// Matrix is singular.
     #[error("Matrix is singular!")]
@@ -50,9 +49,9 @@ pub enum MatrixError {
 ///
 /// assert_eq!(inverted_matrix.unwrap().data, vec![-2.0, 1.0, 1.5, -0.5]);
 /// ```
-pub fn invert(matrix: &Matrix) -> Result<Matrix, anyhow::Error> {
+pub fn invert(matrix: &Matrix) -> Result<Matrix, MatrixError> {
     if matrix.det() == 0.0 {
-        return Err(MatrixError::SingularMatrix.into());
+        return Err(MatrixError::SingularMatrix);
     }
     let inv = matrix.inv();
     Ok(inv)
@@ -157,6 +156,34 @@ mod tests {
                 .to_string()
                 .contains("Matrix is singular")
         );
+    }
+
+    #[test]
+    fn matrix_error_integration_with_circumcenter() {
+        use crate::geometry::point::Point;
+        use crate::geometry::traits::coordinate::Coordinate;
+        use crate::geometry::util::{CircumcenterError, circumcenter};
+
+        // Test with collinear points that should cause matrix inversion to fail
+        let points = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 1.0]),
+            Point::new([2.0, 2.0]), // Collinear points - should cause singular matrix
+        ];
+
+        let result = circumcenter(&points);
+        assert!(result.is_err());
+
+        // The error should be a CircumcenterError containing a MatrixError
+        match result.unwrap_err() {
+            CircumcenterError::MatrixError(matrix_err) => {
+                assert_eq!(matrix_err, super::MatrixError::SingularMatrix);
+                assert!(matrix_err.to_string().contains("Matrix is singular"));
+            }
+            other_err => {
+                panic!("Expected MatrixError, got: {other_err:?}");
+            }
+        }
     }
 
     // #[test]

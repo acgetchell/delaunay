@@ -120,22 +120,26 @@
 //! assert!(tds.is_valid().is_ok());
 //! ```
 //!
-//! ## 2D Triangulation
+//! ## 4D Triangulation
 //!
 //! ```rust
 //! use delaunay::core::triangulation_data_structure::Tds;
 //! use delaunay::vertex;
 //!
-//! // Create 2D triangulation
-//! let vertices_2d = vec![
-//!     vertex!([0.0, 0.0]),
-//!     vertex!([1.0, 0.0]),
-//!     vertex!([0.0, 1.0]),
-//!     vertex!([1.0, 1.0]),
+//! // Create 4D triangulation with 5 vertices (needed for a 4-simplex)
+//! let vertices_4d = vec![
+//!     vertex!([0.0, 0.0, 0.0, 0.0]),  // Origin
+//!     vertex!([1.0, 0.0, 0.0, 0.0]),  // Unit vector along first dimension
+//!     vertex!([0.0, 1.0, 0.0, 0.0]),  // Unit vector along second dimension
+//!     vertex!([0.0, 0.0, 1.0, 0.0]),  // Unit vector along third dimension
+//!     vertex!([0.0, 0.0, 0.0, 1.0]),  // Unit vector along fourth dimension
 //! ];
 //!
-//! let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
-//! assert_eq!(tds_2d.dim(), 2);
+//! let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+//! assert_eq!(tds_4d.dim(), 4);
+//! assert_eq!(tds_4d.number_of_vertices(), 5);
+//! assert_eq!(tds_4d.number_of_cells(), 1);
+//! assert!(tds_4d.is_valid().is_ok());
 //! ```
 //!
 //! # References

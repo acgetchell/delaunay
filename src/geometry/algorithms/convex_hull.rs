@@ -1,19 +1,23 @@
 use crate::core::facet::{Facet, FacetError};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::Tds;
+use crate::core::triangulation_data_structure::{CellKey, Tds};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::simplex_orientation;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
-use crate::geometry::util::squared_norm;
+use crate::geometry::traits::coordinate::{
+    Coordinate, CoordinateConversionError, CoordinateScalar,
+};
+use crate::geometry::util::{safe_scalar_from_f64, safe_usize_to_scalar, squared_norm};
 use nalgebra::ComplexField;
-use num_traits::{NumCast, cast};
+use num_traits::NumCast;
 use num_traits::{One, Zero};
 use ordered_float::OrderedFloat;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 use std::iter::Sum;
 use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
+use std::sync::OnceLock;
 use thiserror::Error;
 
 // =============================================================================
@@ -53,6 +57,9 @@ pub enum ConvexHullConstructionError {
         /// Description of the cast failure.
         message: String,
     },
+    /// Coordinate conversion error occurred during geometric computations.
+    #[error("Coordinate conversion error: {0}")]
+    CoordinateConversion(#[from] CoordinateConversionError),
 }
 
 // =============================================================================
@@ -118,6 +125,10 @@ where
 {
     /// The boundary facets that form the convex hull
     pub hull_facets: Vec<Facet<T, U, V, D>>,
+    /// Cache for the facet-to-cells mapping to avoid rebuilding it for each facet check
+    /// Uses `OnceLock` for thread-safe lazy initialization
+    #[allow(clippy::type_complexity)]
+    facet_to_cells_cache: OnceLock<HashMap<u64, Vec<(CellKey, usize)>>>,
 }
 
 impl<T, U, V, const D: usize> ConvexHull<T, U, V, D>
@@ -215,7 +226,10 @@ where
             });
         }
 
-        Ok(Self { hull_facets })
+        Ok(Self {
+            hull_facets,
+            facet_to_cells_cache: OnceLock::new(),
+        })
     }
 
     /// Tests if a facet is visible from an external point using proper geometric predicates
@@ -224,6 +238,8 @@ where
     /// This implementation uses geometric orientation predicates to determine the correct
     /// side of the hyperplane defined by the facet, based on the Bowyer-Watson algorithm.
     ///
+    /// Uses an internal cache to avoid rebuilding the facet-to-cells mapping for each call.
+    ///
     /// # Algorithm
     ///
     /// For a boundary facet F with vertices {f₁, f₂, ..., fₐ}, we need to determine
@@ -231,10 +247,11 @@ where
     /// from a convex hull, we know it has exactly one adjacent cell.
     ///
     /// The algorithm works as follows:
-    /// 1. Find the "inside" vertex of the adjacent cell (vertex not in the facet)
-    /// 2. Create two simplices: facet + `inside_vertex` and facet + `test_point`  
-    /// 3. Compare orientations - different orientations mean opposite sides
-    /// 4. If test point is on opposite side from inside vertex, facet is visible
+    /// 1. Get or build the cached facet-to-cells mapping
+    /// 2. Find the "inside" vertex of the adjacent cell (vertex not in the facet)
+    /// 3. Create two simplices: facet + `inside_vertex` and facet + `test_point`  
+    /// 4. Compare orientations - different orientations mean opposite sides
+    /// 5. If test point is on opposite side from inside vertex, facet is visible
     ///
     /// # Arguments
     ///
@@ -311,8 +328,11 @@ where
             });
         }
 
-        // Find the cell adjacent to this boundary facet
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        // Get or build the cached facet-to-cells mapping
+        let facet_to_cells = self
+            .facet_to_cells_cache
+            .get_or_init(|| tds.build_facet_to_cells_hashmap());
+
         let facet_key = facet.key();
 
         let adjacent_cells = facet_to_cells
@@ -419,14 +439,8 @@ where
                 centroid_coords[i] += coord;
             }
         }
-        let num_vertices = cast(vertex_points.len()).ok_or_else(|| {
-            ConvexHullConstructionError::NumericCastFailed {
-                message: format!(
-                    "Failed to cast vertex count {} to coordinate type for centroid calculation",
-                    vertex_points.len()
-                ),
-            }
-        })?;
+        let num_vertices = safe_usize_to_scalar(vertex_points.len())
+            .map_err(ConvexHullConstructionError::CoordinateConversion)?;
         for coord in &mut centroid_coords {
             *coord /= num_vertices;
         }
@@ -441,9 +455,7 @@ where
 
         // Use a threshold to determine visibility - this is a simple heuristic
         let threshold =
-            cast(1.0f64).ok_or_else(|| ConvexHullConstructionError::NumericCastFailed {
-                message: "Failed to cast threshold value 1.0 to coordinate type".to_string(),
-            })?;
+            safe_scalar_from_f64(1.0).map_err(ConvexHullConstructionError::CoordinateConversion)?;
         Ok(distance_squared > threshold)
     }
 
@@ -581,13 +593,8 @@ where
 
             // Calculate distance from point to facet centroid as a simple heuristic
             let mut centroid_coords = [T::zero(); D];
-            let num_vertices = cast(facet_vertices.len())
-                .ok_or_else(|| ConvexHullConstructionError::NumericCastFailed {
-                    message: format!(
-                        "Failed to cast vertex count {} to coordinate type for centroid calculation",
-                        facet_vertices.len()
-                    ),
-                })?;
+            let num_vertices = safe_usize_to_scalar(facet_vertices.len())
+                .map_err(ConvexHullConstructionError::CoordinateConversion)?;
 
             for vertex in &facet_vertices {
                 let vertex_point = vertex.point();
@@ -947,6 +954,7 @@ where
     fn default() -> Self {
         Self {
             hull_facets: Vec::new(),
+            facet_to_cells_cache: OnceLock::new(),
         }
     }
 }

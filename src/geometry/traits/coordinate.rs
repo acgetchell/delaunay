@@ -67,6 +67,16 @@ pub enum CoordinateConversionError {
         /// Target type name
         to_type: &'static str,
     },
+    /// Non-finite value (NaN or infinity) encountered during coordinate conversion
+    #[error(
+        "Non-finite value (NaN or infinity) at coordinate index {coordinate_index}: {coordinate_value}"
+    )]
+    NonFiniteValue {
+        /// Index of the coordinate that contains the non-finite value
+        coordinate_index: usize,
+        /// String representation of the non-finite coordinate value
+        coordinate_value: String,
+    },
 }
 
 /// Default tolerance for f32 floating-point comparisons.

@@ -755,6 +755,8 @@ mod tests {
                     .collect();
                 #[cfg(debug_assertions)]
                 eprintln!("  Bad cell {:?}: {:?}", cell.uuid(), coords);
+                #[cfg(not(debug_assertions))]
+                let _ = coords; // Avoid unused variable warning in release
             }
         }
 

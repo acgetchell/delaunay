@@ -591,8 +591,7 @@ where
     ///
     /// # Returns
     ///
-    /// The `dim` function returns the dimension, which is calculated by
-    /// subtracting 1 from the number of vertices in the [Cell].
+    /// The `dim` function returns the compile-time dimension `D` of the [Cell].
     ///
     /// # Example
     ///

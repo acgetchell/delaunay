@@ -4,10 +4,8 @@
 //! that operate on points and simplices, including circumcenter and circumradius
 //! calculations.
 
-use na::{ComplexField, Const, OPoint};
-use nalgebra as na;
-use num_traits::{Float, Zero, cast};
-use peroxide::fuga::{LinearAlgebra, anyhow, zeros};
+use num_traits::{Float, Zero};
+use peroxide::fuga::{LinearAlgebra, zeros};
 use std::iter::Sum;
 
 use crate::core::cell::CellValidationError;
@@ -16,9 +14,10 @@ use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
 };
 use crate::geometry::util::{
-    circumcenter, circumradius_with_center, convert_point_to_f64_coords, convert_scalar_to_f64,
-    hypot, squared_norm,
+    circumcenter, circumradius_with_center, hypot, safe_coords_to_f64, safe_scalar_to_f64,
+    squared_norm,
 };
+use crate::prelude::CircumcenterError;
 
 /// Represents the position of a point relative to a circumsphere.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,16 +132,7 @@ where
     for (i, p) in simplex_points.iter().enumerate() {
         // Use implicit conversion from point to coordinates
         let point_coords: [T; D] = p.into();
-        let mut point_coords_f64: [f64; D] = [0.0; D];
-        for (j, &coord) in point_coords.iter().enumerate() {
-            point_coords_f64[j] =
-                cast(coord).ok_or_else(|| CoordinateConversionError::ConversionFailed {
-                    coordinate_index: j,
-                    coordinate_value: format!("{coord:?}"),
-                    from_type: std::any::type_name::<T>(),
-                    to_type: "f64",
-                })?;
-        }
+        let point_coords_f64 = safe_coords_to_f64(point_coords)?;
 
         // Add coordinates
         for j in 0..D {
@@ -158,13 +148,7 @@ where
 
     // Use a tolerance for degenerate case detection
     let tolerance = T::default_tolerance();
-    let tolerance_f64: f64 =
-        cast(tolerance).ok_or_else(|| CoordinateConversionError::ConversionFailed {
-            coordinate_index: 0,
-            coordinate_value: format!("{tolerance:?}"),
-            from_type: std::any::type_name::<T>(),
-            to_type: "f64",
-        })?;
+    let tolerance_f64 = safe_scalar_to_f64(tolerance)?;
 
     if det > tolerance_f64 {
         Ok(Orientation::POSITIVE)
@@ -231,12 +215,9 @@ where
 pub fn insphere_distance<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: Point<T, D>,
-) -> Result<InSphere, anyhow::Error>
+) -> Result<InSphere, CircumcenterError>
 where
-    T: CoordinateScalar + ComplexField<RealField = T> + Sum + Zero,
-    f64: From<T>,
-    T: From<f64>,
-    OPoint<T, Const<D>>: From<[f64; D]>,
+    T: CoordinateScalar + Sum + Zero,
 {
     let circumcenter = circumcenter(simplex_points)?;
     let circumradius = circumradius_with_center(simplex_points, &circumcenter)?;
@@ -479,28 +460,30 @@ where
     let mut matrix = zeros(D + 2, D + 2);
 
     for (i, p) in simplex_points.iter().enumerate() {
-        let point_coords_f64 = convert_point_to_f64_coords(p)?;
+        let point_coords: [T; D] = p.into();
+        let point_coords_f64 = safe_coords_to_f64(point_coords)?;
         for j in 0..D {
             matrix[(i, j)] = point_coords_f64[j];
         }
 
-        let squared_norm_t = squared_norm(p.into());
-        matrix[(i, D)] = convert_scalar_to_f64(squared_norm_t)?;
+        let squared_norm_t = squared_norm(point_coords);
+        matrix[(i, D)] = safe_scalar_to_f64(squared_norm_t)?;
         matrix[(i, D + 1)] = 1.0;
     }
 
-    let test_point_coords_f64 = convert_point_to_f64_coords(&test_point)?;
+    let test_point_coords: [T; D] = (&test_point).into();
+    let test_point_coords_f64 = safe_coords_to_f64(test_point_coords)?;
     for j in 0..D {
         matrix[(D + 1, j)] = test_point_coords_f64[j];
     }
 
-    let test_squared_norm_t = squared_norm((&test_point).into());
-    matrix[(D + 1, D)] = convert_scalar_to_f64(test_squared_norm_t)?;
+    let test_squared_norm_t = squared_norm(test_point_coords);
+    matrix[(D + 1, D)] = safe_scalar_to_f64(test_squared_norm_t)?;
     matrix[(D + 1, D + 1)] = 1.0;
 
     let det = matrix.det();
     let orientation = simplex_orientation(simplex_points)?;
-    let tolerance_f64 = convert_scalar_to_f64(T::default_tolerance())?;
+    let tolerance_f64 = safe_scalar_to_f64(T::default_tolerance())?;
 
     match orientation {
         Orientation::DEGENERATE => Err(CoordinateConversionError::ConversionFailed {
@@ -646,9 +629,9 @@ where
             relative_coords_t[j] = point_coords[j] - ref_point_coords[j];
         }
 
-        // Convert to f64 for matrix operations
-        let relative_coords_f64: [f64; D] =
-            relative_coords_t.map(|coord| cast(coord).unwrap_or(0.0));
+        // Convert to f64 for matrix operations using safe conversion
+        let relative_coords_f64: [f64; D] = safe_coords_to_f64(relative_coords_t)
+            .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
         // Fill matrix row
         for j in 0..D {
@@ -657,7 +640,8 @@ where
 
         // Calculate squared norm using generic arithmetic on T
         let squared_norm_t = squared_norm(relative_coords_t);
-        let squared_norm_f64: f64 = cast(squared_norm_t).unwrap_or(0.0);
+        let squared_norm_f64: f64 = safe_scalar_to_f64(squared_norm_t)
+            .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
         // Add squared norm to the last column
         matrix[(i - 1, D)] = squared_norm_f64;
@@ -672,9 +656,9 @@ where
         test_relative_coords_t[j] = test_point_coords[j] - ref_point_coords[j];
     }
 
-    // Convert to f64 for matrix operations
-    let test_relative_coords_f64: [f64; D] =
-        test_relative_coords_t.map(|coord| cast(coord).unwrap_or(0.0));
+    // Convert to f64 for matrix operations using safe conversion
+    let test_relative_coords_f64: [f64; D] = safe_coords_to_f64(test_relative_coords_t)
+        .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
     // Fill matrix row
     for j in 0..D {
@@ -683,7 +667,8 @@ where
 
     // Calculate squared norm using generic arithmetic on T
     let test_squared_norm_t = squared_norm(test_relative_coords_t);
-    let test_squared_norm_f64: f64 = cast(test_squared_norm_t).unwrap_or(0.0);
+    let test_squared_norm_f64: f64 = safe_scalar_to_f64(test_squared_norm_t)
+        .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
     // Add squared norm to the last column
     matrix[(D, D)] = test_squared_norm_f64;
@@ -697,7 +682,8 @@ where
 
     // Use a tolerance for boundary detection
     let tolerance = T::default_tolerance();
-    let tolerance_f64: f64 = cast(tolerance).unwrap_or(1e-10);
+    let tolerance_f64: f64 = safe_scalar_to_f64(tolerance)
+        .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
     match orientation {
         Orientation::DEGENERATE => {

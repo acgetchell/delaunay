@@ -11,9 +11,11 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
 
 use super::predicates::{InSphere, Orientation};
-use super::util::squared_norm;
+use super::util::{safe_coords_to_f64, safe_scalar_to_f64, squared_norm};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use crate::geometry::traits::coordinate::{
+    Coordinate, CoordinateConversionError, CoordinateScalar,
+};
 
 /// Configuration for robust geometric predicates.
 ///
@@ -61,15 +63,18 @@ pub fn robust_insphere<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
     config: &RobustPredicateConfig<T>,
-) -> Result<InSphere, anyhow::Error>
+) -> Result<InSphere, CoordinateConversionError>
 where
-    T: CoordinateScalar,
+    T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     if simplex_points.len() != D + 1 {
-        return Err(anyhow::Error::msg(
-            "Invalid simplex: wrong number of points",
-        ));
+        return Err(CoordinateConversionError::ConversionFailed {
+            coordinate_index: 0,
+            coordinate_value: format!("Expected {} points, got {}", D + 1, simplex_points.len()),
+            from_type: "point count",
+            to_type: "valid simplex",
+        });
     }
 
     // Strategy 1: Try standard determinant approach with adaptive tolerance
@@ -105,13 +110,13 @@ fn adaptive_tolerance_insphere<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
     config: &RobustPredicateConfig<T>,
-) -> Result<InSphere, anyhow::Error>
+) -> Result<InSphere, CoordinateConversionError>
 where
     T: CoordinateScalar,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     // Build the insphere determinant matrix
-    let matrix = build_insphere_matrix(simplex_points, test_point);
+    let matrix = build_insphere_matrix(simplex_points, test_point)?;
 
     // Calculate determinant
     let det = matrix.determinant();
@@ -123,11 +128,7 @@ where
     let orientation = robust_orientation(simplex_points, config)?;
 
     // Interpret result based on orientation
-    Ok(interpret_insphere_determinant(
-        det,
-        orientation,
-        adaptive_tolerance,
-    ))
+    interpret_insphere_determinant(det, orientation, adaptive_tolerance)
 }
 
 /// Insphere test with matrix conditioning to improve numerical stability.
@@ -138,13 +139,13 @@ fn conditioned_insphere<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
     config: &RobustPredicateConfig<T>,
-) -> Result<InSphere, anyhow::Error>
+) -> Result<InSphere, CoordinateConversionError>
 where
     T: CoordinateScalar,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     // Build matrix and apply conditioning
-    let matrix = build_insphere_matrix(simplex_points, test_point);
+    let matrix = build_insphere_matrix(simplex_points, test_point)?;
 
     // Apply row and column scaling to improve conditioning
     let (conditioned_matrix, scale_factor) = condition_matrix(matrix, config);
@@ -156,7 +157,7 @@ where
     let tolerance = config.base_tolerance;
     let orientation = robust_orientation(simplex_points, config)?;
 
-    Ok(interpret_insphere_determinant(det, orientation, tolerance))
+    interpret_insphere_determinant(det, orientation, tolerance)
 }
 
 /// Insphere test using symbolic perturbation for degenerate cases.
@@ -199,26 +200,29 @@ where
 pub fn robust_orientation<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     config: &RobustPredicateConfig<T>,
-) -> Result<Orientation, anyhow::Error>
+) -> Result<Orientation, CoordinateConversionError>
 where
     T: CoordinateScalar,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     if simplex_points.len() != D + 1 {
-        return Err(anyhow::Error::msg(
-            "Invalid simplex: wrong number of points",
-        ));
+        return Err(CoordinateConversionError::ConversionFailed {
+            coordinate_index: 0,
+            coordinate_value: format!("Expected {} points, got {}", D + 1, simplex_points.len()),
+            from_type: "point count",
+            to_type: "valid simplex",
+        });
     }
 
     // Build orientation matrix
-    let matrix = build_orientation_matrix(simplex_points);
+    let matrix = build_orientation_matrix(simplex_points)?;
 
     // Calculate determinant
     let det = matrix.determinant();
 
     // Use adaptive tolerance
     let tolerance = compute_matrix_adaptive_tolerance(&matrix, config);
-    let tolerance_f64: f64 = cast(tolerance).unwrap_or(1e-15);
+    let tolerance_f64: f64 = safe_scalar_to_f64(tolerance)?;
 
     if det > tolerance_f64 {
         Ok(Orientation::POSITIVE)
@@ -237,7 +241,7 @@ where
 fn build_insphere_matrix<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
-) -> na::DMatrix<f64>
+) -> Result<na::DMatrix<f64>, CoordinateConversionError>
 where
     T: CoordinateScalar,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
@@ -250,14 +254,16 @@ where
     for (i, point) in simplex_points.iter().enumerate() {
         let coords: [T; D] = point.into();
 
-        // Coordinates - cast each coordinate to f64
+        // Coordinates - use safe conversion
+        let coords_f64 = safe_coords_to_f64(coords)?;
         for j in 0..D {
-            matrix[(i, j)] = cast(coords[j]).unwrap_or(0.0);
+            matrix[(i, j)] = coords_f64[j];
         }
 
-        // Squared norm - cast to f64
+        // Squared norm - use safe conversion
         let norm_sq = squared_norm(coords);
-        matrix[(i, D)] = cast(norm_sq).unwrap_or(0.0);
+        let norm_sq_f64 = safe_scalar_to_f64(norm_sq)?;
+        matrix[(i, D)] = norm_sq_f64;
 
         // Constant term
         matrix[(i, D + 1)] = 1.0;
@@ -266,19 +272,23 @@ where
     // Add test point
     let test_coords: [T; D] = (*test_point).into();
 
+    let test_coords_f64 = safe_coords_to_f64(test_coords)?;
     for j in 0..D {
-        matrix[(D + 1, j)] = cast(test_coords[j]).unwrap_or(0.0);
+        matrix[(D + 1, j)] = test_coords_f64[j];
     }
 
     let test_norm_sq = squared_norm(test_coords);
-    matrix[(D + 1, D)] = cast(test_norm_sq).unwrap_or(0.0);
+    let test_norm_sq_f64 = safe_scalar_to_f64(test_norm_sq)?;
+    matrix[(D + 1, D)] = test_norm_sq_f64;
     matrix[(D + 1, D + 1)] = 1.0;
 
-    matrix
+    Ok(matrix)
 }
 
 /// Build orientation matrix for determinant computation.
-fn build_orientation_matrix<T, const D: usize>(simplex_points: &[Point<T, D>]) -> na::DMatrix<f64>
+fn build_orientation_matrix<T, const D: usize>(
+    simplex_points: &[Point<T, D>],
+) -> Result<na::DMatrix<f64>, CoordinateConversionError>
 where
     T: CoordinateScalar,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
@@ -290,16 +300,17 @@ where
     for (i, point) in simplex_points.iter().enumerate() {
         let coords: [T; D] = point.into();
 
-        // Add coordinates
+        // Add coordinates using safe conversion
+        let coords_f64 = safe_coords_to_f64(coords)?;
         for j in 0..D {
-            matrix[(i, j)] = cast(coords[j]).unwrap_or(0.0);
+            matrix[(i, j)] = coords_f64[j];
         }
 
         // Add constant term
         matrix[(i, D)] = 1.0;
     }
 
-    matrix
+    Ok(matrix)
 }
 
 /// Compute adaptive tolerance based on matrix magnitude and conditioning.
@@ -318,12 +329,13 @@ where
     }
 
     // Scale base tolerance by matrix magnitude
-    let base_tol: f64 = cast(config.base_tolerance).unwrap_or(1e-15);
-    let rel_factor: f64 = cast(config.relative_tolerance_factor).unwrap_or(1e-12);
+    let base_tol: f64 = safe_scalar_to_f64(config.base_tolerance).unwrap_or(1e-15);
+    let rel_factor: f64 = safe_scalar_to_f64(config.relative_tolerance_factor).unwrap_or(1e-12);
 
     let adaptive_tol = rel_factor.mul_add(max_row_sum, base_tol);
 
-    cast(adaptive_tol).unwrap_or(config.base_tolerance)
+    // Use safe conversion but fall back to config value on failure
+    super::util::safe_scalar_from_f64(adaptive_tol).unwrap_or(config.base_tolerance)
 }
 
 /// Simplified version for matrix-based tolerance computation.
@@ -367,21 +379,64 @@ where
 }
 
 /// Verify consistency of insphere result using alternative method.
+///
+/// This function provides an independent verification of the insphere result using
+/// the distance-based `insphere_distance` function. This helps detect numerical
+/// inconsistencies that might arise from near-degenerate configurations or precision
+/// issues in the determinant calculation.
+///
+/// # Algorithm
+///
+/// 1. Use `insphere_distance` to get an independent insphere result
+/// 2. Compare this result with the determinant-based result
+/// 3. Consider results consistent if they match or if either is `BOUNDARY`
+///
+/// # Tolerance for Consistency
+///
+/// The function is conservative about marking results as inconsistent:
+/// - Exact matches (`INSIDE`/`INSIDE`, `OUTSIDE`/`OUTSIDE`, `BOUNDARY`/`BOUNDARY`) are consistent
+/// - Any result involving `BOUNDARY` is considered consistent since it indicates degeneracy
+/// - Only direct contradictions (`INSIDE`/`OUTSIDE`) are marked as inconsistent
+///
+/// This approach prevents false negatives when dealing with legitimately degenerate
+/// or near-degenerate configurations.
+///
+/// # Returns
+///
+/// - `true` if the distance-based result is consistent with the determinant result
+/// - `false` if there's a direct contradiction, indicating potential numerical issues
 fn verify_insphere_consistency<T, const D: usize>(
-    _simplex_points: &[Point<T, D>],
-    _test_point: &Point<T, D>,
-    _result: InSphere,
+    simplex_points: &[Point<T, D>],
+    test_point: &Point<T, D>,
+    determinant_result: InSphere,
     _config: &RobustPredicateConfig<T>,
 ) -> bool
 where
-    T: CoordinateScalar,
+    T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
-    // For now, always return true to avoid complex trait bounds
-    // TODO: Implement a proper verification method using NumCast
-    // The alternative distance-based method requires too many trait bounds
-    // that would defeat the purpose of this refactoring
-    true
+    // Use the existing distance-based insphere test for verification
+    super::predicates::insphere_distance(simplex_points, *test_point).map_or(
+        true,
+        |distance_result| {
+            match (determinant_result, distance_result) {
+                // Exact matches are always consistent
+                (InSphere::INSIDE, InSphere::INSIDE)
+                | (InSphere::OUTSIDE, InSphere::OUTSIDE)
+                | (InSphere::BOUNDARY | _, InSphere::BOUNDARY) | (InSphere::BOUNDARY, _) => true,
+
+                // Direct contradictions indicate numerical issues
+                (InSphere::INSIDE, InSphere::OUTSIDE) | (InSphere::OUTSIDE, InSphere::INSIDE) => {
+                    // Log the inconsistency for debugging (in debug builds only)
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Insphere consistency check failed: determinant={determinant_result:?}, distance={distance_result:?}"
+                    );
+                    false
+                }
+            }
+        },
+    )
 }
 
 /// Generate perturbation directions for symbolic perturbation.
@@ -467,13 +522,17 @@ where
 }
 
 /// Interpret determinant result based on orientation and tolerance.
-fn interpret_insphere_determinant<T>(det: f64, orientation: Orientation, tolerance: T) -> InSphere
+fn interpret_insphere_determinant<T>(
+    det: f64,
+    orientation: Orientation,
+    tolerance: T,
+) -> Result<InSphere, CoordinateConversionError>
 where
     T: CoordinateScalar,
 {
-    let tol: f64 = cast(tolerance).unwrap_or(1e-15);
+    let tol: f64 = safe_scalar_to_f64(tolerance)?;
 
-    match orientation {
+    let result = match orientation {
         Orientation::DEGENERATE => {
             InSphere::BOUNDARY // Conservative approach for degenerate cases
         }
@@ -495,7 +554,9 @@ where
                 InSphere::BOUNDARY
             }
         }
-    }
+    };
+
+    Ok(result)
 }
 
 /// Factory function to create robust predicate configurations for different use cases.

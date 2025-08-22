@@ -24,6 +24,7 @@
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateScalar, CoordinateValidationError,
 };
+use num_traits::cast;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
@@ -231,17 +232,21 @@ where
 // TYPE CONVERSION IMPLEMENTATIONS
 // =============================================================================
 
-/// From trait implementations for Point conversions - using Coordinate trait
+/// From trait implementations for Point conversions - using safe cast operations
 impl<T, U, const D: usize> From<[T; D]> for Point<U, D>
 where
-    T: Into<U>,
-    U: CoordinateScalar,
+    T: cast::NumCast,
+    U: CoordinateScalar + cast::NumCast + Default,
 {
     /// Create a new [Point] from an array of coordinates of type `T`.
+    ///
+    /// Uses safe numeric casting to convert between coordinate types.
+    /// If any coordinate fails to convert, the conversion falls back to the default value for U.
     #[inline]
     fn from(coords: [T; D]) -> Self {
-        // Convert the `coords` array to `[U; D]`
-        let coords_u: [U; D] = coords.map(Into::into);
+        // Convert the `coords` array to `[U; D]` using safe cast operations
+        let coords_u: [U; D] =
+            coords.map(|coord| cast::cast(coord).unwrap_or_else(|| U::default()));
         Self::new(coords_u)
     }
 }
@@ -1582,6 +1587,59 @@ mod tests {
 
         // Verify original point is still usable after reference conversion
         assert_relative_eq!(point_ref.to_array().as_slice(), [4.0, 5.0].as_slice());
+    }
+
+    #[test]
+    fn point_cast_conversions() {
+        // Test the cast()-based From<[T; D]> implementation
+
+        // Test f32 to f64 conversion (safe upcast) using From
+        let coords_f32: [f32; 3] = [1.5, 2.5, 3.5];
+        let point_f64: Point<f64, 3> = Point::from(coords_f32);
+
+        // Verify the conversion worked correctly
+        assert_relative_eq!(
+            point_f64.to_array().as_slice(),
+            [1.5f64, 2.5f64, 3.5f64].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // Test same type conversion (no actual cast needed)
+        let coords_f64: [f64; 2] = [10.0, 20.0];
+        let point_f64_same: Point<f64, 2> = Point::from(coords_f64);
+        assert_relative_eq!(
+            point_f64_same.to_array().as_slice(),
+            [10.0, 20.0].as_slice()
+        );
+
+        // Test with integer type conversions
+        let coords_i32: [i32; 4] = [1, 2, 3, 4];
+        let point_f64_from_int: Point<f64, 4> = Point::from(coords_i32);
+        assert_relative_eq!(
+            point_f64_from_int.to_array().as_slice(),
+            [1.0, 2.0, 3.0, 4.0].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // Test with large values that are within range
+        let coords_large_i32: [i32; 2] = [i32::MAX, i32::MIN];
+        let point_f64_from_large: Point<f64, 2> = Point::from(coords_large_i32);
+        assert_relative_eq!(
+            point_f64_from_large.to_array().as_slice(),
+            [f64::from(i32::MAX), f64::from(i32::MIN)].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // Test with complex numbers or unusual types where casting is harder
+        // In real code, this might default to the default value for the target type
+        // This test is just ensuring our From implementation handles reasonable cases
+        let coords_mixed: [f32; 3] = [0.0, 1.5, -3.5];
+        let point_mixed: Point<f64, 3> = Point::from(coords_mixed);
+        assert_relative_eq!(
+            point_mixed.to_array().as_slice(),
+            [0.0, 1.5, -3.5].as_slice(),
+            epsilon = 1e-9
+        );
     }
 
     #[test]
