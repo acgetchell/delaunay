@@ -235,20 +235,20 @@ fn condition_matrix(
 3. **Numerical Stability**: Reduces amplification of floating-point errors
 4. **Zero Division Protection**: Handles near-zero matrix elements safely
 
-### Integration with NumCast
+### Integration with Cast Function
 
-The implementation properly uses `NumCast::from` for type conversions:
+The implementation uses the `cast` function for clean type conversions:
 
 ```rust
-use num_traits::cast::NumCast;
+use num_traits::cast::cast;
 
 // Safe type conversion with fallback
-let tolerance_f64 = NumCast::from(config.base_tolerance)
+let tolerance_f64 = cast(config.base_tolerance)
     .unwrap_or(f64::EPSILON * 1000.0);
 
 // Proper scale factor application
 let final_determinant = conditioned_determinant * scale_factor;
-let result_determinant = NumCast::from(final_determinant)
+let result_determinant = cast(final_determinant)
     .unwrap_or_else(T::zero);
 ```
 

@@ -6,7 +6,7 @@
 //! more reliable when dealing with degenerate or near-degenerate point configurations.
 
 use nalgebra as na;
-use num_traits::{Float, NumCast};
+use num_traits::{Float, cast};
 use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
 
@@ -37,10 +37,10 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
     fn default() -> Self {
         Self {
             base_tolerance: T::default_tolerance(),
-            relative_tolerance_factor: NumCast::from(1e-12).unwrap_or_else(T::default_tolerance),
+            relative_tolerance_factor: cast(1e-12).unwrap_or_else(T::default_tolerance),
             max_refinement_iterations: 3,
-            exact_arithmetic_threshold: NumCast::from(1e-10).unwrap_or_else(T::default_tolerance),
-            perturbation_scale: NumCast::from(1e-10).unwrap_or_else(T::default_tolerance),
+            exact_arithmetic_threshold: cast(1e-10).unwrap_or_else(T::default_tolerance),
+            perturbation_scale: cast(1e-10).unwrap_or_else(T::default_tolerance),
         }
     }
 }
@@ -218,7 +218,7 @@ where
 
     // Use adaptive tolerance
     let tolerance = compute_matrix_adaptive_tolerance(&matrix, config);
-    let tolerance_f64: f64 = NumCast::from(tolerance).unwrap_or(1e-15);
+    let tolerance_f64: f64 = cast(tolerance).unwrap_or(1e-15);
 
     if det > tolerance_f64 {
         Ok(Orientation::POSITIVE)
@@ -250,14 +250,14 @@ where
     for (i, point) in simplex_points.iter().enumerate() {
         let coords: [T; D] = point.into();
 
-        // Coordinates - cast each coordinate to f64 using NumCast
+        // Coordinates - cast each coordinate to f64
         for j in 0..D {
-            matrix[(i, j)] = NumCast::from(coords[j]).unwrap_or(0.0);
+            matrix[(i, j)] = cast(coords[j]).unwrap_or(0.0);
         }
 
-        // Squared norm - cast to f64 using NumCast
+        // Squared norm - cast to f64
         let norm_sq = squared_norm(coords);
-        matrix[(i, D)] = NumCast::from(norm_sq).unwrap_or(0.0);
+        matrix[(i, D)] = cast(norm_sq).unwrap_or(0.0);
 
         // Constant term
         matrix[(i, D + 1)] = 1.0;
@@ -267,11 +267,11 @@ where
     let test_coords: [T; D] = (*test_point).into();
 
     for j in 0..D {
-        matrix[(D + 1, j)] = NumCast::from(test_coords[j]).unwrap_or(0.0);
+        matrix[(D + 1, j)] = cast(test_coords[j]).unwrap_or(0.0);
     }
 
     let test_norm_sq = squared_norm(test_coords);
-    matrix[(D + 1, D)] = NumCast::from(test_norm_sq).unwrap_or(0.0);
+    matrix[(D + 1, D)] = cast(test_norm_sq).unwrap_or(0.0);
     matrix[(D + 1, D + 1)] = 1.0;
 
     matrix
@@ -290,9 +290,9 @@ where
     for (i, point) in simplex_points.iter().enumerate() {
         let coords: [T; D] = point.into();
 
-        // Add coordinates - cast using NumCast
+        // Add coordinates
         for j in 0..D {
-            matrix[(i, j)] = NumCast::from(coords[j]).unwrap_or(0.0);
+            matrix[(i, j)] = cast(coords[j]).unwrap_or(0.0);
         }
 
         // Add constant term
@@ -317,13 +317,13 @@ where
         max_row_sum = max_row_sum.max(row_sum);
     }
 
-    // Scale base tolerance by matrix magnitude using NumCast
-    let base_tol: f64 = NumCast::from(config.base_tolerance).unwrap_or(1e-15);
-    let rel_factor: f64 = NumCast::from(config.relative_tolerance_factor).unwrap_or(1e-12);
+    // Scale base tolerance by matrix magnitude
+    let base_tol: f64 = cast(config.base_tolerance).unwrap_or(1e-15);
+    let rel_factor: f64 = cast(config.relative_tolerance_factor).unwrap_or(1e-12);
 
     let adaptive_tol = rel_factor.mul_add(max_row_sum, base_tol);
 
-    NumCast::from(adaptive_tol).unwrap_or(config.base_tolerance)
+    cast(adaptive_tol).unwrap_or(config.base_tolerance)
 }
 
 /// Simplified version for matrix-based tolerance computation.
@@ -406,7 +406,7 @@ where
     if D >= 2 {
         let mut diag = [T::one(); D];
         for item in diag.iter_mut().take(D) {
-            let d_value = NumCast::from(D).unwrap_or_else(T::one);
+            let d_value = cast(D).unwrap_or_else(T::one);
             *item = *item / d_value;
         }
         directions.push(diag);
@@ -471,7 +471,7 @@ fn interpret_insphere_determinant<T>(det: f64, orientation: Orientation, toleran
 where
     T: CoordinateScalar,
 {
-    let tol: f64 = NumCast::from(tolerance).unwrap_or(1e-15);
+    let tol: f64 = cast(tolerance).unwrap_or(1e-15);
 
     match orientation {
         Orientation::DEGENERATE => {
@@ -501,17 +501,17 @@ where
 /// Factory function to create robust predicate configurations for different use cases.
 pub mod config_presets {
     use super::{CoordinateScalar, RobustPredicateConfig};
-    use num_traits::NumCast;
+    use num_traits::cast;
 
     /// Configuration optimized for general-purpose triangulation.
     #[must_use]
     pub fn general_triangulation<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
         RobustPredicateConfig {
             base_tolerance: T::default_tolerance(),
-            relative_tolerance_factor: NumCast::from(1e-12).unwrap_or_else(T::default_tolerance),
+            relative_tolerance_factor: cast(1e-12).unwrap_or_else(T::default_tolerance),
             max_refinement_iterations: 3,
-            exact_arithmetic_threshold: NumCast::from(1e-10).unwrap_or_else(T::default_tolerance),
-            perturbation_scale: NumCast::from(1e-10).unwrap_or_else(T::default_tolerance),
+            exact_arithmetic_threshold: cast(1e-10).unwrap_or_else(T::default_tolerance),
+            perturbation_scale: cast(1e-10).unwrap_or_else(T::default_tolerance),
         }
     }
 
@@ -520,11 +520,11 @@ pub mod config_presets {
     pub fn high_precision<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
         let base_tol = T::default_tolerance();
         RobustPredicateConfig {
-            base_tolerance: base_tol / NumCast::from(100.0).unwrap_or_else(T::one),
-            relative_tolerance_factor: NumCast::from(1e-14).unwrap_or(base_tol),
+            base_tolerance: base_tol / cast(100.0).unwrap_or_else(T::one),
+            relative_tolerance_factor: cast(1e-14).unwrap_or(base_tol),
             max_refinement_iterations: 5,
-            exact_arithmetic_threshold: NumCast::from(1e-12).unwrap_or(base_tol),
-            perturbation_scale: NumCast::from(1e-12).unwrap_or(base_tol),
+            exact_arithmetic_threshold: cast(1e-12).unwrap_or(base_tol),
+            perturbation_scale: cast(1e-12).unwrap_or(base_tol),
         }
     }
 
@@ -533,11 +533,11 @@ pub mod config_presets {
     pub fn degenerate_robust<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
         let base_tol = T::default_tolerance();
         RobustPredicateConfig {
-            base_tolerance: base_tol * NumCast::from(100.0).unwrap_or_else(T::one),
-            relative_tolerance_factor: NumCast::from(1e-10).unwrap_or(base_tol),
+            base_tolerance: base_tol * cast(100.0).unwrap_or_else(T::one),
+            relative_tolerance_factor: cast(1e-10).unwrap_or(base_tol),
             max_refinement_iterations: 2,
-            exact_arithmetic_threshold: NumCast::from(1e-8).unwrap_or(base_tol),
-            perturbation_scale: NumCast::from(1e-8).unwrap_or(base_tol),
+            exact_arithmetic_threshold: cast(1e-8).unwrap_or(base_tol),
+            perturbation_scale: cast(1e-8).unwrap_or(base_tol),
         }
     }
 }

@@ -45,24 +45,14 @@ macro_rules! print_result {
         println!(
             "  {:<18} {}",
             format!("{}:", $method),
-            insphere_to_string($result)
+            match $result {
+                Ok(InSphere::INSIDE) => "INSIDE",
+                Ok(InSphere::BOUNDARY) => "BOUNDARY",
+                Ok(InSphere::OUTSIDE) => "OUTSIDE",
+                Err(_) => "ERROR",
+            }
         );
     };
-}
-
-/// Convert `InSphere` result to readable string
-const fn format_result(result: &Result<InSphere, anyhow::Error>) -> &'static str {
-    match result {
-        Ok(InSphere::INSIDE) => "INSIDE",
-        Ok(InSphere::BOUNDARY) => "BOUNDARY",
-        Ok(InSphere::OUTSIDE) => "OUTSIDE",
-        Err(_) => "ERROR",
-    }
-}
-
-/// Legacy function for backward compatibility
-fn insphere_to_string(result: &Result<InSphere, anyhow::Error>) -> String {
-    format_result(result).to_string()
 }
 
 fn get_test_registry() -> HashMap<&'static str, TestFunction> {

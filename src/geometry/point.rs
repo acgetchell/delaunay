@@ -31,10 +31,7 @@ use std::hash::{Hash, Hasher};
 // POINT STRUCT DEFINITION
 // =============================================================================
 
-#[derive(Clone, Copy, Debug, Default, PartialOrd, Serialize, Deserialize)]
-#[serde(transparent)]
-#[serde(bound(serialize = "T: Serialize"))]
-#[serde(bound(deserialize = "T: serde::de::DeserializeOwned"))]
+#[derive(Clone, Copy, Debug, PartialOrd)]
 /// The [Point] struct represents a point in a D-dimensional space, where the
 /// coordinates are of generic type `T`.
 ///
@@ -58,7 +55,6 @@ use std::hash::{Hash, Hasher};
 pub struct Point<T, const D: usize>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     /// The coordinates of the point.
     coords: [T; D],
@@ -69,7 +65,6 @@ where
 impl<T, const D: usize> Coordinate<T, D> for Point<T, D>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     /// Create a new Point from an array of coordinates
     #[inline]
@@ -128,7 +123,6 @@ where
 impl<T, const D: usize> Hash for Point<T, D>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -140,7 +134,6 @@ where
 impl<T, const D: usize> PartialEq for Point<T, D>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     fn eq(&self, other: &Self) -> bool {
         self.ordered_equals(other)
@@ -148,14 +141,91 @@ where
 }
 
 // Implement Eq using the Coordinate trait
-impl<T, const D: usize> Eq for Point<T, D>
+impl<T, const D: usize> Eq for Point<T, D> where T: CoordinateScalar {}
+
+// Manual implementations for traits that can't be derived due to [T; D] limitations
+
+// Implement Default manually
+impl<T, const D: usize> Default for Point<T, D>
 where
-    T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar + Default,
 {
+    fn default() -> Self {
+        Self {
+            coords: [T::default(); D],
+        }
+    }
 }
 
-// Serde implementations are automatically derived using #[serde(transparent)]
+// Implement Serialize manually
+impl<T, const D: usize> Serialize for Point<T, D>
+where
+    T: CoordinateScalar + Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeTuple;
+        let mut tuple = serializer.serialize_tuple(D)?;
+        for coord in &self.coords {
+            tuple.serialize_element(coord)?;
+        }
+        tuple.end()
+    }
+}
+
+// Implement Deserialize manually
+impl<'de, T, const D: usize> Deserialize<'de> for Point<T, D>
+where
+    T: CoordinateScalar,
+{
+    fn deserialize<DE>(deserializer: DE) -> Result<Self, DE::Error>
+    where
+        DE: serde::Deserializer<'de>,
+    {
+        use serde::de::{Error, SeqAccess, Visitor};
+        use std::fmt;
+        use std::marker::PhantomData;
+
+        struct ArrayVisitor<T, const D: usize>(PhantomData<T>);
+
+        impl<'de, T, const D: usize> Visitor<'de> for ArrayVisitor<T, D>
+        where
+            T: CoordinateScalar,
+        {
+            type Value = Point<T, D>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_fmt(format_args!("an array of {D} coordinates"))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                // Collect coordinates into a Vec first, then convert to array
+                let mut coords = Vec::with_capacity(D);
+                for i in 0..D {
+                    let coord = seq
+                        .next_element()?
+                        .ok_or_else(|| Error::invalid_length(i, &self))?;
+                    coords.push(coord);
+                }
+
+                // Convert Vec to array
+                let coords_len = coords.len();
+                let coords_array: [T; D] = coords
+                    .try_into()
+                    .map_err(|_| Error::invalid_length(coords_len, &self))?;
+
+                Ok(Point::new(coords_array))
+            }
+        }
+
+        deserializer.deserialize_tuple(D, ArrayVisitor(PhantomData))
+    }
+}
 
 // =============================================================================
 // TYPE CONVERSION IMPLEMENTATIONS
@@ -166,7 +236,6 @@ impl<T, U, const D: usize> From<[T; D]> for Point<U, D>
 where
     T: Into<U>,
     U: CoordinateScalar,
-    [U; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     /// Create a new [Point] from an array of coordinates of type `T`.
     #[inline]
@@ -181,7 +250,6 @@ where
 impl<T, const D: usize> From<Point<T, D>> for [T; D]
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     /// # Example
     ///
@@ -201,7 +269,6 @@ where
 impl<T, const D: usize> From<&Point<T, D>> for [T; D]
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     /// # Example
     ///
@@ -240,7 +307,6 @@ mod tests {
         expected_dim: usize,
     ) where
         T: CoordinateScalar,
-        [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
     {
         assert_eq!(point.to_array(), expected_coords);
         assert_eq!(point.dim(), expected_dim);
@@ -253,7 +319,6 @@ mod tests {
         should_be_equal: bool,
     ) where
         T: CoordinateScalar,
-        [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
         Point<T, D>: Hash,
     {
         if should_be_equal {

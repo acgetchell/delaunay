@@ -586,16 +586,16 @@ where
         self.stats.degenerate_cases_handled += 1;
 
         // Strategy 1: Try vertex perturbation
-        if let Ok(perturbed_vertex) = self.create_perturbed_vertex(vertex) {
-            if let Ok(info) = self.insert_vertex(tds, perturbed_vertex) {
-                return RobustInsertionInfo {
-                    success: true,
-                    cells_created: info.cells_created,
-                    cells_removed: info.cells_removed,
-                    strategy_used: InsertionStrategy::Perturbation,
-                    degenerate_case_handled: true,
-                };
-            }
+        if let Ok(perturbed_vertex) = self.create_perturbed_vertex(vertex)
+            && let Ok(info) = self.insert_vertex(tds, perturbed_vertex)
+        {
+            return RobustInsertionInfo {
+                success: true,
+                cells_created: info.cells_created,
+                cells_removed: info.cells_removed,
+                strategy_used: InsertionStrategy::Perturbation,
+                degenerate_case_handled: true,
+            };
         }
 
         // Strategy 2: Skip this vertex and mark as degenerate
@@ -1051,6 +1051,8 @@ mod tests {
     use super::*;
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
     use crate::vertex;
+    use approx::assert_abs_diff_eq;
+    use approx::assert_abs_diff_ne;
 
     #[test]
     fn test_robust_bowyer_watson_creation() {
@@ -1721,19 +1723,22 @@ mod tests {
             let perturbed_coords = perturbed.point().to_array();
 
             // First coordinate should be different (perturbed)
-            assert_ne!(
-                original_coords[0], perturbed_coords[0],
-                "First coordinate should be perturbed"
+            assert_abs_diff_ne!(
+                original_coords[0],
+                perturbed_coords[0],
+                epsilon = f64::EPSILON
             );
 
             // Other coordinates should remain the same
-            assert_eq!(
-                original_coords[1], perturbed_coords[1],
-                "Second coordinate should remain unchanged"
+            assert_abs_diff_eq!(
+                original_coords[1],
+                perturbed_coords[1],
+                epsilon = f64::EPSILON
             );
-            assert_eq!(
-                original_coords[2], perturbed_coords[2],
-                "Third coordinate should remain unchanged"
+            assert_abs_diff_eq!(
+                original_coords[2],
+                perturbed_coords[2],
+                epsilon = f64::EPSILON
             );
 
             // All coordinates should be finite
@@ -1772,7 +1777,7 @@ mod tests {
                     crate::core::vertex::VertexValidationError::InvalidPoint { .. } => {
                         println!("  ✓ Large perturbation correctly failed with InvalidPoint error");
                     }
-                    other => {
+                    other @ crate::core::vertex::VertexValidationError::InvalidUuid { .. } => {
                         panic!("Unexpected error type: {other:?}");
                     }
                 }

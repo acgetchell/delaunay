@@ -7,7 +7,7 @@ use crate::geometry::predicates::simplex_orientation;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use crate::geometry::util::squared_norm;
 use nalgebra::ComplexField;
-use num_traits::cast::NumCast;
+use num_traits::{NumCast, cast};
 use num_traits::{One, Zero};
 use ordered_float::OrderedFloat;
 use serde::Serialize;
@@ -419,7 +419,7 @@ where
                 centroid_coords[i] += coord;
             }
         }
-        let num_vertices = NumCast::from(vertex_points.len()).ok_or_else(|| {
+        let num_vertices = cast(vertex_points.len()).ok_or_else(|| {
             ConvexHullConstructionError::NumericCastFailed {
                 message: format!(
                     "Failed to cast vertex count {} to coordinate type for centroid calculation",
@@ -440,11 +440,10 @@ where
         let distance_squared = squared_norm(diff_coords);
 
         // Use a threshold to determine visibility - this is a simple heuristic
-        let threshold = NumCast::from(1.0f64).ok_or_else(|| {
-            ConvexHullConstructionError::NumericCastFailed {
+        let threshold =
+            cast(1.0f64).ok_or_else(|| ConvexHullConstructionError::NumericCastFailed {
                 message: "Failed to cast threshold value 1.0 to coordinate type".to_string(),
-            }
-        })?;
+            })?;
         Ok(distance_squared > threshold)
     }
 
@@ -582,7 +581,7 @@ where
 
             // Calculate distance from point to facet centroid as a simple heuristic
             let mut centroid_coords = [T::zero(); D];
-            let num_vertices = NumCast::from(facet_vertices.len())
+            let num_vertices = cast(facet_vertices.len())
                 .ok_or_else(|| ConvexHullConstructionError::NumericCastFailed {
                     message: format!(
                         "Failed to cast vertex count {} to coordinate type for centroid calculation",

@@ -10,7 +10,7 @@ use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
-use num_traits::NumCast;
+use num_traits::cast::{NumCast, cast};
 
 // =============================================================================
 // TYPES
@@ -485,8 +485,7 @@ where
     }
 
     // Convert dimension to f64 for calculations
-    let d_f64: f64 =
-        NumCast::from(D).ok_or(SuperCellError::DimensionConversionFailed { dimension: D })?;
+    let d_f64: f64 = cast(D).ok_or(SuperCellError::DimensionConversionFailed { dimension: D })?;
 
     // Initialize result vector
     let mut points = Vec::new();
@@ -523,11 +522,10 @@ where
             };
 
             let final_coordinate = center_f64 + offset;
-            coords[coord_idx] = NumCast::from(final_coordinate).ok_or(
-                SuperCellError::CoordinateConversionFailed {
+            coords[coord_idx] =
+                cast(final_coordinate).ok_or(SuperCellError::CoordinateConversionFailed {
                     value: final_coordinate,
-                },
-            )?;
+                })?;
         }
 
         points.push(Point::new(coords));

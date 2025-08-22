@@ -166,6 +166,9 @@ use uuid::Uuid;
 // Crate-internal imports
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
+// num-traits imports
+use num_traits::cast::NumCast;
+
 // Parent module imports
 use super::{
     cell::{Cell, CellBuilder, CellValidationError},
@@ -422,7 +425,7 @@ where
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
@@ -747,7 +750,7 @@ where
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
     for<'a> &'a T: Div<T>,
@@ -850,7 +853,7 @@ where
     /// ```
     pub fn new(vertices: &[Vertex<T, U, D>]) -> Result<Self, TriangulationConstructionError>
     where
-        T: num_traits::NumCast,
+        T: NumCast,
     {
         let mut tds = Self {
             vertices: SlotMap::with_key(),
@@ -1022,7 +1025,7 @@ where
     /// ```
     pub fn add(&mut self, vertex: Vertex<T, U, D>) -> Result<(), &'static str>
     where
-        T: num_traits::NumCast,
+        T: NumCast,
     {
         let uuid = vertex.uuid();
 
@@ -1147,7 +1150,7 @@ where
     /// ```
     fn bowyer_watson(&mut self) -> Result<(), TriangulationConstructionError>
     where
-        T: num_traits::NumCast,
+        T: NumCast,
     {
         use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
         use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
@@ -1174,7 +1177,7 @@ where
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
     for<'a> &'a T: Div<T>,
@@ -1453,7 +1456,7 @@ where
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
     for<'a> &'a T: Div<T>,
@@ -1697,7 +1700,7 @@ where
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
     for<'a> &'a T: Div<T>,
@@ -2437,6 +2440,7 @@ where
 #[cfg(test)]
 #[allow(clippy::uninlined_format_args, clippy::similar_names)]
 mod tests {
+    use super::*;
     use crate::cell;
     use crate::core::{
         traits::boundary_analysis::BoundaryAnalysis, util::facets_are_adjacent,
@@ -2445,8 +2449,7 @@ mod tests {
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
     use crate::vertex;
     use nalgebra::{ComplexField, Const, OPoint};
-
-    use super::*;
+    use num_traits::cast;
 
     // Type alias for easier test writing - change this to test different coordinate types
     type TestFloat = f64;
@@ -2511,14 +2514,14 @@ mod tests {
         ordered_float::OrderedFloat<f64>: From<T>,
         OPoint<T, Const<3>>: From<[f64; 3]>,
         [f64; 3]: Default + DeserializeOwned + Serialize + Sized,
-        T: num_traits::NumCast,
+        T: NumCast,
     {
         let mut tds: Tds<T, usize, usize, 3> = Tds::new(&[]).unwrap();
 
         let point = Point::new([
-            num_traits::NumCast::from(1.0f64).unwrap(),
-            num_traits::NumCast::from(2.0f64).unwrap(),
-            num_traits::NumCast::from(3.0f64).unwrap(),
+            cast(1.0f64).unwrap(),
+            cast(2.0f64).unwrap(),
+            cast(3.0f64).unwrap(),
         ]);
         let vertex = VertexBuilder::default().point(point).build().unwrap();
         tds.add(vertex).unwrap();
@@ -2546,23 +2549,23 @@ mod tests {
         ordered_float::OrderedFloat<f64>: From<T>,
         OPoint<T, Const<3>>: From<[f64; 3]>,
         [f64; 3]: Default + DeserializeOwned + Serialize + Sized,
-        T: num_traits::NumCast,
+        T: NumCast,
     {
         let mut tds: Tds<T, usize, usize, 3> = Tds::new(&[]).unwrap();
 
         let point1 = Point::new([
-            num_traits::NumCast::from(1.0f64).unwrap(),
-            num_traits::NumCast::from(2.0f64).unwrap(),
-            num_traits::NumCast::from(3.0f64).unwrap(),
+            cast(1.0f64).unwrap(),
+            cast(2.0f64).unwrap(),
+            cast(3.0f64).unwrap(),
         ]);
         let vertex1 = VertexBuilder::default().point(point1).build().unwrap();
         let uuid1 = vertex1.uuid();
         tds.add(vertex1).unwrap();
 
         let point2 = Point::new([
-            num_traits::NumCast::from(4.0f64).unwrap(),
-            num_traits::NumCast::from(5.0f64).unwrap(),
-            num_traits::NumCast::from(6.0f64).unwrap(),
+            cast(4.0f64).unwrap(),
+            cast(5.0f64).unwrap(),
+            cast(6.0f64).unwrap(),
         ]);
         let vertex2 = create_vertex_with_uuid(point2, uuid1, None);
 
@@ -2573,9 +2576,9 @@ mod tests {
         let stored_vertex = tds.vertices.get(key2).unwrap();
         let stored_coords: [T; 3] = stored_vertex.into();
         let expected_coords = [
-            num_traits::NumCast::from(4.0f64).unwrap(),
-            num_traits::NumCast::from(5.0f64).unwrap(),
-            num_traits::NumCast::from(6.0f64).unwrap(),
+            cast(4.0f64).unwrap(),
+            cast(5.0f64).unwrap(),
+            cast(6.0f64).unwrap(),
         ];
         assert_eq!(stored_coords, expected_coords);
 

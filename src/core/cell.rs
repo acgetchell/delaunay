@@ -47,7 +47,10 @@ use super::{
     util::{UuidValidationError, make_uuid, validate_uuid},
     vertex::{Vertex, VertexValidationError},
 };
-use crate::geometry::{point::Point, traits::coordinate::CoordinateScalar};
+use crate::geometry::{
+    point::Point,
+    traits::coordinate::{CoordinateConversionError, CoordinateScalar},
+};
 use crate::prelude::VertexKey;
 use bimap::BiMap;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -90,6 +93,18 @@ pub enum CellValidationError {
         expected: usize,
         /// The dimension D.
         dimension: usize,
+    },
+    /// The simplex is degenerate (vertices are collinear, coplanar, or otherwise geometrically degenerate).
+    #[error(
+        "Degenerate simplex: the vertices form a degenerate configuration that cannot reliably determine geometric properties"
+    )]
+    DegenerateSimplex,
+    /// Coordinate conversion error occurred during geometric computations.
+    #[error("Coordinate conversion error: {source}")]
+    CoordinateConversion {
+        /// The underlying coordinate conversion error.
+        #[from]
+        source: CoordinateConversionError,
     },
 }
 
@@ -596,7 +611,7 @@ where
     /// ```
     #[inline]
     pub const fn dim(&self) -> usize {
-        self.vertices.len().saturating_sub(1)
+        D
     }
 
     /// The function `contains_vertex` checks if a given vertex is present in

@@ -818,7 +818,7 @@ mod tests {
     fn benchmark_boundary_facets_performance() {
         use crate::core::algorithms::robust_bowyer_watson::RobustBoyerWatson;
         use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
-        use num_traits::NumCast;
+        use num_traits::cast::cast;
         use rand::Rng;
         use std::time::Instant;
 
@@ -836,7 +836,7 @@ mod tests {
             let points: Vec<Point<f64, 3>> = (0..n_points)
                 .map(|i| {
                     // Add some spacing to reduce degeneracy
-                    let spacing = NumCast::from(i).unwrap_or(0.0) * 0.1;
+                    let spacing = cast(i).unwrap_or(0.0) * 0.1;
                     Point::new([
                         rng.random::<f64>().mul_add(100.0, spacing),
                         rng.random::<f64>().mul_add(100.0, spacing * 1.1),

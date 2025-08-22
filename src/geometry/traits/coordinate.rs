@@ -50,6 +50,25 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+/// Errors that can occur during coordinate conversion in geometric predicates.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum CoordinateConversionError {
+    /// Coordinate conversion failed during matrix operations
+    #[error(
+        "Failed to convert coordinate at index {coordinate_index} from {from_type} to {to_type}: {coordinate_value}"
+    )]
+    ConversionFailed {
+        /// Index of the coordinate that failed to convert
+        coordinate_index: usize,
+        /// String representation of the problematic coordinate value
+        coordinate_value: String,
+        /// Source type name
+        from_type: &'static str,
+        /// Target type name
+        to_type: &'static str,
+    },
+}
+
 /// Default tolerance for f32 floating-point comparisons.
 ///
 /// This value is set to 1e-6, which is appropriate for f32 precision and provides

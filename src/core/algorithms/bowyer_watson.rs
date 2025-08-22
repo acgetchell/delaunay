@@ -105,6 +105,7 @@ use crate::core::{
     vertex::Vertex,
 };
 use crate::geometry::{algorithms::convex_hull::ConvexHull, traits::coordinate::CoordinateScalar};
+use num_traits::NumCast;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
@@ -189,7 +190,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> InsertionStrategy
     where
-        T: num_traits::NumCast,
+        T: NumCast,
     {
         // Check if vertex is inside any existing cell's circumsphere
         if self.is_vertex_interior(tds, vertex) {
@@ -197,13 +198,6 @@ where
         } else {
             InsertionStrategy::HullExtension
         }
-    }
-
-    /// Resets the algorithm state for reuse
-    pub fn reset(&mut self) {
-        self.stats.reset();
-        self.buffers.clear_all();
-        self.hull = None;
     }
 }
 
@@ -223,7 +217,7 @@ where
 // Implementation of the InsertionAlgorithm trait
 impl<T, U, V, const D: usize> InsertionAlgorithm<T, U, V, D> for IncrementalBoyerWatson<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,

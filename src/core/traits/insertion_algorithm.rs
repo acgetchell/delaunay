@@ -13,6 +13,7 @@ use crate::core::{
     vertex::Vertex,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
+use num_traits::{NumCast, cast};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
@@ -146,14 +147,16 @@ impl InsertionStatistics {
     /// Get the success rate for cavity boundary detection
     #[must_use]
     pub fn cavity_boundary_success_rate(&self) -> f64 {
-        let total_attempts = self.cavity_boundary_failures
-            + (self.vertices_processed - self.cavity_boundary_failures);
-        if total_attempts == 0 {
-            1.0
+        if self.vertices_processed == 0 {
+            1.0 // No attempts means 100% success rate
         } else {
+            // Use saturating subtraction to prevent underflow
+            let successes = self
+                .vertices_processed
+                .saturating_sub(self.cavity_boundary_failures);
             #[allow(clippy::cast_precision_loss)]
             {
-                (total_attempts - self.cavity_boundary_failures) as f64 / total_attempts as f64
+                successes as f64 / self.vertices_processed as f64
             }
         }
     }
@@ -373,7 +376,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> InsertionStrategy
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         // Default implementation provides basic strategy determination
@@ -399,7 +402,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> InsertionStrategy
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         // If the triangulation is empty or has very few cells, use standard approach
@@ -441,7 +444,7 @@ where
     /// `true` if the vertex is interior, `false` otherwise.
     fn is_vertex_interior(&self, tds: &Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) -> bool
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
         use crate::geometry::predicates::{InSphere, insphere};
@@ -474,18 +477,18 @@ where
     /// `true` if the vertex is likely exterior, `false` otherwise
     fn is_vertex_likely_exterior(tds: &Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) -> bool
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
     {
         // Get the vertex coordinates
         let vertex_coords: [T; D] = vertex.point().into();
 
         // Calculate rough bounding box of existing vertices
-        let mut min_coords = [num_traits::NumCast::from(f64::INFINITY).unwrap_or_else(|| {
-            T::zero() + T::one() * num_traits::NumCast::from(1e10f64).unwrap_or_else(T::one)
-        }); D];
-        let mut max_coords = [num_traits::NumCast::from(f64::NEG_INFINITY).unwrap_or_else(|| {
-            T::zero() - T::one() * num_traits::NumCast::from(1e10f64).unwrap_or_else(T::one)
-        }); D];
+        let mut min_coords = [cast(f64::INFINITY)
+            .unwrap_or_else(|| T::zero() + T::one() * cast(1e10f64).unwrap_or_else(T::one));
+            D];
+        let mut max_coords = [cast(f64::NEG_INFINITY)
+            .unwrap_or_else(|| T::zero() - T::one() * cast(1e10f64).unwrap_or_else(T::one));
+            D];
         let mut vertex_count = 0;
 
         for existing_vertex in tds.vertices.values() {
@@ -507,7 +510,7 @@ where
         }
 
         // Calculate bounding box margins (10% expansion)
-        let margin_factor: T = num_traits::NumCast::from(0.1f64).unwrap_or_else(T::zero);
+        let margin_factor: T = cast(0.1f64).unwrap_or_else(T::zero);
         let mut expanded_min = [T::zero(); D];
         let mut expanded_max = [T::zero(); D];
 
@@ -552,7 +555,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> Vec<crate::core::triangulation_data_structure::CellKey>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         use crate::geometry::predicates::{InSphere, insphere};
@@ -628,7 +631,7 @@ where
         bad_cells: &[crate::core::triangulation_data_structure::CellKey],
     ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         use std::collections::{HashMap, HashSet};
@@ -735,7 +738,7 @@ where
         adjacent_cell_key: crate::core::triangulation_data_structure::CellKey,
     ) -> bool
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
         [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
@@ -771,7 +774,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> Result<InsertionInfo, TriangulationValidationError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         // Find bad cells
@@ -836,7 +839,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> Result<InsertionInfo, TriangulationValidationError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
         [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
@@ -891,7 +894,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> Result<InsertionInfo, TriangulationValidationError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
         [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
@@ -989,7 +992,7 @@ where
         vertices: &[Vertex<T, U, D>],
     ) -> Result<(), TriangulationConstructionError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast + DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + DeserializeOwned,
         U: DeserializeOwned,
         V: DeserializeOwned,
         for<'a> &'a T: Div<T>,
@@ -1054,7 +1057,7 @@ where
         vertices: Vec<Vertex<T, U, D>>,
     ) -> Result<(), TriangulationConstructionError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast + DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + DeserializeOwned,
         U: DeserializeOwned,
         V: DeserializeOwned,
         for<'a> &'a T: Div<T>,
@@ -1116,7 +1119,7 @@ where
         tds: &mut Tds<T, U, V, D>,
     ) -> Result<(), TriangulationConstructionError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast + DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + DeserializeOwned,
         U: DeserializeOwned,
         V: DeserializeOwned,
         for<'a> &'a T: Div<T>,
@@ -1170,7 +1173,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
         [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
@@ -1222,7 +1225,7 @@ where
         adjacent_cell_key: crate::core::triangulation_data_structure::CellKey,
     ) -> bool
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
         [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
@@ -1338,7 +1341,7 @@ where
         vertices: &[Vertex<T, U, D>],
     ) -> Result<Tds<T, U, V, D>, TriangulationConstructionError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast + DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + DeserializeOwned,
         U: DeserializeOwned,
         V: DeserializeOwned,
         for<'a> &'a T: Div<T>,
@@ -1388,7 +1391,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> bool
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         // Ensure the vertex is registered in the TDS vertex mapping
@@ -1431,7 +1434,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> usize
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         let mut cells_created = 0;
@@ -1455,7 +1458,7 @@ where
         tds: &mut Tds<T, U, V, D>,
         bad_cells: &[crate::core::triangulation_data_structure::CellKey],
     ) where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         for &cell_key in bad_cells {
@@ -1485,7 +1488,7 @@ where
         tds: &mut Tds<T, U, V, D>,
     ) -> Result<(), TriangulationValidationError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         // Remove duplicate cells first
@@ -1909,5 +1912,95 @@ mod tests {
         );
 
         println!("✓ Cell creation properly handles invalid geometry");
+    }
+
+    #[test]
+    fn test_cavity_boundary_success_rate_zero_attempts() {
+        use approx::assert_abs_diff_eq;
+        println!("Testing cavity_boundary_success_rate with zero vertices processed");
+
+        let stats = InsertionStatistics::new();
+        let rate = stats.cavity_boundary_success_rate();
+
+        assert_abs_diff_eq!(rate, 1.0, epsilon = f64::EPSILON);
+        println!("✓ Zero attempts handled correctly");
+    }
+
+    #[test]
+    fn test_cavity_boundary_success_rate_underflow_case() {
+        use approx::assert_abs_diff_eq;
+        println!("Testing cavity_boundary_success_rate with more failures than vertices processed");
+
+        let mut stats = InsertionStatistics::new();
+        stats.vertices_processed = 5;
+        stats.cavity_boundary_failures = 10; // More failures than vertices processed
+
+        let rate = stats.cavity_boundary_success_rate();
+
+        // With saturating subtraction, this should give us 0 successes / 5 attempts = 0.0
+        assert_abs_diff_eq!(rate, 0.0, epsilon = f64::EPSILON);
+        println!("✓ Underflow case handled correctly with saturating subtraction");
+    }
+
+    #[test]
+    fn test_cavity_boundary_success_rate_all_failures() {
+        use approx::assert_abs_diff_eq;
+        println!("Testing cavity_boundary_success_rate with failures equal to vertices processed");
+
+        let mut stats = InsertionStatistics::new();
+        stats.vertices_processed = 10;
+        stats.cavity_boundary_failures = 10; // All attempts failed
+
+        let rate = stats.cavity_boundary_success_rate();
+
+        assert_abs_diff_eq!(rate, 0.0, epsilon = f64::EPSILON);
+        println!("✓ All failures case handled correctly");
+    }
+
+    #[test]
+    fn test_cavity_boundary_success_rate_normal_cases() {
+        use approx::assert_abs_diff_eq;
+        println!("Testing cavity_boundary_success_rate with normal cases");
+
+        // Case 1: All successes
+        let mut stats = InsertionStatistics::new();
+        stats.vertices_processed = 10;
+        stats.cavity_boundary_failures = 0;
+
+        let rate = stats.cavity_boundary_success_rate();
+        assert_abs_diff_eq!(rate, 1.0, epsilon = f64::EPSILON);
+
+        // Case 2: Half successes
+        stats.vertices_processed = 10;
+        stats.cavity_boundary_failures = 5;
+
+        let rate = stats.cavity_boundary_success_rate();
+        assert_abs_diff_eq!(rate, 0.5, epsilon = f64::EPSILON);
+
+        // Case 3: Most successes
+        stats.vertices_processed = 100;
+        stats.cavity_boundary_failures = 10;
+
+        let rate = stats.cavity_boundary_success_rate();
+        assert_abs_diff_eq!(rate, 0.9, epsilon = f64::EPSILON);
+
+        println!("✓ Normal cases handled correctly");
+    }
+
+    #[test]
+    fn test_cavity_boundary_success_rate_precision() {
+        use approx::assert_abs_diff_eq;
+        println!("Testing cavity_boundary_success_rate precision with edge values");
+
+        let mut stats = InsertionStatistics::new();
+        stats.vertices_processed = 3;
+        stats.cavity_boundary_failures = 1;
+
+        let rate = stats.cavity_boundary_success_rate();
+        let expected = 2.0 / 3.0; // Should be approximately 0.6666666666666666
+
+        assert_abs_diff_eq!(rate, expected, epsilon = f64::EPSILON);
+        println!("  Rate: {rate}, Expected: {expected}");
+        println!("✓ Precision handling works correctly");
     }
 }

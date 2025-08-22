@@ -6,15 +6,19 @@
 
 use na::{ComplexField, Const, OPoint};
 use nalgebra as na;
-use num_traits::Zero;
-use num_traits::cast::NumCast;
+use num_traits::{Float, Zero, cast};
 use peroxide::fuga::{LinearAlgebra, anyhow, zeros};
-use serde::{Serialize, de::DeserializeOwned};
 use std::iter::Sum;
 
+use crate::core::cell::CellValidationError;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
-use crate::geometry::util::{circumcenter, circumradius_with_center, hypot, squared_norm};
+use crate::geometry::traits::coordinate::{
+    Coordinate, CoordinateConversionError, CoordinateScalar,
+};
+use crate::geometry::util::{
+    circumcenter, circumradius_with_center, convert_point_to_f64_coords, convert_scalar_to_f64,
+    hypot, squared_norm,
+};
 
 /// Represents the position of a point relative to a circumsphere.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,15 +112,17 @@ impl std::fmt::Display for Orientation {
 /// ```
 pub fn simplex_orientation<T, const D: usize>(
     simplex_points: &[Point<T, D>],
-) -> Result<Orientation, anyhow::Error>
+) -> Result<Orientation, CoordinateConversionError>
 where
     T: CoordinateScalar + Sum,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     if simplex_points.len() != D + 1 {
-        return Err(anyhow::Error::msg(
-            "Invalid simplex: wrong number of points",
-        ));
+        return Err(CoordinateConversionError::ConversionFailed {
+            coordinate_index: 0,
+            coordinate_value: format!("Expected {} points, got {}", D + 1, simplex_points.len()),
+            from_type: "point count",
+            to_type: "valid simplex",
+        });
     }
 
     // Create matrix for orientation test
@@ -127,8 +133,16 @@ where
     for (i, p) in simplex_points.iter().enumerate() {
         // Use implicit conversion from point to coordinates
         let point_coords: [T; D] = p.into();
-        let point_coords_f64: [f64; D] =
-            point_coords.map(|coord| NumCast::from(coord).unwrap_or(0.0));
+        let mut point_coords_f64: [f64; D] = [0.0; D];
+        for (j, &coord) in point_coords.iter().enumerate() {
+            point_coords_f64[j] =
+                cast(coord).ok_or_else(|| CoordinateConversionError::ConversionFailed {
+                    coordinate_index: j,
+                    coordinate_value: format!("{coord:?}"),
+                    from_type: std::any::type_name::<T>(),
+                    to_type: "f64",
+                })?;
+        }
 
         // Add coordinates
         for j in 0..D {
@@ -144,7 +158,13 @@ where
 
     // Use a tolerance for degenerate case detection
     let tolerance = T::default_tolerance();
-    let tolerance_f64: f64 = NumCast::from(tolerance).unwrap_or(1e-10);
+    let tolerance_f64: f64 =
+        cast(tolerance).ok_or_else(|| CoordinateConversionError::ConversionFailed {
+            coordinate_index: 0,
+            coordinate_value: format!("{tolerance:?}"),
+            from_type: std::any::type_name::<T>(),
+            to_type: "f64",
+        })?;
 
     if det > tolerance_f64 {
         Ok(Orientation::POSITIVE)
@@ -216,7 +236,6 @@ where
     T: CoordinateScalar + ComplexField<RealField = T> + Sum + Zero,
     f64: From<T>,
     T: From<f64>,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
     OPoint<T, Const<D>>: From<[f64; D]>,
 {
     let circumcenter = circumcenter(simplex_points)?;
@@ -232,8 +251,9 @@ where
     }
     let radius = hypot(diff_coords);
 
+    // Use Float::abs for proper absolute value comparison
     let tolerance = T::default_tolerance();
-    if num_traits::Float::abs(circumradius - radius) < tolerance {
+    if Float::abs(circumradius - radius) < tolerance {
         Ok(InSphere::BOUNDARY)
     } else if circumradius > radius {
         Ok(InSphere::INSIDE)
@@ -338,88 +358,158 @@ where
 /// let inside_point = Point::new([0.25, 0.25, 0.25]);
 /// assert_eq!(insphere(&simplex_points, inside_point).unwrap(), InSphere::INSIDE);
 /// ```
+/// Check if a point is contained within the circumsphere of a simplex using matrix determinant.
+///
+/// This is the `InSphere` predicate test, which determines whether a test point lies inside,
+/// outside, or on the boundary of the circumsphere of a given simplex. This method is preferred
+/// over `circumsphere_contains` as it provides better numerical stability by using a matrix
+/// determinant approach instead of distance calculations, which can accumulate floating-point errors.
+///
+/// # Algorithm
+///
+/// This implementation follows the robust geometric predicates approach described in:
+///
+/// Shewchuk, J. R. "Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric
+/// Predicates." Discrete & Computational Geometry 18, no. 3 (1997): 305-363.
+/// DOI: [10.1007/PL00009321](https://doi.org/10.1007/PL00009321)
+///
+/// The in-sphere test uses the determinant of a specially constructed matrix. For a
+/// d-dimensional simplex with points `p₁, p₂, ..., pₐ₊₁` and test point `p`, the
+/// matrix has the structure:
+///
+/// ```text
+/// |  x₁   y₁   z₁  ...  x₁²+y₁²+z₁²+...  1  |
+/// |  x₂   y₂   z₂  ...  x₂²+y₂²+z₂²+...  1  |
+/// |  x₃   y₃   z₃  ...  x₃²+y₃²+z₃²+...  1  |
+/// |  ...  ...  ... ...       ...        ... |
+/// |  xₚ   yₚ   zₚ   ...  xₚ²+yₚ²+zₚ²+...   1  |
+/// ```
+///
+/// Where each row contains:
+/// - The d coordinates of a point
+/// - The squared norm (sum of squares) of the point coordinates
+/// - A constant 1
+///
+/// The test point `p` is inside the circumsphere if and only if the determinant
+/// has the correct sign relative to the simplex orientation.
+///
+/// # Mathematical Background
+///
+/// This determinant test is mathematically equivalent to checking if the test point
+/// lies inside the circumsphere, but avoids the numerical instability that can arise
+/// from computing circumcenter coordinates and distances explicitly. As demonstrated
+/// by Shewchuk, this approach provides much better numerical robustness for geometric
+/// computations.
+///
+/// The sign of the determinant depends on the orientation of the simplex:
+/// - For a **positively oriented** simplex: positive determinant means the point is inside
+/// - For a **negatively oriented** simplex: negative determinant means the point is inside
+///
+/// This function automatically determines the simplex orientation using [`simplex_orientation`]
+/// and interprets the determinant sign accordingly, ensuring correct results regardless
+/// of vertex ordering.
+///
+/// # Arguments
+///
+/// * `simplex_points` - A slice of points that form the simplex (must have exactly D+1 points)
+/// * `test_point` - The point to test for containment
+///
+/// # Returns
+///
+/// Returns [`InSphere::INSIDE`] if the given point is inside the circumsphere,
+/// [`InSphere::BOUNDARY`] if it's on the boundary, or [`InSphere::OUTSIDE`] if it's outside.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The number of simplex points is not exactly D+1.
+/// - Matrix operations fail.
+/// - Coordinate conversion fails.
+/// - The simplex is degenerate, making in-sphere test unreliable.
+///
+/// # References
+///
+/// - Shewchuk, J. R. "Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric
+///   Predicates." Discrete & Computational Geometry 18, no. 3 (1997): 305-363.
+/// - Shewchuk, J. R. "Robust Adaptive Floating-Point Geometric Predicates."
+///   Proceedings of the Twelfth Annual Symposium on Computational Geometry (1996): 141-150.
+///
+/// # Example
+///
+/// ```
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::geometry::predicates::insphere;
+/// use delaunay::geometry::InSphere;
+/// let point1 = Point::new([0.0, 0.0, 0.0]);
+/// let point2 = Point::new([1.0, 0.0, 0.0]);
+/// let point3 = Point::new([0.0, 1.0, 0.0]);
+/// let point4 = Point::new([0.0, 0.0, 1.0]);
+/// let simplex_points = vec![point1, point2, point3, point4];
+///
+/// // Test with a point clearly outside the circumsphere
+/// let outside_point = Point::new([2.0, 2.0, 2.0]);
+/// assert_eq!(insphere(&simplex_points, outside_point).unwrap(), InSphere::OUTSIDE);
+///
+/// // Test with a point clearly inside the circumsphere
+/// let inside_point = Point::new([0.25, 0.25, 0.25]);
+/// assert_eq!(insphere(&simplex_points, inside_point).unwrap(), InSphere::INSIDE);
+///
+/// // Test with one of the simplex vertices (on boundary, but result might vary slightly due to precision)
+/// let vertex = Point::new([0.0, 0.0, 0.0]);
+/// let result_vertex = insphere(&simplex_points, vertex).unwrap();
+/// assert!(matches!(result_vertex, InSphere::BOUNDARY | InSphere::INSIDE));
+/// ```
 pub fn insphere<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: Point<T, D>,
-) -> Result<InSphere, anyhow::Error>
+) -> Result<InSphere, CoordinateConversionError>
 where
     T: CoordinateScalar + Sum,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     if simplex_points.len() != D + 1 {
-        return Err(anyhow::Error::msg(
-            "Invalid simplex: wrong number of points",
-        ));
+        return Err(CoordinateConversionError::ConversionFailed {
+            coordinate_index: 0,
+            coordinate_value: format!("Expected {} points, got {}", D + 1, simplex_points.len()),
+            from_type: "point count",
+            to_type: "valid simplex",
+        });
     }
 
-    // Create matrix for in-sphere test
-    // Matrix dimensions: (D+2) x (D+2)
-    //   rows = D+1 simplex points + 1 test point
-    //   cols = D coordinates + squared norm + 1
     let mut matrix = zeros(D + 2, D + 2);
 
-    // Populate rows with the coordinates of the points of the simplex
     for (i, p) in simplex_points.iter().enumerate() {
-        // Use implicit conversion from point to coordinates
-        let point_coords: [T; D] = p.into();
-        let point_coords_f64: [f64; D] =
-            point_coords.map(|coord| NumCast::from(coord).unwrap_or(0.0));
-
-        // Add coordinates
+        let point_coords_f64 = convert_point_to_f64_coords(p)?;
         for j in 0..D {
             matrix[(i, j)] = point_coords_f64[j];
         }
 
-        // Add squared norm using generic arithmetic on T
-        let squared_norm_t = squared_norm(point_coords);
-        let squared_norm_f64: f64 = NumCast::from(squared_norm_t).unwrap_or(0.0);
-        matrix[(i, D)] = squared_norm_f64;
-
-        // Add one to the last column
+        let squared_norm_t = squared_norm(p.into());
+        matrix[(i, D)] = convert_scalar_to_f64(squared_norm_t)?;
         matrix[(i, D + 1)] = 1.0;
     }
 
-    // Add the test point to the last row of the matrix
-    let test_point_coords: [T; D] = (&test_point).into();
-    let test_point_coords_f64: [f64; D] =
-        test_point_coords.map(|coord| NumCast::from(coord).unwrap_or(0.0));
-
-    // Add coordinates
+    let test_point_coords_f64 = convert_point_to_f64_coords(&test_point)?;
     for j in 0..D {
         matrix[(D + 1, j)] = test_point_coords_f64[j];
     }
 
-    // Add squared norm using generic arithmetic on T
-    let test_squared_norm_t = squared_norm(test_point_coords);
-    let test_squared_norm_f64: f64 = NumCast::from(test_squared_norm_t).unwrap_or(0.0);
-    matrix[(D + 1, D)] = test_squared_norm_f64;
-
-    // Add one to the last column
+    let test_squared_norm_t = squared_norm((&test_point).into());
+    matrix[(D + 1, D)] = convert_scalar_to_f64(test_squared_norm_t)?;
     matrix[(D + 1, D + 1)] = 1.0;
 
-    // Calculate the determinant of the matrix
     let det = matrix.det();
-
-    // The sign of the determinant depends on the orientation of the simplex.
-    // For a positively oriented simplex, the determinant is positive when the test point
-    // is inside the circumsphere. For a negatively oriented simplex, the determinant
-    // is negative when the test point is inside the circumsphere.
-    // We need to check the orientation of the simplex to interpret the determinant correctly.
     let orientation = simplex_orientation(simplex_points)?;
-
-    // Use a tolerance for boundary detection
-    let tolerance = T::default_tolerance();
-    let tolerance_f64: f64 = NumCast::from(tolerance).unwrap_or(1e-10);
+    let tolerance_f64 = convert_scalar_to_f64(T::default_tolerance())?;
 
     match orientation {
-        Orientation::DEGENERATE => {
-            // Degenerate simplex - cannot determine containment reliably
-            Err(anyhow::Error::msg(
-                "Cannot determine circumsphere containment: simplex is degenerate",
-            ))
-        }
+        Orientation::DEGENERATE => Err(CoordinateConversionError::ConversionFailed {
+            coordinate_index: 0,
+            coordinate_value: "degenerate simplex".to_string(),
+            from_type: "simplex",
+            to_type: "circumsphere containment",
+        }),
         Orientation::POSITIVE => {
-            // For positive orientation, positive determinant means inside circumsphere
             if det > tolerance_f64 {
                 Ok(InSphere::INSIDE)
             } else if det < -tolerance_f64 {
@@ -429,7 +519,6 @@ where
             }
         }
         Orientation::NEGATIVE => {
-            // For negative orientation, negative determinant means inside circumsphere
             if det < -tolerance_f64 {
                 Ok(InSphere::INSIDE)
             } else if det > tolerance_f64 {
@@ -526,15 +615,16 @@ where
 pub fn insphere_lifted<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: Point<T, D>,
-) -> Result<InSphere, anyhow::Error>
+) -> Result<InSphere, CellValidationError>
 where
     T: CoordinateScalar + Sum,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     if simplex_points.len() != D + 1 {
-        return Err(anyhow::Error::msg(
-            "Invalid simplex: wrong number of points",
-        ));
+        return Err(CellValidationError::InsufficientVertices {
+            actual: simplex_points.len(),
+            expected: D + 1,
+            dimension: D,
+        });
     }
 
     // Get the reference point (first point of the simplex)
@@ -558,7 +648,7 @@ where
 
         // Convert to f64 for matrix operations
         let relative_coords_f64: [f64; D] =
-            relative_coords_t.map(|coord| NumCast::from(coord).unwrap_or(0.0));
+            relative_coords_t.map(|coord| cast(coord).unwrap_or(0.0));
 
         // Fill matrix row
         for j in 0..D {
@@ -567,7 +657,7 @@ where
 
         // Calculate squared norm using generic arithmetic on T
         let squared_norm_t = squared_norm(relative_coords_t);
-        let squared_norm_f64: f64 = NumCast::from(squared_norm_t).unwrap_or(0.0);
+        let squared_norm_f64: f64 = cast(squared_norm_t).unwrap_or(0.0);
 
         // Add squared norm to the last column
         matrix[(i - 1, D)] = squared_norm_f64;
@@ -584,7 +674,7 @@ where
 
     // Convert to f64 for matrix operations
     let test_relative_coords_f64: [f64; D] =
-        test_relative_coords_t.map(|coord| NumCast::from(coord).unwrap_or(0.0));
+        test_relative_coords_t.map(|coord| cast(coord).unwrap_or(0.0));
 
     // Fill matrix row
     for j in 0..D {
@@ -593,7 +683,7 @@ where
 
     // Calculate squared norm using generic arithmetic on T
     let test_squared_norm_t = squared_norm(test_relative_coords_t);
-    let test_squared_norm_f64: f64 = NumCast::from(test_squared_norm_t).unwrap_or(0.0);
+    let test_squared_norm_f64: f64 = cast(test_squared_norm_t).unwrap_or(0.0);
 
     // Add squared norm to the last column
     matrix[(D, D)] = test_squared_norm_f64;
@@ -607,14 +697,12 @@ where
 
     // Use a tolerance for boundary detection
     let tolerance = T::default_tolerance();
-    let tolerance_f64: f64 = NumCast::from(tolerance).unwrap_or(1e-10);
+    let tolerance_f64: f64 = cast(tolerance).unwrap_or(1e-10);
 
     match orientation {
         Orientation::DEGENERATE => {
             // Degenerate simplex - cannot determine containment reliably
-            Err(anyhow::Error::msg(
-                "Cannot determine circumsphere containment: simplex is degenerate",
-            ))
+            Err(CellValidationError::DegenerateSimplex)
         }
         Orientation::POSITIVE => {
             // For positive orientation, negative determinant means inside circumsphere

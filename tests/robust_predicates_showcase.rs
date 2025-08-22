@@ -11,7 +11,7 @@ use delaunay::geometry::{
 };
 use delaunay::prelude::*;
 use delaunay::vertex;
-use num_traits::cast::NumCast;
+use num_traits::cast;
 use std::time::Instant;
 
 /// This test demonstrates the exact problem we're solving: standard predicates
@@ -435,8 +435,8 @@ fn triangulation_scenario_demo() {
 
                 println!("   ✅ SUCCESS in {duration:?}");
                 println!("      Strategy: {:?}", info.strategy);
-                let cells_created_i32 = NumCast::from(info.cells_created).unwrap_or(0i32);
-                let cells_removed_i32 = NumCast::from(info.cells_removed).unwrap_or(0i32);
+                let cells_created_i32 = cast(info.cells_created).unwrap_or(0i32);
+                let cells_removed_i32 = cast(info.cells_removed).unwrap_or(0i32);
                 let cell_change = cells_created_i32 - cells_removed_i32;
                 println!(
                     "      Cells: {} → {} ({:+})",
@@ -461,8 +461,8 @@ fn triangulation_scenario_demo() {
     println!("\n{}", "=".repeat(50));
     println!("🏁 TRIANGULATION COMPLETE:");
     println!("   Successful insertions: {successful_insertions}/5");
-    let total_cells_after_i32 = NumCast::from(total_cells_after).unwrap_or(0i32);
-    let total_cells_before_i32 = NumCast::from(total_cells_before).unwrap_or(0i32);
+    let total_cells_after_i32 = cast(total_cells_after).unwrap_or(0i32);
+    let total_cells_before_i32 = cast(total_cells_before).unwrap_or(0i32);
     let total_cell_change = total_cells_after_i32 - total_cells_before_i32;
     println!("   Total cells: {total_cells_before} → {total_cells_after} ({total_cell_change:+})");
     let (vertices_processed, cells_created, cells_removed) = robust_algorithm.get_statistics();
