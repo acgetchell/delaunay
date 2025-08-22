@@ -13,7 +13,6 @@ use crate::core::{
     vertex::Vertex,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use nalgebra::{ComplexField, Const, OPoint};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
@@ -374,10 +373,8 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> InsertionStrategy
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
     {
         // Default implementation provides basic strategy determination
         Self::determine_strategy_default(tds, vertex)
@@ -402,10 +399,8 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> InsertionStrategy
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
     {
         // If the triangulation is empty or has very few cells, use standard approach
         if tds.number_of_cells() == 0 {
@@ -446,11 +441,8 @@ where
     /// `true` if the vertex is interior, `false` otherwise.
     fn is_vertex_interior(&self, tds: &Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) -> bool
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
-        for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
         use crate::geometry::predicates::{InSphere, insphere};
 
@@ -458,10 +450,10 @@ where
             let mut vertex_points = Vec::new();
             vertex_points.extend(cell.vertices().iter().map(|v| *v.point()));
 
-            if let Ok(containment) = insphere(&vertex_points, *vertex.point()) {
-                if matches!(containment, InSphere::INSIDE) {
-                    return true;
-                }
+            if let Ok(containment) = insphere(&vertex_points, *vertex.point())
+                && matches!(containment, InSphere::INSIDE)
+            {
+                return true;
             }
         }
         false
@@ -482,15 +474,18 @@ where
     /// `true` if the vertex is likely exterior, `false` otherwise
     fn is_vertex_likely_exterior(tds: &Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) -> bool
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
     {
         // Get the vertex coordinates
         let vertex_coords: [T; D] = vertex.point().into();
 
         // Calculate rough bounding box of existing vertices
-        let mut min_coords = [<T as From<f64>>::from(f64::INFINITY); D];
-        let mut max_coords = [<T as From<f64>>::from(f64::NEG_INFINITY); D];
+        let mut min_coords = [num_traits::NumCast::from(f64::INFINITY).unwrap_or_else(|| {
+            T::zero() + T::one() * num_traits::NumCast::from(1e10f64).unwrap_or_else(T::one)
+        }); D];
+        let mut max_coords = [num_traits::NumCast::from(f64::NEG_INFINITY).unwrap_or_else(|| {
+            T::zero() - T::one() * num_traits::NumCast::from(1e10f64).unwrap_or_else(T::one)
+        }); D];
         let mut vertex_count = 0;
 
         for existing_vertex in tds.vertices.values() {
@@ -512,7 +507,7 @@ where
         }
 
         // Calculate bounding box margins (10% expansion)
-        let margin_factor = <T as From<f64>>::from(0.1);
+        let margin_factor: T = num_traits::NumCast::from(0.1f64).unwrap_or_else(T::zero);
         let mut expanded_min = [T::zero(); D];
         let mut expanded_max = [T::zero(); D];
 
@@ -557,12 +552,8 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> Vec<crate::core::triangulation_data_structure::CellKey>
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     {
         use crate::geometry::predicates::{InSphere, insphere};
 
@@ -637,10 +628,8 @@ where
         bad_cells: &[crate::core::triangulation_data_structure::CellKey],
     ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
     {
         use std::collections::{HashMap, HashSet};
 
@@ -673,38 +662,38 @@ where
         let mut processed_facets = HashSet::new();
 
         for &bad_cell_key in bad_cells {
-            if let Some(bad_cell) = tds.cells().get(bad_cell_key) {
-                if let Ok(facets) = bad_cell.facets() {
-                    for facet in facets {
-                        let facet_key = facet.key();
+            if let Some(bad_cell) = tds.cells().get(bad_cell_key)
+                && let Ok(facets) = bad_cell.facets()
+            {
+                for facet in facets {
+                    let facet_key = facet.key();
 
-                        // Skip already processed facets
-                        if processed_facets.contains(&facet_key) {
-                            continue;
+                    // Skip already processed facets
+                    if processed_facets.contains(&facet_key) {
+                        continue;
+                    }
+
+                    if let Some(sharing_cells) = facet_to_cells.get(&facet_key) {
+                        // Count how many bad vs good cells share this facet
+                        let bad_count = sharing_cells
+                            .iter()
+                            .filter(|&&cell_key| bad_cell_set.contains(&cell_key))
+                            .count();
+                        let total_count = sharing_cells.len();
+
+                        // A facet is on the cavity boundary if:
+                        // 1. Exactly one bad cell uses it (boundary between bad and good)
+                        // 2. OR it's a true boundary facet (only one cell total) that's bad
+                        if bad_count == 1 && (total_count == 2 || total_count == 1) {
+                            // This is a cavity boundary facet - it separates bad from good cells
+                            // or is a boundary facet of a bad cell
+                            boundary_facets.push(facet.clone());
+                            processed_facets.insert(facet_key);
                         }
-
-                        if let Some(sharing_cells) = facet_to_cells.get(&facet_key) {
-                            // Count how many bad vs good cells share this facet
-                            let bad_count = sharing_cells
-                                .iter()
-                                .filter(|&&cell_key| bad_cell_set.contains(&cell_key))
-                                .count();
-                            let total_count = sharing_cells.len();
-
-                            // A facet is on the cavity boundary if:
-                            // 1. Exactly one bad cell uses it (boundary between bad and good)
-                            // 2. OR it's a true boundary facet (only one cell total) that's bad
-                            if bad_count == 1 && (total_count == 2 || total_count == 1) {
-                                // This is a cavity boundary facet - it separates bad from good cells
-                                // or is a boundary facet of a bad cell
-                                boundary_facets.push(facet.clone());
-                                processed_facets.insert(facet_key);
-                            }
-                            // Skip facets that are:
-                            // - Internal to the cavity (bad_count > 1)
-                            // - Not touched by any bad cells (bad_count == 0)
-                            // - Invalid sharing (total_count > 2)
-                        }
+                        // Skip facets that are:
+                        // - Internal to the cavity (bad_count > 1)
+                        // - Not touched by any bad cells (bad_count == 0)
+                        // - Invalid sharing (total_count > 2)
                     }
                 }
             }
@@ -746,11 +735,9 @@ where
         adjacent_cell_key: crate::core::triangulation_data_structure::CellKey,
     ) -> bool
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
         // Default implementation delegates to the static helper method
         Self::is_facet_visible_from_vertex_impl(tds, facet, vertex, adjacent_cell_key)
@@ -784,12 +771,8 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> Result<InsertionInfo, TriangulationValidationError>
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     {
         // Find bad cells
         let bad_cells = self.find_bad_cells(tds, vertex);
@@ -853,12 +836,9 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> Result<InsertionInfo, TriangulationValidationError>
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
         // Get visible boundary facets
         let visible_facets = self.find_visible_boundary_facets(tds, vertex)?;
@@ -911,12 +891,9 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> Result<InsertionInfo, TriangulationValidationError>
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
         // Conservative fallback: try to connect to any existing boundary facet
         // This avoids creating invalid geometry by arbitrary vertex replacement
@@ -927,22 +904,21 @@ where
         for cells in facet_to_cells.values() {
             if cells.len() == 1 {
                 let (cell_key, facet_index) = cells[0];
-                if let Some(cell) = tds.cells().get(cell_key) {
-                    if let Ok(facets) = cell.facets() {
-                        if facet_index < facets.len() {
-                            let facet = &facets[facet_index];
+                if let Some(cell) = tds.cells().get(cell_key)
+                    && let Ok(facets) = cell.facets()
+                    && facet_index < facets.len()
+                {
+                    let facet = &facets[facet_index];
 
-                            // Try to create a cell from this facet and the vertex
-                            if Self::create_cell_from_facet_and_vertex(tds, facet, vertex) {
-                                return Ok(InsertionInfo {
-                                    strategy: InsertionStrategy::Fallback,
-                                    cells_removed: 0,
-                                    cells_created: 1,
-                                    success: true,
-                                    degenerate_case_handled: false,
-                                });
-                            }
-                        }
+                    // Try to create a cell from this facet and the vertex
+                    if Self::create_cell_from_facet_and_vertex(tds, facet, vertex) {
+                        return Ok(InsertionInfo {
+                            strategy: InsertionStrategy::Fallback,
+                            cells_removed: 0,
+                            cells_created: 1,
+                            success: true,
+                            degenerate_case_handled: false,
+                        });
                     }
                 }
             }
@@ -951,22 +927,21 @@ where
         // If boundary facets don't work, try ALL facets (including internal ones)
         for cells in facet_to_cells.values() {
             for &(cell_key, facet_index) in cells {
-                if let Some(cell) = tds.cells().get(cell_key) {
-                    if let Ok(facets) = cell.facets() {
-                        if facet_index < facets.len() {
-                            let facet = &facets[facet_index];
+                if let Some(cell) = tds.cells().get(cell_key)
+                    && let Ok(facets) = cell.facets()
+                    && facet_index < facets.len()
+                {
+                    let facet = &facets[facet_index];
 
-                            // Try to create a cell from this facet and the vertex
-                            if Self::create_cell_from_facet_and_vertex(tds, facet, vertex) {
-                                return Ok(InsertionInfo {
-                                    strategy: InsertionStrategy::Fallback,
-                                    cells_removed: 0,
-                                    cells_created: 1,
-                                    success: true,
-                                    degenerate_case_handled: false,
-                                });
-                            }
-                        }
+                    // Try to create a cell from this facet and the vertex
+                    if Self::create_cell_from_facet_and_vertex(tds, facet, vertex) {
+                        return Ok(InsertionInfo {
+                            strategy: InsertionStrategy::Fallback,
+                            cells_removed: 0,
+                            cells_created: 1,
+                            success: true,
+                            degenerate_case_handled: false,
+                        });
                     }
                 }
             }
@@ -1014,19 +989,11 @@ where
         vertices: &[Vertex<T, U, D>],
     ) -> Result<(), TriangulationConstructionError>
     where
-        T: AddAssign<T>
-            + ComplexField<RealField = T>
-            + SubAssign<T>
-            + Sum
-            + From<f64>
-            + DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast + DeserializeOwned,
         U: DeserializeOwned,
         V: DeserializeOwned,
-        f64: From<T>,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
         if vertices.is_empty() {
             return Ok(());
@@ -1087,17 +1054,10 @@ where
         vertices: Vec<Vertex<T, U, D>>,
     ) -> Result<(), TriangulationConstructionError>
     where
-        T: AddAssign<T>
-            + ComplexField<RealField = T>
-            + SubAssign<T>
-            + Sum
-            + From<f64>
-            + DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast + DeserializeOwned,
         U: DeserializeOwned,
         V: DeserializeOwned,
-        f64: From<T>,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
     {
         if vertices.len() != D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
@@ -1156,17 +1116,10 @@ where
         tds: &mut Tds<T, U, V, D>,
     ) -> Result<(), TriangulationConstructionError>
     where
-        T: AddAssign<T>
-            + ComplexField<RealField = T>
-            + SubAssign<T>
-            + Sum
-            + From<f64>
-            + DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast + DeserializeOwned,
         U: DeserializeOwned,
         V: DeserializeOwned,
-        f64: From<T>,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
     {
         // Remove duplicate cells
         tds.remove_duplicate_cells();
@@ -1217,11 +1170,9 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
         let mut visible_facets = Vec::new();
 
@@ -1271,11 +1222,9 @@ where
         adjacent_cell_key: crate::core::triangulation_data_structure::CellKey,
     ) -> bool
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
         use crate::geometry::point::Point;
         use crate::geometry::predicates::{Orientation, simplex_orientation};
@@ -1389,12 +1338,11 @@ where
         vertices: &[Vertex<T, U, D>],
     ) -> Result<Tds<T, U, V, D>, TriangulationConstructionError>
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast + DeserializeOwned,
+        U: DeserializeOwned,
+        V: DeserializeOwned,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
         // Default implementation: use the regular Tds::new constructor
         Tds::new(vertices)
@@ -1440,10 +1388,8 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> bool
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
     {
         // Ensure the vertex is registered in the TDS vertex mapping
         Self::ensure_vertex_in_tds(tds, vertex);
@@ -1485,10 +1431,8 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> usize
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
     {
         let mut cells_created = 0;
         for facet in boundary_facets {
@@ -1511,10 +1455,8 @@ where
         tds: &mut Tds<T, U, V, D>,
         bad_cells: &[crate::core::triangulation_data_structure::CellKey],
     ) where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
     {
         for &cell_key in bad_cells {
             if let Some(cell) = tds.cells_mut().remove(cell_key) {
@@ -1543,10 +1485,8 @@ where
         tds: &mut Tds<T, U, V, D>,
     ) -> Result<(), TriangulationValidationError>
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
         for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
     {
         // Remove duplicate cells first
         tds.remove_duplicate_cells();

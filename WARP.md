@@ -360,7 +360,7 @@ complex triangulations and indicates the robustness of the validation system.
 ### Language Requirements
 
 - **Rust Edition**: 2024
-- **MSRV**: 1.85.0  
+- **MSRV**: 1.89.0
 - **Unsafe code**: Forbidden via `#![forbid(unsafe_code)]`
 - **Missing docs**: Warnings enabled
 

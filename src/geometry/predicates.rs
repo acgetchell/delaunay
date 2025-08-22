@@ -7,6 +7,7 @@
 use na::{ComplexField, Const, OPoint};
 use nalgebra as na;
 use num_traits::Zero;
+use num_traits::cast::NumCast;
 use peroxide::fuga::{LinearAlgebra, anyhow, zeros};
 use serde::{Serialize, de::DeserializeOwned};
 use std::iter::Sum;
@@ -109,10 +110,8 @@ pub fn simplex_orientation<T, const D: usize>(
     simplex_points: &[Point<T, D>],
 ) -> Result<Orientation, anyhow::Error>
 where
-    T: CoordinateScalar + ComplexField<RealField = T> + Sum,
-    f64: From<T>,
+    T: CoordinateScalar + Sum,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    [f64; D]: Default + DeserializeOwned + Serialize + Sized,
 {
     if simplex_points.len() != D + 1 {
         return Err(anyhow::Error::msg(
@@ -128,7 +127,8 @@ where
     for (i, p) in simplex_points.iter().enumerate() {
         // Use implicit conversion from point to coordinates
         let point_coords: [T; D] = p.into();
-        let point_coords_f64: [f64; D] = point_coords.map(std::convert::Into::into);
+        let point_coords_f64: [f64; D] =
+            point_coords.map(|coord| NumCast::from(coord).unwrap_or(0.0));
 
         // Add coordinates
         for j in 0..D {
@@ -144,7 +144,7 @@ where
 
     // Use a tolerance for degenerate case detection
     let tolerance = T::default_tolerance();
-    let tolerance_f64: f64 = tolerance.into();
+    let tolerance_f64: f64 = NumCast::from(tolerance).unwrap_or(1e-10);
 
     if det > tolerance_f64 {
         Ok(Orientation::POSITIVE)
@@ -343,10 +343,8 @@ pub fn insphere<T, const D: usize>(
     test_point: Point<T, D>,
 ) -> Result<InSphere, anyhow::Error>
 where
-    T: CoordinateScalar + ComplexField<RealField = T> + Sum,
-    f64: From<T>,
+    T: CoordinateScalar + Sum,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    [f64; D]: Default + DeserializeOwned + Serialize + Sized,
 {
     if simplex_points.len() != D + 1 {
         return Err(anyhow::Error::msg(
@@ -364,7 +362,8 @@ where
     for (i, p) in simplex_points.iter().enumerate() {
         // Use implicit conversion from point to coordinates
         let point_coords: [T; D] = p.into();
-        let point_coords_f64: [f64; D] = point_coords.map(std::convert::Into::into);
+        let point_coords_f64: [f64; D] =
+            point_coords.map(|coord| NumCast::from(coord).unwrap_or(0.0));
 
         // Add coordinates
         for j in 0..D {
@@ -373,7 +372,7 @@ where
 
         // Add squared norm using generic arithmetic on T
         let squared_norm_t = squared_norm(point_coords);
-        let squared_norm_f64: f64 = squared_norm_t.into();
+        let squared_norm_f64: f64 = NumCast::from(squared_norm_t).unwrap_or(0.0);
         matrix[(i, D)] = squared_norm_f64;
 
         // Add one to the last column
@@ -382,7 +381,8 @@ where
 
     // Add the test point to the last row of the matrix
     let test_point_coords: [T; D] = (&test_point).into();
-    let test_point_coords_f64: [f64; D] = test_point_coords.map(std::convert::Into::into);
+    let test_point_coords_f64: [f64; D] =
+        test_point_coords.map(|coord| NumCast::from(coord).unwrap_or(0.0));
 
     // Add coordinates
     for j in 0..D {
@@ -391,7 +391,7 @@ where
 
     // Add squared norm using generic arithmetic on T
     let test_squared_norm_t = squared_norm(test_point_coords);
-    let test_squared_norm_f64: f64 = test_squared_norm_t.into();
+    let test_squared_norm_f64: f64 = NumCast::from(test_squared_norm_t).unwrap_or(0.0);
     matrix[(D + 1, D)] = test_squared_norm_f64;
 
     // Add one to the last column
@@ -409,7 +409,7 @@ where
 
     // Use a tolerance for boundary detection
     let tolerance = T::default_tolerance();
-    let tolerance_f64: f64 = tolerance.into();
+    let tolerance_f64: f64 = NumCast::from(tolerance).unwrap_or(1e-10);
 
     match orientation {
         Orientation::DEGENERATE => {
@@ -528,10 +528,8 @@ pub fn insphere_lifted<T, const D: usize>(
     test_point: Point<T, D>,
 ) -> Result<InSphere, anyhow::Error>
 where
-    T: CoordinateScalar + ComplexField<RealField = T> + Sum,
-    f64: From<T>,
+    T: CoordinateScalar + Sum,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    [f64; D]: Default + DeserializeOwned + Serialize + Sized,
 {
     if simplex_points.len() != D + 1 {
         return Err(anyhow::Error::msg(
@@ -559,7 +557,8 @@ where
         }
 
         // Convert to f64 for matrix operations
-        let relative_coords_f64: [f64; D] = relative_coords_t.map(std::convert::Into::into);
+        let relative_coords_f64: [f64; D] =
+            relative_coords_t.map(|coord| NumCast::from(coord).unwrap_or(0.0));
 
         // Fill matrix row
         for j in 0..D {
@@ -568,7 +567,7 @@ where
 
         // Calculate squared norm using generic arithmetic on T
         let squared_norm_t = squared_norm(relative_coords_t);
-        let squared_norm_f64: f64 = squared_norm_t.into();
+        let squared_norm_f64: f64 = NumCast::from(squared_norm_t).unwrap_or(0.0);
 
         // Add squared norm to the last column
         matrix[(i - 1, D)] = squared_norm_f64;
@@ -584,7 +583,8 @@ where
     }
 
     // Convert to f64 for matrix operations
-    let test_relative_coords_f64: [f64; D] = test_relative_coords_t.map(std::convert::Into::into);
+    let test_relative_coords_f64: [f64; D] =
+        test_relative_coords_t.map(|coord| NumCast::from(coord).unwrap_or(0.0));
 
     // Fill matrix row
     for j in 0..D {
@@ -593,7 +593,7 @@ where
 
     // Calculate squared norm using generic arithmetic on T
     let test_squared_norm_t = squared_norm(test_relative_coords_t);
-    let test_squared_norm_f64: f64 = test_squared_norm_t.into();
+    let test_squared_norm_f64: f64 = NumCast::from(test_squared_norm_t).unwrap_or(0.0);
 
     // Add squared norm to the last column
     matrix[(D, D)] = test_squared_norm_f64;
@@ -607,7 +607,7 @@ where
 
     // Use a tolerance for boundary detection
     let tolerance = T::default_tolerance();
-    let tolerance_f64: f64 = tolerance.into();
+    let tolerance_f64: f64 = NumCast::from(tolerance).unwrap_or(1e-10);
 
     match orientation {
         Orientation::DEGENERATE => {

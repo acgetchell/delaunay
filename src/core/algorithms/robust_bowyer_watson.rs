@@ -212,36 +212,34 @@ where
             // Try boundary facet detection using trait method with robust fallback
             if let Ok(boundary_facets) =
                 self.find_cavity_boundary_facets_with_robust_fallback(tds, &bad_cells)
+                && !boundary_facets.is_empty()
             {
-                if !boundary_facets.is_empty() {
-                    let cells_removed = bad_cells.len();
-                    <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
-                    <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex);
-                    let cells_created =
-                        <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
-                            tds,
-                            &boundary_facets,
-                            vertex,
-                        );
+                let cells_removed = bad_cells.len();
+                <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
+                <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex);
+                let cells_created =
+                    <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
+                        tds,
+                        &boundary_facets,
+                        vertex,
+                    );
 
-                    // Maintain invariants after structural changes
-                    <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds)
-                        .map_err(|e| {
-                            TriangulationValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Failed to finalize triangulation after cavity-based insertion: {e}"
-                                ),
-                            }
-                        })?;
+                // Maintain invariants after structural changes
+                <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
+                    |e| TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Failed to finalize triangulation after cavity-based insertion: {e}"
+                        ),
+                    },
+                )?;
 
-                    return Ok(InsertionInfo {
-                        strategy: InsertionStrategy::CavityBased,
-                        cells_removed,
-                        cells_created,
-                        success: true,
-                        degenerate_case_handled: false,
-                    });
-                }
+                return Ok(InsertionInfo {
+                    strategy: InsertionStrategy::CavityBased,
+                    cells_removed,
+                    cells_created,
+                    success: true,
+                    degenerate_case_handled: false,
+                });
             }
         }
 
@@ -266,33 +264,32 @@ where
         // Use visibility detection with robust fallback
         if let Ok(visible_facets) =
             self.find_visible_boundary_facets_with_robust_fallback(tds, vertex)
+            && !visible_facets.is_empty()
         {
-            if !visible_facets.is_empty() {
-                <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex);
-                let cells_created =
-                    <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
-                        tds,
-                        &visible_facets,
-                        vertex,
-                    );
+            <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex);
+            let cells_created =
+                <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
+                    tds,
+                    &visible_facets,
+                    vertex,
+                );
 
-                // Maintain invariants after structural changes
-                <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
-                    |e| TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Failed to finalize triangulation after hull extension insertion: {e}"
-                        ),
-                    },
-                )?;
+            // Maintain invariants after structural changes
+            <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
+                |e| TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Failed to finalize triangulation after hull extension insertion: {e}"
+                    ),
+                },
+            )?;
 
-                return Ok(InsertionInfo {
-                    strategy: InsertionStrategy::HullExtension,
-                    cells_removed: 0,
-                    cells_created,
-                    success: true,
-                    degenerate_case_handled: false,
-                });
-            }
+            return Ok(InsertionInfo {
+                strategy: InsertionStrategy::HullExtension,
+                cells_removed: 0,
+                cells_created,
+                success: true,
+                degenerate_case_handled: false,
+            });
         }
 
         // If visibility detection fails, fall back to trait method
@@ -474,27 +471,27 @@ where
         let mut processed_facets = HashSet::new();
 
         for &bad_cell_key in bad_cells {
-            if let Some(bad_cell) = tds.cells().get(bad_cell_key) {
-                if let Ok(facets) = bad_cell.facets() {
-                    for facet in facets {
-                        let facet_key = facet.key();
+            if let Some(bad_cell) = tds.cells().get(bad_cell_key)
+                && let Ok(facets) = bad_cell.facets()
+            {
+                for facet in facets {
+                    let facet_key = facet.key();
 
-                        if processed_facets.contains(&facet_key) {
-                            continue;
-                        }
+                    if processed_facets.contains(&facet_key) {
+                        continue;
+                    }
 
-                        if let Some(sharing_cells) = facet_to_cells.get(&facet_key) {
-                            let bad_count = sharing_cells
-                                .iter()
-                                .filter(|&&cell_key| bad_cell_set.contains(&cell_key))
-                                .count();
-                            let total_count = sharing_cells.len();
+                    if let Some(sharing_cells) = facet_to_cells.get(&facet_key) {
+                        let bad_count = sharing_cells
+                            .iter()
+                            .filter(|&&cell_key| bad_cell_set.contains(&cell_key))
+                            .count();
+                        let total_count = sharing_cells.len();
 
-                            // Enhanced boundary detection logic
-                            if Self::is_cavity_boundary_facet(bad_count, total_count) {
-                                boundary_facets.push(facet.clone());
-                                processed_facets.insert(facet_key);
-                            }
+                        // Enhanced boundary detection logic
+                        if Self::is_cavity_boundary_facet(bad_count, total_count) {
+                            boundary_facets.push(facet.clone());
+                            processed_facets.insert(facet_key);
                         }
                     }
                 }
@@ -524,10 +521,10 @@ where
         }
 
         // Recovery Strategy 2: Reduce the set of bad cells
-        if let Ok(facets) = self.reduced_bad_cell_strategy(tds, bad_cells, vertex) {
-            if !facets.is_empty() {
-                return Ok(facets);
-            }
+        if let Ok(facets) = self.reduced_bad_cell_strategy(tds, bad_cells, vertex)
+            && !facets.is_empty()
+        {
+            return Ok(facets);
         }
 
         // Recovery Strategy 3: Use convex hull extension
@@ -589,15 +586,16 @@ where
         self.stats.degenerate_cases_handled += 1;
 
         // Strategy 1: Try vertex perturbation
-        let perturbed_vertex = self.create_perturbed_vertex(vertex);
-        if let Ok(info) = self.insert_vertex(tds, perturbed_vertex) {
-            return RobustInsertionInfo {
-                success: true,
-                cells_created: info.cells_created,
-                cells_removed: info.cells_removed,
-                strategy_used: InsertionStrategy::Perturbation,
-                degenerate_case_handled: true,
-            };
+        if let Ok(perturbed_vertex) = self.create_perturbed_vertex(vertex) {
+            if let Ok(info) = self.insert_vertex(tds, perturbed_vertex) {
+                return RobustInsertionInfo {
+                    success: true,
+                    cells_created: info.cells_created,
+                    cells_removed: info.cells_removed,
+                    strategy_used: InsertionStrategy::Perturbation,
+                    degenerate_case_handled: true,
+                };
+            }
         }
 
         // Strategy 2: Skip this vertex and mark as degenerate
@@ -893,7 +891,10 @@ where
     }
 
     #[allow(dead_code)]
-    fn create_perturbed_vertex(&self, vertex: &Vertex<T, U, D>) -> Vertex<T, U, D> {
+    fn create_perturbed_vertex(
+        &self,
+        vertex: &Vertex<T, U, D>,
+    ) -> Result<Vertex<T, U, D>, crate::core::vertex::VertexValidationError> {
         let mut coords: [T; D] = vertex.point().to_array();
         let perturbation = self.predicate_config.perturbation_scale;
 
@@ -906,14 +907,10 @@ where
         let mut perturbed_vertex = *vertex;
 
         // Use the set_point method for proper validation
-        // Note: In the context of perturbation for degeneracy handling,
-        // we expect the perturbed point to be valid since we're only applying
-        // a small perturbation to an already valid point
-        perturbed_vertex
-            .set_point(perturbed_point)
-            .expect("Perturbed point should be valid since original point was valid");
+        // Return the result directly to allow caller to handle potential validation errors
+        perturbed_vertex.set_point(perturbed_point)?;
 
-        perturbed_vertex
+        Ok(perturbed_vertex)
     }
 
     #[allow(dead_code)]
@@ -1365,20 +1362,20 @@ mod tests {
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
                     for neighbor_uuid in neighbors {
-                        if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid) {
-                            if let Some(neighbor) = tds.cells().get(*neighbor_key) {
-                                // Each neighbor should also reference this cell as a neighbor
-                                if let Some(neighbor_neighbors) = &neighbor.neighbors {
-                                    let cell_uuid = tds
-                                        .cell_bimap
-                                        .get_by_right(&cell_key)
-                                        .expect("Cell should have UUID");
-                                    assert!(
-                                        neighbor_neighbors.contains(cell_uuid),
-                                        "Neighbor relationship should be symmetric after insertion {}",
-                                        i + 1
-                                    );
-                                }
+                        if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid)
+                            && let Some(neighbor) = tds.cells().get(*neighbor_key)
+                        {
+                            // Each neighbor should also reference this cell as a neighbor
+                            if let Some(neighbor_neighbors) = &neighbor.neighbors {
+                                let cell_uuid = tds
+                                    .cell_bimap
+                                    .get_by_right(&cell_key)
+                                    .expect("Cell should have UUID");
+                                assert!(
+                                    neighbor_neighbors.contains(cell_uuid),
+                                    "Neighbor relationship should be symmetric after insertion {}",
+                                    i + 1
+                                );
                             }
                         }
                     }
@@ -1508,20 +1505,20 @@ mod tests {
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
                     for neighbor_uuid in neighbors {
-                        if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid) {
-                            if let Some(neighbor) = tds.cells().get(*neighbor_key) {
-                                // Each neighbor should also reference this cell as a neighbor
-                                if let Some(neighbor_neighbors) = &neighbor.neighbors {
-                                    let cell_uuid = tds
-                                        .cell_bimap
-                                        .get_by_right(&cell_key)
-                                        .expect("Cell should have UUID");
-                                    assert!(
-                                        neighbor_neighbors.contains(cell_uuid),
-                                        "Neighbor relationship should be symmetric after hull extension {}",
-                                        i + 1
-                                    );
-                                }
+                        if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid)
+                            && let Some(neighbor) = tds.cells().get(*neighbor_key)
+                        {
+                            // Each neighbor should also reference this cell as a neighbor
+                            if let Some(neighbor_neighbors) = &neighbor.neighbors {
+                                let cell_uuid = tds
+                                    .cell_bimap
+                                    .get_by_right(&cell_key)
+                                    .expect("Cell should have UUID");
+                                assert!(
+                                    neighbor_neighbors.contains(cell_uuid),
+                                    "Neighbor relationship should be symmetric after hull extension {}",
+                                    i + 1
+                                );
                             }
                         }
                     }
@@ -1661,49 +1658,44 @@ mod tests {
 
                     if let (Some(cell1), Some(cell2)) =
                         (tds.cells().get(cell1_key), tds.cells().get(cell2_key))
-                    {
-                        if let (Some(neighbors1), Some(neighbors2)) =
+                        && let (Some(neighbors1), Some(neighbors2)) =
                             (&cell1.neighbors, &cell2.neighbors)
-                        {
-                            let cell2_uuid = tds
-                                .cell_bimap
-                                .get_by_right(&cell2_key)
-                                .expect("Cell2 should have UUID");
-                            let cell1_uuid = tds
-                                .cell_bimap
-                                .get_by_right(&cell1_key)
-                                .expect("Cell1 should have UUID");
-                            assert!(
-                                neighbors1.contains(cell2_uuid),
-                                "Cell1 should reference cell2 as neighbor after insertion {}",
-                                i + 1
-                            );
-                            assert!(
-                                neighbors2.contains(cell1_uuid),
-                                "Cell2 should reference cell1 as neighbor after insertion {}",
-                                i + 1
-                            );
-                        }
+                    {
+                        let cell2_uuid = tds
+                            .cell_bimap
+                            .get_by_right(&cell2_key)
+                            .expect("Cell2 should have UUID");
+                        let cell1_uuid = tds
+                            .cell_bimap
+                            .get_by_right(&cell1_key)
+                            .expect("Cell1 should have UUID");
+                        assert!(
+                            neighbors1.contains(cell2_uuid),
+                            "Cell1 should reference cell2 as neighbor after insertion {}",
+                            i + 1
+                        );
+                        assert!(
+                            neighbors2.contains(cell1_uuid),
+                            "Cell2 should reference cell1 as neighbor after insertion {}",
+                            i + 1
+                        );
                     }
                 }
             }
 
             // 4. All vertices should have proper incident cells assigned
             for (_, vertex) in &tds.vertices {
-                if let Some(incident_cell_uuid) = vertex.incident_cell {
-                    if let Some(incident_cell_key) = tds.cell_bimap.get_by_left(&incident_cell_uuid)
-                    {
-                        if let Some(incident_cell) = tds.cells().get(*incident_cell_key) {
-                            let cell_vertices = incident_cell.vertices();
-                            let vertex_is_in_cell =
-                                cell_vertices.iter().any(|v| v.uuid() == vertex.uuid());
-                            assert!(
-                                vertex_is_in_cell,
-                                "Vertex incident cell should contain the vertex after insertion {}",
-                                i + 1
-                            );
-                        }
-                    }
+                if let Some(incident_cell_uuid) = vertex.incident_cell
+                    && let Some(incident_cell_key) = tds.cell_bimap.get_by_left(&incident_cell_uuid)
+                    && let Some(incident_cell) = tds.cells().get(*incident_cell_key)
+                {
+                    let cell_vertices = incident_cell.vertices();
+                    let vertex_is_in_cell = cell_vertices.iter().any(|v| v.uuid() == vertex.uuid());
+                    assert!(
+                        vertex_is_in_cell,
+                        "Vertex incident cell should contain the vertex after insertion {}",
+                        i + 1
+                    );
                 }
             }
 
@@ -1711,5 +1703,122 @@ mod tests {
         }
 
         println!("✓ Finalization successfully prevents all tested inconsistencies");
+    }
+
+    #[test]
+    fn test_create_perturbed_vertex_error_handling() {
+        println!("Testing create_perturbed_vertex error handling for invalid coordinates");
+
+        // Test 1: Normal case - should succeed
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let normal_vertex = vertex!([1.0, 2.0, 3.0]);
+
+        let result = algorithm.create_perturbed_vertex(&normal_vertex);
+        assert!(result.is_ok(), "Normal vertex perturbation should succeed");
+
+        if let Ok(perturbed) = result {
+            let original_coords = normal_vertex.point().to_array();
+            let perturbed_coords = perturbed.point().to_array();
+
+            // First coordinate should be different (perturbed)
+            assert_ne!(
+                original_coords[0], perturbed_coords[0],
+                "First coordinate should be perturbed"
+            );
+
+            // Other coordinates should remain the same
+            assert_eq!(
+                original_coords[1], perturbed_coords[1],
+                "Second coordinate should remain unchanged"
+            );
+            assert_eq!(
+                original_coords[2], perturbed_coords[2],
+                "Third coordinate should remain unchanged"
+            );
+
+            // All coordinates should be finite
+            assert!(
+                perturbed_coords.iter().all(|&c| c.is_finite()),
+                "All perturbed coordinates should be finite"
+            );
+        }
+
+        // Test 2: Create a scenario that could potentially cause overflow
+        // Use a very large perturbation scale that might cause overflow with large coordinates
+        let mut extreme_config =
+            crate::geometry::robust_predicates::config_presets::general_triangulation::<f64>();
+        extreme_config.perturbation_scale = f64::MAX / 10.0; // Very large perturbation scale
+
+        let extreme_algorithm =
+            RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(extreme_config);
+        let large_vertex = vertex!([f64::MAX / 2.0, 1.0, 1.0]);
+
+        // This should either succeed with a valid result or fail gracefully
+        let extreme_result = extreme_algorithm.create_perturbed_vertex(&large_vertex);
+
+        match extreme_result {
+            Ok(perturbed) => {
+                // If it succeeds, all coordinates must be finite
+                let coords = perturbed.point().to_array();
+                assert!(
+                    coords.iter().all(|&c| c.is_finite()),
+                    "All coordinates in successful perturbation must be finite"
+                );
+                println!("  ✓ Large perturbation succeeded with finite coordinates");
+            }
+            Err(error) => {
+                // If it fails, it should be due to invalid coordinates
+                match error {
+                    crate::core::vertex::VertexValidationError::InvalidPoint { .. } => {
+                        println!("  ✓ Large perturbation correctly failed with InvalidPoint error");
+                    }
+                    other => {
+                        panic!("Unexpected error type: {other:?}");
+                    }
+                }
+            }
+        }
+
+        // Test 3: Test with edge case coordinates that are already near the limits
+        let edge_vertex = vertex!([f64::MAX * 0.9, 0.0, 0.0]);
+        let edge_result = extreme_algorithm.create_perturbed_vertex(&edge_vertex);
+
+        // This should handle the edge case gracefully
+        match edge_result {
+            Ok(perturbed) => {
+                let coords = perturbed.point().to_array();
+                assert!(
+                    coords.iter().all(|&c| c.is_finite()),
+                    "Edge case perturbation result must have finite coordinates"
+                );
+                println!("  ✓ Edge case perturbation succeeded");
+            }
+            Err(_) => {
+                println!("  ✓ Edge case perturbation correctly failed due to coordinate overflow");
+            }
+        }
+
+        // Test 4: Verify that UUID and other properties are preserved
+        let uuid_test_vertex = vertex!([0.1, 0.2, 0.3]);
+        let original_uuid = uuid_test_vertex.uuid();
+
+        if let Ok(perturbed_vertex) = algorithm.create_perturbed_vertex(&uuid_test_vertex) {
+            assert_eq!(
+                original_uuid,
+                perturbed_vertex.uuid(),
+                "UUID should be preserved during perturbation"
+            );
+            assert_eq!(
+                uuid_test_vertex.data, perturbed_vertex.data,
+                "Data should be preserved during perturbation"
+            );
+            assert_eq!(
+                uuid_test_vertex.incident_cell, perturbed_vertex.incident_cell,
+                "Incident cell should be preserved during perturbation"
+            );
+            println!("  ✓ Vertex properties correctly preserved during perturbation");
+        }
+
+        println!("✓ All create_perturbed_vertex error handling tests passed");
     }
 }

@@ -73,7 +73,7 @@ use thiserror::Error;
 // =============================================================================
 
 /// Error type for facet operations.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FacetError {
     /// The cell does not contain the vertex.

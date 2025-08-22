@@ -206,11 +206,11 @@ fn test_reproduce_cavity_boundary_error_comprehensive() {
                     println!("  *** REPRODUCED THE TARGET ERROR! ***");
 
                     // Extract details about the error
-                    if let Some(start) = error_string.find("No cavity boundary facets found for ") {
-                        if let Some(end) = error_string[start..].find(" bad cells") {
-                            let bad_cell_count = &error_string[start + 36..start + end];
-                            println!("  Error occurred with {bad_cell_count} bad cells");
-                        }
+                    if let Some(start) = error_string.find("No cavity boundary facets found for ")
+                        && let Some(end) = error_string[start..].find(" bad cells")
+                    {
+                        let bad_cell_count = &error_string[start + 36..start + end];
+                        println!("  Error occurred with {bad_cell_count} bad cells");
                     }
 
                     println!("  This confirms the issue occurs with randomly generated points");

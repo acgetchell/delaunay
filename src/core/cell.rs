@@ -50,8 +50,6 @@ use super::{
 use crate::geometry::{point::Point, traits::coordinate::CoordinateScalar};
 use crate::prelude::VertexKey;
 use bimap::BiMap;
-use na::ComplexField;
-use nalgebra as na;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashMap, fmt::Debug, hash::Hash, iter::Sum};
 use thiserror::Error;
@@ -409,7 +407,7 @@ where
     /// assert_eq!(cell.number_of_vertices(), 4);
     /// ```
     #[inline]
-    pub fn number_of_vertices(&self) -> usize {
+    pub const fn number_of_vertices(&self) -> usize {
         self.vertices.len()
     }
 
@@ -597,7 +595,7 @@ where
     /// assert_eq!(cell.dim(), 3);
     /// ```
     #[inline]
-    pub fn dim(&self) -> usize {
+    pub const fn dim(&self) -> usize {
         self.vertices.len().saturating_sub(1)
     }
 
@@ -872,13 +870,12 @@ where
     }
 }
 
-// Advanced implementation block for methods requiring ComplexField
+// Advanced implementation block for Cell methods
 impl<T, U, V, const D: usize> Cell<T, U, V, D>
 where
-    T: CoordinateScalar + Clone + ComplexField<RealField = T> + PartialEq + PartialOrd + Sum,
+    T: CoordinateScalar + Clone + PartialEq + PartialOrd + Sum,
     U: DataType,
     V: DataType,
-    f64: From<T>,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     /// Returns all facets (faces) of the cell.

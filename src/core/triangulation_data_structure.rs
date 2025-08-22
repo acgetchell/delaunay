@@ -158,8 +158,6 @@ use std::ops::{AddAssign, Div, SubAssign};
 
 // External crate imports
 use bimap::BiMap;
-use na::{ComplexField, Const, OPoint};
-use nalgebra as na;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwned};
 use slotmap::{SlotMap, new_key_type};
 use thiserror::Error;
@@ -424,18 +422,10 @@ where
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar
-        + AddAssign<T>
-        + ComplexField<RealField = T>
-        + SubAssign<T>
-        + Sum
-        + From<f64>,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
     U: DataType,
     V: DataType,
-    f64: From<T>,
-    for<'a> &'a T: Div<T>,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
 {
     /// Returns a reference to the cells `SlotMap`.
     ///
@@ -520,348 +510,6 @@ where
     #[allow(clippy::missing_const_for_fn)]
     pub fn cells_mut(&mut self) -> &mut SlotMap<CellKey, Cell<T, U, V, D>> {
         &mut self.cells
-    }
-
-    /// The function creates a new instance of a triangulation data structure
-    /// with given vertices, initializing the vertices and cells.
-    ///
-    /// # Arguments
-    ///
-    /// * `vertices`: A container of [Vertex]s with which to initialize the
-    ///   triangulation.
-    ///
-    /// # Returns
-    ///
-    /// A Delaunay triangulation with cells and neighbors aligned, and vertices
-    /// associated with cells.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TriangulationValidationError` if:
-    /// - Triangulation computation fails during the Bowyer-Watson algorithm
-    /// - Cell creation or validation fails
-    /// - Neighbor assignment or duplicate cell removal fails
-    ///
-    /// # Examples
-    ///
-    /// Create a new triangulation data structure with 3D vertices:
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::vertex;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
-    ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    ///
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-    ///
-    /// // Check basic structure
-    /// assert_eq!(tds.number_of_vertices(), 4);
-    /// assert_eq!(tds.number_of_cells(), 1); // Cells are automatically created via triangulation
-    /// assert_eq!(tds.dim(), 3);
-    ///
-    /// // Verify cell creation and structure
-    /// let cells: Vec<_> = tds.cells().values().collect();
-    /// assert!(!cells.is_empty(), "Should have created at least one cell");
-    ///
-    /// // Check that the cell has the correct number of vertices (D+1 for a simplex)
-    /// let cell = &cells[0];
-    /// assert_eq!(cell.vertices().len(), 4, "3D cell should have 4 vertices");
-    ///
-    /// // Verify triangulation validity
-    /// assert!(tds.is_valid().is_ok(), "Triangulation should be valid after creation");
-    ///
-    /// // Check that all vertices are associated with the cell
-    /// for vertex in cell.vertices() {
-    ///     // Find the vertex key corresponding to this vertex UUID
-    ///     let vertex_key = tds.vertex_bimap.get_by_left(&vertex.uuid()).expect("Vertex UUID should map to a key");
-    ///     assert!(tds.vertices.contains_key(*vertex_key), "Cell vertex should exist in triangulation");
-    /// }
-    /// ```
-    ///
-    /// Create an empty triangulation:
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::vertex::Vertex;
-    ///
-    /// let vertices: Vec<Vertex<f64, usize, 3>> = Vec::new();
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-    /// assert_eq!(tds.number_of_vertices(), 0);
-    /// assert_eq!(tds.dim(), -1);
-    /// ```
-    ///
-    /// Create a 2D triangulation:
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::vertex;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
-    ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.5, 1.0]),
-    /// ];
-    ///
-    /// let tds: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
-    /// assert_eq!(tds.number_of_vertices(), 3);
-    /// assert_eq!(tds.dim(), 2);
-    /// ```
-    pub fn new(vertices: &[Vertex<T, U, D>]) -> Result<Self, TriangulationConstructionError>
-    where
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
-    {
-        let mut tds = Self {
-            vertices: SlotMap::with_key(),
-            cells: SlotMap::with_key(),
-            vertex_bimap: BiMap::new(),
-            cell_bimap: BiMap::new(),
-            // Initialize construction state based on number of vertices
-            construction_state: if vertices.is_empty() {
-                TriangulationConstructionState::Incomplete(0)
-            } else if vertices.len() < D + 1 {
-                TriangulationConstructionState::Incomplete(vertices.len())
-            } else {
-                TriangulationConstructionState::Constructed
-            },
-        };
-
-        // Add vertices to SlotMap and create bidirectional UUID-to-key mappings
-        for vertex in vertices {
-            let key = tds.vertices.insert(*vertex);
-            let uuid = vertex.uuid();
-            tds.vertex_bimap.insert(uuid, key);
-        }
-
-        // Initialize cells using Bowyer-Watson triangulation
-        // Note: bowyer_watson_logic now populates the SlotMaps internally
-        tds.bowyer_watson()?;
-
-        Ok(tds)
-    }
-
-    /// The `add` function checks if a [Vertex] with the same coordinates already
-    /// exists in the triangulation, and if not, inserts the [Vertex] and updates
-    /// the triangulation topology as needed.
-    ///
-    /// This method handles incremental triangulation construction, transitioning from
-    /// an unconstructed state (fewer than D+1 vertices) to a constructed state with
-    /// proper cells and topology. Once constructed, new vertices are inserted using
-    /// the Bowyer-Watson algorithm to maintain the Delaunay property.
-    ///
-    /// # Arguments
-    ///
-    /// * `vertex`: The [Vertex] to add.
-    ///
-    /// # Returns
-    ///
-    /// The function `add` returns `Ok(())` if the vertex was successfully
-    /// added to the triangulation, or an error message if the vertex already
-    /// exists or if there is a [Uuid] collision.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - A vertex with the same coordinates already exists in the triangulation
-    /// - A vertex with the same UUID already exists (UUID collision)
-    ///
-    /// # Examples
-    ///
-    /// Successfully add a vertex to an empty triangulation:
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::vertex;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
-    ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::default();
-    /// let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
-    ///
-    /// let result = tds.add(vertex);
-    /// assert!(result.is_ok());
-    /// assert_eq!(tds.number_of_vertices(), 1);
-    /// ```
-    ///
-    /// Attempt to add a vertex with coordinates that already exist:
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::vertex;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
-    ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::default();
-    /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
-    /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]); // Same coordinates
-    ///
-    /// tds.add(vertex1).unwrap();
-    /// let result = tds.add(vertex2);
-    /// assert_eq!(result, Err("Vertex already exists!"));
-    /// ```
-    ///
-    /// Add multiple vertices with different coordinates:
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::vertex;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
-    ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::default();
-    ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    /// ];
-    ///
-    /// for vertex in vertices {
-    ///     assert!(tds.add(vertex).is_ok());
-    /// }
-    ///
-    /// assert_eq!(tds.number_of_vertices(), 3);
-    /// assert_eq!(tds.dim(), 2);
-    /// ```
-    ///
-    /// **Demonstrating triangulation state progression from unconstructed to constructed:**
-    ///
-    /// This example shows how the triangulation evolves as vertices are added incrementally,
-    /// transitioning from an unconstructed state to a constructed state with proper cells.
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::{Tds, TriangulationConstructionState};
-    /// use delaunay::vertex;
-    ///
-    /// // Start with empty triangulation (3D)
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
-    ///
-    /// // Initially: empty, unconstructed
-    /// assert_eq!(tds.number_of_vertices(), 0);
-    /// assert_eq!(tds.number_of_cells(), 0);
-    /// assert_eq!(tds.dim(), -1);
-    /// assert!(matches!(tds.construction_state, TriangulationConstructionState::Incomplete(0)));
-    ///
-    /// // Add first vertex: still unconstructed, tracks vertex count
-    /// tds.add(vertex!([0.0, 0.0, 0.0])).unwrap();
-    /// assert_eq!(tds.number_of_vertices(), 1);
-    /// assert_eq!(tds.number_of_cells(), 0);  // No cells yet
-    /// assert_eq!(tds.dim(), 0);
-    /// // Note: construction_state is not updated by add() - it tracks initial state
-    ///
-    /// // Add second vertex: still unconstructed
-    /// tds.add(vertex!([1.0, 0.0, 0.0])).unwrap();
-    /// assert_eq!(tds.number_of_vertices(), 2);
-    /// assert_eq!(tds.number_of_cells(), 0);  // Still no cells
-    /// assert_eq!(tds.dim(), 1);
-    ///
-    /// // Add third vertex: still unconstructed (need D+1=4 vertices for 3D)
-    /// tds.add(vertex!([0.0, 1.0, 0.0])).unwrap();
-    /// assert_eq!(tds.number_of_vertices(), 3);
-    /// assert_eq!(tds.number_of_cells(), 0);  // Still no cells
-    /// assert_eq!(tds.dim(), 2);
-    ///
-    /// // Add fourth vertex: TRANSITION TO CONSTRUCTED STATE!
-    /// // This creates the first cell (tetrahedron) from all 4 vertices
-    /// tds.add(vertex!([0.0, 0.0, 1.0])).unwrap();
-    /// assert_eq!(tds.number_of_vertices(), 4);
-    /// assert_eq!(tds.number_of_cells(), 1);  // First cell created!
-    /// assert_eq!(tds.dim(), 3);
-    ///
-    /// // Add fifth vertex: triangulation updates via Bowyer-Watson
-    /// // This should create additional cells as the new vertex splits existing cells
-    /// tds.add(vertex!([0.25, 0.25, 0.25])).unwrap();  // Interior point
-    /// assert_eq!(tds.number_of_vertices(), 5);
-    /// assert!(tds.number_of_cells() > 1);  // Multiple cells now!
-    /// assert_eq!(tds.dim(), 3);
-    /// assert!(tds.is_valid().is_ok());  // Triangulation remains valid
-    /// ```
-    pub fn add(&mut self, vertex: Vertex<T, U, D>) -> Result<(), &'static str>
-    where
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
-    {
-        let uuid = vertex.uuid();
-
-        // Check if UUID already exists
-        if self.vertex_bimap.contains_left(&uuid) {
-            return Err("Uuid already exists!");
-        }
-
-        // Iterate over self.vertices.values() to check for coordinate duplicates
-        for val in self.vertices.values() {
-            let existing_coords: [T; D] = val.into();
-            let new_coords: [T; D] = (&vertex).into();
-            if existing_coords == new_coords {
-                return Err("Vertex already exists!");
-            }
-        }
-
-        // Add vertex to SlotMap and create bidirectional UUID-to-key mapping
-        let key = self.vertices.insert(vertex);
-        self.vertex_bimap.insert(uuid, key);
-
-        // Handle different triangulation scenarios based on current state
-        let vertex_count = self.number_of_vertices();
-
-        // Case 1: Empty or insufficient vertices - no triangulation yet
-        if vertex_count < D + 1 {
-            // Not enough vertices yet for a D-dimensional triangulation
-            // Just store the vertex without creating any cells
-            return Ok(());
-        }
-
-        // Case 2: Exactly D+1 vertices - create first cell directly
-        if vertex_count == D + 1 && self.number_of_cells() == 0 {
-            let all_vertices: Vec<_> = self.vertices.values().copied().collect();
-            let cell = CellBuilder::default()
-                .vertices(all_vertices)
-                .build()
-                .map_err(|_| "Failed to create initial cell from vertices")?;
-
-            let cell_key = self.cells.insert(cell);
-            let cell_uuid = self.cells[cell_key].uuid();
-            self.cell_bimap.insert(cell_uuid, cell_key);
-
-            // Assign incident cells to vertices
-            self.assign_incident_cells()
-                .map_err(|_| "Failed to assign incident cells")?;
-
-            return Ok(());
-        }
-
-        // Case 3: Adding to existing triangulation - use IncrementalBoyerWatson
-        if self.number_of_cells() > 0 {
-            // Insert the vertex into the existing triangulation using the trait method
-            use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
-            use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
-            let mut algorithm = IncrementalBoyerWatson::new();
-            algorithm
-                .insert_vertex(self, vertex)
-                .map_err(|_| "Failed to insert vertex into triangulation")?;
-
-            // Update neighbor relationships and incident cells
-            self.assign_neighbors()
-                .map_err(|_| "Failed to assign neighbor relationships")?;
-            self.assign_incident_cells()
-                .map_err(|_| "Failed to assign incident cells")?;
-        }
-
-        Ok(())
     }
 
     /// The function returns the number of vertices in the triangulation
@@ -1099,19 +747,352 @@ where
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar
-        + AddAssign<T>
-        + ComplexField<RealField = T>
-        + SubAssign<T>
-        + Sum
-        + From<f64>,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
     U: DataType,
     V: DataType,
-    f64: From<T>,
     for<'a> &'a T: Div<T>,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
 {
+    /// The function creates a new instance of a triangulation data structure
+    /// with given vertices, initializing the vertices and cells.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertices`: A container of [Vertex]s with which to initialize the
+    ///   triangulation.
+    ///
+    /// # Returns
+    ///
+    /// A Delaunay triangulation with cells and neighbors aligned, and vertices
+    /// associated with cells.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError` if:
+    /// - Triangulation computation fails during the Bowyer-Watson algorithm
+    /// - Cell creation or validation fails
+    /// - Neighbor assignment or duplicate cell removal fails
+    ///
+    /// # Examples
+    ///
+    /// Create a new triangulation data structure with 3D vertices:
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::vertex;
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// // Check basic structure
+    /// assert_eq!(tds.number_of_vertices(), 4);
+    /// assert_eq!(tds.number_of_cells(), 1); // Cells are automatically created via triangulation
+    /// assert_eq!(tds.dim(), 3);
+    ///
+    /// // Verify cell creation and structure
+    /// let cells: Vec<_> = tds.cells().values().collect();
+    /// assert!(!cells.is_empty(), "Should have created at least one cell");
+    ///
+    /// // Check that the cell has the correct number of vertices (D+1 for a simplex)
+    /// let cell = &cells[0];
+    /// assert_eq!(cell.vertices().len(), 4, "3D cell should have 4 vertices");
+    ///
+    /// // Verify triangulation validity
+    /// assert!(tds.is_valid().is_ok(), "Triangulation should be valid after creation");
+    ///
+    /// // Check that all vertices are associated with the cell
+    /// for vertex in cell.vertices() {
+    ///     // Find the vertex key corresponding to this vertex UUID
+    ///     let vertex_key = tds.vertex_bimap.get_by_left(&vertex.uuid()).expect("Vertex UUID should map to a key");
+    ///     assert!(tds.vertices.contains_key(*vertex_key), "Cell vertex should exist in triangulation");
+    /// }
+    /// ```
+    ///
+    /// Create an empty triangulation:
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
+    ///
+    /// let vertices: Vec<Vertex<f64, usize, 3>> = Vec::new();
+    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+    /// assert_eq!(tds.number_of_vertices(), 0);
+    /// assert_eq!(tds.dim(), -1);
+    /// ```
+    ///
+    /// Create a 2D triangulation:
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::vertex;
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.5, 1.0]),
+    /// ];
+    ///
+    /// let tds: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
+    /// assert_eq!(tds.number_of_vertices(), 3);
+    /// assert_eq!(tds.dim(), 2);
+    /// ```
+    pub fn new(vertices: &[Vertex<T, U, D>]) -> Result<Self, TriangulationConstructionError>
+    where
+        T: num_traits::NumCast,
+    {
+        let mut tds = Self {
+            vertices: SlotMap::with_key(),
+            cells: SlotMap::with_key(),
+            vertex_bimap: BiMap::new(),
+            cell_bimap: BiMap::new(),
+            // Initialize construction state based on number of vertices
+            construction_state: if vertices.is_empty() {
+                TriangulationConstructionState::Incomplete(0)
+            } else if vertices.len() < D + 1 {
+                TriangulationConstructionState::Incomplete(vertices.len())
+            } else {
+                TriangulationConstructionState::Constructed
+            },
+        };
+
+        // Add vertices to SlotMap and create bidirectional UUID-to-key mappings
+        for vertex in vertices {
+            let key = tds.vertices.insert(*vertex);
+            let uuid = vertex.uuid();
+            tds.vertex_bimap.insert(uuid, key);
+        }
+
+        // Initialize cells using Bowyer-Watson triangulation
+        // Note: bowyer_watson_logic now populates the SlotMaps internally
+        tds.bowyer_watson()?;
+
+        Ok(tds)
+    }
+
+    /// The `add` function checks if a [Vertex] with the same coordinates already
+    /// exists in the triangulation, and if not, inserts the [Vertex] and updates
+    /// the triangulation topology as needed.
+    ///
+    /// This method handles incremental triangulation construction, transitioning from
+    /// an unconstructed state (fewer than D+1 vertices) to a constructed state with
+    /// proper cells and topology. Once constructed, new vertices are inserted using
+    /// the Bowyer-Watson algorithm to maintain the Delaunay property.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertex`: The [Vertex] to add.
+    ///
+    /// # Returns
+    ///
+    /// The function `add` returns `Ok(())` if the vertex was successfully
+    /// added to the triangulation, or an error message if the vertex already
+    /// exists or if there is a [Uuid] collision.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - A vertex with the same coordinates already exists in the triangulation
+    /// - A vertex with the same UUID already exists (UUID collision)
+    ///
+    /// # Examples
+    ///
+    /// Successfully add a vertex to an empty triangulation:
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::vertex;
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    ///
+    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::default();
+    /// let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
+    ///
+    /// let result = tds.add(vertex);
+    /// assert!(result.is_ok());
+    /// assert_eq!(tds.number_of_vertices(), 1);
+    /// ```
+    ///
+    /// Attempt to add a vertex with coordinates that already exist:
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::vertex;
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    ///
+    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::default();
+    /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
+    /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]); // Same coordinates
+    ///
+    /// tds.add(vertex1).unwrap();
+    /// let result = tds.add(vertex2);
+    /// assert_eq!(result, Err("Vertex already exists!"));
+    /// ```
+    ///
+    /// Add multiple vertices with different coordinates:
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::vertex;
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    ///
+    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::default();
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    /// ];
+    ///
+    /// for vertex in vertices {
+    ///     assert!(tds.add(vertex).is_ok());
+    /// }
+    ///
+    /// assert_eq!(tds.number_of_vertices(), 3);
+    /// assert_eq!(tds.dim(), 2);
+    /// ```
+    ///
+    /// **Demonstrating triangulation state progression from unconstructed to constructed:**
+    ///
+    /// This example shows how the triangulation evolves as vertices are added incrementally,
+    /// transitioning from an unconstructed state to a constructed state with proper cells.
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::{Tds, TriangulationConstructionState};
+    /// use delaunay::vertex;
+    ///
+    /// // Start with empty triangulation (3D)
+    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+    ///
+    /// // Initially: empty, unconstructed
+    /// assert_eq!(tds.number_of_vertices(), 0);
+    /// assert_eq!(tds.number_of_cells(), 0);
+    /// assert_eq!(tds.dim(), -1);
+    /// assert!(matches!(tds.construction_state, TriangulationConstructionState::Incomplete(0)));
+    ///
+    /// // Add first vertex: still unconstructed, tracks vertex count
+    /// tds.add(vertex!([0.0, 0.0, 0.0])).unwrap();
+    /// assert_eq!(tds.number_of_vertices(), 1);
+    /// assert_eq!(tds.number_of_cells(), 0);  // No cells yet
+    /// assert_eq!(tds.dim(), 0);
+    /// // Note: construction_state is not updated by add() - it tracks initial state
+    ///
+    /// // Add second vertex: still unconstructed
+    /// tds.add(vertex!([1.0, 0.0, 0.0])).unwrap();
+    /// assert_eq!(tds.number_of_vertices(), 2);
+    /// assert_eq!(tds.number_of_cells(), 0);  // Still no cells
+    /// assert_eq!(tds.dim(), 1);
+    ///
+    /// // Add third vertex: still unconstructed (need D+1=4 vertices for 3D)
+    /// tds.add(vertex!([0.0, 1.0, 0.0])).unwrap();
+    /// assert_eq!(tds.number_of_vertices(), 3);
+    /// assert_eq!(tds.number_of_cells(), 0);  // Still no cells
+    /// assert_eq!(tds.dim(), 2);
+    ///
+    /// // Add fourth vertex: TRANSITION TO CONSTRUCTED STATE!
+    /// // This creates the first cell (tetrahedron) from all 4 vertices
+    /// tds.add(vertex!([0.0, 0.0, 1.0])).unwrap();
+    /// assert_eq!(tds.number_of_vertices(), 4);
+    /// assert_eq!(tds.number_of_cells(), 1);  // First cell created!
+    /// assert_eq!(tds.dim(), 3);
+    ///
+    /// // Add fifth vertex: triangulation updates via Bowyer-Watson
+    /// // This should create additional cells as the new vertex splits existing cells
+    /// tds.add(vertex!([0.25, 0.25, 0.25])).unwrap();  // Interior point
+    /// assert_eq!(tds.number_of_vertices(), 5);
+    /// assert!(tds.number_of_cells() > 1);  // Multiple cells now!
+    /// assert_eq!(tds.dim(), 3);
+    /// assert!(tds.is_valid().is_ok());  // Triangulation remains valid
+    /// ```
+    pub fn add(&mut self, vertex: Vertex<T, U, D>) -> Result<(), &'static str>
+    where
+        T: num_traits::NumCast,
+    {
+        let uuid = vertex.uuid();
+
+        // Check if UUID already exists
+        if self.vertex_bimap.contains_left(&uuid) {
+            return Err("Uuid already exists!");
+        }
+
+        // Iterate over self.vertices.values() to check for coordinate duplicates
+        for val in self.vertices.values() {
+            let existing_coords: [T; D] = val.into();
+            let new_coords: [T; D] = (&vertex).into();
+            if existing_coords == new_coords {
+                return Err("Vertex already exists!");
+            }
+        }
+
+        // Add vertex to SlotMap and create bidirectional UUID-to-key mapping
+        let key = self.vertices.insert(vertex);
+        self.vertex_bimap.insert(uuid, key);
+
+        // Handle different triangulation scenarios based on current state
+        let vertex_count = self.number_of_vertices();
+
+        // Case 1: Empty or insufficient vertices - no triangulation yet
+        if vertex_count < D + 1 {
+            // Not enough vertices yet for a D-dimensional triangulation
+            // Just store the vertex without creating any cells
+            return Ok(());
+        }
+
+        // Case 2: Exactly D+1 vertices - create first cell directly
+        if vertex_count == D + 1 && self.number_of_cells() == 0 {
+            let all_vertices: Vec<_> = self.vertices.values().copied().collect();
+            let cell = CellBuilder::default()
+                .vertices(all_vertices)
+                .build()
+                .map_err(|_| "Failed to create initial cell from vertices")?;
+
+            let cell_key = self.cells.insert(cell);
+            let cell_uuid = self.cells[cell_key].uuid();
+            self.cell_bimap.insert(cell_uuid, cell_key);
+
+            // Assign incident cells to vertices
+            self.assign_incident_cells()
+                .map_err(|_| "Failed to assign incident cells")?;
+
+            return Ok(());
+        }
+
+        // Case 3: Adding to existing triangulation - use IncrementalBoyerWatson
+        if self.number_of_cells() > 0 {
+            // Insert the vertex into the existing triangulation using the trait method
+            use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
+            use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
+            let mut algorithm = IncrementalBoyerWatson::new();
+            algorithm
+                .insert_vertex(self, vertex)
+                .map_err(|_| "Failed to insert vertex into triangulation")?;
+
+            // Update neighbor relationships and incident cells
+            self.assign_neighbors()
+                .map_err(|_| "Failed to assign neighbor relationships")?;
+            self.assign_incident_cells()
+                .map_err(|_| "Failed to assign incident cells")?;
+        }
+
+        Ok(())
+    }
+
     /// Performs the incremental Bowyer-Watson algorithm to construct a Delaunay triangulation.
     ///
     /// This method uses the new incremental Bowyer-Watson algorithm implementation that provides
@@ -1166,8 +1147,7 @@ where
     /// ```
     fn bowyer_watson(&mut self) -> Result<(), TriangulationConstructionError>
     where
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        T: num_traits::NumCast,
     {
         use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
         use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
@@ -1194,13 +1174,11 @@ where
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
     U: DataType,
     V: DataType,
-    f64: From<T>,
     for<'a> &'a T: Div<T>,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
 {
     /// Assigns neighbor relationships between cells based on shared facets with semantic ordering.
     ///
@@ -1475,13 +1453,11 @@ where
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
     U: DataType,
     V: DataType,
-    f64: From<T>,
     for<'a> &'a T: Div<T>,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
 {
     /// Remove duplicate cells (cells with identical vertex sets)
     ///
@@ -1721,13 +1697,11 @@ where
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
     U: DataType,
     V: DataType,
-    f64: From<T>,
     for<'a> &'a T: Div<T>,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
 {
     /// Validates the consistency of vertex UUID-to-key mappings.
     ///
@@ -2470,6 +2444,7 @@ mod tests {
     };
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
     use crate::vertex;
+    use nalgebra::{ComplexField, Const, OPoint};
 
     use super::*;
 

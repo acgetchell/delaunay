@@ -7,12 +7,59 @@ use crate::geometry::predicates::simplex_orientation;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use crate::geometry::util::squared_norm;
 use nalgebra::ComplexField;
-use num_traits::Zero;
-use serde::{Serialize, de::DeserializeOwned};
+use num_traits::cast::NumCast;
+use num_traits::{One, Zero};
+use ordered_float::OrderedFloat;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::iter::Sum;
-use std::ops::{AddAssign, Div, SubAssign};
+use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
+use thiserror::Error;
 
-/// Generic d-dimensional convex hull operations
+// =============================================================================
+// ERROR TYPES
+// =============================================================================
+
+/// Errors that can occur during convex hull construction.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum ConvexHullConstructionError {
+    /// Failed to extract boundary facets from the triangulation.
+    #[error("Failed to extract boundary facets from triangulation: {source}")]
+    BoundaryFacetExtractionFailed {
+        /// The underlying facet error that caused the failure.
+        source: FacetError,
+    },
+    /// The input triangulation is empty or invalid.
+    #[error("Invalid input triangulation: {message}")]
+    InvalidTriangulation {
+        /// Description of why the triangulation is invalid.
+        message: String,
+    },
+    /// Insufficient data to construct convex hull.
+    #[error("Insufficient data for convex hull construction: {message}")]
+    InsufficientData {
+        /// Description of the data insufficiency.
+        message: String,
+    },
+    /// Geometric degeneracy prevents convex hull construction.
+    #[error("Geometric degeneracy encountered during convex hull construction: {message}")]
+    GeometricDegeneracy {
+        /// Description of the degeneracy issue.
+        message: String,
+    },
+    /// Numeric cast failed during computation.
+    #[error("Numeric cast failed during convex hull computation: {message}")]
+    NumericCastFailed {
+        /// Description of the cast failure.
+        message: String,
+    },
+}
+
+// =============================================================================
+// CONVEX HULL DATA STRUCTURE
+// =============================================================================
+
+/// Generic d-dimensional convex hull operations.
 ///
 /// This struct provides convex hull functionality by leveraging the existing
 /// boundary facet analysis from the TDS. Since boundary facets in a Delaunay
@@ -67,7 +114,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + Default + Sized + Serialize + DeserializeOwned,
 {
     /// The boundary facets that form the convex hull
     pub hull_facets: Vec<Facet<T, U, V, D>>,
@@ -77,19 +124,22 @@ impl<T, U, V, const D: usize> ConvexHull<T, U, V, D>
 where
     T: CoordinateScalar
         + AddAssign<T>
-        + ComplexField<RealField = T>
         + SubAssign<T>
-        + Sum
+        + Sub<Output = T>
+        + DivAssign<T>
         + Zero
-        + From<f64>
-        + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
+        + One
+        + NumCast
+        + Copy
+        + Sum
+        + ComplexField<RealField = T>
+        + From<f64>,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + Default + Sized + Serialize + DeserializeOwned,
     f64: From<T>,
-    for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    [f64; D]: Default + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
+    for<'a> &'a T: std::ops::Div<T>,
+    OrderedFloat<f64>: From<T>,
 {
     /// Creates a new convex hull from a d-dimensional triangulation
     ///
@@ -99,11 +149,13 @@ where
     ///
     /// # Returns
     ///
-    /// A `Result` containing the convex hull or an error if extraction fails
+    /// A `Result` containing the convex hull or a [`ConvexHullConstructionError`] if extraction fails
     ///
     /// # Errors
     ///
-    /// Returns an error if boundary facets cannot be extracted from the triangulation.
+    /// Returns a [`ConvexHullConstructionError`] if:
+    /// - Boundary facets cannot be extracted from the triangulation ([`ConvexHullConstructionError::BoundaryFacetExtractionFailed`])
+    /// - The input triangulation is invalid ([`ConvexHullConstructionError::InvalidTriangulation`])
     ///
     /// # Examples
     ///
@@ -137,11 +189,31 @@ where
     ///     ConvexHull::from_triangulation(&tds_4d).unwrap();
     /// assert_eq!(hull_4d.facet_count(), 5); // 4-simplex has 5 facets
     /// ```
-    pub fn from_triangulation(tds: &Tds<T, U, V, D>) -> Result<Self, String> {
+    pub fn from_triangulation(tds: &Tds<T, U, V, D>) -> Result<Self, ConvexHullConstructionError> {
+        // Validate input triangulation
+        if tds.number_of_vertices() == 0 {
+            return Err(ConvexHullConstructionError::InsufficientData {
+                message: "Triangulation contains no vertices".to_string(),
+            });
+        }
+
+        if tds.number_of_cells() == 0 {
+            return Err(ConvexHullConstructionError::InsufficientData {
+                message: "Triangulation contains no cells".to_string(),
+            });
+        }
+
         // Use the existing boundary analysis to get hull facets
-        let hull_facets = tds
-            .boundary_facets()
-            .map_err(|e| format!("Failed to extract boundary facets: {e}"))?;
+        let hull_facets = tds.boundary_facets().map_err(|source| {
+            ConvexHullConstructionError::BoundaryFacetExtractionFailed { source }
+        })?;
+
+        // Additional validation: ensure we have at least one boundary facet
+        if hull_facets.is_empty() {
+            return Err(ConvexHullConstructionError::InsufficientData {
+                message: "No boundary facets found in triangulation".to_string(),
+            });
+        }
 
         Ok(Self { hull_facets })
     }
@@ -305,7 +377,11 @@ where
             | (Orientation::POSITIVE, Orientation::NEGATIVE) => Ok(true),
             (Orientation::DEGENERATE, _) | (_, Orientation::DEGENERATE) => {
                 // Degenerate case - fall back to distance heuristic
-                Ok(Self::fallback_visibility_test(facet, point))
+                Self::fallback_visibility_test(facet, point).map_err(|e| {
+                    FacetError::OrientationComputationFailed {
+                        details: format!("Fallback visibility test failed: {e}"),
+                    }
+                })
             }
             _ => Ok(false), // Same orientation = same side = not visible
         }
@@ -315,7 +391,20 @@ where
     ///
     /// When geometric predicates fail due to degeneracy, this method provides
     /// a simple heuristic based on distance from the facet centroid.
-    fn fallback_visibility_test(facet: &Facet<T, U, V, D>, point: &Point<T, D>) -> bool {
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result<bool, ConvexHullConstructionError>` where `true` indicates
+    /// the facet is visible from the point and `false` indicates it's not visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ConvexHullConstructionError::NumericCastFailed`] if numeric
+    /// conversion fails during centroid calculation or threshold computation.
+    fn fallback_visibility_test(
+        facet: &Facet<T, U, V, D>,
+        point: &Point<T, D>,
+    ) -> Result<bool, ConvexHullConstructionError> {
         let facet_vertices = facet.vertices();
         let vertex_points: Vec<Point<T, D>> = facet_vertices
             .iter()
@@ -330,7 +419,14 @@ where
                 centroid_coords[i] += coord;
             }
         }
-        let num_vertices = T::from_usize(vertex_points.len()).unwrap_or_else(T::one);
+        let num_vertices = NumCast::from(vertex_points.len()).ok_or_else(|| {
+            ConvexHullConstructionError::NumericCastFailed {
+                message: format!(
+                    "Failed to cast vertex count {} to coordinate type for centroid calculation",
+                    vertex_points.len()
+                ),
+            }
+        })?;
         for coord in &mut centroid_coords {
             *coord /= num_vertices;
         }
@@ -344,8 +440,12 @@ where
         let distance_squared = squared_norm(diff_coords);
 
         // Use a threshold to determine visibility - this is a simple heuristic
-        let threshold = T::from_f64(1.0).unwrap_or_else(T::one);
-        distance_squared > threshold
+        let threshold = NumCast::from(1.0f64).ok_or_else(|| {
+            ConvexHullConstructionError::NumericCastFailed {
+                message: "Failed to cast threshold value 1.0 to coordinate type".to_string(),
+            }
+        })?;
+        Ok(distance_squared > threshold)
     }
 
     /// Finds all hull facets visible from an external point
@@ -424,7 +524,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`FacetError`] if the visibility test fails or if distance calculations fail.
+    /// Returns a [`ConvexHullConstructionError`] if the visibility test fails or if distance calculations fail.
     ///
     /// # Examples
     ///
@@ -460,11 +560,13 @@ where
         &self,
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<Option<usize>, FacetError>
+    ) -> Result<Option<usize>, ConvexHullConstructionError>
     where
         T: PartialOrd + Copy,
     {
-        let visible_facets = self.find_visible_facets(point, tds)?;
+        let visible_facets = self.find_visible_facets(point, tds).map_err(|e| {
+            ConvexHullConstructionError::BoundaryFacetExtractionFailed { source: e }
+        })?;
 
         if visible_facets.is_empty() {
             return Ok(None);
@@ -480,7 +582,13 @@ where
 
             // Calculate distance from point to facet centroid as a simple heuristic
             let mut centroid_coords = [T::zero(); D];
-            let num_vertices = T::from_usize(facet_vertices.len()).unwrap_or_else(T::one);
+            let num_vertices = NumCast::from(facet_vertices.len())
+                .ok_or_else(|| ConvexHullConstructionError::NumericCastFailed {
+                    message: format!(
+                        "Failed to cast vertex count {} to coordinate type for centroid calculation",
+                        facet_vertices.len()
+                    ),
+                })?;
 
             for vertex in &facet_vertices {
                 let vertex_point = vertex.point();
@@ -591,7 +699,7 @@ where
     /// assert_eq!(hull.facet_count(), 4); // Tetrahedron has 4 faces
     /// ```
     #[must_use]
-    pub fn facet_count(&self) -> usize {
+    pub const fn facet_count(&self) -> usize {
         self.hull_facets.len()
     }
 
@@ -756,7 +864,7 @@ where
     /// assert!(!hull.is_empty());
     /// ```
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.hull_facets.is_empty()
     }
 
@@ -835,7 +943,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + Default + Sized + Serialize + DeserializeOwned,
 {
     fn default() -> Self {
         Self {
@@ -1147,9 +1255,11 @@ mod tests {
         ];
 
         for (point, description, expected) in test_points {
-            let is_visible = ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
-                test_facet, &point,
-            );
+            let is_visible =
+                ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
+                    test_facet, &point,
+                )
+                .unwrap();
 
             // Note: The exact threshold behavior may vary, so we mainly test that
             // the function completes without error and returns a boolean
@@ -1186,7 +1296,7 @@ mod tests {
             &test_point_2d,
         );
 
-        println!("  2D fallback result: {result_2d}");
+        println!("  2D fallback result: {result_2d:?}");
 
         // Test 4D fallback visibility
         let vertices_4d = vec![
@@ -1213,7 +1323,7 @@ mod tests {
             &test_point_4d,
         );
 
-        println!("  4D fallback result: {result_4d}");
+        println!("  4D fallback result: {result_4d:?}");
 
         println!("✓ Fallback visibility test works correctly in different dimensions");
     }
@@ -1251,7 +1361,7 @@ mod tests {
             );
 
             // The function should handle these cases gracefully
-            println!("  {description} - Result: {result}");
+            println!("  {description} - Result: {result:?}");
         }
 
         println!("✓ Fallback visibility test handles degenerate cases correctly");
@@ -1286,9 +1396,11 @@ mod tests {
         let mut not_visible_count = 0;
 
         for point in threshold_points {
-            let is_visible = ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
-                test_facet, &point,
-            );
+            let is_visible =
+                ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
+                    test_facet, &point,
+                )
+                .unwrap();
 
             let coords: [f64; 3] = point.into();
             println!("  Point {coords:?} - Visible: {is_visible}");
@@ -1346,10 +1458,12 @@ mod tests {
         ];
 
         for point in precise_points {
-            let is_visible = ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
-                test_facet_f64,
-                &point,
-            );
+            let is_visible =
+                ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
+                    test_facet_f64,
+                    &point,
+                )
+                .unwrap();
 
             let coords: [f64; 3] = point.into();
             println!("  High precision Point {coords:?} - Visible: {is_visible}");
@@ -1383,6 +1497,7 @@ mod tests {
                     test_facet,
                     &test_point,
                 )
+                .unwrap()
             })
             .collect();
 
@@ -1411,11 +1526,13 @@ mod tests {
         for point in test_points {
             let result1 = ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
                 test_facet, &point,
-            );
+            )
+            .unwrap();
 
             let result2 = ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
                 test_facet, &point,
-            );
+            )
+            .unwrap();
 
             assert_eq!(result1, result2, "Same point should give same result");
 
@@ -2075,7 +2192,7 @@ mod tests {
         );
 
         // The method should handle extreme coordinates gracefully
-        println!("  Fallback visibility result with extreme point: {result}");
+        println!("  Fallback visibility result with extreme point: {result:?}");
 
         // Test normal visibility methods with edge case points
         let edge_points = vec![
@@ -2250,7 +2367,7 @@ mod tests {
                 facet,
                 &test_point,
             );
-        println!("  Extreme precision fallback result: {fallback_result}");
+        println!("  Extreme precision fallback result: {fallback_result:?}");
 
         // Test with maximum finite values
         let vertices_max = vec![
@@ -2271,5 +2388,58 @@ mod tests {
         );
 
         println!("✓ Extreme coordinate precision tested successfully");
+    }
+
+    #[test]
+    fn test_numeric_cast_error_handling() {
+        println!("Testing numeric cast error handling in find_nearest_visible_facet");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Test with a normal point to ensure the method works correctly first
+        let outside_point = Point::new([2.0, 2.0, 2.0]);
+        let result = hull.find_nearest_visible_facet(&outside_point, &tds);
+        assert!(
+            result.is_ok(),
+            "Normal case should work without numeric cast issues"
+        );
+        assert!(
+            result.unwrap().is_some(),
+            "Outside point should have visible facets"
+        );
+
+        // The actual numeric cast failure is hard to test directly without creating
+        // a coordinate type that fails NumCast, but we can verify that our error
+        // handling structure is in place by checking that the method uses proper
+        // error types and doesn't panic.
+
+        // Test with various edge cases that could potentially cause numeric issues
+        let edge_points = vec![
+            Point::new([0.0, 0.0, 0.0]),       // At vertex
+            Point::new([1e-10, 1e-10, 1e-10]), // Very small but positive
+            Point::new([1e10, 1e10, 1e10]),    // Very large
+        ];
+
+        for point in edge_points {
+            let result = hull.find_nearest_visible_facet(&point, &tds);
+            assert!(
+                result.is_ok(),
+                "Edge case points should not cause numeric cast failures"
+            );
+
+            let coords: [f64; 3] = point.into();
+            let result_val = result.unwrap();
+            println!("  Edge point {coords:?} - Result: {result_val:?}");
+        }
+
+        println!("✓ Numeric cast error handling tested successfully");
     }
 }

@@ -105,7 +105,6 @@ use crate::core::{
     vertex::Vertex,
 };
 use crate::geometry::{algorithms::convex_hull::ConvexHull, traits::coordinate::CoordinateScalar};
-use nalgebra::{ComplexField, Const, OPoint};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
@@ -141,18 +140,11 @@ where
 
 impl<T, U, V, const D: usize> IncrementalBoyerWatson<T, U, V, D>
 where
-    T: CoordinateScalar
-        + AddAssign<T>
-        + ComplexField<RealField = T>
-        + SubAssign<T>
-        + Sum
-        + From<f64>,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    f64: From<T>,
     for<'a> &'a T: Div<T>,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
 {
     /// Creates a new incremental Bowyer-Watson algorithm instance
     ///
@@ -197,12 +189,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> InsertionStrategy
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
-        for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        OPoint<T, Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        T: num_traits::NumCast,
     {
         // Check if vertex is inside any existing cell's circumsphere
         if self.is_vertex_interior(tds, vertex) {
@@ -222,18 +209,11 @@ where
 
 impl<T, U, V, const D: usize> Default for IncrementalBoyerWatson<T, U, V, D>
 where
-    T: CoordinateScalar
-        + AddAssign<T>
-        + ComplexField<RealField = T>
-        + SubAssign<T>
-        + Sum
-        + From<f64>,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    f64: From<T>,
     for<'a> &'a T: Div<T>,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
 {
     fn default() -> Self {
         Self::new()
@@ -243,20 +223,11 @@ where
 // Implementation of the InsertionAlgorithm trait
 impl<T, U, V, const D: usize> InsertionAlgorithm<T, U, V, D> for IncrementalBoyerWatson<T, U, V, D>
 where
-    T: CoordinateScalar
-        + AddAssign<T>
-        + ComplexField<RealField = T>
-        + SubAssign<T>
-        + Sum
-        + From<f64>,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    f64: From<T>,
     for<'a> &'a T: Div<T>,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
-    nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
-    [f64; D]: Default + DeserializeOwned + Serialize + Sized,
 {
     /// Insert a single vertex into the triangulation
     fn insert_vertex(

@@ -96,7 +96,7 @@ Before you begin, ensure you have:
 The project uses:
 
 - **Edition**: Rust 2024
-- **MSRV**: Rust 1.85.0
+- **MSRV**: Rust 1.89.0
 - **Linting**: Strict clippy pedantic mode
 - **Testing**: Standard `#[test]` with comprehensive coverage
 - **Benchmarking**: Criterion with allocation tracking
