@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 use std::ops::{AddAssign, Div, SubAssign};
 
 use crate::core::traits::insertion_algorithm::{
-    InsertionAlgorithm, InsertionInfo, InsertionStatistics, InsertionStrategy,
+    InsertionAlgorithm, InsertionBuffers, InsertionInfo, InsertionStatistics, InsertionStrategy,
 };
 use crate::core::{
     facet::Facet,
@@ -19,6 +19,7 @@ use crate::core::{
     vertex::Vertex,
 };
 use crate::geometry::{
+    algorithms::convex_hull::ConvexHull,
     point::Point,
     predicates::InSphere,
     robust_predicates::{RobustPredicateConfig, config_presets, robust_insphere},
@@ -29,11 +30,21 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::iter::Sum;
 
 /// Enhanced Bowyer-Watson algorithm with robust geometric predicates.
-pub struct RobustBoyerWatson<T, U, V, const D: usize> {
+pub struct RobustBoyerWatson<T, U, V, const D: usize>
+where
+    T: CoordinateScalar,
+    U: crate::core::traits::data_type::DataType,
+    V: crate::core::traits::data_type::DataType,
+    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+{
     /// Configuration for robust predicates
     predicate_config: RobustPredicateConfig<T>,
     /// Unified statistics tracking
     stats: InsertionStatistics,
+    /// Reusable buffers for performance
+    buffers: InsertionBuffers<T, U, V, D>,
+    /// Cached convex hull for hull extension
+    hull: Option<ConvexHull<T, U, V, D>>,
     /// Phantom data to indicate that U and V types are used in method signatures
     _phantom: PhantomData<(U, V)>,
 }
@@ -73,15 +84,19 @@ where
         Self {
             predicate_config: config_presets::general_triangulation::<T>(),
             stats: InsertionStatistics::new(),
+            buffers: InsertionBuffers::with_capacity(100),
+            hull: None,
             _phantom: PhantomData,
         }
     }
 
     /// Create with custom predicate configuration.
-    pub const fn with_config(config: RobustPredicateConfig<T>) -> Self {
+    pub fn with_config(config: RobustPredicateConfig<T>) -> Self {
         Self {
             predicate_config: config,
             stats: InsertionStatistics::new(),
+            buffers: InsertionBuffers::with_capacity(100),
+            hull: None,
             _phantom: PhantomData,
         }
     }
@@ -92,6 +107,8 @@ where
         Self {
             predicate_config: config_presets::degenerate_robust::<T>(),
             stats: InsertionStatistics::new(),
+            buffers: InsertionBuffers::with_capacity(100),
+            hull: None,
             _phantom: PhantomData,
         }
     }
@@ -115,9 +132,6 @@ where
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
         [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     {
-        // Track statistics
-        self.stats.vertices_processed += 1;
-
         // Determine the best strategy using trait method
         let strategy = self.determine_strategy(tds, vertex);
 
@@ -136,8 +150,9 @@ where
         };
 
         // If primary strategy failed, try fallback strategies
+        let mut used_fallback = false;
         if result.is_err() {
-            self.stats.fallback_strategies_used += 1;
+            used_fallback = true;
 
             // Try the other strategy
             result = match strategy {
@@ -158,6 +173,18 @@ where
             // If both strategies failed, try general fallback
             if result.is_err() {
                 result = self.insert_vertex_fallback(tds, vertex);
+            }
+        }
+
+        // Update statistics on successful insertion (matching IncrementalBoyerWatson pattern)
+        if let Ok(ref info) = result {
+            self.stats.vertices_processed += 1;
+            self.stats.total_cells_created += info.cells_created;
+            self.stats.total_cells_removed += info.cells_removed;
+
+            // Track robust-specific statistics
+            if used_fallback {
+                self.stats.fallback_strategies_used += 1;
             }
         }
 
@@ -376,7 +403,7 @@ where
     /// Find bad cells using robust insphere predicate.
     /// This is a lower-level method used by `find_bad_cells_with_robust_fallback`.
     fn robust_find_bad_cells(
-        &mut self,
+        &self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
     ) -> Vec<CellKey> {
@@ -409,7 +436,8 @@ where
                 }
                 Err(_) => {
                     // Robust predicate failed - fall back to conservative approach
-                    self.stats.fallback_strategies_used += 1;
+                    // Note: We don't track fallback usage here as this is an internal method.
+                    // Statistics are only tracked on successful vertex insertion.
 
                     // Use the original insphere predicate as fallback
                     if matches!(
@@ -977,14 +1005,14 @@ where
     }
 
     fn get_statistics(&self) -> (usize, usize, usize) {
-        // Return statistics: (vertices_processed, cells_created, cells_removed)
-        // We don't track cells_created/cells_removed totals, so return 0 for those
-        (self.stats.vertices_processed, 0, 0)
+        // Use the standardized statistics method
+        self.stats.as_basic_tuple()
     }
 
     fn reset(&mut self) {
-        // Reset statistics
-        self.stats = InsertionStatistics::new();
+        self.stats.reset();
+        self.buffers.clear_all();
+        self.hull = None;
     }
 
     fn determine_strategy(

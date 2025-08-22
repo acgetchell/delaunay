@@ -160,12 +160,13 @@ where
     ///
     /// ```
     /// use delaunay::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
+    /// use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
     ///
     /// // Create a new 3D Bowyer-Watson algorithm instance
     /// let algorithm: IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> =
     ///     IncrementalBoyerWatson::new();
     ///
-    /// // Verify initial statistics
+    /// // Verify initial statistics using the trait method
     /// let (insertions, created, removed) = algorithm.get_statistics();
     /// assert_eq!(insertions, 0);
     /// assert_eq!(created, 0);
@@ -209,16 +210,6 @@ where
         } else {
             InsertionStrategy::HullExtension
         }
-    }
-
-    /// Returns statistics about the triangulation construction process
-    #[must_use]
-    pub const fn get_statistics(&self) -> (usize, usize, usize) {
-        (
-            self.stats.vertices_processed,
-            self.stats.total_cells_created,
-            self.stats.total_cells_removed,
-        )
     }
 
     /// Resets the algorithm state for reuse
@@ -342,14 +333,16 @@ where
 
     /// Get statistics about the insertion algorithm's performance
     fn get_statistics(&self) -> (usize, usize, usize) {
-        // Use the existing get_statistics implementation
-        self.get_statistics()
+        // Use the standardized statistics method
+        self.stats.as_basic_tuple()
     }
 
     /// Reset the algorithm state for reuse
     fn reset(&mut self) {
-        // Use the existing reset implementation
-        self.reset();
+        // Reset statistics and clear buffers
+        self.stats.reset();
+        self.buffers.clear_all();
+        self.hull = None;
     }
 
     /// Update the cell creation counter
