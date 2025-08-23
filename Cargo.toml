@@ -18,6 +18,7 @@ readme = "README.md"
 [dependencies]
 allocation-counter = { version = "0.8.1", optional = true }  # for memory profiling
 anyhow = "1.0.99"
+arc-swap = "1.7.1"
 approx = "0.5.1"
 bimap = "0.6.3"
 clap = { version = "4.5.45", features = ["derive"] }

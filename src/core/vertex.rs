@@ -111,7 +111,8 @@ macro_rules! vertex {
     // Pattern 1: Just coordinates - no data
     ($coords:expr) => {
         $crate::core::vertex::VertexBuilder::default()
-            .point($crate::geometry::point::Point::from($coords))
+            .point($crate::geometry::point::Point::try_from($coords)
+                .expect("Failed to convert coordinates to Point: invalid or out-of-range values"))
             .build()
             .expect("Failed to build vertex: invalid coordinates or builder configuration")
     };
@@ -119,7 +120,8 @@ macro_rules! vertex {
     // Pattern 2: Coordinates with data
     ($coords:expr, $data:expr) => {
         $crate::core::vertex::VertexBuilder::default()
-            .point($crate::geometry::point::Point::from($coords))
+            .point($crate::geometry::point::Point::try_from($coords)
+                .expect("Failed to convert coordinates to Point: invalid or out-of-range values"))
             .data($data)
             .build()
             .expect("Failed to build vertex with data: invalid coordinates, data, or builder configuration")
@@ -521,14 +523,16 @@ where
     /// ```
     /// use delaunay::core::vertex::{Vertex, VertexValidationError};
     /// use delaunay::vertex;
+    /// use uuid::Uuid;
     ///
     /// let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
     /// assert!(vertex.is_valid().is_ok());
     ///
-    /// let invalid_vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, f64::NAN, 3.0]);
-    /// match invalid_vertex.is_valid() {
-    ///     Err(VertexValidationError::InvalidPoint { .. }) => (), // Expected
-    ///     _ => panic!("Expected point validation error"),
+    /// // Test with default vertex (which has nil UUID) to show validation
+    /// let default_vertex: Vertex<f64, Option<()>, 3> = Vertex::default();
+    /// match default_vertex.is_valid() {
+    ///     Err(VertexValidationError::InvalidUuid { .. }) => (), // Expected - nil UUID
+    ///     other => panic!("Expected InvalidUuid error, got: {:?}", other),
     /// }
     /// ```
     pub fn is_valid(self) -> Result<(), VertexValidationError>
@@ -1435,24 +1439,49 @@ mod tests {
         let valid_zero: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
         assert!(valid_zero.is_valid().is_ok());
 
-        // Test invalid vertex with NaN coordinate
-        let invalid_nan: Vertex<f64, Option<()>, 3> = vertex!([1.0, f64::NAN, 3.0]);
+        // Test invalid vertex with NaN coordinate - create directly
+        let invalid_nan: Vertex<f64, Option<()>, 3> = Vertex {
+            point: Point::new([1.0, f64::NAN, 3.0]),
+            uuid: make_uuid(),
+            incident_cell: None,
+            data: None,
+        };
         assert!(invalid_nan.is_valid().is_err());
 
-        // Test invalid vertex with all NaN coordinates
-        let invalid_all_nan: Vertex<f64, Option<()>, 3> = vertex!([f64::NAN, f64::NAN, f64::NAN]);
+        // Test invalid vertex with all NaN coordinates - create directly
+        let invalid_all_nan: Vertex<f64, Option<()>, 3> = Vertex {
+            point: Point::new([f64::NAN, f64::NAN, f64::NAN]),
+            uuid: make_uuid(),
+            incident_cell: None,
+            data: None,
+        };
         assert!(invalid_all_nan.is_valid().is_err());
 
-        // Test invalid vertex with positive infinity
-        let invalid_pos_inf: Vertex<f64, Option<()>, 3> = vertex!([1.0, f64::INFINITY, 3.0]);
+        // Test invalid vertex with positive infinity - create directly
+        let invalid_pos_inf: Vertex<f64, Option<()>, 3> = Vertex {
+            point: Point::new([1.0, f64::INFINITY, 3.0]),
+            uuid: make_uuid(),
+            incident_cell: None,
+            data: None,
+        };
         assert!(invalid_pos_inf.is_valid().is_err());
 
-        // Test invalid vertex with negative infinity
-        let invalid_neg_inf: Vertex<f64, Option<()>, 3> = vertex!([1.0, f64::NEG_INFINITY, 3.0]);
+        // Test invalid vertex with negative infinity - create directly
+        let invalid_neg_inf: Vertex<f64, Option<()>, 3> = Vertex {
+            point: Point::new([1.0, f64::NEG_INFINITY, 3.0]),
+            uuid: make_uuid(),
+            incident_cell: None,
+            data: None,
+        };
         assert!(invalid_neg_inf.is_valid().is_err());
 
-        // Test invalid vertex with mixed NaN and infinity
-        let invalid_mixed: Vertex<f64, Option<()>, 3> = vertex!([f64::NAN, f64::INFINITY, 1.0]);
+        // Test invalid vertex with mixed NaN and infinity - create directly
+        let invalid_mixed: Vertex<f64, Option<()>, 3> = Vertex {
+            point: Point::new([f64::NAN, f64::INFINITY, 1.0]),
+            uuid: make_uuid(),
+            incident_cell: None,
+            data: None,
+        };
         assert!(invalid_mixed.is_valid().is_err());
     }
 
@@ -1462,12 +1491,22 @@ mod tests {
         let valid_vertex: Vertex<f32, Option<()>, 2> = vertex!([1.5f32, 2.5f32]);
         assert!(valid_vertex.is_valid().is_ok());
 
-        // Test invalid f32 vertex with NaN
-        let invalid_nan: Vertex<f32, Option<()>, 2> = vertex!([1.0f32, f32::NAN]);
+        // Test invalid f32 vertex with NaN - create directly
+        let invalid_nan: Vertex<f32, Option<()>, 2> = Vertex {
+            point: Point::new([1.0f32, f32::NAN]),
+            uuid: make_uuid(),
+            incident_cell: None,
+            data: None,
+        };
         assert!(invalid_nan.is_valid().is_err());
 
-        // Test invalid f32 vertex with infinity
-        let invalid_inf: Vertex<f32, Option<()>, 2> = vertex!([f32::INFINITY, 2.0f32]);
+        // Test invalid f32 vertex with infinity - create directly
+        let invalid_inf: Vertex<f32, Option<()>, 2> = Vertex {
+            point: Point::new([f32::INFINITY, 2.0f32]),
+            uuid: make_uuid(),
+            incident_cell: None,
+            data: None,
+        };
         assert!(invalid_inf.is_valid().is_err());
     }
 
@@ -1477,14 +1516,24 @@ mod tests {
         let valid_1d: Vertex<f64, Option<()>, 1> = vertex!([42.0]);
         assert!(valid_1d.is_valid().is_ok());
 
-        let invalid_1d: Vertex<f64, Option<()>, 1> = vertex!([f64::NAN]);
+        let invalid_1d: Vertex<f64, Option<()>, 1> = Vertex {
+            point: Point::new([f64::NAN]),
+            uuid: make_uuid(),
+            incident_cell: None,
+            data: None,
+        };
         assert!(invalid_1d.is_valid().is_err());
 
         // Test 5D vertex
         let valid_5d: Vertex<f64, Option<()>, 5> = vertex!([1.0, 2.0, 3.0, 4.0, 5.0]);
         assert!(valid_5d.is_valid().is_ok());
 
-        let invalid_5d: Vertex<f64, Option<()>, 5> = vertex!([1.0, 2.0, f64::NAN, 4.0, 5.0]);
+        let invalid_5d: Vertex<f64, Option<()>, 5> = Vertex {
+            point: Point::new([1.0, 2.0, f64::NAN, 4.0, 5.0]),
+            uuid: make_uuid(),
+            incident_cell: None,
+            data: None,
+        };
         assert!(invalid_5d.is_valid().is_err());
     }
 

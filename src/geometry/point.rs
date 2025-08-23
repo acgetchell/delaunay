@@ -22,10 +22,12 @@
 // =============================================================================
 
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateScalar, CoordinateValidationError,
+    Coordinate, CoordinateConversionError, CoordinateScalar, CoordinateValidationError,
 };
 use num_traits::cast;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::convert::TryFrom;
 use std::hash::{Hash, Hasher};
 
 // =============================================================================
@@ -179,7 +181,7 @@ where
 // Implement Deserialize manually
 impl<'de, T, const D: usize> Deserialize<'de> for Point<T, D>
 where
-    T: CoordinateScalar,
+    T: CoordinateScalar + DeserializeOwned,
 {
     fn deserialize<DE>(deserializer: DE) -> Result<Self, DE::Error>
     where
@@ -193,7 +195,7 @@ where
 
         impl<'de, T, const D: usize> Visitor<'de> for ArrayVisitor<T, D>
         where
-            T: CoordinateScalar,
+            T: CoordinateScalar + DeserializeOwned,
         {
             type Value = Point<T, D>;
 
@@ -232,22 +234,42 @@ where
 // TYPE CONVERSION IMPLEMENTATIONS
 // =============================================================================
 
-/// From trait implementations for Point conversions - using safe cast operations
-impl<T, U, const D: usize> From<[T; D]> for Point<U, D>
+/// Fallible conversions for Point from arrays with potentially different scalar types.
+///
+/// This replaces the previous infallible From<[T; D]> which silently defaulted on
+/// cast failures. Now, conversions will return an error if any coordinate cannot be
+/// cast into the target type, or if a non-finite value is encountered post-cast.
+impl<T, U, const D: usize> TryFrom<[T; D]> for Point<U, D>
 where
-    T: cast::NumCast,
-    U: CoordinateScalar + cast::NumCast + Default,
+    T: cast::NumCast + std::fmt::Debug,
+    U: CoordinateScalar + cast::NumCast,
 {
-    /// Create a new [Point] from an array of coordinates of type `T`.
-    ///
-    /// Uses safe numeric casting to convert between coordinate types.
-    /// If any coordinate fails to convert, the conversion falls back to the default value for U.
+    type Error = CoordinateConversionError;
+
     #[inline]
-    fn from(coords: [T; D]) -> Self {
-        // Convert the `coords` array to `[U; D]` using safe cast operations
-        let coords_u: [U; D] =
-            coords.map(|coord| cast::cast(coord).unwrap_or_else(|| U::default()));
-        Self::new(coords_u)
+    fn try_from(coords: [T; D]) -> Result<Self, Self::Error> {
+        let mut out: [U; D] = [U::zero(); D];
+        for (i, c) in coords.into_iter().enumerate() {
+            // Store debug representation before moving c
+            let c_debug = format!("{c:?}");
+            // Attempt numeric cast
+            let v: U =
+                cast::cast(c).ok_or_else(|| CoordinateConversionError::ConversionFailed {
+                    coordinate_index: i,
+                    coordinate_value: c_debug,
+                    from_type: std::any::type_name::<T>(),
+                    to_type: std::any::type_name::<U>(),
+                })?;
+            // Validate finiteness after cast
+            if !v.is_finite_generic() {
+                return Err(CoordinateConversionError::NonFiniteValue {
+                    coordinate_index: i,
+                    coordinate_value: format!("{v:?}"),
+                });
+            }
+            out[i] = v;
+        }
+        Ok(Self::new(out))
     }
 }
 
@@ -1591,11 +1613,11 @@ mod tests {
 
     #[test]
     fn point_cast_conversions() {
-        // Test the cast()-based From<[T; D]> implementation
+        // Test the cast()-based TryFrom<[T; D]> implementation
 
-        // Test f32 to f64 conversion (safe upcast) using From
+        // Test f32 to f64 conversion (safe upcast) using TryFrom
         let coords_f32: [f32; 3] = [1.5, 2.5, 3.5];
-        let point_f64: Point<f64, 3> = Point::from(coords_f32);
+        let point_f64: Point<f64, 3> = Point::try_from(coords_f32).unwrap();
 
         // Verify the conversion worked correctly
         assert_relative_eq!(
@@ -1606,7 +1628,7 @@ mod tests {
 
         // Test same type conversion (no actual cast needed)
         let coords_f64: [f64; 2] = [10.0, 20.0];
-        let point_f64_same: Point<f64, 2> = Point::from(coords_f64);
+        let point_f64_same: Point<f64, 2> = Point::try_from(coords_f64).unwrap();
         assert_relative_eq!(
             point_f64_same.to_array().as_slice(),
             [10.0, 20.0].as_slice()
@@ -1614,7 +1636,7 @@ mod tests {
 
         // Test with integer type conversions
         let coords_i32: [i32; 4] = [1, 2, 3, 4];
-        let point_f64_from_int: Point<f64, 4> = Point::from(coords_i32);
+        let point_f64_from_int: Point<f64, 4> = Point::try_from(coords_i32).unwrap();
         assert_relative_eq!(
             point_f64_from_int.to_array().as_slice(),
             [1.0, 2.0, 3.0, 4.0].as_slice(),
@@ -1623,18 +1645,16 @@ mod tests {
 
         // Test with large values that are within range
         let coords_large_i32: [i32; 2] = [i32::MAX, i32::MIN];
-        let point_f64_from_large: Point<f64, 2> = Point::from(coords_large_i32);
+        let point_f64_from_large: Point<f64, 2> = Point::try_from(coords_large_i32).unwrap();
         assert_relative_eq!(
             point_f64_from_large.to_array().as_slice(),
             [f64::from(i32::MAX), f64::from(i32::MIN)].as_slice(),
             epsilon = 1e-9
         );
 
-        // Test with complex numbers or unusual types where casting is harder
-        // In real code, this might default to the default value for the target type
-        // This test is just ensuring our From implementation handles reasonable cases
+        // Test with mixed typical values
         let coords_mixed: [f32; 3] = [0.0, 1.5, -3.5];
-        let point_mixed: Point<f64, 3> = Point::from(coords_mixed);
+        let point_mixed: Point<f64, 3> = Point::try_from(coords_mixed).unwrap();
         assert_relative_eq!(
             point_mixed.to_array().as_slice(),
             [0.0, 1.5, -3.5].as_slice(),
@@ -2210,6 +2230,153 @@ mod tests {
         special_set.insert(point_combo3); // Should increase size
 
         assert_eq!(special_set.len(), 2);
+    }
+
+    // =============================================================================
+    // CONVERSION ERROR TESTS
+    // =============================================================================
+
+    #[test]
+    fn point_try_from_conversion_errors() {
+        // Test non-finite value errors (NaN after cast)
+        let coords_with_nan = [f64::NAN, 1.0, 2.0];
+        let result: Result<Point<f32, 3>, _> = Point::try_from(coords_with_nan);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CoordinateConversionError::NonFiniteValue {
+                coordinate_index, ..
+            } => {
+                assert_eq!(coordinate_index, 0);
+            }
+            CoordinateConversionError::ConversionFailed { .. } => {
+                panic!("Expected NonFiniteValue error")
+            }
+        }
+
+        // Test non-finite value errors (infinity after cast)
+        let coords_with_inf = [1.0, f64::INFINITY, 2.0];
+        let result: Result<Point<f32, 3>, _> = Point::try_from(coords_with_inf);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CoordinateConversionError::NonFiniteValue {
+                coordinate_index, ..
+            } => {
+                assert_eq!(coordinate_index, 1);
+            }
+            CoordinateConversionError::ConversionFailed { .. } => {
+                panic!("Expected NonFiniteValue error")
+            }
+        }
+
+        // Test conversion failure (overflow cases if we had them)
+        // Note: With num_traits::cast, most reasonable numeric conversions succeed,
+        // so ConversionFailed errors are rare in practice for standard numeric types.
+        // But the infrastructure is there for edge cases or custom numeric types.
+    }
+
+    #[test]
+    fn point_try_from_success_cases() {
+        // Test successful conversions that should work fine
+
+        // f32 to f64 (upcast)
+        let coords_f32 = [1.5f32, 2.5f32, 3.5f32];
+        let result: Result<Point<f64, 3>, _> = Point::try_from(coords_f32);
+        assert!(result.is_ok());
+        let point = result.unwrap();
+        assert_relative_eq!(
+            point.to_array().as_slice(),
+            [1.5f64, 2.5f64, 3.5f64].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // i32 to f64
+        let coords_i32 = [1i32, -2i32, 3i32];
+        let result: Result<Point<f64, 3>, _> = Point::try_from(coords_i32);
+        assert!(result.is_ok());
+        let point = result.unwrap();
+        assert_relative_eq!(
+            point.to_array().as_slice(),
+            [1.0f64, -2.0f64, 3.0f64].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // Same type (f64 to f64)
+        let coords_f64 = [1.0f64, 2.0f64];
+        let result: Result<Point<f64, 2>, _> = Point::try_from(coords_f64);
+        assert!(result.is_ok());
+        let point = result.unwrap();
+        assert_relative_eq!(
+            point.to_array().as_slice(),
+            [1.0f64, 2.0f64].as_slice(),
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn point_try_from_error_details() {
+        // Test error message formatting for NonFiniteValue
+        let coords_with_nan = [f64::NAN, 1.0];
+        let result: Result<Point<f32, 2>, _> = Point::try_from(coords_with_nan);
+        assert!(result.is_err());
+
+        let error = result.unwrap_err();
+        let error_msg = format!("{error}");
+        assert!(error_msg.contains("Non-finite value"));
+        assert!(error_msg.contains("coordinate index 0"));
+        assert!(error_msg.contains("NaN"));
+
+        // Test error cloning and equality
+        let coords_with_inf = [f64::INFINITY, 2.0];
+        let result2: Result<Point<f32, 2>, _> = Point::try_from(coords_with_inf);
+        let error2 = result2.unwrap_err();
+        let error2_clone = error2.clone();
+        assert_eq!(error2, error2_clone);
+    }
+
+    #[test]
+    fn point_try_from_different_error_positions() {
+        // Test error at different coordinate positions
+        let test_cases = [
+            ([f64::NAN, 1.0, 2.0, 3.0], 0),          // First coordinate
+            ([1.0, f64::NAN, 2.0, 3.0], 1),          // Second coordinate
+            ([1.0, 2.0, f64::INFINITY, 3.0], 2),     // Third coordinate
+            ([1.0, 2.0, 3.0, f64::NEG_INFINITY], 3), // Fourth coordinate
+        ];
+
+        for &(coords, expected_index) in &test_cases {
+            let result: Result<Point<f32, 4>, _> = Point::try_from(coords);
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                CoordinateConversionError::NonFiniteValue {
+                    coordinate_index, ..
+                } => {
+                    assert_eq!(coordinate_index, expected_index);
+                }
+                CoordinateConversionError::ConversionFailed { .. } => {
+                    panic!("Expected NonFiniteValue error at position {expected_index}")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn point_try_from_first_error_reported() {
+        // When multiple coordinates have errors, the first one should be reported
+        let coords_multi_error = [f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+        let result: Result<Point<f32, 3>, _> = Point::try_from(coords_multi_error);
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            CoordinateConversionError::NonFiniteValue {
+                coordinate_index, ..
+            } => {
+                // Should report the first error (index 0, not 1 or 2)
+                assert_eq!(coordinate_index, 0);
+            }
+            CoordinateConversionError::ConversionFailed { .. } => {
+                panic!("Expected NonFiniteValue error")
+            }
+        }
     }
 
     #[test]

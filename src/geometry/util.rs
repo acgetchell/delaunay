@@ -195,6 +195,8 @@ pub fn safe_coords_from_f64<T: CoordinateScalar, const D: usize>(
 /// Safely convert a single scalar value from type T to f64.
 ///
 /// This is a convenience function for converting single values with proper error handling.
+/// Unlike basic casting, this function checks for non-finite values (NaN, infinity) and
+/// provides detailed error information if the conversion fails.
 ///
 /// # Arguments
 ///
@@ -206,7 +208,18 @@ pub fn safe_coords_from_f64<T: CoordinateScalar, const D: usize>(
 ///
 /// # Errors
 ///
+/// Returns `CoordinateConversionError::NonFiniteValue` if the value is NaN or infinite
 /// Returns `CoordinateConversionError::ConversionFailed` if the conversion fails
+///
+/// # Example
+///
+/// ```
+/// use delaunay::geometry::util::safe_scalar_to_f64;
+///
+/// let value_f32 = 42.5f32;
+/// let value_f64 = safe_scalar_to_f64(value_f32).unwrap();
+/// assert_eq!(value_f64, 42.5f64);
+/// ```
 pub fn safe_scalar_to_f64<T: CoordinateScalar>(value: T) -> Result<f64, CoordinateConversionError> {
     safe_cast_to_f64(value, 0)
 }
@@ -573,7 +586,11 @@ where
     // Use safe coordinate conversion for solution
     let solution_array_t: [T; D] = safe_coords_from_f64(solution_array)?;
 
-    Ok(Point::<T, D>::from(solution_array_t))
+    Point::<T, D>::try_from(solution_array_t).map_err(|e| {
+        CircumcenterError::MatrixInversionFailed {
+            details: format!("Failed to convert solution to Point: {e}"),
+        }
+    })
 }
 
 /// Calculate the circumradius of a set of points forming a simplex.
@@ -681,91 +698,6 @@ where
     Ok(distance)
 }
 
-/// Helper function to convert a point's coordinates to a `[f64; D]` array.
-///
-/// This function performs safe conversion from generic coordinate type `T` to `f64`,
-/// providing detailed error information if any coordinate conversion fails.
-///
-/// # Arguments
-///
-/// * `point` - The point whose coordinates need to be converted
-///
-/// # Returns
-///
-/// An array of f64 coordinates if successful, or a conversion error if any
-/// coordinate cannot be safely converted to f64.
-///
-/// # Errors
-///
-/// Returns [`CoordinateConversionError::ConversionFailed`] if any coordinate
-/// cannot be converted to f64, including the coordinate index and value that failed.
-///
-/// # Example
-///
-/// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::util::convert_point_to_f64_coords;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-///
-/// let point = Point::new([1.0f32, 2.0f32, 3.0f32]);
-/// let coords_f64 = convert_point_to_f64_coords(&point).unwrap();
-/// assert_eq!(coords_f64, [1.0f64, 2.0f64, 3.0f64]);
-/// ```
-pub fn convert_point_to_f64_coords<T: CoordinateScalar + Sum, const D: usize>(
-    point: &Point<T, D>,
-) -> Result<[f64; D], CoordinateConversionError> {
-    let point_coords: [T; D] = point.into();
-    let mut point_coords_f64: [f64; D] = [0.0; D];
-    for (j, &coord) in point_coords.iter().enumerate() {
-        point_coords_f64[j] =
-            cast(coord).ok_or_else(|| CoordinateConversionError::ConversionFailed {
-                coordinate_index: j,
-                coordinate_value: format!("{coord:?}"),
-                from_type: std::any::type_name::<T>(),
-                to_type: "f64",
-            })?;
-    }
-    Ok(point_coords_f64)
-}
-
-/// Helper function to convert a scalar value to `f64`.
-///
-/// This function performs safe conversion from generic coordinate type `T` to `f64`,
-/// providing detailed error information if the conversion fails.
-///
-/// # Arguments
-///
-/// * `value` - The scalar value to convert
-///
-/// # Returns
-///
-/// The value as f64 if successful, or a conversion error if the value
-/// cannot be safely converted to f64.
-///
-/// # Errors
-///
-/// Returns [`CoordinateConversionError::ConversionFailed`] if the value
-/// cannot be converted to f64, including the value that failed conversion.
-///
-/// # Example
-///
-/// ```
-/// use delaunay::geometry::util::convert_scalar_to_f64;
-///
-/// let value_f32 = 42.5f32;
-/// let value_f64 = convert_scalar_to_f64(value_f32).unwrap();
-/// assert_eq!(value_f64, 42.5f64);
-/// ```
-pub fn convert_scalar_to_f64<T: CoordinateScalar + Sum>(
-    value: T,
-) -> Result<f64, CoordinateConversionError> {
-    cast(value).ok_or_else(|| CoordinateConversionError::ConversionFailed {
-        coordinate_index: 0,
-        coordinate_value: format!("{value:?}"),
-        from_type: std::any::type_name::<T>(),
-        to_type: "f64",
-    })
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -919,316 +851,6 @@ mod tests {
     // =============================================================================
     // COORDINATE CONVERSION FUNCTION TESTS
     // =============================================================================
-
-    #[test]
-    fn test_convert_point_to_f64_coords_basic_success() {
-        // Test successful conversion from f32 to f64
-        let point_f32 = Point::new([1.0f32, 2.0f32, 3.0f32]);
-        let result = convert_point_to_f64_coords(&point_f32);
-
-        assert!(result.is_ok());
-        let coords_f64 = result.unwrap();
-        assert_relative_eq!(coords_f64[0], 1.0f64, epsilon = 1e-10);
-        assert_relative_eq!(coords_f64[1], 2.0f64, epsilon = 1e-10);
-        assert_relative_eq!(coords_f64[2], 3.0f64, epsilon = 1e-10);
-    }
-
-    #[test]
-    fn test_convert_point_to_f64_coords_different_dimensions() {
-        // Test 1D point
-        let point_1d = Point::new([42.0f32]);
-        let result_1d = convert_point_to_f64_coords(&point_1d);
-        assert!(result_1d.is_ok());
-        let r1d = result_1d.unwrap();
-        assert_relative_eq!(r1d[0], 42.0f64, epsilon = 1e-10);
-
-        // Test 2D point
-        let point_2d = Point::new([1.5f32, 2.5f32]);
-        let result_2d = convert_point_to_f64_coords(&point_2d);
-        assert!(result_2d.is_ok());
-        let r2d = result_2d.unwrap();
-        assert_relative_eq!(r2d[0], 1.5f64, epsilon = 1e-10);
-        assert_relative_eq!(r2d[1], 2.5f64, epsilon = 1e-10);
-
-        // Test 4D point
-        let point_4d = Point::new([1.0f32, 2.0f32, 3.0f32, 4.0f32]);
-        let result_4d = convert_point_to_f64_coords(&point_4d);
-        assert!(result_4d.is_ok());
-        let r4d = result_4d.unwrap();
-        assert_relative_eq!(r4d[0], 1.0f64, epsilon = 1e-10);
-        assert_relative_eq!(r4d[1], 2.0f64, epsilon = 1e-10);
-        assert_relative_eq!(r4d[2], 3.0f64, epsilon = 1e-10);
-        assert_relative_eq!(r4d[3], 4.0f64, epsilon = 1e-10);
-
-        // Test 5D point (high dimension)
-        let point_5d = Point::new([1.0f32, 2.0f32, 3.0f32, 4.0f32, 5.0f32]);
-        let result_5d = convert_point_to_f64_coords(&point_5d);
-        assert!(result_5d.is_ok());
-        let r5d = result_5d.unwrap();
-        assert_relative_eq!(r5d[0], 1.0f64, epsilon = 1e-10);
-        assert_relative_eq!(r5d[1], 2.0f64, epsilon = 1e-10);
-        assert_relative_eq!(r5d[2], 3.0f64, epsilon = 1e-10);
-        assert_relative_eq!(r5d[3], 4.0f64, epsilon = 1e-10);
-        assert_relative_eq!(r5d[4], 5.0f64, epsilon = 1e-10);
-    }
-
-    #[test]
-    fn test_convert_point_to_f64_coords_edge_values() {
-        // Test with zero coordinates
-        let point_zeros = Point::new([0.0f32, 0.0f32, 0.0f32]);
-        let result_zeros = convert_point_to_f64_coords(&point_zeros);
-        assert!(result_zeros.is_ok());
-        let rzeros = result_zeros.unwrap();
-        assert_relative_eq!(rzeros[0], 0.0f64, epsilon = 1e-10);
-        assert_relative_eq!(rzeros[1], 0.0f64, epsilon = 1e-10);
-        assert_relative_eq!(rzeros[2], 0.0f64, epsilon = 1e-10);
-
-        // Test with negative coordinates
-        let point_negative = Point::new([-1.0f32, -2.5f32, -0.001f32]);
-        let result_negative = convert_point_to_f64_coords(&point_negative);
-        assert!(result_negative.is_ok());
-        let coords_negative = result_negative.unwrap();
-        assert_relative_eq!(coords_negative[0], -1.0f64, epsilon = 1e-6);
-        assert_relative_eq!(coords_negative[1], -2.5f64, epsilon = 1e-6);
-        assert_relative_eq!(coords_negative[2], -0.001f64, epsilon = 1e-6);
-
-        // Test with very small values
-        let point_small = Point::new([1e-6f32, 1e-10f32, 1e-20f32]);
-        let result_small = convert_point_to_f64_coords(&point_small);
-        assert!(result_small.is_ok());
-        let coords = result_small.unwrap();
-        assert_relative_eq!(coords[0], 1e-6f64, epsilon = 1e-6); // f32 has limited precision
-        assert_relative_eq!(coords[1], 1e-10f64, epsilon = 1e-10); // More relaxed epsilon for f32
-        // Note: 1e-20f32 might lose precision when converting from f32
-
-        // Test with large values
-        let point_large = Point::new([1e6f32, 1e8f32, 1e10f32]);
-        let result_large = convert_point_to_f64_coords(&point_large);
-        assert!(result_large.is_ok());
-        let coords_large = result_large.unwrap();
-        assert_relative_eq!(coords_large[0], 1e6f64, epsilon = 1e-6);
-        assert_relative_eq!(coords_large[1], 1e8f64, epsilon = 1e-6);
-        assert_relative_eq!(coords_large[2], 1e10f64, epsilon = 1e-6);
-    }
-
-    #[test]
-    fn test_convert_point_to_f64_coords_already_f64() {
-        // Test conversion from f64 to f64 (should be identity)
-        let point_f64 = Point::new([1.123_456_789_012_345_f64, 2.987_654_321_098_765_f64]);
-        let result = convert_point_to_f64_coords(&point_f64);
-        assert!(result.is_ok());
-        let coords = result.unwrap();
-        assert_relative_eq!(coords[0], 1.123_456_789_012_345_f64, epsilon = 1e-15);
-        assert_relative_eq!(coords[1], 2.987_654_321_098_765_f64, epsilon = 1e-15);
-    }
-
-    #[test]
-    fn test_convert_point_to_f64_coords_special_values() {
-        use std::f32;
-
-        // Test with infinity (should work for f32 to f64)
-        let point_inf = Point::new([f32::INFINITY, f32::NEG_INFINITY, 0.0f32]);
-        let result_inf = convert_point_to_f64_coords(&point_inf);
-        assert!(result_inf.is_ok());
-        let coords_inf = result_inf.unwrap();
-        assert!(coords_inf[0].is_infinite() && coords_inf[0].is_sign_positive());
-        assert!(coords_inf[1].is_infinite() && coords_inf[1].is_sign_negative());
-        assert_relative_eq!(coords_inf[2], 0.0f64, epsilon = 1e-10);
-
-        // Test with NaN (should work for f32 to f64)
-        let point_nan = Point::new([f32::NAN, 1.0f32]);
-        let result_nan = convert_point_to_f64_coords(&point_nan);
-        assert!(result_nan.is_ok());
-        let coords_nan = result_nan.unwrap();
-        assert!(coords_nan[0].is_nan());
-        assert_relative_eq!(coords_nan[1], 1.0f64, epsilon = 1e-10);
-    }
-
-    #[test]
-    fn test_convert_point_to_f64_coords_precision() {
-        // Test that f64 precision is maintained when converting from f64
-        let high_precision_value = 1.123_456_789_012_345_7_f64;
-        let point_precise = Point::new([high_precision_value, 0.0f64]);
-        let result = convert_point_to_f64_coords(&point_precise);
-        assert!(result.is_ok());
-        let coords = result.unwrap();
-        assert_relative_eq!(coords[0], high_precision_value, epsilon = 1e-15); // Should maintain full f64 precision
-    }
-
-    #[test]
-    fn test_convert_scalar_to_f64_basic_success() {
-        // Test successful conversion from f32 to f64
-        let value_f32 = 42.5f32;
-        let result = convert_scalar_to_f64(value_f32);
-
-        assert!(result.is_ok());
-        assert_relative_eq!(result.unwrap(), 42.5f64, epsilon = 1e-10);
-    }
-
-    #[test]
-    fn test_convert_scalar_to_f64_different_types() {
-        // Test with f64 (identity conversion)
-        let value_f64 = 123.456_789_f64;
-        let result_f64 = convert_scalar_to_f64(value_f64);
-        assert!(result_f64.is_ok());
-        assert_relative_eq!(result_f64.unwrap(), 123.456_789_f64, epsilon = 1e-10);
-
-        // Test with f32
-        let value_f32 = -987.654f32;
-        let result_f32 = convert_scalar_to_f64(value_f32);
-        assert!(result_f32.is_ok());
-        assert_relative_eq!(result_f32.unwrap(), -987.654f64, epsilon = 1e-3);
-    }
-
-    #[test]
-    fn test_convert_scalar_to_f64_edge_values() {
-        // Test with zero
-        let zero_f32 = 0.0f32;
-        let result_zero = convert_scalar_to_f64(zero_f32);
-        assert!(result_zero.is_ok());
-        assert_relative_eq!(result_zero.unwrap(), 0.0f64, epsilon = 1e-10);
-
-        // Test with negative zero
-        let neg_zero_f32 = -0.0f32;
-        let result_neg_zero = convert_scalar_to_f64(neg_zero_f32);
-        assert!(result_neg_zero.is_ok());
-        assert_relative_eq!(result_neg_zero.unwrap(), -0.0f64, epsilon = 1e-10);
-
-        // Test with very small positive value
-        let small_positive = 1e-30f32;
-        let result_small_pos = convert_scalar_to_f64(small_positive);
-        assert!(result_small_pos.is_ok());
-        let small_pos_value = result_small_pos.unwrap();
-        assert!(small_pos_value > 0.0);
-        assert!(small_pos_value.is_finite());
-
-        // Test with very small negative value
-        let small_negative = -1e-30f32;
-        let result_small_neg = convert_scalar_to_f64(small_negative);
-        assert!(result_small_neg.is_ok());
-        let small_neg_value = result_small_neg.unwrap();
-        assert!(small_neg_value < 0.0);
-        assert!(small_neg_value.is_finite());
-
-        // Test with large positive value
-        let large_positive = 1e30f32;
-        let result_large_pos = convert_scalar_to_f64(large_positive);
-        assert!(result_large_pos.is_ok());
-        let large_pos_value = result_large_pos.unwrap();
-        assert!(large_pos_value > 0.0);
-        assert!(large_pos_value.is_finite());
-
-        // Test with large negative value
-        let large_negative = -1e30f32;
-        let result_large_neg = convert_scalar_to_f64(large_negative);
-        assert!(result_large_neg.is_ok());
-        let large_neg_value = result_large_neg.unwrap();
-        assert!(large_neg_value < 0.0);
-        assert!(large_neg_value.is_finite());
-    }
-
-    #[test]
-    fn test_convert_scalar_to_f64_special_values() {
-        use std::f32;
-
-        // Test with positive infinity
-        let pos_inf_f32 = f32::INFINITY;
-        let result_pos_inf = convert_scalar_to_f64(pos_inf_f32);
-        assert!(result_pos_inf.is_ok());
-        let pos_inf_result = result_pos_inf.unwrap();
-        assert!(pos_inf_result.is_infinite() && pos_inf_result.is_sign_positive());
-
-        // Test with negative infinity
-        let neg_inf_f32 = f32::NEG_INFINITY;
-        let result_neg_inf = convert_scalar_to_f64(neg_inf_f32);
-        assert!(result_neg_inf.is_ok());
-        let neg_inf_result = result_neg_inf.unwrap();
-        assert!(neg_inf_result.is_infinite() && neg_inf_result.is_sign_negative());
-
-        // Test with NaN
-        let nan_f32 = f32::NAN;
-        let result_nan = convert_scalar_to_f64(nan_f32);
-        assert!(result_nan.is_ok());
-        assert!(result_nan.unwrap().is_nan());
-    }
-
-    #[test]
-    fn test_convert_scalar_to_f64_precision() {
-        // Test that f64 precision is maintained when converting from f64
-        let high_precision_value = 1.123_456_789_012_345_7_f64;
-        let result = convert_scalar_to_f64(high_precision_value);
-        assert!(result.is_ok());
-        assert_relative_eq!(result.unwrap(), high_precision_value, epsilon = 1e-15); // Should maintain full f64 precision
-
-        // Test f32 precision limits
-        let f32_max_precision = 1.234_567_f32; // f32 has about 7 decimal digits of precision
-        let result_f32_precision = convert_scalar_to_f64(f32_max_precision);
-        assert!(result_f32_precision.is_ok());
-        assert_relative_eq!(result_f32_precision.unwrap(), 1.234_567_f64, epsilon = 1e-6);
-    }
-
-    #[test]
-    fn test_convert_point_to_f64_coords_consistency_with_scalar() {
-        // Test that converting a point gives the same result as converting each coordinate individually
-        let point = Point::new([1.5f32, -2.75f32, 0.125f32]);
-        let point_result = convert_point_to_f64_coords(&point).unwrap();
-
-        let scalar_results = [
-            convert_scalar_to_f64(1.5f32).unwrap(),
-            convert_scalar_to_f64(-2.75f32).unwrap(),
-            convert_scalar_to_f64(0.125f32).unwrap(),
-        ];
-
-        // Compare each coordinate individually with appropriate epsilon
-        for i in 0..point_result.len() {
-            assert_relative_eq!(point_result[i], scalar_results[i], epsilon = 1e-10);
-        }
-    }
-
-    #[test]
-    fn test_convert_functions_error_information() {
-        // Test that errors contain proper information
-        // Note: Since the cast function for f32->f64 and f64->f64 should always succeed,
-        // it's difficult to create a failure case. We'll test the error structure
-        // by examining the error type and ensuring proper error formatting.
-
-        // For successful conversions, we can at least verify the error type exists
-        let point = Point::new([1.0f32, 2.0f32]);
-        let result = convert_point_to_f64_coords(&point);
-        assert!(result.is_ok());
-
-        // If we had a case where conversion could fail, we would test:
-        // - coordinate_index is correct for point conversion
-        // - coordinate_value is properly formatted
-        // - from_type and to_type are correctly set
-        // This would be more relevant for conversions that could actually fail,
-        // such as converting from a custom numeric type that might not fit in f64
-    }
-
-    #[test]
-    fn test_convert_functions_comprehensive_dimensions() {
-        // Test various dimensions to ensure the generic implementation works correctly
-
-        // 0D point (edge case)
-        let point_0d: Point<f32, 0> = Point::new([]);
-        let result_0d = convert_point_to_f64_coords(&point_0d);
-        assert!(result_0d.is_ok());
-        let coords_0d: [f64; 0] = result_0d.unwrap();
-        let expected_0d: [f64; 0] = [];
-        // For 0D arrays, just verify both are empty
-        assert_eq!(coords_0d.len(), 0);
-        assert_eq!(expected_0d.len(), 0);
-
-        // Test higher dimensions up to reasonable limits
-        let point_6d = Point::new([1.0f32, 2.0f32, 3.0f32, 4.0f32, 5.0f32, 6.0f32]);
-        let result_6d = convert_point_to_f64_coords(&point_6d);
-        assert!(result_6d.is_ok());
-        let r6d = result_6d.unwrap();
-        let expected_6d = [1.0f64, 2.0f64, 3.0f64, 4.0f64, 5.0f64, 6.0f64];
-        for i in 0..6 {
-            assert_relative_eq!(r6d[i], expected_6d[i], epsilon = 1e-10);
-        }
-    }
 
     // =============================================================================
     // SAFE USIZE TO SCALAR CONVERSION TESTS

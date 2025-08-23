@@ -159,6 +159,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::iter::Sum;
 use std::ops::{AddAssign, Div, SubAssign};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 // External crate imports
 use bimap::BiMap;
@@ -417,6 +421,14 @@ where
     /// D-dimensional triangulation or if it's still being incrementally built.
     #[serde(skip)] // Skip serialization - only constructed triangulations should be serialized
     pub construction_state: TriangulationConstructionState,
+
+    /// Generation counter for invalidating caches.
+    /// This counter is incremented whenever the triangulation structure is modified
+    /// (vertices added, cells created/removed, etc.), allowing dependent caches to
+    /// detect when they need to refresh.
+    /// Uses Arc<AtomicU64> for thread-safe operations in concurrent contexts while allowing Clone.
+    #[serde(skip)] // Skip serialization - generation is runtime-only
+    pub generation: Arc<AtomicU64>,
 }
 
 // =============================================================================
@@ -872,6 +884,7 @@ where
             } else {
                 TriangulationConstructionState::Constructed
             },
+            generation: Arc::new(AtomicU64::new(0)),
         };
 
         // Add vertices to SlotMap and create bidirectional UUID-to-key mappings
@@ -1096,6 +1109,9 @@ where
             self.assign_incident_cells()
                 .map_err(|_| "Failed to assign incident cells")?;
         }
+
+        // Increment generation counter to invalidate caches
+        self.generation.fetch_add(1, Ordering::Relaxed);
 
         Ok(())
     }
@@ -1992,28 +2008,37 @@ where
     /// ```
     /// use delaunay::core::triangulation_data_structure::{Tds, TriangulationValidationError};
     /// use delaunay::{vertex, cell};
+    /// use uuid::Uuid;
     ///
     /// let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
     ///
-    /// // Create a cell with an invalid vertex (infinite coordinate)
+    /// // Create a valid cell first, then corrupt it to have a nil UUID
     /// let vertices = vec![
     ///     vertex!([1.0, 2.0, 3.0]),
-    ///     vertex!([f64::INFINITY, 2.0, 3.0]),
     ///     vertex!([4.0, 5.0, 6.0]),
     ///     vertex!([7.0, 8.0, 9.0]),
+    ///     vertex!([10.0, 11.0, 12.0]),
     /// ];
     ///
-    /// let invalid_cell = cell!(vertices);
-    /// let cell_key = tds.cells_mut().insert(invalid_cell);
-    /// let cell_uuid = tds.cells().get(cell_key).unwrap().uuid();
-    /// tds.cell_bimap.insert(cell_uuid, cell_key);
+    /// // Add vertices to TDS
+    /// for vertex in &vertices {
+    ///     let vertex_key = tds.vertices.insert(*vertex);
+    ///     tds.vertex_bimap.insert(vertex.uuid(), vertex_key);
+    /// }
     ///
-    /// // Validation should fail due to infinite coordinate
+    /// let mut cell = cell!(vertices);
+    /// let cell_key = tds.cells_mut().insert(cell);
+    /// let cell_uuid = tds.cells().get(cell_key).unwrap().uuid();
+    ///
+    /// // Corrupt the cell bimap to create inconsistency
+    /// tds.cell_bimap.insert(Uuid::nil(), cell_key); // Invalid mapping
+    ///
+    /// // Validation should fail due to mapping inconsistency
     /// match tds.is_valid() {
-    ///     Err(TriangulationValidationError::InvalidCell { .. }) => {
+    ///     Err(TriangulationValidationError::MappingInconsistency { .. }) => {
     ///         // Expected error
     ///     }
-    ///     _ => panic!("Expected InvalidCell error"),
+    ///     _ => panic!("Expected MappingInconsistency error"),
     /// }
     /// ```
     pub fn is_valid(&self) -> Result<(), TriangulationValidationError>
@@ -2370,6 +2395,8 @@ where
                     // Since only constructed triangulations should be serialized,
                     // we assume the deserialized triangulation is constructed
                     construction_state: TriangulationConstructionState::Constructed,
+                    // Initialize generation counter to 0 when deserializing
+                    generation: Arc::new(AtomicU64::new(0)),
                 })
             }
         }
@@ -3225,39 +3252,71 @@ mod tests {
 
     #[test]
     fn test_triangulation_validation_errors() {
-        // Test validation with an invalid cell
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        // Start with a valid triangulation
+        let vertices = vec![
+            vertex!([1.0, 2.0, 3.0]),
+            vertex!([4.0, 5.0, 6.0]),
+            vertex!([7.0, 8.0, 9.0]),
+            vertex!([10.0, 11.0, 12.0]),
+        ];
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
 
-        // Create a valid vertex
-        let vertex1: Vertex<f64, usize, 3> = vertex!([1.0, 2.0, 3.0]);
+        // Verify initial state is valid
+        assert!(
+            tds.is_valid().is_ok(),
+            "Initial triangulation should be valid"
+        );
 
-        // Create an invalid vertex with infinite coordinates
-        let vertex2: Vertex<f64, usize, 3> = vertex!([f64::INFINITY, 2.0, 3.0]);
+        // Now corrupt a cell by manually setting its UUID to nil to trigger validation error
+        // This simulates a corrupted triangulation that somehow has invalid cells
+        if let Some(cell_key) = tds.cells.keys().next() {
+            let corrupted_cell_uuid = uuid::Uuid::nil(); // Invalid UUID
 
-        let vertex3: Vertex<f64, usize, 3> = vertex!([4.0, 5.0, 6.0]);
+            // Get the original cell UUID before corruption
+            let original_cell_uuid = tds.cells[cell_key].uuid();
 
-        let vertex4: Vertex<f64, usize, 3> = vertex!([7.0, 8.0, 9.0]);
+            // Remove the old mapping and create a corrupted one
+            tds.cell_bimap.remove_by_left(&original_cell_uuid);
 
-        // Create a cell with an invalid vertex
-        let invalid_cell = cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+            // Access the cell mutably and corrupt it
+            if let Some(_cell) = tds.cells.get_mut(cell_key) {
+                // We can't directly modify the UUID field since it's private,
+                // so we'll test a different type of corruption: corrupt the cell_bimap
+                // to have an inconsistent mapping (nil UUID pointing to a valid cell)
+                tds.cell_bimap.insert(corrupted_cell_uuid, cell_key);
 
-        let cell_key = tds.cells.insert(invalid_cell.clone());
-        let cell_uuid = tds.cells[cell_key].uuid();
-        tds.cell_bimap.insert(cell_uuid, cell_key);
+                // Test that validation fails with mapping inconsistency
+                let validation_result = tds.is_valid();
+                assert!(validation_result.is_err());
 
-        // Test that validation fails with InvalidCell error
-        let validation_result = tds.is_valid();
-        assert!(validation_result.is_err());
-
-        match validation_result.unwrap_err() {
-            TriangulationValidationError::InvalidCell { cell_id, source } => {
-                assert_eq!(cell_id, invalid_cell.uuid());
-                println!(
-                    "Successfully caught InvalidCell error: cell_id={:?}, source={:?}",
-                    cell_id, source
-                );
+                match validation_result.unwrap_err() {
+                    TriangulationValidationError::MappingInconsistency { message } => {
+                        println!("Actual error message: {}", message);
+                        // The test corrupts the cell_bimap by:
+                        // 1. Removing the original cell UUID mapping
+                        // 2. Inserting a nil UUID mapping for the same cell key
+                        // This creates a mismatch where the cell's actual UUID is not found in the bimap.
+                        // The bimap now maps: nil_uuid -> cell_key, but the cell has original_uuid.
+                        // This triggers the "Inconsistent or missing UUID-to-key mapping" error at line 1837.
+                        assert!(
+                            message.contains(
+                                "Inconsistent or missing UUID-to-key mapping for cell UUID"
+                            ),
+                            "Expected UUID-to-key mapping error, got: {}",
+                            message
+                        );
+                        println!(
+                            "Successfully caught expected MappingInconsistency error: {}",
+                            message
+                        );
+                    }
+                    other => panic!("Expected MappingInconsistency error, got: {:?}", other),
+                }
+            } else {
+                panic!("Cell should exist after getting its key");
             }
-            other => panic!("Expected InvalidCell error, got: {:?}", other),
+        } else {
+            panic!("Triangulation should have at least one cell");
         }
     }
 
