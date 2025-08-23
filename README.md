@@ -1,5 +1,6 @@
 # delaunay
 
+[![DOI](https://zenodo.org/badge/729897852.svg)](https://doi.org/10.5281/zenodo.16931097)
 [![Crates.io](https://img.shields.io/crates/v/delaunay.svg)](https://crates.io/crates/delaunay)
 [![Downloads](https://img.shields.io/crates/d/delaunay.svg)](https://crates.io/crates/delaunay)
 [![License](https://img.shields.io/crates/l/delaunay.svg)](LICENSE)
