@@ -156,6 +156,22 @@ fn safe_cast_from_f64<T: CoordinateScalar>(
 /// # Errors
 ///
 /// Returns `CoordinateConversionError::ConversionFailed` if any coordinate conversion fails
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::safe_coords_to_f64;
+///
+/// // Convert f32 coordinates to f64
+/// let coords_f32 = [1.5f32, 2.5f32, 3.5f32];
+/// let coords_f64 = safe_coords_to_f64(coords_f32).unwrap();
+/// assert_eq!(coords_f64, [1.5f64, 2.5f64, 3.5f64]);
+///
+/// // Works with different array sizes - 4D example
+/// let coords_4d = [1.0f32, 2.0f32, 3.0f32, 4.0f32];
+/// let result_4d = safe_coords_to_f64(coords_4d).unwrap();
+/// assert_eq!(result_4d, [1.0f64, 2.0f64, 3.0f64, 4.0f64]);
+/// ```
 pub fn safe_coords_to_f64<T: CoordinateScalar, const D: usize>(
     coords: [T; D],
 ) -> Result<[f64; D], CoordinateConversionError> {
@@ -182,6 +198,22 @@ pub fn safe_coords_to_f64<T: CoordinateScalar, const D: usize>(
 /// # Errors
 ///
 /// Returns `CoordinateConversionError::ConversionFailed` if any coordinate conversion fails
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::safe_coords_from_f64;
+///
+/// // Convert f64 coordinates to f32
+/// let coords_f64 = [1.5f64, 2.5f64, 3.5f64];
+/// let coords_f32: [f32; 3] = safe_coords_from_f64(coords_f64).unwrap();
+/// assert_eq!(coords_f32, [1.5f32, 2.5f32, 3.5f32]);
+///
+/// // Works with different array sizes - 4D example
+/// let coords_4d = [1.0f64, 2.0f64, 3.0f64, 4.0f64];
+/// let result_4d: [f32; 4] = safe_coords_from_f64(coords_4d).unwrap();
+/// assert_eq!(result_4d, [1.0f32, 2.0f32, 3.0f32, 4.0f32]);
+/// ```
 pub fn safe_coords_from_f64<T: CoordinateScalar, const D: usize>(
     coords: [f64; D],
 ) -> Result<[T; D], CoordinateConversionError> {
@@ -239,6 +271,21 @@ pub fn safe_scalar_to_f64<T: CoordinateScalar>(value: T) -> Result<f64, Coordina
 /// # Errors
 ///
 /// Returns `CoordinateConversionError::ConversionFailed` if the conversion fails
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::safe_scalar_from_f64;
+///
+/// // Convert f64 to f32
+/// let value_f64 = 123.456f64;
+/// let value_f32: f32 = safe_scalar_from_f64(value_f64).unwrap();
+/// assert!((value_f32 - 123.456f32).abs() < 1e-6);
+///
+/// // Convert f64 to f64 (identity)
+/// let value: f64 = safe_scalar_from_f64(42.0f64).unwrap();
+/// assert_eq!(value, 42.0f64);
+/// ```
 pub fn safe_scalar_from_f64<T: CoordinateScalar>(
     value: f64,
 ) -> Result<T, CoordinateConversionError> {
@@ -341,6 +388,27 @@ pub fn safe_usize_to_scalar<T: CoordinateScalar>(
 /// # Returns
 ///
 /// The squared norm (sum of squares) as type T
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::squared_norm;
+///
+/// // 2D vector
+/// let coords_2d = [3.0, 4.0];
+/// let norm_sq = squared_norm(coords_2d);
+/// assert_eq!(norm_sq, 25.0); // 3² + 4² = 9 + 16 = 25
+///
+/// // 3D vector
+/// let coords_3d = [1.0, 2.0, 2.0];
+/// let norm_sq_3d = squared_norm(coords_3d);
+/// assert_eq!(norm_sq_3d, 9.0); // 1² + 2² + 2² = 1 + 4 + 4 = 9
+///
+/// // 4D vector
+/// let coords_4d = [1.0, 1.0, 1.0, 1.0];
+/// let norm_sq_4d = squared_norm(coords_4d);
+/// assert_eq!(norm_sq_4d, 4.0); // 1² + 1² + 1² + 1² = 4
+/// ```
 pub fn squared_norm<T, const D: usize>(coords: [T; D]) -> T
 where
     T: CoordinateScalar + num_traits::Zero,

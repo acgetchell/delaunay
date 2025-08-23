@@ -636,7 +636,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    Self: Hash,
 {
     // Generic Eq implementation for Vertex based on point equality
 }
@@ -842,7 +841,7 @@ mod tests {
         assert_eq!(deserialized.dim(), vertex.dim());
         assert_eq!(deserialized.incident_cell, vertex.incident_cell);
         assert_eq!(deserialized.data, vertex.data);
-        // Note: UUID will be different as it's loaded from serialized data
+        // UUID will be preserved by serialization/deserialization
         assert_eq!(deserialized.uuid(), vertex.uuid());
 
         // Human readable output for cargo test -- --nocapture

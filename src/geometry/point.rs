@@ -977,8 +977,8 @@ mod tests {
         use std::hash::{Hash, Hasher};
 
         // Test that OrderedFloat provides consistent hashing for NaN values
-        // Note: Equality comparison for NaN still follows IEEE standard (NaN != NaN)
-        // but hashing uses OrderedFloat which treats all NaN values as equivalent
+        // Note: Equality comparison treats all NaN values as equivalent
+        // Hashing uses OrderedFloat which treats all NaN values as equivalent
 
         let point_nan1 = Point::new([f64::NAN, 2.0]);
         let point_nan2 = Point::new([f64::NAN, 2.0]);

@@ -426,7 +426,7 @@ where
     /// This counter is incremented whenever the triangulation structure is modified
     /// (vertices added, cells created/removed, etc.), allowing dependent caches to
     /// detect when they need to refresh.
-    /// Uses Arc<AtomicU64> for thread-safe operations in concurrent contexts while allowing Clone.
+    /// Uses `Arc<AtomicU64>` for thread-safe operations in concurrent contexts while allowing Clone.
     #[serde(skip)] // Skip serialization - generation is runtime-only
     pub generation: Arc<AtomicU64>,
 }

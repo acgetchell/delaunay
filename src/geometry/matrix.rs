@@ -27,7 +27,7 @@ pub enum MatrixError {
 ///
 /// This value is chosen to be appropriately small for typical geometric computations
 /// while being large enough to handle floating-point precision issues.
-const SINGULARITY_TOLERANCE: f64 = 1e-12;
+pub const SINGULARITY_TOLERANCE: f64 = 1e-12;
 
 /// Checks if a matrix is singular (non-invertible) using tolerance-based comparison.
 ///

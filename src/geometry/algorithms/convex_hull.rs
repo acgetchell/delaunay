@@ -162,7 +162,7 @@ where
     facet_to_cells_cache: ArcSwap<Option<HashMap<u64, Vec<(CellKey, usize)>>>>,
     /// Generation counter at the time the cache was built.
     /// Used to detect when the TDS has been mutated and cache needs invalidation.
-    /// Uses Arc<AtomicU64> for consistent tracking across cloned `ConvexHull` instances.
+    /// Uses `Arc<AtomicU64>` for consistent tracking across cloned `ConvexHull` instances.
     cached_generation: Arc<AtomicU64>,
 }
 

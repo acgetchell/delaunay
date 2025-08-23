@@ -623,6 +623,18 @@ pub mod config_presets {
     use num_traits::cast;
 
     /// Configuration optimized for general-purpose triangulation.
+    ///
+    /// This provides a balanced configuration suitable for most triangulation
+    /// scenarios with moderate tolerance settings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::geometry::robust_predicates::config_presets;
+    ///
+    /// let config = config_presets::general_triangulation::<f64>();
+    /// assert_eq!(config.max_refinement_iterations, 3);
+    /// ```
     #[must_use]
     pub fn general_triangulation<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
         RobustPredicateConfig {
@@ -635,6 +647,18 @@ pub mod config_presets {
     }
 
     /// Configuration for high-precision triangulation (stricter tolerances).
+    ///
+    /// This configuration uses tighter tolerances and more refinement iterations
+    /// for applications requiring high geometric precision.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::geometry::robust_predicates::config_presets;
+    ///
+    /// let config = config_presets::high_precision::<f64>();
+    /// assert_eq!(config.max_refinement_iterations, 5);
+    /// ```
     #[must_use]
     pub fn high_precision<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
         let base_tol = T::default_tolerance();
@@ -648,6 +672,18 @@ pub mod config_presets {
     }
 
     /// Configuration for dealing with degenerate cases (more lenient tolerances).
+    ///
+    /// This configuration uses more lenient tolerances to handle nearly degenerate
+    /// geometric configurations that might otherwise cause numerical instability.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::geometry::robust_predicates::config_presets;
+    ///
+    /// let config = config_presets::degenerate_robust::<f64>();
+    /// assert_eq!(config.max_refinement_iterations, 2);
+    /// ```
     #[must_use]
     pub fn degenerate_robust<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
         let base_tol = T::default_tolerance();

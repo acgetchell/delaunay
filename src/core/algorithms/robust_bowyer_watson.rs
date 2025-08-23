@@ -79,6 +79,23 @@ where
     na::OPoint<T, na::Const<D>>: From<[f64; D]>,
 {
     /// Create a new robust Bowyer-Watson algorithm instance.
+    ///
+    /// Creates an instance with default predicate configuration optimized
+    /// for general-purpose triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::algorithms::robust_bowyer_watson::RobustBoyerWatson;
+    /// use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
+    ///
+    /// let algorithm: RobustBoyerWatson<f64, Option<()>, Option<()>, 3> = RobustBoyerWatson::new();
+    /// // Algorithm should be properly initialized with general triangulation config
+    /// let (processed, created, removed) = algorithm.get_statistics();
+    /// assert_eq!(processed, 0); // No vertices processed yet
+    /// assert_eq!(created, 0);   // No cells created yet
+    /// assert_eq!(removed, 0);   // No cells removed yet
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -91,6 +108,23 @@ where
     }
 
     /// Create with custom predicate configuration.
+    ///
+    /// Allows fine-tuning of the robustness parameters for specific use cases.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Custom predicate configuration
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::algorithms::robust_bowyer_watson::RobustBoyerWatson;
+    /// use delaunay::geometry::robust_predicates::config_presets;
+    ///
+    /// let config = config_presets::high_precision::<f64>();
+    /// let algorithm: RobustBoyerWatson<f64, Option<()>, Option<()>, 3> =
+    ///     RobustBoyerWatson::with_config(config);
+    /// ```
     pub fn with_config(config: RobustPredicateConfig<T>) -> Self {
         Self {
             predicate_config: config,
@@ -102,6 +136,22 @@ where
     }
 
     /// Create optimized for handling degenerate cases.
+    ///
+    /// Uses more lenient tolerances and fewer refinement iterations to handle
+    /// nearly degenerate geometric configurations that might cause numerical instability.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::algorithms::robust_bowyer_watson::RobustBoyerWatson;
+    /// use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
+    ///
+    /// let algorithm: RobustBoyerWatson<f64, Option<()>, Option<()>, 3> =
+    ///     RobustBoyerWatson::for_degenerate_cases();
+    /// // Algorithm should be properly initialized for degenerate cases
+    /// let (processed, created, removed) = algorithm.get_statistics();
+    /// assert_eq!(processed, 0); // No vertices processed yet
+    /// ```
     #[must_use]
     pub fn for_degenerate_cases() -> Self {
         Self {
