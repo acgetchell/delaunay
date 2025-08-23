@@ -15,12 +15,139 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 echo "Generating changelog with enhanced AI commit processing..."
 
+# Function to expand squashed PR commits in changelog
+expand_squashed_prs() {
+    local input_file="$1"
+    local output_file="$2"
+    
+    echo "Expanding squashed PR commits..."
+    
+    # Create temporary file for processing
+    local temp_file="${output_file}.expand_temp"
+    
+    # Process the changelog line by line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Check if this line contains a commit SHA that might be from a squashed PR
+        # Handle both "- **title** [`sha`]" and "- title (#PR) [`sha`]" patterns
+        if [[ "$line" =~ -\ \*\*.*\*\*.*\[\`([a-f0-9]{7})\`\] ]] || [[ "$line" =~ -\ .*\(#[0-9]+\)\ \[\`([a-f0-9]{7})\`\] ]]; then
+            commit_sha="${BASH_REMATCH[1]}"
+            
+            # Get the full commit message to check if it's a squashed PR
+            if git --no-pager show "$commit_sha" --format="%s" --no-patch 2>/dev/null | grep -q "(#[0-9]\+)$"; then
+                echo "  Found squashed PR commit: $commit_sha"
+                
+                # Get the full commit message
+                local commit_msg_file="$(mktemp)"
+                git --no-pager show "$commit_sha" --format="%B" --no-patch > "$commit_msg_file"
+                
+                # Extract and format individual commits
+                awk '
+                BEGIN {
+                    in_commit = 0
+                    commit_title = ""
+                    commit_body = ""
+                    first_commit = 1
+                }
+                
+                # Skip the first line (PR title)
+                NR == 1 { next }
+                
+                # Look for commit markers (lines starting with * and containing meaningful content)
+                /^\* / {
+                    # Output previous commit if we have one
+                    if (in_commit && commit_title != "") {
+                        if (!first_commit) print ""
+                        first_commit = 0
+                        print "- **" tolower(commit_title) "**"
+                        if (commit_body != "") {
+                            # Clean up body text and print as description
+                            gsub(/^[ \t]+|[ \t]+$/, "", commit_body)
+                            if (length(commit_body) > 0) {
+                                print "  " commit_body
+                            }
+                        }
+                    }
+                    
+                    # Start new commit
+                    in_commit = 1
+                    # Remove leading "* " and extract title
+                    commit_title = substr($0, 3)
+                    commit_body = ""
+                    next
+                }
+                
+                # Collect commit body (indented or unindented lines after commit title)
+                in_commit && !/^\* / && !/^$/ {
+                    # Add line to body
+                    if (commit_body == "") {
+                        commit_body = $0
+                    } else {
+                        commit_body = commit_body " " $0
+                    }
+                    next
+                }
+                
+                # Empty line or start of new section - end current commit
+                /^$/ || (/^\* / && in_commit) {
+                    if (in_commit && commit_title != "") {
+                        if (!first_commit) print ""
+                        first_commit = 0
+                        print "- **" tolower(commit_title) "**"
+                        if (commit_body != "") {
+                            # Clean up body text and print as description
+                            gsub(/^[ \t]+|[ \t]+$/, "", commit_body)
+                            if (length(commit_body) > 0) {
+                                print "  " commit_body
+                            }
+                        }
+                    }
+                    # Do not reset here if we hit a new * line
+                    if (!/^\* /) {
+                        in_commit = 0
+                        commit_title = ""
+                        commit_body = ""
+                    }
+                }
+                
+                END {
+                    # Output final commit if we have one
+                    if (in_commit && commit_title != "") {
+                        if (!first_commit) print ""
+                        first_commit = 0
+                        print "- **" tolower(commit_title) "**"
+                        if (commit_body != "") {
+                            # Clean up body text and print as description
+                            gsub(/^[ \t]+|[ \t]+$/, "", commit_body)
+                            if (length(commit_body) > 0) {
+                                print "  " commit_body
+                            }
+                        }
+                    }
+                }
+                ' "$commit_msg_file" >> "$temp_file"
+                
+                # Clean up temp file
+                rm -f "$commit_msg_file"
+            else
+                # Not a squashed PR, keep the original line
+                echo "$line" >> "$temp_file"
+            fi
+        else
+            # Not a commit line, keep as is
+            echo "$line" >> "$temp_file"
+        fi
+    done < "$input_file"
+    
+    # Move the processed file to the output
+    mv "$temp_file" "$output_file"
+}
+
 # Function to enhance AI-generated commit messages in changelog
 enhance_ai_commits() {
     local input_file="$1"
     local output_file="$2"
     
-    echo "Enhancing AI-generated commit formatting..."
+    echo "Enhancing AI-generated commit formatting and expanding squashed PRs..."
     
     # Use awk to process the changelog and improve formatting
     awk '
@@ -240,15 +367,28 @@ if ! sed 's/T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].*Z//g' "${TEMP_CHANGELOG}" > "${PR
   exit 1
 fi
 
-# Enhance AI-generated commits with categorization
-if ! enhance_ai_commits "${PROCESSED_CHANGELOG}" "${CHANGELOG_FILE}.tmp2"; then
-  echo "Error: Failed to enhance AI commits." >&2
+# Expand squashed PR commits
+echo "Expanding squashed PR commits..."
+if ! expand_squashed_prs "${PROCESSED_CHANGELOG}" "${PROCESSED_CHANGELOG}.expanded"; then
+  echo "Error: Failed to expand squashed PR commits." >&2
   # Restore backup if it exists
   if [[ -f "${CHANGELOG_FILE}.backup" ]]; then
     mv "${CHANGELOG_FILE}.backup" "${CHANGELOG_FILE}"
     echo "Restored original ${CHANGELOG_FILE} from backup."
   fi
   rm -f "${TEMP_CHANGELOG}" "${PROCESSED_CHANGELOG}"
+  exit 1
+fi
+
+# Enhance AI-generated commits with categorization
+if ! enhance_ai_commits "${PROCESSED_CHANGELOG}.expanded" "${CHANGELOG_FILE}.tmp2"; then
+  echo "Error: Failed to enhance AI commits." >&2
+  # Restore backup if it exists
+  if [[ -f "${CHANGELOG_FILE}.backup" ]]; then
+    mv "${CHANGELOG_FILE}.backup" "${CHANGELOG_FILE}"
+    echo "Restored original ${CHANGELOG_FILE} from backup."
+  fi
+  rm -f "${TEMP_CHANGELOG}" "${PROCESSED_CHANGELOG}" "${PROCESSED_CHANGELOG}.expanded"
   exit 1
 fi
 
@@ -271,12 +411,12 @@ if ! awk '
     mv "${CHANGELOG_FILE}.backup" "${CHANGELOG_FILE}"
     echo "Restored original ${CHANGELOG_FILE} from backup."
   fi
-  rm -f "${TEMP_CHANGELOG}" "${PROCESSED_CHANGELOG}" "${CHANGELOG_FILE}.tmp2"
+  rm -f "${TEMP_CHANGELOG}" "${PROCESSED_CHANGELOG}" "${PROCESSED_CHANGELOG}.expanded" "${CHANGELOG_FILE}.tmp2"
   exit 1
 fi
 
 # Clean up temporary files
-rm -f "${TEMP_CHANGELOG}" "${PROCESSED_CHANGELOG}" "${CHANGELOG_FILE}.tmp2"
+rm -f "${TEMP_CHANGELOG}" "${PROCESSED_CHANGELOG}" "${PROCESSED_CHANGELOG}.expanded" "${CHANGELOG_FILE}.tmp2"
 
 # Remove backup if everything succeeded
 if [[ -f "${CHANGELOG_FILE}.backup" ]]; then

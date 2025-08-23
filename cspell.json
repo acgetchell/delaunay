@@ -91,6 +91,7 @@
         "oneline",
         "orderedeq",
         "Overmars",
+        "pastable",
         "phpcs",
         "phpmd",
         "phpstan",

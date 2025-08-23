@@ -44,7 +44,7 @@ This PR should ONLY include: version bumps, changelog updates, and documentation
 git checkout -b release/$TAG
 ```
 
-1. Bump versions
+2. Bump versions
 
 Preferred (if cargo-edit is installed):
 
@@ -68,7 +68,7 @@ Update references in documentation (search, then manually edit as needed):
 rg -n "\bv?[0-9]+\.[0-9]+\.[0-9]+\b" README.md docs/ || true
 ```
 
-1. Generate changelog using a temporary local tag (DO NOT PUSH this tag)
+3. Generate changelog using a temporary local tag (DO NOT PUSH this tag)
 
 ```bash
 # Create a temporary annotated tag locally to enable changelog generation
@@ -79,7 +79,7 @@ git tag -a "$TAG" -m "delaunay $TAG"
 ./scripts/generate_changelog.sh
 ```
 
-1. Stage and commit release artifacts
+4. Stage and commit release artifacts
 
 ```bash
 git add Cargo.toml CHANGELOG.md docs/
@@ -91,7 +91,7 @@ git commit -m "chore(release): release $TAG
 - Update documentation for release"
 ```
 
-1. Push the branch and open a PR
+5. Push the branch and open a PR
 
 ```bash
 git push -u origin "release/$TAG"
@@ -115,7 +115,7 @@ git checkout main
 git pull --ff-only
 ```
 
-1. Recreate the final annotated tag using the changelog content
+2. Recreate the final annotated tag using the changelog content
 
 ```bash
 # Remove the temporary local tag if it exists
@@ -125,19 +125,26 @@ git tag -d "$TAG" 2>/dev/null || true
 ./scripts/tag-from-changelog.sh "$TAG" --force
 ```
 
-1. (Optional) Verify tag message content
+3. (Optional) Verify tag message content
 
 ```bash
 git tag -l --format='%(contents)' "$TAG"
 ```
 
-1. Push the tag
+4. Push the tag
 
 ```bash
 git push origin "$TAG"
 ```
 
-1. Publish to crates.io
+5. Create the GitHub release with notes from the tag annotation
+
+```bash
+# Requires GitHub CLI (gh) and authenticated session
+gh release create "$TAG" --notes-from-tag
+```
+
+6. Publish to crates.io
 
 ```bash
 # Sanity check before publishing
@@ -145,13 +152,6 @@ cargo publish --dry-run
 
 # Publish the crate (ensure docs are already updated on main via the PR)
 cargo publish
-```
-
-1. Create the GitHub release with notes from the tag annotation
-
-```bash
-# Requires GitHub CLI (gh) and authenticated session
-gh release create "$TAG" --notes-from-tag
 ```
 
 ---

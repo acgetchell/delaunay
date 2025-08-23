@@ -33,7 +33,7 @@ This typically happens with:
 
 ## Current Implementation Status
 
-As of version 0.3.5, the delaunay library includes several robustness improvements:
+As of version 0.4.0, the delaunay library includes several robustness improvements:
 
 ### ✅ Implemented Features
 
