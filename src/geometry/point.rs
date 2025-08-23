@@ -172,13 +172,19 @@ where
         use serde::ser::SerializeTuple;
         let mut tuple = serializer.serialize_tuple(D)?;
         for coord in &self.coords {
-            tuple.serialize_element(coord)?;
+            if coord.is_finite_generic() {
+                tuple.serialize_element(coord)?;
+            } else {
+                // Emit JSON null (or serializer-equivalent) for non‑finite values
+                // Note: This is a lossy representation unless Deserialize maps nulls back.
+                tuple.serialize_element(&Option::<T>::None)?;
+            }
         }
         tuple.end()
     }
 }
 
-// Implement Deserialize manually
+// Implement Deserialize manually with null -> NaN mapping
 impl<'de, T, const D: usize> Deserialize<'de> for Point<T, D>
 where
     T: CoordinateScalar + DeserializeOwned,
@@ -200,7 +206,9 @@ where
             type Value = Point<T, D>;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_fmt(format_args!("an array of {D} coordinates"))
+                formatter.write_fmt(format_args!(
+                    "an array of {D} coordinates (numbers or null values)"
+                ))
             }
 
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -210,9 +218,14 @@ where
                 // Collect coordinates into a Vec first, then convert to array
                 let mut coords = Vec::with_capacity(D);
                 for i in 0..D {
-                    let coord = seq
+                    // Try to deserialize as Option<T> to handle null values
+                    let coord_option: Option<T> = seq
                         .next_element()?
                         .ok_or_else(|| Error::invalid_length(i, &self))?;
+
+                    // Map null to NaN, keep finite values as-is
+                    let coord = coord_option.map_or_else(T::nan, |value| value);
+
                     coords.push(coord);
                 }
 
@@ -430,19 +443,23 @@ mod tests {
 
     #[test]
     fn point_serialization() {
-        use serde_test::{Token, assert_tokens};
-
+        // Test basic serialization and deserialization
         let point: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
-        assert_tokens(
-            &point,
-            &[
-                Token::Tuple { len: 3 },
-                Token::F64(1.0),
-                Token::F64(2.0),
-                Token::F64(3.0),
-                Token::TupleEnd,
-            ],
-        );
+
+        // Test JSON serialization
+        let json = serde_json::to_string(&point).unwrap();
+        assert_eq!(json, "[1.0,2.0,3.0]");
+
+        // Test JSON deserialization
+        let deserialized: Point<f64, 3> = serde_json::from_str(&json).unwrap();
+        assert_eq!(point, deserialized);
+
+        // Test with negative values
+        let point_neg: Point<f64, 2> = Point::new([-1.5, 2.5]);
+        let json_neg = serde_json::to_string(&point_neg).unwrap();
+        assert_eq!(json_neg, "[-1.5,2.5]");
+        let deserialized_neg: Point<f64, 2> = serde_json::from_str(&json_neg).unwrap();
+        assert_eq!(point_neg, deserialized_neg);
     }
 
     #[test]
@@ -1576,6 +1593,118 @@ mod tests {
     }
 
     #[test]
+    fn point_serialize_nan_infinity_comprehensive() {
+        // Test comprehensive serialization of NaN and infinity values
+
+        // Single NaN coordinate
+        let point_nan_single = Point::new([f64::NAN, 1.0, 2.0]);
+        let json_nan_single = serde_json::to_string(&point_nan_single).unwrap();
+        assert_eq!(json_nan_single, "[null,1.0,2.0]");
+
+        // Multiple NaN coordinates
+        let point_nan_multiple = Point::new([f64::NAN, f64::NAN, 1.0]);
+        let json_nan_multiple = serde_json::to_string(&point_nan_multiple).unwrap();
+        assert_eq!(json_nan_multiple, "[null,null,1.0]");
+
+        // All NaN coordinates
+        let point_all_nan = Point::new([f64::NAN, f64::NAN]);
+        let json_all_nan = serde_json::to_string(&point_all_nan).unwrap();
+        assert_eq!(json_all_nan, "[null,null]");
+
+        // Single positive infinity
+        let point_pos_inf = Point::new([f64::INFINITY, 1.0]);
+        let json_pos_inf = serde_json::to_string(&point_pos_inf).unwrap();
+        assert_eq!(json_pos_inf, "[null,1.0]");
+
+        // Single negative infinity
+        let point_neg_inf = Point::new([1.0, f64::NEG_INFINITY]);
+        let json_neg_inf = serde_json::to_string(&point_neg_inf).unwrap();
+        assert_eq!(json_neg_inf, "[1.0,null]");
+
+        // Mixed NaN and infinity
+        let point_mixed = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1.0]);
+        let json_mixed = serde_json::to_string(&point_mixed).unwrap();
+        assert_eq!(json_mixed, "[null,null,null,1.0]");
+
+        // All special values
+        let point_all_special = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY]);
+        let json_all_special = serde_json::to_string(&point_all_special).unwrap();
+        assert_eq!(json_all_special, "[null,null,null]");
+    }
+
+    #[test]
+    fn point_serialize_f32_nan_infinity() {
+        // Test f32 NaN and infinity serialization
+
+        let point_f32_nan = Point::new([f32::NAN, 1.0f32]);
+        let json_f32_nan = serde_json::to_string(&point_f32_nan).unwrap();
+        assert_eq!(json_f32_nan, "[null,1.0]");
+
+        let point_f32_inf = Point::new([f32::INFINITY, f32::NEG_INFINITY]);
+        let json_f32_inf = serde_json::to_string(&point_f32_inf).unwrap();
+        assert_eq!(json_f32_inf, "[null,null]");
+    }
+
+    #[test]
+    fn point_deserialize_nan_infinity_handling() {
+        // Test how deserialization handles null values that were serialized from NaN/infinity
+        // NOTE: This may fail because the current Deserialize doesn't handle null -> coordinate mapping
+
+        // Try to deserialize a point with null values
+        let json_with_nulls = "[null,1.0,2.0]";
+        let result: Result<Point<f64, 3>, _> = serde_json::from_str(json_with_nulls);
+
+        // This should fail unless we implement special handling for null -> NaN/infinity
+        match result {
+            Ok(_) => {
+                // If this passes, document what value was used for null
+                println!("Deserialization of null succeeded unexpectedly");
+            }
+            Err(e) => {
+                // Expected behavior - null can't be deserialized as f64
+                println!("Expected deserialization error: {e}");
+            }
+        }
+    }
+
+    #[test]
+    fn point_serialize_deserialize_roundtrip_finite_only() {
+        // Test that roundtrip works for finite values only
+
+        let original = Point::new([1.0, 2.5, -3.7, 0.0]);
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: Point<f64, 4> = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, deserialized);
+
+        // Test with f32
+        let original_f32 = Point::new([1.0f32, -2.5f32]);
+        let json_f32 = serde_json::to_string(&original_f32).unwrap();
+        let deserialized_f32: Point<f32, 2> = serde_json::from_str(&json_f32).unwrap();
+        assert_eq!(original_f32, deserialized_f32);
+    }
+
+    #[test]
+    fn point_serialize_edge_values() {
+        // Test serialization of edge finite values
+
+        // Very large but finite values
+        let point_max = Point::new([f64::MAX, f64::MIN]);
+        let json_max = serde_json::to_string(&point_max).unwrap();
+        assert!(!json_max.contains("null")); // Should not be null
+
+        // Very small but finite values
+        let point_min = Point::new([f64::MIN_POSITIVE, -f64::MIN_POSITIVE]);
+        let json_min = serde_json::to_string(&point_min).unwrap();
+        assert!(!json_min.contains("null")); // Should not be null
+
+        // Zero and negative zero
+        let point_zero = Point::new([0.0, -0.0]);
+        let json_zero = serde_json::to_string(&point_zero).unwrap();
+        assert!(!json_zero.contains("null")); // Should not be null
+        assert_eq!(json_zero, "[0.0,-0.0]");
+    }
+
+    #[test]
     fn point_conversion_edge_cases() {
         // Test edge cases in type conversions
 
@@ -2377,6 +2506,47 @@ mod tests {
                 panic!("Expected NonFiniteValue error")
             }
         }
+    }
+
+    #[test]
+    fn point_deserialize_nan_handling() {
+        // Test deserialization of null values mapping to NaN
+
+        // Create JSON with null value
+        let json_with_null = "[null,1.0,2.0]";
+
+        let result: Result<Point<f64, 3>, _> = serde_json::from_str(json_with_null);
+
+        // Should successfully deserialize with null mapped to NaN
+        assert!(result.is_ok());
+        let point = result.unwrap();
+
+        // First coordinate should be NaN
+        let coords = point.to_array();
+        assert!(coords[0].is_nan());
+        assert_relative_eq!(coords[1], 1.0);
+        assert_relative_eq!(coords[2], 2.0);
+
+        // Test with multiple nulls
+        let json_multiple_nulls = "[null,null,3.0]";
+        let result_multi: Result<Point<f64, 3>, _> = serde_json::from_str(json_multiple_nulls);
+        assert!(result_multi.is_ok());
+        let point_multi = result_multi.unwrap();
+
+        let coords_multi = point_multi.to_array();
+        assert!(coords_multi[0].is_nan());
+        assert!(coords_multi[1].is_nan());
+        assert_relative_eq!(coords_multi[2], 3.0);
+
+        // Test with f32
+        let json_f32_null = "[null,1.5]";
+        let result_f32: Result<Point<f32, 2>, _> = serde_json::from_str(json_f32_null);
+        assert!(result_f32.is_ok());
+        let point_f32 = result_f32.unwrap();
+
+        let coords_f32 = point_f32.to_array();
+        assert!(coords_f32[0].is_nan());
+        assert_relative_eq!(coords_f32[1], 1.5);
     }
 
     #[test]

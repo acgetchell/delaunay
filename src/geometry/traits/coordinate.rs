@@ -1119,6 +1119,29 @@ mod tests {
         assert!(f64::from(tolerance_f32) > tolerance_f64);
     }
 
+    // Helper function for testing NaN implementation across scalar types
+    fn test_nan<T: CoordinateScalar>() {
+        let nan_value = T::nan();
+        assert!(nan_value.is_nan());
+    }
+
+    #[test]
+    fn coordinate_scalar_nan_implementation() {
+        // Test that CoordinateScalar::nan() returns NaN values
+
+        // Test f32 nan()
+        let nan_f32 = f32::nan();
+        assert!(nan_f32.is_nan());
+
+        // Test f64 nan()
+        let nan_f64 = f64::nan();
+        assert!(nan_f64.is_nan());
+
+        // Test in generic function
+        test_nan::<f32>();
+        test_nan::<f64>();
+    }
+
     #[test]
     fn coordinate_trait_edge_cases_comprehensive() {
         // Test various edge cases not covered by other tests

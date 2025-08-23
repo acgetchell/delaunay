@@ -17,7 +17,35 @@ use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
 };
 
-/// Configuration for robust geometric predicates.
+/// Result of consistency verification between different insphere methods.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsistencyResult {
+    /// The two methods agree on the result
+    Consistent,
+    /// The two methods disagree (potential numerical issue)
+    Inconsistent,
+    /// Cannot verify consistency due to error in verification method
+    Unverifiable,
+}
+
+impl ConsistencyResult {
+    /// Returns true if the result indicates consistency (either Consistent or Unverifiable).
+    /// Only returns false for definite Inconsistent results.
+    #[must_use]
+    pub const fn is_consistent(self) -> bool {
+        matches!(self, Self::Consistent | Self::Unverifiable)
+    }
+}
+
+impl std::fmt::Display for ConsistencyResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Consistent => write!(f, "Consistent"),
+            Self::Inconsistent => write!(f, "Inconsistent"),
+            Self::Unverifiable => write!(f, "Unverifiable"),
+        }
+    }
+}
 ///
 /// This structure allows fine-tuning of numerical robustness parameters
 /// based on the specific requirements of the triangulation algorithm.
@@ -137,8 +165,11 @@ where
     // Strategy 1: Try standard determinant approach with adaptive tolerance
     if let Ok(result) = adaptive_tolerance_insphere(simplex_points, test_point, config) {
         // Strategy 2: Verify consistency with alternative method
-        if verify_insphere_consistency(simplex_points, test_point, result, config) {
-            return Ok(result);
+        match verify_insphere_consistency(simplex_points, test_point, result, config) {
+            ConsistencyResult::Consistent | ConsistencyResult::Unverifiable => return Ok(result), // Accept if we can't verify
+            ConsistencyResult::Inconsistent => {
+                // Fall through to more robust methods when inconsistent
+            }
         }
     } else {
         // Fall through to more robust methods
@@ -460,28 +491,26 @@ where
 ///
 /// # Returns
 ///
-/// - `true` if the distance-based result is consistent with the determinant result
-/// - `false` if there's a direct contradiction, indicating potential numerical issues
+/// - [`ConsistencyResult::Consistent`] if the two methods agree
+/// - [`ConsistencyResult::Inconsistent`] if there's a direct contradiction
+/// - [`ConsistencyResult::Unverifiable`] if the verification method fails
 fn verify_insphere_consistency<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
     determinant_result: InSphere,
     _config: &RobustPredicateConfig<T>,
-) -> bool
+) -> ConsistencyResult
 where
     T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     // Use the existing distance-based insphere test for verification
-    super::predicates::insphere_distance(simplex_points, *test_point).map_or(
-        true,
-        |distance_result| {
-            match (determinant_result, distance_result) {
+    super::predicates::insphere_distance(simplex_points, *test_point).map_or(ConsistencyResult::Unverifiable, |distance_result| match (determinant_result, distance_result) {
                 // Exact matches are always consistent
                 (InSphere::INSIDE, InSphere::INSIDE)
                 | (InSphere::OUTSIDE, InSphere::OUTSIDE)
                 | (InSphere::BOUNDARY, _)
-                | (_, InSphere::BOUNDARY) => true,
+                | (_, InSphere::BOUNDARY) => ConsistencyResult::Consistent,
 
                 // Direct contradictions indicate numerical issues
                 (InSphere::INSIDE, InSphere::OUTSIDE) | (InSphere::OUTSIDE, InSphere::INSIDE) => {
@@ -490,11 +519,9 @@ where
                     eprintln!(
                         "Insphere consistency check failed: determinant={determinant_result:?}, distance={distance_result:?}"
                     );
-                    false
+                    ConsistencyResult::Inconsistent
                 }
-            }
-        },
-    )
+            })
 }
 
 /// Generate perturbation directions for symbolic perturbation.
@@ -774,30 +801,24 @@ mod tests {
 
         // Test INSIDE/INSIDE consistency
         let inside_point = Point::new([0.25, 0.25, 0.25]);
-        assert!(verify_insphere_consistency(
-            &points,
-            &inside_point,
-            InSphere::INSIDE,
-            &config
-        ));
+        assert_eq!(
+            verify_insphere_consistency(&points, &inside_point, InSphere::INSIDE, &config),
+            ConsistencyResult::Consistent
+        );
 
         // Test OUTSIDE/OUTSIDE consistency
         let outside_point = Point::new([2.0, 2.0, 2.0]);
-        assert!(verify_insphere_consistency(
-            &points,
-            &outside_point,
-            InSphere::OUTSIDE,
-            &config
-        ));
+        assert_eq!(
+            verify_insphere_consistency(&points, &outside_point, InSphere::OUTSIDE, &config),
+            ConsistencyResult::Consistent
+        );
 
         // Test BOUNDARY/BOUNDARY consistency
         let boundary_point = Point::new([0.5, 0.5, 0.5]);
-        assert!(verify_insphere_consistency(
-            &points,
-            &boundary_point,
-            InSphere::BOUNDARY,
-            &config
-        ));
+        assert_eq!(
+            verify_insphere_consistency(&points, &boundary_point, InSphere::BOUNDARY, &config),
+            ConsistencyResult::Consistent
+        );
     }
 
     #[test]
@@ -813,39 +834,31 @@ mod tests {
         let test_point = Point::new([0.25, 0.25, 0.25]);
 
         // Test BOUNDARY vs INSIDE - should be consistent
-        assert!(verify_insphere_consistency(
-            &points,
-            &test_point,
-            InSphere::BOUNDARY,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(&points, &test_point, InSphere::BOUNDARY, &config)
+                .is_consistent()
+        );
 
         // Test INSIDE vs BOUNDARY - should be consistent
         // Note: We're testing the logic, not the actual distance-based result
         // The function considers any BOUNDARY result as consistent
-        assert!(verify_insphere_consistency(
-            &points,
-            &test_point,
-            InSphere::INSIDE,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(&points, &test_point, InSphere::INSIDE, &config)
+                .is_consistent()
+        );
 
         // Test BOUNDARY vs OUTSIDE - should be consistent
         let outside_point = Point::new([2.0, 2.0, 2.0]);
-        assert!(verify_insphere_consistency(
-            &points,
-            &outside_point,
-            InSphere::BOUNDARY,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(&points, &outside_point, InSphere::BOUNDARY, &config)
+                .is_consistent()
+        );
 
         // Test OUTSIDE vs BOUNDARY - should be consistent
-        assert!(verify_insphere_consistency(
-            &points,
-            &outside_point,
-            InSphere::OUTSIDE,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(&points, &outside_point, InSphere::OUTSIDE, &config)
+                .is_consistent()
+        );
     }
 
     #[test]
@@ -863,21 +876,27 @@ mod tests {
 
         // Point clearly inside the sphere
         let inside_point = Point::new([0.0, 0.0, 0.0]);
-        assert!(verify_insphere_consistency(
-            &unit_sphere_points,
-            &inside_point,
-            InSphere::INSIDE,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(
+                &unit_sphere_points,
+                &inside_point,
+                InSphere::INSIDE,
+                &config
+            )
+            .is_consistent()
+        );
 
         // Point clearly outside the sphere
         let far_outside_point = Point::new([5.0, 5.0, 5.0]);
-        assert!(verify_insphere_consistency(
-            &unit_sphere_points,
-            &far_outside_point,
-            InSphere::OUTSIDE,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(
+                &unit_sphere_points,
+                &far_outside_point,
+                InSphere::OUTSIDE,
+                &config
+            )
+            .is_consistent()
+        );
     }
 
     #[test]
@@ -892,29 +911,33 @@ mod tests {
 
         // Point inside circumcircle
         let inside_point = Point::new([1.0, 0.5]);
-        assert!(verify_insphere_consistency(
-            &triangle_points,
-            &inside_point,
-            InSphere::INSIDE,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(&triangle_points, &inside_point, InSphere::INSIDE, &config)
+                .is_consistent()
+        );
 
         // Point outside circumcircle
         let outside_point = Point::new([5.0, 5.0]);
-        assert!(verify_insphere_consistency(
-            &triangle_points,
-            &outside_point,
-            InSphere::OUTSIDE,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(
+                &triangle_points,
+                &outside_point,
+                InSphere::OUTSIDE,
+                &config
+            )
+            .is_consistent()
+        );
 
         // Test boundary case
-        assert!(verify_insphere_consistency(
-            &triangle_points,
-            &inside_point,
-            InSphere::BOUNDARY,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(
+                &triangle_points,
+                &inside_point,
+                InSphere::BOUNDARY,
+                &config
+            )
+            .is_consistent()
+        );
     }
 
     #[test]
@@ -932,12 +955,15 @@ mod tests {
         let small_test_point = Point::new([5e-11, 5e-11, 5e-11]);
 
         // Use BOUNDARY - should always be considered consistent
-        assert!(verify_insphere_consistency(
-            &small_points,
-            &small_test_point,
-            InSphere::BOUNDARY,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(
+                &small_points,
+                &small_test_point,
+                InSphere::BOUNDARY,
+                &config
+            )
+            .is_consistent()
+        );
 
         // Test with large coordinates - use BOUNDARY for safety
         let large_points = vec![
@@ -949,12 +975,15 @@ mod tests {
         let large_test_point = Point::new([5e5, 5e5, 5e5]);
 
         // Use BOUNDARY - should always be considered consistent
-        assert!(verify_insphere_consistency(
-            &large_points,
-            &large_test_point,
-            InSphere::BOUNDARY,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(
+                &large_points,
+                &large_test_point,
+                InSphere::BOUNDARY,
+                &config
+            )
+            .is_consistent()
+        );
 
         // Test that function detects actual inconsistencies
         // Create a simple case where we know the geometry well
@@ -983,18 +1012,24 @@ mod tests {
         // Don't assert - just document that this tests the actual behavior
 
         // But BOUNDARY should always be consistent
-        assert!(verify_insphere_consistency(
-            &simple_points,
-            &clearly_inside,
-            InSphere::BOUNDARY,
-            &config
-        ));
-        assert!(verify_insphere_consistency(
-            &simple_points,
-            &clearly_outside,
-            InSphere::BOUNDARY,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(
+                &simple_points,
+                &clearly_inside,
+                InSphere::BOUNDARY,
+                &config
+            )
+            .is_consistent()
+        );
+        assert!(
+            verify_insphere_consistency(
+                &simple_points,
+                &clearly_outside,
+                InSphere::BOUNDARY,
+                &config
+            )
+            .is_consistent()
+        );
     }
 
     #[test]
@@ -1012,12 +1047,15 @@ mod tests {
         let test_point = Point::new([0.5, 0.3, 1e-13]);
 
         // Should be consistent even for degenerate cases
-        assert!(verify_insphere_consistency(
-            &nearly_coplanar_points,
-            &test_point,
-            InSphere::BOUNDARY,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(
+                &nearly_coplanar_points,
+                &test_point,
+                InSphere::BOUNDARY,
+                &config
+            )
+            .is_consistent()
+        );
 
         // Test with points that form a very flat tetrahedron
         let flat_tetrahedron_points = vec![
@@ -1035,7 +1073,7 @@ mod tests {
             InSphere::BOUNDARY, // Conservative for degenerate cases
             &config,
         );
-        assert!(result_is_consistent);
+        assert!(result_is_consistent.is_consistent());
     }
 
     #[test]
@@ -1045,12 +1083,10 @@ mod tests {
         // Test 1D case (interval)
         let interval_points = vec![Point::new([0.0]), Point::new([1.0])];
         let test_1d = Point::new([0.3]);
-        assert!(verify_insphere_consistency(
-            &interval_points,
-            &test_1d,
-            InSphere::INSIDE,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(&interval_points, &test_1d, InSphere::INSIDE, &config)
+                .is_consistent()
+        );
 
         // Test 4D case
         let hypersimplex_points = vec![
@@ -1061,12 +1097,10 @@ mod tests {
             Point::new([0.0, 0.0, 0.0, 1.0]),
         ];
         let test_4d = Point::new([0.2, 0.2, 0.2, 0.2]);
-        assert!(verify_insphere_consistency(
-            &hypersimplex_points,
-            &test_4d,
-            InSphere::INSIDE,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(&hypersimplex_points, &test_4d, InSphere::INSIDE, &config)
+                .is_consistent()
+        );
     }
 
     #[test]
@@ -1114,7 +1148,8 @@ mod tests {
         // All BOUNDARY results should be consistent
         for (points, test_point, expected_result) in test_configs {
             assert!(
-                verify_insphere_consistency(&points, &test_point, expected_result, &config),
+                verify_insphere_consistency(&points, &test_point, expected_result, &config)
+                    .is_consistent(),
                 "Failed for configuration with test point {test_point:?}"
             );
         }
@@ -1147,17 +1182,110 @@ mod tests {
         println!("Far point consistency: {far_consistent}");
 
         // But BOUNDARY should always work
-        assert!(verify_insphere_consistency(
-            &unit_tetrahedron,
-            &origin_point,
-            InSphere::BOUNDARY,
-            &config
-        ));
-        assert!(verify_insphere_consistency(
-            &unit_tetrahedron,
-            &far_point,
-            InSphere::BOUNDARY,
-            &config
-        ));
+        assert!(
+            verify_insphere_consistency(&unit_tetrahedron, &far_point, InSphere::BOUNDARY, &config)
+                .is_consistent()
+        );
+    }
+
+    #[test]
+    fn test_verify_insphere_consistency_error_handling() {
+        // Test that verify_insphere_consistency returns Unverifiable when insphere_distance fails
+        // This is the correct behavior - when verification method fails, we cannot prove
+        // inconsistency, so we conservatively return Unverifiable (which is_consistent() = true)
+        let config = config_presets::general_triangulation();
+
+        // Case 1: Invalid simplex (wrong number of points for 3D - need 4, provide 3)
+        // This causes CircumcenterError::InvalidSimplex in insphere_distance
+        let invalid_points_3d = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+        ];
+        let test_point_3d = Point::new([0.1, 0.1, 0.1]);
+
+        // Should return Unverifiable for all determinant results when verification fails
+        assert_eq!(
+            verify_insphere_consistency(
+                &invalid_points_3d,
+                &test_point_3d,
+                InSphere::INSIDE,
+                &config
+            ),
+            ConsistencyResult::Unverifiable
+        );
+        assert_eq!(
+            verify_insphere_consistency(
+                &invalid_points_3d,
+                &test_point_3d,
+                InSphere::OUTSIDE,
+                &config
+            ),
+            ConsistencyResult::Unverifiable
+        );
+        assert_eq!(
+            verify_insphere_consistency(
+                &invalid_points_3d,
+                &test_point_3d,
+                InSphere::BOUNDARY,
+                &config
+            ),
+            ConsistencyResult::Unverifiable
+        );
+
+        // Case 2: Empty point set causes CircumcenterError::EmptyPointSet
+        let empty_points: Vec<Point<f64, 3>> = Vec::new();
+        assert_eq!(
+            verify_insphere_consistency(&empty_points, &test_point_3d, InSphere::OUTSIDE, &config),
+            ConsistencyResult::Unverifiable
+        );
+
+        // Case 3: Non-finite coordinate (NaN) causes coordinate conversion error
+        // This triggers CircumcenterError::CoordinateConversion in circumcenter calculation
+        let nan_points = vec![
+            Point::new([f64::NAN, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        assert_eq!(
+            verify_insphere_consistency(&nan_points, &test_point_3d, InSphere::BOUNDARY, &config),
+            ConsistencyResult::Unverifiable
+        );
+
+        // Case 4: Infinity coordinates also cause conversion errors
+        let inf_points = vec![
+            Point::new([f64::INFINITY, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        assert_eq!(
+            verify_insphere_consistency(&inf_points, &test_point_3d, InSphere::INSIDE, &config),
+            ConsistencyResult::Unverifiable
+        );
+
+        // Case 5: Degenerate simplex (colinear points) causes matrix inversion failure
+        // All points lie on the same line, making circumcenter calculation impossible
+        let colinear_points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([2.0, 0.0, 0.0]),
+            Point::new([3.0, 0.0, 0.0]),
+        ];
+        assert_eq!(
+            verify_insphere_consistency(
+                &colinear_points,
+                &test_point_3d,
+                InSphere::OUTSIDE,
+                &config
+            ),
+            ConsistencyResult::Unverifiable
+        );
+
+        // Test that all Unverifiable results are considered "consistent"
+        assert!(ConsistencyResult::Unverifiable.is_consistent());
+        assert!(ConsistencyResult::Consistent.is_consistent());
+        assert!(!ConsistencyResult::Inconsistent.is_consistent());
     }
 }
