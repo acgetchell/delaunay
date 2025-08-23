@@ -24,6 +24,7 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 
 - [x]  Arbitrary data types associated with vertices and cells
 - [x]  d-dimensional [Delaunay triangulations]
+- [x]  d-dimensional convex hulls
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
 - [x]  Tested for 3-, 4-, and 5-dimensional triangulations
 

@@ -2,7 +2,7 @@ name: CI
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 on:
@@ -41,9 +41,11 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
           target: ${{ matrix.target }}
           cache: true  # Built-in caching
+          toolchain: 1.89.0
+          override: true
+          components: rustfmt, clippy
 
       - name: Check formatting
         if: matrix.os == 'ubuntu-latest'

@@ -7,9 +7,120 @@
 //! # Features
 //!
 //! - d-dimensional Delaunay triangulations
+//! - d-dimensional convex hulls
 //! - Generic floating-point coordinate types (supports `f32`, `f64`, and other types implementing `CoordinateScalar`)
 //! - Arbitrary data types associated with vertices and cells
 //! - Serialization/Deserialization with [serde](https://serde.rs)
+//!
+//! # Basic Usage
+//!
+//! This library handles **arbitrary dimensions** (subject to numerical issues). Here's a 4D triangulation example:
+//!
+//! ```rust
+//! use delaunay::core::triangulation_data_structure::Tds;
+//! use delaunay::vertex;
+//!
+//! // Create a 4D triangulation (4-dimensional space!)
+//! let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::default();
+//!
+//! // Add vertices incrementally - triangulation evolves automatically
+//! tds.add(vertex!([0.0, 0.0, 0.0, 0.0])).unwrap();  // 1 vertex, 0 cells
+//! tds.add(vertex!([1.0, 0.0, 0.0, 0.0])).unwrap();  // 2 vertices, 0 cells
+//! tds.add(vertex!([0.0, 1.0, 0.0, 0.0])).unwrap();  // 3 vertices, 0 cells
+//! tds.add(vertex!([0.0, 0.0, 1.0, 0.0])).unwrap();  // 4 vertices, 0 cells
+//! assert_eq!(tds.number_of_cells(), 0);
+//! tds.add(vertex!([0.0, 0.0, 0.0, 1.0])).unwrap();  // 5 vertices, 1 cell (first 4-simplex!)
+//! tds.add(vertex!([0.2, 0.2, 0.2, 0.2])).unwrap();  // 6 vertices, multiple cells
+//!
+//! assert_eq!(tds.number_of_vertices(), 6);
+//! assert_eq!(tds.dim(), 4);                    // Full 4D triangulation
+//! assert!(tds.number_of_cells() > 1);          // Bowyer-Watson creates additional 4-simplices
+//! assert!(tds.is_valid().is_ok());             // Maintains Delaunay property in 4D
+//! ```
+//!
+//! **Key insight**: The transition happens at D+1 vertices (5 vertices for 4D), where the first
+//! 4-simplex (5-vertex cell) is created. Additional vertices trigger the Bowyer-Watson algorithm
+//! to maintain the 4D Delaunay triangulation.
+//!
+//! # Convex Hull Extraction
+//!
+//! Extract d-dimensional convex hulls from Delaunay triangulations:
+//!
+//! ```rust
+//! use delaunay::core::triangulation_data_structure::Tds;
+//! use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+//! use delaunay::geometry::point::Point;
+//! use delaunay::geometry::traits::coordinate::Coordinate;
+//! use delaunay::vertex;
+//!
+//! // Create two tetrahedrons sharing a triangular facet (double tetrahedron)
+//! let vertices = vec![
+//!     // Shared triangular facet vertices (forms base of both tetrahedrons)
+//!     vertex!([0.0, 0.0, 0.0]),    // Shared vertex A
+//!     vertex!([2.0, 0.0, 0.0]),    // Shared vertex B
+//!     vertex!([1.0, 2.0, 0.0]),    // Shared vertex C
+//!     // Apex of first tetrahedron (above the shared facet)
+//!     vertex!([1.0, 0.7, 1.5]),    // First tet apex
+//!     // Apex of second tetrahedron (below the shared facet)
+//!     vertex!([1.0, 0.7, -1.5]),   // Second tet apex
+//! ];
+//!
+//! let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+//!
+//! // Extract the convex hull (boundary facets of the triangulation)
+//! let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+//!     ConvexHull::from_triangulation(&tds).unwrap();
+//!
+//! println!("Convex hull has {} facets in {}D", hull.facet_count(), hull.dimension());
+//!
+//! // Test point containment
+//! let inside_point = Point::new([1.0, 0.5, 0.5]);
+//! let outside_point = Point::new([3.0, 3.0, 3.0]);
+//!
+//! assert!(!hull.is_point_outside(&inside_point, &tds).unwrap());  // Inside the hull
+//! assert!(hull.is_point_outside(&outside_point, &tds).unwrap());   // Outside the hull
+//!
+//! // Find visible facets from an external point (useful for incremental construction)
+//! let visible_facets = hull.find_visible_facets(&outside_point, &tds).unwrap();
+//! println!("Point sees {} out of {} facets", visible_facets.len(), hull.facet_count());
+//!
+//! // Works in any dimension!
+//! let vertices_4d = vec![
+//!     vertex!([0.0, 0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 0.0, 1.0]),
+//! ];
+//! let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+//! let hull_4d: ConvexHull<f64, Option<()>, Option<()>, 4> =
+//!     ConvexHull::from_triangulation(&tds_4d).unwrap();
+//!
+//! assert_eq!(hull_4d.facet_count(), 5);  // 4-simplex has 5 boundary facets
+//! assert_eq!(hull_4d.dimension(), 4);     // 4D convex hull
+//! ```
+//!
+//! # Triangulation Invariants
+//!
+//! The library maintains several critical triangulation invariants that ensure geometric and topological correctness:
+//!
+//! ## Invariant Enforcement
+//!
+//! | Invariant Type | Enforcement Location | Method | Timing |
+//! |---|---|---|---|
+//! | **Delaunay Property** | `bowyer_watson::find_bad_cells()` | Empty circumsphere test using `insphere()` | **Proactive** (during construction) |
+//! | **Facet Sharing** | `validate_facet_sharing()` | Each facet shared by ≤ 2 cells | **Reactive** (via validation) |
+//! | **No Duplicate Cells** | `validate_no_duplicate_cells()` | No cells with identical vertex sets | **Reactive** (via validation) |
+//! | **Neighbor Consistency** | `validate_neighbors_internal()` | Mutual neighbor relationships | **Reactive** (via validation) |
+//! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + [`cell.is_valid()`](core::cell::Cell::is_valid) (comprehensive) | Construction + runtime validation | **Both** (construction + validation) |
+//! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation | **Both** (construction + validation) |
+//!
+//! The **Delaunay property** (empty circumsphere) is enforced **proactively** during construction by removing
+//! violating cells, while **structural invariants** are enforced **reactively** through validation methods.
+//!
+//! For detailed information, see:
+//! - [`core::algorithms::bowyer_watson`] - Primary invariant enforcement during triangulation construction
+//! - [`core::triangulation_data_structure::Tds::is_valid`] - Comprehensive validation of all invariants
 //!
 //! ## Project History
 //! Versions ≤ 0.1.0 were maintained at [old repo](https://github.com/oovm/shape-rs).
@@ -29,25 +140,36 @@ extern crate derive_builder;
 /// It includes the `Tds` struct, which represents the triangulation, as well as `Cell`, `Facet`, and `Vertex` components.
 /// This module provides traits for customizing vertex and cell data. The crate also includes a `prelude` module for convenient access to commonly used types.
 pub mod core {
+    /// Triangulation algorithms for construction, maintenance, and querying
+    pub mod algorithms {
+        /// Pure incremental Bowyer-Watson algorithm for Delaunay triangulation
+        pub mod bowyer_watson;
+        /// Robust Bowyer-Watson implementation with enhanced numerical stability
+        pub mod robust_bowyer_watson;
+        pub use bowyer_watson::*;
+        pub use robust_bowyer_watson::*;
+    }
     pub mod boundary;
     pub mod cell;
     pub mod facet;
     pub mod triangulation_data_structure;
-    pub mod utilities;
+    pub mod util;
     pub mod vertex;
     /// Traits for Delaunay triangulation data structures.
     pub mod traits {
         pub mod boundary_analysis;
         pub mod data_type;
+        pub mod insertion_algorithm;
         pub use boundary_analysis::*;
         pub use data_type::*;
+        pub use insertion_algorithm::*;
     }
     // Re-export the `core` modules.
     pub use cell::*;
     pub use facet::*;
     pub use traits::*;
     pub use triangulation_data_structure::*;
-    pub use utilities::*;
+    pub use util::*;
     pub use vertex::*;
 }
 
@@ -59,9 +181,19 @@ pub mod core {
 /// (for `f32`, `f64`, and other types implementing `CoordinateScalar`) with proper NaN
 /// handling, validation, and hashing.
 pub mod geometry {
+    /// Geometric algorithms for triangulations and spatial data structures
+    pub mod algorithms {
+        /// Convex hull operations on d-dimensional triangulations
+        pub mod convex_hull;
+        pub use convex_hull::*;
+    }
     pub mod matrix;
     pub mod point;
     pub mod predicates;
+    /// Enhanced predicates with improved numerical robustness
+    pub mod robust_predicates;
+    /// Geometric utility functions for d-dimensional geometry calculations
+    pub mod util;
     /// Traits module containing coordinate abstractions and reusable trait definitions.
     ///
     /// This module contains the core `Coordinate` trait that abstracts coordinate
@@ -78,10 +210,12 @@ pub mod geometry {
         pub use hashcoordinate::*;
         pub use orderedeq::*;
     }
+    pub use algorithms::*;
     pub use matrix::*;
     pub use point::*;
     pub use predicates::*;
     pub use traits::*;
+    pub use util::*;
 }
 
 /// A prelude module that re-exports commonly used types and macros.
@@ -91,18 +225,21 @@ pub mod prelude {
     pub use crate::core::{
         cell::*,
         facet::*,
-        traits::{boundary_analysis::*, data_type::*},
+        traits::{boundary_analysis::*, data_type::*, insertion_algorithm::*},
         triangulation_data_structure::*,
-        utilities::*,
+        util::*,
         vertex::*,
     };
 
     // Re-export from geometry
     pub use crate::geometry::{
+        algorithms::*,
         matrix::*,
         point::*,
         predicates::*,
+        robust_predicates::*,
         traits::{coordinate::*, finitecheck::*, hashcoordinate::*, orderedeq::*},
+        util::*,
     };
 
     // Convenience macros

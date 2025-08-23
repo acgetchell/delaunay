@@ -26,7 +26,7 @@
 //! - Performance metrics
 
 use delaunay::prelude::*;
-use num_traits::cast::NumCast;
+use num_traits::cast::cast;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
@@ -119,8 +119,8 @@ fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
     let vertex_count = tds.number_of_vertices();
     let cell_count = tds.number_of_cells();
     if cell_count > 0 {
-        let vertex_f64 = NumCast::from(vertex_count).unwrap_or(0.0f64);
-        let cell_f64 = NumCast::from(cell_count).unwrap_or(1.0f64);
+        let vertex_f64 = cast(vertex_count).unwrap_or(0.0f64);
+        let cell_f64 = cast(cell_count).unwrap_or(1.0f64);
         let ratio = vertex_f64 / cell_f64;
         println!("  Vertex/Cell ratio:  {ratio:.2}");
     }
@@ -154,8 +154,8 @@ fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
 
         println!("    Valid cells:     {valid_cells}/{cell_count}");
         if cell_count > 0 {
-            let total_f64 = NumCast::from(total_neighbors).unwrap_or(0.0f64);
-            let cell_f64 = NumCast::from(cell_count).unwrap_or(1.0f64);
+            let total_f64 = cast(total_neighbors).unwrap_or(0.0f64);
+            let cell_f64 = cast(cell_count).unwrap_or(1.0f64);
             let avg_neighbors = total_f64 / cell_f64;
             println!("    Avg neighbors:   {avg_neighbors:.2}");
         }
@@ -311,7 +311,7 @@ fn performance_analysis(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
     println!("\n  Memory Usage Estimation:");
     println!("    • Vertex memory: ~{} bytes", vertex_count * vertex_size);
     println!("    • Cell memory:   ~{} bytes", cell_count * cell_size);
-    let estimated_f64 = NumCast::from(estimated_memory).unwrap_or(0.0f64);
+    let estimated_f64 = cast(estimated_memory).unwrap_or(0.0f64);
     println!(
         "    • Total memory:  ~{estimated_memory} bytes ({:.1} KB)",
         estimated_f64 / 1024.0
@@ -319,9 +319,9 @@ fn performance_analysis(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
 
     // Performance per vertex/cell ratios
     if vertex_count > 0 && cell_count > 0 {
-        let nanos_f64 = NumCast::from(avg_validation_time.as_nanos()).unwrap_or(0.0f64);
-        let vertex_f64 = NumCast::from(vertex_count).unwrap_or(1.0f64);
-        let cell_f64 = NumCast::from(cell_count).unwrap_or(1.0f64);
+        let nanos_f64 = cast(avg_validation_time.as_nanos()).unwrap_or(0.0f64);
+        let vertex_f64 = cast(vertex_count).unwrap_or(1.0f64);
+        let cell_f64 = cast(cell_count).unwrap_or(1.0f64);
         let validation_per_vertex = nanos_f64 / vertex_f64;
         let validation_per_cell = nanos_f64 / cell_f64;
 

@@ -60,7 +60,7 @@
 // =============================================================================
 
 use super::traits::data_type::DataType;
-use super::utilities::stable_hash_u64_slice;
+use super::util::stable_hash_u64_slice;
 use super::{cell::Cell, triangulation_data_structure::VertexKey, vertex::Vertex};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use serde::{Serialize, de::DeserializeOwned};
@@ -73,7 +73,7 @@ use thiserror::Error;
 // =============================================================================
 
 /// Error type for facet operations.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FacetError {
     /// The cell does not contain the vertex.
@@ -84,6 +84,39 @@ pub enum FacetError {
     VertexNotFound {
         /// The UUID that was not found.
         uuid: uuid::Uuid,
+    },
+    /// Facet has insufficient vertices for the given dimension.
+    #[error(
+        "Facet must have exactly {expected} vertices for {dimension}D triangulation, got {actual}"
+    )]
+    InsufficientVertices {
+        /// The expected number of vertices.
+        expected: usize,
+        /// The actual number of vertices.
+        actual: usize,
+        /// The dimension of the triangulation.
+        dimension: usize,
+    },
+    /// Facet was not found in the triangulation.
+    #[error("Facet not found in triangulation")]
+    FacetNotFoundInTriangulation,
+    /// Expected exactly one adjacent cell for boundary facet.
+    #[error("Expected exactly 1 adjacent cell for boundary facet, found {found}")]
+    InvalidAdjacentCellCount {
+        /// The number of adjacent cells found.
+        found: usize,
+    },
+    /// Adjacent cell was not found in the triangulation.
+    #[error("Adjacent cell not found")]
+    AdjacentCellNotFound,
+    /// Could not find inside vertex for boundary facet.
+    #[error("Could not find inside vertex for boundary facet")]
+    InsideVertexNotFound,
+    /// Failed to compute geometric orientation.
+    #[error("Failed to compute orientation: {details}")]
+    OrientationComputationFailed {
+        /// Details about the orientation computation failure.
+        details: String,
     },
 }
 
@@ -1445,7 +1478,7 @@ mod tests {
                 assert_eq!(uuid, vertices[0].uuid());
                 println!("✓ Successfully caught VertexNotFound error for UUID: {uuid}");
             }
-            other @ FacetError::CellDoesNotContainVertex => {
+            other => {
                 panic!("Expected VertexNotFound error, got: {other:?}")
             }
         }
@@ -1470,7 +1503,7 @@ mod tests {
             FacetError::VertexNotFound { uuid } => {
                 assert_eq!(uuid, vertices[1].uuid()); // Second vertex should be the missing one
             }
-            other @ FacetError::CellDoesNotContainVertex => {
+            other => {
                 panic!("Expected VertexNotFound error, got: {other:?}")
             }
         }

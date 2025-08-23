@@ -50,6 +50,35 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+/// Errors that can occur during coordinate conversion in geometric predicates.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum CoordinateConversionError {
+    /// Coordinate conversion failed during matrix operations
+    #[error(
+        "Failed to convert coordinate at index {coordinate_index} from {from_type} to {to_type}: {coordinate_value}"
+    )]
+    ConversionFailed {
+        /// Index of the coordinate that failed to convert
+        coordinate_index: usize,
+        /// String representation of the problematic coordinate value
+        coordinate_value: String,
+        /// Source type name
+        from_type: &'static str,
+        /// Target type name
+        to_type: &'static str,
+    },
+    /// Non-finite value (NaN or infinity) encountered during coordinate conversion
+    #[error(
+        "Non-finite value (NaN or infinity) at coordinate index {coordinate_index}: {coordinate_value}"
+    )]
+    NonFiniteValue {
+        /// Index of the coordinate that contains the non-finite value
+        coordinate_index: usize,
+        /// String representation of the non-finite coordinate value
+        coordinate_value: String,
+    },
+}
+
 /// Default tolerance for f32 floating-point comparisons.
 ///
 /// This value is set to 1e-6, which is appropriate for f32 precision and provides
@@ -1088,6 +1117,29 @@ mod tests {
 
         // Test that f32 tolerance is larger than f64 tolerance
         assert!(f64::from(tolerance_f32) > tolerance_f64);
+    }
+
+    // Helper function for testing NaN implementation across scalar types
+    fn test_nan<T: CoordinateScalar>() {
+        let nan_value = T::nan();
+        assert!(nan_value.is_nan());
+    }
+
+    #[test]
+    fn coordinate_scalar_nan_implementation() {
+        // Test that CoordinateScalar::nan() returns NaN values
+
+        // Test f32 nan()
+        let nan_f32 = f32::nan();
+        assert!(nan_f32.is_nan());
+
+        // Test f64 nan()
+        let nan_f64 = f64::nan();
+        assert!(nan_f64.is_nan());
+
+        // Test in generic function
+        test_nan::<f32>();
+        test_nan::<f64>();
     }
 
     #[test]

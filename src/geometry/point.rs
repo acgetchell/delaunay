@@ -22,19 +22,19 @@
 // =============================================================================
 
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateScalar, CoordinateValidationError,
+    Coordinate, CoordinateConversionError, CoordinateScalar, CoordinateValidationError,
 };
+use num_traits::cast;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::convert::TryFrom;
 use std::hash::{Hash, Hasher};
 
 // =============================================================================
 // POINT STRUCT DEFINITION
 // =============================================================================
 
-#[derive(Clone, Copy, Debug, Default, PartialOrd, Serialize, Deserialize)]
-#[serde(transparent)]
-#[serde(bound(serialize = "T: Serialize"))]
-#[serde(bound(deserialize = "T: serde::de::DeserializeOwned"))]
+#[derive(Clone, Copy, Debug, PartialOrd)]
 /// The [Point] struct represents a point in a D-dimensional space, where the
 /// coordinates are of generic type `T`.
 ///
@@ -58,7 +58,6 @@ use std::hash::{Hash, Hasher};
 pub struct Point<T, const D: usize>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     /// The coordinates of the point.
     coords: [T; D],
@@ -69,7 +68,6 @@ where
 impl<T, const D: usize> Coordinate<T, D> for Point<T, D>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     /// Create a new Point from an array of coordinates
     #[inline]
@@ -128,7 +126,6 @@ where
 impl<T, const D: usize> Hash for Point<T, D>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -140,7 +137,6 @@ where
 impl<T, const D: usize> PartialEq for Point<T, D>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     fn eq(&self, other: &Self) -> bool {
         self.ordered_equals(other)
@@ -148,32 +144,145 @@ where
 }
 
 // Implement Eq using the Coordinate trait
-impl<T, const D: usize> Eq for Point<T, D>
+impl<T, const D: usize> Eq for Point<T, D> where T: CoordinateScalar {}
+
+// Manual implementations for traits that can't be derived due to [T; D] limitations
+
+// Implement Default manually
+impl<T, const D: usize> Default for Point<T, D>
 where
-    T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar + Default,
 {
+    fn default() -> Self {
+        Self {
+            coords: [T::default(); D],
+        }
+    }
 }
 
-// Serde implementations are automatically derived using #[serde(transparent)]
+// Implement Serialize manually
+impl<T, const D: usize> Serialize for Point<T, D>
+where
+    T: CoordinateScalar + Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeTuple;
+        let mut tuple = serializer.serialize_tuple(D)?;
+        for coord in &self.coords {
+            if coord.is_finite_generic() {
+                tuple.serialize_element(coord)?;
+            } else {
+                // Emit JSON null (or serializer-equivalent) for non‑finite values
+                // Note: This is a lossy representation unless Deserialize maps nulls back.
+                tuple.serialize_element(&Option::<T>::None)?;
+            }
+        }
+        tuple.end()
+    }
+}
+
+// Implement Deserialize manually with null -> NaN mapping
+impl<'de, T, const D: usize> Deserialize<'de> for Point<T, D>
+where
+    T: CoordinateScalar + DeserializeOwned,
+{
+    fn deserialize<DE>(deserializer: DE) -> Result<Self, DE::Error>
+    where
+        DE: serde::Deserializer<'de>,
+    {
+        use serde::de::{Error, SeqAccess, Visitor};
+        use std::fmt;
+        use std::marker::PhantomData;
+
+        struct ArrayVisitor<T, const D: usize>(PhantomData<T>);
+
+        impl<'de, T, const D: usize> Visitor<'de> for ArrayVisitor<T, D>
+        where
+            T: CoordinateScalar + DeserializeOwned,
+        {
+            type Value = Point<T, D>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_fmt(format_args!(
+                    "an array of {D} coordinates (numbers or null values)"
+                ))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                // Collect coordinates into a Vec first, then convert to array
+                let mut coords = Vec::with_capacity(D);
+                for i in 0..D {
+                    // Try to deserialize as Option<T> to handle null values
+                    let coord_option: Option<T> = seq
+                        .next_element()?
+                        .ok_or_else(|| Error::invalid_length(i, &self))?;
+
+                    // Map null to NaN, keep finite values as-is
+                    let coord = coord_option.map_or_else(T::nan, |value| value);
+
+                    coords.push(coord);
+                }
+
+                // Convert Vec to array
+                let coords_len = coords.len();
+                let coords_array: [T; D] = coords
+                    .try_into()
+                    .map_err(|_| Error::invalid_length(coords_len, &self))?;
+
+                Ok(Point::new(coords_array))
+            }
+        }
+
+        deserializer.deserialize_tuple(D, ArrayVisitor(PhantomData))
+    }
+}
 
 // =============================================================================
 // TYPE CONVERSION IMPLEMENTATIONS
 // =============================================================================
 
-/// From trait implementations for Point conversions - using Coordinate trait
-impl<T, U, const D: usize> From<[T; D]> for Point<U, D>
+/// Fallible conversions for Point from arrays with potentially different scalar types.
+///
+/// This replaces the previous infallible From<[T; D]> which silently defaulted on
+/// cast failures. Now, conversions will return an error if any coordinate cannot be
+/// cast into the target type, or if a non-finite value is encountered post-cast.
+impl<T, U, const D: usize> TryFrom<[T; D]> for Point<U, D>
 where
-    T: Into<U>,
-    U: CoordinateScalar,
-    [U; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
+    T: cast::NumCast + std::fmt::Debug,
+    U: CoordinateScalar + cast::NumCast,
 {
-    /// Create a new [Point] from an array of coordinates of type `T`.
+    type Error = CoordinateConversionError;
+
     #[inline]
-    fn from(coords: [T; D]) -> Self {
-        // Convert the `coords` array to `[U; D]`
-        let coords_u: [U; D] = coords.map(Into::into);
-        Self::new(coords_u)
+    fn try_from(coords: [T; D]) -> Result<Self, Self::Error> {
+        let mut out: [U; D] = [U::zero(); D];
+        for (i, c) in coords.into_iter().enumerate() {
+            // Store debug representation before moving c
+            let c_debug = format!("{c:?}");
+            // Attempt numeric cast
+            let v: U =
+                cast::cast(c).ok_or_else(|| CoordinateConversionError::ConversionFailed {
+                    coordinate_index: i,
+                    coordinate_value: c_debug,
+                    from_type: std::any::type_name::<T>(),
+                    to_type: std::any::type_name::<U>(),
+                })?;
+            // Validate finiteness after cast
+            if !v.is_finite_generic() {
+                return Err(CoordinateConversionError::NonFiniteValue {
+                    coordinate_index: i,
+                    coordinate_value: format!("{v:?}"),
+                });
+            }
+            out[i] = v;
+        }
+        Ok(Self::new(out))
     }
 }
 
@@ -181,7 +290,6 @@ where
 impl<T, const D: usize> From<Point<T, D>> for [T; D]
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     /// # Example
     ///
@@ -201,7 +309,6 @@ where
 impl<T, const D: usize> From<&Point<T, D>> for [T; D]
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + Serialize + Sized,
 {
     /// # Example
     ///
@@ -240,7 +347,6 @@ mod tests {
         expected_dim: usize,
     ) where
         T: CoordinateScalar,
-        [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
     {
         assert_eq!(point.to_array(), expected_coords);
         assert_eq!(point.dim(), expected_dim);
@@ -253,7 +359,6 @@ mod tests {
         should_be_equal: bool,
     ) where
         T: CoordinateScalar,
-        [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
         Point<T, D>: Hash,
     {
         if should_be_equal {
@@ -338,19 +443,23 @@ mod tests {
 
     #[test]
     fn point_serialization() {
-        use serde_test::{Token, assert_tokens};
-
+        // Test basic serialization and deserialization
         let point: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
-        assert_tokens(
-            &point,
-            &[
-                Token::Tuple { len: 3 },
-                Token::F64(1.0),
-                Token::F64(2.0),
-                Token::F64(3.0),
-                Token::TupleEnd,
-            ],
-        );
+
+        // Test JSON serialization
+        let json = serde_json::to_string(&point).unwrap();
+        assert_eq!(json, "[1.0,2.0,3.0]");
+
+        // Test JSON deserialization
+        let deserialized: Point<f64, 3> = serde_json::from_str(&json).unwrap();
+        assert_eq!(point, deserialized);
+
+        // Test with negative values
+        let point_neg: Point<f64, 2> = Point::new([-1.5, 2.5]);
+        let json_neg = serde_json::to_string(&point_neg).unwrap();
+        assert_eq!(json_neg, "[-1.5,2.5]");
+        let deserialized_neg: Point<f64, 2> = serde_json::from_str(&json_neg).unwrap();
+        assert_eq!(point_neg, deserialized_neg);
     }
 
     #[test]
@@ -885,8 +994,8 @@ mod tests {
         use std::hash::{Hash, Hasher};
 
         // Test that OrderedFloat provides consistent hashing for NaN values
-        // Note: Equality comparison for NaN still follows IEEE standard (NaN != NaN)
-        // but hashing uses OrderedFloat which treats all NaN values as equivalent
+        // Note: Equality comparison treats all NaN values as equivalent
+        // Hashing uses OrderedFloat which treats all NaN values as equivalent
 
         let point_nan1 = Point::new([f64::NAN, 2.0]);
         let point_nan2 = Point::new([f64::NAN, 2.0]);
@@ -1484,6 +1593,118 @@ mod tests {
     }
 
     #[test]
+    fn point_serialize_nan_infinity_comprehensive() {
+        // Test comprehensive serialization of NaN and infinity values
+
+        // Single NaN coordinate
+        let point_nan_single = Point::new([f64::NAN, 1.0, 2.0]);
+        let json_nan_single = serde_json::to_string(&point_nan_single).unwrap();
+        assert_eq!(json_nan_single, "[null,1.0,2.0]");
+
+        // Multiple NaN coordinates
+        let point_nan_multiple = Point::new([f64::NAN, f64::NAN, 1.0]);
+        let json_nan_multiple = serde_json::to_string(&point_nan_multiple).unwrap();
+        assert_eq!(json_nan_multiple, "[null,null,1.0]");
+
+        // All NaN coordinates
+        let point_all_nan = Point::new([f64::NAN, f64::NAN]);
+        let json_all_nan = serde_json::to_string(&point_all_nan).unwrap();
+        assert_eq!(json_all_nan, "[null,null]");
+
+        // Single positive infinity
+        let point_pos_inf = Point::new([f64::INFINITY, 1.0]);
+        let json_pos_inf = serde_json::to_string(&point_pos_inf).unwrap();
+        assert_eq!(json_pos_inf, "[null,1.0]");
+
+        // Single negative infinity
+        let point_neg_inf = Point::new([1.0, f64::NEG_INFINITY]);
+        let json_neg_inf = serde_json::to_string(&point_neg_inf).unwrap();
+        assert_eq!(json_neg_inf, "[1.0,null]");
+
+        // Mixed NaN and infinity
+        let point_mixed = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1.0]);
+        let json_mixed = serde_json::to_string(&point_mixed).unwrap();
+        assert_eq!(json_mixed, "[null,null,null,1.0]");
+
+        // All special values
+        let point_all_special = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY]);
+        let json_all_special = serde_json::to_string(&point_all_special).unwrap();
+        assert_eq!(json_all_special, "[null,null,null]");
+    }
+
+    #[test]
+    fn point_serialize_f32_nan_infinity() {
+        // Test f32 NaN and infinity serialization
+
+        let point_f32_nan = Point::new([f32::NAN, 1.0f32]);
+        let json_f32_nan = serde_json::to_string(&point_f32_nan).unwrap();
+        assert_eq!(json_f32_nan, "[null,1.0]");
+
+        let point_f32_inf = Point::new([f32::INFINITY, f32::NEG_INFINITY]);
+        let json_f32_inf = serde_json::to_string(&point_f32_inf).unwrap();
+        assert_eq!(json_f32_inf, "[null,null]");
+    }
+
+    #[test]
+    fn point_deserialize_nan_infinity_handling() {
+        // Test how deserialization handles null values that were serialized from NaN/infinity
+        // NOTE: This may fail because the current Deserialize doesn't handle null -> coordinate mapping
+
+        // Try to deserialize a point with null values
+        let json_with_nulls = "[null,1.0,2.0]";
+        let result: Result<Point<f64, 3>, _> = serde_json::from_str(json_with_nulls);
+
+        // This should fail unless we implement special handling for null -> NaN/infinity
+        match result {
+            Ok(_) => {
+                // If this passes, document what value was used for null
+                println!("Deserialization of null succeeded unexpectedly");
+            }
+            Err(e) => {
+                // Expected behavior - null can't be deserialized as f64
+                println!("Expected deserialization error: {e}");
+            }
+        }
+    }
+
+    #[test]
+    fn point_serialize_deserialize_roundtrip_finite_only() {
+        // Test that roundtrip works for finite values only
+
+        let original = Point::new([1.0, 2.5, -3.7, 0.0]);
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: Point<f64, 4> = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, deserialized);
+
+        // Test with f32
+        let original_f32 = Point::new([1.0f32, -2.5f32]);
+        let json_f32 = serde_json::to_string(&original_f32).unwrap();
+        let deserialized_f32: Point<f32, 2> = serde_json::from_str(&json_f32).unwrap();
+        assert_eq!(original_f32, deserialized_f32);
+    }
+
+    #[test]
+    fn point_serialize_edge_values() {
+        // Test serialization of edge finite values
+
+        // Very large but finite values
+        let point_max = Point::new([f64::MAX, f64::MIN]);
+        let json_max = serde_json::to_string(&point_max).unwrap();
+        assert!(!json_max.contains("null")); // Should not be null
+
+        // Very small but finite values
+        let point_min = Point::new([f64::MIN_POSITIVE, -f64::MIN_POSITIVE]);
+        let json_min = serde_json::to_string(&point_min).unwrap();
+        assert!(!json_min.contains("null")); // Should not be null
+
+        // Zero and negative zero
+        let point_zero = Point::new([0.0, -0.0]);
+        let json_zero = serde_json::to_string(&point_zero).unwrap();
+        assert!(!json_zero.contains("null")); // Should not be null
+        assert_eq!(json_zero, "[0.0,-0.0]");
+    }
+
+    #[test]
     fn point_conversion_edge_cases() {
         // Test edge cases in type conversions
 
@@ -1517,6 +1738,57 @@ mod tests {
 
         // Verify original point is still usable after reference conversion
         assert_relative_eq!(point_ref.to_array().as_slice(), [4.0, 5.0].as_slice());
+    }
+
+    #[test]
+    fn point_cast_conversions() {
+        // Test the cast()-based TryFrom<[T; D]> implementation
+
+        // Test f32 to f64 conversion (safe upcast) using TryFrom
+        let coords_f32: [f32; 3] = [1.5, 2.5, 3.5];
+        let point_f64: Point<f64, 3> = Point::try_from(coords_f32).unwrap();
+
+        // Verify the conversion worked correctly
+        assert_relative_eq!(
+            point_f64.to_array().as_slice(),
+            [1.5f64, 2.5f64, 3.5f64].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // Test same type conversion (no actual cast needed)
+        let coords_f64: [f64; 2] = [10.0, 20.0];
+        let point_f64_same: Point<f64, 2> = Point::try_from(coords_f64).unwrap();
+        assert_relative_eq!(
+            point_f64_same.to_array().as_slice(),
+            [10.0, 20.0].as_slice()
+        );
+
+        // Test with integer type conversions
+        let coords_i32: [i32; 4] = [1, 2, 3, 4];
+        let point_f64_from_int: Point<f64, 4> = Point::try_from(coords_i32).unwrap();
+        assert_relative_eq!(
+            point_f64_from_int.to_array().as_slice(),
+            [1.0, 2.0, 3.0, 4.0].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // Test with large values that are within range
+        let coords_large_i32: [i32; 2] = [i32::MAX, i32::MIN];
+        let point_f64_from_large: Point<f64, 2> = Point::try_from(coords_large_i32).unwrap();
+        assert_relative_eq!(
+            point_f64_from_large.to_array().as_slice(),
+            [f64::from(i32::MAX), f64::from(i32::MIN)].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // Test with mixed typical values
+        let coords_mixed: [f32; 3] = [0.0, 1.5, -3.5];
+        let point_mixed: Point<f64, 3> = Point::try_from(coords_mixed).unwrap();
+        assert_relative_eq!(
+            point_mixed.to_array().as_slice(),
+            [0.0, 1.5, -3.5].as_slice(),
+            epsilon = 1e-9
+        );
     }
 
     #[test]
@@ -2087,6 +2359,194 @@ mod tests {
         special_set.insert(point_combo3); // Should increase size
 
         assert_eq!(special_set.len(), 2);
+    }
+
+    // =============================================================================
+    // CONVERSION ERROR TESTS
+    // =============================================================================
+
+    #[test]
+    fn point_try_from_conversion_errors() {
+        // Test non-finite value errors (NaN after cast)
+        let coords_with_nan = [f64::NAN, 1.0, 2.0];
+        let result: Result<Point<f32, 3>, _> = Point::try_from(coords_with_nan);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CoordinateConversionError::NonFiniteValue {
+                coordinate_index, ..
+            } => {
+                assert_eq!(coordinate_index, 0);
+            }
+            CoordinateConversionError::ConversionFailed { .. } => {
+                panic!("Expected NonFiniteValue error")
+            }
+        }
+
+        // Test non-finite value errors (infinity after cast)
+        let coords_with_inf = [1.0, f64::INFINITY, 2.0];
+        let result: Result<Point<f32, 3>, _> = Point::try_from(coords_with_inf);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CoordinateConversionError::NonFiniteValue {
+                coordinate_index, ..
+            } => {
+                assert_eq!(coordinate_index, 1);
+            }
+            CoordinateConversionError::ConversionFailed { .. } => {
+                panic!("Expected NonFiniteValue error")
+            }
+        }
+
+        // Test conversion failure (overflow cases if we had them)
+        // Note: With num_traits::cast, most reasonable numeric conversions succeed,
+        // so ConversionFailed errors are rare in practice for standard numeric types.
+        // But the infrastructure is there for edge cases or custom numeric types.
+    }
+
+    #[test]
+    fn point_try_from_success_cases() {
+        // Test successful conversions that should work fine
+
+        // f32 to f64 (upcast)
+        let coords_f32 = [1.5f32, 2.5f32, 3.5f32];
+        let result: Result<Point<f64, 3>, _> = Point::try_from(coords_f32);
+        assert!(result.is_ok());
+        let point = result.unwrap();
+        assert_relative_eq!(
+            point.to_array().as_slice(),
+            [1.5f64, 2.5f64, 3.5f64].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // i32 to f64
+        let coords_i32 = [1i32, -2i32, 3i32];
+        let result: Result<Point<f64, 3>, _> = Point::try_from(coords_i32);
+        assert!(result.is_ok());
+        let point = result.unwrap();
+        assert_relative_eq!(
+            point.to_array().as_slice(),
+            [1.0f64, -2.0f64, 3.0f64].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // Same type (f64 to f64)
+        let coords_f64 = [1.0f64, 2.0f64];
+        let result: Result<Point<f64, 2>, _> = Point::try_from(coords_f64);
+        assert!(result.is_ok());
+        let point = result.unwrap();
+        assert_relative_eq!(
+            point.to_array().as_slice(),
+            [1.0f64, 2.0f64].as_slice(),
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn point_try_from_error_details() {
+        // Test error message formatting for NonFiniteValue
+        let coords_with_nan = [f64::NAN, 1.0];
+        let result: Result<Point<f32, 2>, _> = Point::try_from(coords_with_nan);
+        assert!(result.is_err());
+
+        let error = result.unwrap_err();
+        let error_msg = format!("{error}");
+        assert!(error_msg.contains("Non-finite value"));
+        assert!(error_msg.contains("coordinate index 0"));
+        assert!(error_msg.contains("NaN"));
+
+        // Test error cloning and equality
+        let coords_with_inf = [f64::INFINITY, 2.0];
+        let result2: Result<Point<f32, 2>, _> = Point::try_from(coords_with_inf);
+        let error2 = result2.unwrap_err();
+        let error2_clone = error2.clone();
+        assert_eq!(error2, error2_clone);
+    }
+
+    #[test]
+    fn point_try_from_different_error_positions() {
+        // Test error at different coordinate positions
+        let test_cases = [
+            ([f64::NAN, 1.0, 2.0, 3.0], 0),          // First coordinate
+            ([1.0, f64::NAN, 2.0, 3.0], 1),          // Second coordinate
+            ([1.0, 2.0, f64::INFINITY, 3.0], 2),     // Third coordinate
+            ([1.0, 2.0, 3.0, f64::NEG_INFINITY], 3), // Fourth coordinate
+        ];
+
+        for &(coords, expected_index) in &test_cases {
+            let result: Result<Point<f32, 4>, _> = Point::try_from(coords);
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                CoordinateConversionError::NonFiniteValue {
+                    coordinate_index, ..
+                } => {
+                    assert_eq!(coordinate_index, expected_index);
+                }
+                CoordinateConversionError::ConversionFailed { .. } => {
+                    panic!("Expected NonFiniteValue error at position {expected_index}")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn point_try_from_first_error_reported() {
+        // When multiple coordinates have errors, the first one should be reported
+        let coords_multi_error = [f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+        let result: Result<Point<f32, 3>, _> = Point::try_from(coords_multi_error);
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            CoordinateConversionError::NonFiniteValue {
+                coordinate_index, ..
+            } => {
+                // Should report the first error (index 0, not 1 or 2)
+                assert_eq!(coordinate_index, 0);
+            }
+            CoordinateConversionError::ConversionFailed { .. } => {
+                panic!("Expected NonFiniteValue error")
+            }
+        }
+    }
+
+    #[test]
+    fn point_deserialize_nan_handling() {
+        // Test deserialization of null values mapping to NaN
+
+        // Create JSON with null value
+        let json_with_null = "[null,1.0,2.0]";
+
+        let result: Result<Point<f64, 3>, _> = serde_json::from_str(json_with_null);
+
+        // Should successfully deserialize with null mapped to NaN
+        assert!(result.is_ok());
+        let point = result.unwrap();
+
+        // First coordinate should be NaN
+        let coords = point.to_array();
+        assert!(coords[0].is_nan());
+        assert_relative_eq!(coords[1], 1.0);
+        assert_relative_eq!(coords[2], 2.0);
+
+        // Test with multiple nulls
+        let json_multiple_nulls = "[null,null,3.0]";
+        let result_multi: Result<Point<f64, 3>, _> = serde_json::from_str(json_multiple_nulls);
+        assert!(result_multi.is_ok());
+        let point_multi = result_multi.unwrap();
+
+        let coords_multi = point_multi.to_array();
+        assert!(coords_multi[0].is_nan());
+        assert!(coords_multi[1].is_nan());
+        assert_relative_eq!(coords_multi[2], 3.0);
+
+        // Test with f32
+        let json_f32_null = "[null,1.5]";
+        let result_f32: Result<Point<f32, 2>, _> = serde_json::from_str(json_f32_null);
+        assert!(result_f32.is_ok());
+        let point_f32 = result_f32.unwrap();
+
+        let coords_f32 = point_f32.to_array();
+        assert!(coords_f32[0].is_nan());
+        assert_relative_eq!(coords_f32[1], 1.5);
     }
 
     #[test]

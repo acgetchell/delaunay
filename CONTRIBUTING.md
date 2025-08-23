@@ -96,7 +96,7 @@ Before you begin, ensure you have:
 The project uses:
 
 - **Edition**: Rust 2024
-- **MSRV**: Rust 1.85.0
+- **MSRV**: Rust 1.89.0
 - **Linting**: Strict clippy pedantic mode
 - **Testing**: Standard `#[test]` with comprehensive coverage
 - **Benchmarking**: Criterion with allocation tracking
@@ -109,19 +109,27 @@ Understanding the project layout will help you navigate and contribute effective
 delaunay/
 ├── src/                                          # Core library code
 │   ├── core/                                     # Core triangulation structures
+│   │   ├── algorithms/                           # Triangulation algorithms
+│   │   │   ├── bowyer_watson.rs                  # Incremental Bowyer-Watson algorithm
+│   │   │   └── robust_bowyer_watson.rs           # Robust geometric predicates version
 │   │   ├── boundary.rs                           # Boundary analysis and facet detection
 │   │   ├── cell.rs                               # Cell (simplex) implementation
 │   │   ├── facet.rs                              # Facet implementation
-│   │   ├── triangulation_data_structure.rs       # Main Tds struct and Bowyer-Watson
-│   │   ├── utilities.rs                          # Helper functions for triangulation operations
+│   │   ├── triangulation_data_structure.rs       # Main Tds struct
+│   │   ├── util.rs                               # Helper functions for triangulation operations
 │   │   ├── vertex.rs                             # Vertex implementation with generic support
-│   │   └── traits/                               # Core traits for data types and boundary analysis
+│   │   └── traits/                               # Core traits for data types and algorithms
 │   │       ├── boundary_analysis.rs              # Boundary analysis traits
-│   │       └── data_type.rs                      # DataType trait definitions
+│   │       ├── data_type.rs                      # DataType trait definitions
+│   │       └── insertion_algorithm.rs            # Insertion algorithm traits
 │   ├── geometry/                                 # Geometric algorithms and predicates
+│   │   ├── algorithms/                           # Geometric algorithms
+│   │   │   └── convex_hull.rs                    # Convex hull computation
 │   │   ├── matrix.rs                             # Matrix operations for geometric computations
 │   │   ├── point.rs                              # Generic Point struct with NaN-aware operations
 │   │   ├── predicates.rs                         # Geometric predicates (insphere, orientation)
+│   │   ├── robust_predicates.rs                  # Robust geometric predicates
+│   │   ├── util.rs                               # Geometric utility functions
 │   │   └── traits/                               # Coordinate abstractions and floating-point traits
 │   │       ├── coordinate.rs                     # Core Coordinate trait abstraction
 │   │       ├── finitecheck.rs                    # Finite value validation traits
@@ -147,7 +155,11 @@ delaunay/
 │   ├── small_scale_triangulation.rs              # Small triangulation benchmarks
 │   └── triangulation_creation.rs                 # Triangulation creation benchmarks
 ├── tests/                                        # Integration tests
-│   └── bench_helpers_test.rs                     # Tests for benchmark helper functions
+│   ├── bench_helpers_test.rs                     # Tests for benchmark helper functions
+│   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
+│   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
+│   ├── robust_predicates_showcase.rs             # Robust predicates demonstration tests
+│   └── test_cavity_boundary_error.rs             # Cavity boundary error reproduction tests
 ├── docs/                                         # Additional documentation
 │   ├── templates/                                # Templates for automated generation
 │   │   ├── README.md                             # Templates documentation
@@ -266,18 +278,18 @@ Breaking changes: BREAKING CHANGE: description
 ### Types
 
 | Type | Description | Appears in Changelog |
-|------|-------------|-----------------------|
-| `feat` | New features | ✅ Yes |
-| `fix` | Bug fixes | ✅ Yes |
-| `perf` | Performance improvements | ✅ Yes |
-| `refactor` | Code refactoring | ✅ Yes |
-| `build` | Build system changes | ✅ Yes |
-| `ci` | CI/CD changes | ✅ Yes |
-| `revert` | Reverting changes | ✅ Yes |
-| `chore` | Maintenance tasks | ❌ No (filtered) |
-| `style` | Formatting changes | ❌ No (filtered) |
-| `docs` | Documentation only | ❌ No (filtered) |
-| `test` | Test changes only | ❌ No (filtered) |
+|------|-------------|----------------------|
+| feat | New features | ✅ Yes |
+| fix | Bug fixes | ✅ Yes |
+| perf | Performance improvements | ✅ Yes |
+| refactor | Code refactoring | ✅ Yes |
+| build | Build system changes | ✅ Yes |
+| ci | CI/CD changes | ✅ Yes |
+| revert | Reverting changes | ✅ Yes |
+| chore | Maintenance tasks | ❌ No (filtered) |
+| style | Formatting changes | ❌ No (filtered) |
+| docs | Documentation only | ❌ No (filtered) |
+| test | Test changes only | ❌ No (filtered) |
 
 ### Scopes (Optional)
 
@@ -589,77 +601,7 @@ The project follows [semantic versioning][semver] and maintains a detailed [CHAN
 
 ### Release Workflow
 
-1. **Update version** in `Cargo.toml` and any documentation if needed
-2. **Create temporary tag** to enable changelog generation:
-
-   ```bash
-   git tag -a v0.3.5 -m "delaunay v0.3.5"
-   ```
-
-3. **Generate changelog**:
-
-   ```bash
-   ./scripts/generate_changelog.sh
-   ```
-
-   Note: do not push this temporary tag, it will be recreated later with full changelog content
-
-4. **Commit all changes together**:
-
-   ```bash
-   git add Cargo.toml CHANGELOG.md docs/ # Add any updated files
-   git commit -m "chore(release): release v0.3.5
-   
-   - Bump version to v0.3.5
-   - Update changelog with latest changes  
-   - Update documentation for release"
-   ```
-
-5. **Move tag to final release commit with changelog content**:
-
-   ```bash
-   # Delete temporary tag and recreate with changelog content
-   git tag -d v0.3.5
-   ./scripts/tag-from-changelog.sh v0.3.5 --force
-   ```
-
-   The `tag-from-changelog.sh` script extracts the changelog section that matches
-   the specified version (v0.3.5) from CHANGELOG.md and uses it as the tag message.
-   It supports common changelog formats including `## [v0.3.5] ...`, `## v0.3.5 ...`,
-   and `## 0.3.5 ...`. The script ensures you get the correct version's changelog
-   content rather than an unrelated section.
-
-6. **Verify tag annotation** (optional but recommended):
-
-   ```bash
-   # View the tag message content that will be used for GitHub release
-   git tag -l --format='%(contents)' v0.3.5
-   ```
-
-   This shows exactly what content will be used when creating the GitHub release.
-
-7. **Push changes and tag**:
-
-   ```bash
-   git push --atomic origin main v0.3.5
-   ```
-
-8. **Publish to crates.io** (maintainer only):
-
-   ```bash
-   cargo publish --dry-run # Validate package
-   cargo publish
-   ```
-
-9. **Create GitHub release** (maintainer only):
-
-   ```bash
-   # Create release using changelog content from tag message
-   gh release create v0.3.5 --notes-from-tag
-   ```
-
-**Note**: The project uses `./scripts/generate_changelog.sh` to generate changelogs with commit dates instead of tag creation dates,
-providing more accurate release timing that reflects when development work was completed.
+For a detailed, copy-pastable, step-by-step workflow (including a clean release PR flow with exact commands), see docs/RELEASING.md.
 
 ## Getting Help
 

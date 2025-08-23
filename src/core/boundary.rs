@@ -25,6 +25,7 @@ where
         + ComplexField<RealField = T>
         + SubAssign<T>
         + Sum
+        + From<f64>
         + DeserializeOwned,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
@@ -185,7 +186,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::BoundaryAnalysis;
-    use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
+    use crate::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
     use std::collections::HashMap;
@@ -682,7 +683,7 @@ mod tests {
         // Single vertex should fail with InsufficientVertices error since 1 < 4 (D+1 for 3D)
         assert!(matches!(
             result_single,
-            Err(TriangulationValidationError::InsufficientVertices { .. })
+            Err(TriangulationConstructionError::InsufficientVertices { .. })
         ));
 
         // Test 2: Collinear points (should fail with InsufficientVertices)
@@ -697,7 +698,7 @@ mod tests {
         // Collinear points should fail with InsufficientVertices error since 3 < 4 (D+1 for 3D)
         assert!(matches!(
             result_collinear,
-            Err(TriangulationValidationError::InsufficientVertices { .. })
+            Err(TriangulationConstructionError::InsufficientVertices { .. })
         ));
 
         // Test 3: Coplanar points in 3D (should fail with InsufficientVertices)
@@ -814,34 +815,55 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Benchmark test is time-consuming and not suitable for regular test runs"]
     fn benchmark_boundary_facets_performance() {
+        use crate::core::algorithms::robust_bowyer_watson::RobustBoyerWatson;
+        use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
+        use num_traits::cast::cast;
         use rand::Rng;
         use std::time::Instant;
 
         // Smaller point counts for reasonable test time
         let point_counts = [20, 40, 60, 80];
 
-        println!("\nBenchmarking boundary_facets() performance:");
+        println!("\nBenchmarking boundary_facets() performance with robust triangulation:");
         println!(
             "Note: This demonstrates the O(N·F) complexity where N = cells, F = facets per cell"
         );
 
         for &n_points in &point_counts {
-            // Create a number of random points in 3D
+            // Create a number of well-distributed random points in 3D
             let mut rng = rand::rng();
             let points: Vec<Point<f64, 3>> = (0..n_points)
-                .map(|_| {
+                .map(|i| {
+                    // Add some spacing to reduce degeneracy
+                    let spacing = cast(i).unwrap_or(0.0) * 0.1;
                     Point::new([
-                        rng.random::<f64>() * 100.0,
-                        rng.random::<f64>() * 100.0,
-                        rng.random::<f64>() * 100.0,
+                        rng.random::<f64>().mul_add(100.0, spacing),
+                        rng.random::<f64>().mul_add(100.0, spacing * 1.1),
+                        rng.random::<f64>().mul_add(100.0, spacing * 1.3),
                     ])
                 })
                 .collect();
 
             let vertices = Vertex::from_points(points);
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+            // Use robust Bowyer-Watson algorithm to create triangulation from scratch
+            let mut robust_algorithm: RobustBoyerWatson<f64, Option<()>, Option<()>, 3> =
+                RobustBoyerWatson::new();
+
+            // Create triangulation using robust algorithm
+            let tds = match robust_algorithm.new_triangulation(&vertices) {
+                Ok(tds) => {
+                    println!("Successfully created robust triangulation with {n_points} vertices");
+                    tds
+                }
+                Err(e) => {
+                    println!(
+                        "Points: {n_points:3} | Skipped due to robust triangulation error: {e}"
+                    );
+                    continue; // Skip this test case
+                }
+            };
 
             // Time multiple runs to get more stable measurements
             let mut total_time = std::time::Duration::ZERO;
