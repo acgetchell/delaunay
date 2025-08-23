@@ -24,7 +24,7 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 
 - [x]  Arbitrary data types associated with vertices and cells
 - [x]  d-dimensional [Delaunay triangulations]
-- [x]  d-dimensional convex hulls
+- [x]  d-dimensional [Convex hulls]
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
 - [x]  Tested for 3-, 4-, and 5-dimensional triangulations
 
@@ -60,7 +60,21 @@ cargo clippy --all-targets --all-features
 
 # Run examples
 ./scripts/run_all_examples.sh
+
+# Run a specific example
+cargo run --example triangulation_3d_50_points
+cargo run --example convex_hull_3d_50_points
 ```
+
+## 📋 Examples
+
+The `examples/` directory contains several demonstrations:
+
+- **`triangulation_3d_50_points`**: Complete 3D Delaunay triangulation with 50 random points
+- **`convex_hull_3d_50_points`**: 3D convex hull extraction and analysis with performance benchmarks
+- **`boundary_analysis_trait`**: Demonstrates boundary facet analysis using the trait system
+- **`implicit_conversion`**: Shows coordinate conversion patterns and utilities
+- **`test_circumsphere`**: Comprehensive geometric predicate testing suite
 
 For comprehensive guidelines on development environment setup,
 testing, benchmarking, performance analysis, and development workflow, please see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -109,3 +123,4 @@ The library's geometric predicates and algorithms are based on established compu
 [Delaunay triangulations]: https://en.wikipedia.org/wiki/Delaunay_triangulation
 [Constrained Delaunay triangulations]: https://en.wikipedia.org/wiki/Constrained_Delaunay_triangulation
 [Voronoi diagrams]: https://en.wikipedia.org/wiki/Voronoi_diagram
+[Convex hulls]: https://en.wikipedia.org/wiki/Convex_hull

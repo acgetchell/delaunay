@@ -2,7 +2,9 @@
   "MD013": {"line_length": 160},
   "MD018": false,
   "MD024": false,
+  "MD029": false,
   "MD033": false,
   "MD038": false,
-  "MD041": false
+  "MD041": false,
+  "_comment": "MD029 disabled - we prefer manual numbering over lazy numbering (1. 1. 1.) for better readability"
 }

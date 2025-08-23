@@ -368,15 +368,15 @@ git commit -m "Update performance baseline after optimization"
 
 ```bash
 # 1. Make commits and create git tags
-git tag v0.3.5
-git push origin v0.3.5
+git tag v0.4.0
+git push origin v0.4.0
 
 # 2. Generate updated changelog with accurate commit dates
 ./scripts/generate_changelog.sh
 
 # 3. Review and commit the updated changelog
 git add CHANGELOG.md
-git commit -m "Update changelog with commit dates for v0.3.5"
+git commit -m "Update changelog with commit dates for v0.4.0"
 git push origin main
 ```
 

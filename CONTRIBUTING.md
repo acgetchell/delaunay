@@ -140,6 +140,7 @@ delaunay/
 │   ├── README.md                                 # Examples documentation
 │   ├── boundary_analysis_trait.rs                # Boundary analysis examples
 │   ├── check_float_traits.rs                     # Floating-point trait examples
+│   ├── convex_hull_3d_50_points.rs               # 3D convex hull extraction and analysis example
 │   ├── implicit_conversion.rs                    # Type conversion examples
 │   ├── point_comparison_and_hashing.rs           # Point operations examples
 │   ├── test_alloc_api.rs                         # Allocation API examples
@@ -157,6 +158,7 @@ delaunay/
 ├── tests/                                        # Integration tests
 │   ├── bench_helpers_test.rs                     # Tests for benchmark helper functions
 │   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
+│   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
 │   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
 │   ├── robust_predicates_showcase.rs             # Robust predicates demonstration tests
 │   └── test_cavity_boundary_error.rs             # Cavity boundary error reproduction tests
@@ -165,13 +167,15 @@ delaunay/
 │   │   ├── README.md                             # Templates documentation
 │   │   └── changelog.hbs                         # Custom changelog template
 │   ├── code_organization.md                      # Code organization patterns
-│   └── optimization_recommendations.md           # Performance optimization guide
+│   ├── numerical_robustness_guide.md             # Numerical robustness and stability guide
+│   ├── optimization_recommendations.md           # Performance optimization guide
+│   └── RELEASING.md                              # Release process documentation
 ├── scripts/                                      # Development and CI scripts
 │   ├── README.md                                 # Scripts documentation
 │   ├── benchmark_parser.sh                       # Shared benchmark parsing utilities
 │   ├── compare_benchmarks.sh                     # Performance regression testing
 │   ├── generate_baseline.sh                      # Create performance baselines
-│   ├── generate_changelog.sh                     # Generate changelog with commit dates
+│   ├── generate_changelog.sh                     # Generate changelog with commit dates and squashed PR expansion
 │   ├── hardware_info.sh                          # Hardware information and system capabilities
 │   ├── run_all_examples.sh                       # Validate all examples
 │   └── tag-from-changelog.sh                     # Create git tags from changelog content
@@ -194,7 +198,7 @@ delaunay/
 ├── .gitignore                                    # Git ignore patterns
 ├── .markdownlint.json                            # Markdown linting configuration
 ├── .yamllint                                     # YAML linting configuration
-├── CHANGELOG.md                                  # Version history
+├── CHANGELOG.md                                  # Version history with enhanced squashed PR support
 ├── CODE_OF_CONDUCT.md                            # Community guidelines
 ├── CONTRIBUTING.md                               # This file
 ├── Cargo.lock                                    # Dependency lockfile
