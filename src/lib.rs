@@ -202,13 +202,7 @@ pub mod geometry {
     /// floating-point coordinate values.
     pub mod traits {
         pub mod coordinate;
-        pub mod finitecheck;
-        pub mod hashcoordinate;
-        pub mod orderedeq;
         pub use coordinate::*;
-        pub use finitecheck::*;
-        pub use hashcoordinate::*;
-        pub use orderedeq::*;
     }
     pub use algorithms::*;
     pub use matrix::*;
@@ -233,13 +227,8 @@ pub mod prelude {
 
     // Re-export from geometry
     pub use crate::geometry::{
-        algorithms::*,
-        matrix::*,
-        point::*,
-        predicates::*,
-        robust_predicates::*,
-        traits::{coordinate::*, finitecheck::*, hashcoordinate::*, orderedeq::*},
-        util::*,
+        algorithms::*, matrix::*, point::*, predicates::*, robust_predicates::*,
+        traits::coordinate::*, util::*,
     };
 
     // Convenience macros
