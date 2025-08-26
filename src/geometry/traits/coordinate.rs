@@ -223,6 +223,7 @@ impl_finite_check!(float: f32, f64);
 /// assert!(f64::INFINITY.ordered_eq(&f64::INFINITY));
 /// assert!(f64::NEG_INFINITY.ordered_eq(&f64::NEG_INFINITY));
 /// assert!(!f64::INFINITY.ordered_eq(&f64::NEG_INFINITY));
+/// assert!(0.0f64.ordered_eq(&(-0.0f64))); // 0.0 == -0.0
 /// ```
 pub trait OrderedEq {
     /// Compares two values for equality using ordered comparison semantics.
@@ -288,17 +289,14 @@ impl_ordered_eq!(float: f32, f64);
 /// use std::collections::hash_map::DefaultHasher;
 /// use std::hash::Hasher;
 ///
-/// let mut hasher = DefaultHasher::new();
-/// let value = 3.14f64;
-/// value.hash_coord(&mut hasher);
-/// let hash_value = hasher.finish();
+///     // NaN values hash consistently
+///     let mut hasher1 = DefaultHasher::new();
+///     let mut hasher2 = DefaultHasher::new();
+///     f64::NAN.hash_scalar(&mut hasher1);
 ///
-/// // NaN values hash consistently
-/// let mut hasher1 = DefaultHasher::new();
-/// let mut hasher2 = DefaultHasher::new();
-/// f64::NAN.hash_coord(&mut hasher1);
-/// f64::NAN.hash_coord(&mut hasher2);
-/// assert_eq!(hasher1.finish(), hasher2.finish());
+///     f64::NAN.hash_scalar(&mut hasher2);
+///
+///     assert_eq!(hasher1.finish(), hasher2.finish());
 /// ```
 pub trait HashCoordinate {
     /// Hashes a single coordinate value using the provided hasher.
@@ -319,28 +317,28 @@ pub trait HashCoordinate {
     /// use std::collections::hash_map::DefaultHasher;
     /// use std::hash::Hasher;
     ///
-    /// // Hash a normal floating-point value
-    /// let mut hasher = DefaultHasher::new();
-    /// let value = 42.0f64;
-    /// value.hash_coord(&mut hasher);
-    /// let hash1 = hasher.finish();
+    ///     // Hash a normal floating-point value
+    ///     let mut hasher = DefaultHasher::new();
+    ///     let value = 42.0f64;
+    ///     value.hash_scalar(&mut hasher);
+    ///     let hash1 = hasher.finish();
     ///
-    /// // Hash the same value again
-    /// let mut hasher = DefaultHasher::new();
-    /// let value = 42.0f64;
-    /// value.hash_coord(&mut hasher);
-    /// let hash2 = hasher.finish();
+    ///     // Hash the same value again
+    ///     let mut hasher = DefaultHasher::new();
+    ///     let value = 42.0f64;
+    ///     value.hash_scalar(&mut hasher);
+    ///     let hash2 = hasher.finish();
     ///
-    /// assert_eq!(hash1, hash2); // Same values produce same hash
+    ///     assert_eq!(hash1, hash2); // Same values produce same hash
     ///
-    /// // NaN values also hash consistently
-    /// let mut hasher1 = DefaultHasher::new();
-    /// let mut hasher2 = DefaultHasher::new();
-    /// f64::NAN.hash_coord(&mut hasher1);
-    /// f64::NAN.hash_coord(&mut hasher2);
-    /// assert_eq!(hasher1.finish(), hasher2.finish());
+    ///     // NaN values also hash consistently
+    ///     let mut hasher1 = DefaultHasher::new();
+    ///     let mut hasher2 = DefaultHasher::new();
+    ///     f64::NAN.hash_scalar(&mut hasher1);
+    ///     f64::NAN.hash_scalar(&mut hasher2);
+    ///     assert_eq!(hasher1.finish(), hasher2.finish());
     /// ```
-    fn hash_coord<H: Hasher>(&self, state: &mut H);
+    fn hash_scalar<H: Hasher>(&self, state: &mut H);
 }
 
 // Unified macro for implementing HashCoordinate
@@ -349,7 +347,7 @@ macro_rules! impl_hash_coordinate {
         $(
             impl HashCoordinate for $t {
                 #[inline(always)]
-                fn hash_coord<H: Hasher>(&self, state: &mut H) {
+                fn hash_scalar<H: Hasher>(&self, state: &mut H) {
                     OrderedFloat(*self).hash(state);
                 }
             }
@@ -1250,7 +1248,7 @@ mod tests {
 
             // Test HashCoordinate (through trait requirement)
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            zero.hash_coord(&mut hasher);
+            zero.hash_scalar(&mut hasher);
 
             // Test FiniteCheck (through trait requirement)
             assert!(zero.is_finite_generic());
@@ -1476,8 +1474,6 @@ mod tests {
 
         // f64 normal values
         assert!(1.0f64.ordered_eq(&1.0f64));
-        assert!(1.0f64.ordered_eq(&1.0f64));
-        assert!(!1.0f64.ordered_eq(&2.0f64));
         assert!(!1.0f64.ordered_eq(&2.0f64));
 
         // f64 NaN equality (should be true with OrderedEq)
@@ -1512,7 +1508,7 @@ mod tests {
         // Helper function to get hash for a coordinate
         fn hash_coord<T: HashCoordinate>(value: &T) -> u64 {
             let mut hasher = DefaultHasher::new();
-            value.hash_coord(&mut hasher);
+            value.hash_scalar(&mut hasher);
             hasher.finish()
         }
 
@@ -1560,7 +1556,8 @@ mod tests {
 
             // HashCoordinate
             let mut hasher = DefaultHasher::new();
-            value.hash_coord(&mut hasher);
+            value.hash_scalar(&mut hasher);
+
             let hash = hasher.finish();
 
             // Default tolerance
@@ -1612,7 +1609,7 @@ mod tests {
 
             // HashCoordinate trait
             let mut hasher = DefaultHasher::new();
-            zero.hash_coord(&mut hasher);
+            zero.hash_scalar(&mut hasher);
             let _hash = hasher.finish();
 
             // FiniteCheck trait

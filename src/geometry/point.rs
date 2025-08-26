@@ -105,7 +105,7 @@ where
     /// Hash the coordinate values
     fn hash_coordinate<H: Hasher>(&self, state: &mut H) {
         for &coord in &self.coords {
-            coord.hash_coord(state);
+            coord.hash_scalar(state);
         }
     }
 

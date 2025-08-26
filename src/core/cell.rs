@@ -816,7 +816,7 @@ where
     ///
     /// # Type Parameters
     ///
-    /// This method requires the coordinate type `T` to implement additional traits:
+    /// This method relies on capabilities implied by `T: CoordinateScalar`, including:
     /// - [`FiniteCheck`](crate::geometry::traits::coordinate::FiniteCheck): Enables checking that all coordinate values are finite
     ///   (not infinite or NaN), which is essential for geometric computations.
     /// - [`HashCoordinate`](crate::geometry::traits::coordinate::HashCoordinate): Enables hashing of coordinate values,
