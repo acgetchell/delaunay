@@ -191,9 +191,19 @@ where
         for coord in &self.coords {
             if coord.is_finite_generic() {
                 tuple.serialize_element(coord)?;
+            } else if coord.is_nan() {
+                // Serialize NaN as null for JSON compatibility
+                tuple.serialize_element(&Option::<T>::None)?;
+            } else if coord.is_infinite() {
+                if coord.is_sign_positive() {
+                    // Serialize positive infinity as the string "Infinity"
+                    tuple.serialize_element("Infinity")?;
+                } else {
+                    // Serialize negative infinity as the string "-Infinity"
+                    tuple.serialize_element("-Infinity")?;
+                }
             } else {
-                // Emit JSON null (or serializer-equivalent) for non‑finite values
-                // Note: This is a lossy representation unless Deserialize maps nulls back.
+                // Fallback for any other non-finite values
                 tuple.serialize_element(&Option::<T>::None)?;
             }
         }
@@ -224,7 +234,7 @@ where
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_fmt(format_args!(
-                    "an array of {D} coordinates (numbers or null values)"
+                    "an array of {D} coordinates (numbers, null, \"Infinity\", or \"-Infinity\")"
                 ))
             }
 
@@ -235,13 +245,36 @@ where
                 // Collect coordinates into a Vec first, then convert to array
                 let mut coords = Vec::with_capacity(D);
                 for i in 0..D {
-                    // Try to deserialize as Option<T> to handle null values
-                    let coord_option: Option<T> = seq
+                    // Deserialize each element as a generic value to handle numbers, null, and strings
+                    let element: serde_json::Value = seq
                         .next_element()?
                         .ok_or_else(|| Error::invalid_length(i, &self))?;
 
-                    // Map null to NaN, keep finite values as-is
-                    let coord = coord_option.map_or_else(T::nan, |value| value);
+                    let coord = match element {
+                        serde_json::Value::Number(n) => {
+                            // Handle regular numeric values
+                            n.as_f64()
+                                .and_then(|f| num_traits::cast::cast::<f64, T>(f))
+                                .ok_or_else(|| Error::custom("Invalid numeric value"))?
+                        }
+                        serde_json::Value::String(s) => {
+                            // Handle special string representations
+                            match s.as_str() {
+                                "Infinity" => T::infinity(),
+                                "-Infinity" => T::neg_infinity(),
+                                _ => {
+                                    return Err(Error::custom(format!(
+                                        "Unknown special value: {s}"
+                                    )));
+                                }
+                            }
+                        }
+                        serde_json::Value::Null => {
+                            // Handle null values as NaN
+                            T::nan()
+                        }
+                        _ => return Err(Error::custom("Expected number, string, or null")),
+                    };
 
                     coords.push(coord);
                 }
@@ -1674,13 +1707,13 @@ mod tests {
         // Test with infinity
         let point_with_inf = Point::new([f64::INFINITY, 1.0]);
         let serialized_inf = serde_json::to_string(&point_with_inf).unwrap();
-        // Infinity serializes as null in JSON
-        assert!(serialized_inf.contains("null"));
+        // Infinity now serializes as "Infinity" string in JSON
+        assert!(serialized_inf.contains("\"Infinity\""));
 
         // Test with negative infinity
         let point_with_neg_inf = Point::new([f64::NEG_INFINITY, 1.0]);
         let serialized_neg_inf = serde_json::to_string(&point_with_neg_inf).unwrap();
-        assert!(serialized_neg_inf.contains("null"));
+        assert!(serialized_neg_inf.contains("\"-Infinity\""));
 
         // Test with very large numbers
         let point_large = Point::new([1e100, -1e100, 0.0]);
@@ -1717,22 +1750,22 @@ mod tests {
         // Single positive infinity
         let point_pos_inf = Point::new([f64::INFINITY, 1.0]);
         let json_pos_inf = serde_json::to_string(&point_pos_inf).unwrap();
-        assert_eq!(json_pos_inf, "[null,1.0]");
+        assert_eq!(json_pos_inf, "[\"Infinity\",1.0]");
 
         // Single negative infinity
         let point_neg_inf = Point::new([1.0, f64::NEG_INFINITY]);
         let json_neg_inf = serde_json::to_string(&point_neg_inf).unwrap();
-        assert_eq!(json_neg_inf, "[1.0,null]");
+        assert_eq!(json_neg_inf, "[1.0,\"-Infinity\"]");
 
         // Mixed NaN and infinity
         let point_mixed = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1.0]);
         let json_mixed = serde_json::to_string(&point_mixed).unwrap();
-        assert_eq!(json_mixed, "[null,null,null,1.0]");
+        assert_eq!(json_mixed, "[null,\"Infinity\",\"-Infinity\",1.0]");
 
         // All special values
         let point_all_special = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY]);
         let json_all_special = serde_json::to_string(&point_all_special).unwrap();
-        assert_eq!(json_all_special, "[null,null,null]");
+        assert_eq!(json_all_special, "[null,\"Infinity\",\"-Infinity\"]");
     }
 
     #[test]
@@ -1745,7 +1778,7 @@ mod tests {
 
         let point_f32_inf = Point::new([f32::INFINITY, f32::NEG_INFINITY]);
         let json_f32_inf = serde_json::to_string(&point_f32_inf).unwrap();
-        assert_eq!(json_f32_inf, "[null,null]");
+        assert_eq!(json_f32_inf, "[\"Infinity\",\"-Infinity\"]");
     }
 
     #[test]
@@ -1771,19 +1804,14 @@ mod tests {
     }
 
     #[test]
-    fn point_serialize_deserialize_roundtrip_finite_only() {
-        // Test that roundtrip works for finite values only
-
-        let original = Point::new([1.0, 2.5, -3.7, 0.0]);
-        let json = serde_json::to_string(&original).unwrap();
-        let deserialized: Point<f64, 4> = serde_json::from_str(&json).unwrap();
-        assert_eq!(original, deserialized);
-
-        // Test with f32
-        let original_f32 = Point::new([1.0f32, -2.5f32]);
-        let json_f32 = serde_json::to_string(&original_f32).unwrap();
-        let deserialized_f32: Point<f32, 2> = serde_json::from_str(&json_f32).unwrap();
-        assert_eq!(original_f32, deserialized_f32);
+    fn point_deserialize_null_maps_to_nan() {
+        // With custom Deserialize, JSON null deserializes to NaN
+        let json = "[null,1.0,2.0]";
+        let p: Point<f64, 3> = serde_json::from_str(json).unwrap();
+        let coords = p.to_array();
+        assert!(coords[0].is_nan());
+        assert_relative_eq!(coords[1], 1.0);
+        assert_relative_eq!(coords[2], 2.0);
     }
 
     #[test]
