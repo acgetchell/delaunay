@@ -276,6 +276,89 @@ macro_rules! impl_ordered_eq {
 // Implement OrderedEq for standard floating-point types
 impl_ordered_eq!(float: f32, f64);
 
+/// Helper trait for OrderedFloat-based partial comparison that handles NaN properly.
+///
+/// This trait provides a way to compare floating-point numbers using `OrderedFloat`
+/// semantics, which ensures consistent ordering even with special values like NaN
+/// and infinity. This is different from the default floating-point comparison where
+/// NaN comparisons always return None.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::traits::coordinate::OrderedCmp;
+/// use std::cmp::Ordering;
+///
+/// // Normal values work as expected
+/// assert_eq!(1.0f64.ordered_partial_cmp(&2.0f64), Some(Ordering::Less));
+/// assert_eq!(2.0f64.ordered_partial_cmp(&1.0f64), Some(Ordering::Greater));
+/// assert_eq!(1.0f64.ordered_partial_cmp(&1.0f64), Some(Ordering::Equal));
+///
+/// // NaN values have consistent ordering
+/// assert_eq!(f64::NAN.ordered_partial_cmp(&f64::NAN), Some(Ordering::Equal));
+/// assert_eq!(f64::NAN.ordered_partial_cmp(&1.0f64), Some(Ordering::Greater)); // NaN > all other values in OrderedFloat
+/// assert_eq!(1.0f64.ordered_partial_cmp(&f64::NAN), Some(Ordering::Less));
+///
+/// // Infinity values work correctly
+/// assert_eq!(f64::INFINITY.ordered_partial_cmp(&f64::NEG_INFINITY), Some(Ordering::Greater));
+/// assert_eq!(f64::NEG_INFINITY.ordered_partial_cmp(&1.0f64), Some(Ordering::Less));
+/// ```
+pub trait OrderedCmp {
+    /// Performs a partial comparison using `OrderedFloat` semantics.
+    ///
+    /// This method provides consistent comparison results for all floating-point
+    /// values, including NaN and infinity. Unlike standard floating-point
+    /// `partial_cmp` which returns None for NaN comparisons, this method always
+    /// returns Some(Ordering) by using `OrderedFloat`'s total ordering.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The other value to compare with
+    ///
+    /// # Returns
+    ///
+    /// Returns Some(Ordering) indicating the relationship between self and other.
+    /// In `OrderedFloat` semantics:
+    /// - NaN is considered equal to NaN
+    /// - NaN is greater than all other values (including positive infinity)
+    /// - Normal ordering applies to all other values
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::geometry::traits::coordinate::OrderedCmp;
+    /// use std::cmp::Ordering;
+    ///
+    /// // Standard comparisons
+    /// assert_eq!(1.0f64.ordered_partial_cmp(&2.0f64), Some(Ordering::Less));
+    /// assert_eq!(2.0f64.ordered_partial_cmp(&1.0f64), Some(Ordering::Greater));
+    ///
+    /// // NaN comparison (key difference from standard partial_cmp)
+    /// assert_eq!(f64::NAN.ordered_partial_cmp(&f64::NAN), Some(Ordering::Equal));
+    ///
+    /// // Zero comparisons
+    /// assert_eq!(0.0f64.ordered_partial_cmp(&(-0.0f64)), Some(Ordering::Equal)); // 0.0 == -0.0
+    /// ```
+    fn ordered_partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering>;
+}
+
+// Unified macro for implementing OrderedCmp
+macro_rules! impl_ordered_cmp {
+    (float: $($t:ty),*) => {
+        $(
+            impl OrderedCmp for $t {
+                #[inline(always)]
+                fn ordered_partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                    Some(OrderedFloat(*self).cmp(&OrderedFloat(*other)))
+                }
+            }
+        )*
+    };
+}
+
+// Implement OrderedCmp for standard floating-point types
+impl_ordered_cmp!(float: f32, f64);
+
 /// Helper trait for hashing individual coordinates for non-hashable types like f32 and f64.
 ///
 /// This trait provides consistent hashing of floating-point coordinate values,
@@ -386,7 +469,15 @@ impl_hash_coordinate!(float: f32, f64);
 /// }
 /// ```
 pub trait CoordinateScalar:
-    Float + OrderedEq + HashCoordinate + FiniteCheck + Default + Debug + Serialize + DeserializeOwned
+    Float
+    + OrderedEq
+    + OrderedCmp
+    + HashCoordinate
+    + FiniteCheck
+    + Default
+    + Debug
+    + Serialize
+    + DeserializeOwned
 {
     /// Returns the appropriate default tolerance for this coordinate scalar type.
     ///
@@ -1191,7 +1282,11 @@ mod tests {
         }
 
         // We should have very high uniqueness; allow rare collisions
-        assert!(hashes.len() > 95, "Unexpectedly low uniqueness: {} unique of 100", hashes.len());
+        assert!(
+            hashes.len() > 95,
+            "Unexpectedly low uniqueness: {} unique of 100",
+            hashes.len()
+        );
     }
 
     #[test]
