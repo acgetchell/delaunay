@@ -41,8 +41,8 @@ expand_squashed_prs() {
                 commit_msg_file="$(mktemp)"
                 git --no-pager show "$commit_sha" --format="%B" --no-patch > "$commit_msg_file"
                 
-                # Enhanced commit parsing with better body handling
-                awk '
+                # Enhanced commit parsing with better body handling - output only bullet points
+                awk -v commit_sha="$commit_sha" '
                 BEGIN {
                     in_entry = 0
                     entry_title = ""
@@ -166,8 +166,8 @@ expand_squashed_prs() {
                         if (!first_entry) print ""
                         first_entry = 0
                         
-                        # Output title
-                        print "- **" entry_title "**"
+                        # Output title with commit SHA link
+                        print "- **" entry_title "** [\`" commit_sha "\`](https://github.com/acgetchell/delaunay/commit/" commit_sha ")"
                         
                         # Output body with proper indentation
                         if (entry_body != "") {
@@ -243,6 +243,117 @@ enhance_ai_commits() {
 import sys
 import re
 
+# Function to categorize and output entries
+def process_and_output_categorized_entries(entries, output_lines, add_section_break):
+    if not entries:
+        return
+        
+    # Categorize all entries
+    added_entries = []
+    changed_entries = []
+    removed_entries = []
+    fixed_entries = []
+    deprecated_entries = []
+    security_entries = []
+    
+    for entry in entries:
+        commit_line = entry.lower()
+        
+        # ADDED: New features, new functionality (check first to prioritize)
+        if (entry.startswith('- **Add') or entry.startswith('- **Implement') or 
+            entry.startswith('- **Introduce') or entry.startswith('- **New') or
+            '**Adds ' in entry or '**Added ' in entry or '**Implementing ' in entry or
+            '**feat: Add' in entry or '**feat: Implement' in entry or
+            'add new' in commit_line or 'adds new' in commit_line or
+            entry.count('**') == 2 and any(word in commit_line for word in 
+                ['add ', 'adds ', 'implement', 'introduce', 'new feature'])):
+            added_entries.append(entry)
+        
+        # REMOVED: Removed functionality (be very specific to avoid false positives)
+        elif (entry.startswith('- **Remove') or entry.startswith('- **Delete') or
+              entry.startswith('- **Drop') or '**Removes ' in entry or
+              '**Deleted ' in entry or '**Dropped ' in entry or
+              (any(word in commit_line for word in ['remove ', 'removes ', 'removed ', 'delete ', 'deletes ', 'deleted ', 'drop ', 'drops ', 'dropped ']) and 
+               not 'adds' in commit_line.split()[0])):
+            removed_entries.append(entry)
+        
+        # FIXED: Bug fixes, robustness improvements, and error handling
+        elif (entry.startswith('- **Fix') or '**Bug' in entry or
+              '**Patch' in entry or '**Resolve' in entry or
+              'fixes ' in commit_line or 'fixed ' in commit_line or
+              'bug' in commit_line or 'patch' in commit_line or
+              'addresses' in commit_line and ('error' in commit_line or 'issue' in commit_line or 'problem' in commit_line) or
+              'robustness' in commit_line or 'stability' in commit_line or
+              'fallback' in commit_line or 'degenerate' in commit_line or
+              'precision' in commit_line or 'numerical' in commit_line or
+              'error handling' in commit_line or 'consistency check' in commit_line or
+              entry.count('**') == 2 and any(word in commit_line for word in 
+                ['fix ', 'fixes ', 'fixed ', 'bug', 'patch', 'resolve', 'error', 'issue', 
+                 'robust', 'stability', 'fallback', 'degenerate', 'precision'])):
+            fixed_entries.append(entry)
+        
+        # CHANGED: Changes to existing functionality (default fallback)
+        else:
+            changed_entries.append(entry)
+    
+    # Track if we've output any sections to know when to add breaks
+    any_sections_output = False
+    
+    # Output entries in Keep a Changelog order with proper spacing
+    if added_entries:
+        if any_sections_output:
+            output_lines.append('')  # Blank line before section if not first
+        output_lines.append('### Added')
+        output_lines.append('')
+        for entry in added_entries:
+            output_lines.append(entry)
+        any_sections_output = True
+        
+    if changed_entries:
+        if any_sections_output:
+            output_lines.append('')  # Blank line before section if not first
+        output_lines.append('### Changed')
+        output_lines.append('')
+        for entry in changed_entries:
+            output_lines.append(entry)
+        any_sections_output = True
+        
+    if deprecated_entries:
+        if any_sections_output:
+            output_lines.append('')  # Blank line before section if not first
+        output_lines.append('### Deprecated')
+        output_lines.append('')
+        for entry in deprecated_entries:
+            output_lines.append(entry)
+        any_sections_output = True
+        
+    if removed_entries:
+        if any_sections_output:
+            output_lines.append('')  # Blank line before section if not first
+        output_lines.append('### Removed')
+        output_lines.append('')
+        for entry in removed_entries:
+            output_lines.append(entry)
+        any_sections_output = True
+        
+    if fixed_entries:
+        if any_sections_output:
+            output_lines.append('')  # Blank line before section if not first
+        output_lines.append('### Fixed')
+        output_lines.append('')
+        for entry in fixed_entries:
+            output_lines.append(entry)
+        any_sections_output = True
+        
+    if security_entries:
+        if any_sections_output:
+            output_lines.append('')  # Blank line before section if not first
+        output_lines.append('### Security')
+        output_lines.append('')
+        for entry in security_entries:
+            output_lines.append(entry)
+        any_sections_output = True
+
 # Read the input file
 with open('$input_file', 'r') as f:
     lines = f.readlines()
@@ -259,14 +370,23 @@ security_section = False
 
 def add_section_break():
     global output_lines
+    # Always add a blank line before a new section if there are existing sections
     if added_section or changed_section or deprecated_section or removed_section or fixed_section or security_section:
         output_lines.append('')
 
-for line in lines:
+# Collect entries to categorize
+categorize_entries_list = []
+
+for line_index, line in enumerate(lines):
     line = line.rstrip()
     
     # Track when we enter Changes section (from template)
     if re.match(r'^### *Changes$', line):
+        # Process any pending entries from previous section
+        if categorize_entries_list:
+            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            categorize_entries_list = []
+            
         in_changes_section = True
         in_fixed_issues = False
         # Reset section flags for this release
@@ -281,6 +401,11 @@ for line in lines:
     
     # Track when we enter Fixed Issues section (from template)
     elif re.match(r'^### *Fixed Issues$', line):
+        # Process any pending entries from previous section
+        if categorize_entries_list:
+            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            categorize_entries_list = []
+            
         in_fixed_issues = True
         in_changes_section = False
         # Reset section flags for this release
@@ -293,103 +418,62 @@ for line in lines:
         # Skip the original Fixed Issues header - we'll create proper sections
         continue
     
-    # Stop processing when we hit the next release section
-    elif re.match(r'^## ', line) and (in_changes_section or in_fixed_issues):
+    # Process collected entries before starting a new release or ending
+    elif ((re.match(r'^## ', line) and (in_changes_section or in_fixed_issues)) or 
+          (line_index == len(lines) - 1)):
+        
+        # Process any pending entries
+        if categorize_entries_list:
+            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            categorize_entries_list = []
+            
+        # Stop processing current section
         in_changes_section = False
         in_fixed_issues = False
+        
+        # Add the release header to output if it's a new release
+        if re.match(r'^## ', line):
+            # Reset section flags for new release
+            added_section = False
+            changed_section = False
+            deprecated_section = False
+            removed_section = False
+            fixed_section = False
+            security_section = False
+            output_lines.append('')  # Add blank line before new release
+            output_lines.append(line)
+        else:
+            # Not a release header, add normally
+            output_lines.append(line)
     
     # Process commit lines in Changes or Fixed Issues sections
     elif (in_changes_section or in_fixed_issues) and re.match(r'^- \*\*', line):
-        # Determine category based on commit content and keywords
-        commit_line = line.lower()
+        # Store this commit entry for later processing
+        # We'll categorize all entries first, then output them in correct sections
         
-        # ADDED: New features, new functionality
-        if ('**add' in commit_line or '**implement' in commit_line or 
-            '**introduce' in commit_line or '**new' in commit_line or
-            'adds ' in commit_line or 'implement' in commit_line or
-            'introduces ' in commit_line or 'new ' in commit_line or
-            'feature' in commit_line):
-            
-            if not added_section:
-                add_section_break()
-                output_lines.append('### Added')
-                output_lines.append('')
-                added_section = True
+        # Collect the commit title line
+        current_entry = [line]
         
-        # FIXED: Bug fixes
-        elif ('**fix' in commit_line or '**bug' in commit_line or
-              '**patch' in commit_line or '**resolve' in commit_line or
-              'fixes ' in commit_line or 'fixed ' in commit_line or
-              'bug' in commit_line or 'patch' in commit_line or
-              'resolve' in commit_line or 'addresses' in commit_line or
-              'handles' in commit_line or 'error' in commit_line):
-            
-            if not fixed_section:
-                add_section_break()
-                output_lines.append('### Fixed')
-                output_lines.append('')
-                fixed_section = True
+        # Look ahead to collect any indented body content
+        next_line_index = line_index + 1
+        while (next_line_index < len(lines) and 
+               (lines[next_line_index].strip() == '' or  # Empty line
+                lines[next_line_index].startswith('  '))):  # Indented body content
+            current_entry.append(lines[next_line_index].rstrip())
+            next_line_index += 1
         
-        # CHANGED: Changes to existing functionality (improvements, refactors, updates)
-        elif ('**refactor' in commit_line or '**improve' in commit_line or
-              '**update' in commit_line or '**change' in commit_line or
-              '**enhance' in commit_line or '**upgrade' in commit_line or
-              'refactor' in commit_line or 'improve' in commit_line or
-              'update' in commit_line or 'change' in commit_line or
-              'enhance' in commit_line or 'upgrade' in commit_line or
-              'bump' in commit_line or 'increase' in commit_line or
-              'better' in commit_line or 'optimiz' in commit_line or
-              'performance' in commit_line or 'standardiz' in commit_line):
-            
-            if not changed_section:
-                add_section_break()
-                output_lines.append('### Changed')
-                output_lines.append('')
-                changed_section = True
+        # Join the entry (title + body) and add to categorization list
+        categorize_entries_list.append('\n'.join(current_entry))
         
-        # REMOVED: Removed functionality
-        elif ('**remove' in commit_line or '**delete' in commit_line or
-              '**drop' in commit_line or 'remov' in commit_line or
-              'delet' in commit_line or 'drop' in commit_line or
-              'legacy' in commit_line):
-            
-            if not removed_section:
-                add_section_break()
-                output_lines.append('### Removed')
-                output_lines.append('')
-                removed_section = True
-        
-        # DEPRECATED: Soon-to-be removed features
-        elif ('**deprecat' in commit_line or 'deprecat' in commit_line):
-            
-            if not deprecated_section:
-                add_section_break()
-                output_lines.append('### Deprecated')
-                output_lines.append('')
-                deprecated_section = True
-        
-        # SECURITY: Security fixes
-        elif ('**security' in commit_line or 'security' in commit_line or
-              'vulnerabilit' in commit_line or 'cve' in commit_line):
-            
-            if not security_section:
-                add_section_break()
-                output_lines.append('### Security')
-                output_lines.append('')
-                security_section = True
-        
-        # Default to CHANGED for other modifications
-        else:
-            if not changed_section:
-                add_section_break()
-                output_lines.append('### Changed')
-                output_lines.append('')
-                changed_section = True
-        
-        # Add the commit line
-        output_lines.append(line)
+        # Skip to after the lines we've processed
+        line_index = next_line_index
+        continue
     
     else:
+        # Skip PR description content (indented lines after Merged Pull Requests)
+        if re.match(r'^  ', line):  # Lines starting with 2+ spaces (PR descriptions)
+            continue  # Skip PR description lines
+        
         # Print all other lines normally (headers, merged PRs, etc.)
         output_lines.append(line)
 
