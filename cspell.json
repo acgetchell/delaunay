@@ -157,6 +157,7 @@
         "Voronoi",
         "wasi",
         "winget",
+        "xlarge",
         "zerocopy"
     ],
     "ignoreWords": [],

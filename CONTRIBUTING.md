@@ -131,10 +131,7 @@ delaunay/
 │   │   ├── robust_predicates.rs                  # Robust geometric predicates
 │   │   ├── util.rs                               # Geometric utility functions
 │   │   └── traits/                               # Coordinate abstractions and floating-point traits
-│   │       ├── coordinate.rs                     # Core Coordinate trait abstraction
-│   │       ├── finitecheck.rs                    # Finite value validation traits
-│   │       ├── hashcoordinate.rs                 # Floating-point hashing traits
-│   │       └── orderedeq.rs                      # Ordered equality comparison traits
+│   │       └── coordinate.rs                     # Core Coordinate trait abstraction
 │   └── lib.rs                                    # Main library file with module declarations and prelude
 ├── examples/                                     # Usage examples and demonstrations
 │   ├── README.md                                 # Examples documentation

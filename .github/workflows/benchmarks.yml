@@ -22,7 +22,7 @@ env:
 
 jobs:
   performance-regression:
-    runs-on: ubuntu-latest
+    runs-on: macos-15-xlarge
     
     steps:
       - uses: actions/checkout@v5
