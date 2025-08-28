@@ -122,6 +122,12 @@
 //! - [`core::algorithms::bowyer_watson`] - Primary invariant enforcement during triangulation construction
 //! - [`core::triangulation_data_structure::Tds::is_valid`] - Comprehensive validation of all invariants
 //!
+//! # References
+//!
+//! The algorithms and geometric predicates in this library are based on established computational
+//! geometry literature. For a comprehensive list of academic references and bibliographic citations,
+//! see the [REFERENCES.md](https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md) file in the repository.
+//!
 //! ## Project History
 //! Versions ≤ 0.1.0 were maintained at [old repo](https://github.com/oovm/shape-rs).
 //! Versions ≥ 0.3.4 are maintained [here](https://github.com/acgetchell/delaunay).

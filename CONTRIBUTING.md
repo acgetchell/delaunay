@@ -14,6 +14,7 @@ to experienced developers looking to contribute significant features.
 - [Code Style and Standards](#code-style-and-standards)
 - [Testing](#testing)
 - [Documentation](#documentation)
+- [Citation and References](#citation-and-references)
 - [Performance and Benchmarking](#performance-and-benchmarking)
 - [Submitting Changes](#submitting-changes)
 - [Types of Contributions](#types-of-contributions)
@@ -472,6 +473,92 @@ cargo test --doc
 # Check documentation coverage
 cargo doc --document-private-items
 ```
+
+## Citation and References
+
+### Academic Citations
+
+This library is designed for research and academic use in computational geometry. If you use this library in your research, please cite it appropriately.
+
+#### How to Cite This Library
+
+The project provides standardized citation metadata in [CITATION.cff](CITATION.cff) that can be automatically
+processed by GitHub and academic tools. For the most up-to-date citation information, see [REFERENCES.md](REFERENCES.md).
+
+**Quick citation (ACM format):**
+
+```text
+Adam Getchell. 2025. delaunay: A d-dimensional Delaunay triangulation library.
+Version 0.4.0. Zenodo. DOI: https://doi.org/10.5281/zenodo.16931097
+```
+
+#### Adding Academic References
+
+When contributing algorithmic improvements or new features based on academic literature:
+
+1. **Update REFERENCES.md**: Add new citations to the appropriate section
+2. **Follow the existing format**: Use consistent bibliographic style
+3. **Include DOI links**: When available, provide DOI URLs for easy access
+4. **Categorize appropriately**: Place references under relevant sections:
+   - Core Delaunay Triangulation Algorithms and Data Structures
+   - Geometric Predicates and Numerical Robustness  
+   - Convex Hull Algorithms
+   - Advanced Computational Geometry Topics
+
+#### Reference Format Guidelines
+
+Use this format for academic papers:
+
+```text
+- Author, A. "Paper Title." *Journal Name* Volume, no. Issue (Year): Pages.
+  DOI: [10.xxxx/xxxx](https://doi.org/10.xxxx/xxxx)
+```
+
+For books:
+
+```text
+- Author, A. "Book Title." Publisher, Year.
+```
+
+For online resources:
+
+```text
+- [Resource Name](URL)
+```
+
+#### Documentation in Code
+
+When implementing algorithms from academic sources:
+
+- **Reference the source** in module or function documentation
+- **Explain the algorithm** in computational geometry terms
+- **Note any modifications** you made from the original
+- **Include complexity analysis** when relevant
+
+Example:
+
+```rust
+/// Implements the Bowyer-Watson algorithm for incremental Delaunay triangulation.
+/// 
+/// Based on:
+/// - Bowyer, A. "Computing Dirichlet tessellations." The Computer Journal 24, no. 2 (1981): 162-166.
+/// - Watson, D.F. "Computing the n-dimensional Delaunay tessellation with application to Voronoi polytopes."
+///   The Computer Journal 24, no. 2 (1981): 167-172.
+///
+/// This implementation extends the original algorithm to d-dimensions and includes
+/// robust geometric predicates for numerical stability.
+```
+
+### Maintaining Academic Standards
+
+As contributors to a computational geometry library:
+
+- **Respect intellectual property**: Always cite sources for algorithms and ideas
+- **Verify mathematical correctness**: Ensure implementations match published algorithms
+- **Test against known results**: Use standard test cases from literature when possible
+- **Document assumptions**: Note any mathematical assumptions or constraints
+
+For comprehensive bibliographic information, see [REFERENCES.md](REFERENCES.md).
 
 ## Performance and Benchmarking
 
