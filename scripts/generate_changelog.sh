@@ -413,8 +413,8 @@ line_index = 0
 while line_index < len(lines):
     line = lines[line_index].rstrip()
     
-    # Track when we enter Changes section (from template)
-    if re.match(r'^### *Changes$', line):
+    # Track when we enter Changes section (from template or Keep a Changelog format)
+    if re.match(r'^### *(Changes|Changed)$', line):
         # Process any pending entries from previous section
         if categorize_entries_list:
             process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
@@ -433,8 +433,8 @@ while line_index < len(lines):
         line_index += 1
         continue
     
-    # Track when we enter Fixed Issues section (from template)
-    elif re.match(r'^### *Fixed Issues$', line):
+    # Track when we enter Fixed Issues section (from template or Keep a Changelog format)
+    elif re.match(r'^### *(Fixed|Fixed Issues)$', line):
         # Process any pending entries from previous section
         if categorize_entries_list:
             process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
@@ -451,6 +451,90 @@ while line_index < len(lines):
         fixed_section = False
         security_section = False
         # Skip the original Fixed Issues header - we'll create proper sections
+        line_index += 1
+        continue
+    
+    # Track when we enter Added section (Keep a Changelog format)
+    elif re.match(r'^### *Added$', line):
+        # Process any pending entries from previous section
+        if categorize_entries_list:
+            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            categorize_entries_list = []
+            
+        in_changes_section = True  # Treat as changes section for processing
+        in_fixed_issues = False
+        in_merged_prs_section = False
+        # Reset section flags for this release
+        added_section = False
+        changed_section = False
+        deprecated_section = False
+        removed_section = False
+        fixed_section = False
+        security_section = False
+        # Skip the original Added header - we'll create proper sections
+        line_index += 1
+        continue
+    
+    # Track when we enter Removed section (Keep a Changelog format)
+    elif re.match(r'^### *Removed$', line):
+        # Process any pending entries from previous section
+        if categorize_entries_list:
+            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            categorize_entries_list = []
+            
+        in_changes_section = True  # Treat as changes section for processing
+        in_fixed_issues = False
+        in_merged_prs_section = False
+        # Reset section flags for this release
+        added_section = False
+        changed_section = False
+        deprecated_section = False
+        removed_section = False
+        fixed_section = False
+        security_section = False
+        # Skip the original Removed header - we'll create proper sections
+        line_index += 1
+        continue
+    
+    # Track when we enter Deprecated section (Keep a Changelog format)
+    elif re.match(r'^### *Deprecated$', line):
+        # Process any pending entries from previous section
+        if categorize_entries_list:
+            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            categorize_entries_list = []
+            
+        in_changes_section = True  # Treat as changes section for processing
+        in_fixed_issues = False
+        in_merged_prs_section = False
+        # Reset section flags for this release
+        added_section = False
+        changed_section = False
+        deprecated_section = False
+        removed_section = False
+        fixed_section = False
+        security_section = False
+        # Skip the original Deprecated header - we'll create proper sections
+        line_index += 1
+        continue
+    
+    # Track when we enter Security section (Keep a Changelog format)
+    elif re.match(r'^### *Security$', line):
+        # Process any pending entries from previous section
+        if categorize_entries_list:
+            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            categorize_entries_list = []
+            
+        in_changes_section = True  # Treat as changes section for processing
+        in_fixed_issues = False
+        in_merged_prs_section = False
+        # Reset section flags for this release
+        added_section = False
+        changed_section = False
+        deprecated_section = False
+        removed_section = False
+        fixed_section = False
+        security_section = False
+        # Skip the original Security header - we'll create proper sections
         line_index += 1
         continue
     
