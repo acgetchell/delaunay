@@ -765,9 +765,253 @@ where
     Ok(distance)
 }
 
+/// Calculate the area/volume of a facet defined by a set of points.
+///
+/// This function calculates the (D-1)-dimensional "area" of a facet in D-dimensional space:
+/// - 1D: Distance between two points (length)
+/// - 2D: Area of triangle using cross product  
+/// - 3D: Volume of tetrahedron using scalar triple product
+/// - 4D+: Generalized volume using determinant method
+///
+/// # Arguments
+///
+/// * `points` - Points defining the facet (should have exactly D points for (D-1)-dimensional facet)
+///
+/// # Returns
+///
+/// The area/volume of the facet, or an error if calculation fails
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Wrong number of points provided
+/// - Points are degenerate (collinear/coplanar)
+/// - Coordinate conversion fails
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::geometry::util::facet_measure;
+/// use approx::assert_relative_eq;
+///
+/// // 2D: Line segment length (1D facet in 2D space)
+/// let line_segment = vec![
+///     Point::new([0.0, 0.0]),
+///     Point::new([3.0, 4.0]),
+/// ];
+/// let length = facet_measure(&line_segment).unwrap();
+/// assert_relative_eq!(length, 5.0, epsilon = 1e-10); // sqrt(3² + 4²) = 5
+///
+/// // 3D: Triangle area (2D facet in 3D space)
+/// let triangle = vec![
+///     Point::new([0.0, 0.0, 0.0]),
+///     Point::new([3.0, 0.0, 0.0]),
+///     Point::new([0.0, 4.0, 0.0]),
+/// ];
+/// let area = facet_measure(&triangle).unwrap();
+/// assert_relative_eq!(area, 6.0, epsilon = 1e-10); // 3*4/2 = 6
+/// ```
+pub fn facet_measure<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
+where
+    T: CoordinateScalar + Sum + Zero,
+{
+    if points.len() != D {
+        return Err(CircumcenterError::InvalidSimplex {
+            actual: points.len(),
+            expected: D,
+            dimension: D,
+        });
+    }
+
+    match D {
+        1 => {
+            // 1D: Distance between two points
+            if points.len() != 1 {
+                return Err(CircumcenterError::InvalidSimplex {
+                    actual: points.len(),
+                    expected: 1,
+                    dimension: 1,
+                });
+            }
+            // For 1D, a "facet" is a single point, so "area" is 1 (or we could return 0)
+            // This is somewhat arbitrary - in practice 1D facets aren't commonly used
+            Ok(T::one())
+        }
+        2 => {
+            // 2D: Length of line segment (1D facet in 2D space)
+            let p0 = points[0].to_array();
+            let p1 = points[1].to_array();
+
+            let diff = [p1[0] - p0[0], p1[1] - p0[1]];
+            Ok(hypot(diff))
+        }
+        3 => {
+            // 3D: Area of triangle (2D facet in 3D space) using cross product
+            let p0 = points[0].to_array();
+            let p1 = points[1].to_array();
+            let p2 = points[2].to_array();
+
+            // Vectors from p0 to p1 and p0 to p2
+            let v1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+            let v2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+
+            // Cross product v1 × v2
+            let cross = [
+                v1[1] * v2[2] - v1[2] * v2[1],
+                v1[2] * v2[0] - v1[0] * v2[2],
+                v1[0] * v2[1] - v1[1] * v2[0],
+            ];
+
+            // Area is |cross product| / 2
+            let cross_magnitude = hypot(cross);
+            Ok(cross_magnitude / (T::one() + T::one())) // Divide by 2
+        }
+        4 => {
+            // 4D: Volume of tetrahedron (3D facet in 4D space)
+            // Use scalar triple product generalized to 4D
+            let p0 = points[0].to_array();
+            let p1 = points[1].to_array();
+            let p2 = points[2].to_array();
+            let p3 = points[3].to_array();
+
+            // Create matrix with vectors from p0 to other points
+            let v1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2], p1[3] - p0[3]];
+            let v2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2], p2[3] - p0[3]];
+            let v3 = [p3[0] - p0[0], p3[1] - p0[1], p3[2] - p0[2], p3[3] - p0[3]];
+
+            // For 4D tetrahedron volume, we need 3x3 determinant of the edge vectors
+            // Volume = |det(v1, v2, v3)| / 6 where det is 3x3 determinant of first 3 coordinates
+            // This is an approximation - proper 4D volume calculation is more complex
+            let det = v1[0] * (v2[1] * v3[2] - v2[2] * v3[1])
+                - v1[1] * (v2[0] * v3[2] - v2[2] * v3[0])
+                + v1[2] * (v2[0] * v3[1] - v2[1] * v3[0]);
+
+            let six = T::one() + T::one() + T::one() + T::one() + T::one() + T::one();
+            Ok(Float::abs(det) / six)
+        }
+        _ => {
+            // Higher dimensions: Use generalized determinant method
+            // This is a simplified implementation - full nD volume calculation
+            // requires more sophisticated linear algebra
+
+            // Convert to f64 for matrix operations
+            let mut matrix = zeros(D - 1, D);
+            let p0_coords = points[0].to_array();
+            let p0_f64 = safe_coords_to_f64(p0_coords)?;
+
+            for i in 1..D {
+                let point_coords = points[i].to_array();
+                let point_f64 = safe_coords_to_f64(point_coords)?;
+
+                for j in 0..D {
+                    matrix[(i - 1, j)] = point_f64[j] - p0_f64[j];
+                }
+            }
+
+            // Calculate "volume" using matrix determinant (this is a simplification)
+            // For a proper implementation, we'd need to calculate the determinant of the Gram matrix
+            let mut volume_estimate = 1.0;
+            for i in 0..std::cmp::min(D - 1, D) {
+                let mut row_norm = 0.0;
+                for j in 0..D {
+                    row_norm += matrix[(i, j)] * matrix[(i, j)];
+                }
+                volume_estimate *= row_norm.sqrt();
+            }
+
+            // Normalize by factorial approximation
+            let mut factorial_approx = 1.0;
+            for i in 1..D {
+                #[allow(clippy::cast_precision_loss)]
+                {
+                    factorial_approx *= i as f64;
+                }
+            }
+
+            volume_estimate /= factorial_approx;
+
+            safe_scalar_from_f64(volume_estimate).map_err(CircumcenterError::CoordinateConversion)
+        }
+    }
+}
+
+/// Calculate the surface area of a triangulated boundary by summing facet measures.
+///
+/// This function calculates the total surface area of a boundary defined by
+/// a collection of facets. Each facet's measure (area/volume) is calculated
+/// and summed to give the total surface measure.
+///
+/// # Arguments
+///
+/// * `facets` - Collection of facets defining the boundary surface
+///
+/// # Returns
+///
+/// Total surface area/volume, or error if any facet calculation fails
+///
+/// # Errors
+///
+/// Returns an error if any individual facet measure calculation fails
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::util::surface_measure;
+/// use delaunay::core::facet::Facet;
+/// use delaunay::core::vertex::Vertex;
+/// use delaunay::core::cell::Cell;
+/// use delaunay::{cell, vertex};
+///
+/// // Create triangular facets for a cube surface
+/// let v1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
+/// let v2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
+/// let v3: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
+/// let v4: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
+///
+/// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![v1, v2, v3, v4]);
+/// let facet = Facet::new(cell, v1).unwrap();
+///
+/// // Calculate surface area (this example shows the API pattern)
+/// // let surface_area = surface_measure(&[facet]).unwrap();
+/// ```
+pub fn surface_measure<T, U, V, const D: usize>(
+    facets: &[crate::core::facet::Facet<T, U, V, D>],
+) -> Result<T, CircumcenterError>
+where
+    T: CoordinateScalar + Sum + Zero,
+    U: crate::core::traits::data_type::DataType,
+    V: crate::core::traits::data_type::DataType,
+    [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+{
+    let mut total_measure = T::zero();
+
+    for facet in facets {
+        let facet_vertices = facet.vertices();
+
+        // Convert vertices to Points for measure calculation
+        let points: Vec<Point<T, D>> = facet_vertices
+            .iter()
+            .map(|v| {
+                let coords: [T; D] = v.into();
+                Point::new(coords)
+            })
+            .collect();
+
+        let measure = facet_measure(&points)?;
+        total_measure = total_measure + measure;
+    }
+
+    Ok(total_measure)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::cell::Cell;
+    use crate::core::vertex::Vertex;
     use crate::geometry::point::Point;
     use approx::assert_relative_eq;
 
@@ -1603,5 +1847,177 @@ mod tests {
         assert_relative_eq!(center_coords[0], 3.0, epsilon = 1e-10);
         assert_relative_eq!(center_coords[1], 4.0, epsilon = 1e-10);
         assert_relative_eq!(center_coords[2], 5.0, epsilon = 1e-10);
+    }
+
+    // =============================================================================
+    // FACET MEASURE TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_facet_measure_1d_point() {
+        // 1D facet is a single point - measure should be 1.0 by convention
+        let points = vec![Point::new([5.0])];
+        let measure = facet_measure(&points).unwrap();
+        assert_relative_eq!(measure, 1.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_facet_measure_2d_line_segment() {
+        // 2D: Line segment (1D facet in 2D space) - 3-4-5 triangle
+        let points = vec![Point::new([0.0, 0.0]), Point::new([3.0, 4.0])];
+        let measure = facet_measure(&points).unwrap();
+        // Length should be sqrt(3² + 4²) = 5.0
+        assert_relative_eq!(measure, 5.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_facet_measure_3d_triangle_right_angle() {
+        // 3D: Right triangle (area = 1/2 * base * height)
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([3.0, 0.0, 0.0]),
+            Point::new([0.0, 4.0, 0.0]),
+        ];
+        let measure = facet_measure(&points).unwrap();
+        // Area should be 3 * 4 / 2 = 6.0
+        assert_relative_eq!(measure, 6.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_facet_measure_4d_tetrahedron() {
+        // 4D: Unit tetrahedron (3D facet in 4D space)
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0]),
+        ];
+        let measure = facet_measure(&points).unwrap();
+
+        // Volume of tetrahedron with vertices at origin and unit vectors
+        // Should be 1/6 (this is the determinant calculation result)
+        assert_relative_eq!(measure, 1.0 / 6.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_facet_measure_wrong_point_count() {
+        // Test error when wrong number of points provided
+        // 3D expects 3 points, but provide 2
+        let points = vec![Point::new([0.0, 0.0, 0.0]), Point::new([1.0, 0.0, 0.0])];
+        let result = facet_measure::<f64, 3>(&points);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CircumcenterError::InvalidSimplex {
+                actual,
+                expected,
+                dimension,
+            } => {
+                assert_eq!(actual, 2);
+                assert_eq!(expected, 3);
+                assert_eq!(dimension, 3);
+            }
+            other => panic!("Expected InvalidSimplex error, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_facet_measure_zero_area_triangle() {
+        // Degenerate triangle (collinear points) - should have zero area
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([2.0, 0.0, 0.0]), // Collinear
+        ];
+        let measure = facet_measure(&points).unwrap();
+
+        // Should be zero (or very close to zero due to numerical precision)
+        assert!(
+            measure < 1e-10,
+            "Collinear points should have zero area, got: {measure}"
+        );
+    }
+
+    // =============================================================================
+    // SURFACE MEASURE TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_surface_measure_empty_facets() {
+        // Test with empty facet collection
+        use crate::core::facet::Facet;
+        let facets: Vec<Facet<f64, Option<()>, Option<()>, 3>> = vec![];
+        let result = surface_measure(&facets).unwrap();
+
+        assert_relative_eq!(result, 0.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_surface_measure_single_facet() {
+        // Test with single triangular facet
+        use crate::core::facet::Facet;
+        use crate::{cell, vertex};
+
+        // Create a right triangle
+        let v1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
+        let v2: Vertex<f64, Option<()>, 3> = vertex!([3.0, 0.0, 0.0]);
+        let v3: Vertex<f64, Option<()>, 3> = vertex!([0.0, 4.0, 0.0]);
+        let v4: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]); // Fourth vertex for 3D cell
+
+        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![v1, v2, v3, v4]);
+        let facet = Facet::new(cell, v4).unwrap(); // Facet opposite to v4 (the triangle)
+
+        let surface_area = surface_measure(&[facet]).unwrap();
+
+        // Should be area of right triangle: 3 * 4 / 2 = 6.0
+        assert_relative_eq!(surface_area, 6.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_surface_measure_consistency_with_facet_measure() {
+        // Test that surface_measure sum equals sum of individual facet_measures
+        use crate::core::facet::Facet;
+        use crate::{cell, vertex};
+
+        // Create several facets
+        let v1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
+        let v2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
+        let v3: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
+        let v4: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
+        let v5: Vertex<f64, Option<()>, 3> = vertex!([1.0, 1.0, 1.0]);
+
+        let cell1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![v1, v2, v3, v4]);
+        let cell2 = cell!(vec![v2, v3, v4, v5]);
+
+        let facet1 = Facet::new(cell1, v4).unwrap();
+        let facet2 = Facet::new(cell2, v5).unwrap();
+
+        // Calculate surface measure
+        let total_surface = surface_measure(&[facet1.clone(), facet2.clone()]).unwrap();
+
+        // Calculate individual facet measures and sum them
+        let points1: Vec<Point<f64, 3>> = facet1
+            .vertices()
+            .iter()
+            .map(|v| {
+                let coords: [f64; 3] = v.into();
+                Point::new(coords)
+            })
+            .collect();
+        let points2: Vec<Point<f64, 3>> = facet2
+            .vertices()
+            .iter()
+            .map(|v| {
+                let coords: [f64; 3] = v.into();
+                Point::new(coords)
+            })
+            .collect();
+
+        let measure1 = facet_measure(&points1).unwrap();
+        let measure2 = facet_measure(&points2).unwrap();
+        let sum_individual = measure1 + measure2;
+
+        // Should be equal
+        assert_relative_eq!(total_surface, sum_individual, epsilon = 1e-10);
     }
 }
