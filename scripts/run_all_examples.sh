@@ -61,7 +61,7 @@ done
 # Run simple examples
 for example in "${simple_examples[@]}"; do
     echo "=== Running $example ==="
-    cargo run --example "$example" || error_exit "Example $example failed!"
+    cargo run --release --example "$example" || error_exit "Example $example failed!"
 done
 
 # Run test_circumsphere with comprehensive test categories
@@ -78,7 +78,7 @@ echo "---------------------------------------------------"
 for test_name in "${test_circumsphere_tests[@]}"; do
     echo
     echo "--- Running test_circumsphere $test_name ---"
-    if ! cargo run --example test_circumsphere -- "$test_name"; then
+    if ! cargo run --release --example test_circumsphere -- "$test_name"; then
         error_exit "test_circumsphere $test_name failed!"
     fi
 done

@@ -3,6 +3,25 @@
 This directory contains examples demonstrating various features and
 capabilities of the delaunay library.
 
+## Performance Considerations
+
+⚠️ **Important**: Examples may run slowly in debug mode. For optimal performance, run examples in release mode:
+
+```bash
+# Recommended: Run in release mode for better performance
+cargo run --release --example <example_name>
+
+# Debug mode (slower, but includes debug symbols)
+cargo run --example <example_name>
+```
+
+Release mode provides:
+
+- **Faster execution** (often 10-100x speedup for geometric algorithms)
+- **More accurate performance measurements**
+- **Better representation of production performance**
+- **Optimized floating-point operations**
+
 ## Available Examples
 
 ### 1. Point Comparison and Hashing (`point_comparison_and_hashing.rs`)
@@ -22,7 +41,7 @@ with special emphasis on handling of NaN (Not a Number) and infinity values.
 - **Special value handling**: Proper comparison of infinity, negative infinity,
   and zero values.
 
-**Run with:** `cargo run --example point_comparison_and_hashing`
+**Run with:** `cargo run --release --example point_comparison_and_hashing`
 
 ### 2. Circumsphere Containment and Simplex Orientation Testing (`test_circumsphere.rs`)
 
@@ -59,7 +78,7 @@ testing of simplex orientation across multiple dimensions.
 - **Method comparison**: Shows how both methods perform on the same test cases,
   demonstrating where they agree and where numerical differences may occur.
 
-**Run with:** `cargo run --example test_circumsphere`
+**Run with:** `cargo run --release --example test_circumsphere`
 
 ### 3. Implicit Conversion Example (`implicit_conversion.rs`)
 
@@ -94,7 +113,7 @@ let coords: [f64; 3] = point.into();
 let coords: [f64; 3] = (&point).into();
 ```
 
-**Run with:** `cargo run --example implicit_conversion`
+**Run with:** `cargo run --release --example implicit_conversion`
 
 ### 4. 3D Triangulation with 50 Points (`triangulation_3d_50_points.rs`)
 
@@ -156,7 +175,7 @@ Triangulation Analysis:
   Validation completed in 156μs
 ```
 
-**Run with:** `cargo run --example triangulation_3d_50_points`
+**Run with:** `cargo run --release --example triangulation_3d_50_points`
 
 ### 5. Boundary Analysis Trait Demonstration (`boundary_analysis_trait.rs`)
 
@@ -185,7 +204,7 @@ design of the boundary analysis system.
 - Better IDE support and discoverability
 - Consistent interface across different triangulation types
 
-**Run with:** `cargo run --example boundary_analysis_trait`
+**Run with:** `cargo run --release --example boundary_analysis_trait`
 
 ### 6. Float Traits Validation (`check_float_traits.rs`)
 
@@ -193,7 +212,7 @@ A technical example that validates and demonstrates which traits are included
 in the `Float` trait from `num_traits`, helping you understand the trait bounds
 used throughout the library.
 
-**Run with:** `cargo run --example check_float_traits`
+**Run with:** `cargo run --release --example check_float_traits`
 [View source](./check_float_traits.rs)
 
 **Key Features:**
@@ -265,7 +284,7 @@ let (result, info) = measure_with_result(|| {
 print_alloc_summary(&info, "3D point creation");
 ```
 
-**Run with:** `cargo run --example test_alloc_api`
+**Run with:** `cargo run --release --example test_alloc_api`
 
 **Test with allocation tracking:** `cargo test --example test_alloc_api --features count-allocations`
 [View source](./test_alloc_api.rs)

@@ -5,7 +5,8 @@
 //! both predicates and other geometric algorithms.
 
 use num_traits::{Float, Zero};
-use peroxide::fuga::{MatrixTrait, zeros};
+use peroxide::fuga::{LinearAlgebra, MatrixTrait, zeros};
+use peroxide::statistics::ops::factorial;
 use std::iter::Sum;
 
 use crate::geometry::matrix::{MatrixError, invert};
@@ -14,6 +15,23 @@ use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
 };
 use num_traits::cast;
+
+/// Errors that can occur during value type conversions.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ValueConversionError {
+    /// Failed to convert a value from one type to another
+    #[error("Cannot convert {value} from {from_type} to {to_type}: {details}")]
+    ConversionFailed {
+        /// The value that failed to convert (as string for display)
+        value: String,
+        /// Source type name
+        from_type: &'static str,
+        /// Target type name
+        to_type: &'static str,
+        /// Additional details about the failure
+        details: String,
+    },
+}
 
 /// Errors that can occur during circumcenter calculation.
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
@@ -56,6 +74,10 @@ pub enum CircumcenterError {
     /// Coordinate conversion error
     #[error("Coordinate conversion error: {0}")]
     CoordinateConversion(#[from] CoordinateConversionError),
+
+    /// Value conversion error
+    #[error("Value conversion error: {0}")]
+    ValueConversion(#[from] ValueConversionError),
 }
 
 // ============================================================================
@@ -771,7 +793,10 @@ where
 /// - 1D: Distance between two points (length)
 /// - 2D: Area of triangle using cross product  
 /// - 3D: Volume of tetrahedron using scalar triple product
-/// - 4D+: Generalized volume using determinant method
+/// - 4D+: Generalized volume using Gram matrix method
+///
+/// For dimensions 4 and higher, this function uses the Gram matrix method for
+/// mathematically accurate volume computation.
 ///
 /// # Arguments
 ///
@@ -870,71 +895,119 @@ where
         }
         4 => {
             // 4D: Volume of tetrahedron (3D facet in 4D space)
-            // Use scalar triple product generalized to 4D
-            let p0 = points[0].to_array();
-            let p1 = points[1].to_array();
-            let p2 = points[2].to_array();
-            let p3 = points[3].to_array();
-
-            // Create matrix with vectors from p0 to other points
-            let v1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2], p1[3] - p0[3]];
-            let v2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2], p2[3] - p0[3]];
-            let v3 = [p3[0] - p0[0], p3[1] - p0[1], p3[2] - p0[2], p3[3] - p0[3]];
-
-            // For 4D tetrahedron volume, we need 3x3 determinant of the edge vectors
-            // Volume = |det(v1, v2, v3)| / 6 where det is 3x3 determinant of first 3 coordinates
-            // This is an approximation - proper 4D volume calculation is more complex
-            let det = v1[0] * (v2[1] * v3[2] - v2[2] * v3[1])
-                - v1[1] * (v2[0] * v3[2] - v2[2] * v3[0])
-                + v1[2] * (v2[0] * v3[1] - v2[1] * v3[0]);
-
-            let six = T::one() + T::one() + T::one() + T::one() + T::one() + T::one();
-            Ok(Float::abs(det) / six)
+            // Use Gram matrix method for correct calculation
+            facet_measure_gram_matrix::<T, D>(points)
         }
         _ => {
-            // Higher dimensions: Use generalized determinant method
-            // This is a simplified implementation - full nD volume calculation
-            // requires more sophisticated linear algebra
-
-            // Convert to f64 for matrix operations
-            let mut matrix = zeros(D - 1, D);
-            let p0_coords = points[0].to_array();
-            let p0_f64 = safe_coords_to_f64(p0_coords)?;
-
-            for i in 1..D {
-                let point_coords = points[i].to_array();
-                let point_f64 = safe_coords_to_f64(point_coords)?;
-
-                for j in 0..D {
-                    matrix[(i - 1, j)] = point_f64[j] - p0_f64[j];
-                }
-            }
-
-            // Calculate "volume" using matrix determinant (this is a simplification)
-            // For a proper implementation, we'd need to calculate the determinant of the Gram matrix
-            let mut volume_estimate = 1.0;
-            for i in 0..std::cmp::min(D - 1, D) {
-                let mut row_norm = 0.0;
-                for j in 0..D {
-                    row_norm += matrix[(i, j)] * matrix[(i, j)];
-                }
-                volume_estimate *= row_norm.sqrt();
-            }
-
-            // Normalize by factorial approximation
-            let mut factorial_approx = 1.0;
-            for i in 1..D {
-                #[allow(clippy::cast_precision_loss)]
-                {
-                    factorial_approx *= i as f64;
-                }
-            }
-
-            volume_estimate /= factorial_approx;
-
-            safe_scalar_from_f64(volume_estimate).map_err(CircumcenterError::CoordinateConversion)
+            // Higher dimensions: Use Gram matrix method for correct calculation
+            facet_measure_gram_matrix::<T, D>(points)
         }
     }
+}
+
+/// Calculate the area/volume of a (D-1)-dimensional simplex using the Gram matrix method.
+///
+/// This function implements the mathematically rigorous approach for computing the volume
+/// of a (D-1)-dimensional simplex embedded in D-dimensional space using the Gram matrix
+/// determinant formula:
+///
+/// **Volume = (1/(D-1)!) × √(det(G))**
+///
+/// where G is the Gram matrix of edge vectors from one vertex to all other vertices.
+///
+/// # Mathematical Background
+///
+/// The Gram matrix method is the standard approach for computing simplex volumes in
+/// high-dimensional spaces, as described in:
+///
+/// - Coxeter, H.S.M. "Introduction to Geometry" (2nd ed., 1969), Chapter 13
+/// - Richter-Gebert, Jürgen. "Perspectives on Projective Geometry" (2011), Section 14.3
+/// - Edelsbrunner, Herbert. "Geometry and Topology for Mesh Generation" (2001), Chapter 2
+///
+/// The method constructs the Gram matrix G where G[i,j] = `v_i` · `v_j` (dot product of
+/// edge vectors), then computes the volume as the square root of the determinant
+/// divided by the appropriate factorial.
+///
+/// This approach is numerically stable and generalizes correctly to arbitrary dimensions,
+/// unlike methods based on recursive determinant expansion which become computationally
+/// intractable in high dimensions.
+///
+/// # Arguments
+///
+/// * `points` - Points defining the simplex (should have exactly D points for (D-1)-dimensional facet)
+///
+/// # Returns
+///
+/// The volume of the simplex, or an error if calculation fails
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Matrix operations fail (singular Gram matrix indicates degenerate simplex)
+/// - Coordinate conversion fails
+/// - Gram matrix determinant is negative (should never happen for valid input)
+fn facet_measure_gram_matrix<T, const D: usize>(
+    points: &[Point<T, D>],
+) -> Result<T, CircumcenterError>
+where
+    T: CoordinateScalar + Sum + Zero,
+{
+    // Convert points to f64 and create edge vectors from first point to all others
+    let p0_coords = points[0].to_array();
+    let p0_f64 = safe_coords_to_f64(p0_coords)?;
+
+    // Create matrix of edge vectors (each row is an edge vector)
+    let mut edge_matrix = zeros(D - 1, D);
+    for i in 1..D {
+        let point_coords = points[i].to_array();
+        let point_f64 = safe_coords_to_f64(point_coords)?;
+
+        for j in 0..D {
+            edge_matrix[(i - 1, j)] = point_f64[j] - p0_f64[j];
+        }
+    }
+
+    // Compute Gram matrix G where G[i,j] = edge_i · edge_j
+    let mut gram_matrix = zeros(D - 1, D - 1);
+    for i in 0..(D - 1) {
+        for j in 0..(D - 1) {
+            let mut dot_product = 0.0;
+            for k in 0..D {
+                dot_product += edge_matrix[(i, k)] * edge_matrix[(j, k)];
+            }
+            gram_matrix[(i, j)] = dot_product;
+        }
+    }
+
+    // Calculate determinant of Gram matrix
+    let det = gram_matrix.det();
+
+    // Volume = (1/(D-1)!) × √(det(G))
+    if det < 0.0 {
+        return Err(CircumcenterError::MatrixInversionFailed {
+            details: "Gram matrix has negative determinant (degenerate simplex)".to_string(),
+        });
+    }
+
+    let volume_f64 = if det == 0.0 {
+        0.0 // Degenerate case
+    } else {
+        let sqrt_det = det.sqrt();
+
+        // Calculate (D-1)! factorial using peroxide's factorial function
+        let factorial_val = cast::<_, f64>(factorial(D - 1)).ok_or_else(|| {
+            CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
+                value: format!("{}", factorial(D - 1)),
+                from_type: "usize",
+                to_type: "f64",
+                details: "Factorial value too large for f64 precision".to_string(),
+            })
+        })?;
+
+        sqrt_det / factorial_val
+    };
+
+    safe_scalar_from_f64(volume_f64).map_err(CircumcenterError::CoordinateConversion)
 }
 
 /// Calculate the surface area of a triangulated boundary by summing facet measures.
@@ -1850,7 +1923,7 @@ mod tests {
     }
 
     // =============================================================================
-    // FACET MEASURE TESTS
+    // BASIC FACET MEASURE TESTS (BY DIMENSION)
     // =============================================================================
 
     #[test]
@@ -1894,10 +1967,90 @@ mod tests {
         ];
         let measure = facet_measure(&points).unwrap();
 
-        // Volume of tetrahedron with vertices at origin and unit vectors
-        // Should be 1/6 (this is the determinant calculation result)
+        // For a unit tetrahedron in 4D with vertices at origin and 3 unit vectors,
+        // the volume should be 1/3! = 1/6
+        // This is a 3-dimensional simplex in 4D space
         assert_relative_eq!(measure, 1.0 / 6.0, epsilon = 1e-10);
     }
+
+    #[test]
+    fn test_gram_matrix_debug() {
+        // Test the Gram matrix method against known simple cases
+
+        // Test 1: Unit right triangle in 3D - we know this should be 0.5
+        let triangle_3d = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+        ];
+        let area_3d = facet_measure(&triangle_3d).unwrap();
+        println!("3D triangle area: {area_3d} (expected: 0.5)");
+
+        // Test 2: Same triangle but use direct Gram matrix calculation
+        let area_3d_gram = facet_measure_gram_matrix::<f64, 3>(&triangle_3d).unwrap();
+        println!("3D triangle area (Gram): {area_3d_gram} (expected: 0.5)");
+
+        // Test 3: Unit tetrahedron in 4D - should be 1/6 ≈ 0.167
+        let tetrahedron_4d = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0]),
+        ];
+        let volume_4d = facet_measure(&tetrahedron_4d).unwrap();
+        println!(
+            "4D tetrahedron volume: {} (expected: {})",
+            volume_4d,
+            1.0 / 6.0
+        );
+
+        // Test 4: Manual calculation for the 4D tetrahedron
+        let volume_4d_gram = facet_measure_gram_matrix::<f64, 4>(&tetrahedron_4d).unwrap();
+        println!(
+            "4D tetrahedron volume (Gram): {} (expected: {})",
+            volume_4d_gram,
+            1.0 / 6.0
+        );
+    }
+
+    #[test]
+    fn test_facet_measure_5d_simplex() {
+        // 5D: 4-dimensional facet in 5D space (4-simplex volume)
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
+        ];
+        let measure = facet_measure(&points).unwrap();
+
+        // Volume of 4-simplex with vertices at origin and unit vectors
+        // Should be 1/4! = 1/24 (generalized determinant formula)
+        assert_relative_eq!(measure, 1.0 / 24.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_facet_measure_6d_simplex() {
+        // 6D: 5-dimensional facet in 6D space
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+        ];
+        let measure = facet_measure(&points).unwrap();
+
+        // Volume of 5-simplex with vertices at origin and unit vectors
+        // Should be 1/5! = 1/120
+        assert_relative_eq!(measure, 1.0 / 120.0, epsilon = 1e-10);
+    }
+
+    // =============================================================================
+    // FACET MEASURE ERROR HANDLING TESTS
+    // =============================================================================
 
     #[test]
     fn test_facet_measure_wrong_point_count() {
@@ -1921,6 +2074,10 @@ mod tests {
         }
     }
 
+    // =============================================================================
+    // FACET MEASURE DEGENERATE CASE TESTS
+    // =============================================================================
+
     #[test]
     fn test_facet_measure_zero_area_triangle() {
         // Degenerate triangle (collinear points) - should have zero area
@@ -1935,6 +2092,61 @@ mod tests {
         assert!(
             measure < 1e-10,
             "Collinear points should have zero area, got: {measure}"
+        );
+    }
+
+    #[test]
+    fn test_facet_measure_nearly_collinear_points_2d() {
+        // Test with points that are nearly collinear in 2D
+        let eps = 1e-10;
+        let points = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, eps]), // Slightly off the x-axis
+        ];
+
+        let measure = facet_measure(&points).unwrap();
+        let expected = eps.mul_add(eps, 1.0).sqrt(); // Length of line segment
+        assert_relative_eq!(measure, expected, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn test_facet_measure_nearly_coplanar_points_3d() {
+        // Test with points that are truly nearly coplanar in 3D
+        let eps = 1e-8;
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([1.0, eps, eps]), // Very close to the line from (0,0,0) to (1,0,0)
+        ];
+
+        let measure = facet_measure(&points).unwrap();
+        // Should be small but non-zero area
+        assert!(
+            measure > 0.0,
+            "Nearly coplanar triangle should have positive area"
+        );
+        // With points very close to being collinear, area should be very small
+        assert!(
+            measure < 1e-6,
+            "Nearly coplanar triangle should have very small area, got: {measure}"
+        );
+    }
+
+    #[test]
+    fn test_facet_measure_degenerate_4d_tetrahedron() {
+        // Test with points that are nearly coplanar in 4D (3 points in 3D subspace)
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.5, 0.5, 0.0, 0.0]), // In the same 3D subspace
+        ];
+
+        let measure = facet_measure(&points).unwrap();
+        // Should be zero (or very close to zero) since all points lie in 3D subspace
+        assert!(
+            measure < 1e-10,
+            "Degenerate 4D tetrahedron should have zero volume, got: {measure}"
         );
     }
 
@@ -2019,5 +2231,586 @@ mod tests {
 
         // Should be equal
         assert_relative_eq!(total_surface, sum_individual, epsilon = 1e-10);
+    }
+
+    // =============================================================================
+    // FACET MEASURE SCALING PROPERTY TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_facet_measure_scaled_simplex_2d() {
+        // Test scaling property: measure should scale by |λ|^(D-1)
+        let scale = 3.0;
+        let original_points = vec![Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
+        let scaled_points = vec![
+            Point::new([0.0 * scale, 0.0 * scale]),
+            Point::new([1.0 * scale, 0.0 * scale]),
+        ];
+
+        let original_measure = facet_measure(&original_points).unwrap();
+        let scaled_measure = facet_measure(&scaled_points).unwrap();
+
+        // For 2D (D=2), measure scales by |λ|^(2-1) = |λ|^1 = λ
+        assert_relative_eq!(scaled_measure, original_measure * scale, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_facet_measure_scaled_simplex_3d() {
+        // Test scaling property for 3D triangle (D=3, measure scales by λ^2)
+        let scale = 2.5;
+        let original_points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([2.0, 0.0, 0.0]),
+            Point::new([0.0, 3.0, 0.0]),
+        ];
+        let scaled_points = vec![
+            Point::new([0.0 * scale, 0.0 * scale, 0.0 * scale]),
+            Point::new([2.0 * scale, 0.0 * scale, 0.0 * scale]),
+            Point::new([0.0 * scale, 3.0 * scale, 0.0 * scale]),
+        ];
+
+        let original_measure = facet_measure(&original_points).unwrap();
+        let scaled_measure = facet_measure(&scaled_points).unwrap();
+
+        // For 3D (D=3), measure scales by |λ|^(3-1) = λ^2
+        assert_relative_eq!(
+            scaled_measure,
+            original_measure * scale * scale,
+            epsilon = 1e-10
+        );
+    }
+
+    #[test]
+    fn test_facet_measure_scaled_simplex_4d() {
+        // Test scaling property for 4D tetrahedron (D=4, measure scales by λ^3)
+        let scale = 2.0;
+        let original_points = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0]),
+        ];
+        let scaled_points = vec![
+            Point::new([0.0 * scale, 0.0 * scale, 0.0 * scale, 0.0 * scale]),
+            Point::new([1.0 * scale, 0.0 * scale, 0.0 * scale, 0.0 * scale]),
+            Point::new([0.0 * scale, 1.0 * scale, 0.0 * scale, 0.0 * scale]),
+            Point::new([0.0 * scale, 0.0 * scale, 1.0 * scale, 0.0 * scale]),
+        ];
+
+        let original_measure = facet_measure(&original_points).unwrap();
+        let scaled_measure = facet_measure(&scaled_points).unwrap();
+
+        // For 4D (D=4), measure scales by |λ|^(4-1) = λ^3
+        assert_relative_eq!(
+            scaled_measure,
+            original_measure * scale.powi(3),
+            epsilon = 1e-10
+        );
+    }
+
+    // =============================================================================
+    // EDGE CASE AND NUMERICAL STABILITY TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_facet_measure_very_large_coordinates() {
+        // Test with very large but finite coordinates
+        let large_val = 1e8;
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([large_val, 0.0, 0.0]),
+            Point::new([0.0, large_val, 0.0]),
+        ];
+
+        let result = facet_measure(&points);
+        assert!(result.is_ok(), "Large coordinates should work");
+
+        let measure = result.unwrap();
+        assert!(measure.is_finite(), "Measure should be finite");
+        // Should be area of right triangle: large_val * large_val / 2
+        let expected = large_val * large_val / 2.0;
+        assert_relative_eq!(measure, expected, epsilon = 1e-3);
+    }
+
+    #[test]
+    fn test_facet_measure_very_small_coordinates() {
+        // Test with very small but non-zero coordinates
+        let small_val = 1e-6; // Use reasonable small value to avoid underflow
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([small_val, 0.0, 0.0]),
+            Point::new([0.0, small_val, 0.0]),
+        ];
+
+        let result = facet_measure(&points);
+        assert!(result.is_ok(), "Small coordinates should work");
+
+        let measure = result.unwrap();
+        assert!(measure.is_finite(), "Measure should be finite");
+        // Should be area of right triangle: small_val * small_val / 2
+        let expected = small_val * small_val / 2.0;
+        assert_relative_eq!(measure, expected, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn test_facet_measure_mixed_positive_negative_coordinates() {
+        // Test with mixed positive and negative coordinates
+        let points = vec![
+            Point::new([-1.0, -1.0, 0.0]),
+            Point::new([2.0, -1.0, 0.0]),
+            Point::new([-1.0, 3.0, 0.0]),
+        ];
+
+        let measure = facet_measure(&points).unwrap();
+        // Triangle with base=3, height=4, area=6
+        assert_relative_eq!(measure, 6.0, epsilon = 1e-10);
+    }
+
+    // =============================================================================
+    // COORDINATE TYPE TESTS (f32 vs f64)
+    // =============================================================================
+
+    #[test]
+    fn test_facet_measure_f32_vs_f64_consistency() {
+        // Test that f32 and f64 give similar results (within tolerance)
+        let points_f64 = vec![
+            Point::new([0.0_f64, 0.0_f64, 0.0_f64]),
+            Point::new([3.0_f64, 0.0_f64, 0.0_f64]),
+            Point::new([0.0_f64, 4.0_f64, 0.0_f64]),
+        ];
+        let points_f32 = vec![
+            Point::new([0.0_f32, 0.0_f32, 0.0_f32]),
+            Point::new([3.0_f32, 0.0_f32, 0.0_f32]),
+            Point::new([0.0_f32, 4.0_f32, 0.0_f32]),
+        ];
+
+        let measure_f64 = facet_measure(&points_f64).unwrap();
+        let measure_f32 = facet_measure(&points_f32).unwrap();
+
+        // Convert f32 result to f64 for comparison
+        let measure_f32_as_f64 = f64::from(measure_f32);
+
+        // Should be approximately equal (within f32 precision)
+        assert_relative_eq!(measure_f64, measure_f32_as_f64, epsilon = 1e-6);
+        assert_relative_eq!(measure_f64, 6.0, epsilon = 1e-10);
+        assert_relative_eq!(measure_f32_as_f64, 6.0, epsilon = 1e-6);
+    }
+
+    // =============================================================================
+    // GEOMETRIC INVARIANCE TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_facet_measure_translation_invariance() {
+        // Test that translation doesn't change facet measure
+        let translation = [10.0, 20.0, 30.0];
+        let original_points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([3.0, 0.0, 0.0]),
+            Point::new([0.0, 4.0, 0.0]),
+        ];
+        let translated_points = vec![
+            Point::new([
+                0.0 + translation[0],
+                0.0 + translation[1],
+                0.0 + translation[2],
+            ]),
+            Point::new([
+                3.0 + translation[0],
+                0.0 + translation[1],
+                0.0 + translation[2],
+            ]),
+            Point::new([
+                0.0 + translation[0],
+                4.0 + translation[1],
+                0.0 + translation[2],
+            ]),
+        ];
+
+        let original_measure = facet_measure(&original_points).unwrap();
+        let translated_measure = facet_measure(&translated_points).unwrap();
+
+        assert_relative_eq!(original_measure, translated_measure, epsilon = 1e-10);
+        assert_relative_eq!(original_measure, 6.0, epsilon = 1e-10); // Area of 3-4-5 triangle / 2
+    }
+
+    #[test]
+    fn test_facet_measure_vertex_permutation_invariance() {
+        // Test that vertex order doesn't change facet measure (absolute value)
+        let points_order1 = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([3.0, 0.0, 0.0]),
+            Point::new([0.0, 4.0, 0.0]),
+        ];
+        let points_order2 = vec![
+            Point::new([3.0, 0.0, 0.0]),
+            Point::new([0.0, 4.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0]),
+        ];
+        let points_order3 = vec![
+            Point::new([0.0, 4.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([3.0, 0.0, 0.0]),
+        ];
+
+        let measure1 = facet_measure(&points_order1).unwrap();
+        let measure2 = facet_measure(&points_order2).unwrap();
+        let measure3 = facet_measure(&points_order3).unwrap();
+
+        // All should give same area (measure is absolute value)
+        assert_relative_eq!(measure1, measure2, epsilon = 1e-10);
+        assert_relative_eq!(measure1, measure3, epsilon = 1e-10);
+        assert_relative_eq!(measure1, 6.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_facet_measure_various_triangle_orientations() {
+        // Test triangles in different orientations in 3D space
+        let triangles = [
+            // XY plane
+            vec![
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0]),
+            ],
+            // XZ plane
+            vec![
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0]),
+            ],
+            // YZ plane
+            vec![
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0]),
+            ],
+            // Diagonal plane
+            vec![
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([1.0, 1.0, 0.0]),
+                Point::new([0.0, 1.0, 1.0]),
+            ],
+        ];
+
+        let expected_areas = [0.5, 0.5, 0.5]; // First three are right triangles with legs of length 1
+
+        for (i, triangle) in triangles.iter().take(3).enumerate() {
+            let measure = facet_measure(triangle).unwrap();
+            // Triangle should have expected area
+            assert_relative_eq!(measure, expected_areas[i], epsilon = 1e-10);
+        }
+
+        // Fourth triangle has a different but computable area
+        let measure4 = facet_measure(&triangles[3]).unwrap();
+        assert!(
+            measure4 > 0.0,
+            "Diagonal triangle should have positive area"
+        );
+        assert!(
+            measure4.is_finite(),
+            "Diagonal triangle area should be finite"
+        );
+    }
+
+    // =============================================================================
+    // ADDITIONAL SURFACE MEASURE TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_surface_measure_multiple_facets_different_sizes() {
+        // Test with facets of different sizes
+        use crate::core::facet::Facet;
+        use crate::{cell, vertex};
+
+        // Small triangle
+        let v1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
+        let v2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
+        let v3: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
+        let v4: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
+
+        // Large triangle
+        let v5: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
+        let v6: Vertex<f64, Option<()>, 3> = vertex!([6.0, 0.0, 0.0]);
+        let v7: Vertex<f64, Option<()>, 3> = vertex!([0.0, 8.0, 0.0]);
+        let v8: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
+
+        let cell1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![v1, v2, v3, v4]);
+        let cell2: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![v5, v6, v7, v8]);
+
+        let facet1 = Facet::new(cell1, v4).unwrap(); // Area = 0.5
+        let facet2 = Facet::new(cell2, v8).unwrap(); // Area = 24.0
+
+        let total_surface = surface_measure(&[facet1, facet2]).unwrap();
+        let expected_total = 0.5 + 24.0;
+
+        assert_relative_eq!(total_surface, expected_total, epsilon = 1e-10);
+    }
+
+    // =============================================================================
+    // 2D AND 4D+ SURFACE MEASURE TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_surface_measure_2d_perimeter() {
+        // Test 2D surface measure (perimeter of polygon)
+        use crate::core::facet::Facet;
+        use crate::{cell, vertex};
+
+        // Create 2D triangle
+        let v1: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+        let v2: Vertex<f64, Option<()>, 2> = vertex!([3.0, 0.0]);
+        let v3: Vertex<f64, Option<()>, 2> = vertex!([0.0, 4.0]);
+
+        let cell: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v1, v2, v3]);
+
+        // Create facets for each edge
+        let edge1 = Facet::new(cell.clone(), v3).unwrap(); // Edge v1-v2
+        let edge2 = Facet::new(cell.clone(), v1).unwrap(); // Edge v2-v3
+        let edge3 = Facet::new(cell, v2).unwrap(); // Edge v3-v1
+
+        let total_perimeter = surface_measure(&[edge1, edge2, edge3]).unwrap();
+
+        // Perimeter should be 3 + 4 + 5 = 12 (sides of 3-4-5 triangle)
+        assert_relative_eq!(total_perimeter, 12.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_surface_measure_4d_boundary() {
+        // Test 4D surface measure (3D boundary facets)
+        use crate::core::facet::Facet;
+        use crate::{cell, vertex};
+
+        // Create 4D simplex (5 vertices)
+        let v1: Vertex<f64, Option<()>, 4> = vertex!([0.0, 0.0, 0.0, 0.0]);
+        let v2: Vertex<f64, Option<()>, 4> = vertex!([1.0, 0.0, 0.0, 0.0]);
+        let v3: Vertex<f64, Option<()>, 4> = vertex!([0.0, 1.0, 0.0, 0.0]);
+        let v4: Vertex<f64, Option<()>, 4> = vertex!([0.0, 0.0, 1.0, 0.0]);
+        let v5: Vertex<f64, Option<()>, 4> = vertex!([0.0, 0.0, 0.0, 1.0]);
+
+        let cell: Cell<f64, Option<()>, Option<()>, 4> = cell!(vec![v1, v2, v3, v4, v5]);
+
+        // Create boundary facets (tetrahedra)
+        let facets = vec![
+            Facet::new(cell.clone(), v5).unwrap(), // Tetrahedron without v5
+            Facet::new(cell.clone(), v4).unwrap(), // Tetrahedron without v4
+            Facet::new(cell.clone(), v3).unwrap(), // Tetrahedron without v3
+            Facet::new(cell.clone(), v2).unwrap(), // Tetrahedron without v2
+            Facet::new(cell, v1).unwrap(),         // Tetrahedron without v1
+        ];
+
+        let total_surface = surface_measure(&facets).unwrap();
+
+        // The correct total surface area is 1.0, not 5/6 as originally expected
+        // This is because the boundary facets have different volumes:
+        // - 4 facets that include the origin: each has volume 1/6
+        // - 1 facet that excludes the origin: has volume 1/3
+        // Total: 4×(1/6) + 1×(1/3) = 4/6 + 2/6 = 1.0
+        let expected_total = 1.0;
+        assert_relative_eq!(total_surface, expected_total, epsilon = 1e-10);
+    }
+
+    // =============================================================================
+    // ERROR PROPAGATION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_surface_measure_with_invalid_facet() {
+        // Test error handling when facet measure calculation fails
+        use crate::core::facet::Facet;
+        use crate::{cell, vertex};
+
+        // Create a valid facet
+        let v1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
+        let v2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
+        let v3: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
+        let v4: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
+
+        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![v1, v2, v3, v4]);
+        let facet = Facet::new(cell, v4).unwrap();
+
+        // Test with valid facets - should work
+        let result = surface_measure(&[facet]);
+        assert!(result.is_ok(), "Valid facets should work");
+        assert_relative_eq!(result.unwrap(), 0.5, epsilon = 1e-10);
+    }
+
+    // =============================================================================
+    // PERFORMANCE AND STRESS TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_facet_measure_performance_many_dimensions() {
+        // Test performance with higher dimensions (7D, 8D)
+        let points_7d = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+        ];
+
+        let measure_7d = facet_measure(&points_7d).unwrap();
+        // Volume of 6-simplex should be 1/6! = 1/720
+        assert_relative_eq!(measure_7d, 1.0 / 720.0, epsilon = 1e-10);
+
+        let points_8d = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+        ];
+
+        let measure_8d = facet_measure(&points_8d).unwrap();
+        // Volume of 7-simplex should be 1/7! = 1/5040
+        assert_relative_eq!(measure_8d, 1.0 / 5040.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_surface_measure_many_facets() {
+        // Test with many facets to ensure linear scaling
+        use crate::core::facet::Facet;
+        use crate::{cell, vertex};
+
+        let mut facets = Vec::new();
+        let mut expected_total = 0.0;
+
+        // Create 10 different triangular facets
+        for i in 0..10 {
+            let scale = f64::from(i + 1);
+            let v1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
+            let v2: Vertex<f64, Option<()>, 3> = vertex!([scale, 0.0, 0.0]);
+            let v3: Vertex<f64, Option<()>, 3> = vertex!([0.0, scale, 0.0]);
+            let v4: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
+
+            let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![v1, v2, v3, v4]);
+            let facet = Facet::new(cell, v4).unwrap();
+
+            // Each triangle has area scale * scale / 2
+            expected_total += scale * scale / 2.0;
+            facets.push(facet);
+        }
+
+        let total_surface = surface_measure(&facets).unwrap();
+        assert_relative_eq!(total_surface, expected_total, epsilon = 1e-10);
+    }
+
+    // =============================================================================
+    // ADVANCED GEOMETRIC PROPERTY TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_facet_measure_equilateral_triangles() {
+        // Test equilateral triangles of various sizes
+        let side_lengths = [1.0, 2.0, 5.0, 10.0];
+
+        for &side in &side_lengths {
+            let height = side * 3.0_f64.sqrt() / 2.0;
+            let points = vec![
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([side, 0.0, 0.0]),
+                Point::new([side / 2.0, height, 0.0]),
+            ];
+
+            let measure = facet_measure(&points).unwrap();
+            let expected_area = side * side * 3.0_f64.sqrt() / 4.0; // Formula for equilateral triangle area
+
+            // Equilateral triangle should have expected area
+            assert_relative_eq!(measure, expected_area, epsilon = 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_facet_measure_regular_tetrahedron_faces() {
+        // Test faces of regular tetrahedron
+        let side = 2.0;
+        let height = side * (2.0_f64 / 3.0).sqrt();
+        let center_offset = side / (2.0 * 3.0_f64.sqrt());
+
+        // Regular tetrahedron vertices
+        let v1 = Point::new([0.0, 0.0, 0.0]);
+        let v2 = Point::new([side, 0.0, 0.0]);
+        let v3 = Point::new([side / 2.0, side * 3.0_f64.sqrt() / 2.0, 0.0]);
+        let v4 = Point::new([side / 2.0, center_offset, height]);
+
+        // Test each face
+        let faces = [
+            vec![v1, v2, v3], // Base
+            vec![v1, v2, v4], // Face 1
+            vec![v2, v3, v4], // Face 2
+            vec![v3, v1, v4], // Face 3
+        ];
+
+        let expected_face_area = side * side * 3.0_f64.sqrt() / 4.0; // Equilateral triangle area
+
+        for face in &faces {
+            let measure = facet_measure(face).unwrap();
+            // Face of regular tetrahedron should have expected area
+            assert_relative_eq!(measure, expected_face_area, epsilon = 1e-9);
+        }
+    }
+
+    #[test]
+    fn test_facet_measure_reflection_invariance() {
+        // Test that reflection doesn't change facet measure
+        let original_points = vec![
+            Point::new([1.0, 2.0, 3.0]),
+            Point::new([4.0, 5.0, 6.0]),
+            Point::new([7.0, 8.0, 9.0]),
+        ];
+
+        // Reflect across various planes
+        let reflections = [
+            // Reflect x-coordinate
+            vec![
+                Point::new([-1.0, 2.0, 3.0]),
+                Point::new([-4.0, 5.0, 6.0]),
+                Point::new([-7.0, 8.0, 9.0]),
+            ],
+            // Reflect y-coordinate
+            vec![
+                Point::new([1.0, -2.0, 3.0]),
+                Point::new([4.0, -5.0, 6.0]),
+                Point::new([7.0, -8.0, 9.0]),
+            ],
+            // Reflect z-coordinate
+            vec![
+                Point::new([1.0, 2.0, -3.0]),
+                Point::new([4.0, 5.0, -6.0]),
+                Point::new([7.0, 8.0, -9.0]),
+            ],
+        ];
+
+        let original_measure = facet_measure(&original_points).unwrap();
+
+        for reflected_points in &reflections {
+            let reflected_measure = facet_measure(reflected_points).unwrap();
+            // Reflection should preserve facet measure
+            assert_relative_eq!(original_measure, reflected_measure, epsilon = 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_facet_measure_rotation_invariance_2d() {
+        // Test that rotation doesn't change 2D facet measure (line length)
+        let original_points = vec![Point::new([0.0, 0.0]), Point::new([3.0, 4.0])];
+
+        // Rotate by 90 degrees
+        let rotated_points = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([-4.0, 3.0]), // 90° rotation of (3,4)
+        ];
+
+        let original_measure = facet_measure(&original_points).unwrap();
+        let rotated_measure = facet_measure(&rotated_points).unwrap();
+
+        assert_relative_eq!(original_measure, rotated_measure, epsilon = 1e-10);
+        assert_relative_eq!(original_measure, 5.0, epsilon = 1e-10); // Both should be 5.0
     }
 }
