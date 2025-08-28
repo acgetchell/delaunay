@@ -34,7 +34,7 @@ use std::hash::{Hash, Hasher};
 // POINT STRUCT DEFINITION
 // =============================================================================
 
-#[derive(Clone, Copy, Debug, PartialOrd)]
+#[derive(Clone, Copy, Debug)]
 /// The [Point] struct represents a point in a D-dimensional space, where the
 /// coordinates are of generic type `T`.
 ///
@@ -105,7 +105,7 @@ where
     /// Hash the coordinate values
     fn hash_coordinate<H: Hasher>(&self, state: &mut H) {
         for &coord in &self.coords {
-            coord.hash_coord(state);
+            coord.hash_scalar(state);
         }
     }
 
@@ -146,6 +146,23 @@ where
 // Implement Eq using the Coordinate trait
 impl<T, const D: usize> Eq for Point<T, D> where T: CoordinateScalar {}
 
+// Implement PartialOrd using OrderedCmp for consistent ordering with special floating-point values
+impl<T, const D: usize> PartialOrd for Point<T, D>
+where
+    T: CoordinateScalar,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        // Perform lexicographic comparison using ordered comparison for each coordinate
+        for (a, b) in self.coords.iter().zip(other.coords.iter()) {
+            match a.ordered_partial_cmp(b) {
+                Some(std::cmp::Ordering::Equal) => {}
+                other_ordering => return other_ordering,
+            }
+        }
+        Some(std::cmp::Ordering::Equal)
+    }
+}
+
 // Manual implementations for traits that can't be derived due to [T; D] limitations
 
 // Implement Default manually
@@ -174,9 +191,19 @@ where
         for coord in &self.coords {
             if coord.is_finite_generic() {
                 tuple.serialize_element(coord)?;
+            } else if coord.is_nan() {
+                // Serialize NaN as null for JSON compatibility
+                tuple.serialize_element(&Option::<T>::None)?;
+            } else if coord.is_infinite() {
+                if coord.is_sign_positive() {
+                    // Serialize positive infinity as the string "Infinity"
+                    tuple.serialize_element("Infinity")?;
+                } else {
+                    // Serialize negative infinity as the string "-Infinity"
+                    tuple.serialize_element("-Infinity")?;
+                }
             } else {
-                // Emit JSON null (or serializer-equivalent) for non‑finite values
-                // Note: This is a lossy representation unless Deserialize maps nulls back.
+                // Fallback for any other non-finite values
                 tuple.serialize_element(&Option::<T>::None)?;
             }
         }
@@ -207,7 +234,7 @@ where
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_fmt(format_args!(
-                    "an array of {D} coordinates (numbers or null values)"
+                    "an array of {D} coordinates (numbers, null, \"Infinity\", or \"-Infinity\")"
                 ))
             }
 
@@ -218,13 +245,36 @@ where
                 // Collect coordinates into a Vec first, then convert to array
                 let mut coords = Vec::with_capacity(D);
                 for i in 0..D {
-                    // Try to deserialize as Option<T> to handle null values
-                    let coord_option: Option<T> = seq
+                    // Deserialize each element as a generic value to handle numbers, null, and strings
+                    let element: serde_json::Value = seq
                         .next_element()?
                         .ok_or_else(|| Error::invalid_length(i, &self))?;
 
-                    // Map null to NaN, keep finite values as-is
-                    let coord = coord_option.map_or_else(T::nan, |value| value);
+                    let coord = match element {
+                        serde_json::Value::Number(n) => {
+                            // Handle regular numeric values
+                            n.as_f64()
+                                .and_then(|f| num_traits::cast::cast::<f64, T>(f))
+                                .ok_or_else(|| Error::custom("Invalid numeric value"))?
+                        }
+                        serde_json::Value::String(s) => {
+                            // Handle special string representations
+                            match s.as_str() {
+                                "Infinity" => T::infinity(),
+                                "-Infinity" => T::neg_infinity(),
+                                _ => {
+                                    return Err(Error::custom(format!(
+                                        "Unknown special value: {s}"
+                                    )));
+                                }
+                            }
+                        }
+                        serde_json::Value::Null => {
+                            // Handle null values as NaN
+                            T::nan()
+                        }
+                        _ => return Err(Error::custom("Expected number, string, or null")),
+                    };
 
                     coords.push(coord);
                 }
@@ -1512,6 +1562,92 @@ mod tests {
     }
 
     #[test]
+    fn point_partial_ord_special_values() {
+        use std::cmp::Ordering;
+
+        // Test NaN vs NaN comparison (should be Some(Equal) with OrderedCmp)
+        let point_nan1 = Point::new([f64::NAN, 1.0]);
+        let point_nan2 = Point::new([f64::NAN, 1.0]);
+        let point_normal = Point::new([1.0, 1.0]);
+
+        // NaN should be equal to itself
+        assert_eq!(point_nan1.partial_cmp(&point_nan2), Some(Ordering::Equal));
+
+        // Test NaN vs normal comparison
+        // In OrderedFloat semantics, NaN is greater than all other values
+        assert_eq!(
+            point_nan1.partial_cmp(&point_normal),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(point_normal.partial_cmp(&point_nan1), Some(Ordering::Less));
+
+        // Test infinity vs normal comparison
+        let point_inf = Point::new([f64::INFINITY, 1.0]);
+        let point_neg_inf = Point::new([f64::NEG_INFINITY, 1.0]);
+        let point_normal2 = Point::new([2.0, 1.0]);
+
+        // Infinity should be greater than normal values
+        assert_eq!(
+            point_inf.partial_cmp(&point_normal2),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(point_normal2.partial_cmp(&point_inf), Some(Ordering::Less));
+
+        // Test negative infinity vs normal
+        assert_eq!(
+            point_neg_inf.partial_cmp(&point_normal2),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            point_normal2.partial_cmp(&point_neg_inf),
+            Some(Ordering::Greater)
+        );
+
+        // Positive infinity should be greater than negative infinity
+        assert_eq!(
+            point_inf.partial_cmp(&point_neg_inf),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(point_neg_inf.partial_cmp(&point_inf), Some(Ordering::Less));
+
+        // NaN should be greater than infinity in OrderedFloat semantics
+        assert_eq!(point_nan1.partial_cmp(&point_inf), Some(Ordering::Greater));
+        assert_eq!(point_inf.partial_cmp(&point_nan1), Some(Ordering::Less));
+
+        // Test that comparison operators work
+        assert!(point_normal < point_inf); // Normal < Infinity
+        assert!(point_normal2 < point_inf); // Normal < Infinity
+        assert!(point_neg_inf < point_normal); // -Infinity < Normal
+        assert!(point_inf > point_normal); // Infinity > Normal
+        assert!(point_nan1 > point_normal); // NaN > Normal (in OrderedFloat)
+        assert!(point_nan1 > point_inf); // NaN > Infinity (in OrderedFloat)
+
+        // Test mixed coordinates
+        let point_mixed1 = Point::new([1.0, f64::NAN]);
+        let point_mixed2 = Point::new([1.0, 2.0]);
+        assert_eq!(
+            point_mixed1.partial_cmp(&point_mixed2),
+            Some(Ordering::Greater)
+        ); // NaN in second coordinate
+
+        let point_mixed3 = Point::new([f64::NEG_INFINITY, 2.0]);
+        let point_mixed4 = Point::new([1.0, 2.0]);
+        assert_eq!(
+            point_mixed3.partial_cmp(&point_mixed4),
+            Some(Ordering::Less)
+        ); // -inf in first coordinate
+
+        // Test with f32 as well
+        let point_f32_nan = Point::new([f32::NAN, 1.0f32]);
+        let point_f32_normal = Point::new([1.0f32, 1.0f32]);
+        assert_eq!(
+            point_f32_nan.partial_cmp(&point_f32_normal),
+            Some(Ordering::Greater)
+        );
+        assert!(point_f32_nan > point_f32_normal);
+    }
+
+    #[test]
     fn point_memory_layout_and_size() {
         use std::mem;
 
@@ -1571,13 +1707,13 @@ mod tests {
         // Test with infinity
         let point_with_inf = Point::new([f64::INFINITY, 1.0]);
         let serialized_inf = serde_json::to_string(&point_with_inf).unwrap();
-        // Infinity serializes as null in JSON
-        assert!(serialized_inf.contains("null"));
+        // Infinity now serializes as "Infinity" string in JSON
+        assert!(serialized_inf.contains("\"Infinity\""));
 
         // Test with negative infinity
         let point_with_neg_inf = Point::new([f64::NEG_INFINITY, 1.0]);
         let serialized_neg_inf = serde_json::to_string(&point_with_neg_inf).unwrap();
-        assert!(serialized_neg_inf.contains("null"));
+        assert!(serialized_neg_inf.contains("\"-Infinity\""));
 
         // Test with very large numbers
         let point_large = Point::new([1e100, -1e100, 0.0]);
@@ -1614,22 +1750,22 @@ mod tests {
         // Single positive infinity
         let point_pos_inf = Point::new([f64::INFINITY, 1.0]);
         let json_pos_inf = serde_json::to_string(&point_pos_inf).unwrap();
-        assert_eq!(json_pos_inf, "[null,1.0]");
+        assert_eq!(json_pos_inf, "[\"Infinity\",1.0]");
 
         // Single negative infinity
         let point_neg_inf = Point::new([1.0, f64::NEG_INFINITY]);
         let json_neg_inf = serde_json::to_string(&point_neg_inf).unwrap();
-        assert_eq!(json_neg_inf, "[1.0,null]");
+        assert_eq!(json_neg_inf, "[1.0,\"-Infinity\"]");
 
         // Mixed NaN and infinity
         let point_mixed = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1.0]);
         let json_mixed = serde_json::to_string(&point_mixed).unwrap();
-        assert_eq!(json_mixed, "[null,null,null,1.0]");
+        assert_eq!(json_mixed, "[null,\"Infinity\",\"-Infinity\",1.0]");
 
         // All special values
         let point_all_special = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY]);
         let json_all_special = serde_json::to_string(&point_all_special).unwrap();
-        assert_eq!(json_all_special, "[null,null,null]");
+        assert_eq!(json_all_special, "[null,\"Infinity\",\"-Infinity\"]");
     }
 
     #[test]
@@ -1642,7 +1778,7 @@ mod tests {
 
         let point_f32_inf = Point::new([f32::INFINITY, f32::NEG_INFINITY]);
         let json_f32_inf = serde_json::to_string(&point_f32_inf).unwrap();
-        assert_eq!(json_f32_inf, "[null,null]");
+        assert_eq!(json_f32_inf, "[\"Infinity\",\"-Infinity\"]");
     }
 
     #[test]
@@ -1668,19 +1804,14 @@ mod tests {
     }
 
     #[test]
-    fn point_serialize_deserialize_roundtrip_finite_only() {
-        // Test that roundtrip works for finite values only
-
-        let original = Point::new([1.0, 2.5, -3.7, 0.0]);
-        let json = serde_json::to_string(&original).unwrap();
-        let deserialized: Point<f64, 4> = serde_json::from_str(&json).unwrap();
-        assert_eq!(original, deserialized);
-
-        // Test with f32
-        let original_f32 = Point::new([1.0f32, -2.5f32]);
-        let json_f32 = serde_json::to_string(&original_f32).unwrap();
-        let deserialized_f32: Point<f32, 2> = serde_json::from_str(&json_f32).unwrap();
-        assert_eq!(original_f32, deserialized_f32);
+    fn point_deserialize_null_maps_to_nan() {
+        // With custom Deserialize, JSON null deserializes to NaN
+        let json = "[null,1.0,2.0]";
+        let p: Point<f64, 3> = serde_json::from_str(json).unwrap();
+        let coords = p.to_array();
+        assert!(coords[0].is_nan());
+        assert_relative_eq!(coords[1], 1.0);
+        assert_relative_eq!(coords[2], 2.0);
     }
 
     #[test]

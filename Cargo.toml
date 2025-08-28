@@ -21,7 +21,7 @@ anyhow = "1.0.99"
 arc-swap = "1.7.1"
 approx = "0.5.1"
 bimap = "0.6.3"
-clap = { version = "4.5.45", features = ["derive"] }
+clap = { version = "4.5.46", features = ["derive"] }
 derive_builder = "0.20.1"
 nalgebra = "0.34.0"
 num-traits = "0.2.19"

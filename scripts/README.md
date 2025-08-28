@@ -202,7 +202,7 @@ parse_benchmarks_with_while_read "input.txt" "output.txt"
 
 #### `generate_changelog.sh`
 
-**Purpose**: Generates changelog with commit dates instead of tag creation dates for more accurate release timing.
+**Purpose**: Generates changelog with commit dates instead of tag creation dates and enhanced squashed PR commit expansion for more comprehensive release documentation.
 
 **Features**:
 
@@ -214,6 +214,10 @@ parse_benchmarks_with_while_read "input.txt" "output.txt"
 - **Progress Reporting**: Clear status messages and success confirmation with statistics
 - **Robust Date Processing**: Improved regex for converting ISO 8601 to YYYY-MM-DD format
 - **Automatic Root Detection**: Uses `BASH_SOURCE[0]` for reliable project root detection
+- **🆕 Enhanced Squashed PR Expansion**: Advanced parsing of squashed PR commits to extract detailed commit message bodies
+- **🆕 Multi-format Bullet Support**: Handles `*`, `-`, and numbered (`1.`, `2.`, etc.) bullet points in commit messages
+- **🆕 Paragraph Preservation**: Maintains multi-line descriptions with proper paragraph breaks and formatting
+- **🆕 Word Wrapping**: Intelligent word wrapping at 75 characters with fallback handling
 
 **Comparison with Standard auto-changelog**:
 
@@ -273,11 +277,61 @@ npx auto-changelog
 npx auto-changelog --unreleased --commit-limit 10
 ```
 
+**Enhanced Squashed PR Expansion**:
+
+The script now provides sophisticated parsing of squashed PR commits to extract detailed information from commit message bodies:
+
+```bash
+# INPUT: Squashed PR commit message
+# Feature/convex hull (#50)
+# 
+# * Implements incremental Delaunay triangulation
+# 
+# Refactors the triangulation algorithm to use a pure
+# incremental Bowyer-Watson approach, improving performance and code organization.
+# 
+# * Refactors TDS to use IncrementalBoyerWatson
+# 
+# Completes the TDS refactoring to exclusively use the 
+# IncrementalBoyerWatson algorithm, removing legacy methods.
+
+# OUTPUT: Expanded changelog entries
+# - **implements incremental delaunay triangulation**
+#   Refactors the triangulation algorithm to use a pure incremental 
+#   Bowyer-Watson approach, improving performance and code organization.
+# 
+# - **refactors tds to use incrementalboyerwatson**
+#   Completes the TDS refactoring to exclusively use the 
+#   IncrementalBoyerWatson algorithm, removing legacy methods.
+```
+
+**Supported Bullet Formats**:
+
+- **Asterisk bullets**: `* Title` followed by description
+- **Dash bullets**: `- Title` followed by description  
+- **Numbered bullets**: `1. Title`, `2. Title` etc. followed by description
+- **Fallback handling**: Non-bullet commits treated as single entries
+
+**Parsing Features**:
+
+- **Multi-line descriptions**: Preserves paragraph breaks and formatting
+- **Word wrapping**: Intelligent wrapping at 75 characters
+- **Whitespace handling**: Cleans leading/trailing whitespace while preserving structure
+- **Error recovery**: Falls back to original changelog line if parsing fails
+
+**Testing**:
+
+```bash
+# Test the parsing logic with sample commit messages
+./scripts/test_squashed_pr_parsing.sh
+```
+
 **Dependencies**:
 
-- **Required**: `npx` (Node.js), `git`, `sed`
+- **Required**: `npx` (Node.js), `git`, `sed`, `awk`
 - **Configuration Files**: `.auto-changelog`, `docs/templates/changelog.hbs`
 - **npm Package**: `auto-changelog` (installed automatically by npx)
+- **Testing**: `scripts/test_squashed_pr_parsing.sh` for validation
 
 ---
 

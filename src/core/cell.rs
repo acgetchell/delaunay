@@ -816,10 +816,10 @@ where
     ///
     /// # Type Parameters
     ///
-    /// This method requires the coordinate type `T` to implement additional traits:
-    /// - [`FiniteCheck`](crate::geometry::traits::finitecheck::FiniteCheck): Enables checking that all coordinate values are finite
+    /// This method relies on capabilities implied by `T: CoordinateScalar`, including:
+    /// - [`FiniteCheck`](crate::geometry::traits::coordinate::FiniteCheck): Enables checking that all coordinate values are finite
     ///   (not infinite or NaN), which is essential for geometric computations.
-    /// - [`HashCoordinate`](crate::geometry::traits::hashcoordinate::HashCoordinate): Enables hashing of coordinate values,
+    /// - [`HashCoordinate`](crate::geometry::traits::coordinate::HashCoordinate): Enables hashing of coordinate values,
     ///   which is required for detecting duplicate vertices efficiently.
     /// - [`Copy`]: Required for efficient comparison operations.
     ///

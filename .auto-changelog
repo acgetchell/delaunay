@@ -10,5 +10,7 @@
   "issueUrl": "https://github.com/acgetchell/delaunay/issues/{id}",
   "includeBody": true,
   "sortCommits": "date",
-  "tagPrefix": "v"
+  "tagPrefix": "v",
+  "unreleased": true,
+  "unreleasedOnly": false
 }

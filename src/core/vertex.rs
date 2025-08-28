@@ -579,10 +579,12 @@ where
     U: DataType,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
-    /// Order of vertices is based on lexicographic order of coordinate arrays.
+    /// Order of vertices is based on lexicographic order of coordinates using Point's `partial_cmp`.
+    /// This ensures consistent ordering with special floating-point values (NaN, infinity)
+    /// through `OrderedFloat` semantics.
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.point.to_array().partial_cmp(&other.point.to_array())
+        self.point.partial_cmp(&other.point)
     }
 }
 

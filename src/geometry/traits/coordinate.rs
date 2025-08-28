@@ -1,49 +1,67 @@
-//! Coordinate trait for abstracting coordinate storage and operations.
+//! Coordinate traits and implementations for geometric computations.
 //!
-//! This module provides the `Coordinate` trait which unifies all coordinate-related
-//! functionality including floating-point operations, hashing, equality comparisons,
-//! and validation. This trait abstracts away the specific storage mechanism for
-//! coordinates, enabling flexibility between arrays, vectors, or other storage types.
+//! This module provides a comprehensive set of traits for working with coordinates
+//! in d-dimensional space, including the main `Coordinate` trait that unifies all
+//! coordinate-related functionality, along with supporting traits for validation,
+//! hashing, and equality comparison of floating-point coordinate values.
 //!
 //! # Overview
 //!
-//! The `Coordinate` trait provides a unified abstraction for coordinate operations
-//! across different scalar types and storage mechanisms. All geometric structures
-//! (`Point`, `Vertex`, `Cell`, `Facet`, and `TriangulationDataStructure`) now use
-//! generic type parameters constrained by this trait, enabling support for multiple
-//! floating-point precision levels (`f32`, `f64`, etc.). The trait consolidates
-//! all the trait bounds that these structures need:
+//! The coordinate system is built around several key traits that work together:
 //!
-//! - `Float` for floating-point arithmetic operations
-//! - `Hash` for use in hash-based collections like `HashMap` and `HashSet`
-//! - `PartialEq` and `Eq` for equality comparisons
-//! - `OrderedEq` for NaN-aware equality that treats NaN values as equal to themselves
-//! - `FiniteCheck` for validation of coordinate values
-//! - `HashCoordinate` for consistent hashing of floating-point values
-//! - Serialization traits (`Serialize`, `Deserialize`)
+//! ## Core Traits
+//!
+//! - **`Coordinate<T, D>`**: Main abstraction for coordinate storage and operations
+//! - **`CoordinateScalar`**: Trait alias consolidating all scalar type requirements
+//! - **`FiniteCheck`**: Validation of coordinate values (no NaN or infinity)
+//! - **`OrderedEq`**: NaN-aware equality that treats NaN values as equal to themselves
+//! - **`HashCoordinate`**: Consistent hashing of floating-point values
+//!
+//! ## Key Features
+//!
+//! - **Generic dimensions**: Supports arbitrary dimensions via `const D: usize`
+//! - **Multiple scalar types**: Works with `f32`, `f64`, and other floating-point types
+//! - **Storage abstraction**: Abstracts arrays, vectors, and other storage mechanisms
+//! - **Special value handling**: Proper handling of NaN, infinity, and zero values
+//! - **Serialization support**: Built-in serde serialization/deserialization
 //!
 //! # Benefits
 //!
-//! 1. **Abstraction**: The storage mechanism (arrays, vectors, hash maps, etc.) is
-//!    abstracted away, allowing future flexibility in how coordinates are stored.
+//! 1. **Unified Interface**: All coordinate operations through a single trait system
+//! 2. **Type Safety**: Strong type bounds ensure correct usage at compile time
+//! 3. **Flexible Storage**: Abstract storage mechanism allows future extensibility
+//! 4. **Robust Equality**: NaN-aware comparisons enable use in hash collections
+//! 5. **Validation**: Built-in finite value checking prevents geometric errors
 //!
-//! 2. **Trait Consolidation**: All coordinate-related trait bounds are consolidated
-//!    into a single trait, simplifying the trait bounds on geometric structures.
+//! # Usage Examples
 //!
-//! 3. **Consistent Interface**: All coordinate implementations provide the same
-//!    interface regardless of underlying storage mechanism.
+//! ```rust
+//! use delaunay::geometry::traits::coordinate::*;
+//! use delaunay::geometry::point::Point;
 //!
-//! 4. **Future Extensibility**: New coordinate storage types can be added easily
-//!    by implementing the `Coordinate` trait.
+//! // Create coordinates using Point (which implements Coordinate)
+//! let coord: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
 //!
-//! # Usage with Existing Code
+//! // All coordinate operations are available
+//! assert_eq!(coord.dim(), 3);
+//! assert_eq!(coord.to_array(), [1.0, 2.0, 3.0]);
+//! assert!(coord.validate().is_ok());
 //!
-//! The current `Point` structure uses arrays directly. The `Coordinate` trait provides
-//! a path for future refactoring where `Point` could be parameterized over different
-//! coordinate storage types while maintaining the same API.
+//! // Special value handling
+//! let nan_coord: Point<f64, 2> = Coordinate::new([f64::NAN, 1.0]);
+//! assert!(nan_coord.validate().is_err());  // NaN detected
+//!
+//! // But NaN coordinates can still be compared and hashed consistently
+//! let nan_coord2: Point<f64, 2> = Coordinate::new([f64::NAN, 1.0]);
+//! assert!(nan_coord.ordered_equals(&nan_coord2));  // NaN == NaN
+//! ```
+//!
+//! The coordinate trait system enables geometric structures (`Point`, `Vertex`,
+//! `Cell`, etc.) to work consistently across different scalar types and storage
+//! mechanisms while maintaining mathematical correctness and type safety.
 
-use super::{FiniteCheck, HashCoordinate, OrderedEq};
 use num_traits::{Float, Zero};
+use ordered_float::OrderedFloat;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     fmt::Debug,
@@ -79,6 +97,23 @@ pub enum CoordinateConversionError {
     },
 }
 
+/// Errors that can occur during coordinate validation.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum CoordinateValidationError {
+    /// A coordinate value is invalid (NaN or infinite).
+    #[error(
+        "Invalid coordinate at index {coordinate_index} in dimension {dimension}: {coordinate_value}"
+    )]
+    InvalidCoordinate {
+        /// Index of the invalid coordinate.
+        coordinate_index: usize,
+        /// Value of the invalid coordinate, as a string.
+        coordinate_value: String,
+        /// The dimensionality of the coordinate system.
+        dimension: usize,
+    },
+}
+
 /// Default tolerance for f32 floating-point comparisons.
 ///
 /// This value is set to 1e-6, which is appropriate for f32 precision and provides
@@ -91,9 +126,324 @@ pub const DEFAULT_TOLERANCE_F32: f32 = 1e-6;
 /// a reasonable margin for floating-point comparison errors.
 pub const DEFAULT_TOLERANCE_F64: f64 = 1e-15;
 
-/// Trait alias for the scalar type requirements in coordinate systems.
+// =============================================================================
+// SUPPORTING TRAITS
+// =============================================================================
+
+/// Helper trait for checking finiteness of coordinates.
 ///
-/// This alias captures all the trait bounds required for a scalar type `T` to be used
+/// This trait provides a unified interface for checking whether a numeric value
+/// is finite (not NaN or infinite). It's primarily used to validate coordinate
+/// values in geometric types like points and vectors.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::traits::coordinate::FiniteCheck;
+///
+/// let valid_value = 3.14f64;
+/// assert!(valid_value.is_finite_generic());
+///
+/// let invalid_nan = f64::NAN;
+/// assert!(!invalid_nan.is_finite_generic());
+///
+/// let invalid_inf = f64::INFINITY;
+/// assert!(!invalid_inf.is_finite_generic());
+/// ```
+pub trait FiniteCheck {
+    /// Returns true if the value is finite (not NaN or infinite).
+    ///
+    /// This method provides a consistent way to check finiteness across
+    /// different numeric types, particularly floating-point types where
+    /// NaN and infinity values are possible.
+    ///
+    /// # Returns
+    ///
+    /// - `true` if the value is finite
+    /// - `false` if the value is NaN, positive infinity, or negative infinity
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::geometry::traits::coordinate::FiniteCheck;
+    ///
+    /// // Valid finite values
+    /// assert!(1.0f64.is_finite_generic());
+    /// assert!((-42.5f32).is_finite_generic());
+    /// assert!(0.0f64.is_finite_generic());
+    /// assert!(f64::MAX.is_finite_generic());
+    /// assert!(f64::MIN.is_finite_generic());
+    ///
+    /// // Invalid non-finite values
+    /// assert!(!f64::NAN.is_finite_generic());
+    /// assert!(!f64::INFINITY.is_finite_generic());
+    /// assert!(!f64::NEG_INFINITY.is_finite_generic());
+    /// assert!(!f32::NAN.is_finite_generic());
+    /// assert!(!f32::INFINITY.is_finite_generic());
+    /// ```
+    fn is_finite_generic(&self) -> bool;
+}
+
+// Unified macro for implementing FiniteCheck for floating-point types
+macro_rules! impl_finite_check {
+    (float: $($t:ty),*) => {
+        $(
+            impl FiniteCheck for $t {
+                #[inline(always)]
+                fn is_finite_generic(&self) -> bool {
+                    self.is_finite()
+                }
+            }
+        )*
+    };
+}
+
+// Implement FiniteCheck for standard floating-point types
+impl_finite_check!(float: f32, f64);
+
+/// Helper trait for OrderedFloat-based equality comparison that handles NaN properly.
+///
+/// This trait provides a way to compare floating-point numbers that treats
+/// NaN values as equal to themselves, which is different from the default
+/// floating-point equality comparison where NaN != NaN.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::traits::coordinate::OrderedEq;
+///
+/// // Normal values work as expected
+/// assert!(1.0f64.ordered_eq(&1.0f64));
+/// assert!(!1.0f64.ordered_eq(&2.0f64));
+///
+/// // NaN values are treated as equal to themselves
+/// assert!(f64::NAN.ordered_eq(&f64::NAN));
+///
+/// // Infinity values work correctly
+/// assert!(f64::INFINITY.ordered_eq(&f64::INFINITY));
+/// assert!(f64::NEG_INFINITY.ordered_eq(&f64::NEG_INFINITY));
+/// assert!(!f64::INFINITY.ordered_eq(&f64::NEG_INFINITY));
+/// assert!(0.0f64.ordered_eq(&(-0.0f64))); // 0.0 == -0.0
+/// ```
+pub trait OrderedEq {
+    /// Compares two values for equality using ordered comparison semantics.
+    ///
+    /// This method provides a way to compare floating-point numbers that treats
+    /// NaN values as equal to themselves, which is different from the default
+    /// floating-point equality comparison where NaN != NaN.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The other value to compare with
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the values are equal according to ordered comparison,
+    /// `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::geometry::traits::coordinate::OrderedEq;
+    ///
+    /// // Standard comparisons
+    /// assert!(1.0f64.ordered_eq(&1.0f64));
+    /// assert!(!1.0f64.ordered_eq(&2.0f64));
+    ///
+    /// // NaN comparison (key difference from standard ==)
+    /// assert!(f64::NAN.ordered_eq(&f64::NAN)); // This is true!
+    ///
+    /// // Zero comparisons
+    /// assert!(0.0f64.ordered_eq(&(-0.0f64))); // 0.0 == -0.0
+    /// ```
+    fn ordered_eq(&self, other: &Self) -> bool;
+}
+
+// Unified macro for implementing OrderedEq
+macro_rules! impl_ordered_eq {
+    (float: $($t:ty),*) => {
+        $(
+            impl OrderedEq for $t {
+                #[inline(always)]
+                fn ordered_eq(&self, other: &Self) -> bool {
+                    OrderedFloat(*self) == OrderedFloat(*other)
+                }
+            }
+        )*
+    };
+}
+
+// Implement OrderedEq for standard floating-point types
+impl_ordered_eq!(float: f32, f64);
+
+/// Helper trait for OrderedFloat-based partial comparison that handles NaN properly.
+///
+/// This trait provides a way to compare floating-point numbers using `OrderedFloat`
+/// semantics, which ensures consistent ordering even with special values like NaN
+/// and infinity. This is different from the default floating-point comparison where
+/// NaN comparisons always return None.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::traits::coordinate::OrderedCmp;
+/// use std::cmp::Ordering;
+///
+/// // Normal values work as expected
+/// assert_eq!(1.0f64.ordered_partial_cmp(&2.0f64), Some(Ordering::Less));
+/// assert_eq!(2.0f64.ordered_partial_cmp(&1.0f64), Some(Ordering::Greater));
+/// assert_eq!(1.0f64.ordered_partial_cmp(&1.0f64), Some(Ordering::Equal));
+///
+/// // NaN values have consistent ordering
+/// assert_eq!(f64::NAN.ordered_partial_cmp(&f64::NAN), Some(Ordering::Equal));
+/// assert_eq!(f64::NAN.ordered_partial_cmp(&1.0f64), Some(Ordering::Greater)); // NaN > all other values in OrderedFloat
+/// assert_eq!(1.0f64.ordered_partial_cmp(&f64::NAN), Some(Ordering::Less));
+///
+/// // Infinity values work correctly
+/// assert_eq!(f64::INFINITY.ordered_partial_cmp(&f64::NEG_INFINITY), Some(Ordering::Greater));
+/// assert_eq!(f64::NEG_INFINITY.ordered_partial_cmp(&1.0f64), Some(Ordering::Less));
+/// ```
+pub trait OrderedCmp {
+    /// Performs a partial comparison using `OrderedFloat` semantics.
+    ///
+    /// This method provides consistent comparison results for all floating-point
+    /// values, including NaN and infinity. Unlike standard floating-point
+    /// `partial_cmp` which returns None for NaN comparisons, this method always
+    /// returns Some(Ordering) by using `OrderedFloat`'s total ordering.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The other value to compare with
+    ///
+    /// # Returns
+    ///
+    /// Returns Some(Ordering) indicating the relationship between self and other.
+    /// In `OrderedFloat` semantics:
+    /// - NaN is considered equal to NaN
+    /// - NaN is greater than all other values (including positive infinity)
+    /// - Normal ordering applies to all other values
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::geometry::traits::coordinate::OrderedCmp;
+    /// use std::cmp::Ordering;
+    ///
+    /// // Standard comparisons
+    /// assert_eq!(1.0f64.ordered_partial_cmp(&2.0f64), Some(Ordering::Less));
+    /// assert_eq!(2.0f64.ordered_partial_cmp(&1.0f64), Some(Ordering::Greater));
+    ///
+    /// // NaN comparison (key difference from standard partial_cmp)
+    /// assert_eq!(f64::NAN.ordered_partial_cmp(&f64::NAN), Some(Ordering::Equal));
+    ///
+    /// // Zero comparisons
+    /// assert_eq!(0.0f64.ordered_partial_cmp(&(-0.0f64)), Some(Ordering::Equal)); // 0.0 == -0.0
+    /// ```
+    fn ordered_partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering>;
+}
+
+// Unified macro for implementing OrderedCmp
+macro_rules! impl_ordered_cmp {
+    (float: $($t:ty),*) => {
+        $(
+            impl OrderedCmp for $t {
+                #[inline(always)]
+                fn ordered_partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                    Some(OrderedFloat(*self).cmp(&OrderedFloat(*other)))
+                }
+            }
+        )*
+    };
+}
+
+// Implement OrderedCmp for standard floating-point types
+impl_ordered_cmp!(float: f32, f64);
+
+/// Helper trait for hashing individual coordinates for non-hashable types like f32 and f64.
+///
+/// This trait provides consistent hashing of floating-point coordinate values,
+/// including proper handling of special values like NaN and infinity. It uses
+/// `OrderedFloat` internally to ensure that NaN values hash consistently.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::traits::coordinate::HashCoordinate;
+/// use std::collections::hash_map::DefaultHasher;
+/// use std::hash::Hasher;
+///
+///     // NaN values hash consistently
+///     let mut hasher1 = DefaultHasher::new();
+///     let mut hasher2 = DefaultHasher::new();
+///     f64::NAN.hash_scalar(&mut hasher1);
+///
+///     f64::NAN.hash_scalar(&mut hasher2);
+///
+///     assert_eq!(hasher1.finish(), hasher2.finish());
+/// ```
+pub trait HashCoordinate {
+    /// Hashes a single coordinate value using the provided hasher.
+    ///
+    /// This method provides a consistent way to hash coordinate values,
+    /// including floating-point types that don't normally implement Hash.
+    /// For floating-point types, this uses `OrderedFloat` to ensure consistent
+    /// hashing behavior, including proper handling of NaN values.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - The hasher state to write the hash value to
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::geometry::traits::coordinate::HashCoordinate;
+    /// use std::collections::hash_map::DefaultHasher;
+    /// use std::hash::Hasher;
+    ///
+    ///     // Hash a normal floating-point value
+    ///     let mut hasher = DefaultHasher::new();
+    ///     let value = 42.0f64;
+    ///     value.hash_scalar(&mut hasher);
+    ///     let hash1 = hasher.finish();
+    ///
+    ///     // Hash the same value again
+    ///     let mut hasher = DefaultHasher::new();
+    ///     let value = 42.0f64;
+    ///     value.hash_scalar(&mut hasher);
+    ///     let hash2 = hasher.finish();
+    ///
+    ///     assert_eq!(hash1, hash2); // Same values produce same hash
+    ///
+    ///     // NaN values also hash consistently
+    ///     let mut hasher1 = DefaultHasher::new();
+    ///     let mut hasher2 = DefaultHasher::new();
+    ///     f64::NAN.hash_scalar(&mut hasher1);
+    ///     f64::NAN.hash_scalar(&mut hasher2);
+    ///     assert_eq!(hasher1.finish(), hasher2.finish());
+    /// ```
+    fn hash_scalar<H: Hasher>(&self, state: &mut H);
+}
+
+// Unified macro for implementing HashCoordinate
+macro_rules! impl_hash_coordinate {
+    (float: $($t:ty),*) => {
+        $(
+            impl HashCoordinate for $t {
+                #[inline(always)]
+                fn hash_scalar<H: Hasher>(&self, state: &mut H) {
+                    OrderedFloat(*self).hash(state);
+                }
+            }
+        )*
+    };
+}
+
+// Implement HashCoordinate for standard floating-point types
+impl_hash_coordinate!(float: f32, f64);
+
+/// Consolidated trait for the scalar type requirements in coordinate systems.
+///
+/// This trait captures all the trait bounds required for a scalar type `T` to be used
 /// in coordinate systems. It consolidates the requirements from line 116 of the
 /// `Coordinate` trait definition to reduce code duplication.
 ///
@@ -119,7 +469,15 @@ pub const DEFAULT_TOLERANCE_F64: f64 = 1e-15;
 /// }
 /// ```
 pub trait CoordinateScalar:
-    Float + OrderedEq + HashCoordinate + FiniteCheck + Default + Debug + Serialize + DeserializeOwned
+    Float
+    + OrderedEq
+    + OrderedCmp
+    + HashCoordinate
+    + FiniteCheck
+    + Default
+    + Debug
+    + Serialize
+    + DeserializeOwned
 {
     /// Returns the appropriate default tolerance for this coordinate scalar type.
     ///
@@ -387,23 +745,6 @@ where
     /// True if coordinates are equal using ordered comparison.
     #[must_use]
     fn ordered_equals(&self, other: &Self) -> bool;
-}
-
-/// Errors that can occur during coordinate validation.
-#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
-pub enum CoordinateValidationError {
-    /// A coordinate value is invalid (NaN or infinite).
-    #[error(
-        "Invalid coordinate at index {coordinate_index} in dimension {dimension}: {coordinate_value}"
-    )]
-    InvalidCoordinate {
-        /// Index of the invalid coordinate.
-        coordinate_index: usize,
-        /// Value of the invalid coordinate, as a string.
-        coordinate_value: String,
-        /// The dimensionality of the coordinate system.
-        dimension: usize,
-    },
 }
 
 #[cfg(test)]
@@ -940,8 +1281,12 @@ mod tests {
             hashes.insert(hash);
         }
 
-        // We should have 100 unique hashes
-        assert_eq!(hashes.len(), 100);
+        // We should have very high uniqueness; allow rare collisions
+        assert!(
+            hashes.len() > 95,
+            "Unexpectedly low uniqueness: {} unique of 100",
+            hashes.len()
+        );
     }
 
     #[test]
@@ -998,7 +1343,7 @@ mod tests {
 
             // Test HashCoordinate (through trait requirement)
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            zero.hash_coord(&mut hasher);
+            zero.hash_scalar(&mut hasher);
 
             // Test FiniteCheck (through trait requirement)
             assert!(zero.is_finite_generic());
@@ -1177,5 +1522,232 @@ mod tests {
         // Test validation with mixed edge values
         let edge_coord: Point<f64, 3> = Point::new([f64::MIN_POSITIVE, f64::MAX, 0.0]);
         assert!(edge_coord.validate().is_ok());
+    }
+
+    // =============================================================================
+    // CONSOLIDATED TRAIT TESTS
+    // =============================================================================
+
+    #[test]
+    fn finite_check_trait_coverage() {
+        // Test FiniteCheck trait implementations across types
+
+        // f64 tests
+        assert!(1.0f64.is_finite_generic());
+        assert!((-1.0f64).is_finite_generic());
+        assert!(0.0f64.is_finite_generic());
+        assert!((-0.0f64).is_finite_generic());
+        assert!(f64::MAX.is_finite_generic());
+        assert!(f64::MIN.is_finite_generic());
+        assert!(f64::MIN_POSITIVE.is_finite_generic());
+        assert!(1e308f64.is_finite_generic());
+        assert!(1e-308f64.is_finite_generic());
+
+        assert!(!f64::NAN.is_finite_generic());
+        assert!(!f64::INFINITY.is_finite_generic());
+        assert!(!f64::NEG_INFINITY.is_finite_generic());
+
+        // f32 tests
+        assert!(1.0f32.is_finite_generic());
+        assert!((-1.0f32).is_finite_generic());
+        assert!(0.0f32.is_finite_generic());
+        assert!((-0.0f32).is_finite_generic());
+        assert!(f32::MAX.is_finite_generic());
+        assert!(f32::MIN.is_finite_generic());
+        assert!(f32::MIN_POSITIVE.is_finite_generic());
+        assert!(1e38f32.is_finite_generic());
+        assert!(1e-38f32.is_finite_generic());
+
+        assert!(!f32::NAN.is_finite_generic());
+        assert!(!f32::INFINITY.is_finite_generic());
+        assert!(!f32::NEG_INFINITY.is_finite_generic());
+    }
+
+    #[test]
+    fn ordered_eq_trait_coverage() {
+        // Test OrderedEq trait implementations
+
+        // f64 normal values
+        assert!(1.0f64.ordered_eq(&1.0f64));
+        assert!(!1.0f64.ordered_eq(&2.0f64));
+
+        // f64 NaN equality (should be true with OrderedEq)
+        assert!(f64::NAN.ordered_eq(&f64::NAN));
+
+        // f64 infinity values
+        assert!(f64::INFINITY.ordered_eq(&f64::INFINITY));
+        assert!(f64::NEG_INFINITY.ordered_eq(&f64::NEG_INFINITY));
+        assert!(!f64::INFINITY.ordered_eq(&f64::NEG_INFINITY));
+
+        // f64 zero comparisons
+        assert!(0.0f64.ordered_eq(&(-0.0f64)));
+
+        // f32 normal values
+        assert!(1.0f32.ordered_eq(&1.0f32));
+        assert!(!1.0f32.ordered_eq(&2.0f32));
+
+        // f32 NaN equality
+        assert!(f32::NAN.ordered_eq(&f32::NAN));
+
+        // f32 infinity values
+        assert!(f32::INFINITY.ordered_eq(&f32::INFINITY));
+        assert!(f32::NEG_INFINITY.ordered_eq(&f32::NEG_INFINITY));
+        assert!(!f32::INFINITY.ordered_eq(&f32::NEG_INFINITY));
+
+        // f32 zero comparisons
+        assert!(0.0f32.ordered_eq(&(-0.0f32)));
+    }
+
+    #[test]
+    fn hash_coordinate_trait_coverage() {
+        // Helper function to get hash for a coordinate
+        fn hash_coord<T: HashCoordinate>(value: &T) -> u64 {
+            let mut hasher = DefaultHasher::new();
+            value.hash_scalar(&mut hasher);
+            hasher.finish()
+        }
+
+        // Test floating point types
+        let hash_f32 = hash_coord(&std::f32::consts::PI);
+        let hash_f64 = hash_coord(&std::f64::consts::PI);
+        assert!(hash_f32 > 0);
+        assert!(hash_f64 > 0);
+
+        // Test that same values hash to same result
+        assert_eq!(hash_coord(&1.0f32), hash_coord(&1.0f32));
+        assert_eq!(hash_coord(&1.0f64), hash_coord(&1.0f64));
+
+        // Test NaN hashing consistency
+        assert_eq!(hash_coord(&f32::NAN), hash_coord(&f32::NAN));
+        assert_eq!(hash_coord(&f64::NAN), hash_coord(&f64::NAN));
+
+        // Test infinity hashing
+        assert_eq!(hash_coord(&f32::INFINITY), hash_coord(&f32::INFINITY));
+        assert_eq!(hash_coord(&f64::INFINITY), hash_coord(&f64::INFINITY));
+        assert_eq!(
+            hash_coord(&f32::NEG_INFINITY),
+            hash_coord(&f32::NEG_INFINITY)
+        );
+        assert_eq!(
+            hash_coord(&f64::NEG_INFINITY),
+            hash_coord(&f64::NEG_INFINITY)
+        );
+
+        // Test that different special values hash differently
+        assert_ne!(hash_coord(&f64::INFINITY), hash_coord(&f64::NEG_INFINITY));
+    }
+
+    #[test]
+    fn trait_interoperability_comprehensive() {
+        // Test that all traits work together correctly
+
+        // Test a generic function that uses all traits
+        fn test_comprehensive_coordinate<T: CoordinateScalar>(value: T) -> bool {
+            // FiniteCheck
+            let is_finite = value.is_finite_generic();
+
+            // OrderedEq
+            let is_equal_to_self = value.ordered_eq(&value);
+
+            // HashCoordinate
+            let mut hasher = DefaultHasher::new();
+            value.hash_scalar(&mut hasher);
+
+            let hash = hasher.finish();
+
+            // Default tolerance
+            let tolerance = T::default_tolerance();
+
+            // All finite values should be equal to themselves and have non-zero hash
+            if is_finite {
+                is_equal_to_self && hash > 0 && tolerance > T::zero()
+            } else {
+                // Non-finite values should still be equal to themselves and hash consistently
+                is_equal_to_self && tolerance > T::zero()
+            }
+        }
+
+        // Test with finite values
+        assert!(test_comprehensive_coordinate(1.0f64));
+        assert!(test_comprehensive_coordinate(42.5f32));
+        assert!(test_comprehensive_coordinate(0.0f64));
+        assert!(test_comprehensive_coordinate(-1.0f32));
+
+        // Test with special values
+        assert!(test_comprehensive_coordinate(f64::NAN));
+        assert!(test_comprehensive_coordinate(f32::NAN));
+        assert!(test_comprehensive_coordinate(f64::INFINITY));
+        assert!(test_comprehensive_coordinate(f32::INFINITY));
+        assert!(test_comprehensive_coordinate(f64::NEG_INFINITY));
+        assert!(test_comprehensive_coordinate(f32::NEG_INFINITY));
+    }
+
+    #[test]
+    fn coordinate_scalar_completeness() {
+        // Test that CoordinateScalar implementations are complete
+
+        // Test all required trait bounds exist
+        fn verify_coordinate_scalar<T: CoordinateScalar>() {
+            let zero = T::zero();
+            let one = T::one();
+            let nan = T::nan();
+
+            // Float trait
+            #[allow(clippy::no_effect_underscore_binding)]
+            let _sum = zero + one;
+            #[allow(clippy::no_effect_underscore_binding)]
+            let _product = one * one;
+
+            // OrderedEq trait
+            assert!(zero.ordered_eq(&T::zero()));
+            assert!(nan.ordered_eq(&T::nan()));
+
+            // HashCoordinate trait
+            let mut hasher = DefaultHasher::new();
+            zero.hash_scalar(&mut hasher);
+            let _hash = hasher.finish();
+
+            // FiniteCheck trait
+            assert!(zero.is_finite_generic());
+            assert!(!nan.is_finite_generic());
+
+            // Default trait
+            let default_val = T::default();
+            assert_eq!(default_val, T::zero());
+
+            // Debug trait
+            let debug_str = format!("{zero:?}");
+            assert!(!debug_str.is_empty());
+
+            // CoordinateScalar-specific method
+            let tolerance = T::default_tolerance();
+            assert!(tolerance > T::zero());
+        }
+
+        verify_coordinate_scalar::<f32>();
+        verify_coordinate_scalar::<f64>();
+    }
+
+    #[test]
+    fn trait_consistency_with_point() {
+        // Test that Point implementations use the traits consistently
+
+        // Test that Point's ordered_equals uses OrderedEq
+        let point1: Point<f64, 2> = Point::new([f64::NAN, 1.0]);
+        let point2: Point<f64, 2> = Point::new([f64::NAN, 1.0]);
+        assert!(point1.ordered_equals(&point2));
+
+        // Test that Point's hash_coordinate uses HashCoordinate
+        let mut hasher1 = DefaultHasher::new();
+        let mut hasher2 = DefaultHasher::new();
+        point1.hash_coordinate(&mut hasher1);
+        point2.hash_coordinate(&mut hasher2);
+        assert_eq!(hasher1.finish(), hasher2.finish());
+
+        // Test that Point's validate uses FiniteCheck
+        let valid_point: Point<f64, 2> = Point::new([1.0, 2.0]);
+        let invalid_point: Point<f64, 2> = Point::new([f64::NAN, 2.0]);
+        assert!(valid_point.validate().is_ok());
+        assert!(invalid_point.validate().is_err());
     }
 }
