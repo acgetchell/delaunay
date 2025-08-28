@@ -49,7 +49,7 @@ expand_squashed_prs() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         # Check if this line contains a commit SHA that might be from a squashed PR
         # Handle both "- **title** [`sha`]" and "- title (#PR) [`sha`]" patterns
-        if [[ "$line" =~ -\ \*\*.*\*\*.*\[\`([a-f0-9]{7})\`\] ]] || [[ "$line" =~ -\ .*\(#[0-9]+\)\ \[\`([a-f0-9]{7})\`\] ]]; then
+        if [[ "$line" =~ -\ \*\*.*\*\*.*\[\`([a-f0-9]{7,40})\`\] ]] || [[ "$line" =~ -\ .*\(#[0-9]+\)\ \[\`([a-f0-9]{7,40})\`\] ]]; then
             commit_sha="${BASH_REMATCH[1]}"
             
             # Get the full commit message to check if it's a squashed PR
