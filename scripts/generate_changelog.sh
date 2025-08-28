@@ -22,6 +22,26 @@ expand_squashed_prs() {
     
     echo "Expanding squashed PR commits with enhanced body parsing..."
     
+    # Detect repository URL from git remote origin
+    local repo_url
+    repo_url=$(git remote get-url origin 2>/dev/null || echo "")
+    if [[ -z "$repo_url" ]]; then
+        echo "Warning: Could not detect git remote origin URL. Using default GitHub format."
+        repo_url="https://github.com/acgetchell/delaunay"
+    else
+        # Convert SSH URLs to HTTPS format and clean up
+        if [[ "$repo_url" =~ ^git@github\.com:(.+)\.git$ ]]; then
+            repo_url="https://github.com/${BASH_REMATCH[1]}"
+        elif [[ "$repo_url" =~ ^https://github\.com/(.+)\.git$ ]]; then
+            repo_url="https://github.com/${BASH_REMATCH[1]}"
+        elif [[ "$repo_url" =~ ^https://github\.com/(.+)$ ]]; then
+            repo_url="https://github.com/${BASH_REMATCH[1]}"
+        fi
+        # Remove trailing slash if present
+        repo_url="${repo_url%/}"
+    fi
+    echo "  Using repository URL: $repo_url"
+    
     # Create temporary file for processing
     local temp_file="${output_file}.expand_temp"
     
@@ -42,7 +62,7 @@ expand_squashed_prs() {
                 git --no-pager show "$commit_sha" --format="%B" --no-patch > "$commit_msg_file"
                 
                 # Enhanced commit parsing with better body handling - output only bullet points
-                awk -v commit_sha="$commit_sha" '
+                awk -v commit_sha="$commit_sha" -v repo_url="$repo_url" '
                 BEGIN {
                     in_entry = 0
                     entry_title = ""
@@ -166,8 +186,8 @@ expand_squashed_prs() {
                         if (!first_entry) print ""
                         first_entry = 0
                         
-                        # Output title with commit SHA link
-                        print "- **" entry_title "** [\`" commit_sha "\`](https://github.com/acgetchell/delaunay/commit/" commit_sha ")"
+                        # Output title with commit SHA link using dynamic repo URL
+                        print "- **" entry_title "** [\`" commit_sha "\`](" repo_url "/commit/" commit_sha ")"
                         
                         # Output body with proper indentation
                         if (entry_body != "") {
@@ -277,22 +297,33 @@ def process_and_output_categorized_entries(entries, output_lines, add_section_br
                not 'adds' in commit_line.split()[0])):
             removed_entries.append(entry)
         
+        # CHANGED: Changes to existing functionality (includes MSRV bumps, refactoring, updates)
+        # Check this BEFORE Fixed section to prioritize MSRV bumps as changes
+        elif (entry.startswith('- **Bump') or entry.startswith('- **Update') or
+              entry.startswith('- **Refactor') or entry.startswith('- **Change') or
+              'msrv' in commit_line or 'minimum supported rust version' in commit_line or
+              ('bump' in commit_line and ('version' in commit_line or 'msrv' in commit_line or 'rust' in commit_line)) or
+              'refactor' in commit_line or 'update' in commit_line):
+            changed_entries.append(entry)
+        
         # FIXED: Bug fixes, robustness improvements, and error handling
+        # Exclude entries that contain 'bump' + version/msrv/rust to avoid misclassification
         elif (entry.startswith('- **Fix') or '**Bug' in entry or
               '**Patch' in entry or '**Resolve' in entry or
               'fixes ' in commit_line or 'fixed ' in commit_line or
               'bug' in commit_line or 'patch' in commit_line or
               'addresses' in commit_line and ('error' in commit_line or 'issue' in commit_line or 'problem' in commit_line) or
-              'robustness' in commit_line or 'stability' in commit_line or
+              ('robustness' in commit_line and not ('bump' in commit_line and ('version' in commit_line or 'msrv' in commit_line or 'rust' in commit_line))) or
+              'stability' in commit_line or
               'fallback' in commit_line or 'degenerate' in commit_line or
               'precision' in commit_line or 'numerical' in commit_line or
               'error handling' in commit_line or 'consistency check' in commit_line or
-              entry.count('**') == 2 and any(word in commit_line for word in 
+              (entry.count('**') == 2 and any(word in commit_line for word in 
                 ['fix ', 'fixes ', 'fixed ', 'bug', 'patch', 'resolve', 'error', 'issue', 
-                 'robust', 'stability', 'fallback', 'degenerate', 'precision'])):
+                 'fallback', 'degenerate', 'precision']) and not ('bump' in commit_line and ('version' in commit_line or 'msrv' in commit_line or 'rust' in commit_line)))):
             fixed_entries.append(entry)
         
-        # CHANGED: Changes to existing functionality (default fallback)
+        # Default fallback for anything else
         else:
             changed_entries.append(entry)
     
@@ -361,6 +392,7 @@ with open('$input_file', 'r') as f:
 output_lines = []
 in_changes_section = False
 in_fixed_issues = False
+in_merged_prs_section = False
 added_section = False
 changed_section = False
 deprecated_section = False
@@ -377,8 +409,9 @@ def add_section_break():
 # Collect entries to categorize
 categorize_entries_list = []
 
-for line_index, line in enumerate(lines):
-    line = line.rstrip()
+line_index = 0
+while line_index < len(lines):
+    line = lines[line_index].rstrip()
     
     # Track when we enter Changes section (from template)
     if re.match(r'^### *Changes$', line):
@@ -397,6 +430,7 @@ for line_index, line in enumerate(lines):
         fixed_section = False
         security_section = False
         # Skip the original Changes header - we'll create proper sections
+        line_index += 1
         continue
     
     # Track when we enter Fixed Issues section (from template)
@@ -408,6 +442,7 @@ for line_index, line in enumerate(lines):
             
         in_fixed_issues = True
         in_changes_section = False
+        in_merged_prs_section = False
         # Reset section flags for this release
         added_section = False
         changed_section = False
@@ -416,10 +451,26 @@ for line_index, line in enumerate(lines):
         fixed_section = False
         security_section = False
         # Skip the original Fixed Issues header - we'll create proper sections
+        line_index += 1
+        continue
+    
+    # Track when we enter Merged Pull Requests section
+    elif re.match(r'^### *Merged Pull Requests$', line):
+        # Process any pending entries from previous section
+        if categorize_entries_list:
+            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            categorize_entries_list = []
+            
+        in_merged_prs_section = True
+        in_changes_section = False
+        in_fixed_issues = False
+        # Add the Merged Pull Requests header to output (we keep this section)
+        output_lines.append(line)
+        line_index += 1
         continue
     
     # Process collected entries before starting a new release or ending
-    elif ((re.match(r'^## ', line) and (in_changes_section or in_fixed_issues)) or 
+    elif ((re.match(r'^## ', line) and (in_changes_section or in_fixed_issues or in_merged_prs_section)) or 
           (line_index == len(lines) - 1)):
         
         # Process any pending entries
@@ -430,6 +481,7 @@ for line_index, line in enumerate(lines):
         # Stop processing current section
         in_changes_section = False
         in_fixed_issues = False
+        in_merged_prs_section = False
         
         # Add the release header to output if it's a new release
         if re.match(r'^## ', line):
@@ -445,6 +497,7 @@ for line_index, line in enumerate(lines):
         else:
             # Not a release header, add normally
             output_lines.append(line)
+        line_index += 1
     
     # Process commit lines in Changes or Fixed Issues sections
     elif (in_changes_section or in_fixed_issues) and re.match(r'^- \*\*', line):
@@ -470,12 +523,14 @@ for line_index, line in enumerate(lines):
         continue
     
     else:
-        # Skip PR description content (indented lines after Merged Pull Requests)
-        if re.match(r'^  ', line):  # Lines starting with 2+ spaces (PR descriptions)
-            continue  # Skip PR description lines
+        # Skip PR description content (indented lines ONLY within Merged Pull Requests section)
+        if in_merged_prs_section and re.match(r'^  ', line):  # Lines starting with 2+ spaces (PR descriptions)
+            line_index += 1
+            continue  # Skip PR description lines only in Merged PRs section
         
-        # Print all other lines normally (headers, merged PRs, etc.)
+        # Print all other lines normally (headers, merged PRs, legitimate indented content, etc.)
         output_lines.append(line)
+        line_index += 1
 
 # Write the output file
 with open('$output_file', 'w') as f:
