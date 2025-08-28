@@ -53,7 +53,7 @@ expand_squashed_prs() {
             commit_sha="${BASH_REMATCH[1]}"
             
             # Get the full commit message to check if it's a squashed PR
-            if git --no-pager show "$commit_sha" --format="%s" --no-patch 2>/dev/null | grep -q "(#[0-9]\+)$"; then
+            if git --no-pager show "$commit_sha" --format="%s" --no-patch 2>/dev/null | grep -E -q "\(#[0-9]+\)$"; then
                 echo "  Found squashed PR commit: $commit_sha"
                 
                 # Get the full commit message including body
@@ -134,9 +134,8 @@ expand_squashed_prs() {
                         }
                     } else {
                         # Non-blank line - clean and add to body
+                        # Preserve leading whitespace to keep Markdown code blocks/lists intact
                         line_content = $0
-                        # Remove leading whitespace but preserve relative indentation
-                        gsub(/^[ \t]+/, "", line_content)
                         
                         if (entry_body == "") {
                             entry_body = line_content
@@ -166,8 +165,8 @@ expand_squashed_prs() {
                                 entry_body = entry_body "\n\n"
                             }
                         } else {
+                            # Preserve leading whitespace to keep Markdown code blocks/lists intact
                             line_content = $0
-                            gsub(/^[ \t]+/, "", line_content)
                             
                             if (entry_body == "") {
                                 entry_body = line_content
@@ -197,8 +196,24 @@ expand_squashed_prs() {
                                 num_paragraphs = split(entry_body, paragraphs, /\n[ \t]*\n/)
                                 for (i = 1; i <= num_paragraphs; i++) {
                                     para = paragraphs[i]
-                                    gsub(/^[ \t]+|[ \t]+$/, "", para)
+                                    # Check for special content BEFORE stripping whitespace
+                                    preserve_indent = (para ~ /^[ \t]*( {4}|\t)/ || para ~ /`{3}/ || para ~ /\[[^\]]+\]\([^)]*\)|https?:\/\/\S+/)
+                                    
+                                    if (!preserve_indent) {
+                                        # Only strip whitespace for normal text
+                                        gsub(/^[ \t]+|[ \t]+$/, "", para)
+                                    } else {
+                                        # For code/structured content, only strip trailing whitespace
+                                        gsub(/[ \t]+$/, "", para)
+                                    }
+                                    
                                     if (length(para) > 0) {
+                                        # Skip wrapping for code blocks or lines with links/inline code
+                                        if (preserve_indent) {
+                                            print "  " para
+                                            if (i < num_paragraphs) print ""
+                                            continue
+                                        }
                                         # Word wrap long paragraphs
                                         while (length(para) > 0) {
                                             if (length(para) <= 75) {
@@ -264,7 +279,7 @@ import sys
 import re
 
 # Function to categorize and output entries
-def process_and_output_categorized_entries(entries, output_lines, add_section_break):
+def process_and_output_categorized_entries(entries, output_lines):
     if not entries:
         return
         
@@ -393,18 +408,6 @@ output_lines = []
 in_changes_section = False
 in_fixed_issues = False
 in_merged_prs_section = False
-added_section = False
-changed_section = False
-deprecated_section = False
-removed_section = False
-fixed_section = False
-security_section = False
-
-def add_section_break():
-    global output_lines
-    # Always add a blank line before a new section if there are existing sections
-    if added_section or changed_section or deprecated_section or removed_section or fixed_section or security_section:
-        output_lines.append('')
 
 # Collect entries to categorize
 categorize_entries_list = []
@@ -417,18 +420,11 @@ while line_index < len(lines):
     if re.match(r'^### *(Changes|Changed)$', line):
         # Process any pending entries from previous section
         if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            process_and_output_categorized_entries(categorize_entries_list, output_lines)
             categorize_entries_list = []
             
         in_changes_section = True
         in_fixed_issues = False
-        # Reset section flags for this release
-        added_section = False
-        changed_section = False
-        deprecated_section = False
-        removed_section = False
-        fixed_section = False
-        security_section = False
         # Skip the original Changes header - we'll create proper sections
         line_index += 1
         continue
@@ -437,19 +433,12 @@ while line_index < len(lines):
     elif re.match(r'^### *(Fixed|Fixed Issues)$', line):
         # Process any pending entries from previous section
         if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            process_and_output_categorized_entries(categorize_entries_list, output_lines)
             categorize_entries_list = []
             
         in_fixed_issues = True
         in_changes_section = False
         in_merged_prs_section = False
-        # Reset section flags for this release
-        added_section = False
-        changed_section = False
-        deprecated_section = False
-        removed_section = False
-        fixed_section = False
-        security_section = False
         # Skip the original Fixed Issues header - we'll create proper sections
         line_index += 1
         continue
@@ -458,19 +447,12 @@ while line_index < len(lines):
     elif re.match(r'^### *Added$', line):
         # Process any pending entries from previous section
         if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            process_and_output_categorized_entries(categorize_entries_list, output_lines)
             categorize_entries_list = []
             
         in_changes_section = True  # Treat as changes section for processing
         in_fixed_issues = False
         in_merged_prs_section = False
-        # Reset section flags for this release
-        added_section = False
-        changed_section = False
-        deprecated_section = False
-        removed_section = False
-        fixed_section = False
-        security_section = False
         # Skip the original Added header - we'll create proper sections
         line_index += 1
         continue
@@ -479,19 +461,12 @@ while line_index < len(lines):
     elif re.match(r'^### *Removed$', line):
         # Process any pending entries from previous section
         if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            process_and_output_categorized_entries(categorize_entries_list, output_lines)
             categorize_entries_list = []
             
         in_changes_section = True  # Treat as changes section for processing
         in_fixed_issues = False
         in_merged_prs_section = False
-        # Reset section flags for this release
-        added_section = False
-        changed_section = False
-        deprecated_section = False
-        removed_section = False
-        fixed_section = False
-        security_section = False
         # Skip the original Removed header - we'll create proper sections
         line_index += 1
         continue
@@ -500,19 +475,12 @@ while line_index < len(lines):
     elif re.match(r'^### *Deprecated$', line):
         # Process any pending entries from previous section
         if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            process_and_output_categorized_entries(categorize_entries_list, output_lines)
             categorize_entries_list = []
             
         in_changes_section = True  # Treat as changes section for processing
         in_fixed_issues = False
         in_merged_prs_section = False
-        # Reset section flags for this release
-        added_section = False
-        changed_section = False
-        deprecated_section = False
-        removed_section = False
-        fixed_section = False
-        security_section = False
         # Skip the original Deprecated header - we'll create proper sections
         line_index += 1
         continue
@@ -521,19 +489,12 @@ while line_index < len(lines):
     elif re.match(r'^### *Security$', line):
         # Process any pending entries from previous section
         if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            process_and_output_categorized_entries(categorize_entries_list, output_lines)
             categorize_entries_list = []
             
         in_changes_section = True  # Treat as changes section for processing
         in_fixed_issues = False
         in_merged_prs_section = False
-        # Reset section flags for this release
-        added_section = False
-        changed_section = False
-        deprecated_section = False
-        removed_section = False
-        fixed_section = False
-        security_section = False
         # Skip the original Security header - we'll create proper sections
         line_index += 1
         continue
@@ -542,7 +503,7 @@ while line_index < len(lines):
     elif re.match(r'^### *Merged Pull Requests$', line):
         # Process any pending entries from previous section
         if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            process_and_output_categorized_entries(categorize_entries_list, output_lines)
             categorize_entries_list = []
             
         in_merged_prs_section = True
@@ -559,7 +520,7 @@ while line_index < len(lines):
         
         # Process any pending entries
         if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines, add_section_break)
+            process_and_output_categorized_entries(categorize_entries_list, output_lines)
             categorize_entries_list = []
             
         # Stop processing current section
@@ -569,13 +530,6 @@ while line_index < len(lines):
         
         # Add the release header to output if it's a new release
         if re.match(r'^## ', line):
-            # Reset section flags for new release
-            added_section = False
-            changed_section = False
-            deprecated_section = False
-            removed_section = False
-            fixed_section = False
-            security_section = False
             output_lines.append('')  # Add blank line before new release
             output_lines.append(line)
         else:
