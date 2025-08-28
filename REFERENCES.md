@@ -19,7 +19,7 @@ processed by GitHub and other platforms.
 
 ```text
 Adam Getchell. 2025. delaunay: A d-dimensional Delaunay triangulation library.
-Version 0.4.0. Zenodo. DOI: https://doi.org/10.5281/zenodo.16931097
+Zenodo. DOI: https://doi.org/10.5281/zenodo.16931097
 ```
 
 For BibTeX, APA, or other citation formats, please refer to the [CITATION.cff](CITATION.cff) file or use
@@ -38,7 +38,8 @@ This section contains the foundational algorithms and data structures that form 
 
 ### Data Structures and Implementation References
 
-- [CGAL Triangulation Documentation](https://doc.cgal.org/latest/Triangulation/index.html)
+- The CGAL Project. "CGAL User and Reference Manual." CGAL Editorial Board, 6.0.1 edition, 2024.
+  Available at: <https://doc.cgal.org/6.0.1/Manual/packages.html>
 - de Berg, M., et al. "Computational Geometry: Algorithms and Applications." 3rd ed. Berlin: Springer-Verlag, 2008.
   DOI: [10.1007/978-3-540-77974-2](https://doi.org/10.1007/978-3-540-77974-2)
 
@@ -46,8 +47,10 @@ This section contains the foundational algorithms and data structures that form 
 
 - Preparata, Franco P., and Michael Ian Shamos. "Computational Geometry: An Introduction."
   Texts and Monographs in Computer Science. New York: Springer-Verlag, 1985.
+  DOI: [10.1007/978-1-4612-1098-6](https://doi.org/10.1007/978-1-4612-1098-6)
 - Edelsbrunner, Herbert. "Algorithms in Combinatorial Geometry."
   EATCS Monographs on Theoretical Computer Science. Berlin: Springer-Verlag, 1987.
+  DOI: [10.1007/978-3-642-61568-9](https://doi.org/10.1007/978-3-642-61568-9)
 
 ## Geometric Predicates and Numerical Robustness
 

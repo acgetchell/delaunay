@@ -489,7 +489,7 @@ processed by GitHub and academic tools. For the most up-to-date citation informa
 
 ```text
 Adam Getchell. 2025. delaunay: A d-dimensional Delaunay triangulation library.
-Version 0.4.0. Zenodo. DOI: https://doi.org/10.5281/zenodo.16931097
+Zenodo. DOI: https://doi.org/10.5281/zenodo.16931097
 ```
 
 #### Adding Academic References
@@ -501,7 +501,7 @@ When contributing algorithmic improvements or new features based on academic lit
 3. **Include DOI links**: When available, provide DOI URLs for easy access
 4. **Categorize appropriately**: Place references under relevant sections:
    - Core Delaunay Triangulation Algorithms and Data Structures
-   - Geometric Predicates and Numerical Robustness  
+   - Geometric Predicates and Numerical Robustness
    - Convex Hull Algorithms
    - Advanced Computational Geometry Topics
 

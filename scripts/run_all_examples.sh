@@ -39,13 +39,13 @@ cd "${PROJECT_ROOT}"
 echo "Running all examples for delaunay project..."
 echo "=============================================="
 
-# Automatically discover all examples from the examples directory
+# Automatically discover all examples from the examples directory (sorted for deterministic order)
 all_examples=()
 while IFS= read -r -d '' file; do
     # Extract filename without path and .rs extension
     example_name=$(basename "$file" .rs)
     all_examples+=("$example_name")
-done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print0)
+done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print0 | sort -z)
 
 # Define special example that needs special handling
 special_example="test_circumsphere"

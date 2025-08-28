@@ -292,53 +292,108 @@ def process_and_output_categorized_entries(entries, output_lines):
     security_entries = []
     
     for entry in entries:
-        commit_line = entry.lower()
+        # Normalize for consistent matching
+        entry_lower = entry.lower()
+        title_text = ''
         
-        # ADDED: New features, new functionality (check first to prioritize)
-        if (entry.startswith('- **Add') or entry.startswith('- **Implement') or 
-            entry.startswith('- **Introduce') or entry.startswith('- **New') or
-            '**Adds ' in entry or '**Added ' in entry or '**Implementing ' in entry or
-            '**feat: Add' in entry or '**feat: Implement' in entry or
-            'add new' in commit_line or 'adds new' in commit_line or
-            entry.count('**') == 2 and any(word in commit_line for word in 
-                ['add ', 'adds ', 'implement', 'introduce', 'new feature'])):
+        # Extract just the commit title (between first ** and second **)
+        title_match = re.search(r'\*\*(.*?)\*\*', entry)
+        if title_match:
+            title_text = title_match.group(1).lower().strip()
+        
+        # Define deterministic categorization rules based on commit title patterns
+        # Use exact word boundary matching to avoid false positives
+        
+        category = 'changed'  # Default fallback
+        
+        # ADDED: New features, functionality, content (highest priority)
+        added_patterns = [
+            r'\badd\b(?!itional)',  # 'add' but not 'additional'
+            r'\badds\b',
+            r'\badding\b',
+            r'\bimplement\b',
+            r'\bimplements\b',
+            r'\bimplementing\b',
+            r'\bintroduce\b',
+            r'\bintroduces\b',
+            r'\bintroducing\b',
+            r'^new\b',
+            r'\bnew feature\b',
+            r'\bnew functionality\b',
+            r'^feat:\s*add\b',
+            r'^feat:\s*implement\b'
+        ]
+        
+        if any(re.search(pattern, title_text) for pattern in added_patterns):
+            category = 'added'
+            
+        # REMOVED: Functionality removal (check before Changed to avoid conflicts)
+        elif any(re.search(pattern, title_text) for pattern in [
+            r'\bremove\b', r'\bremoves\b', r'\bremoving\b',
+            r'\bdelete\b', r'\bdeletes\b', r'\bdeleting\b',
+            r'\bdrop\b', r'\bdrops\b', r'\bdropping\b',
+            r'\beliminate\b', r'\beliminates\b'
+        ]):
+            category = 'removed'
+            
+        # FIXED: Bug fixes, robustness, error handling (check before Changed)
+        elif any(re.search(pattern, title_text) for pattern in [
+            r'\bfix\b', r'\bfixes\b', r'\bfixing\b',
+            r'\bbug\b', r'\bbugs\b',
+            r'\bpatch\b',
+            r'\bresolve\b', r'\bresolves\b',
+            r'\baddress\b.*\b(error|issue|problem)\b',
+            r'\brobustness\b',
+            r'\bstability\b',
+            r'\bfallback\b',
+            r'\bdegenerate\b',
+            r'\bprecision\b',
+            r'\bnumerical\b',
+            r'\berror handling\b',
+            r'\bconsistency check\b'
+        ]):
+            category = 'fixed'
+            
+        # CHANGED: Modifications to existing functionality
+        elif any(re.search(pattern, title_text) for pattern in [
+            r'\bupdate\b', r'\bupdates\b', r'\bupdating\b',
+            r'\brefactor\b', r'\brefactors\b', r'\brefactoring\b',
+            r'\bchange\b', r'\bchanges\b', r'\bchanging\b',
+            r'\bbump\b',
+            r'\bmodify\b', r'\bmodifies\b', r'\bmodifying\b',
+            r'\bimprove\b', r'\bimproves\b', r'\bimproving\b',
+            r'\benhance\b', r'\benhances\b', r'\benhancing\b',
+            r'\bmsrv\b',
+            r'\bminimum supported rust version\b'
+        ]):
+            category = 'changed'
+            
+        # DEPRECATED: Deprecation notices
+        elif any(re.search(pattern, title_text) for pattern in [
+            r'\bdeprecate\b', r'\bdeprecates\b', r'\bdeprecating\b',
+            r'\bdeprecated\b'
+        ]):
+            category = 'deprecated'
+            
+        # SECURITY: Security-related changes
+        elif any(re.search(pattern, title_text) for pattern in [
+            r'\bsecurity\b',
+            r'\bvulnerability\b', r'\bvulnerabilities\b',
+            r'\bexploit\b', r'\bexploits\b'
+        ]):
+            category = 'security'
+        
+        # Assign to appropriate category list
+        if category == 'added':
             added_entries.append(entry)
-        
-        # REMOVED: Removed functionality (be very specific to avoid false positives)
-        elif (entry.startswith('- **Remove') or entry.startswith('- **Delete') or
-              entry.startswith('- **Drop') or '**Removes ' in entry or
-              '**Deleted ' in entry or '**Dropped ' in entry or
-              (any(word in commit_line for word in ['remove ', 'removes ', 'removed ', 'delete ', 'deletes ', 'deleted ', 'drop ', 'drops ', 'dropped ']) and 
-               not 'adds' in commit_line.split()[0])):
+        elif category == 'removed':
             removed_entries.append(entry)
-        
-        # CHANGED: Changes to existing functionality (includes MSRV bumps, refactoring, updates)
-        # Check this BEFORE Fixed section to prioritize MSRV bumps as changes
-        elif (entry.startswith('- **Bump') or entry.startswith('- **Update') or
-              entry.startswith('- **Refactor') or entry.startswith('- **Change') or
-              'msrv' in commit_line or 'minimum supported rust version' in commit_line or
-              ('bump' in commit_line and ('version' in commit_line or 'msrv' in commit_line or 'rust' in commit_line)) or
-              'refactor' in commit_line or 'update' in commit_line):
-            changed_entries.append(entry)
-        
-        # FIXED: Bug fixes, robustness improvements, and error handling
-        # Exclude entries that contain 'bump' + version/msrv/rust to avoid misclassification
-        elif (entry.startswith('- **Fix') or '**Bug' in entry or
-              '**Patch' in entry or '**Resolve' in entry or
-              'fixes ' in commit_line or 'fixed ' in commit_line or
-              'bug' in commit_line or 'patch' in commit_line or
-              'addresses' in commit_line and ('error' in commit_line or 'issue' in commit_line or 'problem' in commit_line) or
-              ('robustness' in commit_line and not ('bump' in commit_line and ('version' in commit_line or 'msrv' in commit_line or 'rust' in commit_line))) or
-              'stability' in commit_line or
-              'fallback' in commit_line or 'degenerate' in commit_line or
-              'precision' in commit_line or 'numerical' in commit_line or
-              'error handling' in commit_line or 'consistency check' in commit_line or
-              (entry.count('**') == 2 and any(word in commit_line for word in 
-                ['fix ', 'fixes ', 'fixed ', 'bug', 'patch', 'resolve', 'error', 'issue', 
-                 'fallback', 'degenerate', 'precision']) and not ('bump' in commit_line and ('version' in commit_line or 'msrv' in commit_line or 'rust' in commit_line)))):
+        elif category == 'fixed':
             fixed_entries.append(entry)
-        
-        # Default fallback for anything else
+        elif category == 'deprecated':
+            deprecated_entries.append(entry)
+        elif category == 'security':
+            security_entries.append(entry)
         else:
             changed_entries.append(entry)
     

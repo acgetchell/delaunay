@@ -425,6 +425,7 @@ hardware_info=$(get_hardware_info)
 - Provides hardware compatibility warnings for benchmark comparisons
 
 **Dependencies**:
+
 - macOS: `sysctl`, `bc` (via Homebrew: `brew install bc`)
 - Linux: `bc` (via apt: `sudo apt-get install bc`)
 - Windows: `wmic` or PowerShell (`pwsh`/`powershell`)

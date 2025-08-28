@@ -238,7 +238,7 @@ fn requires_clone<U: Clone>() {}
 // fn requires_default<U: Default>() {} // This would NOT compile with just Float
 ```
 
-**Run with:** `cargo run --example check_float_traits`
+**Run with:** `cargo run --release --example check_float_traits`
 
 ### 7. Memory Allocation Testing API (`test_alloc_api.rs`)
 
