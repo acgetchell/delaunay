@@ -37,7 +37,8 @@ expand_squashed_prs() {
                 echo "  Found squashed PR commit: $commit_sha"
                 
                 # Get the full commit message including body
-                local commit_msg_file="$(mktemp)"
+                local commit_msg_file
+                commit_msg_file="$(mktemp)"
                 git --no-pager show "$commit_sha" --format="%B" --no-patch > "$commit_msg_file"
                 
                 # Enhanced commit parsing with better body handling
@@ -166,15 +167,15 @@ expand_squashed_prs() {
                         first_entry = 0
                         
                         # Output title
-                        print "- **" tolower(entry_title) "**"
+                        print "- **" entry_title "**"
                         
                         # Output body with proper indentation
                         if (entry_body != "") {
                             gsub(/^[ \t]+|[ \t]+$/, "", entry_body)
                             if (length(entry_body) > 0) {
                                 # Split body into paragraphs and format each
-                                split(entry_body, paragraphs, /\n[ \t]*\n/)
-                                for (i = 1; i <= length(paragraphs); i++) {
+                                num_paragraphs = split(entry_body, paragraphs, /\n[ \t]*\n/)
+                                for (i = 1; i <= num_paragraphs; i++) {
                                     para = paragraphs[i]
                                     gsub(/^[ \t]+|[ \t]+$/, "", para)
                                     if (length(para) > 0) {
@@ -198,7 +199,7 @@ expand_squashed_prs() {
                                         }
                                         
                                         # Add blank line between paragraphs
-                                        if (i < length(paragraphs)) print ""
+                                        if (i < num_paragraphs) print ""
                                     }
                                 }
                             }
@@ -298,7 +299,7 @@ for line in lines:
         in_fixed_issues = False
     
     # Process commit lines in Changes or Fixed Issues sections
-    elif (in_changes_section or in_fixed_issues) and re.match(r'^- \\*\\*', line):
+    elif (in_changes_section or in_fixed_issues) and re.match(r'^- \*\*', line):
         # Determine category based on commit content and keywords
         commit_line = line.lower()
         

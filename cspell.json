@@ -114,6 +114,7 @@
         "RLENGTH",
         "RSTART",
         "rubocop",
+        "Rustdoc",
         "RUSTDOCFLAGS",
         "rustup",
         "rustversion",
