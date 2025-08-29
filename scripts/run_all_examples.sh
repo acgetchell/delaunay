@@ -9,12 +9,63 @@ error_exit() {
     exit "$code"
 }
 
+# Help function
+show_help() {
+    cat << EOF
+run_all_examples.sh - Run all examples in the delaunay project
+
+USAGE:
+    ./scripts/run_all_examples.sh [OPTIONS]
+
+DESCRIPTION:
+    This script automatically discovers and runs all examples in the examples/
+    directory. All examples are executed in release mode (--release) for optimal
+    performance.
+
+    The script handles special examples that require additional test parameters,
+    such as test_circumsphere which runs multiple comprehensive test suites.
+
+OPTIONS:
+    -h, --help     Show this help message and exit
+
+EXAMPLES:
+    # Run all examples
+    ./scripts/run_all_examples.sh
+
+    # Show help
+    ./scripts/run_all_examples.sh --help
+
+NOTES:
+    - All examples run in release mode for better performance
+    - Examples are discovered automatically from the examples/ directory
+    - Output is shown in real-time as examples execute
+    - Script exits with error code if any example fails
+
+SEE ALSO:
+    examples/README.md - Detailed documentation for each example
+    cargo run --example <name> -- Run a specific example manually
+EOF
+}
+
 # Script to run all examples in the delaunay project
+
+# Parse command line arguments
+for arg in "$@"; do
+    case $arg in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            error_exit "Unknown option: $arg. Use --help for usage information."
+            ;;
+    esac
+done
 
 # Dependency checking function
 check_dependencies() {
     # Array of required commands
-    local required_commands=("cargo")
+    local required_commands=("cargo" "find" "sort")
 
     # Check each required command
     for cmd in "${required_commands[@]}"; do
@@ -39,13 +90,21 @@ cd "${PROJECT_ROOT}"
 echo "Running all examples for delaunay project..."
 echo "=============================================="
 
-# Automatically discover all examples from the examples directory (sorted for deterministic order)
+# Automatically discover all examples (deterministic order, GNU/BSD portable)
 all_examples=()
-while IFS= read -r -d '' file; do
-    # Extract filename without path and .rs extension
-    example_name=$(basename "$file" .rs)
-    all_examples+=("$example_name")
-done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print0 | sort -z)
+if sort --version >/dev/null 2>&1; then
+    # GNU sort available: use -z safely
+    while IFS= read -r -d '' file; do
+        example_name=$(basename "$file" .rs)
+        all_examples+=("$example_name")
+    done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print0 | sort -z)
+else
+    # Fallback for BSD sort: tolerate spaces; filenames in repo should not contain newlines
+    while IFS= read -r file; do
+        example_name=$(basename "$file" .rs)
+        all_examples+=("$example_name")
+    done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print | sort)
+fi
 
 # Define special example that needs special handling
 special_example="test_circumsphere"

@@ -9,3 +9,6 @@
 /cobertura.xml
 /tarpaulin*
 /benches/results
+/node_modules
+package-lock.json
+package.json

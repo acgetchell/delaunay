@@ -73,7 +73,7 @@ Before you begin, ensure you have:
 4. **Try the examples**:
 
    ```bash
-   cargo run --example triangulation_3d_50_points
+   cargo run --release --example triangulation_3d_50_points
    ./scripts/run_all_examples.sh  # Run all examples
    ```
 

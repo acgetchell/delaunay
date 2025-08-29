@@ -440,7 +440,7 @@ hardware_info=$(get_hardware_info)
 **Features**:
 
 - Automatically discovers all examples in the `examples/` directory
-- Runs simple examples with standard execution
+- Runs simple examples in release mode for representative performance
 - Provides comprehensive testing for `test_circumsphere` example
 - Creates results directory structure
 
@@ -456,7 +456,7 @@ hardware_info=$(get_hardware_info)
 - `test-all-points` - Single point tests in all dimensions
 - `debug-all` - All debug tests
 
-**Dependencies**: Requires `cargo`, `find`
+**Dependencies**: Requires `cargo`, `find`, `sort` (GNU sort preferred but not required)
 
 ---
 

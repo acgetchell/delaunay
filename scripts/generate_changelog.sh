@@ -292,8 +292,7 @@ def process_and_output_categorized_entries(entries, output_lines):
     security_entries = []
     
     for entry in entries:
-        # Normalize for consistent matching
-        entry_lower = entry.lower()
+        # Extract commit title for pattern matching
         title_text = ''
         
         # Extract just the commit title (between first ** and second **)
@@ -310,6 +309,7 @@ def process_and_output_categorized_entries(entries, output_lines):
         added_patterns = [
             r'\badd\b(?!itional)',  # 'add' but not 'additional'
             r'\badds\b',
+            r'\badded\b',
             r'\badding\b',
             r'\bimplement\b',
             r'\bimplements\b',
@@ -317,6 +317,7 @@ def process_and_output_categorized_entries(entries, output_lines):
             r'\bintroduce\b',
             r'\bintroduces\b',
             r'\bintroducing\b',
+            r'\bintroduced\b',
             r'^new\b',
             r'\bnew feature\b',
             r'\bnew functionality\b',
@@ -329,26 +330,26 @@ def process_and_output_categorized_entries(entries, output_lines):
             
         # REMOVED: Functionality removal (check before Changed to avoid conflicts)
         elif any(re.search(pattern, title_text) for pattern in [
-            r'\bremove\b', r'\bremoves\b', r'\bremoving\b',
-            r'\bdelete\b', r'\bdeletes\b', r'\bdeleting\b',
-            r'\bdrop\b', r'\bdrops\b', r'\bdropping\b',
-            r'\beliminate\b', r'\beliminates\b'
+            r'\bremove\b', r'\bremoves\b', r'\bremoving\b', r'\bremoved\b',
+            r'\bdelete\b', r'\bdeletes\b', r'\bdeleting\b', r'\bdeleted\b',
+            r'\bdrop\b', r'\bdrops\b', r'\bdropping\b', r'\bdropped\b',
+            r'\beliminate\b', r'\beliminates\b', r'\beliminating\b', r'\beliminated\b',
         ]):
             category = 'removed'
             
         # FIXED: Bug fixes, robustness, error handling (check before Changed)
         elif any(re.search(pattern, title_text) for pattern in [
-            r'\bfix\b', r'\bfixes\b', r'\bfixing\b',
+            r'\bfix\b', r'\bfixes\b', r'\bfixing\b', r'\bfixed\b',
             r'\bbug\b', r'\bbugs\b',
             r'\bpatch\b',
-            r'\bresolve\b', r'\bresolves\b',
+            r'\bresolve\b', r'\bresolves\b', r'\bresolved\b',
             r'\baddress\b.*\b(error|issue|problem)\b',
             r'\brobustness\b',
             r'\bstability\b',
-            r'\bfallback\b',
             r'\bdegenerate\b',
             r'\bprecision\b',
             r'\bnumerical\b',
+            r'\bfallback\b',
             r'\berror handling\b',
             r'\bconsistency check\b'
         ]):
@@ -363,6 +364,8 @@ def process_and_output_categorized_entries(entries, output_lines):
             r'\bmodify\b', r'\bmodifies\b', r'\bmodifying\b',
             r'\bimprove\b', r'\bimproves\b', r'\bimproving\b',
             r'\benhance\b', r'\benhances\b', r'\benhancing\b',
+            r'\boptimize\b', r'\boptimizes\b', r'\boptimizing\b',
+            r'\bperformance\b',
             r'\bmsrv\b',
             r'\bminimum supported rust version\b'
         ]):
@@ -379,7 +382,9 @@ def process_and_output_categorized_entries(entries, output_lines):
         elif any(re.search(pattern, title_text) for pattern in [
             r'\bsecurity\b',
             r'\bvulnerability\b', r'\bvulnerabilities\b',
-            r'\bexploit\b', r'\bexploits\b'
+            r'\bexploit\b', r'\bexploits\b',
+            r'\bcve-\d{4}-\d{4,7}\b',  # CVE identifiers (e.g., CVE-2023-12345)
+            r'\bdependabot\b'
         ]):
             category = 'security'
         
@@ -640,6 +645,16 @@ if ! command -v npx > /dev/null 2>&1; then
   echo "Error: npx is required to run auto-changelog, please install Node.js and npm." >&2
   echo "Visit https://nodejs.org/ to install Node.js and npm." >&2
   exit 1
+fi
+
+# Check if auto-changelog is available, install if needed
+if ! npx auto-changelog --version > /dev/null 2>&1; then
+  echo "auto-changelog not found. Installing..."
+  if ! npm install auto-changelog; then
+    echo "Error: Failed to install auto-changelog. Please run 'npm install auto-changelog' manually." >&2
+    exit 1
+  fi
+  echo "✓ auto-changelog installed successfully."
 fi
 
 # Verify configuration files exist
