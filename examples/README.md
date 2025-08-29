@@ -217,9 +217,6 @@ A technical example that validates and demonstrates which traits are included
 in the `Float` trait from `num_traits`, helping you understand the trait bounds
 used throughout the library.
 
-**Run with:** `cargo run --release --example check_float_traits`
-[View source](./check_float_traits.rs)
-
 **Key Features:**
 
 - **Trait Analysis**: Compile-time verification of traits included in `Float`
@@ -244,6 +241,7 @@ fn requires_clone<U: Clone>() {}
 ```
 
 **Run with:** `cargo run --release --example check_float_traits`
+[View source](./check_float_traits.rs)
 
 ### 7. Memory Allocation Testing API (`test_alloc_api.rs`)
 

@@ -103,7 +103,7 @@ else
     while IFS= read -r file; do
         example_name=$(basename "$file" .rs)
         all_examples+=("$example_name")
-    done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print | sort)
+    done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print | LC_ALL=C sort)
 fi
 
 # Define special example that needs special handling

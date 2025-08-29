@@ -368,7 +368,7 @@ compare_hardware(current, baseline)      # Compares two hardware configs
 
 - **macOS**: Uses `sysctl` for CPU/memory information
 - **Linux**: Parses `/proc/cpuinfo` and `/proc/meminfo`
-- **Windows**: Uses `wmic` with PowerShell fallbacks
+- **Windows**: Uses PowerShell by default (`Get-CimInstance`), with legacy `wmic` fallback
 - **Rust info**: Extracted via `rustc --version` and `rustc -vV`
 
 **Output Formats**:
@@ -428,7 +428,7 @@ hardware_info=$(get_hardware_info)
 
 - macOS: `sysctl`, `bc` (via Homebrew: `brew install bc`)
 - Linux: `bc` (via apt: `sudo apt-get install bc`)
-- Windows: `wmic` or PowerShell (`pwsh`/`powershell`)
+- Windows: PowerShell (`pwsh` or `powershell`) preferred, legacy `wmic` as fallback
 - All platforms: `rustc` for Rust toolchain info
 
 ---
@@ -562,7 +562,7 @@ Tag message preview:
 - **Tag recreation**: Useful for fixing tag messages or updating content
 - **Documentation consistency**: Maintains alignment between tags and changelog
 
-**Dependencies**: Requires `git`, `awk`, `sed`, and access to CHANGELOG.md
+**Dependencies**: Requires `git`, `awk`, `sed`, `gh` (GitHub CLI), and access to CHANGELOG.md
 
 ---
 

@@ -18,6 +18,7 @@
 //! cargo run --release --example boundary_analysis_trait
 //! ```
 
+use approx::relative_eq;
 use slotmap::Key;
 /// Calculates the perimeter of a 2D triangle.
 fn calculate_triangle_perimeter() {
@@ -1001,8 +1002,11 @@ fn demonstrate_input_validation_pattern() {
                 let coords_i: [f64; 3] = (&vertices[i]).into();
                 let coords_j: [f64; 3] = (&vertices[j]).into();
 
-                #[allow(clippy::float_cmp)]
-                if coords_i == coords_j {
+                // Use approximate comparison to handle floating-point precision issues
+                if relative_eq!(coords_i[0], coords_j[0], epsilon = f64::EPSILON)
+                    && relative_eq!(coords_i[1], coords_j[1], epsilon = f64::EPSILON)
+                    && relative_eq!(coords_i[2], coords_j[2], epsilon = f64::EPSILON)
+                {
                     return Err(format!("Duplicate vertices found at indices {i} and {j}"));
                 }
             }

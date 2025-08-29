@@ -43,22 +43,23 @@ get_hardware_info() {
             cpu_threads=$(grep -c "processor" /proc/cpuinfo 2>/dev/null || echo "Unknown")
         fi
     elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        # Windows (via MSYS2/Cygwin)
-        if command -v wmic >/dev/null 2>&1; then
-            cpu_info=$(wmic cpu get name /format:list 2>/dev/null | grep "Name=" | cut -d= -f2 | head -1 || echo "Unknown")
-            cpu_cores=$(wmic cpu get NumberOfCores /format:list 2>/dev/null | grep "NumberOfCores=" | cut -d= -f2 | head -1 || echo "Unknown")
-            cpu_threads=$(wmic cpu get NumberOfLogicalProcessors /format:list 2>/dev/null | grep "NumberOfLogicalProcessors=" | cut -d= -f2 | head -1 || echo "Unknown")
-        elif command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
-            # Fallback to PowerShell
+        # Windows (via MSYS2/Cygwin) - Use PowerShell by default (wmic is deprecated)
+        if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
             local ps_cmd
             if command -v pwsh >/dev/null 2>&1; then
                 ps_cmd="pwsh"
             else
                 ps_cmd="powershell"
             fi
-            cpu_info=$($ps_cmd -Command "Get-WmiObject -Class Win32_Processor | Select-Object -First 1 -ExpandProperty Name" 2>/dev/null | tr -d '\r' || echo "Unknown")
-            cpu_cores=$($ps_cmd -Command "Get-WmiObject -Class Win32_Processor | Select-Object -First 1 -ExpandProperty NumberOfCores" 2>/dev/null | tr -d '\r' || echo "Unknown")
-            cpu_threads=$($ps_cmd -Command "Get-WmiObject -Class Win32_Processor | Select-Object -First 1 -ExpandProperty NumberOfLogicalProcessors" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            # Use Get-CimInstance instead of Get-WmiObject for better compatibility
+            cpu_info=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).Name" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_cores=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfCores" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_threads=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfLogicalProcessors" 2>/dev/null | tr -d '\r' || echo "Unknown")
+        elif command -v wmic >/dev/null 2>&1; then
+            # Legacy fallback to wmic (deprecated)
+            cpu_info=$(wmic cpu get name /format:list 2>/dev/null | grep "Name=" | cut -d= -f2 | head -1 || echo "Unknown")
+            cpu_cores=$(wmic cpu get NumberOfCores /format:list 2>/dev/null | grep "NumberOfCores=" | cut -d= -f2 | head -1 || echo "Unknown")
+            cpu_threads=$(wmic cpu get NumberOfLogicalProcessors /format:list 2>/dev/null | grep "NumberOfLogicalProcessors=" | cut -d= -f2 | head -1 || echo "Unknown")
         fi
     fi
     
@@ -86,16 +87,8 @@ get_hardware_info() {
             fi
         fi
     elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        # Windows
-        if command -v wmic >/dev/null 2>&1; then
-            local mem_bytes
-            mem_bytes=$(wmic computersystem get TotalPhysicalMemory /format:list 2>/dev/null | grep "TotalPhysicalMemory=" | cut -d= -f2 | head -1 || echo "0")
-            if [[ "$mem_bytes" -gt 0 ]]; then
-                memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
-                memory_total="${memory_total} GB"
-            fi
-        elif command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
-            # Fallback to PowerShell
+        # Windows - Use PowerShell by default (wmic is deprecated)
+        if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
             local ps_cmd
             if command -v pwsh >/dev/null 2>&1; then
                 ps_cmd="pwsh"
@@ -103,7 +96,16 @@ get_hardware_info() {
                 ps_cmd="powershell"
             fi
             local mem_bytes
-            mem_bytes=$($ps_cmd -Command "Get-WmiObject -Class Win32_ComputerSystem | Select-Object -ExpandProperty TotalPhysicalMemory" 2>/dev/null | tr -d '\r' || echo "0")
+            # Use Get-CimInstance instead of Get-WmiObject for better compatibility
+            mem_bytes=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory" 2>/dev/null | tr -d '\r' || echo "0")
+            if [[ "$mem_bytes" -gt 0 ]]; then
+                memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
+                memory_total="${memory_total} GB"
+            fi
+        elif command -v wmic >/dev/null 2>&1; then
+            # Legacy fallback to wmic (deprecated)
+            local mem_bytes
+            mem_bytes=$(wmic computersystem get TotalPhysicalMemory /format:list 2>/dev/null | grep "TotalPhysicalMemory=" | cut -d= -f2 | head -1 || echo "0")
             if [[ "$mem_bytes" -gt 0 ]]; then
                 memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
                 memory_total="${memory_total} GB"
@@ -168,22 +170,23 @@ get_hardware_info_kv() {
             cpu_threads=$(grep -c "processor" /proc/cpuinfo 2>/dev/null || echo "Unknown")
         fi
     elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        # Windows (via MSYS2/Cygwin)
-        if command -v wmic >/dev/null 2>&1; then
-            cpu_info=$(wmic cpu get name /format:list 2>/dev/null | grep "Name=" | cut -d= -f2 | head -1 || echo "Unknown")
-            cpu_cores=$(wmic cpu get NumberOfCores /format:list 2>/dev/null | grep "NumberOfCores=" | cut -d= -f2 | head -1 || echo "Unknown")
-            cpu_threads=$(wmic cpu get NumberOfLogicalProcessors /format:list 2>/dev/null | grep "NumberOfLogicalProcessors=" | cut -d= -f2 | head -1 || echo "Unknown")
-        elif command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
-            # Fallback to PowerShell
+        # Windows (via MSYS2/Cygwin) - Use PowerShell by default (wmic is deprecated)
+        if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
             local ps_cmd
             if command -v pwsh >/dev/null 2>&1; then
                 ps_cmd="pwsh"
             else
                 ps_cmd="powershell"
             fi
-            cpu_info=$($ps_cmd -Command "Get-WmiObject -Class Win32_Processor | Select-Object -First 1 -ExpandProperty Name" 2>/dev/null | tr -d '\r' || echo "Unknown")
-            cpu_cores=$($ps_cmd -Command "Get-WmiObject -Class Win32_Processor | Select-Object -First 1 -ExpandProperty NumberOfCores" 2>/dev/null | tr -d '\r' || echo "Unknown")
-            cpu_threads=$($ps_cmd -Command "Get-WmiObject -Class Win32_Processor | Select-Object -First 1 -ExpandProperty NumberOfLogicalProcessors" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            # Use Get-CimInstance instead of Get-WmiObject for better compatibility
+            cpu_info=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).Name" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_cores=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfCores" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_threads=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfLogicalProcessors" 2>/dev/null | tr -d '\r' || echo "Unknown")
+        elif command -v wmic >/dev/null 2>&1; then
+            # Legacy fallback to wmic (deprecated)
+            cpu_info=$(wmic cpu get name /format:list 2>/dev/null | grep "Name=" | cut -d= -f2 | head -1 || echo "Unknown")
+            cpu_cores=$(wmic cpu get NumberOfCores /format:list 2>/dev/null | grep "NumberOfCores=" | cut -d= -f2 | head -1 || echo "Unknown")
+            cpu_threads=$(wmic cpu get NumberOfLogicalProcessors /format:list 2>/dev/null | grep "NumberOfLogicalProcessors=" | cut -d= -f2 | head -1 || echo "Unknown")
         fi
     fi
     
@@ -211,16 +214,8 @@ get_hardware_info_kv() {
             fi
         fi
     elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        # Windows
-        if command -v wmic >/dev/null 2>&1; then
-            local mem_bytes
-            mem_bytes=$(wmic computersystem get TotalPhysicalMemory /format:list 2>/dev/null | grep "TotalPhysicalMemory=" | cut -d= -f2 | head -1 || echo "0")
-            if [[ "$mem_bytes" -gt 0 ]]; then
-                memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
-                memory_total="${memory_total} GB"
-            fi
-        elif command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
-            # Fallback to PowerShell
+        # Windows - Use PowerShell by default (wmic is deprecated)
+        if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
             local ps_cmd
             if command -v pwsh >/dev/null 2>&1; then
                 ps_cmd="pwsh"
@@ -228,7 +223,16 @@ get_hardware_info_kv() {
                 ps_cmd="powershell"
             fi
             local mem_bytes
-            mem_bytes=$($ps_cmd -Command "Get-WmiObject -Class Win32_ComputerSystem | Select-Object -ExpandProperty TotalPhysicalMemory" 2>/dev/null | tr -d '\r' || echo "0")
+            # Use Get-CimInstance instead of Get-WmiObject for better compatibility
+            mem_bytes=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory" 2>/dev/null | tr -d '\r' || echo "0")
+            if [[ "$mem_bytes" -gt 0 ]]; then
+                memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
+                memory_total="${memory_total} GB"
+            fi
+        elif command -v wmic >/dev/null 2>&1; then
+            # Legacy fallback to wmic (deprecated)
+            local mem_bytes
+            mem_bytes=$(wmic computersystem get TotalPhysicalMemory /format:list 2>/dev/null | grep "TotalPhysicalMemory=" | cut -d= -f2 | head -1 || echo "0")
             if [[ "$mem_bytes" -gt 0 ]]; then
                 memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
                 memory_total="${memory_total} GB"

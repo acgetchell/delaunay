@@ -488,9 +488,24 @@ processed by GitHub and academic tools. For the most up-to-date citation informa
 **Quick citation (ACM format):**
 
 ```text
-Adam Getchell. 2025. delaunay: A d-dimensional Delaunay triangulation library.
+Adam Getchell (https://orcid.org/0000-0002-0797-0021). 2025. delaunay: A d-dimensional Delaunay triangulation library.
 Zenodo. DOI: https://doi.org/10.5281/zenodo.16931097
 ```
+
+**BibTeX:**
+
+```bibtex
+@software{getchell_delaunay_2025,
+  author  = {Adam Getchell},
+  title   = {delaunay: A d-dimensional Delaunay triangulation library},
+  year    = {2025},
+  doi     = {10.5281/zenodo.16931097},
+  url     = {https://doi.org/10.5281/zenodo.16931097},
+  orcid   = {0000-0002-0797-0021}
+}
+```
+
+Note: The canonical citation is maintained in [CITATION.cff](CITATION.cff); prefer that as the source of truth.
 
 #### Adding Academic References
 

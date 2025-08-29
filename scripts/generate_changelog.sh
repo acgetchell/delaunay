@@ -6,6 +6,50 @@
 
 set -euo pipefail
 
+# Function to show usage information
+show_help() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Generate an enhanced changelog with AI commit processing and Keep a Changelog categorization.
+
+Options:
+  --debug     Preserve intermediate files for debugging
+  --help      Show this help message
+
+Examples:
+  $0                    # Normal run, clean up intermediate files
+  $0 --debug            # Keep intermediate files for debugging
+
+Intermediate files (when using --debug):
+  - CHANGELOG.md.tmp (initial auto-changelog output)
+  - CHANGELOG.md.processed (after date processing)
+  - CHANGELOG.md.processed.expanded (after PR expansion)
+  - CHANGELOG.md.tmp2 (after AI enhancement)
+
+EOF
+}
+
+# Parse command line arguments
+PRESERVE_TEMP_FILES=false
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --debug)
+            PRESERVE_TEMP_FILES=true
+            shift
+            ;;
+        --help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown option '$1'" >&2
+            echo "Use --help for usage information." >&2
+            exit 1
+            ;;
+    esac
+done
+
 # Script configuration
 CHANGELOG_FILE="CHANGELOG.md"
 TEMP_CHANGELOG="${CHANGELOG_FILE}.tmp"
@@ -273,368 +317,10 @@ enhance_ai_commits() {
     
     echo "Enhancing AI-generated commit formatting with Keep a Changelog categorization..."
     
-    # Process the changelog line by line and categorize according to Keep a Changelog format
-    python3 -c "
-import sys
-import re
-
-# Function to categorize and output entries
-def process_and_output_categorized_entries(entries, output_lines):
-    if not entries:
-        return
-        
-    # Categorize all entries
-    added_entries = []
-    changed_entries = []
-    removed_entries = []
-    fixed_entries = []
-    deprecated_entries = []
-    security_entries = []
-    
-    for entry in entries:
-        # Extract commit title for pattern matching
-        title_text = ''
-        
-        # Extract just the commit title (between first ** and second **)
-        title_match = re.search(r'\*\*(.*?)\*\*', entry)
-        if title_match:
-            title_text = title_match.group(1).lower().strip()
-        
-        # Define deterministic categorization rules based on commit title patterns
-        # Use exact word boundary matching to avoid false positives
-        
-        category = 'changed'  # Default fallback
-        
-        # ADDED: New features, functionality, content (highest priority)
-        added_patterns = [
-            r'\badd\b(?!itional)',  # 'add' but not 'additional'
-            r'\badds\b',
-            r'\badded\b',
-            r'\badding\b',
-            r'\bimplement\b',
-            r'\bimplements\b',
-            r'\bimplementing\b',
-            r'\bintroduce\b',
-            r'\bintroduces\b',
-            r'\bintroducing\b',
-            r'\bintroduced\b',
-            r'^new\b',
-            r'\bnew feature\b',
-            r'\bnew functionality\b',
-            r'^feat:\s*add\b',
-            r'^feat:\s*implement\b'
-        ]
-        
-        if any(re.search(pattern, title_text) for pattern in added_patterns):
-            category = 'added'
-            
-        # REMOVED: Functionality removal (check before Changed to avoid conflicts)
-        elif any(re.search(pattern, title_text) for pattern in [
-            r'\bremove\b', r'\bremoves\b', r'\bremoving\b', r'\bremoved\b',
-            r'\bdelete\b', r'\bdeletes\b', r'\bdeleting\b', r'\bdeleted\b',
-            r'\bdrop\b', r'\bdrops\b', r'\bdropping\b', r'\bdropped\b',
-            r'\beliminate\b', r'\beliminates\b', r'\beliminating\b', r'\beliminated\b',
-        ]):
-            category = 'removed'
-            
-        # FIXED: Bug fixes, robustness, error handling (check before Changed)
-        elif any(re.search(pattern, title_text) for pattern in [
-            r'\bfix\b', r'\bfixes\b', r'\bfixing\b', r'\bfixed\b',
-            r'\bbug\b', r'\bbugs\b',
-            r'\bpatch\b',
-            r'\bresolve\b', r'\bresolves\b', r'\bresolved\b',
-            r'\baddress\b.*\b(error|issue|problem)\b',
-            r'\brobustness\b',
-            r'\bstability\b',
-            r'\bdegenerate\b',
-            r'\bprecision\b',
-            r'\bnumerical\b',
-            r'\bfallback\b',
-            r'\berror handling\b',
-            r'\bconsistency check\b'
-        ]):
-            category = 'fixed'
-            
-        # CHANGED: Modifications to existing functionality
-        elif any(re.search(pattern, title_text) for pattern in [
-            r'\bupdate\b', r'\bupdates\b', r'\bupdating\b',
-            r'\brefactor\b', r'\brefactors\b', r'\brefactoring\b',
-            r'\bchange\b', r'\bchanges\b', r'\bchanging\b',
-            r'\bbump\b',
-            r'\bmodify\b', r'\bmodifies\b', r'\bmodifying\b',
-            r'\bimprove\b', r'\bimproves\b', r'\bimproving\b',
-            r'\benhance\b', r'\benhances\b', r'\benhancing\b',
-            r'\boptimize\b', r'\boptimizes\b', r'\boptimizing\b',
-            r'\bperformance\b',
-            r'\bmsrv\b',
-            r'\bminimum supported rust version\b'
-        ]):
-            category = 'changed'
-            
-        # DEPRECATED: Deprecation notices
-        elif any(re.search(pattern, title_text) for pattern in [
-            r'\bdeprecate\b', r'\bdeprecates\b', r'\bdeprecating\b',
-            r'\bdeprecated\b'
-        ]):
-            category = 'deprecated'
-            
-        # SECURITY: Security-related changes
-        elif any(re.search(pattern, title_text) for pattern in [
-            r'\bsecurity\b',
-            r'\bvulnerability\b', r'\bvulnerabilities\b',
-            r'\bexploit\b', r'\bexploits\b',
-            r'\bcve-\d{4}-\d{4,7}\b',  # CVE identifiers (e.g., CVE-2023-12345)
-            r'\bdependabot\b'
-        ]):
-            category = 'security'
-        
-        # Assign to appropriate category list
-        if category == 'added':
-            added_entries.append(entry)
-        elif category == 'removed':
-            removed_entries.append(entry)
-        elif category == 'fixed':
-            fixed_entries.append(entry)
-        elif category == 'deprecated':
-            deprecated_entries.append(entry)
-        elif category == 'security':
-            security_entries.append(entry)
-        else:
-            changed_entries.append(entry)
-    
-    # Track if we've output any sections to know when to add breaks
-    any_sections_output = False
-    
-    # Output entries in Keep a Changelog order with proper spacing
-    if added_entries:
-        if any_sections_output:
-            output_lines.append('')  # Blank line before section if not first
-        output_lines.append('### Added')
-        output_lines.append('')
-        for entry in added_entries:
-            output_lines.append(entry)
-        any_sections_output = True
-        
-    if changed_entries:
-        if any_sections_output:
-            output_lines.append('')  # Blank line before section if not first
-        output_lines.append('### Changed')
-        output_lines.append('')
-        for entry in changed_entries:
-            output_lines.append(entry)
-        any_sections_output = True
-        
-    if deprecated_entries:
-        if any_sections_output:
-            output_lines.append('')  # Blank line before section if not first
-        output_lines.append('### Deprecated')
-        output_lines.append('')
-        for entry in deprecated_entries:
-            output_lines.append(entry)
-        any_sections_output = True
-        
-    if removed_entries:
-        if any_sections_output:
-            output_lines.append('')  # Blank line before section if not first
-        output_lines.append('### Removed')
-        output_lines.append('')
-        for entry in removed_entries:
-            output_lines.append(entry)
-        any_sections_output = True
-        
-    if fixed_entries:
-        if any_sections_output:
-            output_lines.append('')  # Blank line before section if not first
-        output_lines.append('### Fixed')
-        output_lines.append('')
-        for entry in fixed_entries:
-            output_lines.append(entry)
-        any_sections_output = True
-        
-    if security_entries:
-        if any_sections_output:
-            output_lines.append('')  # Blank line before section if not first
-        output_lines.append('### Security')
-        output_lines.append('')
-        for entry in security_entries:
-            output_lines.append(entry)
-        any_sections_output = True
-
-# Read the input file
-with open('$input_file', 'r') as f:
-    lines = f.readlines()
-
-output_lines = []
-in_changes_section = False
-in_fixed_issues = False
-in_merged_prs_section = False
-
-# Collect entries to categorize
-categorize_entries_list = []
-
-line_index = 0
-while line_index < len(lines):
-    line = lines[line_index].rstrip()
-    
-    # Track when we enter Changes section (from template or Keep a Changelog format)
-    if re.match(r'^### *(Changes|Changed)$', line):
-        # Process any pending entries from previous section
-        if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines)
-            categorize_entries_list = []
-            
-        in_changes_section = True
-        in_fixed_issues = False
-        # Skip the original Changes header - we'll create proper sections
-        line_index += 1
-        continue
-    
-    # Track when we enter Fixed Issues section (from template or Keep a Changelog format)
-    elif re.match(r'^### *(Fixed|Fixed Issues)$', line):
-        # Process any pending entries from previous section
-        if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines)
-            categorize_entries_list = []
-            
-        in_fixed_issues = True
-        in_changes_section = False
-        in_merged_prs_section = False
-        # Skip the original Fixed Issues header - we'll create proper sections
-        line_index += 1
-        continue
-    
-    # Track when we enter Added section (Keep a Changelog format)
-    elif re.match(r'^### *Added$', line):
-        # Process any pending entries from previous section
-        if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines)
-            categorize_entries_list = []
-            
-        in_changes_section = True  # Treat as changes section for processing
-        in_fixed_issues = False
-        in_merged_prs_section = False
-        # Skip the original Added header - we'll create proper sections
-        line_index += 1
-        continue
-    
-    # Track when we enter Removed section (Keep a Changelog format)
-    elif re.match(r'^### *Removed$', line):
-        # Process any pending entries from previous section
-        if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines)
-            categorize_entries_list = []
-            
-        in_changes_section = True  # Treat as changes section for processing
-        in_fixed_issues = False
-        in_merged_prs_section = False
-        # Skip the original Removed header - we'll create proper sections
-        line_index += 1
-        continue
-    
-    # Track when we enter Deprecated section (Keep a Changelog format)
-    elif re.match(r'^### *Deprecated$', line):
-        # Process any pending entries from previous section
-        if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines)
-            categorize_entries_list = []
-            
-        in_changes_section = True  # Treat as changes section for processing
-        in_fixed_issues = False
-        in_merged_prs_section = False
-        # Skip the original Deprecated header - we'll create proper sections
-        line_index += 1
-        continue
-    
-    # Track when we enter Security section (Keep a Changelog format)
-    elif re.match(r'^### *Security$', line):
-        # Process any pending entries from previous section
-        if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines)
-            categorize_entries_list = []
-            
-        in_changes_section = True  # Treat as changes section for processing
-        in_fixed_issues = False
-        in_merged_prs_section = False
-        # Skip the original Security header - we'll create proper sections
-        line_index += 1
-        continue
-    
-    # Track when we enter Merged Pull Requests section
-    elif re.match(r'^### *Merged Pull Requests$', line):
-        # Process any pending entries from previous section
-        if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines)
-            categorize_entries_list = []
-            
-        in_merged_prs_section = True
-        in_changes_section = False
-        in_fixed_issues = False
-        # Add the Merged Pull Requests header to output (we keep this section)
-        output_lines.append(line)
-        line_index += 1
-        continue
-    
-    # Process collected entries before starting a new release or ending
-    elif ((re.match(r'^## ', line) and (in_changes_section or in_fixed_issues or in_merged_prs_section)) or 
-          (line_index == len(lines) - 1)):
-        
-        # Process any pending entries
-        if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines)
-            categorize_entries_list = []
-            
-        # Stop processing current section
-        in_changes_section = False
-        in_fixed_issues = False
-        in_merged_prs_section = False
-        
-        # Add the release header to output if it's a new release
-        if re.match(r'^## ', line):
-            output_lines.append('')  # Add blank line before new release
-            output_lines.append(line)
-        else:
-            # Not a release header, add normally
-            output_lines.append(line)
-        line_index += 1
-    
-    # Process commit lines in Changes or Fixed Issues sections
-    elif (in_changes_section or in_fixed_issues) and re.match(r'^- \*\*', line):
-        # Store this commit entry for later processing
-        # We'll categorize all entries first, then output them in correct sections
-        
-        # Collect the commit title line
-        current_entry = [line]
-        
-        # Look ahead to collect any indented body content
-        next_line_index = line_index + 1
-        while (next_line_index < len(lines) and 
-               (lines[next_line_index].strip() == '' or  # Empty line
-                lines[next_line_index].startswith('  '))):  # Indented body content
-            current_entry.append(lines[next_line_index].rstrip())
-            next_line_index += 1
-        
-        # Join the entry (title + body) and add to categorization list
-        categorize_entries_list.append('\n'.join(current_entry))
-        
-        # Skip to after the lines we've processed
-        line_index = next_line_index
-        continue
-    
-    else:
-        # Skip PR description content (indented lines ONLY within Merged Pull Requests section)
-        if in_merged_prs_section and re.match(r'^  ', line):  # Lines starting with 2+ spaces (PR descriptions)
-            line_index += 1
-            continue  # Skip PR description lines only in Merged PRs section
-        
-        # Print all other lines normally (headers, merged PRs, legitimate indented content, etc.)
-        output_lines.append(line)
-        line_index += 1
-
-# Write the output file
-with open('$output_file', 'w') as f:
-    for line in output_lines:
-        f.write(line + '\n')
-"
+    # Use external Python script to avoid shell/Python quoting issues
+    if ! python3 "${SCRIPT_DIR}/enhance_commits.py" "$input_file" "$output_file"; then
+        return 1
+    fi
 }
 
 # Change to project root directory to ensure auto-changelog finds config files
@@ -647,14 +333,11 @@ if ! command -v npx > /dev/null 2>&1; then
   exit 1
 fi
 
-# Check if auto-changelog is available, install if needed
-if ! npx auto-changelog --version > /dev/null 2>&1; then
-  echo "auto-changelog not found. Installing..."
-  if ! npm install auto-changelog; then
-    echo "Error: Failed to install auto-changelog. Please run 'npm install auto-changelog' manually." >&2
-    exit 1
-  fi
-  echo "✓ auto-changelog installed successfully."
+# Ensure auto-changelog is runnable non-interactively via npx
+if ! npx --yes -p auto-changelog auto-changelog --version > /dev/null 2>&1; then
+  echo "Error: auto-changelog is not available via npx (network? registry?)." >&2
+  echo "Tip: add it as a devDependency or retry with network access." >&2
+  exit 1
 fi
 
 # Verify configuration files exist
@@ -688,7 +371,8 @@ if ! git log --oneline -n 1 > /dev/null 2>&1; then
 fi
 
 echo "Running auto-changelog with custom template..."
-if ! npx auto-changelog --stdout > "${TEMP_CHANGELOG}" 2> "${TEMP_CHANGELOG}.err"; then
+if ! npx --yes -p auto-changelog auto-changelog --stdout > "${TEMP_CHANGELOG}" 2> "${TEMP_CHANGELOG}.err"; then
+
   echo "Error: auto-changelog failed to generate changelog." >&2
   if [[ -f "${TEMP_CHANGELOG}.err" ]]; then
     echo "Error details:" >&2
@@ -768,8 +452,16 @@ if ! awk '
   exit 1
 fi
 
-# Clean up temporary files
-rm -f "${TEMP_CHANGELOG}" "${PROCESSED_CHANGELOG}" "${PROCESSED_CHANGELOG}.expanded" "${CHANGELOG_FILE}.tmp2"
+# Clean up temporary files (unless preservation is requested)
+if [[ "${PRESERVE_TEMP_FILES}" != "true" ]]; then
+    rm -f "${TEMP_CHANGELOG}" "${PROCESSED_CHANGELOG}" "${PROCESSED_CHANGELOG}.expanded" "${CHANGELOG_FILE}.tmp2"
+else
+    echo "ℹ Preserving intermediate files for debugging:"
+    echo "  - ${TEMP_CHANGELOG} (initial auto-changelog output)"
+    echo "  - ${PROCESSED_CHANGELOG} (after date processing)"
+    echo "  - ${PROCESSED_CHANGELOG}.expanded (after PR expansion)"
+    echo "  - ${CHANGELOG_FILE}.tmp2 (after AI enhancement)"
+fi
 
 # Remove backup if everything succeeded
 if [[ -f "${CHANGELOG_FILE}.backup" ]]; then

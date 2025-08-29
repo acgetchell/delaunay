@@ -2,6 +2,15 @@
 
 This file provides guidance to WARP (warp.dev) when working with code in this repository.
 
+## WARP-Specific Rules
+
+### Git Operations
+
+- **DO NOT** issue `git commit` or `git push` commands
+- Let the user handle all git operations manually
+- You may suggest git commands for the user to run, but never execute them
+- This ensures the user maintains full control over version control operations
+
 ## Overview
 
 The `delaunay` library implements d-dimensional Delaunay triangulations in Rust,
