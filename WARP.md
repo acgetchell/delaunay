@@ -7,6 +7,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 ### Git Operations
 
 - **DO NOT** issue `git commit` or `git push` commands
+- **DO NOT** use `git push --force` or modify tags (`git tag`, `git push --tags`)
 - Let the user handle all git operations manually
 - You may suggest git commands for the user to run, but never execute them
 - This ensures the user maintains full control over version control operations
@@ -40,16 +41,147 @@ cargo test --features count-allocations -- allocation_counting
 
 ### Code Quality
 
+#### Rust Code Quality
+
 ```bash
-# Format code
+# Format Rust code
 cargo fmt --all
 
-# Check formatting without modifying files
+# Check Rust formatting without modifying files
 cargo fmt --all -- --check
 
 # Run clippy (strict pedantic mode configured)
 cargo clippy --all-targets --all-features -- -D warnings -D clippy::all -D clippy::pedantic -W clippy::nursery -W clippy::cargo
 ```
+
+#### Python Code Quality
+
+**IMPORTANT**: Run these commands after any changes to Python scripts in the `scripts/` directory:
+
+```bash
+# Format Python code (PEP 8 compliance) - replaces autopep8
+uvx ruff format scripts/*.py
+
+# Fix imports, remove unused code, and other auto-fixable issues - replaces isort + autoflake
+uvx ruff check --fix scripts/*.py
+
+# Lint Python code (check for issues - does not auto-fix)
+uvx pylint scripts/*.py
+```
+
+**Note**: The Python tools serve different purposes:
+
+- `ruff format`: Fixes PEP 8 style violations (replaces autopep8)
+- `ruff check --fix`: Organizes imports, removes unused code, and fixes other linting issues (replaces isort + autoflake)
+- `pylint`: Reports code quality issues (manual fixes required)
+
+#### Shell Script Code Quality
+
+**IMPORTANT**: Run these commands after any changes to shell scripts in the `scripts/` directory:
+
+```bash
+# Lint shell scripts with shellcheck (detects common issues)
+shellcheck scripts/*.sh
+
+# Lint a specific shell script
+shellcheck scripts/generate_changelog.sh
+
+# Show all shellcheck warnings including informational ones
+shellcheck -S info scripts/*.sh
+
+# Check scripts with specific shell (if not detected automatically)
+shellcheck -s bash scripts/*.sh
+```
+
+**Note**: shellcheck helps detect:
+
+- Syntax errors and typos
+- Quoting issues that could cause word splitting
+- Incorrect variable usage patterns
+- Potential security vulnerabilities
+- POSIX compliance issues
+- Performance anti-patterns
+
+**Installation**: Install shellcheck via:
+
+- macOS: `brew install shellcheck`
+- Ubuntu/Debian: `apt install shellcheck`
+- Other platforms: See [shellcheck.net](https://www.shellcheck.net/)
+
+#### Markdown Code Quality
+
+**IMPORTANT**: Run these commands after any changes to Markdown files:
+
+```bash
+# Lint all Markdown files (detects formatting and style issues)
+npx markdownlint "**/*.md"
+
+# Lint specific Markdown files
+npx markdownlint README.md CONTRIBUTING.md
+
+# Fix auto-fixable Markdown issues
+npx markdownlint --fix "**/*.md"
+
+# Lint with custom configuration file
+npx markdownlint --config .markdownlint.json "**/*.md"
+
+# Show all rules and their descriptions
+npx markdownlint --help
+```
+
+**Note**: markdownlint helps detect:
+
+- Inconsistent heading styles and hierarchy
+- Improper list formatting and indentation
+- Missing or incorrect link formatting
+- Line length violations
+- Trailing whitespace and empty lines
+- Inconsistent emphasis and strong text formatting
+- Missing language identifiers in code blocks
+
+**Installation**: markdownlint is automatically available via npx, or install globally:
+
+- `npm install -g markdownlint-cli`
+- Configuration can be customized via `.markdownlint.json` or `.markdownlint.yaml`
+
+#### YAML Code Quality
+
+**IMPORTANT**: Run these commands after any changes to YAML files:
+
+```bash
+# Lint all YAML files (detects syntax and style issues)
+yamllint .
+
+# Lint specific YAML files
+yamllint .github/workflows/ci.yml .auto-changelog
+
+# Lint with custom configuration file
+yamllint -c .yamllint.yml .
+
+# Show configuration options
+yamllint --help
+
+# Lint with specific format (parsable, standard, colored, github, auto)
+yamllint -f parsable .
+```
+
+**Note**: yamllint helps detect:
+
+- YAML syntax errors and invalid structure
+- Indentation inconsistencies
+- Line length violations
+- Trailing whitespace
+- Missing document start markers
+- Inconsistent key ordering
+- Improper use of tabs vs spaces
+- Empty values and duplicate keys
+
+**Installation**: Install yamllint via:
+
+- macOS: `brew install yamllint` or `pip install yamllint`
+- Ubuntu/Debian: `apt install yamllint` or `pip install yamllint`
+- Other platforms: `pip install yamllint`
+- Configuration can be customized via `.yamllint.yml` or `.yamllint.yaml`
 
 ### Benchmarking
 

@@ -317,6 +317,13 @@ enhance_ai_commits() {
     
     echo "Enhancing AI-generated commit formatting with Keep a Changelog categorization..."
     
+    # Check Python3 prerequisite
+    if ! command -v python3 > /dev/null 2>&1; then
+        echo "Error: python3 is required to run enhance_commits.py for changelog generation." >&2
+        echo "Please install Python 3 to use this feature." >&2
+        return 1
+    fi
+    
     # Use external Python script to avoid shell/Python quoting issues
     if ! python3 "${SCRIPT_DIR}/enhance_commits.py" "$input_file" "$output_file"; then
         return 1

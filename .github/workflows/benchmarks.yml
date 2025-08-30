@@ -4,7 +4,7 @@ name: Performance Regression Testing
 on:
   # Manual trigger
   workflow_dispatch:
-  
+
   # On pushes to main branch (not PRs to avoid CI environment noise)
   push:
     branches:
@@ -23,7 +23,7 @@ env:
 jobs:
   performance-regression:
     runs-on: macos-15-xlarge
-    
+
     steps:
       - uses: actions/checkout@v5
 
@@ -43,7 +43,7 @@ jobs:
           if [[ -f "benches/baseline_results.txt" ]]; then
             echo "✅ Found performance baseline, proceeding with regression testing"
             echo "BASELINE_EXISTS=true" >> $GITHUB_ENV
-            
+
             # Show baseline metadata
             echo "=== Baseline Information ==="
             head -n 3 benches/baseline_results.txt
@@ -81,7 +81,7 @@ jobs:
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false'
         run: |
           echo "🚀 Running performance regression test..."
-          
+
           # This will exit with code 1 if significant regressions are found
           ./scripts/compare_benchmarks.sh
 

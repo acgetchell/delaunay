@@ -123,24 +123,30 @@ for example in "${simple_examples[@]}"; do
     cargo run --release --example "$example" || error_exit "Example $example failed!"
 done
 
-# Run test_circumsphere with comprehensive test categories
-test_circumsphere_tests=(
-    "all"              # All basic dimensional tests and orientation tests
-    "test-all-points"   # Single point tests in all dimensions
-    "debug-all"         # All debug tests
-)
+# Run test_circumsphere with comprehensive test categories (only if it exists)
+if [[ -f "${PROJECT_ROOT}/examples/test_circumsphere.rs" ]]; then
+    test_circumsphere_tests=(
+        "all"              # All basic dimensional tests and orientation tests
+        "test-all-points"   # Single point tests in all dimensions
+        "debug-all"         # All debug tests
+    )
 
-echo
-echo "=== Running test_circumsphere comprehensive tests ==="
-echo "---------------------------------------------------"
-
-for test_name in "${test_circumsphere_tests[@]}"; do
     echo
-    echo "--- Running test_circumsphere $test_name ---"
-    if ! cargo run --release --example test_circumsphere -- "$test_name"; then
-        error_exit "test_circumsphere $test_name failed!"
-    fi
-done
+    echo "=== Running test_circumsphere comprehensive tests ==="
+    echo "---------------------------------------------------"
+
+    for test_name in "${test_circumsphere_tests[@]}"; do
+        echo
+        echo "--- Running test_circumsphere $test_name ---"
+        if ! cargo run --release --example test_circumsphere -- "$test_name"; then
+            error_exit "test_circumsphere $test_name failed!"
+        fi
+    done
+else
+    echo
+    echo "=== Skipping test_circumsphere (not found) ==="
+    echo "test_circumsphere.rs not found in examples/ directory"
+fi
 
 echo
 echo "=============================================="

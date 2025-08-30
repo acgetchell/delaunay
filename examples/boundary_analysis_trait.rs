@@ -19,6 +19,7 @@
 //! ```
 
 use approx::relative_eq;
+use serde::{Deserialize, Serialize};
 use slotmap::Key;
 /// Calculates the perimeter of a 2D triangle.
 fn calculate_triangle_perimeter() {
@@ -162,21 +163,24 @@ fn analyze_4d_boundary() {
     println!("      - {boundary_count} boundary facets (3D tetrahedra) [{count_time:?}]");
 
     // Analyze boundary facets in detail
+    let facets_start = Instant::now();
     match tds.boundary_facets() {
         Ok(boundary_facets) => {
-            let facets_time = Instant::now();
+            let facets_time = facets_start.elapsed();
 
             println!("    📊 Boundary Facet Analysis:");
             println!(
                 "      - Retrieved {} facets in {:?}",
                 boundary_facets.len(),
-                facets_time.elapsed()
+                facets_time
             );
 
             // Calculate total 3D boundary volume
             match surface_measure(&boundary_facets) {
                 Ok(total_volume) => {
-                    println!("      - Total boundary volume: {total_volume:.6} cubic units");
+                    println!(
+                        "      - Total boundary hyper-surface area: {total_volume:.6} cubic units"
+                    );
                 }
                 Err(e) => println!("      - Error calculating boundary volume: {e}"),
             }
@@ -432,58 +436,27 @@ trait BoundaryAnalysisTestable {
     fn time_individual_checks(&self) -> (usize, usize, std::time::Duration); // (total_facets, boundary_facets, duration)
 }
 
-/// Implement the testable trait for 3D TDS
-impl BoundaryAnalysisTestable for Tds<f64, Option<()>, Option<()>, 3> {
+/// Generic implementation for TDS with appropriate trait bounds
+impl<const D: usize> BoundaryAnalysisTestable for Tds<f64, Option<()>, Option<()>, D>
+where
+    [f64; D]: Copy + Default + for<'de> Deserialize<'de> + Serialize + Sized,
+{
     fn get_stats(&self) -> (usize, usize) {
         (self.number_of_vertices(), self.number_of_cells())
     }
 
     fn time_boundary_facets(&self) -> (usize, std::time::Duration) {
         let start = Instant::now();
-        let facets = self.boundary_facets().unwrap_or_default();
+        let res = self.boundary_facets();
         let duration = start.elapsed();
-        (facets.len(), duration)
-    }
-
-    fn time_boundary_count(&self) -> (usize, std::time::Duration) {
-        let start = Instant::now();
-        let count = self.number_of_boundary_facets();
-        let duration = start.elapsed();
-        (count, duration)
-    }
-
-    fn time_individual_checks(&self) -> (usize, usize, std::time::Duration) {
-        let start = Instant::now();
-        let mut total_facets = 0;
-        let mut boundary_facets = 0;
-
-        for cell in self.cells().values() {
-            if let Ok(facets) = cell.facets() {
-                for facet in &facets {
-                    total_facets += 1;
-                    if self.is_boundary_facet(facet) {
-                        boundary_facets += 1;
-                    }
-                }
+        let len = match res {
+            Ok(v) => v.len(),
+            Err(e) => {
+                eprintln!("boundary_facets() failed: {e}");
+                0
             }
-        }
-
-        let duration = start.elapsed();
-        (total_facets, boundary_facets, duration)
-    }
-}
-
-/// Implement the testable trait for 4D TDS
-impl BoundaryAnalysisTestable for Tds<f64, Option<()>, Option<()>, 4> {
-    fn get_stats(&self) -> (usize, usize) {
-        (self.number_of_vertices(), self.number_of_cells())
-    }
-
-    fn time_boundary_facets(&self) -> (usize, std::time::Duration) {
-        let start = Instant::now();
-        let facets = self.boundary_facets().unwrap_or_default();
-        let duration = start.elapsed();
-        (facets.len(), duration)
+        };
+        (len, duration)
     }
 
     fn time_boundary_count(&self) -> (usize, std::time::Duration) {
@@ -671,15 +644,25 @@ fn demonstrate_memory_patterns() {
             println!("  ├─ {boundary_count} boundary facets exist");
 
             println!("\n  📋 Method Memory Characteristics:");
-            println!("  ├─ number_of_boundary_facets(): O(1) memory, O(facets) time");
-            println!("  ├─   • Just counts, no allocation of facet objects");
-            println!("  ├─   • Most efficient for simple boundary counting");
-            println!("  ├─ boundary_facets(): O(boundary_facets) memory, O(facets) time");
-            println!("  ├─   • Allocates Vec<Facet> with full facet data");
+            println!(
+                "  ├─ number_of_boundary_facets(): O(total_facets) memory, O(total_facets) time"
+            );
+            println!("  ├─   • Builds full facet-to-cells HashMap, then counts boundary entries");
+            println!("  ├─   • No facet object allocation, just counting");
+            println!(
+                "  ├─ boundary_facets(): O(total_facets + boundary_facets) memory, O(total_facets) time"
+            );
+            println!(
+                "  ├─   • Builds facet-to-cells HashMap + allocates Vec<Facet> with full facet data"
+            );
             println!("  ├─   • Use when you need to process facet geometry");
-            println!("  └─ is_boundary_facet(): O(1) memory, O(1) time per facet");
-            println!("      • No allocation, just boundary test");
-            println!("      • Use for selective facet filtering\n");
+            println!(
+                "  └─ is_boundary_facet(): O(total_facets) memory, O(total_facets) time per call"
+            );
+            println!(
+                "      • Builds full facet-to-cells HashMap for each call - inefficient for multiple queries"
+            );
+            println!("      • Use sparingly or cache the boundary facets list instead\n");
 
             println!("  💡 Performance Recommendations:");
             println!("  ├─ Use number_of_boundary_facets() for simple counting");
@@ -1105,26 +1088,6 @@ fn demonstrate_error_categorization_pattern() {
     println!("      4. Log warnings for degenerate cases but continue processing");
     println!("      5. Consider using robust predicates for numerical stability");
 }
-
-// # Comprehensive Boundary Analysis Example
-//
-// This example demonstrates the `BoundaryAnalysis` trait for triangulation boundary operations
-// and showcases practical real-world use cases. It shows how boundary analysis functions have
-// been cleanly separated from the TDS struct using a trait-based approach.
-//
-// ## Features Demonstrated
-//
-// - **Multi-dimensional Support**: 2D edge extraction, 3D facet analysis, 4D+ support
-// - **Real-world Use Cases**: Mesh vertex extraction, surface area calculation, performance comparison
-// - **API Patterns**: Different methods for different performance needs
-// - **Error Handling**: Robust error scenarios and edge cases
-// - **Trait Benefits**: Modularity, testability, extensibility
-//
-// ## Usage
-//
-// ```bash
-// cargo run --example boundary_analysis_trait
-// ```
 
 use delaunay::core::{
     traits::boundary_analysis::BoundaryAnalysis, triangulation_data_structure::Tds,

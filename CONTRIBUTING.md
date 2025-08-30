@@ -113,26 +113,26 @@ delaunay/
 │   │   ├── algorithms/                           # Triangulation algorithms
 │   │   │   ├── bowyer_watson.rs                  # Incremental Bowyer-Watson algorithm
 │   │   │   └── robust_bowyer_watson.rs           # Robust geometric predicates version
+│   │   ├── traits/                               # Core traits for data types and algorithms
+│   │   │   ├── boundary_analysis.rs              # Boundary analysis traits
+│   │   │   ├── data_type.rs                      # DataType trait definitions
+│   │   │   └── insertion_algorithm.rs            # Insertion algorithm traits
 │   │   ├── boundary.rs                           # Boundary analysis and facet detection
 │   │   ├── cell.rs                               # Cell (simplex) implementation
 │   │   ├── facet.rs                              # Facet implementation
 │   │   ├── triangulation_data_structure.rs       # Main Tds struct
 │   │   ├── util.rs                               # Helper functions for triangulation operations
-│   │   ├── vertex.rs                             # Vertex implementation with generic support
-│   │   └── traits/                               # Core traits for data types and algorithms
-│   │       ├── boundary_analysis.rs              # Boundary analysis traits
-│   │       ├── data_type.rs                      # DataType trait definitions
-│   │       └── insertion_algorithm.rs            # Insertion algorithm traits
+│   │   └── vertex.rs                             # Vertex implementation with generic support
 │   ├── geometry/                                 # Geometric algorithms and predicates
 │   │   ├── algorithms/                           # Geometric algorithms
 │   │   │   └── convex_hull.rs                    # Convex hull computation
+│   │   ├── traits/                               # Coordinate abstractions and floating-point traits
+│   │   │   └── coordinate.rs                     # Core Coordinate trait abstraction
 │   │   ├── matrix.rs                             # Matrix operations for geometric computations
 │   │   ├── point.rs                              # Generic Point struct with NaN-aware operations
 │   │   ├── predicates.rs                         # Geometric predicates (insphere, orientation)
 │   │   ├── robust_predicates.rs                  # Robust geometric predicates
-│   │   ├── util.rs                               # Geometric utility functions
-│   │   └── traits/                               # Coordinate abstractions and floating-point traits
-│   │       └── coordinate.rs                     # Core Coordinate trait abstraction
+│   │   └── util.rs                               # Geometric utility functions
 │   └── lib.rs                                    # Main library file with module declarations and prelude
 ├── examples/                                     # Usage examples and demonstrations
 │   ├── README.md                                 # Examples documentation
@@ -145,6 +145,7 @@ delaunay/
 │   ├── test_circumsphere.rs                      # Circumsphere computation examples
 │   └── triangulation_3d_50_points.rs             # 3D triangulation example
 ├── benches/                                      # Performance benchmarks
+│   ├── results/                                  # Benchmark result files
 │   ├── README.md                                 # Benchmarking guide and performance results
 │   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
 │   ├── baseline_results.txt                      # Performance baseline data
@@ -172,6 +173,7 @@ delaunay/
 │   ├── README.md                                 # Scripts documentation
 │   ├── benchmark_parser.sh                       # Shared benchmark parsing utilities
 │   ├── compare_benchmarks.sh                     # Performance regression testing
+│   ├── enhance_commits.py                        # Commit enhancement utilities
 │   ├── generate_baseline.sh                      # Create performance baselines
 │   ├── generate_changelog.sh                     # Generate changelog with commit dates and squashed PR expansion
 │   ├── hardware_info.sh                          # Hardware information and system capabilities
@@ -180,16 +182,16 @@ delaunay/
 ├── .cargo/                                       # Cargo configuration
 │   └── config.toml                               # Build configuration
 ├── .github/                                      # GitHub configuration
+│   ├── workflows/                                # CI/CD workflows
+│   │   ├── audit.yml                             # Security vulnerability scanning
+│   │   ├── benchmarks.yml                        # Performance regression testing
+│   │   ├── ci.yml                                # Main CI pipeline
+│   │   ├── codacy.yml                            # Code quality analysis
+│   │   ├── codecov.yml                           # Test coverage tracking
+│   │   ├── codeql.yml                            # Security analysis
+│   │   └── rust-clippy.yml                       # Additional clippy analysis
 │   ├── CODEOWNERS                                # Code ownership definitions
-│   ├── dependabot.yml                            # Dependency update configuration
-│   └── workflows/                                # CI/CD workflows
-│       ├── audit.yml                             # Security vulnerability scanning
-│       ├── benchmarks.yml                        # Performance regression testing
-│       ├── ci.yml                                # Main CI pipeline
-│       ├── codacy.yml                            # Code quality analysis
-│       ├── codecov.yml                           # Test coverage tracking
-│       ├── codeql.yml                            # Security analysis
-│       └── rust-clippy.yml                       # Additional clippy analysis
+│   └── dependabot.yml                            # Dependency update configuration
 ├── .auto-changelog                               # Auto-changelog configuration
 ├── .codecov.yml                                  # CodeCov configuration
 ├── .coderabbit.yml                               # CodeRabbit AI review configuration
@@ -197,6 +199,7 @@ delaunay/
 ├── .markdownlint.json                            # Markdown linting configuration
 ├── .yamllint                                     # YAML linting configuration
 ├── CHANGELOG.md                                  # Version history with enhanced squashed PR support
+├── CITATION.cff                                  # Citation metadata for academic use
 ├── CODE_OF_CONDUCT.md                            # Community guidelines
 ├── CONTRIBUTING.md                               # This file
 ├── Cargo.lock                                    # Dependency lockfile
@@ -204,6 +207,7 @@ delaunay/
 ├── cspell.json                                   # Spell checking configuration
 ├── LICENSE                                       # MIT License
 ├── README.md                                     # Project overview and getting started
+├── REFERENCES.md                                 # Academic references and citations
 ├── rustfmt.toml                                  # Code formatting configuration
 └── WARP.md                                       # WARP AI development guidance
 ```

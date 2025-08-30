@@ -40,7 +40,7 @@ get_hardware_info() {
         if [[ -f "/proc/cpuinfo" ]]; then
             cpu_info=$(grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
             cpu_cores=$(grep "cpu cores" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
-            cpu_threads=$(grep -c "processor" /proc/cpuinfo 2>/dev/null || echo "Unknown")
+            cpu_threads=$(grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "Unknown")
         fi
     elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
         # Windows (via MSYS2/Cygwin) - Use PowerShell by default (wmic is deprecated)
@@ -52,9 +52,9 @@ get_hardware_info() {
                 ps_cmd="powershell"
             fi
             # Use Get-CimInstance instead of Get-WmiObject for better compatibility
-            cpu_info=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).Name" 2>/dev/null | tr -d '\r' || echo "Unknown")
-            cpu_cores=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfCores" 2>/dev/null | tr -d '\r' || echo "Unknown")
-            cpu_threads=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfLogicalProcessors" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_info=$($ps_cmd -NonInteractive -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).Name" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_cores=$($ps_cmd -NonInteractive -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfCores" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_threads=$($ps_cmd -NonInteractive -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfLogicalProcessors" 2>/dev/null | tr -d '\r' || echo "Unknown")
         elif command -v wmic >/dev/null 2>&1; then
             # Legacy fallback to wmic (deprecated)
             cpu_info=$(wmic cpu get name /format:list 2>/dev/null | grep "Name=" | cut -d= -f2 | head -1 || echo "Unknown")
@@ -97,7 +97,7 @@ get_hardware_info() {
             fi
             local mem_bytes
             # Use Get-CimInstance instead of Get-WmiObject for better compatibility
-            mem_bytes=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory" 2>/dev/null | tr -d '\r' || echo "0")
+            mem_bytes=$($ps_cmd -NonInteractive -Command "(Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory" 2>/dev/null | tr -d '\r' || echo "0")
             if [[ "$mem_bytes" -gt 0 ]]; then
                 memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
                 memory_total="${memory_total} GB"
@@ -167,7 +167,7 @@ get_hardware_info_kv() {
         if [[ -f "/proc/cpuinfo" ]]; then
             cpu_info=$(grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
             cpu_cores=$(grep "cpu cores" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
-            cpu_threads=$(grep -c "processor" /proc/cpuinfo 2>/dev/null || echo "Unknown")
+            cpu_threads=$(grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "Unknown")
         fi
     elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
         # Windows (via MSYS2/Cygwin) - Use PowerShell by default (wmic is deprecated)
@@ -179,9 +179,9 @@ get_hardware_info_kv() {
                 ps_cmd="powershell"
             fi
             # Use Get-CimInstance instead of Get-WmiObject for better compatibility
-            cpu_info=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).Name" 2>/dev/null | tr -d '\r' || echo "Unknown")
-            cpu_cores=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfCores" 2>/dev/null | tr -d '\r' || echo "Unknown")
-            cpu_threads=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfLogicalProcessors" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_info=$($ps_cmd -NonInteractive -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).Name" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_cores=$($ps_cmd -NonInteractive -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfCores" 2>/dev/null | tr -d '\r' || echo "Unknown")
+            cpu_threads=$($ps_cmd -NonInteractive -Command "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfLogicalProcessors" 2>/dev/null | tr -d '\r' || echo "Unknown")
         elif command -v wmic >/dev/null 2>&1; then
             # Legacy fallback to wmic (deprecated)
             cpu_info=$(wmic cpu get name /format:list 2>/dev/null | grep "Name=" | cut -d= -f2 | head -1 || echo "Unknown")
@@ -224,7 +224,7 @@ get_hardware_info_kv() {
             fi
             local mem_bytes
             # Use Get-CimInstance instead of Get-WmiObject for better compatibility
-            mem_bytes=$($ps_cmd -Command "(Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory" 2>/dev/null | tr -d '\r' || echo "0")
+            mem_bytes=$($ps_cmd -NonInteractive -Command "(Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory" 2>/dev/null | tr -d '\r' || echo "0")
             if [[ "$mem_bytes" -gt 0 ]]; then
                 memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
                 memory_total="${memory_total} GB"
@@ -270,8 +270,9 @@ extract_baseline_hardware() {
         hardware_block=$(awk '/^Hardware Information:/{flag=1; next} flag && /^$/{exit} flag' "$baseline_file")
         
         # If hardware_block is empty, try alternative extraction (handle cases where block doesn't end with empty line)
+        # Only capture indented lines (starting with 2+ spaces) to avoid overrunning past the hardware section
         if [[ -z "$hardware_block" ]]; then
-            hardware_block=$(awk '/^Hardware Information:/{flag=1; next} flag && /^[A-Za-z]/ && !/^  /{exit} flag' "$baseline_file")
+            hardware_block=$(awk '/^Hardware Information:/{flag=1; next} flag && /^  / {print; next} flag {exit}' "$baseline_file")
         fi
         
         # Extract each piece of hardware info from the scoped block

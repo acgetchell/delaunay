@@ -113,12 +113,12 @@ reviews:
     # Python linters (enabled for scripts/enhance_commits.py)
     ruff:
       enabled: true
-    flake8:
-      enabled: true
     pylint:
       enabled: true
 
     # Disabled tools
+    flake8:
+      enabled: false  # Disabled - functionality covered by ruff
     eslint:
       enabled: false
     swiftlint:
