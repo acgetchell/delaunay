@@ -173,7 +173,7 @@ main() {
 	echo "----------------------------------------"
 
 	# Create the tag
-	if ! git config user.name >/dev/null || ! git config user.email >/dev/null; then
+	if ! git config --get user.name >/dev/null 2>&1 || ! git config --get user.email >/dev/null 2>&1; then
 		echo -e "${YELLOW}Warning: git user.name/email not configured; tag creation may fail.${NC}" >&2
 	fi
 	echo -e "${BLUE}Creating tag '$tag_version' with changelog content...${NC}"

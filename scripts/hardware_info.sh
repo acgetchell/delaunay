@@ -56,12 +56,21 @@ get_hardware_info() {
 			local cps sockets
 			cps=$(lscpu | awk -F: '/^Core\(s\) per socket/ {gsub(/^ +/,"",$2); print $2; exit}' 2>/dev/null || echo "")
 			sockets=$(lscpu | awk -F: '/^Socket\(s\)/ {gsub(/^ +/,"",$2); print $2; exit}' 2>/dev/null || echo "")
-			if [[ -n "$cps" && -n "$sockets" && "$cps" != "Unknown" && "$sockets" != "Unknown" ]]; then
+			if [[ "$cps" =~ ^[0-9]+$ && "$sockets" =~ ^[0-9]+$ ]]; then
 				# Calculate total physical cores: cores_per_socket * socket_count
 				cpu_cores=$((${cps:-0} * ${sockets:-1}))
 			else
 				# Fallback to cores per socket only if multiplication not possible
 				cpu_cores="${cps:-Unknown}"
+			fi
+		fi
+		# Fallback: derive sockets from /proc/cpuinfo physical id and multiply
+		if [[ "$cpu_cores" == "Unknown" ]] && [[ -f "/proc/cpuinfo" ]]; then
+			local cores_per_socket sockets_count
+			cores_per_socket=$(awk -F: '/cpu cores/ {gsub(/^ +/,"",$2); print $2; exit}' /proc/cpuinfo)
+			sockets_count=$(awk -F: '/physical id/ {gsub(/^ +/,"",$2); print $2}' /proc/cpuinfo | sort -u | wc -l)
+			if [[ "$cores_per_socket" =~ ^[0-9]+$ && "$sockets_count" =~ ^[0-9]+$ && "$sockets_count" -gt 0 ]]; then
+				cpu_cores=$((cores_per_socket * sockets_count))
 			fi
 		fi
 		if [[ "$cpu_cores" == "Unknown" ]] && [[ -f "/proc/cpuinfo" ]]; then
@@ -70,8 +79,8 @@ get_hardware_info() {
 			if [[ "$cpu_cores" == "Unknown" ]]; then
 				cpu_cores=$(grep "core id" /proc/cpuinfo | sort -u | wc -l 2>/dev/null || echo "Unknown")
 				# If core id approach gives 0, fall back to processor count
-				if [[ "$cpu_cores" == "0" ]]; then
-					cpu_cores="Unknown"
+				if [[ "$cpu_cores" == "0" || "$cpu_cores" == "Unknown" ]]; then
+					cpu_cores=$(grep -c "^processor[[:space:]]*:" /proc/cpuinfo 2>/dev/null || echo "Unknown")
 				fi
 			fi
 		fi

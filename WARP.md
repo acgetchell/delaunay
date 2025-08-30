@@ -191,10 +191,10 @@ line length violations, and trailing whitespace.
 
 ```bash
 # Lint all YAML files (uses project .yamllint configuration)
-yamllint .
+find . -type f \( -name '*.yml' -o -name '*.yaml' \) -exec yamllint -c .yamllint {} +
 
 # Lint specific YAML files
-yamllint .github/workflows/ci.yml
+yamllint -c .yamllint .github/workflows/ci.yml
 ```
 
 **Note**: yamllint detects YAML syntax errors, indentation issues, line length violations, and trailing whitespace.

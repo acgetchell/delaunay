@@ -15,7 +15,7 @@ brew install jq findutils coreutils
 ### Ubuntu/Debian
 
 ```bash
-sudo apt-get install jq findutils coreutils
+sudo apt-get install -y jq
 ```
 
 ### Other Systems

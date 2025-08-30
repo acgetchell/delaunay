@@ -32,8 +32,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           cache: true
-          # Toolchain from rust-toolchain.toml; install only needed target on macOS
-          target: aarch64-apple-darwin
+          # Toolchain from rust-toolchain.toml; no extra target needed on macOS-ARM
 
       - name: Check for performance baseline
         shell: bash
@@ -77,7 +76,11 @@ jobs:
           if [[ "$BASELINE_COMMIT" == "${{ github.sha }}" ]]; then
             echo "SKIP_BENCHMARKS=true" >> "$GITHUB_ENV"
           else
-            echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
+            if git diff --name-only "$BASELINE_COMMIT"... | grep -qE '^(src/|benches/|Cargo\.toml|Cargo\.lock)'; then
+              echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
+            else
+              echo "SKIP_BENCHMARKS=true" >> "$GITHUB_ENV"
+            fi
           fi
 
       - name: Skip benchmarks if no code change
@@ -92,7 +95,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x ./scripts/compare_benchmarks.sh
           echo "🚀 Running performance regression test..."
 
           # This will exit with code 1 if significant regressions are found
