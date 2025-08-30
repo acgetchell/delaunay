@@ -30,6 +30,15 @@ cargo build
 # Build in release mode
 cargo build --release
 
+# Verify benchmarks compile (without running them)
+cargo bench --no-run
+
+# Check documentation for errors (public API)
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+
+# Check documentation for errors (comprehensive, including private items)
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items
+
 # Run all tests (library, doc tests, examples)
 cargo test --lib --verbose
 cargo test --doc --verbose  
@@ -93,6 +102,19 @@ shellcheck -S info scripts/*.sh
 shellcheck -s bash scripts/*.sh
 ```
 
+Additionally, use shfmt for consistent formatting:
+
+```bash
+# Format all shell scripts in-place (tabs by default)
+shfmt -w scripts/*.sh
+
+# Check formatting without modifying files (useful in CI)
+shfmt -d scripts/*.sh
+
+# Example: enforce 2-space indentation and named functions style
+shfmt -i 2 -fn -w scripts/*.sh
+```
+
 **Note**: shellcheck helps detect:
 
 - Syntax errors and typos
@@ -102,11 +124,17 @@ shellcheck -s bash scripts/*.sh
 - POSIX compliance issues
 - Performance anti-patterns
 
-**Installation**: Install shellcheck via:
+shfmt ensures consistent, idiomatic formatting, which reduces diffs and aids readability.
 
-- macOS: `brew install shellcheck`
-- Ubuntu/Debian: `apt install shellcheck`
-- Other platforms: See [shellcheck.net](https://www.shellcheck.net/)
+**Installation**: Install tools via:
+
+- shellcheck
+  - macOS: `brew install shellcheck`
+  - Ubuntu/Debian: `apt install shellcheck`
+  - Other platforms: See [shellcheck.net](https://www.shellcheck.net/)
+- shfmt
+  - macOS: `brew install shfmt`
+  - Linux/Windows: See <https://github.com/mvdan/sh#shfmt> for binaries and package options
 
 #### Markdown Code Quality
 
@@ -156,7 +184,7 @@ yamllint .
 yamllint .github/workflows/ci.yml .auto-changelog
 
 # Lint with custom configuration file
-yamllint -c .yamllint.yml .
+yamllint -c .yamllint .
 
 # Show configuration options
 yamllint --help
@@ -181,7 +209,7 @@ yamllint -f parsable .
 - macOS: `brew install yamllint` or `pip install yamllint`
 - Ubuntu/Debian: `apt install yamllint` or `pip install yamllint`
 - Other platforms: `pip install yamllint`
-- Configuration can be customized via `.yamllint.yml` or `.yamllint.yaml`
+- Configuration can be customized via `.yamllint`, `.yamllint.yml` or `.yamllint.yaml`
 
 ### Benchmarking
 

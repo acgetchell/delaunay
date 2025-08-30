@@ -215,8 +215,6 @@ fn analyze_4d_boundary() {
     }
 }
 
-// # `boundary_analysis_trait` Example
-
 /// Demonstrate multi-dimensional support for `BoundaryAnalysis` trait
 fn demonstrate_multi_dimensional_support() {
     println!("\n🌍 2. Multi-Dimensional Support");
