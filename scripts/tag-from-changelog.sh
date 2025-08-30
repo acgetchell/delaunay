@@ -80,18 +80,17 @@ extract_changelog() {
 	changelog_content=$(awk -v version="$version_number" '
         BEGIN { 
             found = 0; printing = 0;
-            # Escape special regex characters in version number
-            gsub(/[\[\]{}()*+?.^$|\\]/, "\\&", version);
-            # Create header pattern that allows (hyperlinks) after version
-            header = "^##[[:space:]]*\\[?v?" version "\\]?($|[[:space:]]|\\()";
-        }
+			# Escape all regex metacharacters in version (., +, *, ?, |, (, ), [, ], {, }, ^, $, and \)
+			gsub(/[][(){}.^$*+?|\\]/, "\\\\&", version);
+		}
         /^##[[:space:]]/ {
             if (printing) {
                 # Stop printing when we hit the next ## header
                 exit
             }
-            # Check if this header matches our version (flexible matching for various formats)
-            if ($0 ~ header) {
+            # Check if this header matches our version
+            # Match: ## [vX.Y.Z] or ## [X.Y.Z] or ## vX.Y.Z or ## X.Y.Z
+            if ($0 ~ "^##[[:space:]]*\\[?v?" version "\\]?($|[[:space:]]|\\()") {
                 found = 1
                 printing = 1
                 next  # Skip the header itself

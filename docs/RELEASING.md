@@ -36,7 +36,11 @@ git pull --ff-only
 
 ## Phase 1: Create a clean release PR
 
-This PR should ONLY include: version bumps, changelog updates, and documentation updates. All code changes should already be on main.
+This PR should primarily include: version bumps, changelog updates, and documentation updates. All major code changes should already be on main.
+
+**Exception:** Small, critical fixes discovered during the release process (e.g.,
+documentation errors, script bugs, formatting issues) may be included but should
+be minimal and release-critical only.
 
 1. Create the release branch
 
@@ -103,6 +107,34 @@ PR metadata:
 - Description: Clean release PR with version bump, changelog, and documentation updates. No code changes.
 
 Note: Do NOT push the temporary tag created in step 3.
+
+### Handling fixes discovered during release process
+
+If you discover issues (bugs, formatting problems, etc.) after creating the changelog:
+
+1. **For critical fixes that must be in this release:**
+
+   ```bash
+   # Make your fixes
+   # Run code quality tools
+   # Commit the fixes
+   git add .
+   git commit -m "fix: [description of fix]"
+   
+   # Delete the temporary tag and regenerate changelog
+   git tag -d "$TAG"
+   git tag -a "$TAG" -m "delaunay $TAG"
+   ./scripts/generate_changelog.sh
+   
+   # Commit updated changelog
+   git add CHANGELOG.md
+   git commit -m "docs: update changelog with release fixes"
+   ```
+
+2. **For non-critical fixes:**
+   - Document them as known issues in the release notes
+   - Include them in the next release
+   - This avoids the changelog regeneration loop
 
 ---
 
