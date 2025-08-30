@@ -15,16 +15,18 @@ brew install jq findutils coreutils
 ### Ubuntu/Debian
 
 ```bash
-sudo apt-get install jq findutils coreutils bc
+sudo apt-get install -y jq
 ```
 
 ### Other Systems
 
-Install equivalent packages for `jq`, `find`, `sort`, and `bc` using your system's package manager.
+Install equivalent packages for `jq`, `find`, and `sort` using your system's package manager.
 
 ## Scripts Overview
 
 ### Scripts (Alphabetical)
+
+All scripts support the `--help` flag for detailed usage information.
 
 #### `benchmark_parser.sh`
 
@@ -36,15 +38,11 @@ Install equivalent packages for `jq`, `find`, `sort`, and `bc` using your system
 - **Multiple Parsing Methods**: Both `while read` and `awk` implementations for different use cases
 - **Robust Regex Patterns**: Handles various benchmark output formats and edge cases
 - **Unit Normalization**: Standardizes time units (µs, us, μs) for consistency
-- **Dependency Validation**: Built-in checks for required tools (`bc`)
 - **Flexible Output**: Configurable output formatting for different consumers
 
 **Key Functions**:
 
 ```bash
-# Dependency checking
-check_benchmark_parser_dependencies()    # Validates required tools
-
 # Benchmark detection and parsing
 parse_benchmark_start("line")            # Extracts metadata from "Benchmarking..." lines
 extract_timing_data("line")              # Parses timing data from result lines
@@ -82,14 +80,11 @@ Throughput: [28.135, 28.257, 28.381] Kelem/s
 # Source the shared functions
 source "$(dirname "$0")/benchmark_parser.sh"
 
-# Check dependencies
-check_benchmark_parser_dependencies || exit 1
-
 # Parse benchmark output
 parse_benchmarks_with_while_read "input.txt" "output.txt"
 ```
 
-**Dependencies**: Requires `bc` for numerical calculations
+**Dependencies**: No external dependencies beyond standard POSIX tools
 
 ---
 
@@ -144,7 +139,7 @@ parse_benchmarks_with_while_read "input.txt" "output.txt"
 ./scripts/compare_benchmarks.sh --help
 ```
 
-**Dependencies**: Requires `cargo`, `bc`, shared `benchmark_parser.sh`
+**Dependencies**: Requires `cargo`, shared `benchmark_parser.sh`
 
 ---
 
@@ -335,6 +330,102 @@ The script now provides sophisticated parsing of squashed PR commits to extract 
 
 ---
 
+#### `hardware_info.sh`
+
+**Purpose**: Cross-platform hardware information detection utility for benchmark baseline generation and comparison.
+
+**Features**:
+
+- **Cross-platform detection** for macOS, Linux, and Windows (MSYS2/Cygwin)
+- **CPU information**: Brand, core count, thread count detection
+- **Memory detection**: Total system memory with GB conversion
+- **Rust toolchain info**: Version and target architecture
+- **Multiple output formats**: Formatted display or key=value pairs
+- **Baseline extraction**: Parse hardware info from existing baseline files
+- **Hardware comparison**: Side-by-side environment comparison with warnings
+- **Robust fallbacks**: Multiple detection methods per platform
+
+**Key Functions**:
+
+```bash
+# Primary hardware detection
+get_hardware_info()                     # Returns formatted hardware block
+get_hardware_info_kv()                  # Returns key=value pairs
+
+# Baseline file integration
+extract_baseline_hardware("file.txt")    # Extracts hardware from baseline
+compare_hardware(current, baseline)      # Compares two hardware configs
+```
+
+**Hardware Detection Methods**:
+
+- **macOS**: Uses `sysctl` for CPU/memory information
+- **Linux**: Uses `lscpu` for accurate multi-socket core detection, with `/proc/cpuinfo` and `/proc/meminfo` fallbacks
+- **Windows**: Uses PowerShell (`Get-CimInstance`) for hardware detection
+- **Rust info**: Extracted via `rustc --version` and `rustc -vV`
+
+**Output Formats**:
+
+```bash
+# Formatted output (default):
+# Hardware Information:
+#   OS: macOS
+#   CPU: Apple M2 Pro
+#   CPU Cores: 10
+#   CPU Threads: 10
+#   Memory: 16.0 GB
+#   Rust: rustc 1.82.0
+#   Target: aarch64-apple-darwin
+
+# Key=value output (--kv flag):
+# OS=macOS
+# CPU=Apple M2 Pro
+# CPU_CORES=10
+# CPU_THREADS=10
+# MEMORY=16.0 GB
+# RUST=rustc 1.82.0
+# TARGET=aarch64-apple-darwin
+```
+
+**Hardware Comparison Warnings**:
+
+```bash
+# Example comparison output with warnings:
+# Hardware Compatibility:
+# ⚠️  CPU differs: Results may not be directly comparable
+# ⚠️  CPU core count differs: 8 vs 10 cores
+# ⚠️  Rust version differs: Performance may be affected by compiler changes
+```
+
+**Usage**:
+
+```bash
+# Display formatted hardware information
+./scripts/hardware_info.sh
+
+# Display as key=value pairs (useful for parsing)
+./scripts/hardware_info.sh --kv
+
+# Source for use in other scripts
+source scripts/hardware_info.sh
+hardware_info=$(get_hardware_info)
+```
+
+**Integration with Other Scripts**:
+
+- Used by `generate_baseline.sh` to include hardware context
+- Used by `compare_benchmarks.sh` to detect environment differences
+- Provides hardware compatibility warnings for benchmark comparisons
+
+**Dependencies**:
+
+- macOS: `sysctl` (built-in)
+- Linux: `/proc/cpuinfo` and `/proc/meminfo` (built-in)
+- Windows: PowerShell (`pwsh` or `powershell`) for hardware detection
+- All platforms: `rustc` for Rust toolchain info
+
+---
+
 #### `run_all_examples.sh`
 
 **Purpose**: Executes all example programs in the project to verify functionality.
@@ -342,7 +433,7 @@ The script now provides sophisticated parsing of squashed PR commits to extract 
 **Features**:
 
 - Automatically discovers all examples in the `examples/` directory
-- Runs simple examples with standard execution
+- Runs simple examples in release mode for representative performance
 - Provides comprehensive testing for `test_circumsphere` example
 - Creates results directory structure
 
@@ -358,7 +449,113 @@ The script now provides sophisticated parsing of squashed PR commits to extract 
 - `test-all-points` - Single point tests in all dimensions
 - `debug-all` - All debug tests
 
-**Dependencies**: Requires `cargo`, `find`
+**Dependencies**: Requires `cargo`, `find`, `sort` (GNU sort preferred but not required)
+
+---
+
+#### `tag-from-changelog.sh`
+
+**Purpose**: Creates git tags with changelog content as tag messages for seamless GitHub release integration.
+
+**Features**:
+
+- **Automatic changelog extraction**: Parses CHANGELOG.md to find version-specific content
+- **Multiple version formats**: Supports `## [X.Y.Z]`, `## vX.Y.Z`, and `## X.Y.Z` headers
+- **GitHub release integration**: Tag messages work with `gh release create --notes-from-tag`
+- **Safety checks**: Validates git repository, changelog existence, and version format
+- **Force recreation**: Option to recreate existing tags with `--force` flag
+- **Smart content extraction**: Removes headers and cleans whitespace automatically
+- **Preview functionality**: Shows tag message preview before creation
+- **Comprehensive error handling**: Clear error messages and usage instructions
+
+**Version Format Support**:
+
+```bash
+# Supported CHANGELOG.md section headers:
+## [0.3.5] - 2025-08-15     # Standard Keep a Changelog format
+## v0.3.5 - 2025-08-15     # Version with 'v' prefix
+## 0.3.5 (2025-08-15)     # Alternative format
+## v0.3.5                 # Minimal format
+```
+
+**Changelog Content Processing**:
+
+- Extracts everything from version header until next `##` header
+- Removes the header line itself from tag message
+- Cleans leading/trailing whitespace
+- Preserves markdown formatting and bullet points
+- Handles empty sections gracefully with minimal fallback message
+
+**Integration with GitHub Releases**:
+
+```bash
+# Workflow for GitHub releases:
+1. Create tag with changelog content:
+   ./scripts/tag-from-changelog.sh v0.3.5
+
+2. Push tag to remote:
+   git push origin v0.3.5
+
+3. Create GitHub release using tag message:
+   gh release create v0.3.5 --notes-from-tag
+```
+
+**Usage Examples**:
+
+```bash
+# Create new tag with changelog content
+./scripts/tag-from-changelog.sh v0.3.5
+
+# Force recreate existing tag
+./scripts/tag-from-changelog.sh v0.3.5 --force
+
+# Show help information
+./scripts/tag-from-changelog.sh --help
+```
+
+**Tag Message Preview**:
+
+```bash
+# Example output before tag creation:
+Tag message preview:
+----------------------------------------
+### Added
+- New triangulation validation methods
+- Enhanced error handling for malformed inputs
+
+### Changed  
+- Improved performance for 3D triangulations
+- Updated dependency versions
+
+### Fixed
+- Resolved edge cases in boundary detection
+----------------------------------------
+```
+
+**Error Handling**:
+
+- **Repository validation**: Ensures script runs in valid git repository
+- **Changelog detection**: Searches current and parent directories for CHANGELOG.md
+- **Version format validation**: Requires `vX.Y.Z` format for consistency
+- **Existing tag detection**: Prevents accidental overwriting without `--force`
+- **Content validation**: Warns if no changelog content found for version
+
+**Safety Features**:
+
+- Validates version format before processing
+- Checks for existing tags to prevent accidental overwrites
+- Shows preview of tag message before creation
+- Provides clear next steps after successful tag creation
+- Graceful fallback if no changelog content is found
+
+**Use Cases**:
+
+- **Release automation**: Streamlines GitHub release creation process
+- **Changelog integration**: Ensures release notes match changelog content
+- **Tag recreation**: Useful for fixing tag messages or updating content
+- **Documentation consistency**: Maintains alignment between tags and changelog
+
+**Dependencies**: Requires `git`, `awk`, `sed`, `gh` (GitHub CLI), and access to CHANGELOG.md
 
 ---
 
@@ -483,7 +680,7 @@ The repository includes automated performance regression testing via GitHub Acti
 #### CI Integration Benefits
 
 - **Separate from main CI**: Avoids slowing down regular development workflow
-- **Environment consistency**: Uses Ubuntu runners for reproducible benchmark comparisons
+- **Environment consistency**: Uses macOS runners (Apple Silicon) for reproducible benchmark comparisons
 - **Smart triggering**: Only runs on changes that could affect performance
 - **Graceful degradation**: Skips if baseline missing, with clear setup instructions
 - **Artifact collection**: Stores benchmark results for historical analysis

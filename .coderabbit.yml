@@ -28,7 +28,12 @@ reviews:
   poem: true
   labeling_instructions: []
   path_filters: []
-  path_instructions: []
+  path_instructions:
+    - path: "scripts/*.py"
+      instructions: |
+        These are Python utility scripts for changelog and commit processing.
+        Focus on code quality, maintainability, and adherence to Python best practices.
+        The scripts should maintain high pylint scores.
   abort_on_close: true
   disable_cache: false
   auto_review:
@@ -105,14 +110,20 @@ reviews:
     semgrep:
       enabled: true
 
+    # Python linters (enabled for scripts/enhance_commits.py)
+    ruff:
+      enabled: true
+    pylint:
+      enabled: true
+
     # Disabled tools
+    flake8:
+      enabled: false  # Disabled - functionality covered by ruff
     eslint:
       enabled: false
     swiftlint:
       enabled: false
     hadolint:
-      enabled: false
-    ruff:
       enabled: false
     biome:
       enabled: false
@@ -127,8 +138,6 @@ reviews:
     checkov:
       enabled: false
     detekt:
-      enabled: false
-    flake8:
       enabled: false
     rubocop:
       enabled: false
@@ -145,8 +154,6 @@ reviews:
     sqlfluff:
       enabled: false
     prismaLint:
-      enabled: false
-    pylint:
       enabled: false
     oxc:
       enabled: false

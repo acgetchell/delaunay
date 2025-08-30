@@ -9,3 +9,10 @@
 /cobertura.xml
 /tarpaulin*
 /benches/results
+/node_modules/
+/.package-lock.json
+/package-lock.json
+/package.json
+/__pycache__/
+**/__pycache__/
+.cspellcache

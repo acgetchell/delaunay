@@ -2,6 +2,16 @@
 
 This file provides guidance to WARP (warp.dev) when working with code in this repository.
 
+## WARP-Specific Rules
+
+### Git Operations
+
+- **DO NOT** issue `git commit` or `git push` commands
+- **DO NOT** use `git push --force` or modify tags (`git tag`, `git push --tags`)
+- Let the user handle all git operations manually
+- You may suggest git commands for the user to run, but never execute them
+- This ensures the user maintains full control over version control operations
+
 ## Overview
 
 The `delaunay` library implements d-dimensional Delaunay triangulations in Rust,
@@ -10,6 +20,19 @@ applications with support for arbitrary data types associated with vertices and
 cells, d-dimensional triangulations, and serialization/deserialization capabilities.
 
 ## Essential Development Commands
+
+### Rust Toolchain
+
+The project uses a pinned Rust toolchain via `rust-toolchain.toml`:
+
+- **Version**: 1.89.0 (matches MSRV in Cargo.toml)
+- **Automatically enforced** when entering the project directory
+- **Includes all necessary components**: clippy, rustfmt, rust-docs, rust-src
+- **Cross-platform targets**: macOS (Intel/Apple Silicon), Linux, Windows
+- **Team-friendly**: New contributors get the correct setup automatically via `rustup`
+
+The toolchain file ensures consistent Rust versions across development, CI, and deployment
+environments, preventing version drift issues and ensuring reproducible builds.
 
 ### Building and Testing
 
@@ -20,6 +43,15 @@ cargo build
 # Build in release mode
 cargo build --release
 
+# Verify benchmarks compile (without running them)
+cargo bench --no-run
+
+# Check documentation for errors (public API)
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
+# Check documentation for errors (comprehensive, including private items)
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
+
 # Run all tests (library, doc tests, examples)
 cargo test --lib --verbose
 cargo test --doc --verbose  
@@ -29,17 +61,153 @@ cargo test --examples --verbose
 cargo test --features count-allocations -- allocation_counting 
 ```
 
-### Code Quality
+### Identifying Changed Files
 
 ```bash
-# Format code
+# Show changed files in machine-readable format
+git status --porcelain=v1 -z
+```
+
+### Code Quality
+
+#### Rust Code Quality
+
+```bash
+# Format Rust code
 cargo fmt --all
 
-# Check formatting without modifying files
+# Check Rust formatting without modifying files
 cargo fmt --all -- --check
 
 # Run clippy (strict pedantic mode configured)
 cargo clippy --all-targets --all-features -- -D warnings -D clippy::all -D clippy::pedantic -W clippy::nursery -W clippy::cargo
+```
+
+#### Python Code Quality
+
+**IMPORTANT**: Run these commands after any changes to Python scripts in the `scripts/` directory:
+
+```bash
+# Format Python code (PEP 8 compliance) - replaces autopep8
+uvx ruff format scripts/
+
+# Fix imports, remove unused code, and other auto-fixable issues - replaces isort + autoflake
+uvx ruff check --fix scripts/
+
+# Lint Python code (check for issues - does not auto-fix)
+uvx pylint scripts/
+```
+
+**Note**: The Python tools serve different purposes:
+
+- `ruff format`: Fixes PEP 8 style violations (replaces autopep8)
+- `ruff check --fix`: Organizes imports, removes unused code, and fixes other linting issues (replaces isort + autoflake)
+- `pylint`: Reports code quality issues (manual fixes required)
+
+**Installation**: The commands use `uvx` (uv's command runner) to execute Python tools:
+
+- **uv**: Install via `curl -LsSf https://astral.sh/uv/install.sh | sh` or see [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/)
+- **macOS**: `brew install uv`
+- **Windows**: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+- **pip**: `pip install uv` (if you prefer installing via pip)
+
+`uvx` automatically manages tool dependencies and provides isolated execution environments without requiring global installations.
+
+#### Shell Script Code Quality
+
+**IMPORTANT**: Run these commands after any changes to shell scripts in the `scripts/` directory:
+
+```bash
+# Lint shell scripts with shellcheck (detects common issues)
+find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck
+
+# Lint a specific shell script (follow sourced files)
+shellcheck -x scripts/generate_changelog.sh
+
+# Show all shellcheck warnings including informational ones
+find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck -S info
+
+# Check scripts with specific shell (if not detected automatically)
+find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck -s bash
+```
+
+Additionally, use shfmt for consistent formatting:
+
+```bash
+# Format all shell scripts in-place (tabs by default)
+find scripts -type f -name '*.sh' -exec shfmt -w {} +
+
+# Check formatting without modifying files (useful in CI)
+find scripts -type f -name '*.sh' -exec shfmt -d {} +
+
+# Example: enforce 2-space indentation and named functions style
+find scripts -type f -name '*.sh' -exec shfmt -i 2 -fn -w {} +
+```
+
+**Note**: shellcheck helps detect:
+
+- Syntax errors and typos
+- Quoting issues that could cause word splitting
+- Incorrect variable usage patterns
+- Potential security vulnerabilities
+- POSIX compliance issues
+- Performance anti-patterns
+
+shfmt ensures consistent, idiomatic formatting, which reduces diffs and aids readability.
+
+**Installation**: Install tools via:
+
+- shellcheck
+  - macOS: `brew install shellcheck`
+  - Ubuntu/Debian: `apt install shellcheck`
+  - Other platforms: See [shellcheck.net](https://www.shellcheck.net/)
+- shfmt
+  - macOS: `brew install shfmt`
+  - Linux/Windows: See <https://github.com/mvdan/sh#shfmt> for binaries and package options
+
+#### Markdown Code Quality
+
+**IMPORTANT**: Run these commands after any changes to Markdown files:
+
+```bash
+# Lint project Markdown files (uses project .markdownlint.json configuration)
+npx markdownlint "*.md" "scripts/*.md" "docs/*.md" ".github/*.md"
+
+# Fix auto-fixable Markdown issues
+npx markdownlint --fix "*.md" "scripts/*.md" "docs/*.md" ".github/*.md"
+
+# Lint specific files
+npx markdownlint README.md CONTRIBUTING.md WARP.md
+```
+
+**Note**: markdownlint detects formatting and style issues including inconsistent headings, improper list formatting, missing link formatting,
+line length violations, and trailing whitespace.
+
+**Installation**: markdownlint is automatically available via npx.
+
+#### YAML Code Quality
+
+**IMPORTANT**: Run these commands after any changes to YAML files:
+
+```bash
+# Lint all YAML files (uses project .yamllint configuration)
+find . -type f \( -name '*.yml' -o -name '*.yaml' \) -exec yamllint -c .yamllint {} +
+
+# Lint specific YAML files
+yamllint -c .yamllint .github/workflows/ci.yml
+```
+
+**Note**: yamllint detects YAML syntax errors, indentation issues, line length violations, and trailing whitespace.
+
+**Installation**: Install yamllint via `brew install yamllint` or `pip install yamllint`.
+
+#### Spell Checking
+
+```bash
+# Check spelling with project configuration
+npx cspell --config cspell.json --gitignore --no-progress --cache \
+  --exclude "target/**" --exclude "node_modules/**" \
+  "**/*"
 ```
 
 ### Benchmarking
@@ -105,8 +273,8 @@ npx auto-changelog --latest-version v0.3.4
 # Generate changelog with custom commit limit per release
 npx auto-changelog --commit-limit 10
 
-# Generate changelog using Keep a Changelog format overrides the project template configured in .auto-changelog config)
-npx auto-changelog --template keepachangelog
+# Use the project script; it transforms the template into Keep a Changelog format
+# See scripts/generate_changelog.sh for details.
 
 # Test changelog generation without writing to file
 npx auto-changelog --stdout
@@ -145,10 +313,8 @@ This provides more accurate release timing that reflects when the actual work wa
 - **`algorithms/`** - Geometric algorithms
   - **`convex_hull.rs`** - Convex hull extraction from Delaunay triangulations
 - **`traits/`** - Coordinate system abstractions
-  - **`coordinate.rs`** - Primary coordinate trait and scalar types
-  - **`finitecheck.rs`** - Finite value validation for coordinates
-  - **`hashcoordinate.rs`** - Consistent hashing for floating-point coordinates
-  - **`orderedeq.rs`** - NaN-aware equality comparison for floating-point types
+  - **`coordinate.rs`** - Unified coordinate traits including primary coordinate trait, scalar types, finite value validation,
+    consistent hashing for floating-point coordinates, and NaN-aware equality comparison
 
 **`src/lib.rs`** - Main library file with module declarations and prelude module
 
