@@ -21,6 +21,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Get script directory for Python utilities
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+
 # Print usage information
 usage() {
 	echo "Usage: $0 <tag-version> [--force]"
@@ -39,101 +42,30 @@ usage() {
 	echo "from CHANGELOG.md and uses it as the tag message for GitHub release integration."
 }
 
-# Check if we're in a git repository
-check_git_repo() {
-	if ! git rev-parse --git-dir >/dev/null 2>&1; then
-		echo -e "${RED}Error: Not in a git repository${NC}" >&2
-		exit 1
-	fi
-}
-
-# Check if CHANGELOG.md exists
-check_changelog() {
-	# Try to find CHANGELOG.md in current directory or parent directory
-	local changelog_path
-	if [[ -f "CHANGELOG.md" ]]; then
-		changelog_path="CHANGELOG.md"
-	elif [[ -f "../CHANGELOG.md" ]]; then
-		changelog_path="../CHANGELOG.md"
-	else
-		echo -e "${RED}Error: CHANGELOG.md not found${NC}" >&2
-		echo "Please run this script from the project root or scripts/ directory." >&2
-		exit 1
-	fi
-
-	# Set the changelog path for use by other functions
-	CHANGELOG_PATH="$changelog_path"
-}
-
-# Extract changelog content for the specific tag version
+# Extract changelog content for the specific tag version using Python utilities
 extract_changelog() {
 	local tag_version="$1"
-	local version_number
-	local changelog_content
 
-	# Strip 'v' prefix if present to get version number
-	version_number="${tag_version#v}"
+	# Use Python utilities to extract changelog content
+	python3 -c "
+import sys
+sys.path.insert(0, '$SCRIPT_DIR')
+from changelog_utils import ChangelogUtils, ChangelogError
 
-	# Use awk to find the specific version section and extract until next ## header
-	# Support formats: "## [0.3.5] ...", "## v0.3.5 ...", "## 0.3.5 ...", "## [0.3.5] - 2025-08-28" (Keep a Changelog)
-	# Also supports hyperlink syntax: "## [0.3.5](https://github.com/...)"
-	changelog_content=$(awk -v version="$version_number" '
-        BEGIN { 
-            found = 0; printing = 0;
-			# Escape all regex metacharacters in version (., +, *, ?, |, (, ), [, ], {, }, ^, $, and \)
-			gsub(/[][(){}.^$*+?|\\]/, "\\\\&", version);
-		}
-        /^##[[:space:]]/ {
-            if (printing) {
-                # Stop printing when we hit the next ## header
-                exit
-            }
-            # Check if this header matches our version
-            # Match: ## [vX.Y.Z] or ## [X.Y.Z] or ## vX.Y.Z or ## X.Y.Z
-            if ($0 ~ "^##[[:space:]]*\\[?v?" version "\\]?($|[[:space:]]|\\()") {
-                found = 1
-                printing = 1
-                next  # Skip the header itself
-            }
-        }
-        printing { print }
-        END { 
-            if (!found) {
-                print "VERSION_NOT_FOUND" > "/dev/stderr"
-            }
-        }
-    ' "$CHANGELOG_PATH")
-
-	# Check if version was found
-	if [[ -z "$changelog_content" ]]; then
-		echo -e "${YELLOW}Warning: No changelog content found for version $tag_version${NC}" >&2
-		echo "Searched for version patterns:" >&2
-		echo "  - ## [$version_number] - <date> ..." >&2
-		echo "  - ## v$version_number ..." >&2
-		echo "  - ## $version_number ..." >&2
-		echo "Using minimal tag message instead." >&2
-		echo "$tag_version"
-	else
-		# Preserve per-line indentation; only drop leading/trailing empty lines
-		local cleaned
-		cleaned=$(printf "%s\n" "$changelog_content" | awk '
-			BEGIN{n=0}
-			{ lines[n++]=$0 }
-			END{
-				# find first non-empty
-				s=0; while (s<n && lines[s] ~ /^[[:space:]]*$/) s++;
-				# find last non-empty
-				e=n-1; while (e>=s && lines[e] ~ /^[[:space:]]*$/) e--;
-				if (e<s) exit 0;
-				for (i=s; i<=e; i++) print lines[i];
-			}')
-		if [[ -z "${cleaned//[$'\n'[:space:]]/}" ]]; then
-			echo -e "${YELLOW}Warning: Changelog section is empty after trimming; using minimal tag message.${NC}" >&2
-			echo "$tag_version"
-		else
-			printf "%s\n" "$cleaned"
-		fi
-	fi
+try:
+    # Validate git repo and find changelog
+    ChangelogUtils.validate_git_repo()
+    changelog_path = ChangelogUtils.find_changelog_path()
+    
+    # Parse version and extract content
+    version = ChangelogUtils.parse_version('$tag_version')
+    content = ChangelogUtils.extract_changelog_section(changelog_path, version)
+    
+    print(content)
+except ChangelogError as e:
+    print(f'ERROR: {e}', file=sys.stderr)
+    sys.exit(1)
+"
 }
 
 # Main script logic
@@ -141,9 +73,19 @@ main() {
 	local tag_version="$1"
 	local force_recreate="${2:-}"
 
-	# Validate tag format (SemVer: vMAJOR.MINOR.PATCH with optional -PRERELEASE and optional +BUILD)
-	if [[ ! "$tag_version" =~ ^v[0-9]+(\.[0-9]+){2}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-		echo -e "${RED}Error: Tag version should follow SemVer format 'vX.Y.Z' (e.g., v0.3.5, v1.2.3-rc.1, v1.2.3+build.5)${NC}" >&2
+	# Validate tag format using Python utilities
+	if ! python3 -c "
+import sys
+sys.path.insert(0, '$SCRIPT_DIR')
+from changelog_utils import ChangelogUtils, VersionError
+
+try:
+    ChangelogUtils.validate_semver('$tag_version')
+except VersionError as e:
+    print(f'Error: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>/dev/null; then
+		echo -e "${RED}Error: Invalid SemVer format${NC}" >&2
 		exit 1
 	fi
 
@@ -199,9 +141,11 @@ if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
 	exit 0
 fi
 
-# Run checks
-check_git_repo
-check_changelog
+# Check Python3 prerequisite
+if ! command -v python3 >/dev/null 2>&1; then
+	echo -e "${RED}Error: python3 is required for changelog processing${NC}" >&2
+	exit 1
+fi
 
 # Run main logic
 main "$@"
