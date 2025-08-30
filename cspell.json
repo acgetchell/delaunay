@@ -104,6 +104,7 @@
         "luacheck",
         "machdep",
         "matrixmultiply",
+        "metacharacters",
         "memchr",
         "memsize",
         "microbenchmark",

@@ -80,8 +80,8 @@ extract_changelog() {
 	changelog_content=$(awk -v version="$version_number" '
         BEGIN { 
             found = 0; printing = 0;
-			# Escape dots in version number for regex
-			gsub(/\./, "\\.", version);
+			# Escape all regex metacharacters in version (., +, *, ?, |, (, ), [, ], {, }, ^, $, and \)
+			gsub(/[][(){}.^$*+?|\\]/, "\\\\&", version);
 		}
         /^##[[:space:]]/ {
             if (printing) {
