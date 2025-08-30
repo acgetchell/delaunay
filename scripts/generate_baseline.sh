@@ -53,18 +53,16 @@ fi
 # shellcheck disable=SC1091
 source "${PROJECT_ROOT}/scripts/hardware_info.sh"
 
-# Check mandatory tools first (bc is required by hardware detection)
-for cmd in jq bc; do
-	if ! command -v "$cmd" >/dev/null 2>&1; then
-		error_exit "Required command '$cmd' is not installed. Please install it to proceed."
-	fi
-done
+# Check mandatory tools first
+if ! command -v jq >/dev/null 2>&1; then
+	error_exit "Required command 'jq' is not installed. Please install it to proceed."
+fi
 
 # Get current date and git commit
 CURRENT_DATE=$(date)
 GIT_COMMIT=$(git rev-parse HEAD)
 
-# Collect hardware information using shared utility (requires bc for memory calculations)
+# Collect hardware information using shared utility
 echo "Collecting hardware information..."
 HARDWARE_INFO=$(get_hardware_info)
 
@@ -138,18 +136,18 @@ extract_criterion_data() {
 		if [[ "$mean_ns" != "0" && "$mean_ns" != "null" ]]; then
 			# Convert nanoseconds to microseconds
 			local mean_us low_us high_us
-			mean_us=$(printf "%.2f" "$(echo "scale=2; $mean_ns / 1000" | bc -l)")
-			low_us=$(printf "%.2f" "$(echo "scale=2; $low_ns / 1000" | bc -l)")
-			high_us=$(printf "%.2f" "$(echo "scale=2; $high_ns / 1000" | bc -l)")
+			mean_us=$(awk -v v="$mean_ns" 'BEGIN{printf "%.2f", v / 1000}')
+			low_us=$(awk -v v="$low_ns" 'BEGIN{printf "%.2f", v / 1000}')
+			high_us=$(awk -v v="$high_ns" 'BEGIN{printf "%.2f", v / 1000}')
 
 			# Calculate throughput in Kelem/s
 			# Throughput = points / time_in_seconds
 			# For time in microseconds: throughput = points / (time_us / 1,000,000) = points * 1,000,000 / time_us
 			# For Kelem/s: throughput_kelem = (points * 1,000,000 / time_us) / 1000 = points * 1000 / time_us
 			local thrpt_mean thrpt_low thrpt_high
-			thrpt_mean=$(printf "%.3f" "$(echo "scale=3; $points * 1000 / $mean_us" | bc -l)")
-			thrpt_low=$(printf "%.3f" "$(echo "scale=3; $points * 1000 / $high_us" | bc -l)") # Lower time = higher throughput
-			thrpt_high=$(printf "%.3f" "$(echo "scale=3; $points * 1000 / $low_us" | bc -l)") # Higher time = lower throughput
+			thrpt_mean=$(awk -v p="$points" -v t="$mean_us" 'BEGIN{printf "%.3f", p * 1000 / t}')
+			thrpt_low=$(awk -v p="$points" -v t="$high_us" 'BEGIN{printf "%.3f", p * 1000 / t}') # Lower time = higher throughput
+			thrpt_high=$(awk -v p="$points" -v t="$low_us" 'BEGIN{printf "%.3f", p * 1000 / t}') # Higher time = lower throughput
 
 			# Write to baseline file in expected format
 			cat >>"$OUTPUT_FILE" <<EOF

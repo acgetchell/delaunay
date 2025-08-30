@@ -75,16 +75,16 @@ extract_changelog() {
 	version_number="${tag_version#v}"
 
 	# Use awk to find the specific version section and extract until next ## header
-	# Support formats: "## [0.3.5] ...", "## v0.3.5 ...", "## 0.3.5 ..."
+	# Support formats: "## [0.3.5] ...", "## v0.3.5 ...", "## 0.3.5 ...", "## [0.3.5] - 2025-08-28" (Keep a Changelog)
 	changelog_content=$(awk -v version="$version_number" '
         BEGIN { found = 0; printing = 0 }
-        /^## / {
+        /^##[[:space:]]/ {
             if (printing) {
                 # Stop printing when we hit the next ## header
                 exit
             }
-            # Check if this header matches our version
-            if ($0 ~ "## \\[v?" version "\\]" || $0 ~ "## v?" version " " || $0 ~ "## v?" version "$") {
+            # Check if this header matches our version (flexible matching for various formats)
+            if ($0 ~ "^##[[:space:]]*\\[?v?" version "\\]?") {
                 found = 1
                 printing = 1
                 next  # Skip the header itself
@@ -102,13 +102,14 @@ extract_changelog() {
 	if [[ -z "$changelog_content" ]]; then
 		echo -e "${YELLOW}Warning: No changelog content found for version $tag_version${NC}" >&2
 		echo "Searched for version patterns:" >&2
-		echo "  - ## [$version_number] ..." >&2
+		echo "  - ## [$version_number] - <date> ..." >&2
 		echo "  - ## v$version_number ..." >&2
 		echo "  - ## $version_number ..." >&2
 		echo "Using minimal tag message instead." >&2
 		echo "$tag_version"
 	else
 		# Preserve per-line indentation; only drop leading/trailing empty lines
+		local cleaned
 		cleaned=$(printf "%s\n" "$changelog_content" | awk '
 			BEGIN{n=0}
 			{ lines[n++]=$0 }
@@ -141,7 +142,7 @@ main() {
 	fi
 
 	# Check if tag already exists
-	if git tag -l | grep -q "^${tag_version}$"; then
+	if git rev-parse -q --verify "refs/tags/${tag_version}" >/dev/null; then
 		if [[ "$force_recreate" != "--force" ]]; then
 			echo -e "${YELLOW}Tag '$tag_version' already exists.${NC}" >&2
 			echo "Use --force to recreate it, or delete it first with:" >&2

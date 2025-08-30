@@ -36,19 +36,49 @@ get_hardware_info() {
 			cpu_threads=$(sysctl -n hw.logicalcpu 2>/dev/null || echo "Unknown")
 		fi
 	elif [[ "$OSTYPE" == "linux"* ]]; then
-		# Linux
-		if [[ -f "/proc/cpuinfo" ]]; then
+		# Linux - Enhanced detection for ARM/heterogeneous cores
+		# Try lscpu first for model name (more reliable across architectures)
+		if command -v lscpu >/dev/null 2>&1; then
+			cpu_info=$(lscpu | awk -F: '/Model name|Model/ {print $2; exit}' | sed 's/^ *//' 2>/dev/null || echo "Unknown")
+		fi
+
+		# Fallback to /proc/cpuinfo for model name if lscpu failed or unavailable
+		if [[ "$cpu_info" == "Unknown" ]] && [[ -f "/proc/cpuinfo" ]]; then
 			cpu_info=$(grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
-			cpu_cores=$(grep "cpu cores" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
-			# Use nproc for thread count (more portable), fall back to /proc/cpuinfo parsing
-			if command -v nproc >/dev/null 2>&1; then
-				cpu_threads=$(nproc 2>/dev/null || echo "Unknown")
-			else
-				cpu_threads=$(grep -c "^processor[[:space:]]*:" /proc/cpuinfo 2>/dev/null || echo "Unknown")
+			# ARM fallback - try "Processor" field
+			if [[ "$cpu_info" == "Unknown" ]]; then
+				cpu_info=$(grep "Processor" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
 			fi
 		fi
+
+		# CPU cores - try lscpu first, then /proc/cpuinfo with fallbacks
+		if command -v lscpu >/dev/null 2>&1; then
+			cpu_cores=$(lscpu | awk -F: '/^Core\(s\) per socket/ {print $2}' | sed 's/^ *//' 2>/dev/null || echo "Unknown")
+		fi
+		if [[ "$cpu_cores" == "Unknown" ]] && [[ -f "/proc/cpuinfo" ]]; then
+			cpu_cores=$(grep "cpu cores" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
+			# ARM fallback - count unique core IDs if available
+			if [[ "$cpu_cores" == "Unknown" ]]; then
+				cpu_cores=$(grep "core id" /proc/cpuinfo | sort -u | wc -l 2>/dev/null || echo "Unknown")
+				# If core id approach gives 0, fall back to processor count
+				if [[ "$cpu_cores" == "0" ]]; then
+					cpu_cores="Unknown"
+				fi
+			fi
+		fi
+
+		# CPU threads - multiple fallback methods for maximum compatibility
+		if command -v nproc >/dev/null 2>&1; then
+			cpu_threads=$(nproc 2>/dev/null || echo "Unknown")
+		elif command -v getconf >/dev/null 2>&1; then
+			cpu_threads=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo "Unknown")
+		elif [[ -f "/proc/cpuinfo" ]]; then
+			cpu_threads=$(grep -c "^processor[[:space:]]*:" /proc/cpuinfo 2>/dev/null || echo "Unknown")
+		else
+			cpu_threads="Unknown"
+		fi
 	elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-		# Windows (via MSYS2/Cygwin) - Use PowerShell by default (wmic is deprecated)
+		# Windows (via MSYS2/Cygwin) - Use PowerShell
 		if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
 			local ps_cmd
 			if command -v pwsh >/dev/null 2>&1; then
@@ -65,11 +95,6 @@ get_hardware_info() {
 			cpu_info=${temp_cpu_info:-"Unknown"}
 			cpu_cores=${temp_cpu_cores:-"Unknown"}
 			cpu_threads=${temp_cpu_threads:-"Unknown"}
-		elif command -v wmic >/dev/null 2>&1; then
-			# Legacy fallback to wmic (deprecated)
-			cpu_info=$(wmic cpu get name /format:list 2>/dev/null | grep "Name=" | cut -d= -f2 | head -1 || echo "Unknown")
-			cpu_cores=$(wmic cpu get NumberOfCores /format:list 2>/dev/null | grep "NumberOfCores=" | cut -d= -f2 | head -1 || echo "Unknown")
-			cpu_threads=$(wmic cpu get NumberOfLogicalProcessors /format:list 2>/dev/null | grep "NumberOfLogicalProcessors=" | cut -d= -f2 | head -1 || echo "Unknown")
 		fi
 	fi
 
@@ -82,8 +107,8 @@ get_hardware_info() {
 			local mem_bytes
 			mem_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo "0")
 			if [[ "$mem_bytes" -gt 0 ]]; then
-				memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
-				memory_total="${memory_total} GB"
+				memory_total=$(awk -v b="$mem_bytes" 'BEGIN{ if (b+0>0) printf "%.1f", b/1024/1024/1024 }')
+				[[ -n "$memory_total" ]] && memory_total="${memory_total} GB" || memory_total="Unknown"
 			fi
 		fi
 	elif [[ "$OSTYPE" == "linux"* ]]; then
@@ -92,12 +117,12 @@ get_hardware_info() {
 			local mem_kb
 			mem_kb=$(grep "MemTotal:" /proc/meminfo | awk '{print $2}' 2>/dev/null || echo "0")
 			if [[ "$mem_kb" -gt 0 ]]; then
-				memory_total=$(echo "scale=1; $mem_kb / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
-				memory_total="${memory_total} GB"
+				memory_total=$(awk -v k="$mem_kb" 'BEGIN{ if (k+0>0) printf "%.1f", k/1024/1024 }')
+				[[ -n "$memory_total" ]] && memory_total="${memory_total} GB" || memory_total="Unknown"
 			fi
 		fi
 	elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-		# Windows - Use PowerShell by default (wmic is deprecated)
+		# Windows - Use PowerShell
 		if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
 			local ps_cmd
 			if command -v pwsh >/dev/null 2>&1; then
@@ -105,7 +130,7 @@ get_hardware_info() {
 			else
 				ps_cmd="powershell"
 			fi
-			# Use Get-CimInstance and perform GB conversion in PowerShell to avoid bc dependency
+			# Use Get-CimInstance and perform GB conversion in PowerShell
 			memory_total=$($ps_cmd -NoProfile -NonInteractive -Command "
                 try {
                     \$mem_bytes = (Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory
@@ -115,37 +140,6 @@ get_hardware_info() {
                     Write-Output \"Unknown\"
                 }
             " 2>/dev/null | tr -d '\r' || echo "Unknown")
-		elif command -v wmic >/dev/null 2>&1; then
-			# Legacy fallback to wmic (deprecated) - use PowerShell for conversion
-			if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
-				local ps_cmd_fallback
-				if command -v pwsh >/dev/null 2>&1; then
-					ps_cmd_fallback="pwsh"
-				else
-					ps_cmd_fallback="powershell"
-				fi
-				local mem_bytes
-				mem_bytes=$(wmic computersystem get TotalPhysicalMemory /format:list 2>/dev/null | grep "TotalPhysicalMemory=" | cut -d= -f2 | head -1 || echo "0")
-				if [[ "$mem_bytes" -gt 0 ]]; then
-					memory_total=$($ps_cmd_fallback -NoProfile -NonInteractive -Command "
-                        try {
-                            \$mem_gb = [math]::Round($mem_bytes / 1GB, 1)
-                            Write-Output \"\$mem_gb GB\"
-                        } catch {
-                            Write-Output \"Unknown\"
-                        }
-                    " 2>/dev/null | tr -d '\r' || echo "Unknown")
-				fi
-			else
-				# Pure bash fallback if no PowerShell available (very rare)
-				local mem_bytes
-				mem_bytes=$(wmic computersystem get TotalPhysicalMemory /format:list 2>/dev/null | grep "TotalPhysicalMemory=" | cut -d= -f2 | head -1 || echo "0")
-				if [[ "$mem_bytes" -gt 0 ]]; then
-					# Basic integer division fallback (less precise but avoids bc dependency)
-					memory_total=$((mem_bytes / 1073741824))
-					memory_total="${memory_total} GB"
-				fi
-			fi
 		fi
 	fi
 
@@ -199,19 +193,49 @@ get_hardware_info_kv() {
 			cpu_threads=$(sysctl -n hw.logicalcpu 2>/dev/null || echo "Unknown")
 		fi
 	elif [[ "$OSTYPE" == "linux"* ]]; then
-		# Linux
-		if [[ -f "/proc/cpuinfo" ]]; then
+		# Linux - Enhanced detection for ARM/heterogeneous cores
+		# Try lscpu first for model name (more reliable across architectures)
+		if command -v lscpu >/dev/null 2>&1; then
+			cpu_info=$(lscpu | awk -F: '/Model name|Model/ {print $2; exit}' | sed 's/^ *//' 2>/dev/null || echo "Unknown")
+		fi
+
+		# Fallback to /proc/cpuinfo for model name if lscpu failed or unavailable
+		if [[ "$cpu_info" == "Unknown" ]] && [[ -f "/proc/cpuinfo" ]]; then
 			cpu_info=$(grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
-			cpu_cores=$(grep "cpu cores" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
-			# Use nproc for thread count (more portable), fall back to /proc/cpuinfo parsing
-			if command -v nproc >/dev/null 2>&1; then
-				cpu_threads=$(nproc 2>/dev/null || echo "Unknown")
-			else
-				cpu_threads=$(grep -c "^processor[[:space:]]*:" /proc/cpuinfo 2>/dev/null || echo "Unknown")
+			# ARM fallback - try "Processor" field
+			if [[ "$cpu_info" == "Unknown" ]]; then
+				cpu_info=$(grep "Processor" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
 			fi
 		fi
+
+		# CPU cores - try lscpu first, then /proc/cpuinfo with fallbacks
+		if command -v lscpu >/dev/null 2>&1; then
+			cpu_cores=$(lscpu | awk -F: '/^Core\(s\) per socket/ {print $2}' | sed 's/^ *//' 2>/dev/null || echo "Unknown")
+		fi
+		if [[ "$cpu_cores" == "Unknown" ]] && [[ -f "/proc/cpuinfo" ]]; then
+			cpu_cores=$(grep "cpu cores" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
+			# ARM fallback - count unique core IDs if available
+			if [[ "$cpu_cores" == "Unknown" ]]; then
+				cpu_cores=$(grep "core id" /proc/cpuinfo | sort -u | wc -l 2>/dev/null || echo "Unknown")
+				# If core id approach gives 0, fall back to processor count
+				if [[ "$cpu_cores" == "0" ]]; then
+					cpu_cores="Unknown"
+				fi
+			fi
+		fi
+
+		# CPU threads - multiple fallback methods for maximum compatibility
+		if command -v nproc >/dev/null 2>&1; then
+			cpu_threads=$(nproc 2>/dev/null || echo "Unknown")
+		elif command -v getconf >/dev/null 2>&1; then
+			cpu_threads=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo "Unknown")
+		elif [[ -f "/proc/cpuinfo" ]]; then
+			cpu_threads=$(grep -c "^processor[[:space:]]*:" /proc/cpuinfo 2>/dev/null || echo "Unknown")
+		else
+			cpu_threads="Unknown"
+		fi
 	elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-		# Windows (via MSYS2/Cygwin) - Use PowerShell by default (wmic is deprecated)
+		# Windows (via MSYS2/Cygwin) - Use PowerShell
 		if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
 			local ps_cmd
 			if command -v pwsh >/dev/null 2>&1; then
@@ -228,11 +252,6 @@ get_hardware_info_kv() {
 			cpu_info=${temp_cpu_info:-"Unknown"}
 			cpu_cores=${temp_cpu_cores:-"Unknown"}
 			cpu_threads=${temp_cpu_threads:-"Unknown"}
-		elif command -v wmic >/dev/null 2>&1; then
-			# Legacy fallback to wmic (deprecated)
-			cpu_info=$(wmic cpu get name /format:list 2>/dev/null | grep "Name=" | cut -d= -f2 | head -1 || echo "Unknown")
-			cpu_cores=$(wmic cpu get NumberOfCores /format:list 2>/dev/null | grep "NumberOfCores=" | cut -d= -f2 | head -1 || echo "Unknown")
-			cpu_threads=$(wmic cpu get NumberOfLogicalProcessors /format:list 2>/dev/null | grep "NumberOfLogicalProcessors=" | cut -d= -f2 | head -1 || echo "Unknown")
 		fi
 	fi
 
@@ -245,8 +264,8 @@ get_hardware_info_kv() {
 			local mem_bytes
 			mem_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo "0")
 			if [[ "$mem_bytes" -gt 0 ]]; then
-				memory_total=$(echo "scale=1; $mem_bytes / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
-				memory_total="${memory_total} GB"
+				memory_total=$(awk -v b="$mem_bytes" 'BEGIN{ if (b+0>0) printf "%.1f", b/1024/1024/1024 }')
+				[[ -n "$memory_total" ]] && memory_total="${memory_total} GB" || memory_total="Unknown"
 			fi
 		fi
 	elif [[ "$OSTYPE" == "linux"* ]]; then
@@ -255,12 +274,12 @@ get_hardware_info_kv() {
 			local mem_kb
 			mem_kb=$(grep "MemTotal:" /proc/meminfo | awk '{print $2}' 2>/dev/null || echo "0")
 			if [[ "$mem_kb" -gt 0 ]]; then
-				memory_total=$(echo "scale=1; $mem_kb / 1024 / 1024" | bc -l 2>/dev/null || echo "Unknown")
-				memory_total="${memory_total} GB"
+				memory_total=$(awk -v k="$mem_kb" 'BEGIN{ if (k+0>0) printf "%.1f", k/1024/1024 }')
+				[[ -n "$memory_total" ]] && memory_total="${memory_total} GB" || memory_total="Unknown"
 			fi
 		fi
 	elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-		# Windows - Use PowerShell by default (wmic is deprecated)
+		# Windows - Use PowerShell
 		if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
 			local ps_cmd
 			if command -v pwsh >/dev/null 2>&1; then
@@ -268,7 +287,7 @@ get_hardware_info_kv() {
 			else
 				ps_cmd="powershell"
 			fi
-			# Use Get-CimInstance and perform GB conversion in PowerShell to avoid bc dependency
+			# Use Get-CimInstance and perform GB conversion in PowerShell
 			memory_total=$($ps_cmd -NoProfile -NonInteractive -Command "
                 try {
                     \$mem_bytes = (Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory
@@ -278,37 +297,6 @@ get_hardware_info_kv() {
                     Write-Output \"Unknown\"
                 }
             " 2>/dev/null | tr -d '\r' || echo "Unknown")
-		elif command -v wmic >/dev/null 2>&1; then
-			# Legacy fallback to wmic (deprecated) - use PowerShell for conversion
-			if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
-				local ps_cmd_fallback
-				if command -v pwsh >/dev/null 2>&1; then
-					ps_cmd_fallback="pwsh"
-				else
-					ps_cmd_fallback="powershell"
-				fi
-				local mem_bytes
-				mem_bytes=$(wmic computersystem get TotalPhysicalMemory /format:list 2>/dev/null | grep "TotalPhysicalMemory=" | cut -d= -f2 | head -1 || echo "0")
-				if [[ "$mem_bytes" -gt 0 ]]; then
-					memory_total=$($ps_cmd_fallback -NoProfile -NonInteractive -Command "
-                        try {
-                            \$mem_gb = [math]::Round($mem_bytes / 1GB, 1)
-                            Write-Output \"\$mem_gb GB\"
-                        } catch {
-                            Write-Output \"Unknown\"
-                        }
-                    " 2>/dev/null | tr -d '\r' || echo "Unknown")
-				fi
-			else
-				# Pure bash fallback if no PowerShell available (very rare)
-				local mem_bytes
-				mem_bytes=$(wmic computersystem get TotalPhysicalMemory /format:list 2>/dev/null | grep "TotalPhysicalMemory=" | cut -d= -f2 | head -1 || echo "0")
-				if [[ "$mem_bytes" -gt 0 ]]; then
-					# Basic integer division fallback (less precise but avoids bc dependency)
-					memory_total=$((mem_bytes / 1073741824))
-					memory_total="${memory_total} GB"
-				fi
-			fi
 		fi
 	fi
 
@@ -339,12 +327,12 @@ extract_baseline_hardware() {
 	if grep -q "Hardware Information:" "$baseline_file"; then
 		# Extract hardware information block only (from "Hardware Information:" until next empty line or EOF)
 		local hardware_block
-		hardware_block=$(awk '/^Hardware Information:/{flag=1; next} flag && /^$/{exit} flag' "$baseline_file")
+		hardware_block=$(awk '/^Hardware Information:/{flag=1; next} flag && /^$/{exit} flag' "$baseline_file" | tr -d '\r')
 
 		# If hardware_block is empty, try alternative extraction (handle cases where block doesn't end with empty line)
 		# Only capture indented lines (starting with 2+ spaces) to avoid overrunning past the hardware section
 		if [[ -z "$hardware_block" ]]; then
-			hardware_block=$(awk '/^Hardware Information:/{flag=1; next} flag && /^  / {print; next} flag {exit}' "$baseline_file")
+			hardware_block=$(awk '/^Hardware Information:/{flag=1; next} flag && /^  / {print; next} flag {exit}' "$baseline_file" | tr -d '\r')
 		fi
 
 		# Extract each piece of hardware info from the scoped block
@@ -460,9 +448,27 @@ EOF
 		warnings_found=true
 	fi
 
-	if [[ "$current_memory" != "$baseline_memory" ]] && [[ "$baseline_memory" != "Unknown" ]] && [[ "$current_memory" != "Unknown" ]]; then
-		echo "⚠️  Memory differs: $current_memory vs $baseline_memory"
-		warnings_found=true
+	# Memory comparison with numeric tolerance for false-positive reduction
+	if [[ "$baseline_memory" != "Unknown" ]] && [[ "$current_memory" != "Unknown" ]]; then
+		# Extract numeric values from memory strings (e.g., "16.0 GB" -> "16.0")
+		current_mem_num=$(echo "$current_memory" | grep -oE '[0-9]+\.?[0-9]*' | head -1)
+		baseline_mem_num=$(echo "$baseline_memory" | grep -oE '[0-9]+\.?[0-9]*' | head -1)
+
+		# Only warn if numeric values differ by more than 0.1 GB (to handle rounding differences)
+		if [[ -n "$current_mem_num" ]] && [[ -n "$baseline_mem_num" ]]; then
+			# Use awk to check if absolute difference > 0.1 GB
+			mem_diff=$(awk -v c="$current_mem_num" -v b="$baseline_mem_num" 'BEGIN{diff=c-b; if(diff<0) diff=-diff; print (diff > 0.1)}')
+			if [[ "$mem_diff" == "1" ]]; then
+				echo "⚠️  Memory differs: $current_memory vs $baseline_memory"
+				warnings_found=true
+			fi
+		else
+			# Fall back to string comparison if numeric parsing fails
+			if [[ "$current_memory" != "$baseline_memory" ]]; then
+				echo "⚠️  Memory differs: $current_memory vs $baseline_memory"
+				warnings_found=true
+			fi
+		fi
 	fi
 
 	if [[ "$current_rust" != "$baseline_rust" ]] && [[ "$baseline_rust" != "Unknown" ]]; then

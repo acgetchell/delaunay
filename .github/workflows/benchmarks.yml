@@ -31,12 +31,8 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           cache: true
-          # toolchain, components, etc. are specified in rust-toolchain.toml
-
-      - name: Install benchmark dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc
+          # Toolchain from rust-toolchain.toml; install only needed target on macOS
+          target: aarch64-apple-darwin
 
       - name: Check for performance baseline
         run: |
@@ -80,6 +76,7 @@ jobs:
       - name: Run performance regression test
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false'
         run: |
+          chmod +x ./scripts/compare_benchmarks.sh
           echo "🚀 Running performance regression test..."
 
           # This will exit with code 1 if significant regressions are found

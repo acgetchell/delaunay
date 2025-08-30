@@ -93,9 +93,6 @@ done
 
 # Error handling with explicit checks (trap removed to avoid parsing issues)
 
-# Check dependencies
-command -v bc >/dev/null 2>&1 || error_exit "bc is required but not found. Please install via your system package manager (e.g., apt, brew, winget)"
-
 # File paths
 BASELINE_FILE="${PROJECT_ROOT}/benches/baseline_results.txt"
 COMPARE_FILE="${PROJECT_ROOT}/benches/compare_results.txt"
@@ -268,7 +265,7 @@ while IFS= read -r line; do
 				# Determine if this is positive (regression) or negative (improvement)
 				if [[ "$change_line" == +* ]]; then
 					# Positive change = slower = regression
-					if (($(echo "$change_value > 5.0" | bc -l))); then
+					if (($(awk -v v="$change_value" 'BEGIN{print (v > 5.0)}'))); then
 						printf "⚠️  REGRESSION: Time increased by %s%% (slower performance)\n" "$change_value" >>"$COMPARE_FILE"
 						regression_found=true
 					else
@@ -276,7 +273,7 @@ while IFS= read -r line; do
 					fi
 				elif [[ "$change_line" == -* ]]; then
 					# Negative change = faster = improvement
-					if (($(echo "$change_value > 5.0" | bc -l))); then
+					if (($(awk -v v="$change_value" 'BEGIN{print (v > 5.0)}'))); then
 						printf "✅ IMPROVEMENT: Time decreased by %s%% (faster performance)\n" "$change_value" >>"$COMPARE_FILE"
 					else
 						printf "✅ OK: Time change within acceptable range\n" >>"$COMPARE_FILE"
@@ -327,7 +324,7 @@ if [[ -n "$current_benchmark" ]] && [[ -n "$current_time_change" ]]; then
 			# Determine if this is positive (regression) or negative (improvement)
 			if [[ "$change_line" == +* ]]; then
 				# Positive change = slower = regression
-				if (($(echo "$change_value > 5.0" | bc -l))); then
+				if (($(awk -v v="$change_value" 'BEGIN{print (v > 5.0)}'))); then
 					printf "⚠️  REGRESSION: Time increased by %s%% (slower performance)\n" "$change_value" >>"$COMPARE_FILE"
 					regression_found=true
 				else
@@ -335,7 +332,7 @@ if [[ -n "$current_benchmark" ]] && [[ -n "$current_time_change" ]]; then
 				fi
 			elif [[ "$change_line" == -* ]]; then
 				# Negative change = faster = improvement
-				if (($(echo "$change_value > 5.0" | bc -l))); then
+				if (($(awk -v v="$change_value" 'BEGIN{print (v > 5.0)}'))); then
 					printf "✅ IMPROVEMENT: Time decreased by %s%% (faster performance)\n" "$change_value" >>"$COMPARE_FILE"
 				else
 					printf "✅ OK: Time change within acceptable range\n" >>"$COMPARE_FILE"

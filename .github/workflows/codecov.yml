@@ -36,13 +36,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-tarpaulin
-          key: tarpaulin-${{ runner.os }}
+          key: tarpaulin-${{ runner.os }}-${{ env.TARPAULIN_VERSION }}
 
       - name: Install tarpaulin
         run: |
           if ! command -v cargo-tarpaulin &> /dev/null; then
-            cargo install cargo-tarpaulin --locked
+            cargo install cargo-tarpaulin --locked --version "${TARPAULIN_VERSION}"
           fi
+        env:
+          TARPAULIN_VERSION: "0.32.8"
 
       - name: Run coverage
         run: |

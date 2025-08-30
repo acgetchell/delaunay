@@ -5,19 +5,6 @@ set -euo pipefail
 # This script provides reusable functions for parsing benchmark results across different scripts
 
 #==============================================================================
-# DEPENDENCY CHECKS
-#==============================================================================
-
-# Function to check if required dependencies are available
-# Usage: check_benchmark_parser_dependencies
-check_benchmark_parser_dependencies() {
-	if ! command -v bc >/dev/null 2>&1; then
-		echo "ERROR: bc is required but not found. Please install via your system package manager (e.g., apt, brew, winget)" >&2
-		return 1
-	fi
-}
-
-#==============================================================================
 # BENCHMARK PARSING FUNCTIONS
 #==============================================================================
 
@@ -231,9 +218,6 @@ extract_baseline_time() {
 	local dimension="$2"
 	local baseline_file="$3"
 
-	# Check dependencies before proceeding
-	check_benchmark_parser_dependencies || return 1
-
 	# Look for the section header and extract the mean time value
 	# Handle dimension parameter that may or may not already include 'D' suffix
 	local dimension_with_d="$dimension"
@@ -256,13 +240,13 @@ extract_baseline_time() {
 
 		# Convert to nanoseconds based on unit (check original line for unit)
 		if [[ "$time_line" == *"ns"* ]]; then
-			printf "%.0f\n" "$(echo "$time_value * 1" | bc -l)"
+			printf "%.0f\n" "$(awk -v v="$time_value" 'BEGIN{printf "%.0f", v * 1}')"
 		elif [[ "$time_line" == *"μs"* ]] || [[ "$time_line" == *"µs"* ]] || [[ "$time_line" == *"us"* ]]; then
-			printf "%.0f\n" "$(echo "$time_value * 1000" | bc -l)"
+			printf "%.0f\n" "$(awk -v v="$time_value" 'BEGIN{printf "%.0f", v * 1000}')"
 		elif [[ "$time_line" == *"ms"* ]]; then
-			printf "%.0f\n" "$(echo "$time_value * 1000000" | bc -l)"
+			printf "%.0f\n" "$(awk -v v="$time_value" 'BEGIN{printf "%.0f", v * 1000000}')"
 		elif [[ "$time_line" == *" s"* ]] && [[ "$time_line" != *"μs"* ]] && [[ "$time_line" != *"ms"* ]] && [[ "$time_line" != *"ns"* ]]; then
-			printf "%.0f\n" "$(echo "$time_value * 1000000000" | bc -l)"
+			printf "%.0f\n" "$(awk -v v="$time_value" 'BEGIN{printf "%.0f", v * 1000000000}')"
 		else
 			echo "$time_value"
 		fi
@@ -277,7 +261,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	echo "This script is meant to be sourced by other scripts, not executed directly."
 	echo ""
 	echo "Available functions:"
-	echo "  - check_benchmark_parser_dependencies"
 	echo "  - parse_benchmark_start"
 	echo "  - extract_timing_data"
 	echo "  - parse_benchmark_identifier"

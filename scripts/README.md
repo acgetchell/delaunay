@@ -15,12 +15,12 @@ brew install jq findutils coreutils
 ### Ubuntu/Debian
 
 ```bash
-sudo apt-get install jq findutils coreutils bc
+sudo apt-get install jq findutils coreutils
 ```
 
 ### Other Systems
 
-Install equivalent packages for `jq`, `find`, `sort`, and `bc` using your system's package manager.
+Install equivalent packages for `jq`, `find`, and `sort` using your system's package manager.
 
 ## Scripts Overview
 
@@ -38,15 +38,12 @@ All scripts support the `--help` flag for detailed usage information.
 - **Multiple Parsing Methods**: Both `while read` and `awk` implementations for different use cases
 - **Robust Regex Patterns**: Handles various benchmark output formats and edge cases
 - **Unit Normalization**: Standardizes time units (µs, us, μs) for consistency
-- **Dependency Validation**: Built-in checks for required tools (`bc`)
+- **Dependency Validation**: Built-in checks for required tools
 - **Flexible Output**: Configurable output formatting for different consumers
 
 **Key Functions**:
 
 ```bash
-# Dependency checking
-check_benchmark_parser_dependencies()    # Validates required tools
-
 # Benchmark detection and parsing
 parse_benchmark_start("line")            # Extracts metadata from "Benchmarking..." lines
 extract_timing_data("line")              # Parses timing data from result lines
@@ -84,14 +81,11 @@ Throughput: [28.135, 28.257, 28.381] Kelem/s
 # Source the shared functions
 source "$(dirname "$0")/benchmark_parser.sh"
 
-# Check dependencies
-check_benchmark_parser_dependencies || exit 1
-
 # Parse benchmark output
 parse_benchmarks_with_while_read "input.txt" "output.txt"
 ```
 
-**Dependencies**: Requires `bc` for numerical calculations
+**Dependencies**: No external dependencies beyond standard POSIX tools
 
 ---
 
@@ -146,7 +140,7 @@ parse_benchmarks_with_while_read "input.txt" "output.txt"
 ./scripts/compare_benchmarks.sh --help
 ```
 
-**Dependencies**: Requires `cargo`, `bc`, shared `benchmark_parser.sh`
+**Dependencies**: Requires `cargo`, shared `benchmark_parser.sh`
 
 ---
 
@@ -426,8 +420,8 @@ hardware_info=$(get_hardware_info)
 
 **Dependencies**:
 
-- macOS: `sysctl`, `bc` (via Homebrew: `brew install bc`)
-- Linux: `bc` (via apt: `sudo apt-get install bc`)
+- macOS: `sysctl` (built-in)
+- Linux: `/proc/cpuinfo` and `/proc/meminfo` (built-in)
 - Windows: PowerShell (`pwsh` or `powershell`) preferred, legacy `wmic` as fallback
 - All platforms: `rustc` for Rust toolchain info
 

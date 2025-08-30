@@ -61,6 +61,13 @@ cargo test --examples --verbose
 cargo test --features count-allocations -- allocation_counting 
 ```
 
+### Identifying Changed Files
+
+```bash
+# Show changed files in machine-readable format
+git status --porcelain
+```
+
 ### Code Quality
 
 #### Rust Code Quality
@@ -233,6 +240,13 @@ yamllint -f parsable .
 - Other platforms: `pip install yamllint`
 - Configuration can be customized via `.yamllint`, `.yamllint.yml` or `.yamllint.yaml`
 
+#### Spell Checking
+
+```bash
+# Check spelling with project configuration
+npx cspell --config cspell.json "**/*"
+```
+
 ### Benchmarking
 
 ```bash
@@ -336,10 +350,8 @@ This provides more accurate release timing that reflects when the actual work wa
 - **`algorithms/`** - Geometric algorithms
   - **`convex_hull.rs`** - Convex hull extraction from Delaunay triangulations
 - **`traits/`** - Coordinate system abstractions
-  - **`coordinate.rs`** - Primary coordinate trait and scalar types
-  - **`finitecheck.rs`** - Finite value validation for coordinates
-  - **`hashcoordinate.rs`** - Consistent hashing for floating-point coordinates
-  - **`orderedeq.rs`** - NaN-aware equality comparison for floating-point types
+  - **`coordinate.rs`** - Unified coordinate traits including primary coordinate trait, scalar types, finite value validation,
+    consistent hashing for floating-point coordinates, and NaN-aware equality comparison
 
 **`src/lib.rs`** - Main library file with module declarations and prelude module
 
