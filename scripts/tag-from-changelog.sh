@@ -108,8 +108,24 @@ extract_changelog() {
 		echo "Using minimal tag message instead." >&2
 		echo "$tag_version"
 	else
-		# Clean up the content - remove any leading/trailing whitespace
-		echo "$changelog_content" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+		# Preserve per-line indentation; only drop leading/trailing empty lines
+		cleaned=$(printf "%s\n" "$changelog_content" | awk '
+			BEGIN{n=0}
+			{ lines[n++]=$0 }
+			END{
+				# find first non-empty
+				s=0; while (s<n && lines[s] ~ /^[[:space:]]*$/) s++;
+				# find last non-empty
+				e=n-1; while (e>=s && lines[e] ~ /^[[:space:]]*$/) e--;
+				if (e<s) exit 0;
+				for (i=s; i<=e; i++) print lines[i];
+			}')
+		if [[ -z "${cleaned//[$'\n'[:space:]]/}" ]]; then
+			echo -e "${YELLOW}Warning: Changelog section is empty after trimming; using minimal tag message.${NC}" >&2
+			echo "$tag_version"
+		else
+			printf "%s\n" "$cleaned"
+		fi
 	fi
 }
 
@@ -119,7 +135,7 @@ main() {
 	local force_recreate="${2:-}"
 
 	# Validate tag format (basic check for v prefix and version-like pattern)
-	if [[ ! "$tag_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+	if [[ ! "$tag_version" =~ ^v[0-9]+(\.[0-9]+){2}([\-+][0-9A-Za-z\.-]+)?$ ]]; then
 		echo -e "${RED}Error: Tag version should follow format 'vX.Y.Z' (e.g., v0.3.5)${NC}" >&2
 		exit 1
 	fi

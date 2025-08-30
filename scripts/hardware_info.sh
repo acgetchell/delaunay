@@ -106,7 +106,7 @@ get_hardware_info() {
 				ps_cmd="powershell"
 			fi
 			# Use Get-CimInstance and perform GB conversion in PowerShell to avoid bc dependency
-			memory_total=$($ps_cmd -NonInteractive -Command "
+			memory_total=$($ps_cmd -NoProfile -NonInteractive -Command "
                 try {
                     \$mem_bytes = (Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory
                     \$mem_gb = [math]::Round(\$mem_bytes / 1GB, 1)
@@ -127,7 +127,7 @@ get_hardware_info() {
 				local mem_bytes
 				mem_bytes=$(wmic computersystem get TotalPhysicalMemory /format:list 2>/dev/null | grep "TotalPhysicalMemory=" | cut -d= -f2 | head -1 || echo "0")
 				if [[ "$mem_bytes" -gt 0 ]]; then
-					memory_total=$($ps_cmd_fallback -NonInteractive -Command "
+					memory_total=$($ps_cmd_fallback -NoProfile -NonInteractive -Command "
                         try {
                             \$mem_gb = [math]::Round($mem_bytes / 1GB, 1)
                             Write-Output \"\$mem_gb GB\"
@@ -269,7 +269,7 @@ get_hardware_info_kv() {
 				ps_cmd="powershell"
 			fi
 			# Use Get-CimInstance and perform GB conversion in PowerShell to avoid bc dependency
-			memory_total=$($ps_cmd -NonInteractive -Command "
+			memory_total=$($ps_cmd -NoProfile -NonInteractive -Command "
                 try {
                     \$mem_bytes = (Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory
                     \$mem_gb = [math]::Round(\$mem_bytes / 1GB, 1)
@@ -290,7 +290,7 @@ get_hardware_info_kv() {
 				local mem_bytes
 				mem_bytes=$(wmic computersystem get TotalPhysicalMemory /format:list 2>/dev/null | grep "TotalPhysicalMemory=" | cut -d= -f2 | head -1 || echo "0")
 				if [[ "$mem_bytes" -gt 0 ]]; then
-					memory_total=$($ps_cmd_fallback -NonInteractive -Command "
+					memory_total=$($ps_cmd_fallback -NoProfile -NonInteractive -Command "
                         try {
                             \$mem_gb = [math]::Round($mem_bytes / 1GB, 1)
                             Write-Output \"\$mem_gb GB\"

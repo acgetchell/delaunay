@@ -21,6 +21,19 @@ cells, d-dimensional triangulations, and serialization/deserialization capabilit
 
 ## Essential Development Commands
 
+### Rust Toolchain
+
+The project uses a pinned Rust toolchain via `rust-toolchain.toml`:
+
+- **Version**: 1.89.0 (matches MSRV in Cargo.toml)
+- **Automatically enforced** when entering the project directory
+- **Includes all necessary components**: clippy, rustfmt, rust-docs, rust-src
+- **Cross-platform targets**: macOS (Intel/Apple Silicon), Linux, Windows
+- **Team-friendly**: New contributors get the correct setup automatically via `rustup`
+
+The toolchain file ensures consistent Rust versions across development, CI, and deployment
+environments, preventing version drift issues and ensuring reproducible builds.
+
 ### Building and Testing
 
 ```bash
@@ -69,13 +82,13 @@ cargo clippy --all-targets --all-features -- -D warnings -D clippy::all -D clipp
 
 ```bash
 # Format Python code (PEP 8 compliance) - replaces autopep8
-uvx ruff format scripts/*.py
+uvx ruff format scripts/
 
 # Fix imports, remove unused code, and other auto-fixable issues - replaces isort + autoflake
-uvx ruff check --fix scripts/*.py
+uvx ruff check --fix scripts/
 
 # Lint Python code (check for issues - does not auto-fix)
-uvx pylint scripts/*.py
+uvx pylint scripts/
 ```
 
 **Note**: The Python tools serve different purposes:
@@ -84,35 +97,44 @@ uvx pylint scripts/*.py
 - `ruff check --fix`: Organizes imports, removes unused code, and fixes other linting issues (replaces isort + autoflake)
 - `pylint`: Reports code quality issues (manual fixes required)
 
+**Installation**: The commands use `uvx` (uv's command runner) to execute Python tools:
+
+- **uv**: Install via `curl -LsSf https://astral.sh/uv/install.sh | sh` or see [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/)
+- **macOS**: `brew install uv`
+- **Windows**: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+- **pip**: `pip install uv` (if you prefer installing via pip)
+
+`uvx` automatically manages tool dependencies and provides isolated execution environments without requiring global installations.
+
 #### Shell Script Code Quality
 
 **IMPORTANT**: Run these commands after any changes to shell scripts in the `scripts/` directory:
 
 ```bash
 # Lint shell scripts with shellcheck (detects common issues)
-shellcheck scripts/*.sh
+shellcheck scripts/**/*.sh
 
-# Lint a specific shell script
-shellcheck scripts/generate_changelog.sh
+# Lint a specific shell script (follow sourced files)
+shellcheck -x scripts/generate_changelog.sh
 
 # Show all shellcheck warnings including informational ones
-shellcheck -S info scripts/*.sh
+shellcheck -S info scripts/**/*.sh
 
 # Check scripts with specific shell (if not detected automatically)
-shellcheck -s bash scripts/*.sh
+shellcheck -s bash scripts/**/*.sh
 ```
 
 Additionally, use shfmt for consistent formatting:
 
 ```bash
 # Format all shell scripts in-place (tabs by default)
-shfmt -w scripts/*.sh
+shfmt -w scripts/**/*.sh
 
 # Check formatting without modifying files (useful in CI)
-shfmt -d scripts/*.sh
+shfmt -d scripts/**/*.sh
 
 # Example: enforce 2-space indentation and named functions style
-shfmt -i 2 -fn -w scripts/*.sh
+shfmt -i 2 -fn -w scripts/**/*.sh
 ```
 
 **Note**: shellcheck helps detect:
@@ -181,7 +203,7 @@ npx markdownlint --help
 yamllint .
 
 # Lint specific YAML files
-yamllint .github/workflows/ci.yml .auto-changelog
+yamllint .github/workflows/ci.yml
 
 # Lint with custom configuration file
 yamllint -c .yamllint .
@@ -274,7 +296,7 @@ npx auto-changelog --latest-version v0.3.4
 # Generate changelog with custom commit limit per release
 npx auto-changelog --commit-limit 10
 
-# Generate changelog using Keep a Changelog format overrides the project template configured in .auto-changelog config)
+# Generate changelog using Keep a Changelog format (overrides the project template configured in .auto-changelog)
 npx auto-changelog --template keepachangelog
 
 # Test changelog generation without writing to file

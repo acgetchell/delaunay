@@ -157,6 +157,36 @@ compare_hardware "$CURRENT_HARDWARE" "$BASELINE_HARDWARE" >>"$COMPARE_FILE"
 
 echo "Parsing benchmark results and comparing..."
 
+# Helper function to emit comparison section (DRY - Don't Repeat Yourself)
+emit_comparison_section() {
+	local points="$1"
+	local dim="$2"
+	local time_vals="$3"
+	local thrpt_vals="$4"
+	local base_file="$5"
+
+	local baseline_time_line baseline_thrpt_line baseline_time baseline_thrpt
+
+	# Get baseline values for this benchmark
+	baseline_time_line=$(grep -A 1 "=== $points Points ($dim) ===" "$base_file" | grep "Time:" | head -1 || true)
+	baseline_thrpt_line=$(grep -A 2 "=== $points Points ($dim) ===" "$base_file" | grep "Throughput:" | head -1 || true)
+
+	# Output the comparison section
+	printf "=== %s Points (%s) ===\n" "$points" "$dim" >>"$COMPARE_FILE"
+	printf "Current Time: %s\n" "$time_vals" >>"$COMPARE_FILE"
+	[[ -n "$thrpt_vals" ]] && printf "Current Throughput: %s\n" "$thrpt_vals" >>"$COMPARE_FILE"
+
+	if [[ -n "$baseline_time_line" ]]; then
+		baseline_time="${baseline_time_line//Time: /}"
+		printf "Baseline Time: %s\n" "$baseline_time" >>"$COMPARE_FILE"
+	fi
+
+	if [[ -n "$baseline_thrpt_line" ]]; then
+		baseline_thrpt="${baseline_thrpt_line//Throughput: /}"
+		printf "Baseline Throughput: %s\n" "$baseline_thrpt" >>"$COMPARE_FILE"
+	fi
+}
+
 # Variables for tracking
 regression_found=false
 
@@ -193,7 +223,7 @@ while IFS= read -r line; do
 		current_time_vals="[$time_low, $time_mean, $time_high] $normalized_unit"
 
 	# Detect throughput lines
-	elif [[ "$line" =~ ^[[:space:]]+thrpt:[[:space:]]+\[([0-9.]+)[[:space:]](K?elem/s)[[:space:]]([0-9.]+)[[:space:]](K?elem/s)[[:space:]]([0-9.]+)[[:space:]](K?elem/s)\] ]] && [[ -n "$current_points" ]]; then
+	elif [[ "$line" =~ ^[[:space:]]+thrpt:[[:space:]]+\[([0-9.]+)[[:space:]]([GMK]?elem/s)[[:space:]]([0-9.]+)[[:space:]]([GMK]?elem/s)[[:space:]]([0-9.]+)[[:space:]]([GMK]?elem/s)\] ]] && [[ -n "$current_points" ]]; then
 		thrpt_low="${BASH_REMATCH[1]}"
 		thrpt_unit="${BASH_REMATCH[2]}"
 		thrpt_mean="${BASH_REMATCH[3]}"
@@ -219,36 +249,19 @@ while IFS= read -r line; do
 
 	# When we encounter trigger to output results
 	elif { [[ "$line" =~ ^Benchmarking ]] && [[ -n "$current_benchmark" ]]; } || { [[ "$line" =~ ^Found.*outliers ]] && [[ -n "$current_time_change" ]] && [[ -n "$current_benchmark" ]]; }; then
-		# Get baseline values for this benchmark
-		baseline_time_line=$(grep -A 1 "=== $current_points Points ($current_dimension) ===" "$BASELINE_FILE" | grep "Time:" | head -1 || true)
-		baseline_thrpt_line=$(grep -A 2 "=== $current_points Points ($current_dimension) ===" "$BASELINE_FILE" | grep "Throughput:" | head -1 || true)
-
-		# Output the comparison section
-		printf "=== %s Points (%s) ===\n" "$current_points" "$current_dimension" >>"$COMPARE_FILE"
-		printf "Current Time: %s\n" "$current_time_vals" >>"$COMPARE_FILE"
-		if [[ -n "$current_thrpt_vals" ]]; then
-			printf "Current Throughput: %s\n" "$current_thrpt_vals" >>"$COMPARE_FILE"
-		fi
-
-		if [[ -n "$baseline_time_line" ]]; then
-			baseline_time="${baseline_time_line//Time: /}"
-			printf "Baseline Time: %s\n" "$baseline_time" >>"$COMPARE_FILE"
-		fi
-
-		if [[ -n "$baseline_thrpt_line" ]]; then
-			baseline_thrpt="${baseline_thrpt_line//Throughput: /}"
-			printf "Baseline Throughput: %s\n" "$baseline_thrpt" >>"$COMPARE_FILE"
-		fi
+		# Output the comparison section using helper function
+		emit_comparison_section "$current_points" "$current_dimension" "$current_time_vals" "$current_thrpt_vals" "$BASELINE_FILE"
 
 		# Add change information if available
 		if [[ -n "$current_time_change" ]]; then
 			printf "Time Change: %s\n" "$current_time_change" >>"$COMPARE_FILE"
 
 			# Check for significant regression (>5% increase in time = slower = bad)
-			# Extract the mean change value (middle value) - handle both unicode − and ASCII - minus signs
-			change_line=$(echo "$current_time_change" | grep -oE '[−+\-][0-9.]+%' | sed -n '2p')
-			# Remove all instances of −, +, -, and % characters
-			change_value="${change_line//[−+\-%]/}"
+			# Normalize unicode minus to ASCII for locale-agnostic parsing
+			normalized_change=$(echo "$current_time_change" | tr '−' '-')
+			change_line=$(echo "$normalized_change" | grep -oE '[-+][0-9.]+%' | sed -n '2p')
+			# Strip sign and percent
+			change_value="${change_line//[+-%]/}"
 
 			# Only perform regression analysis if we have a valid change value
 			if [[ -n "$change_line" && -n "$change_value" ]]; then
@@ -261,7 +274,7 @@ while IFS= read -r line; do
 					else
 						printf "✅ OK: Time change within acceptable range\n" >>"$COMPARE_FILE"
 					fi
-				elif [[ "$change_line" == −* ]] || [[ "$change_line" == -* ]]; then
+				elif [[ "$change_line" == -* ]]; then
 					# Negative change = faster = improvement
 					if (($(echo "$change_value > 5.0" | bc -l))); then
 						printf "✅ IMPROVEMENT: Time decreased by %s%% (faster performance)\n" "$change_value" >>"$COMPARE_FILE"
@@ -295,36 +308,19 @@ done <"$TEMP_FILE"
 
 # Handle the final benchmark if it wasn't processed
 if [[ -n "$current_benchmark" ]] && [[ -n "$current_time_change" ]]; then
-	# Get baseline values for this benchmark
-	baseline_time_line=$(grep -A 1 "=== $current_points Points ($current_dimension) ===" "$BASELINE_FILE" | grep "Time:" | head -1 || true)
-	baseline_thrpt_line=$(grep -A 2 "=== $current_points Points ($current_dimension) ===" "$BASELINE_FILE" | grep "Throughput:" | head -1 || true)
-
-	# Output the comparison section
-	printf "=== %s Points (%s) ===\n" "$current_points" "$current_dimension" >>"$COMPARE_FILE"
-	printf "Current Time: %s\n" "$current_time_vals" >>"$COMPARE_FILE"
-	if [[ -n "$current_thrpt_vals" ]]; then
-		printf "Current Throughput: %s\n" "$current_thrpt_vals" >>"$COMPARE_FILE"
-	fi
-
-	if [[ -n "$baseline_time_line" ]]; then
-		baseline_time="${baseline_time_line//Time: /}"
-		printf "Baseline Time: %s\n" "$baseline_time" >>"$COMPARE_FILE"
-	fi
-
-	if [[ -n "$baseline_thrpt_line" ]]; then
-		baseline_thrpt="${baseline_thrpt_line//Throughput: /}"
-		printf "Baseline Throughput: %s\n" "$baseline_thrpt" >>"$COMPARE_FILE"
-	fi
+	# Output the comparison section using helper function
+	emit_comparison_section "$current_points" "$current_dimension" "$current_time_vals" "$current_thrpt_vals" "$BASELINE_FILE"
 
 	# Add change information if available
 	if [[ -n "$current_time_change" ]]; then
 		printf "Time Change: %s\n" "$current_time_change" >>"$COMPARE_FILE"
 
 		# Check for significant regression (>5% increase in time = slower = bad)
-		# Extract the mean change value (middle value) - handle both unicode − and ASCII - minus signs
-		change_line=$(echo "$current_time_change" | grep -oE '[−+\-][0-9.]+%' | sed -n '2p')
-		# Remove all instances of −, +, -, and % characters
-		change_value="${change_line//[−+\-%]/}"
+		# Normalize unicode minus to ASCII for locale-agnostic parsing
+		normalized_change=$(echo "$current_time_change" | tr '−' '-')
+		change_line=$(echo "$normalized_change" | grep -oE '[-+][0-9.]+%' | sed -n '2p')
+		# Strip sign and percent
+		change_value="${change_line//[+-%]/}"
 
 		# Only perform regression analysis if we have a valid change value
 		if [[ -n "$change_line" && -n "$change_value" ]]; then
@@ -337,7 +333,7 @@ if [[ -n "$current_benchmark" ]] && [[ -n "$current_time_change" ]]; then
 				else
 					printf "✅ OK: Time change within acceptable range\n" >>"$COMPARE_FILE"
 				fi
-			elif [[ "$change_line" == −* ]] || [[ "$change_line" == -* ]]; then
+			elif [[ "$change_line" == -* ]]; then
 				# Negative change = faster = improvement
 				if (($(echo "$change_value > 5.0" | bc -l))); then
 					printf "✅ IMPROVEMENT: Time decreased by %s%% (faster performance)\n" "$change_value" >>"$COMPARE_FILE"

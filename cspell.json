@@ -177,6 +177,7 @@
         "winget",
         "xlarge",
         "zenodo",
+        "Zenodo",
         "zerocopy"
     ],
     "ignoreWords": [],

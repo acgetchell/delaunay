@@ -102,6 +102,42 @@ The project uses:
 - **Testing**: Standard `#[test]` with comprehensive coverage
 - **Benchmarking**: Criterion with allocation tracking
 
+### Automatic Toolchain Management
+
+**🔧 This project uses automatic Rust toolchain management via `rust-toolchain.toml`**
+
+When you enter the project directory, `rustup` will automatically:
+
+- **Install the correct Rust version** (1.89.0) if you don't have it
+- **Switch to the pinned version** for this project
+- **Install required components** (clippy, rustfmt, rust-docs, rust-src)
+- **Add cross-compilation targets** for supported platforms
+
+**What this means for contributors:**
+
+1. **No manual setup needed** - Just have `rustup` installed ([rustup.rs][rustup])
+2. **Consistent environment** - Everyone uses the same Rust version automatically
+3. **Reproducible builds** - Eliminates "works on my machine" issues
+4. **CI compatibility** - Your local environment matches our CI exactly
+
+**First time in the project?** You'll see:
+
+```text
+info: syncing channel updates for '1.89.0-<your-platform>'
+info: downloading component 'cargo'
+info: downloading component 'clippy'
+...
+```
+
+This is normal and only happens once. After that, the correct toolchain is used automatically whenever you work on the project.
+
+**Verification:** Run `rustup show` to confirm you're using the pinned toolchain:
+
+```bash
+rustup show
+# Should show: active toolchain: 1.89.0-<platform> (overridden by '/path/to/delaunay/rust-toolchain.toml')
+```
+
 ## Project Structure
 
 Understanding the project layout will help you navigate and contribute effectively:

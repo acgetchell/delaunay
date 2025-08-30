@@ -48,9 +48,7 @@ jobs:
         with:
           target: ${{ matrix.target }}
           cache: true  # Built-in caching
-          toolchain: 1.89.0
-          override: true
-          components: rustfmt, clippy
+          # toolchain, components, etc. are specified in rust-toolchain.toml
 
       - name: Check formatting
         if: matrix.os == 'ubuntu-latest'

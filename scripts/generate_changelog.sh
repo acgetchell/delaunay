@@ -106,7 +106,7 @@ expand_squashed_prs() {
 		# Check if this line contains a commit SHA that might be from a squashed PR
 		# Handle both "- **title** [`sha`]" and "- title (#PR) [`sha`]" patterns
 		if [[ "$line" =~ -\ \*\*.*\*\*.*\[\`([a-f0-9]{7,40})\`\] ]] || [[ "$line" =~ -\ .*\(#[0-9]+\)\ \[\`([a-f0-9]{7,40})\`\] ]]; then
-			commit_sha="${BASH_REMATCH[1]}"
+			local commit_sha="${BASH_REMATCH[1]}"
 
 			# Get the full commit message to check if it's a squashed PR
 			if git --no-pager show "$commit_sha" --format="%s" --no-patch 2>/dev/null | grep -E -q "\(#[0-9]+\)$"; then
