@@ -4,7 +4,7 @@ This guide documents the exact commands for performing a clean release using a
 dedicated release PR, followed by tagging, publishing to crates.io, and
 creating a GitHub release.
 
-Applies to versions vX.Y.Z (example uses v0.3.5). We prefer updating
+Applies to versions vX.Y.Z (example uses v0.4.1). We prefer updating
 documentation before publishing to crates.io.
 
 ---
@@ -15,7 +15,7 @@ Set these variables to avoid repeating the version string:
 
 ```bash
 # tag has the leading v, version does not
-TAG=v0.3.5
+TAG=v0.4.1
 VERSION=${TAG#v}
 ```
 

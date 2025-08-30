@@ -26,7 +26,7 @@ Custom Handlebars template for auto-changelog that displays commit dates instead
 npx auto-changelog --template keepachangelog
 
 # Generate changelog for a specific version
-npx auto-changelog --latest-version v0.3.4
+npx auto-changelog --latest-version v0.4.1
 
 # Include unreleased changes
 npx auto-changelog --unreleased
