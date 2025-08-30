@@ -38,7 +38,9 @@ git pull --ff-only
 
 This PR should primarily include: version bumps, changelog updates, and documentation updates. All major code changes should already be on main.
 
-**Exception:** Small, critical fixes discovered during the release process (e.g., documentation errors, script bugs, formatting issues) may be included but should be minimal and release-critical only.
+**Exception:** Small, critical fixes discovered during the release process (e.g.,
+documentation errors, script bugs, formatting issues) may be included but should
+be minimal and release-critical only.
 
 1. Create the release branch
 
@@ -111,6 +113,7 @@ Note: Do NOT push the temporary tag created in step 3.
 If you discover issues (bugs, formatting problems, etc.) after creating the changelog:
 
 1. **For critical fixes that must be in this release:**
+
    ```bash
    # Make your fixes
    # Run code quality tools
