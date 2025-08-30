@@ -10,7 +10,7 @@ import json
 import re
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class ChangelogError(Exception):
@@ -307,7 +307,7 @@ class ChangelogUtils:
             return default_limit
 
     @staticmethod
-    def wrap_markdown_line(text: str, max_length: int, indent: str = "  ") -> List[str]:
+    def wrap_markdown_line(text: str, max_length: int, indent: str = "  ") -> list[str]:
         """
         Wrap text to fit within markdown line length limits.
 
@@ -398,8 +398,8 @@ class ChangelogUtils:
         if not content_lines:
             return ""
 
-        entries: List[Dict[str, Any]] = []
-        current_entry: Optional[Dict[str, Any]] = None
+        entries: list[dict[str, Any]] = []
+        current_entry: dict[str, Any] | None = None
 
         for line in content_lines:
             # Detect bullet points: "* ", "- ", or "\d+. "
@@ -508,7 +508,7 @@ class ChangelogUtils:
         return "\n".join(output_lines)
 
     @staticmethod
-    def run_git_command(args: List[str], check: bool = True) -> tuple[str, int]:
+    def run_git_command(args: list[str], check: bool = True) -> tuple[str, int]:
         """
         Run a git command and return output and exit code.
 

@@ -1,367 +1,82 @@
 #!/usr/bin/env bash
 # compare_benchmarks.sh - Compare current benchmark performance against baseline
 #
-# PARSING LOGIC AND FORMATTING CONVENTIONS:
-# ========================================
+# This script is a simple wrapper around the Python benchmark utilities.
+# It preserves the original CLI interface while using the more maintainable
+# Python implementation.
 #
-# This script runs a fresh benchmark and compares results against the established baseline.
-# It parses both current results and baseline data to calculate performance changes.
-#
-# BENCHMARK EXECUTION:
-# - Runs `cargo bench --bench small_scale_triangulation` (keeping previous results)
-# - Captures Criterion output including change metrics vs. baseline
-# - Parses both current results and baseline file for comparison
-#
-# INPUT FORMATS:
-# - Current run: Criterion output with time/throughput/change data
-# - Baseline: benches/baseline_results.txt with standardized format
-#
-# OUTPUT FORMAT CONVENTIONS:
-# =========================
-# - Header: Date, Git commit, and baseline metadata
-# - Section format: "=== {N} Points ({D}D) ===" matching baseline
-# - Current metrics: Time, Throughput (from fresh run)
-# - Baseline metrics: Time, Throughput (from baseline file)
-# - Change analysis: Time Change %, Throughput Change % with ✅/⚠️ indicators
-# - Regression threshold: >5% change triggers warning
-#
+# Usage: compare_benchmarks.sh [--dev]
+#   --dev    Use development mode with faster benchmark settings
+#            (sample_size=10, measurement_time=2s, warmup_time=1s)
+
 set -euo pipefail
 
-# Error handling function
-error_exit() {
-	local message="$1"
-	local code="${2:-1}"
-	echo "ERROR: $message" >&2
-	exit "$code"
-}
+# Find script directory and project root
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PROJECT_ROOT=$(cd "$SCRIPT_DIR" && cd .. && pwd)
 
-# Print usage information
-usage() {
-	echo "Usage: compare_benchmarks.sh [-h|--help] [--dev]"
-	echo
-	echo "Runs benchmark and compares results with baseline, creating compare_results.txt"
-	echo
-	echo "Options:"
-	echo "  -h, --help      Show this help message and exit"
-	echo "  --dev           Use development mode with faster benchmark settings"
-	echo "                  (sample_size=10, measurement_time=2s, warmup_time=1s)"
-	echo
-	echo "Exit Codes:"
-	echo "  0  Success - no significant regressions"
-	echo "  1  Error occurred or significant regressions found"
-	exit 0
-}
-
-# Find project root and set default values
-PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
-
-# Check if benchmark_parser.sh dependency exists
-BENCHMARK_PARSER_PATH="${PROJECT_ROOT}/scripts/benchmark_parser.sh"
-if [[ ! -f "$BENCHMARK_PARSER_PATH" ]]; then
-	error_exit "Required dependency not found: $BENCHMARK_PARSER_PATH. This script depends on benchmark_parser.sh for parsing functions."
+# Check if Python utilities are available
+PYTHON_BENCHMARK_UTILS="${SCRIPT_DIR}/benchmark_utils.py"
+if [[ ! -f "$PYTHON_BENCHMARK_UTILS" ]]; then
+	echo "ERROR: Python benchmark utilities not found: $PYTHON_BENCHMARK_UTILS" >&2
+	echo "       Make sure benchmark_utils.py exists in the scripts/ directory." >&2
+	exit 1
 fi
 
-# Check if hardware_info.sh dependency exists
-HARDWARE_INFO_PATH="${PROJECT_ROOT}/scripts/hardware_info.sh"
-if [[ ! -f "$HARDWARE_INFO_PATH" ]]; then
-	error_exit "Required dependency not found: $HARDWARE_INFO_PATH. This script depends on hardware_info.sh for hardware detection."
+# Check for Python 3
+if ! command -v python3 >/dev/null 2>&1; then
+	echo "ERROR: python3 is not installed or not in PATH" >&2
+	echo "       Please install Python 3 to use this script." >&2
+	exit 1
 fi
 
-# Source the shared utilities
-# Note: We explicitly check file existence above, so disable shellcheck warnings
-# shellcheck disable=SC1091
-source "${PROJECT_ROOT}/scripts/benchmark_parser.sh"
-# shellcheck disable=SC1091
-source "${PROJECT_ROOT}/scripts/hardware_info.sh"
-
-# Parse command line arguments
-DEV_MODE=false
-while [[ $# -gt 0 ]]; do
-	case $1 in
-	-h | --help)
-		usage
-		;;
-	--dev)
-		DEV_MODE=true
-		shift
-		;;
-	*)
-		error_exit "Unknown argument: $1. Use -h for help."
-		;;
-	esac
-done
-
-# Error handling with explicit checks (trap removed to avoid parsing issues)
-
-# File paths
+# Baseline file path
 BASELINE_FILE="${PROJECT_ROOT}/benches/baseline_results.txt"
-COMPARE_FILE="${PROJECT_ROOT}/benches/compare_results.txt"
-TEMP_FILE=$(mktemp)
+
+# Parse arguments and show help
+for arg in "$@"; do
+	if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+		cat <<EOF
+Usage: compare_benchmarks.sh [--dev]
+
+Run benchmark and compare results with baseline, creating compare_results.txt
+
+Options:
+  --dev       Use development mode with faster benchmark settings
+              (sample_size=10, measurement_time=2s, warmup_time=1s)
+  -h, --help  Show this help message and exit
+
+Exit Codes:
+  0  Success - no significant regressions
+  1  Error occurred or significant regressions found
+
+Input:
+  Requires benches/baseline_results.txt (run generate_baseline.sh first)
+
+Output:
+  Creates benches/compare_results.txt with comparison results
+
+This script is a wrapper around the Python benchmark utilities for
+backward compatibility with existing workflows.
+EOF
+		exit 0
+	fi
+done
 
 # Check if baseline exists
 if [[ ! -f "$BASELINE_FILE" ]]; then
-	error_exit "Baseline results file not found: $BASELINE_FILE. Run scripts/generate_baseline.sh first."
-fi
-
-echo "Running benchmark and comparing against baseline..."
-echo "Baseline file: $BASELINE_FILE"
-echo "Compare file: $COMPARE_FILE"
-
-# Get current date and git commit
-CURRENT_DATE=$(date)
-GIT_COMMIT=$(git rev-parse HEAD)
-
-# Collect current hardware information using shared utility
-echo "Collecting current hardware information..."
-CURRENT_HARDWARE=$(get_hardware_info_kv)
-
-# Extract baseline hardware information
-BASELINE_HARDWARE=$(extract_baseline_hardware "$BASELINE_FILE")
-
-# Extract baseline metadata
-BASELINE_DATE=$(grep "^Date:" "$BASELINE_FILE" | cut -d' ' -f2-)
-BASELINE_COMMIT=$(grep "^Git commit:" "$BASELINE_FILE" | cut -d' ' -f3)
-
-# Run fresh benchmark
-if [[ "$DEV_MODE" == "true" ]]; then
-	echo "Running cargo bench --bench small_scale_triangulation (DEV MODE)..."
-	if ! cargo bench --bench small_scale_triangulation -- --sample-size 10 --measurement-time 2 --warm-up-time 1 --noplot >"$TEMP_FILE" 2>&1; then
-		rm -f "$TEMP_FILE"
-		error_exit "Failed to run benchmark in dev mode"
-	fi
-else
-	echo "Running cargo bench --bench small_scale_triangulation..."
-	if ! cargo bench --bench small_scale_triangulation >"$TEMP_FILE" 2>&1; then
-		rm -f "$TEMP_FILE"
-		error_exit "Failed to run benchmark"
-	fi
-fi
-
-# Create compare results file with headers and hardware comparison
-cat >"$COMPARE_FILE" <<EOF
-Comparison Results
-==================
-Current Date: $CURRENT_DATE
-Current Git commit: $GIT_COMMIT
-
-Baseline Date: $BASELINE_DATE
-Baseline Git commit: $BASELINE_COMMIT
-
-EOF
-
-# Add hardware comparison section
-compare_hardware "$CURRENT_HARDWARE" "$BASELINE_HARDWARE" >>"$COMPARE_FILE"
-
-echo "Parsing benchmark results and comparing..."
-
-# Helper function to emit comparison section (DRY - Don't Repeat Yourself)
-emit_comparison_section() {
-	local points="$1"
-	local dim="$2"
-	local time_vals="$3"
-	local thrpt_vals="$4"
-	local base_file="$5"
-
-	local baseline_time_line baseline_thrpt_line baseline_time baseline_thrpt
-
-	# Get baseline values for this benchmark
-	baseline_time_line=$(grep -A 1 "=== $points Points ($dim) ===" "$base_file" | grep "Time:" | head -1 || true)
-	baseline_thrpt_line=$(grep -A 2 "=== $points Points ($dim) ===" "$base_file" | grep "Throughput:" | head -1 || true)
-
-	# Output the comparison section
-	printf "=== %s Points (%s) ===\n" "$points" "$dim" >>"$COMPARE_FILE"
-	printf "Current Time: %s\n" "$time_vals" >>"$COMPARE_FILE"
-	[[ -n "$thrpt_vals" ]] && printf "Current Throughput: %s\n" "$thrpt_vals" >>"$COMPARE_FILE"
-
-	if [[ -n "$baseline_time_line" ]]; then
-		baseline_time="${baseline_time_line//Time: /}"
-		printf "Baseline Time: %s\n" "$baseline_time" >>"$COMPARE_FILE"
-	fi
-
-	if [[ -n "$baseline_thrpt_line" ]]; then
-		baseline_thrpt="${baseline_thrpt_line//Throughput: /}"
-		printf "Baseline Throughput: %s\n" "$baseline_thrpt" >>"$COMPARE_FILE"
-	fi
-}
-
-# Variables for tracking
-regression_found=false
-
-# Parse current benchmark results and compare with baseline
-current_benchmark=""
-current_points=""
-current_dimension=""
-current_time_vals=""
-current_thrpt_vals=""
-current_time_change=""
-current_thrpt_change=""
-
-while IFS= read -r line; do
-	# Detect benchmark result lines - handle both μ (U+03BC) and µ (U+00B5) micro symbols, us, and nanoseconds
-	if [[ "$line" =~ ^(tds_new_([0-9]+)d/tds_new/([0-9]+))[[:space:]]+time:[[:space:]]+\[([0-9.]+)[[:space:]](ns|us|[μµ]s|ms|s)[[:space:]]([0-9.]+)[[:space:]](ns|us|[μµ]s|ms|s)[[:space:]]([0-9.]+)[[:space:]](ns|us|[μµ]s|ms|s)\] ]]; then
-		current_benchmark="${BASH_REMATCH[1]}"
-		current_dimension="${BASH_REMATCH[2]}D"
-		current_points="${BASH_REMATCH[3]}"
-
-		# Extract time values and unit
-		time_low="${BASH_REMATCH[4]}"
-		time_unit="${BASH_REMATCH[5]}"
-		time_mean="${BASH_REMATCH[6]}"
-		time_high="${BASH_REMATCH[8]}"
-
-		# Normalize the micro symbol to the Greek mu (μ) for consistency
-		normalized_unit="$time_unit"
-		if [[ "$time_unit" == "µs" ]]; then
-			normalized_unit="μs"
-		elif [[ "$time_unit" == "us" ]]; then
-			normalized_unit="μs"
-		fi
-
-		current_time_vals="[$time_low, $time_mean, $time_high] $normalized_unit"
-
-	# Detect throughput lines
-	elif [[ "$line" =~ ^[[:space:]]+thrpt:[[:space:]]+\[([0-9.]+)[[:space:]]([GMK]?elem/s)[[:space:]]([0-9.]+)[[:space:]]([GMK]?elem/s)[[:space:]]([0-9.]+)[[:space:]]([GMK]?elem/s)\] ]] && [[ -n "$current_points" ]]; then
-		thrpt_low="${BASH_REMATCH[1]}"
-		thrpt_unit="${BASH_REMATCH[2]}"
-		thrpt_mean="${BASH_REMATCH[3]}"
-		thrpt_high="${BASH_REMATCH[5]}"
-
-		current_thrpt_vals="[$thrpt_low, $thrpt_mean, $thrpt_high] $thrpt_unit"
-
-	# Detect time change lines (from Criterion comparison)
-	elif [[ "$line" =~ ^[[:space:]]+time:[[:space:]]+\[([−+-]?[0-9.]+)%[[:space:]]([−+-]?[0-9.]+)%[[:space:]]([−+-]?[0-9.]+)%\] ]] && [[ -n "$current_points" ]]; then
-		time_change_low="${BASH_REMATCH[1]}"
-		time_change_mean="${BASH_REMATCH[2]}"
-		time_change_high="${BASH_REMATCH[3]}"
-
-		current_time_change="[$time_change_low%, $time_change_mean%, $time_change_high%]"
-
-	# Detect throughput change lines
-	elif [[ "$line" =~ ^[[:space:]]+thrpt:[[:space:]]+\[([-+−]?[0-9.]+)%[[:space:]]([-+−]?[0-9.]+)%[[:space:]]([-+−]?[0-9.]+)%\] ]] && [[ -n "$current_points" ]]; then
-		thrpt_change_low="${BASH_REMATCH[1]}"
-		thrpt_change_mean="${BASH_REMATCH[2]}"
-		thrpt_change_high="${BASH_REMATCH[3]}"
-
-		current_thrpt_change="[$thrpt_change_low%, $thrpt_change_mean%, $thrpt_change_high%]"
-
-	# When we encounter trigger to output results
-	elif { [[ "$line" =~ ^Benchmarking ]] && [[ -n "$current_benchmark" ]]; } || { [[ "$line" =~ ^Found.*outliers ]] && [[ -n "$current_time_change" ]] && [[ -n "$current_benchmark" ]]; }; then
-		# Output the comparison section using helper function
-		emit_comparison_section "$current_points" "$current_dimension" "$current_time_vals" "$current_thrpt_vals" "$BASELINE_FILE"
-
-		# Add change information if available
-		if [[ -n "$current_time_change" ]]; then
-			printf "Time Change: %s\n" "$current_time_change" >>"$COMPARE_FILE"
-
-			# Check for significant regression (>5% increase in time = slower = bad)
-			# Normalize unicode minus to ASCII for locale-agnostic parsing
-			normalized_change=$(echo "$current_time_change" | tr '−' '-')
-			change_line=$(echo "$normalized_change" | grep -oE '[-+][0-9.]+%' | sed -n '2p')
-			# Strip sign and percent
-			change_value="${change_line//[+-%]/}"
-
-			# Only perform regression analysis if we have a valid change value
-			if [[ -n "$change_line" && -n "$change_value" ]]; then
-				# Determine if this is positive (regression) or negative (improvement)
-				if [[ "$change_line" == +* ]]; then
-					# Positive change = slower = regression
-					if (($(awk -v v="$change_value" 'BEGIN{print (v > 5.0)}'))); then
-						printf "⚠️  REGRESSION: Time increased by %s%% (slower performance)\n" "$change_value" >>"$COMPARE_FILE"
-						regression_found=true
-					else
-						printf "✅ OK: Time change within acceptable range\n" >>"$COMPARE_FILE"
-					fi
-				elif [[ "$change_line" == -* ]]; then
-					# Negative change = faster = improvement
-					if (($(awk -v v="$change_value" 'BEGIN{print (v > 5.0)}'))); then
-						printf "✅ IMPROVEMENT: Time decreased by %s%% (faster performance)\n" "$change_value" >>"$COMPARE_FILE"
-					else
-						printf "✅ OK: Time change within acceptable range\n" >>"$COMPARE_FILE"
-					fi
-				else
-					printf "✅ OK: Time change within acceptable range\n" >>"$COMPARE_FILE"
-				fi
-			else
-				printf "✅ OK: Time change within acceptable range (unable to parse change value)\n" >>"$COMPARE_FILE"
-			fi
-		fi
-
-		if [[ -n "$current_thrpt_change" ]]; then
-			printf "Throughput Change: %s\n" "$current_thrpt_change" >>"$COMPARE_FILE"
-		fi
-
-		printf "\n" >>"$COMPARE_FILE"
-
-		# Reset state variables
-		current_benchmark=""
-		current_points=""
-		current_dimension=""
-		current_time_vals=""
-		current_thrpt_vals=""
-		current_time_change=""
-		current_thrpt_change=""
-	fi
-done <"$TEMP_FILE"
-
-# Handle the final benchmark if it wasn't processed
-if [[ -n "$current_benchmark" ]] && [[ -n "$current_time_change" ]]; then
-	# Output the comparison section using helper function
-	emit_comparison_section "$current_points" "$current_dimension" "$current_time_vals" "$current_thrpt_vals" "$BASELINE_FILE"
-
-	# Add change information if available
-	if [[ -n "$current_time_change" ]]; then
-		printf "Time Change: %s\n" "$current_time_change" >>"$COMPARE_FILE"
-
-		# Check for significant regression (>5% increase in time = slower = bad)
-		# Normalize unicode minus to ASCII for locale-agnostic parsing
-		normalized_change=$(echo "$current_time_change" | tr '−' '-')
-		change_line=$(echo "$normalized_change" | grep -oE '[-+][0-9.]+%' | sed -n '2p')
-		# Strip sign and percent
-		change_value="${change_line//[+-%]/}"
-
-		# Only perform regression analysis if we have a valid change value
-		if [[ -n "$change_line" && -n "$change_value" ]]; then
-			# Determine if this is positive (regression) or negative (improvement)
-			if [[ "$change_line" == +* ]]; then
-				# Positive change = slower = regression
-				if (($(awk -v v="$change_value" 'BEGIN{print (v > 5.0)}'))); then
-					printf "⚠️  REGRESSION: Time increased by %s%% (slower performance)\n" "$change_value" >>"$COMPARE_FILE"
-					regression_found=true
-				else
-					printf "✅ OK: Time change within acceptable range\n" >>"$COMPARE_FILE"
-				fi
-			elif [[ "$change_line" == -* ]]; then
-				# Negative change = faster = improvement
-				if (($(awk -v v="$change_value" 'BEGIN{print (v > 5.0)}'))); then
-					printf "✅ IMPROVEMENT: Time decreased by %s%% (faster performance)\n" "$change_value" >>"$COMPARE_FILE"
-				else
-					printf "✅ OK: Time change within acceptable range\n" >>"$COMPARE_FILE"
-				fi
-			else
-				printf "✅ OK: Time change within acceptable range\n" >>"$COMPARE_FILE"
-			fi
-		else
-			printf "✅ OK: Time change within acceptable range (unable to parse change value)\n" >>"$COMPARE_FILE"
-		fi
-	fi
-
-	if [[ -n "$current_thrpt_change" ]]; then
-		printf "Throughput Change: %s\n" "$current_thrpt_change" >>"$COMPARE_FILE"
-	fi
-
-	printf "\n" >>"$COMPARE_FILE"
-fi
-
-# Clean up
-rm -f "$TEMP_FILE"
-
-echo "Comparison results written to $COMPARE_FILE"
-
-# Exit with appropriate code
-if [[ "$regression_found" == "true" ]]; then
-	echo "⚠️  Significant performance regressions detected!"
+	echo "ERROR: Baseline results file not found: $BASELINE_FILE" >&2
+	echo "       Run generate_baseline.sh first to create a baseline." >&2
 	exit 1
-else
-	echo "✅ No significant performance regressions found."
-	exit 0
 fi
+
+# Build Python command with baseline file and arguments
+PYTHON_CMD=("python3" "$PYTHON_BENCHMARK_UTILS" "compare" "--baseline" "$BASELINE_FILE")
+PYTHON_CMD+=("$@") # Pass through all arguments
+
+# Change to project root for consistent behavior
+cd "$PROJECT_ROOT"
+
+# Execute Python benchmark comparison
+echo "🐍 Using Python-based benchmark comparison..."
+exec "${PYTHON_CMD[@]}"

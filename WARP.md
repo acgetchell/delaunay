@@ -462,6 +462,83 @@ Following `docs/code_organization.md`, modules use consistent structure:
 - **`scripts/run_all_examples.sh`** - Validate all examples
 - **`scripts/benchmark_parser.sh`** - Shared benchmark parsing utilities
 
+## TODOs - Automated Performance Baseline System
+
+### Implementation Complete ✅
+
+The automated performance baseline system has been successfully implemented with:
+
+- **Automated baseline generation** on git tag creation (`.github/workflows/generate-baseline.yml`)
+- **Enhanced benchmark testing** for PRs and main branch commits
+- **Python utilities** replacing complex bash scripts (`scripts/hardware_utils.py`, `scripts/benchmark_utils.py`)
+- **GitHub Actions artifacts** for baseline storage (no repo commits needed)
+- **Backward-compatible shell wrappers** preserving existing CLI interfaces
+
+### Next Steps - Testing and Validation
+
+#### Priority 1: Test the Release Flow
+
+```bash
+# Create and push a release tag to test automatic baseline generation
+git tag v0.4.2
+git push origin v0.4.2
+
+# Verify baseline generation workflow runs successfully
+# Check that performance-baseline-v0.4.2 artifact is created
+```
+
+#### Priority 2: Test PR Performance Regression
+
+- Create a PR with some benchmark-affecting changes
+- Verify that the benchmark workflow downloads the baseline artifact
+- Confirm regression detection works with 5% threshold
+- Validate hardware compatibility warnings
+
+#### Priority 3: Python Code Quality Improvements
+
+The CI includes Python linting that's currently non-blocking. Address gradually:
+
+```bash
+# Fix formatting and linting issues in Python scripts
+uvx ruff format scripts/
+uvx ruff check --fix scripts/
+uvx pylint scripts/
+```
+
+Key improvements needed:
+
+- Replace deprecated `typing.Dict/List/Tuple` with modern syntax
+- Fix print statements in library code (use logging)
+- Address error handling patterns
+- Improve function signatures (reduce argument counts)
+
+#### Priority 4: Monitor and Iterate
+
+- Monitor performance baseline accuracy across different hardware
+- Adjust regression thresholds if needed (currently 5%)
+- Consider expanding to additional benchmark suites
+- Optimize CI runtime if 5-minute constraint becomes an issue
+
+### System Architecture Notes
+
+**Baseline Storage Strategy:**
+
+- Uses GitHub Actions artifacts instead of committing to repo
+- Artifacts tied to specific releases with 365-day retention
+- Fallback generation if no baseline found (dev mode for speed)
+
+**Hardware Compatibility:**
+
+- Cross-platform hardware detection (macOS, Linux, Windows)
+- Warnings when comparing across different hardware configurations
+- Detailed hardware metadata in all baselines for troubleshooting
+
+**Performance Comparison:**
+
+- 5% regression threshold for time measurements
+- Hardware-normalized comparisons where possible
+- Comprehensive reporting with improvement/regression indicators
+
 ### Mathematical References
 
 The library implements algorithms based on established computational geometry literature:

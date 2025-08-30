@@ -1,0 +1,139 @@
+name: Generate Performance Baseline
+
+# Generate performance baselines for new releases
+on:
+  # Trigger on tag creation (releases)
+  push:
+    tags:
+      - 'v*'
+  
+  # Manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name to generate baseline for (optional - uses current commit if not provided)'
+        required: false
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  generate-baseline:
+    runs-on: macos-15  # Use same runner as benchmark workflow for consistency
+    timeout-minutes: 60
+    
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Full history for tag operations
+      
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+          # Toolchain from rust-toolchain.toml
+      
+      - name: Install jq (required for baseline generation)
+        run: |
+          # macOS runner should have jq, but ensure it's available
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "Installing jq..."
+            brew install jq
+          else
+            echo "jq is already available: $(jq --version)"
+          fi
+      
+      - name: Determine tag information
+        id: tag_info
+        run: |
+          if [[ -n "${{ github.event.inputs.tag_name }}" ]]; then
+            # Manual workflow dispatch with tag name
+            TAG_NAME="${{ github.event.inputs.tag_name }}"
+            echo "Using manually specified tag: $TAG_NAME"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # Tag push trigger
+            TAG_NAME="${{ github.ref_name }}"
+            echo "Using push tag: $TAG_NAME"
+          else
+            # Fallback for manual dispatch without tag name
+            TAG_NAME="manual-$(date -u +%Y%m%d-%H%M%S)"
+            echo "Using generated tag name: $TAG_NAME"
+          fi
+          
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "Final tag name: $TAG_NAME"
+      
+      - name: Generate performance baseline
+        run: |
+          echo "🚀 Generating performance baseline for tag ${{ steps.tag_info.outputs.tag_name }}"
+          
+          # Run baseline generation script
+          ./scripts/generate_baseline.sh
+          
+          # Verify baseline was created
+          if [[ ! -f "benches/baseline_results.txt" ]]; then
+            echo "❌ Baseline generation failed - no baseline file created"
+            exit 1
+          fi
+          
+          echo "✅ Baseline generated successfully"
+          
+          # Show baseline summary
+          echo "📊 Baseline summary:"
+          head -n 10 benches/baseline_results.txt
+          echo "..."
+          echo "Total benchmarks: $(grep -c "^===" benches/baseline_results.txt || echo "0")"
+      
+      - name: Prepare baseline artifact
+        run: |
+          # Create artifact directory
+          mkdir -p baseline-artifact
+          
+          # Copy baseline file with tag-specific name
+          cp benches/baseline_results.txt "baseline-artifact/baseline-${{ steps.tag_info.outputs.tag_name }}.txt"
+          
+          # Also copy as generic name for easy download
+          cp benches/baseline_results.txt "baseline-artifact/baseline_results.txt"
+          
+          # Create metadata file
+          cat > "baseline-artifact/metadata.json" <<EOF
+          {
+            "tag": "${{ steps.tag_info.outputs.tag_name }}",
+            "commit": "${{ github.sha }}",
+            "workflow_run_id": "${{ github.run_id }}",
+            "generated_at": "$(date -u --iso-8601=seconds)",
+            "runner_os": "${{ runner.os }}",
+            "runner_arch": "${{ runner.arch }}"
+          }
+          EOF
+          
+          echo "📦 Artifact contents:"
+          ls -la baseline-artifact/
+      
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-baseline-${{ steps.tag_info.outputs.tag_name }}
+          path: baseline-artifact/
+          retention-days: 365  # Keep baselines for 1 year
+          compression-level: 6  # Good balance of speed/compression
+      
+      - name: Display next steps
+        run: |
+          echo "🎉 Performance baseline generated successfully!"
+          echo ""
+          echo "📋 Summary:"
+          echo "  Tag: ${{ steps.tag_info.outputs.tag_name }}"
+          echo "  Commit: ${{ github.sha }}"
+          echo "  Artifact: performance-baseline-${{ steps.tag_info.outputs.tag_name }}"
+          echo ""
+          echo "🔄 The benchmark workflow will now use this baseline for:"
+          echo "  • Pull request performance testing"
+          echo "  • Main branch regression detection"
+          echo "  • Manual performance comparisons"
+          echo ""
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "💡 This baseline is now available for release ${{ steps.tag_info.outputs.tag_name }}"
+          fi
