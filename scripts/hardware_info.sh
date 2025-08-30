@@ -51,9 +51,18 @@ get_hardware_info() {
 			fi
 		fi
 
-		# CPU cores - try lscpu first, then /proc/cpuinfo with fallbacks
+		# CPU cores - try lscpu first (multiply cores per socket by socket count for total physical cores)
 		if command -v lscpu >/dev/null 2>&1; then
-			cpu_cores=$(lscpu | awk -F: '/^Core\(s\) per socket/ {print $2}' | sed 's/^ *//' 2>/dev/null || echo "Unknown")
+			local cps sockets
+			cps=$(lscpu | awk -F: '/^Core\(s\) per socket/ {gsub(/^ +/,"",$2); print $2; exit}' 2>/dev/null || echo "")
+			sockets=$(lscpu | awk -F: '/^Socket\(s\)/ {gsub(/^ +/,"",$2); print $2; exit}' 2>/dev/null || echo "")
+			if [[ -n "$cps" && -n "$sockets" && "$cps" != "Unknown" && "$sockets" != "Unknown" ]]; then
+				# Calculate total physical cores: cores_per_socket * socket_count
+				cpu_cores=$((${cps:-0} * ${sockets:-1}))
+			else
+				# Fallback to cores per socket only if multiplication not possible
+				cpu_cores="${cps:-Unknown}"
+			fi
 		fi
 		if [[ "$cpu_cores" == "Unknown" ]] && [[ -f "/proc/cpuinfo" ]]; then
 			cpu_cores=$(grep "cpu cores" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
@@ -208,9 +217,18 @@ get_hardware_info_kv() {
 			fi
 		fi
 
-		# CPU cores - try lscpu first, then /proc/cpuinfo with fallbacks
+		# CPU cores - try lscpu first (multiply cores per socket by socket count for total physical cores)
 		if command -v lscpu >/dev/null 2>&1; then
-			cpu_cores=$(lscpu | awk -F: '/^Core\(s\) per socket/ {print $2}' | sed 's/^ *//' 2>/dev/null || echo "Unknown")
+			local cps sockets
+			cps=$(lscpu | awk -F: '/^Core\(s\) per socket/ {gsub(/^ +/,"",$2); print $2; exit}' 2>/dev/null || echo "")
+			sockets=$(lscpu | awk -F: '/^Socket\(s\)/ {gsub(/^ +/,"",$2); print $2; exit}' 2>/dev/null || echo "")
+			if [[ -n "$cps" && -n "$sockets" && "$cps" != "Unknown" && "$sockets" != "Unknown" ]]; then
+				# Calculate total physical cores: cores_per_socket * socket_count
+				cpu_cores=$((${cps:-0} * ${sockets:-1}))
+			else
+				# Fallback to cores per socket only if multiplication not possible
+				cpu_cores="${cps:-Unknown}"
+			fi
 		fi
 		if [[ "$cpu_cores" == "Unknown" ]] && [[ -f "/proc/cpuinfo" ]]; then
 			cpu_cores=$(grep "cpu cores" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^ *//' 2>/dev/null || echo "Unknown")
@@ -434,7 +452,7 @@ EOF
 	fi
 
 	if [[ "$current_cpu" != "$baseline_cpu" ]] && [[ "$baseline_cpu" != "Unknown" ]]; then
-		echo "⚠️  CPU differs: Results may not be directly comparable"
+		echo "⚠️  CPU differs: '$current_cpu' vs '$baseline_cpu' — results may not be directly comparable"
 		warnings_found=true
 	fi
 
@@ -452,8 +470,8 @@ EOF
 	if [[ "$baseline_memory" != "Unknown" ]] && [[ "$current_memory" != "Unknown" ]]; then
 		# Extract numeric values from memory strings (e.g., "16.0 GB" -> "16.0")
 		local current_mem_num baseline_mem_num
-		current_mem_num=$(echo "$current_memory" | grep -oE '[0-9]+\.?[0-9]*' | head -1)
-		baseline_mem_num=$(echo "$baseline_memory" | grep -oE '[0-9]+\.?[0-9]*' | head -1)
+		current_mem_num=$(echo "$current_memory" | tr ',' '.' | grep -oE '[0-9]+([.][0-9]+)?' | head -1)
+		baseline_mem_num=$(echo "$baseline_memory" | tr ',' '.' | grep -oE '[0-9]+([.][0-9]+)?' | head -1)
 
 		# Only warn if numeric values differ by more than 0.1 GB (to handle rounding differences)
 		if [[ -n "$current_mem_num" ]] && [[ -n "$baseline_mem_num" ]]; then
@@ -524,6 +542,10 @@ NOTE:
 EOF
 		;;
 	*)
+		if [[ -n "${1:-}" ]]; then
+			echo "Unknown option: $1" >&2
+			exit 2
+		fi
 		echo "Current Hardware Information:"
 		echo "============================"
 		get_hardware_info

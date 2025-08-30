@@ -142,9 +142,9 @@ main() {
 	local tag_version="$1"
 	local force_recreate="${2:-}"
 
-	# Validate tag format (basic check for v prefix and version-like pattern)
-	if [[ ! "$tag_version" =~ ^v[0-9]+(\.[0-9]+){2}([\-+][0-9A-Za-z\.-]+)?$ ]]; then
-		echo -e "${RED}Error: Tag version should follow format 'vX.Y.Z' (e.g., v0.3.5)${NC}" >&2
+	# Validate tag format (SemVer: vMAJOR.MINOR.PATCH with optional -PRERELEASE and optional +BUILD)
+	if [[ ! "$tag_version" =~ ^v[0-9]+(\.[0-9]+){2}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+		echo -e "${RED}Error: Tag version should follow SemVer format 'vX.Y.Z' (e.g., v0.3.5, v1.2.3-rc.1, v1.2.3+build.5)${NC}" >&2
 		exit 1
 	fi
 
@@ -173,6 +173,9 @@ main() {
 	echo "----------------------------------------"
 
 	# Create the tag
+	if ! git config user.name >/dev/null || ! git config user.email >/dev/null; then
+		echo -e "${YELLOW}Warning: git user.name/email not configured; tag creation may fail.${NC}" >&2
+	fi
 	echo -e "${BLUE}Creating tag '$tag_version' with changelog content...${NC}"
 	if echo "$tag_message" | git tag -a "$tag_version" -F -; then
 		echo -e "${GREEN}✓ Successfully created tag '$tag_version'${NC}"

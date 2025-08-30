@@ -47,10 +47,10 @@ cargo build --release
 cargo bench --no-run
 
 # Check documentation for errors (public API)
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 # Check documentation for errors (comprehensive, including private items)
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
 
 # Run all tests (library, doc tests, examples)
 cargo test --lib --verbose
@@ -65,7 +65,7 @@ cargo test --features count-allocations -- allocation_counting
 
 ```bash
 # Show changed files in machine-readable format
-git status --porcelain
+git status --porcelain=v1 -z
 ```
 
 ### Code Quality
@@ -170,81 +170,44 @@ shfmt ensures consistent, idiomatic formatting, which reduces diffs and aids rea
 **IMPORTANT**: Run these commands after any changes to Markdown files:
 
 ```bash
-# Lint all Markdown files (detects formatting and style issues)
-npx markdownlint "**/*.md"
-
-# Lint specific Markdown files
-npx markdownlint README.md CONTRIBUTING.md
+# Lint project Markdown files (uses project .markdownlint.json configuration)
+npx markdownlint "*.md" "scripts/*.md" "docs/*.md" ".github/*.md"
 
 # Fix auto-fixable Markdown issues
-npx markdownlint --fix "**/*.md"
+npx markdownlint --fix "*.md" "scripts/*.md" "docs/*.md" ".github/*.md"
 
-# Lint with custom configuration file
-npx markdownlint --config .markdownlint.json "**/*.md"
-
-# Show all rules and their descriptions
-npx markdownlint --help
+# Lint specific files
+npx markdownlint README.md CONTRIBUTING.md WARP.md
 ```
 
-**Note**: markdownlint helps detect:
+**Note**: markdownlint detects formatting and style issues including inconsistent headings, improper list formatting, missing link formatting,
+line length violations, and trailing whitespace.
 
-- Inconsistent heading styles and hierarchy
-- Improper list formatting and indentation
-- Missing or incorrect link formatting
-- Line length violations
-- Trailing whitespace and empty lines
-- Inconsistent emphasis and strong text formatting
-- Missing language identifiers in code blocks
-
-**Installation**: markdownlint is automatically available via npx, or install globally:
-
-- `npm install -g markdownlint-cli`
-- Configuration can be customized via `.markdownlint.json` or `.markdownlint.yaml`
+**Installation**: markdownlint is automatically available via npx.
 
 #### YAML Code Quality
 
 **IMPORTANT**: Run these commands after any changes to YAML files:
 
 ```bash
-# Lint all YAML files (detects syntax and style issues)
+# Lint all YAML files (uses project .yamllint configuration)
 yamllint .
 
 # Lint specific YAML files
 yamllint .github/workflows/ci.yml
-
-# Lint with custom configuration file
-yamllint -c .yamllint .
-
-# Show configuration options
-yamllint --help
-
-# Lint with specific format (parsable, standard, colored, github, auto)
-yamllint -f parsable .
 ```
 
-**Note**: yamllint helps detect:
+**Note**: yamllint detects YAML syntax errors, indentation issues, line length violations, and trailing whitespace.
 
-- YAML syntax errors and invalid structure
-- Indentation inconsistencies
-- Line length violations
-- Trailing whitespace
-- Missing document start markers
-- Inconsistent key ordering
-- Improper use of tabs vs spaces
-- Empty values and duplicate keys
-
-**Installation**: Install yamllint via:
-
-- macOS: `brew install yamllint` or `pip install yamllint`
-- Ubuntu/Debian: `apt install yamllint` or `pip install yamllint`
-- Other platforms: `pip install yamllint`
-- Configuration can be customized via `.yamllint`, `.yamllint.yml` or `.yamllint.yaml`
+**Installation**: Install yamllint via `brew install yamllint` or `pip install yamllint`.
 
 #### Spell Checking
 
 ```bash
 # Check spelling with project configuration
-npx cspell --config cspell.json "**/*"
+npx cspell --config cspell.json --gitignore --no-progress --cache \
+  --exclude "target/**" --exclude "node_modules/**" \
+  "**/*"
 ```
 
 ### Benchmarking
@@ -310,8 +273,8 @@ npx auto-changelog --latest-version v0.3.4
 # Generate changelog with custom commit limit per release
 npx auto-changelog --commit-limit 10
 
-# Generate changelog using Keep a Changelog format (overrides the project template configured in .auto-changelog)
-npx auto-changelog --template keepachangelog
+# Use the project script; it transforms the template into Keep a Changelog format
+# See scripts/generate_changelog.sh for details.
 
 # Test changelog generation without writing to file
 npx auto-changelog --stdout

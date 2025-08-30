@@ -137,6 +137,8 @@
 
 // Allow multiple crate versions due to transitive dependencies
 #![allow(clippy::multiple_crate_versions)]
+// Forbid unsafe code throughout the entire crate
+#![forbid(unsafe_code)]
 
 #[macro_use]
 extern crate derive_builder;

@@ -360,7 +360,7 @@ compare_hardware(current, baseline)      # Compares two hardware configs
 **Hardware Detection Methods**:
 
 - **macOS**: Uses `sysctl` for CPU/memory information
-- **Linux**: Parses `/proc/cpuinfo` and `/proc/meminfo`
+- **Linux**: Uses `lscpu` for accurate multi-socket core detection, with `/proc/cpuinfo` and `/proc/meminfo` fallbacks
 - **Windows**: Uses PowerShell (`Get-CimInstance`) for hardware detection
 - **Rust info**: Extracted via `rustc --version` and `rustc -vV`
 

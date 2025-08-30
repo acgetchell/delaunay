@@ -203,9 +203,8 @@ for dim in 2 3 4; do
 				fi
 
 				if [[ -n "$estimates_file" ]]; then
-					# Create sort key and add to temp file: sort_key|estimates_file|point_count|dimension
-					sort_key=$(printf "%d_%03d" "$dim" "$point_count")
-					echo "$sort_key|$estimates_file|$point_count|$dim" >>"$BENCHMARKS_FILE"
+					# Add to temp file: dimension|point_count|estimates_file
+					echo "$dim|$point_count|$estimates_file" >>"$BENCHMARKS_FILE"
 				fi
 			fi
 		done
@@ -214,8 +213,8 @@ for dim in 2 3 4; do
 	fi
 done
 
-# Process benchmarks in sorted order
-sort "$BENCHMARKS_FILE" | while IFS='|' read -r sort_key estimates_file point_count dimension; do
+# Process benchmarks in sorted order (numerically by dimension, then by point count)
+sort -t'|' -k1,1n -k2,2n "$BENCHMARKS_FILE" | while IFS='|' read -r dimension point_count estimates_file; do
 	extract_criterion_data "$estimates_file" "$point_count" "$dimension"
 done
 

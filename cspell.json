@@ -1,11 +1,11 @@
 {
     "version": "0.2",
     "ignorePaths": [
-        "target",
-        "node_modules",
-        "dist",
-        "build",
-        ".git"
+        "**/target/**",
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/build/**",
+        "**/.git/**"
     ],
     "dictionaryDefinitions": [],
     "dictionaries": [],
