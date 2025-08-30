@@ -38,7 +38,7 @@ jobs:
         run: |
           if [[ -f "benches/baseline_results.txt" ]]; then
             echo "✅ Found performance baseline, proceeding with regression testing"
-            echo "BASELINE_EXISTS=true" >> $GITHUB_ENV
+            echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
 
             # Show baseline metadata
             echo "=== Baseline Information ==="
@@ -51,21 +51,21 @@ jobs:
             echo "   3. Future CI runs will test for performance regressions"
             echo ""
             echo "   Skipping benchmark regression testing for now."
-            echo "BASELINE_EXISTS=false" >> $GITHUB_ENV
+            echo "BASELINE_EXISTS=false" >> "$GITHUB_ENV"
           fi
 
       - name: Extract baseline commit SHA
         if: env.BASELINE_EXISTS == 'true'
         run: |
-          echo "BASELINE_COMMIT=$(grep "^Git commit:" benches/baseline_results.txt | cut -d' ' -f3)" >> $GITHUB_ENV
+          echo "BASELINE_COMMIT=$(grep "^Git commit:" benches/baseline_results.txt | cut -d' ' -f3)" >> "$GITHUB_ENV"
 
       - name: Determine if benchmarks should run
         if: env.BASELINE_EXISTS == 'true'
         run: |
           if [[ "$BASELINE_COMMIT" == "${{ github.sha }}" ]]; then
-            echo "SKIP_BENCHMARKS=true" >> $GITHUB_ENV
+            echo "SKIP_BENCHMARKS=true" >> "$GITHUB_ENV"
           else
-            echo "SKIP_BENCHMARKS=false" >> $GITHUB_ENV
+            echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
           fi
 
       - name: Skip benchmarks if no code change

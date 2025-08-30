@@ -451,12 +451,14 @@ EOF
 	# Memory comparison with numeric tolerance for false-positive reduction
 	if [[ "$baseline_memory" != "Unknown" ]] && [[ "$current_memory" != "Unknown" ]]; then
 		# Extract numeric values from memory strings (e.g., "16.0 GB" -> "16.0")
+		local current_mem_num baseline_mem_num
 		current_mem_num=$(echo "$current_memory" | grep -oE '[0-9]+\.?[0-9]*' | head -1)
 		baseline_mem_num=$(echo "$baseline_memory" | grep -oE '[0-9]+\.?[0-9]*' | head -1)
 
 		# Only warn if numeric values differ by more than 0.1 GB (to handle rounding differences)
 		if [[ -n "$current_mem_num" ]] && [[ -n "$baseline_mem_num" ]]; then
 			# Use awk to check if absolute difference > 0.1 GB
+			local mem_diff
 			mem_diff=$(awk -v c="$current_mem_num" -v b="$baseline_mem_num" 'BEGIN{diff=c-b; if(diff<0) diff=-diff; print (diff > 0.1)}')
 			if [[ "$mem_diff" == "1" ]]; then
 				echo "⚠️  Memory differs: $current_memory vs $baseline_memory"

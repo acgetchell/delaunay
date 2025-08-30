@@ -58,9 +58,17 @@ if ! command -v jq >/dev/null 2>&1; then
 	error_exit "Required command 'jq' is not installed. Please install it to proceed."
 fi
 
+# Additional required tools
+if ! command -v cargo >/dev/null 2>&1; then
+	error_exit "Required command 'cargo' is not installed or not on PATH."
+fi
+if ! command -v git >/dev/null 2>&1; then
+	echo "Warning: 'git' not found; commit hash will be recorded as 'unknown'." >&2
+fi
+
 # Get current date and git commit
-CURRENT_DATE=$(date)
-GIT_COMMIT=$(git rev-parse HEAD)
+CURRENT_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 
 # Collect hardware information using shared utility
 echo "Collecting hardware information..."
@@ -97,7 +105,7 @@ echo "Step 2: Running fresh benchmark..."
 
 if [[ "$DEV_MODE" == "true" ]]; then
 	echo "Using dev mode: sample_size=10, measurement_time=2s, warmup_time=1s, no plots"
-	if ! cargo bench --bench small_scale_triangulation -- --sample-size 10 --measurement-time 2 --warm-up-time 1 --noplot >/dev/null 2>&1; then
+	if ! cargo bench --bench small_scale_triangulation -- --sample-size 10 --measurement-time 2s --warm-up-time 1s --noplot >/dev/null 2>&1; then
 		error_exit "Failed to run benchmark in dev mode"
 	fi
 else
@@ -133,7 +141,8 @@ extract_criterion_data() {
 		low_ns=$(jq -r '.mean.confidence_interval.lower_bound' "$estimates_file" 2>/dev/null || echo "$mean_ns")
 		high_ns=$(jq -r '.mean.confidence_interval.upper_bound' "$estimates_file" 2>/dev/null || echo "$mean_ns")
 
-		if [[ "$mean_ns" != "0" && "$mean_ns" != "null" ]]; then
+		# Proceed only if mean_ns parses to a positive number
+		if [[ "$(awk -v v="$mean_ns" 'BEGIN{print (v+0)>0 ? "yes" : "no"}')" == "yes" ]]; then
 			# Convert nanoseconds to microseconds
 			local mean_us low_us high_us
 			mean_us=$(awk -v v="$mean_ns" 'BEGIN{printf "%.2f", v / 1000}')
@@ -179,6 +188,8 @@ for dim in 2 3 4; do
 
 	if [[ -d "$criterion_dir" ]]; then
 		echo "Processing ${dim}D benchmarks..."
+		# Enable nullglob to handle case where no directories match the pattern
+		shopt -s nullglob
 		for point_dir in "$criterion_dir"/*/; do
 			if [[ -d "$point_dir" ]]; then
 				point_count=$(basename "$point_dir")
@@ -198,6 +209,8 @@ for dim in 2 3 4; do
 				fi
 			fi
 		done
+		# Disable nullglob to avoid side effects
+		shopt -u nullglob
 	fi
 done
 

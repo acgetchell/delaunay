@@ -76,15 +76,22 @@ extract_changelog() {
 
 	# Use awk to find the specific version section and extract until next ## header
 	# Support formats: "## [0.3.5] ...", "## v0.3.5 ...", "## 0.3.5 ...", "## [0.3.5] - 2025-08-28" (Keep a Changelog)
+	# Also supports hyperlink syntax: "## [0.3.5](https://github.com/...)"
 	changelog_content=$(awk -v version="$version_number" '
-        BEGIN { found = 0; printing = 0 }
+        BEGIN { 
+            found = 0; printing = 0;
+            # Escape special regex characters in version number
+            gsub(/[\[\]{}()*+?.^$|\\]/, "\\&", version);
+            # Create header pattern that allows (hyperlinks) after version
+            header = "^##[[:space:]]*\\[?v?" version "\\]?($|[[:space:]]|\\()";
+        }
         /^##[[:space:]]/ {
             if (printing) {
                 # Stop printing when we hit the next ## header
                 exit
             }
             # Check if this header matches our version (flexible matching for various formats)
-            if ($0 ~ "^##[[:space:]]*\\[?v?" version "\\]?") {
+            if ($0 ~ header) {
                 found = 1
                 printing = 1
                 next  # Skip the header itself

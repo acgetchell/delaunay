@@ -20,6 +20,8 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    env:
+      TARPAULIN_VERSION: "0.32.8"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -37,14 +39,14 @@ jobs:
         with:
           path: ~/.cargo/bin/cargo-tarpaulin
           key: tarpaulin-${{ runner.os }}-${{ env.TARPAULIN_VERSION }}
+          restore-keys: |
+            tarpaulin-${{ runner.os }}-
 
       - name: Install tarpaulin
         run: |
           if ! command -v cargo-tarpaulin &> /dev/null; then
             cargo install cargo-tarpaulin --locked --version "${TARPAULIN_VERSION}"
           fi
-        env:
-          TARPAULIN_VERSION: "0.32.8"
 
       - name: Run coverage
         run: |

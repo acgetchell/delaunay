@@ -119,29 +119,29 @@ uvx pylint scripts/
 
 ```bash
 # Lint shell scripts with shellcheck (detects common issues)
-shellcheck scripts/**/*.sh
+find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck
 
 # Lint a specific shell script (follow sourced files)
 shellcheck -x scripts/generate_changelog.sh
 
 # Show all shellcheck warnings including informational ones
-shellcheck -S info scripts/**/*.sh
+find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck -S info
 
 # Check scripts with specific shell (if not detected automatically)
-shellcheck -s bash scripts/**/*.sh
+find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck -s bash
 ```
 
 Additionally, use shfmt for consistent formatting:
 
 ```bash
 # Format all shell scripts in-place (tabs by default)
-shfmt -w scripts/**/*.sh
+find scripts -type f -name '*.sh' -exec shfmt -w {} +
 
 # Check formatting without modifying files (useful in CI)
-shfmt -d scripts/**/*.sh
+find scripts -type f -name '*.sh' -exec shfmt -d {} +
 
 # Example: enforce 2-space indentation and named functions style
-shfmt -i 2 -fn -w scripts/**/*.sh
+find scripts -type f -name '*.sh' -exec shfmt -i 2 -fn -w {} +
 ```
 
 **Note**: shellcheck helps detect:

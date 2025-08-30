@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 # benchmark_parser.sh - Shared utility functions for parsing benchmark data
 # This script provides reusable functions for parsing benchmark results across different scripts
@@ -35,7 +34,7 @@ extract_timing_data() {
 	if [[ "$line" =~ ^tds_new_[0-9]+d/tds_new/[0-9]+[[:space:]]+time:[[:space:]]+\[ ]]; then
 		# Extract timing values from within brackets
 		local timing_values
-		timing_values=$(echo "$line" | grep -o '\[[^]]*\]' | grep -o '[0-9.]\+' | head -3 | tr '\n' ' ')
+		timing_values=$(echo "$line" | grep -o '\[[^]]*\]' | grep -o '[0-9.]\+' | head -3 | tr '\n' ' ' || true)
 
 		# Extract unit (ns, us, μs, µs, ms, s) from the line
 		local unit
@@ -226,27 +225,29 @@ extract_baseline_time() {
 	fi
 
 	local time_line
-	time_line=$(grep -A 1 "=== $points Points ($dimension_with_d) ===" "$baseline_file" | grep "Time:" | head -1)
+	time_line=$(grep -A 1 "=== $points Points ($dimension_with_d) ===" "$baseline_file" | grep "Time:" | head -1 || true)
 
 	if [[ -z "$time_line" ]]; then
 		# Try alternate format for lowercase points
-		time_line=$(grep -A 1 "=== $points points ($dimension_with_d) ===" "$baseline_file" | grep -i "time:" | head -1)
+		time_line=$(grep -A 1 "=== $points points ($dimension_with_d) ===" "$baseline_file" | grep -i "time:" | head -1 || true)
 	fi
 
 	if [[ -n "$time_line" ]]; then
 		# Extract the middle value from [low, mean, high] and convert to nanoseconds
 		local time_value
-		time_value=$(echo "$time_line" | grep -o '\[[^]]*\]' | tr -d '[]' | cut -d',' -f2 | tr -d ' ')
+		time_value=$(echo "$time_line" | grep -o '\[[^]]*\]' | tr -d '[]' | cut -d',' -f2 | tr -d ' ' || true)
 
-		# Convert to nanoseconds based on unit (check original line for unit)
-		if [[ "$time_line" == *"ns"* ]]; then
-			printf "%.0f\n" "$(awk -v v="$time_value" 'BEGIN{printf "%.0f", v * 1}')"
-		elif [[ "$time_line" == *"μs"* ]] || [[ "$time_line" == *"µs"* ]] || [[ "$time_line" == *"us"* ]]; then
-			printf "%.0f\n" "$(awk -v v="$time_value" 'BEGIN{printf "%.0f", v * 1000}')"
-		elif [[ "$time_line" == *"ms"* ]]; then
-			printf "%.0f\n" "$(awk -v v="$time_value" 'BEGIN{printf "%.0f", v * 1000000}')"
-		elif [[ "$time_line" == *" s"* ]] && [[ "$time_line" != *"μs"* ]] && [[ "$time_line" != *"ms"* ]] && [[ "$time_line" != *"ns"* ]]; then
-			printf "%.0f\n" "$(awk -v v="$time_value" 'BEGIN{printf "%.0f", v * 1000000000}')"
+		# Convert to nanoseconds based on unit (explicit unit parsing)
+		local unit
+		if unit=$(echo "$time_line" | grep -oE ']\s*(ns|us|[μµ]s|ms|s)\s*$' | tr -d '[] ' || true); then
+			# Normalize unit variants
+			unit=${unit/us/μs}
+			unit=${unit/µs/μs}
+			# Convert using explicit multiplier mapping
+			awk -v v="$time_value" -v u="$unit" 'BEGIN{
+				m=(u=="ns"?1:(u=="μs"?1000:(u=="ms"?1000000:(u=="s"?1000000000:1))));
+				printf "%.0f", v*m
+			}'
 		else
 			echo "$time_value"
 		fi
@@ -257,6 +258,7 @@ extract_baseline_time() {
 
 # Function to check if benchmark_parser.sh is being sourced or executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	set -euo pipefail
 	echo "benchmark_parser.sh - Shared utility functions for parsing benchmark data"
 	echo "This script is meant to be sourced by other scripts, not executed directly."
 	echo ""

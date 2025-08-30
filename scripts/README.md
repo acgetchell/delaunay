@@ -38,7 +38,6 @@ All scripts support the `--help` flag for detailed usage information.
 - **Multiple Parsing Methods**: Both `while read` and `awk` implementations for different use cases
 - **Robust Regex Patterns**: Handles various benchmark output formats and edge cases
 - **Unit Normalization**: Standardizes time units (µs, us, μs) for consistency
-- **Dependency Validation**: Built-in checks for required tools
 - **Flexible Output**: Configurable output formatting for different consumers
 
 **Key Functions**:
@@ -362,7 +361,7 @@ compare_hardware(current, baseline)      # Compares two hardware configs
 
 - **macOS**: Uses `sysctl` for CPU/memory information
 - **Linux**: Parses `/proc/cpuinfo` and `/proc/meminfo`
-- **Windows**: Uses PowerShell by default (`Get-CimInstance`), with legacy `wmic` fallback
+- **Windows**: Uses PowerShell (`Get-CimInstance`) for hardware detection
 - **Rust info**: Extracted via `rustc --version` and `rustc -vV`
 
 **Output Formats**:
@@ -422,7 +421,7 @@ hardware_info=$(get_hardware_info)
 
 - macOS: `sysctl` (built-in)
 - Linux: `/proc/cpuinfo` and `/proc/meminfo` (built-in)
-- Windows: PowerShell (`pwsh` or `powershell`) preferred, legacy `wmic` as fallback
+- Windows: PowerShell (`pwsh` or `powershell`) for hardware detection
 - All platforms: `rustc` for Rust toolchain info
 
 ---
@@ -681,7 +680,7 @@ The repository includes automated performance regression testing via GitHub Acti
 #### CI Integration Benefits
 
 - **Separate from main CI**: Avoids slowing down regular development workflow
-- **Environment consistency**: Uses Ubuntu runners for reproducible benchmark comparisons
+- **Environment consistency**: Uses macOS runners (Apple Silicon) for reproducible benchmark comparisons
 - **Smart triggering**: Only runs on changes that could affect performance
 - **Graceful degradation**: Skips if baseline missing, with clear setup instructions
 - **Artifact collection**: Stores benchmark results for historical analysis
