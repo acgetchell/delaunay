@@ -68,9 +68,9 @@ jobs:
 
       - name: Install uv (for Python linting)
         if: matrix.os == 'ubuntu-latest'
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
 
       - name: Lint Python scripts
         if: matrix.os == 'ubuntu-latest'

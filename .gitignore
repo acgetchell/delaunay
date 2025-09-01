@@ -20,3 +20,4 @@
 # Python packaging artifacts
 *.egg-info/
 .ruff_cache/
+uv.lock

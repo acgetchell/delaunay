@@ -23,7 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Mathematics",
     "Topic :: Software Development :: Libraries :: Python Modules",
-    "Topic :: System :: Benchmark",
+    "Topic :: System :: Benchmarking",
 ]
 
 [project.urls]
@@ -42,12 +42,7 @@ hardware-utils = "hardware_utils:main"
 # Configure setuptools to find packages in scripts/ directory
 [tool.setuptools]
 package-dir = {"" = "scripts"}
-
-[tool.setuptools.packages.find]
-where = ["scripts"]
-
-[tool.setuptools.package-data]
-"*" = ["*.py"]
+py-modules = ["benchmark_utils", "changelog_utils", "enhance_commits", "hardware_utils"]
 
 [tool.ruff]
 line-length = 160
@@ -116,8 +111,8 @@ disable = [
     "reimported",                 # W0404 - Local imports for CLI startup optimization
     "unused-argument",            # W0613 - Signal handlers require specific signatures
     "unspecified-encoding",       # W1514 - System files may use default encoding
-    "unsupported-binary-operation", # E1131 - Python 3.9 union syntax compatibility
-    "no-name-in-module",         # E0611 - datetime.UTC availability varies by Python version
+    "unsupported-binary-operation", # E1131 - Keep for edge cases with complex type expressions
+    "unsubscriptable-object",     # E1136 - False positives with union types checked with control flow
 ]
 
 [tool.pylint.design]

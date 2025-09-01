@@ -378,9 +378,24 @@ hardware_info=$(get_hardware_info)
 
 ---
 
-#### `tag-from-changelog.sh`
+#### Git Tagging from Changelog (Python-based)
 
 **Purpose**: Creates git tags with changelog content as tag messages for seamless GitHub release integration.
+
+**Modern Implementation**: Uses Python utilities instead of shell scripts for better cross-platform compatibility and maintainability.
+
+**Usage**:
+
+```bash
+# Create new tag with changelog content
+uv run changelog-utils tag v0.4.2
+
+# Force recreate existing tag
+uv run changelog-utils tag v0.4.2 --force
+
+# Show help information
+uv run changelog-utils tag --help
+```
 
 **Features**:
 
@@ -392,95 +407,31 @@ hardware_info=$(get_hardware_info)
 - **Smart content extraction**: Removes headers and cleans whitespace automatically
 - **Preview functionality**: Shows tag message preview before creation
 - **Comprehensive error handling**: Clear error messages and usage instructions
-
-**Version Format Support**:
-
-```bash
-# Supported CHANGELOG.md section headers:
-## [0.3.5] - 2025-08-15     # Standard Keep a Changelog format
-## v0.3.5 - 2025-08-15     # Version with 'v' prefix
-## 0.3.5 (2025-08-15)     # Alternative format
-## v0.3.5                 # Minimal format
-```
-
-**Changelog Content Processing**:
-
-- Extracts everything from version header until next `##` header
-- Removes the header line itself from tag message
-- Cleans leading/trailing whitespace
-- Preserves markdown formatting and bullet points
-- Handles empty sections gracefully with minimal fallback message
+- **Cross-platform compatibility**: Works consistently across Windows, macOS, and Linux
 
 **Integration with GitHub Releases**:
 
 ```bash
 # Workflow for GitHub releases:
 1. Create tag with changelog content:
-   ./scripts/tag-from-changelog.sh v0.3.5
+   uv run changelog-utils tag v0.4.2
 
 2. Push tag to remote:
-   git push origin v0.3.5
+   git push origin v0.4.2
 
 3. Create GitHub release using tag message:
-   gh release create v0.3.5 --notes-from-tag
+   gh release create v0.4.2 --notes-from-tag
 ```
 
-**Usage Examples**:
+**Advanced Usage**:
 
 ```bash
-# Create new tag with changelog content
-./scripts/tag-from-changelog.sh v0.3.5
-
-# Force recreate existing tag
-./scripts/tag-from-changelog.sh v0.3.5 --force
-
-# Show help information
-./scripts/tag-from-changelog.sh --help
+# The changelog-utils tool also supports changelog generation:
+uv run changelog-utils generate           # Generate enhanced changelog
+uv run changelog-utils generate --debug   # Keep intermediate files for debugging
 ```
 
-**Tag Message Preview**:
-
-```bash
-# Example output before tag creation:
-Tag message preview:
-----------------------------------------
-### Added
-- New triangulation validation methods
-- Enhanced error handling for malformed inputs
-
-### Changed  
-- Improved performance for 3D triangulations
-- Updated dependency versions
-
-### Fixed
-- Resolved edge cases in boundary detection
-----------------------------------------
-```
-
-**Error Handling**:
-
-- **Repository validation**: Ensures script runs in valid git repository
-- **Changelog detection**: Searches current and parent directories for CHANGELOG.md
-- **Version format validation**: Requires `vX.Y.Z` format for consistency
-- **Existing tag detection**: Prevents accidental overwriting without `--force`
-- **Content validation**: Warns if no changelog content found for version
-
-**Safety Features**:
-
-- Validates version format before processing
-- Checks for existing tags to prevent accidental overwrites
-- Shows preview of tag message before creation
-- Provides clear next steps after successful tag creation
-- Graceful fallback if no changelog content is found
-
-**Use Cases**:
-
-- **Release automation**: Streamlines GitHub release creation process
-- **Changelog integration**: Ensures release notes match changelog content
-- **Tag recreation**: Useful for fixing tag messages or updating content
-- **Documentation consistency**: Maintains alignment between tags and changelog
-
-**Dependencies**: Requires `git`, `awk`, `sed`, `gh` (GitHub CLI), and access to CHANGELOG.md
+**Dependencies**: Requires Python 3.13+, `uv`, `git`, and access to CHANGELOG.md
 
 ---
 

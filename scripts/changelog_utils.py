@@ -4,6 +4,8 @@ Shared utilities for changelog operations.
 
 This module provides common functionality used by multiple scripts
 for changelog generation, parsing, and git tag management.
+
+Requires Python 3.13+ for modern typing features and datetime.UTC.
 """
 
 import builtins
@@ -366,7 +368,7 @@ class ChangelogUtils:
         return lines
 
     @staticmethod
-    def process_squashed_commit(commit_sha: str, repo_url: str) -> str:  # pylint: disable=too-many-locals,too-many-branches,too-many-statements,too-many-nested-blocks,unsubscriptable-object
+    def process_squashed_commit(commit_sha: str, repo_url: str) -> str:
         """
         Process a squashed PR commit and format it with proper line wrapping.
 
@@ -426,7 +428,7 @@ class ChangelogUtils:
                 }
             elif current_entry:
                 # This line belongs to the current entry's body
-                current_entry["body_lines"].append(line)  # pylint: disable=unsubscriptable-object
+                current_entry["body_lines"].append(line)
             elif not current_entry and line.strip():
                 # No current entry and this is a non-empty line - treat as standalone entry
                 current_entry = {"title": line.strip(), "body_lines": []}
@@ -565,7 +567,6 @@ class ChangelogUtils:
         import sys
 
         # Colors for output
-        RED = "\033[0;31m"
         GREEN = "\033[0;32m"
         YELLOW = "\033[1;33m"
         BLUE = "\033[0;34m"

@@ -16,7 +16,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime  # pylint: disable=no-name-in-module
 from pathlib import Path
 
 from hardware_utils import HardwareComparator, HardwareInfo

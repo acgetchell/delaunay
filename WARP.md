@@ -12,6 +12,13 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - You may suggest git commands for the user to run, but never execute them
 - This ensures the user maintains full control over version control operations
 
+### Code Quality Tools
+
+- **ALLOWED** to automatically run all code quality and formatting tools
+- **ALLOWED** to fix auto-fixable issues (formatting, linting, etc.)
+- This includes: `cargo fmt`, `cargo clippy`, `ruff format`, `ruff check --fix`, `markdownlint --fix`, `shfmt`, etc.
+- Quality tools improve code without changing functionality or version control state
+
 ## Overview
 
 The `delaunay` library implements d-dimensional Delaunay triangulations in Rust,
@@ -213,10 +220,8 @@ yamllint -c .yamllint .github/workflows/ci.yml
 #### Spell Checking
 
 ```bash
-# Check spelling with project configuration
-npx cspell --config cspell.json --gitignore --no-progress --cache \
-  --exclude "target/**" --exclude "node_modules/**" \
-  "**/*"
+# Check spelling with project configuration (respects .gitignore)
+npx cspell --config cspell.json --no-progress --cache "**/*"
 ```
 
 ### Benchmarking
@@ -351,9 +356,12 @@ The library extensively uses generics:
 2. **Make changes** following architectural patterns
 3. **Build and test** with `cargo build && cargo test`
 4. **Format and lint** with `cargo fmt && cargo clippy`
-5. **Run examples** with `./scripts/run_all_examples.sh`
-6. **Check performance impact** with `./scripts/compare_benchmarks.sh --dev`
-7. **Commit and push** for CI validation
+5. **Test benchmarks compile** with `cargo bench --no-run` (avoids long execution time)
+6. **Run examples** with `./scripts/run_all_examples.sh`
+7. **Check performance impact** with `./scripts/compare_benchmarks.sh --dev` (only if performance-critical changes)
+8. **Commit and push** for CI validation
+
+**Note**: Use `cargo bench --no-run` to verify benchmarks compile without actually running them, as full benchmark execution takes several minutes.
 
 ### Performance-Critical Changes
 
@@ -373,6 +381,42 @@ Examples in `examples/` demonstrate library capabilities:
 - Include comprehensive documentation header
 - Show error handling patterns
 - Validate with `./scripts/run_all_examples.sh`
+
+### Documentation Maintenance
+
+**CRITICAL**: When adding, removing, or significantly restructuring files, always update `docs/code_organization.md`:
+
+#### File Structure Changes
+
+```bash
+# After adding new files/directories:
+# 1. Update the Complete Directory Tree section in docs/code_organization.md
+# 2. Add descriptions for new files with their purpose
+# 3. Update Architecture Overview if the change affects core structure
+```
+
+**Examples of changes requiring documentation updates:**
+
+- **New modules**: `src/core/new_module.rs` → Add to directory tree with description
+- **New directories**: `src/algorithms/` → Update architecture overview
+- **Removed files**: Delete from directory tree, update references
+- **Moved files**: Update both old and new locations, check all references
+- **New examples**: Add to `examples/` section with purpose
+- **New scripts**: Add to `scripts/` section with functionality description
+- **New workflows**: Add to `.github/workflows/` section
+
+**Why this matters:**
+
+- `docs/code_organization.md` serves as the authoritative project structure reference
+- Contributors rely on it to understand the codebase architecture  
+- Out-of-date documentation creates confusion and slows development
+- The directory tree is used by new contributors for navigation
+
+**Quick check**: If you've added/removed files, run:
+
+```bash
+find . -type f -name '*.rs' | wc -l  # Compare with documented file count
+```
 
 ## Benchmarking and Performance
 

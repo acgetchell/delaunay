@@ -104,6 +104,9 @@ jobs:
       - name: Upload SARIF files
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          GITHUB_REF: ${{ github.ref }}
         run: |
           # Don't iterate literal patterns when no files exist
           shopt -s nullglob
@@ -116,24 +119,24 @@ jobs:
               # Upload using the action (we'll call it via environment variables)
               # Use GitHub CLI to upload if available, otherwise use curl
               if command -v gh >/dev/null 2>&1; then
-                gh api "repos/${{ github.repository }}/code-scanning/sarifs" \
+                gh api "repos/$GITHUB_REPO/code-scanning/sarifs" \
                   --method POST \
                   --field sarif="$(base64 -w 0 < "$sarif_file")" \
-                  --field commit_sha="${{ github.sha }}" \
-                  --field ref="${{ github.ref }}" \
+                  --field commit_sha="$COMMIT_SHA" \
+                  --field ref="$GITHUB_REF" \
                   --field category="codacy-$tool_name" || echo "Failed to upload $sarif_file via gh"
               else
                 # Fallback to curl
                 curl -L \
                   -X POST \
                   -H "Accept: application/vnd.github+json" \
-                  -H "Authorization: Bearer ${{ github.token }}" \
+                  -H "Authorization: Bearer $GH_TOKEN" \
                   -H "X-GitHub-Api-Version: 2022-11-28" \
-                  "https://api.github.com/repos/${{ github.repository }}/code-scanning/sarifs" \
+                  "https://api.github.com/repos/$GITHUB_REPO/code-scanning/sarifs" \
                   -d "$(jq -n \
                     --arg sarif "$(base64 -w 0 < "$sarif_file")" \
-                    --arg commit "${{ github.sha }}" \
-                    --arg ref "${{ github.ref }}" \
+                    --arg commit "$COMMIT_SHA" \
+                    --arg ref "$GITHUB_REF" \
                     --arg category "codacy-$tool_name" \
                     '{sarif: $sarif, commit_sha: $commit, ref: $ref, category: $category}')" \
                   || echo "Failed to upload $sarif_file via curl"

@@ -1,16 +1,10 @@
 {
     "version": "0.2",
+    "useGitignore": true,
     "ignorePaths": [
-        "**/target/**",
-        "**/node_modules/**",
-        "**/dist/**",
-        "**/build/**",
         "**/.git/**",
-        "**/.pytest_cache/**",
         "**/.cache/**",
-        "**/.venv/**",
-        "**/venv/**",
-        "**/coverage/**"
+        "**/.pytest_cache/**"
     ],
     "ignoreRegExpList": [
         "_SC_[A-Z0-9_]+",
@@ -125,12 +119,15 @@
         "Overmars",
         "pastable",
         "Pentachoron",
+        "pycodestyle",
+        "pydocstyle",
         "phpcs",
         "phpmd",
         "phpstan",
         "physicalcpu",
         "pipefail",
         "pointee",
+        "Popen",
         "Polytope",
         "polytopes",
         "postconditions",

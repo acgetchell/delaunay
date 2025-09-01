@@ -1,0 +1,139 @@
+---
+# Codacy configuration for delaunay project
+# Uses settings from pyproject.toml (Python) and Cargo.toml/rustfmt.toml (Rust)
+
+engines:
+  # === RUST TOOLS ===
+  # Clippy for Rust linting (reads from Cargo.toml [lints.clippy] section)
+  clippy:
+    enabled: true
+    # Clippy will automatically use the pedantic lints configured in Cargo.toml
+
+  # rustfmt for Rust formatting (reads from rustfmt.toml)
+  rustfmt:
+    enabled: true
+    # rustfmt will automatically use rustfmt.toml configuration
+
+  # === PYTHON TOOLS ===
+  # Ruff for Python linting and formatting (reads from pyproject.toml)
+  ruff:
+    enabled: true
+    # Ruff automatically reads [tool.ruff] configuration from pyproject.toml
+
+  # Pylint for additional Python analysis (reads from pyproject.toml)
+  pylint:
+    enabled: true
+    # Pylint automatically reads [tool.pylint] configuration from pyproject.toml
+
+  # === DISABLE CONFLICTING PYTHON TOOLS ===
+  # Disable tools that overlap with Ruff to avoid duplicate/conflicting issues
+  flake8:
+    enabled: false  # Ruff replaces flake8
+  pycodestyle:
+    enabled: false  # Ruff includes pycodestyle checks
+  pydocstyle:
+    enabled: false  # Ruff includes docstring checks
+  bandit:
+    enabled: false  # Ruff includes security checks (S rules)
+  isort:
+    enabled: false  # Ruff includes import sorting (I rules)
+  black:
+    enabled: false  # Ruff includes formatting
+
+  # === OTHER LANGUAGES/FORMATS ===
+  # ShellCheck for shell scripts (scripts/*.sh)
+  shellcheck:
+    enabled: true
+
+  # Markdown linting for documentation
+  markdownlint:
+    enabled: true
+
+  # YAML linting for CI and config files
+  yamllint:
+    enabled: true
+
+# === FILE INCLUSION/EXCLUSION ===
+exclude_paths:
+  # Rust build artifacts and dependencies
+  - 'target/**'
+  - 'Cargo.lock'
+
+  # Python artifacts
+  - '__pycache__/**'
+  - '*.pyc'
+  - '.pytest_cache/**'
+  - 'venv/**'
+  - '.venv/**'
+
+  # General artifacts
+  - 'node_modules/**'
+  - '.git/**'
+  - '**/*.min.js'
+  - '**/*.min.css'
+  - '**/vendor/**'
+
+# Focus analysis on source code and documentation
+include_paths:
+  # Rust source code
+  - 'src/**'
+  - 'benches/**'
+  - 'examples/**'
+  - 'tests/**'
+  - 'build.rs'
+  - 'Cargo.toml'
+  - 'rustfmt.toml'
+
+  # Python scripts
+  - 'scripts/**'
+  - '*.py'
+  - 'pyproject.toml'
+
+  # Documentation and configuration
+  - '*.md'
+  - '*.yml'
+  - '*.yaml'
+  - '*.sh'
+  - '.github/**'
+
+# === COVERAGE SETTINGS ===
+coverage:
+  # Enable coverage for Rust (cargo-tarpaulin or similar)
+  enabled: true
+
+  # Exclude certain paths from coverage analysis
+  exclude_paths:
+    - 'benches/**'      # Benchmarks don't need coverage
+    - 'examples/**'     # Examples are for demonstration
+    - 'scripts/**'      # Python utility scripts
+
+# === DUPLICATION DETECTION ===
+duplication:
+  enabled: true
+
+  # Configuration for duplication thresholds
+  config:
+    # Minimum number of lines to consider duplication
+    minimum_mass: 60
+
+    # Minimum number of tokens to consider duplication
+    minimum_tokens: 80
+
+  exclude_paths:
+    - 'target/**'
+    - 'benches/**'     # Benchmarks may have similar setup patterns
+    - 'examples/**'    # Examples may demonstrate similar concepts
+    - 'tests/**'       # Test patterns may be repetitive by design
+
+# === ADDITIONAL SETTINGS ===
+# Custom file extensions (if needed)
+file_extensions:
+  rust:
+    - '.rs'
+  python:
+    - '.py'
+  markdown:
+    - '.md'
+  yaml:
+    - '.yml'
+    - '.yaml'

@@ -1,9 +1,190 @@
-# Delaunay Module Organizational Patterns Analysis
+# Code Organization Guide
 
-This document captures the canonical organizational patterns found across the key modules in the delaunay
-codebase: `cell.rs`, `vertex.rs`, `facet.rs`, `boundary.rs`, and `utilities.rs`.
+This document provides a comprehensive guide to the delaunay project's code organization, from the overall project architecture to detailed individual module patterns.
 
-## Canonical Section Sequence
+## Table of Contents
+
+- [Project Structure](#project-structure)
+  - [Complete Directory Tree](#complete-directory-tree)
+  - [Architecture Overview](#architecture-overview)
+  - [Architectural Principles](#architectural-principles)
+- [Module Organization Patterns](#module-organization-patterns)
+  - [Canonical Section Sequence](#canonical-section-sequence)
+  - [Comment Separators](#comment-separators)
+  - [Section-by-Section Analysis](#section-by-section-analysis)
+  - [Module-Specific Variations](#module-specific-variations)
+  - [Key Conventions](#key-conventions)
+
+---
+
+## Project Structure
+
+The delaunay project follows a standard Rust library structure with additional tooling for computational geometry research.
+
+### Complete Directory Tree
+
+```text
+delaunay/
+├── src/                                          # Core library code
+│   ├── core/                                     # Core triangulation structures
+│   │   ├── algorithms/                           # Triangulation algorithms
+│   │   │   ├── bowyer_watson.rs                  # Incremental Bowyer-Watson algorithm
+│   │   │   └── robust_bowyer_watson.rs           # Robust geometric predicates version
+│   │   ├── traits/                               # Core traits for data types and algorithms
+│   │   │   ├── boundary_analysis.rs              # Boundary analysis traits
+│   │   │   ├── data_type.rs                      # DataType trait definitions
+│   │   │   └── insertion_algorithm.rs            # Insertion algorithm traits
+│   │   ├── boundary.rs                           # Boundary analysis and facet detection
+│   │   ├── cell.rs                               # Cell (simplex) implementation
+│   │   ├── facet.rs                              # Facet implementation
+│   │   ├── triangulation_data_structure.rs       # Main Tds struct
+│   │   ├── util.rs                               # Helper functions for triangulation operations
+│   │   └── vertex.rs                             # Vertex implementation with generic support
+│   ├── geometry/                                 # Geometric algorithms and predicates
+│   │   ├── algorithms/                           # Geometric algorithms
+│   │   │   └── convex_hull.rs                    # Convex hull computation
+│   │   ├── traits/                               # Coordinate abstractions and floating-point traits
+│   │   │   └── coordinate.rs                     # Core Coordinate trait abstraction
+│   │   ├── matrix.rs                             # Matrix operations for geometric computations
+│   │   ├── point.rs                              # Generic Point struct with NaN-aware operations
+│   │   ├── predicates.rs                         # Geometric predicates (insphere, orientation)
+│   │   ├── robust_predicates.rs                  # Robust geometric predicates
+│   │   └── util.rs                               # Geometric utility functions
+│   └── lib.rs                                    # Main library file with module declarations and prelude
+├── examples/                                     # Usage examples and demonstrations
+│   ├── README.md                                 # Examples documentation
+│   ├── boundary_analysis_trait.rs                # Boundary analysis examples
+│   ├── check_float_traits.rs                     # Floating-point trait examples
+│   ├── convex_hull_3d_50_points.rs               # 3D convex hull extraction and analysis example
+│   ├── implicit_conversion.rs                    # Type conversion examples
+│   ├── point_comparison_and_hashing.rs           # Point operations examples
+│   ├── test_alloc_api.rs                         # Allocation API examples
+│   ├── test_circumsphere.rs                      # Circumsphere computation examples
+│   └── triangulation_3d_50_points.rs             # 3D triangulation example
+├── benches/                                      # Performance benchmarks
+│   ├── README.md                                 # Benchmarking guide and performance results
+│   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
+│   ├── baseline_results.txt                      # Performance baseline data
+│   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
+│   ├── helpers.rs                                # Benchmark helper functions
+│   ├── microbenchmarks.rs                        # Fine-grained performance tests
+│   ├── small_scale_triangulation.rs              # Small triangulation benchmarks
+│   └── triangulation_creation.rs                 # Triangulation creation benchmarks
+├── tests/                                        # Integration tests
+│   ├── bench_helpers_test.rs                     # Tests for benchmark helper functions
+│   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
+│   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
+│   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
+│   ├── robust_predicates_showcase.rs             # Robust predicates demonstration tests
+│   └── test_cavity_boundary_error.rs             # Cavity boundary error reproduction tests
+├── docs/                                         # Additional documentation
+│   ├── templates/                                # Templates for automated generation
+│   │   ├── README.md                             # Templates documentation
+│   │   └── changelog.hbs                         # Custom changelog template
+│   ├── code_organization.md                      # Code organization patterns (this file)
+│   ├── numerical_robustness_guide.md             # Numerical robustness and stability guide
+│   ├── optimization_recommendations.md           # Performance optimization guide
+│   └── RELEASING.md                              # Release process documentation
+├── scripts/                                      # Development and CI scripts
+│   ├── README.md                                 # Scripts documentation
+│   ├── benchmark_utils.py                        # Python utilities for benchmark processing and hardware detection
+│   ├── changelog_utils.py                        # Comprehensive Python utilities for changelog generation, processing, and git tagging
+│   ├── enhance_commits.py                        # Commit enhancement utilities
+│   ├── generate_changelog.sh                     # Generate changelog with commit dates and squashed PR expansion
+│   ├── hardware_utils.py                         # Python utilities for hardware information and system capabilities
+│   └── run_all_examples.sh                       # Validate all examples
+├── .cargo/                                       # Cargo configuration
+│   └── config.toml                               # Build configuration
+├── .github/                                      # GitHub configuration
+│   ├── workflows/                                # CI/CD workflows
+│   │   ├── audit.yml                             # Security vulnerability scanning
+│   │   ├── benchmarks.yml                        # Performance regression testing
+│   │   ├── ci.yml                                # Main CI pipeline
+│   │   ├── codacy.yml                            # Code quality analysis
+│   │   ├── codecov.yml                           # Test coverage tracking
+│   │   ├── generate-baseline.yml                 # Automated performance baseline generation on releases
+│   │   └── rust-clippy.yml                       # Additional clippy analysis
+│   ├── CODEOWNERS                                # Code ownership definitions
+│   └── dependabot.yml                            # Dependency update configuration
+├── .auto-changelog                               # Auto-changelog configuration
+├── .codacy.yml                                   # Codacy code quality configuration
+├── .codecov.yml                                  # CodeCov configuration
+├── .coderabbit.yml                               # CodeRabbit AI review configuration
+├── .gitignore                                    # Git ignore patterns
+├── .markdownlint.json                            # Markdown linting configuration
+├── .yamllint                                     # YAML linting configuration
+├── CHANGELOG.md                                  # Version history with enhanced squashed PR support
+├── CITATION.cff                                  # Citation metadata for academic use
+├── CODE_OF_CONDUCT.md                            # Community guidelines
+├── CONTRIBUTING.md                               # Contribution guidelines and development workflows
+├── Cargo.lock                                    # Dependency lockfile
+├── Cargo.toml                                    # Package configuration and dependencies
+├── cspell.json                                   # Spell checking configuration
+├── LICENSE                                       # BSD-3-Clause License
+├── pyproject.toml                                # Python project configuration for development scripts
+├── README.md                                     # Project overview and getting started
+├── REFERENCES.md                                 # Academic references and citations
+├── rust-toolchain.toml                           # Rust toolchain specification for consistent development environment
+├── rustfmt.toml                                  # Code formatting configuration
+└── WARP.md                                       # WARP AI development guidance
+```
+
+### Architecture Overview
+
+#### Core Library (`src/`)
+
+**`src/core/`** - Triangulation data structures and algorithms:
+
+- `triangulation_data_structure.rs` - Main `Tds` struct
+- `vertex.rs`, `cell.rs`, `facet.rs` - Core geometric primitives
+- `boundary.rs` - Boundary detection and analysis
+- `algorithms/` - Bowyer-Watson implementations
+- `traits/` - Core trait definitions
+
+**`src/geometry/`** - Geometric algorithms and predicates:
+
+- `point.rs` - NaN-aware Point operations
+- `predicates.rs`, `robust_predicates.rs` - Geometric tests
+- `matrix.rs` - Linear algebra support
+- `algorithms/convex_hull.rs` - Hull extraction
+- `traits/coordinate.rs` - Coordinate abstractions
+
+#### Development Infrastructure
+
+- **`examples/`** - Usage demonstrations and trait examples
+- **`benches/`** - Performance benchmarks with automated baseline management
+- **`tests/`** - Integration tests and regression testing
+- **`docs/`** - Architecture guides, performance documentation, and templates
+- **`scripts/`** - Python utilities for automation and CI integration
+
+#### Configuration
+
+- **Quality Control**: `.codacy.yml`, `rustfmt.toml`, `pyproject.toml`, linting configurations
+- **Environment**: `rust-toolchain.toml`, `.cargo/config.toml`, GitHub Actions workflows
+- **Project Metadata**: `CITATION.cff`, `REFERENCES.md`, `WARP.md`
+
+### Architectural Principles
+
+The project structure reflects several key architectural decisions:
+
+1. **Separation of Concerns**: Clear boundaries between data structures (`core/`) and algorithms (`geometry/`)
+2. **Generic Design**: Extensive use of generics for coordinate types, data associations, and dimensionality
+3. **Trait-Based Architecture**: Heavy use of traits for extensibility and code reuse
+4. **Performance Focus**: Dedicated benchmarking infrastructure and performance regression detection
+5. **Academic Integration**: Strong support for research use with comprehensive citations and references
+6. **Cross-Platform Development**: Modern Python tooling alongside traditional Rust development
+7. **Quality Assurance**: Multiple layers of automated quality control and testing
+
+This structure supports both library users (through examples and documentation) and contributors (through comprehensive
+development tooling and clear architectural guidance).
+
+---
+
+## Module Organization Patterns
+
+The canonical organizational patterns found across key modules in the codebase: `cell.rs`, `vertex.rs`, `facet.rs`, `boundary.rs`, and `utilities.rs`.
+
+### Canonical Section Sequence
 
 Based on analysis of the modules, the standard ordering follows this sequence:
 
@@ -19,9 +200,9 @@ Based on analysis of the modules, the standard ordering follows this sequence:
 10. **Specialized Trait Implementations** (e.g., Hashing, Equality)
 11. **Tests** (with section separator)
 
-## Comment Separators
+### Comment Separators
 
-### Primary Section Separators
+#### Primary Section Separators
 
 All modules consistently use this pattern for major sections:
 
@@ -31,7 +212,7 @@ All modules consistently use this pattern for major sections:
 // =============================================================================
 ```
 
-### Subsection Separators
+#### Subsection Separators
 
 Within test modules, subsections use consistent formatting:
 
@@ -41,9 +222,9 @@ Within test modules, subsections use consistent formatting:
     // =============================================================================
 ```
 
-## Section-by-Section Analysis
+### Section-by-Section Analysis
 
-### 1. Module Documentation (`//!` comments)
+#### 1. Module Documentation (`//!` comments)
 
 **Pattern**: Comprehensive module-level documentation with:
 
@@ -71,7 +252,7 @@ Within test modules, subsections use consistent formatting:
 //! ```
 ```
 
-### 2. Imports Section
+#### 2. Imports Section
 
 **Pattern**: Organized into logical groups with clear hierarchy:
 
@@ -86,7 +267,7 @@ Within test modules, subsections use consistent formatting:
 - Clear grouping with spacing
 - Trait imports explicitly named
 
-### 3. Error Types Section
+#### 3. Error Types Section
 
 **Pattern**: Custom error enums using `thiserror::Error`:
 
@@ -111,7 +292,7 @@ pub enum [Module]ValidationError {
 - Detailed documentation for each variant
 - `#[from]` attribute for error chaining
 
-### 4. Convenience Macros and Helpers Section
+#### 4. Convenience Macros and Helpers Section
 
 **Pattern**: Procedural macros with comprehensive documentation:
 
@@ -151,7 +332,7 @@ where
 }
 ```
 
-### 5. Struct Definitions Section
+#### 5. Struct Definitions Section
 
 **Pattern**: Builder pattern with comprehensive documentation:
 
@@ -184,7 +365,7 @@ where
 }
 ```
 
-### 6. Deserialization Implementation Section
+#### 6. Deserialization Implementation Section
 
 **Pattern**: Manual `Deserialize` implementation with visitor pattern:
 
@@ -203,7 +384,7 @@ where
 }
 ```
 
-### 7. Core Implementation Blocks
+#### 7. Core Implementation Blocks
 
 **Pattern**: Primary functionality with clear method groupings:
 
@@ -230,7 +411,7 @@ where
 }
 ```
 
-### 8. Advanced Implementation Blocks
+#### 8. Advanced Implementation Blocks
 
 **Pattern**: Specialized implementations with additional trait bounds:
 
@@ -248,7 +429,7 @@ where
 }
 ```
 
-### 9. Standard Trait Implementations Section
+#### 9. Standard Trait Implementations Section
 
 **Pattern**: Standard Rust traits with clear documentation:
 
@@ -273,7 +454,7 @@ where
 - `Eq` - marker trait
 - `From`/`Into` conversions
 
-### 10. Specialized Trait Implementations
+#### 10. Specialized Trait Implementations
 
 **Pattern**: Complex traits like `Hash` with detailed contract documentation:
 
@@ -295,7 +476,7 @@ where
 }
 ```
 
-### 11. Tests Section
+#### 11. Tests Section
 
 **Pattern**: Comprehensive test organization with multiple subsections:
 
@@ -341,67 +522,67 @@ mod tests {
 8. **Error Handling Tests** - Validation and error cases
 9. **Edge Case Tests** - Boundary conditions
 
-## Module-Specific Variations
+### Module-Specific Variations
 
-### `cell.rs` (2,442 lines)
+#### `cell.rs` (2,442 lines)
 
 - Most comprehensive implementation
 - Multiple specialized implementation blocks
 - Extensive geometric predicates integration
 - Detailed Hash/Eq contract documentation
 
-### `vertex.rs` (1,950 lines)
+#### `vertex.rs` (1,950 lines)
 
 - Strong focus on coordinate validation
 - Comprehensive equality testing
 - Multiple numeric type support
 - Detailed serialization testing
 
-### `facet.rs` (1,420 lines)
+#### `facet.rs` (1,420 lines)
 
 - Geometric relationship focus
 - Key generation utilities
 - Adjacency testing
 - Error handling for geometric constraints
 
-### `boundary.rs` (415 lines)
+#### `boundary.rs` (415 lines)
 
 - Trait implementation focused
 - Algorithm-specific testing
 - Performance benchmarking
 - Integration with TDS
 
-### `utilities.rs` (871 lines)
+#### `utilities.rs` (871 lines)
 
 - Function-focused (not struct-focused)
 - Extensive edge case testing
 - Generic type coverage
 - Utility function combinations
 
-## Key Conventions
+### Key Conventions
 
-### Documentation Standards
+#### Documentation Standards
 
 - Always include examples in public API documentation
 - Use `///` for item documentation, `//!` for module documentation
 - Include `# Arguments`, `# Returns`, `# Errors`, `# Panics` sections where applicable
 - Reference other types using `[Type]` notation
 
-### Naming Conventions
+#### Naming Conventions
 
 - Error types: `[Module]ValidationError` or `[Module]Error`
 - Test functions: `test_[functionality]_[specific_case]`
 - Helper functions: `create_[item]` or `assert_[property]`
 - Type aliases in tests: `Test[Type][Dimension]` (e.g., `TestCell3D`)
 
-### Code Organization
+#### Code Organization
 
 - Group related functionality within implementation blocks
 - Separate basic and advanced functionality into different impl blocks
 - Use consistent indentation and spacing
 - Include inline comments for complex logic
 
-### Testing Patterns
+#### Testing Patterns
 
 - Comprehensive edge case coverage
 - Both positive and negative test cases
@@ -409,5 +590,5 @@ mod tests {
 - Serialization round-trip testing
 - Error message validation
 
-This organizational pattern provides a consistent, maintainable structure that scales well across different
-module complexities while maintaining readability and discoverability.
+This organizational pattern provides a consistent, maintainable structure that scales well across different module
+complexities while maintaining readability and discoverability.

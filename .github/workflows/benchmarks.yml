@@ -48,14 +48,12 @@ jobs:
           # Toolchain from rust-toolchain.toml; no extra target needed on macOS-ARM
 
       - name: Install uv (Python package manager)
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
 
       - name: Verify uv installation
-        run: |
-          source $HOME/.cargo/env
-          uv --version
+        run: uv --version
 
       - name: Install jq (required for baseline generation fallback)
         run: |
@@ -174,9 +172,6 @@ jobs:
           echo "   This baseline will be used for this comparison only."
           echo ""
 
-          # Source uv environment
-          source $HOME/.cargo/env
-
           # Generate baseline using dev mode for faster execution
           if uv run benchmark-utils generate-baseline --dev; then
             echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
@@ -206,9 +201,11 @@ jobs:
       - name: Determine if benchmarks should run
         if: env.BASELINE_EXISTS == 'true'
         shell: bash
+        env:
+          CURRENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [[ "$BASELINE_COMMIT" == "${{ github.sha }}" ]]; then
+          if [[ "$BASELINE_COMMIT" == "$CURRENT_SHA" ]]; then
             echo "SKIP_BENCHMARKS=true" >> "$GITHUB_ENV"
           else
             if git diff --name-only "$BASELINE_COMMIT"... | grep -qE '^(src/|benches/|Cargo\.toml|Cargo\.lock)'; then
@@ -251,9 +248,6 @@ jobs:
           set -euo pipefail
           echo "🚀 Running performance regression test..."
           echo "   Baseline source: ${BASELINE_SOURCE:-unknown}"
-
-          # Source uv environment
-          source $HOME/.cargo/env
 
           # This will exit with code 1 if significant regressions are found
           uv run benchmark-utils compare --baseline benches/baseline_results.txt

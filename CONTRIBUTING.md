@@ -43,7 +43,7 @@ Before you begin, ensure you have:
 1. **Rust** (latest stable version): Install via [rustup.rs][rustup]
 2. **Git** for version control
 3. **Python and uv** (for development scripts and automation):
-   - **Python 3.8+**: Most systems have this pre-installed
+   - **Python 3.13+**: Required for modern Python features used in development scripts
    - **uv**: Fast Python package manager - Install via:
      - **macOS/Linux**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
      - **Windows**: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
@@ -184,8 +184,8 @@ uvx pylint scripts/          # Code quality analysis
 The project has evolved from shell-based to Python-based automation:
 
 - ✅ **New**: `scripts/benchmark_utils.py`, `scripts/hardware_utils.py`, `scripts/changelog_utils.py` (with comprehensive changelog and git tagging functionality)
-- ❌ **Legacy**: Old shell scripts like `generate_baseline.sh`, `compare_benchmarks.sh` (now automated via GitHub Actions)
-- 🔄 **Hybrid**: Some shell scripts remain as simple wrappers (e.g., `run_all_examples.sh`, `tag-from-changelog.sh`)
+- ❌ **Legacy**: Old shell scripts like `generate_baseline.sh`, `compare_benchmarks.sh`, `tag-from-changelog.sh` (replaced by Python equivalents)
+- 🔄 **Hybrid**: Some shell scripts remain as simple wrappers (e.g., `run_all_examples.sh`)
 
 **Benefits of Python Utilities:**
 
@@ -196,116 +196,35 @@ The project has evolved from shell-based to Python-based automation:
 
 ## Project Structure
 
-Understanding the project layout will help you navigate and contribute effectively:
+The project follows a standard Rust library structure with additional tooling for computational geometry research:
 
-```text
-delaunay/
-├── src/                                          # Core library code
-│   ├── core/                                     # Core triangulation structures
-│   │   ├── algorithms/                           # Triangulation algorithms
-│   │   │   ├── bowyer_watson.rs                  # Incremental Bowyer-Watson algorithm
-│   │   │   └── robust_bowyer_watson.rs           # Robust geometric predicates version
-│   │   ├── traits/                               # Core traits for data types and algorithms
-│   │   │   ├── boundary_analysis.rs              # Boundary analysis traits
-│   │   │   ├── data_type.rs                      # DataType trait definitions
-│   │   │   └── insertion_algorithm.rs            # Insertion algorithm traits
-│   │   ├── boundary.rs                           # Boundary analysis and facet detection
-│   │   ├── cell.rs                               # Cell (simplex) implementation
-│   │   ├── facet.rs                              # Facet implementation
-│   │   ├── triangulation_data_structure.rs       # Main Tds struct
-│   │   ├── util.rs                               # Helper functions for triangulation operations
-│   │   └── vertex.rs                             # Vertex implementation with generic support
-│   ├── geometry/                                 # Geometric algorithms and predicates
-│   │   ├── algorithms/                           # Geometric algorithms
-│   │   │   └── convex_hull.rs                    # Convex hull computation
-│   │   ├── traits/                               # Coordinate abstractions and floating-point traits
-│   │   │   └── coordinate.rs                     # Core Coordinate trait abstraction
-│   │   ├── matrix.rs                             # Matrix operations for geometric computations
-│   │   ├── point.rs                              # Generic Point struct with NaN-aware operations
-│   │   ├── predicates.rs                         # Geometric predicates (insphere, orientation)
-│   │   ├── robust_predicates.rs                  # Robust geometric predicates
-│   │   └── util.rs                               # Geometric utility functions
-│   └── lib.rs                                    # Main library file with module declarations and prelude
-├── examples/                                     # Usage examples and demonstrations
-│   ├── README.md                                 # Examples documentation
-│   ├── boundary_analysis_trait.rs                # Boundary analysis examples
-│   ├── check_float_traits.rs                     # Floating-point trait examples
-│   ├── convex_hull_3d_50_points.rs               # 3D convex hull extraction and analysis example
-│   ├── implicit_conversion.rs                    # Type conversion examples
-│   ├── point_comparison_and_hashing.rs           # Point operations examples
-│   ├── test_alloc_api.rs                         # Allocation API examples
-│   ├── test_circumsphere.rs                      # Circumsphere computation examples
-│   └── triangulation_3d_50_points.rs             # 3D triangulation example
-├── benches/                                      # Performance benchmarks
-│   ├── README.md                                 # Benchmarking guide and performance results
-│   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
-│   ├── baseline_results.txt                      # Performance baseline data
-│   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
-│   ├── helpers.rs                                # Benchmark helper functions
-│   ├── microbenchmarks.rs                        # Fine-grained performance tests
-│   ├── small_scale_triangulation.rs              # Small triangulation benchmarks
-│   └── triangulation_creation.rs                 # Triangulation creation benchmarks
-├── tests/                                        # Integration tests
-│   ├── bench_helpers_test.rs                     # Tests for benchmark helper functions
-│   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
-│   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
-│   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
-│   ├── robust_predicates_showcase.rs             # Robust predicates demonstration tests
-│   └── test_cavity_boundary_error.rs             # Cavity boundary error reproduction tests
-├── docs/                                         # Additional documentation
-│   ├── templates/                                # Templates for automated generation
-│   │   ├── README.md                             # Templates documentation
-│   │   └── changelog.hbs                         # Custom changelog template
-│   ├── code_organization.md                      # Code organization patterns
-│   ├── numerical_robustness_guide.md             # Numerical robustness and stability guide
-│   ├── optimization_recommendations.md           # Performance optimization guide
-│   └── RELEASING.md                              # Release process documentation
-├── scripts/                                      # Development and CI scripts
-│   ├── README.md                                 # Scripts documentation
-│   ├── benchmark_utils.py                        # Python utilities for benchmark processing and hardware detection
-│   ├── changelog_utils.py                        # Comprehensive Python utilities for changelog generation, processing, and git tagging
-│   ├── enhance_commits.py                        # Commit enhancement utilities
-│   ├── generate_changelog.sh                     # Generate changelog with commit dates and squashed PR expansion
-│   ├── hardware_utils.py                         # Python utilities for hardware information and system capabilities
-│   ├── run_all_examples.sh                       # Validate all examples
-│   └── tag-from-changelog.sh                     # Create git tags from changelog content (wrapper for Python implementation)
-├── .cargo/                                       # Cargo configuration
-│   └── config.toml                               # Build configuration
-├── .github/                                      # GitHub configuration
-│   ├── workflows/                                # CI/CD workflows
-│   │   ├── audit.yml                             # Security vulnerability scanning
-│   │   ├── benchmarks.yml                        # Performance regression testing
-│   │   ├── ci.yml                                # Main CI pipeline
-│   │   ├── codacy.yml                            # Code quality analysis
-│   │   ├── codecov.yml                           # Test coverage tracking
-│   │   ├── generate-baseline.yml                 # Automated performance baseline generation on releases
-│   │   └── rust-clippy.yml                       # Additional clippy analysis
-│   ├── CODEOWNERS                                # Code ownership definitions
-│   └── dependabot.yml                            # Dependency update configuration
-├── .auto-changelog                               # Auto-changelog configuration
-├── .codecov.yml                                  # CodeCov configuration
-├── .coderabbit.yml                               # CodeRabbit AI review configuration
-├── .gitignore                                    # Git ignore patterns
-├── .markdownlint.json                            # Markdown linting configuration
-├── .yamllint                                     # YAML linting configuration
-├── CHANGELOG.md                                  # Version history with enhanced squashed PR support
-├── CITATION.cff                                  # Citation metadata for academic use
-├── CODE_OF_CONDUCT.md                            # Community guidelines
-├── CONTRIBUTING.md                               # This file
-├── Cargo.lock                                    # Dependency lockfile
-├── Cargo.toml                                    # Package configuration and dependencies
-├── cspell.json                                   # Spell checking configuration
-├── LICENSE                                       # MIT License
-├── pyproject.toml                                # Python project configuration for development scripts
-├── README.md                                     # Project overview and getting started
-├── REFERENCES.md                                 # Academic references and citations
-├── rust-toolchain.toml                           # Rust toolchain specification for consistent development environment
-├── rustfmt.toml                                  # Code formatting configuration
-├── uv.lock                                       # Python dependency lockfile for uv package manager
-└── WARP.md                                       # WARP AI development guidance
-```
+### Key Directories
 
-For detailed code organization patterns, see [code organization documentation][code-organization].
+- **`src/`** - Core library code
+  - **`core/`** - Triangulation data structures and algorithms (Bowyer-Watson, boundary analysis)
+  - **`geometry/`** - Geometric predicates, point operations, and convex hull algorithms
+- **`examples/`** - Usage examples and demonstrations (see [examples documentation][examples-readme])
+- **`benches/`** - Performance benchmarks with Criterion (see [benchmarks documentation][benches-readme])
+- **`tests/`** - Integration tests and regression test suites
+- **`docs/`** - Additional documentation and guides
+- **`scripts/`** - Development automation (Python utilities, shell scripts)
+
+### Configuration Files
+
+- **`.codacy.yml`** - Code quality analysis configuration
+- **`Cargo.toml`** - Package metadata and Rust tooling configuration
+- **`pyproject.toml`** - Python development tools configuration
+- **`rustfmt.toml`** - Code formatting rules
+- **`rust-toolchain.toml`** - Pinned Rust version for reproducible builds
+
+### Development Resources
+
+- **`WARP.md`** - AI development assistant guidance
+- **`CONTRIBUTING.md`** - This file
+- **`REFERENCES.md`** - Academic citations and bibliography
+- **`.github/workflows/`** - CI/CD automation (testing, benchmarks, quality checks)
+
+For detailed code organization patterns and module structure, see [code organization documentation][code-organization].
 
 ## Development Workflow
 
@@ -365,9 +284,33 @@ The project uses comprehensive CI workflows:
 - **Benchmarks** (`.github/workflows/benchmarks.yml`): Performance regression testing
 - **Security** (`.github/workflows/audit.yml`): Dependency vulnerability scanning
 - **Code Quality** (`.github/workflows/rust-clippy.yml`): Strict linting
+- **Codacy** (`.github/workflows/codacy.yml`): Code quality analysis using project configurations
 - **Coverage** (`.github/workflows/codecov.yml`): Test coverage tracking
 
 All PRs must pass CI checks before merging.
+
+### 5. Code Quality Analysis
+
+The project uses **Codacy** for automated code quality analysis across both Rust and Python code:
+
+- **Configuration**: `.codacy.yml` in the project root
+- **Rust Analysis**: Uses Clippy (configured via `Cargo.toml`) and rustfmt (configured via `rustfmt.toml`)
+- **Python Analysis**: Uses Ruff and Pylint (configured via `pyproject.toml`)
+- **Additional Tools**: ShellCheck for shell scripts, markdownlint for documentation, yamllint for config files
+
+**Key Benefits:**
+
+- **Unified Quality Dashboard**: Single view of code quality across all languages
+- **Uses Project Settings**: Respects your local tool configurations (no duplicate/conflicting rules)
+- **Pull Request Integration**: Quality feedback directly in PR reviews
+- **Trend Tracking**: Monitor code quality improvements over time
+
+**For Contributors:**
+
+- Codacy analysis runs automatically on all PRs
+- Quality issues are reported as PR comments
+- The same tools and rules used locally in development (following WARP.md guidelines)
+- No additional setup required - uses existing project configurations
 
 ## Commit Message Format
 

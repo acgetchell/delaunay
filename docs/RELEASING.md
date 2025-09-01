@@ -4,7 +4,7 @@ This guide documents the exact commands for performing a clean release using a
 dedicated release PR, followed by tagging, publishing to crates.io, and
 creating a GitHub release.
 
-Applies to versions vX.Y.Z (example uses v0.4.1). We prefer updating
+Applies to versions vX.Y.Z (example uses v0.4.2). We prefer updating
 documentation before publishing to crates.io.
 
 ---
@@ -15,7 +15,7 @@ Set these variables to avoid repeating the version string:
 
 ```bash
 # tag has the leading v, version does not
-TAG=v0.4.1
+TAG=v0.4.2
 VERSION=${TAG#v}
 ```
 
@@ -80,7 +80,7 @@ rg -n "\bv?[0-9]+\.[0-9]+\.[0-9]+\b" README.md docs/ || true
 git tag -a "$TAG" -m "delaunay $TAG"
 
 # Generate changelog using the Python-based tool (improved error handling)
-uv run scripts/changelog_utils.py generate
+uv run changelog-utils generate
 ```
 
 4. Stage and commit release artifacts
@@ -124,7 +124,7 @@ If you discover issues (bugs, formatting problems, etc.) after creating the chan
    # Delete the temporary tag and regenerate changelog
    git tag -d "$TAG"
    git tag -a "$TAG" -m "delaunay $TAG"
-   uv run scripts/changelog_utils.py generate
+   uv run changelog-utils generate
    
    # Commit updated changelog
    git add CHANGELOG.md
@@ -154,8 +154,8 @@ git pull --ff-only
 git tag -d "$TAG" 2>/dev/null || true
 
 # Create the final annotated tag with the changelog section as the tag message
-# Using the new Python-based tagging tool (can also use the shell wrapper)
-uv run scripts/changelog_utils.py tag "$TAG" --force
+# Using the new Python-based tagging tool
+uv run changelog-utils tag "$TAG" --force
 ```
 
 3. (Optional) Verify tag message content
