@@ -462,14 +462,18 @@ def main():
 
     if args.command == "info":
         if args.json:
+            import json
+
             info = hardware.get_hardware_info()
+            print(json.dumps(info, indent=2))
         else:
-            hardware.format_hardware_info()
+            formatted_info = hardware.format_hardware_info()
+            print(formatted_info, end="")
 
     elif args.command == "kv":
         info = hardware.get_hardware_info()
-        for _key, _value in info.items():
-            pass
+        for key, value in info.items():
+            print(f"{key}={value}")
 
     elif args.command == "compare":
         if not args.baseline_file:
@@ -485,6 +489,7 @@ def main():
             baseline_info = HardwareComparator.parse_baseline_hardware(baseline_content)
 
             report, has_warnings = HardwareComparator.compare_hardware(current_info, baseline_info)
+            print(report, end="")
 
             # Exit with warning code if there are hardware differences
             sys.exit(1 if has_warnings else 0)

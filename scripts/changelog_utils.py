@@ -8,8 +8,6 @@ for changelog generation, parsing, and git tag management.
 Requires Python 3.13+ for modern typing features and datetime.UTC.
 """
 
-import builtins
-import contextlib
 import json
 import re
 import subprocess
@@ -245,18 +243,18 @@ class ChangelogUtils:
             msg = "Git remote origin URL is empty"
             raise GitRepoError(msg)
 
-        # Convert SSH URLs to HTTPS format and clean up
-        if re.match(r"^git@github\.com:(.+)\.git$", repo_url):
-            match = re.match(r"^git@github\.com:(.+)\.git$", repo_url)
-            repo_url = f"https://github.com/{match.group(1)}"
-        elif re.match(r"^https://github\.com/(.+)\.git$", repo_url):
-            match = re.match(r"^https://github\.com/(.+)\.git$", repo_url)
-            repo_url = f"https://github.com/{match.group(1)}"
-        elif re.match(r"^https://github\.com/(.+)$", repo_url):
-            # Already in correct format, just remove trailing slash if present
-            repo_url = repo_url.rstrip("/")
-
-        return repo_url
+        # Normalize to https://github.com/owner/repo
+        patterns = [
+            r"^git@github\.com:(?P<slug>.+?)(?:\.git)?/?$",
+            r"^ssh://git@github\.com[:/](?P<slug>.+?)(?:\.git)?/?$",
+            r"^https://github\.com/(?P<slug>.+?)(?:\.git)?/?$",
+        ]
+        for pat in patterns:
+            m = re.match(pat, repo_url)
+            if m:
+                repo_url = f"https://github.com/{m.group('slug')}"
+                break
+        return repo_url.rstrip("/")
 
     @staticmethod
     def get_project_root() -> str:
@@ -449,50 +447,29 @@ class ChangelogUtils:
             if len(title_line) <= max_line_length:
                 output_lines.append(title_line)
             else:
-                # Title line is too long, try to wrap intelligently
-                prefix = "- **"
-                suffix = f"** [`{commit_sha}`]({repo_url}/commit/{commit_sha})"
+                # Title/link wrapping: keep bold closed on every line, link on its own line
+                first_prefix, next_prefix, bold_close = "- **", "  **", "**"
+                avail_first = max_line_length - len(first_prefix) - len(bold_close)
+                avail_next = max_line_length - len(next_prefix) - len(bold_close)
 
-                # Calculate space available for the title text
-                available_for_title = max_line_length - len(prefix) - len(suffix)
-
-                if available_for_title < 20:  # Very little space for title
-                    # Split title and put commit link on next line
-                    output_lines.append(f"- **{title}**")
-                    output_lines.append(f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})")
-                # Try to fit title on first line, wrap if necessary
-                elif len(title) <= available_for_title:
-                    # Title fits on one line with prefix and suffix
-                    output_lines.append(title_line)
-                else:
-                    # Title needs wrapping - split at word boundaries
-                    words = title.split()
-                    first_line_words = []
-                    remaining_words = words[:]
-
-                    # Try to fit as many words as possible on the first line
-                    while remaining_words:
-                        test_title = " ".join([*first_line_words, remaining_words[0]])
-                        if len(test_title) <= available_for_title:
-                            first_line_words.append(remaining_words.pop(0))
-                        else:
-                            break
-
-                    if not first_line_words:
-                        # Not even one word fits, force break
-                        output_lines.append(f"- **{title}**")
-                        output_lines.append(f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})")
+                words = title.split()
+                line_words, lines_bold = [], []
+                avail = avail_first
+                for w in words:
+                    test = (" ".join([*line_words, w])).strip()
+                    if len(test) <= avail:
+                        line_words.append(w)
                     else:
-                        # Output first line with prefix and some title words
-                        first_line_title = " ".join(first_line_words)
-                        if remaining_words:
-                            # More words to wrap
-                            output_lines.append(f"{prefix}{first_line_title}")
-                            remaining_title = " ".join(remaining_words)
-                            output_lines.append(f"  {remaining_title}{suffix}")
-                        else:
-                            # All words fit on first line
-                            output_lines.append(f"{prefix}{first_line_title}{suffix}")
+                        # flush current bold line
+                        prefix = first_prefix if not lines_bold else next_prefix
+                        lines_bold.append(f"{prefix}{' '.join(line_words)}{bold_close}")
+                        line_words = [w]
+                        avail = avail_next
+                if line_words:
+                    prefix = first_prefix if not lines_bold else next_prefix
+                    lines_bold.append(f"{prefix}{' '.join(line_words)}{bold_close}")
+                output_lines.extend(lines_bold)
+                output_lines.append(f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})")
 
             # Process body content
             if entry["body_lines"]:
@@ -860,8 +837,13 @@ This tool replaces both generate_changelog.sh and tag-from-changelog.sh.
                 backup_file.unlink()
 
             # Success messages
-            with contextlib.suppress(builtins.BaseException):
-                len([line for line in final_content.split("\n") if line.startswith("## ")])
+            try:
+                release_count = len([line for line in final_content.split("\n") if line.startswith("## ")])
+                print("✅ Changelog generation completed successfully!")
+                print(f"   Processed {release_count} releases with enhanced commit categorization")
+            except Exception:
+                # If counting fails, still show basic success message
+                print("✅ Changelog generation completed successfully!")
 
         finally:
             # Always restore original working directory

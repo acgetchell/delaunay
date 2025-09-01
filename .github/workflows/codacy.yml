@@ -110,6 +110,12 @@ jobs:
         run: |
           # Don't iterate literal patterns when no files exist
           shopt -s nullglob
+          # Compute a branch ref for PRs
+          if [ -n "${GITHUB_HEAD_REF:-}" ]; then
+            REF="refs/heads/${GITHUB_HEAD_REF}"
+          else
+            REF="${GITHUB_REF}"
+          fi
           upload_count=0
           for sarif_file in sarif_*.sarif; do
             if [ -f "$sarif_file" ]; then
@@ -123,7 +129,7 @@ jobs:
                   --method POST \
                   --field sarif="$(base64 -w 0 < "$sarif_file")" \
                   --field commit_sha="$COMMIT_SHA" \
-                  --field ref="$GITHUB_REF" \
+                  --field ref="$REF" \
                   --field category="codacy-$tool_name" || echo "Failed to upload $sarif_file via gh"
               else
                 # Fallback to curl
@@ -136,7 +142,7 @@ jobs:
                   -d "$(jq -n \
                     --arg sarif "$(base64 -w 0 < "$sarif_file")" \
                     --arg commit "$COMMIT_SHA" \
-                    --arg ref "$GITHUB_REF" \
+                    --arg ref "$REF" \
                     --arg category "codacy-$tool_name" \
                     '{sarif: $sarif, commit_sha: $commit, ref: $ref, category: $category}')" \
                   || echo "Failed to upload $sarif_file via curl"

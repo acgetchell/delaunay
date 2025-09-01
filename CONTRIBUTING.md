@@ -183,7 +183,8 @@ uvx pylint scripts/          # Code quality analysis
 
 The project has evolved from shell-based to Python-based automation:
 
-- ✅ **New**: `scripts/benchmark_utils.py`, `scripts/hardware_utils.py`, `scripts/changelog_utils.py` (with comprehensive changelog and git tagging functionality)
+- ✅ **New**: Python utilities (`benchmark-utils`, `hardware-utils`, `changelog-utils`) accessible via `uv run`
+  with comprehensive benchmark processing, hardware detection, and changelog management functionality
 - ❌ **Legacy**: Old shell scripts like `generate_baseline.sh`, `compare_benchmarks.sh`, `tag-from-changelog.sh` (replaced by Python equivalents)
 - 🔄 **Hybrid**: Some shell scripts remain as simple wrappers (e.g., `run_all_examples.sh`)
 

@@ -84,38 +84,32 @@ jobs:
               for (const release of releases.data) {
                 console.log(`Checking release ${release.tag_name}...`);
 
-                // List workflow runs for this release's commit
+                // List recent runs and look for an artifact matching the release tag
                 try {
                   const runs = await github.rest.actions.listWorkflowRuns({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     workflow_id: 'generate-baseline.yml',
-                    head_sha: release.target_commitish || release.tag_name,
                     status: 'completed',
                     conclusion: 'success',
                     per_page: 10
                   });
-
-                  if (runs.data.total_count > 0) {
-                    const run = runs.data.workflow_runs[0];
-                    console.log(`Found baseline generation run ${run.id} for release ${release.tag_name}`);
-
-                    // Check if this run has baseline artifacts
+                  const expectedName = `performance-baseline-${release.tag_name}`;
+                  for (const run of runs.data.workflow_runs) {
                     const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
                       owner: context.repo.owner,
                       repo: context.repo.repo,
                       run_id: run.id
                     });
-
-                    const baselineArtifact = artifacts.data.artifacts.find(a =>
-                      a.name.startsWith('performance-baseline-')
-                    );
-
+                    const baselineArtifact = artifacts.data.artifacts.find(a => a.name === expectedName);
                     if (baselineArtifact) {
-                      console.log(`Found baseline artifact: ${baselineArtifact.name}`);
+                      console.log(
+                        `Found baseline artifact ${expectedName} in run ${run.id} ` +
+                        `for release ${release.tag_name}`
+                      );
                       core.setOutput('found', 'true');
                       core.setOutput('release_tag', release.tag_name);
-                      core.setOutput('artifact_name', baselineArtifact.name);
+                      core.setOutput('artifact_name', expectedName);
                       core.setOutput('run_id', run.id.toString());
                       return;
                     }

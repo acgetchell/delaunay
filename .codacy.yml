@@ -1,40 +1,93 @@
 ---
 # Codacy configuration for delaunay project
-# Uses settings from pyproject.toml (Python) and Cargo.toml/rustfmt.toml (Rust)
+# Comprehensive configuration for all Codacy analysis tools
 
+# Tool configuration
 engines:
   # === RUST TOOLS ===
   # Clippy for Rust linting (reads from Cargo.toml [lints.clippy] section)
   clippy:
     enabled: true
-    # Clippy will automatically use the pedantic lints configured in Cargo.toml
+    include_paths:
+      - "src/**/*.rs"
+      - "benches/**/*.rs"
+      - "examples/**/*.rs"
+      - "tests/**/*.rs"
+      - "build.rs"
 
   # rustfmt for Rust formatting (reads from rustfmt.toml)
   rustfmt:
     enabled: true
-    # rustfmt will automatically use rustfmt.toml configuration
+    include_paths:
+      - "src/**/*.rs"
+      - "benches/**/*.rs"
+      - "examples/**/*.rs"
+      - "tests/**/*.rs"
+      - "build.rs"
 
   # === PYTHON TOOLS ===
   # Ruff for Python linting and formatting (reads from pyproject.toml)
   ruff:
     enabled: true
-    # Ruff automatically reads [tool.ruff] configuration from pyproject.toml
+    include_paths:
+      - "scripts/**/*.py"
+      - "**/*.py"
+    config:
+      # Use configuration from pyproject.toml
+      file: "pyproject.toml"
 
   # Pylint for additional Python analysis (reads from pyproject.toml)
-  pylint:
+  pylintpython3:
     enabled: true
-    # Pylint automatically reads [tool.pylint] configuration from pyproject.toml
+    include_paths:
+      - "scripts/**/*.py"
+      - "**/*.py"
+    config:
+      # Use configuration from pyproject.toml
+      file: "pyproject.toml"
+
+  # Bandit for Python security analysis
+  bandit:
+    enabled: true
+    include_paths:
+      - "scripts/**/*.py"
+      - "**/*.py"
+    # Focus on high-severity security issues only (avoid style checks)
+    config:
+      severity: high
+      # Skip tests that are already covered by Ruff security checks
+      skips: ["B101", "B102", "B103", "B108", "B110"]
+
+  # Prospector for Python code quality
+  prospector:
+    enabled: true
+    include_paths:
+      - "scripts/**/*.py"
+      - "**/*.py"
+    # Use project settings and focus on high-impact issues
+    config:
+      max_line_length: 160
+      # Limit to higher-impact checks to avoid noise
+      strictness: medium
+      # Avoid duplicating Ruff and Pylint checks
+      uses:
+        - security
+        - performance
+      # Skip style/formatting checks already handled by Ruff
+      ignore_patterns:
+        - "^E\\d+$"  # Skip PEP8 errors
+        - "^W\\d+$"  # Skip style warnings
+      # Read from pyproject.toml
+      profile: "pyproject.toml"
 
   # === DISABLE CONFLICTING PYTHON TOOLS ===
-  # Disable tools that overlap with Ruff to avoid duplicate/conflicting issues
+  # Disable tools that overlap with our enabled tools to avoid duplicate issues
   flake8:
     enabled: false  # Ruff replaces flake8
   pycodestyle:
     enabled: false  # Ruff includes pycodestyle checks
   pydocstyle:
     enabled: false  # Ruff includes docstring checks
-  bandit:
-    enabled: false  # Ruff includes security checks (S rules)
   isort:
     enabled: false  # Ruff includes import sorting (I rules)
   black:
@@ -44,57 +97,147 @@ engines:
   # ShellCheck for shell scripts (scripts/*.sh)
   shellcheck:
     enabled: true
+    include_paths:
+      - "scripts/**/*.sh"
+      - "**/*.sh"
+    config:
+      shell: bash  # Default shell dialect
+      severity: style  # Report all issues including style
+      include_code: true  # Include code in findings
 
   # Markdown linting for documentation
   markdownlint:
     enabled: true
+    include_paths:
+      - "**/*.md"
+    config:
+      # Reference existing config file
+      file: ".markdownlint.json"
 
   # YAML linting for CI and config files
   yamllint:
     enabled: true
+    include_paths:
+      - "**/*.yml"
+      - "**/*.yaml"
+      - ".github/**/*.yml"
+    config:
+      # Reference existing config file
+      file: ".yamllint"
 
-# === FILE INCLUSION/EXCLUSION ===
+  # Jackson Linter (for JSON files)
+  jackson-linter:
+    enabled: true
+    include_paths:
+      - "**/*.json"
+    config:
+      # Report all issues
+      severity: warning
+
+  # Lizard (code complexity analysis)
+  lizard:
+    enabled: true
+    include_paths:
+      - "src/**/*.rs"
+      - "scripts/**/*.py"
+    config:
+      # Customize thresholds to match project practices
+      languages: ["rust", "python"]
+      threshold:
+        cyclomatic_complexity: 15
+        token_count: 300
+        nesting_depth: 5
+        parameter_count: 5
+        length: 1000
+
+  # Semgrep (static analysis for security)
+  semgrep:
+    enabled: true
+    include_paths:
+      - "src/**/*.rs"
+      - "scripts/**/*.py"
+      - "scripts/**/*.sh"
+    config:
+      # Focus on security rules
+      rules:
+        - security
+        - performance
+      # Set severities to avoid overwhelming with minor issues
+      severities:
+        - error
+        - warning
+
+  # Spectral (OpenAPI/AsyncAPI linting)
+  spectral:
+    enabled: true
+    include_paths:
+      - "**/*.yml"
+      - "**/*.yaml"
+      - "**/*.json"
+    # Focus on schemas if they exist in the project
+    config:
+      extends:
+        - spectral:oas
+        - spectral:asyncapi
+      rules:
+        no-$ref-siblings: off  # Common exception needed in many schemas
+
+  # Trivy (security vulnerability scanner)
+  trivy:
+    enabled: true
+    config:
+      # Focus on high and critical vulnerabilities
+      severity: ["HIGH", "CRITICAL"]
+      # Skip development dependencies
+      skip_dev_dependencies: true
+      # Enable scanning for secrets
+      enable_secret_scanning: true
+
+# === GLOBAL EXCLUSION PATTERNS ===
 exclude_paths:
   # Rust build artifacts and dependencies
-  - 'target/**'
-  - 'Cargo.lock'
+  - "target/**"
+  - "Cargo.lock"
 
   # Python artifacts
-  - '__pycache__/**'
-  - '*.pyc'
-  - '.pytest_cache/**'
-  - 'venv/**'
-  - '.venv/**'
+  - "__pycache__/**"
+  - "*.pyc"
+  - ".pytest_cache/**"
+  - "venv/**"
+  - ".venv/**"
 
   # General artifacts
-  - 'node_modules/**'
-  - '.git/**'
-  - '**/*.min.js'
-  - '**/*.min.css'
-  - '**/vendor/**'
+  - "node_modules/**"
+  - ".git/**"
+  - "**/*.min.js"
+  - "**/*.min.css"
+  - "**/vendor/**"
+  - "benches/baseline_results.txt"
+  - "benches/benchmark_results/**"
 
 # Focus analysis on source code and documentation
 include_paths:
   # Rust source code
-  - 'src/**'
-  - 'benches/**'
-  - 'examples/**'
-  - 'tests/**'
-  - 'build.rs'
-  - 'Cargo.toml'
-  - 'rustfmt.toml'
+  - "src/**"
+  - "benches/**"
+  - "examples/**"
+  - "tests/**"
+  - "build.rs"
+  - "Cargo.toml"
+  - "rustfmt.toml"
 
   # Python scripts
-  - 'scripts/**'
-  - '*.py'
-  - 'pyproject.toml'
+  - "scripts/**"
+  - "*.py"
+  - "pyproject.toml"
 
   # Documentation and configuration
-  - '*.md'
-  - '*.yml'
-  - '*.yaml'
-  - '*.sh'
-  - '.github/**'
+  - "*.md"
+  - "*.yml"
+  - "*.yaml"
+  - "*.json"
+  - "*.sh"
+  - ".github/**"
 
 # === COVERAGE SETTINGS ===
 coverage:
@@ -103,9 +246,9 @@ coverage:
 
   # Exclude certain paths from coverage analysis
   exclude_paths:
-    - 'benches/**'      # Benchmarks don't need coverage
-    - 'examples/**'     # Examples are for demonstration
-    - 'scripts/**'      # Python utility scripts
+    - "benches/**"      # Benchmarks don't need coverage
+    - "examples/**"     # Examples are for demonstration
+    - "scripts/**"      # Python utility scripts
 
 # === DUPLICATION DETECTION ===
 duplication:
@@ -120,20 +263,24 @@ duplication:
     minimum_tokens: 80
 
   exclude_paths:
-    - 'target/**'
-    - 'benches/**'     # Benchmarks may have similar setup patterns
-    - 'examples/**'    # Examples may demonstrate similar concepts
-    - 'tests/**'       # Test patterns may be repetitive by design
+    - "target/**"
+    - "benches/**"     # Benchmarks may have similar setup patterns
+    - "examples/**"    # Examples may demonstrate similar concepts
+    - "tests/**"       # Test patterns may be repetitive by design
 
 # === ADDITIONAL SETTINGS ===
 # Custom file extensions (if needed)
 file_extensions:
   rust:
-    - '.rs'
+    - ".rs"
   python:
-    - '.py'
+    - ".py"
   markdown:
-    - '.md'
+    - ".md"
   yaml:
-    - '.yml'
-    - '.yaml'
+    - ".yml"
+    - ".yaml"
+  json:
+    - ".json"
+  shell:
+    - ".sh"

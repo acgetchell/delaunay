@@ -21,3 +21,5 @@
 *.egg-info/
 .ruff_cache/
 uv.lock
+.pytest_cache/
+.venv/

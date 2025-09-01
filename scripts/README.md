@@ -48,10 +48,10 @@ All Python utilities require Python 3.13+ and support `--help` for detailed usag
 
 ```bash
 # Generate performance baseline
-uv run scripts/benchmark_utils.py generate-baseline [--dev] [--output FILE]
+uv run benchmark-utils generate-baseline [--dev] [--output FILE]
 
 # Compare against baseline 
-uv run scripts/benchmark_utils.py compare --baseline FILE [--dev] [--output FILE]
+uv run benchmark-utils compare --baseline FILE [--dev] [--output FILE]
 ```
 
 **Output Format**:
@@ -89,13 +89,13 @@ Time Change: [+0.45%, +0.45%, +0.45%]
 
 ```bash
 # Display formatted hardware information
-uv run scripts/hardware_utils.py info
+uv run hardware-utils info
 
 # Display as key=value pairs
-uv run scripts/hardware_utils.py kv
+uv run hardware-utils kv
 
 # Compare with baseline file
-uv run scripts/hardware_utils.py compare --baseline-file FILE
+uv run hardware-utils compare --baseline-file FILE
 ```
 
 **Output Format**:
@@ -441,7 +441,7 @@ uv run changelog-utils generate --debug   # Keep intermediate files for debuggin
 
 ```bash
 # 1. Generate initial performance baseline
-uv run scripts/benchmark_utils.py generate-baseline
+uv run benchmark-utils generate-baseline
 
 # 2. Commit baseline for CI regression testing
 git add benches/baseline_results.txt
@@ -455,11 +455,11 @@ git commit -m "Add performance baseline for CI regression testing"
 # ... your modifications ...
 
 # 2. Test for performance regressions
-uv run scripts/benchmark_utils.py compare --baseline benches/baseline_results.txt
+uv run benchmark-utils compare --baseline benches/baseline_results.txt
 
 # 3. Review results in benches/compare_results.txt
 # 4. If regressions are acceptable, update baseline:
-uv run scripts/benchmark_utils.py generate-baseline
+uv run benchmark-utils generate-baseline
 git add benches/baseline_results.txt
 git commit -m "Update performance baseline after optimization"
 ```
@@ -474,14 +474,14 @@ git commit -m "Update performance baseline after optimization"
 # ... your modifications ...
 
 # 2. Quick performance check
-uv run scripts/benchmark_utils.py compare --baseline benches/baseline_results.txt --dev
+uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev
 
 # 3. If major changes needed, generate new dev baseline:
-uv run scripts/benchmark_utils.py generate-baseline --dev
+uv run benchmark-utils generate-baseline --dev
 
 # 4. Final validation with full benchmarks before commit:
-uv run scripts/benchmark_utils.py generate-baseline          # Full baseline
-uv run scripts/benchmark_utils.py compare --baseline benches/baseline_results.txt         # Full comparison
+uv run benchmark-utils generate-baseline          # Full baseline
+uv run benchmark-utils compare --baseline benches/baseline_results.txt         # Full comparison
 ```
 
 **Development Mode Benefits**:
@@ -521,10 +521,10 @@ git push origin main
 cargo bench --bench small_scale_triangulation
 
 # 2. Generate new baseline
-uv run scripts/benchmark_utils.py generate-baseline
+uv run benchmark-utils generate-baseline
 
 # 3. Compare against previous baseline
-uv run scripts/benchmark_utils.py compare --baseline benches/baseline_results.txt
+uv run benchmark-utils compare --baseline benches/baseline_results.txt
 ```
 
 ### Continuous Integration
@@ -543,14 +543,14 @@ The repository includes automated performance regression testing via GitHub Acti
 
 ```bash
 # If baseline exists:
-# 1. Runs uv run scripts/benchmark_utils.py compare --baseline benches/baseline_results.txt
+# 1. Runs uv run benchmark-utils compare --baseline benches/baseline_results.txt
 # 2. Fails CI if >5% performance regression detected
 # 3. Uploads comparison results as artifacts
 
 # If no baseline exists:
 # 1. Logs instructions for creating baseline
 # 2. Skips regression testing (does not fail CI)
-# 3. Suggests running uv run scripts/benchmark_utils.py generate-baseline locally
+# 3. Suggests running uv run benchmark-utils generate-baseline locally
 ```
 
 #### CI Integration Benefits
@@ -568,7 +568,7 @@ The repository includes automated performance regression testing via GitHub Acti
 1. **Missing Dependencies**: Install required packages using your system's package manager
 2. **Permission Errors**: Ensure scripts are executable with `chmod +x scripts/*.sh`
 3. **Path Issues**: Run scripts from the project root directory
-4. **Missing Baseline**: Run `uv run scripts/benchmark_utils.py generate-baseline` to generate initial baseline
+4. **Missing Baseline**: Run `uv run benchmark-utils generate-baseline` to generate initial baseline
 
 ### Exit Codes
 
@@ -583,8 +583,8 @@ Add `set -x` to any script for verbose execution output:
 
 ```bash
 # For Python scripts, use -v flag for verbose output
-uv run scripts/benchmark_utils.py generate-baseline --help
-uv run scripts/hardware_utils.py info --help
+uv run benchmark-utils generate-baseline --help
+uv run hardware-utils info --help
 
 # For remaining bash scripts
 bash -x ./scripts/generate_changelog.sh

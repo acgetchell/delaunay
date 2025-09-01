@@ -58,7 +58,7 @@ ignore = [
     
     # CLI script patterns - these are appropriate design choices for command-line tools
     "PLR0912", # Too many branches - natural for CLI argument parsing and workflow logic
-    "PLR0913", # Too many arguments - acceptable for comprehensive CLI functions
+    # "PLR0913" - Re-enabled: Too many arguments - catch constructor complexity issues
     "PLR0915", # Too many statements - expected for main functions doing complex workflows
     "PLR2004", # Magic value used in comparison - acceptable for CLI constants and thresholds
     "FBT001",  # Boolean-typed positional argument - appropriate for CLI flag arguments
@@ -102,7 +102,7 @@ disable = [
     "import-outside-toplevel",    # C0415 - Acceptable for CLI scripts to reduce startup time
     "broad-exception-caught",     # W0718 - Intentional defensive programming for CLI robustness
     "too-many-instance-attributes", # R0902 - Data structures in CLI scripts can be complex
-    "too-many-arguments",         # R0913 - CLI functions often need many parameters
+    # "too-many-arguments" - Re-enabled: R0913 - Catch constructor complexity issues
     "too-many-positional-arguments", # R0917 - CLI functions often use positional args
     "invalid-name",               # C0103 - ANSI color constants use ALL_CAPS convention
     "consider-using-with",        # R1732 - subprocess.Popen patterns in CLI scripts
@@ -116,7 +116,7 @@ disable = [
 ]
 
 [tool.pylint.design]
-max-args = 8
+max-args = 5  # Reduced from 8 to catch parameter complexity issues earlier
 max-locals = 20
 max-branches = 15
 max-statements = 60

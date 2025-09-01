@@ -4,7 +4,7 @@ This guide documents the exact commands for performing a clean release using a
 dedicated release PR, followed by tagging, publishing to crates.io, and
 creating a GitHub release.
 
-Applies to versions vX.Y.Z (example uses v0.4.2). We prefer updating
+Applies to versions vX.Y.Z (example uses v0.4.2). Prefer updating
 documentation before publishing to crates.io.
 
 ---

@@ -138,7 +138,7 @@ uvx pylint scripts/
 find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck
 
 # Lint a specific shell script (follow sourced files)
-shellcheck -x scripts/generate_changelog.sh
+shellcheck -x scripts/run_all_examples.sh
 
 # Show all shellcheck warnings including informational ones
 find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck -S info
@@ -236,16 +236,16 @@ cargo bench --bench small_scale_triangulation
 cargo bench --bench triangulation_creation
 
 # Generate performance baseline for CI
-./scripts/generate_baseline.sh
+uv run benchmark-utils generate-baseline
 
 # Generate baseline for development (faster)
-./scripts/generate_baseline.sh --dev
+uv run benchmark-utils generate-baseline --dev
 
 # Compare performance against baseline
-./scripts/compare_benchmarks.sh
+uv run benchmark-utils compare --baseline benches/baseline_results.txt
 
 # Compare with development settings (faster)
-./scripts/compare_benchmarks.sh --dev
+uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev
 ```
 
 ### Examples and Development Scripts
@@ -276,26 +276,30 @@ cargo test -- --nocapture
 
 ```bash
 # Generate changelog with commit dates (recommended)
-./scripts/generate_changelog.sh
+uv run changelog-utils generate
 
-# Generate changelog with unreleased changes included
+# Generate changelog with debug output (keeps intermediate files)
+uv run changelog-utils generate --debug
+
+# Create git tag with changelog content as tag message
+uv run changelog-utils tag v0.4.2
+
+# Force recreate existing tag
+uv run changelog-utils tag v0.4.2 --force
+
+# Generate changelog with unreleased changes included (direct auto-changelog)
 npx auto-changelog --unreleased
 
-# Generate changelog for specific version
+# Generate changelog for specific version (direct auto-changelog)
 npx auto-changelog --latest-version v0.3.4
 
-# Generate changelog with custom commit limit per release
-npx auto-changelog --commit-limit 10
-
-# Use the project script; it transforms the template into Keep a Changelog format
-# See scripts/generate_changelog.sh for details.
-
-# Test changelog generation without writing to file
+# Test changelog generation without writing to file (direct auto-changelog)
 npx auto-changelog --stdout
 ```
 
-**Note**: The project uses `./scripts/generate_changelog.sh` to generate changelogs with commit dates instead of tag creation dates.
+**Note**: The project uses `uv run changelog-utils generate` to generate changelogs with commit dates instead of tag creation dates.
 This provides more accurate release timing that reflects when the actual work was completed rather than when tags were created.
+The tool also supports creating git tags with changelog content for GitHub releases.
 
 ## Architecture Overview
 
@@ -358,7 +362,7 @@ The library extensively uses generics:
 4. **Format and lint** with `cargo fmt && cargo clippy`
 5. **Test benchmarks compile** with `cargo bench --no-run` (avoids long execution time)
 6. **Run examples** with `./scripts/run_all_examples.sh`
-7. **Check performance impact** with `./scripts/compare_benchmarks.sh --dev` (only if performance-critical changes)
+7. **Check performance impact** with `uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev` (only if performance-critical changes)
 8. **Commit and push** for CI validation
 
 **Note**: Use `cargo bench --no-run` to verify benchmarks compile without actually running them, as full benchmark execution takes several minutes.
@@ -367,9 +371,9 @@ The library extensively uses generics:
 
 For changes affecting algorithmic performance:
 
-1. **Generate baseline** before changes: `./scripts/generate_baseline.sh`
+1. **Generate baseline** before changes: `uv run benchmark-utils generate-baseline`
 2. **Make modifications**
-3. **Test regression** with `./scripts/compare_benchmarks.sh`
+3. **Test regression** with `uv run benchmark-utils compare --baseline benches/baseline_results.txt`
 4. **If >5% regression detected**, investigate and optimize
 5. **Update baseline** if performance change is acceptable
 
@@ -510,8 +514,7 @@ Following `docs/code_organization.md`, modules use consistent structure:
 
 ### Scripts and Tools
 
-- **`scripts/generate_baseline.sh`** - Create performance baselines
-- **`scripts/compare_benchmarks.sh`** - Performance regression testing
+- **`uv run benchmark-utils`** - Modern Python utility for performance baselines and regression testing
 - **`scripts/run_all_examples.sh`** - Validate all examples
 - **`scripts/benchmark_parser.sh`** - Shared benchmark parsing utilities
 

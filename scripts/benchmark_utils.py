@@ -25,29 +25,34 @@ from hardware_utils import HardwareComparator, HardwareInfo
 class BenchmarkData:
     """Represents benchmark data for a single test case."""
 
-    def __init__(
-        self,
-        points: int,
-        dimension: str,
-        time_low: float,
-        time_mean: float,
-        time_high: float,
-        time_unit: str,
-        throughput_low: float | None = None,
-        throughput_mean: float | None = None,
-        throughput_high: float | None = None,
-        throughput_unit: str | None = None,
-    ):
+    def __init__(self, points: int, dimension: str):
+        """Initialize with required fields only."""
         self.points = points
         self.dimension = dimension
-        self.time_low = time_low
-        self.time_mean = time_mean
-        self.time_high = time_high
-        self.time_unit = time_unit
-        self.throughput_low = throughput_low
-        self.throughput_mean = throughput_mean
-        self.throughput_high = throughput_high
-        self.throughput_unit = throughput_unit
+        self.time_low: float = 0.0
+        self.time_mean: float = 0.0
+        self.time_high: float = 0.0
+        self.time_unit: str = ""
+        self.throughput_low: float | None = None
+        self.throughput_mean: float | None = None
+        self.throughput_high: float | None = None
+        self.throughput_unit: str | None = None
+
+    def with_timing(self, low: float, mean: float, high: float, unit: str) -> "BenchmarkData":
+        """Set timing data (fluent interface)."""
+        self.time_low = low
+        self.time_mean = mean
+        self.time_high = high
+        self.time_unit = unit
+        return self
+
+    def with_throughput(self, low: float, mean: float, high: float, unit: str) -> "BenchmarkData":
+        """Set throughput data (fluent interface)."""
+        self.throughput_low = low
+        self.throughput_mean = mean
+        self.throughput_high = high
+        self.throughput_unit = unit
+        return self
 
     def to_baseline_format(self) -> str:
         """Convert to baseline file format."""
@@ -101,17 +106,10 @@ class CriterionParser:
             thrpt_low = points * 1000 / high_us  # Lower time = higher throughput
             thrpt_high = points * 1000 / low_us  # Higher time = lower throughput
 
-            return BenchmarkData(
-                points=points,
-                dimension=dimension,
-                time_low=round(low_us, 2),
-                time_mean=round(mean_us, 2),
-                time_high=round(high_us, 2),
-                time_unit="μs",
-                throughput_low=round(thrpt_low, 3),
-                throughput_mean=round(thrpt_mean, 3),
-                throughput_high=round(thrpt_high, 3),
-                throughput_unit="Kelem/s",
+            return (
+                BenchmarkData(points, dimension)
+                .with_timing(round(low_us, 2), round(mean_us, 2), round(high_us, 2), "μs")
+                .with_throughput(round(thrpt_low, 3), round(thrpt_mean, 3), round(thrpt_high, 3), "Kelem/s")
             )
 
         except (FileNotFoundError, json.JSONDecodeError, KeyError, ZeroDivisionError, ValueError):
@@ -369,18 +367,10 @@ class PerformanceComparator:
                                 throughput_unit = thrpt_match.group(4)
 
                         key = f"{points}_{dimension}"
-                        results[key] = BenchmarkData(
-                            points=points,
-                            dimension=dimension,
-                            time_low=time_low,
-                            time_mean=time_mean,
-                            time_high=time_high,
-                            time_unit=time_unit,
-                            throughput_low=throughput_low,
-                            throughput_mean=throughput_mean,
-                            throughput_high=throughput_high,
-                            throughput_unit=throughput_unit,
-                        )
+                        benchmark = BenchmarkData(points, dimension).with_timing(time_low, time_mean, time_high, time_unit)
+                        if throughput_mean is not None:
+                            benchmark.with_throughput(throughput_low, throughput_mean, throughput_high, throughput_unit)
+                        results[key] = benchmark
 
             i += 1
 
