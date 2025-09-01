@@ -6,194 +6,119 @@ This directory contains utility scripts for building, testing, and benchmarking 
 
 Before running these scripts, ensure you have the following dependencies installed:
 
-### macOS (using Homebrew)
+### Python 3.13+ (Required)
 
 ```bash
-brew install jq findutils coreutils
+# Install Python 3.13+ and uv package manager
+brew install python@3.13 uv  # macOS with Homebrew
+# or follow installation instructions for your platform
 ```
 
-### Ubuntu/Debian
+### Additional Dependencies
 
 ```bash
+# macOS (using Homebrew)
+brew install jq findutils coreutils
+
+# Ubuntu/Debian 
 sudo apt-get install -y jq
 ```
 
-### Other Systems
-
-Install equivalent packages for `jq`, `find`, and `sort` using your system's package manager.
-
 ## Scripts Overview
 
-### Scripts (Alphabetical)
+### Python Utilities (Primary)
 
-All scripts support the `--help` flag for detailed usage information.
+All Python utilities require Python 3.13+ and support `--help` for detailed usage.
 
-#### `benchmark_parser.sh`
+#### `benchmark_utils.py` 🐍
 
-**Purpose**: Shared utility library for parsing benchmark data across multiple scripts.
+**Purpose**: Complete benchmark parsing, baseline generation, and performance comparison utilities.
 
 **Features**:
 
-- **Reusable Functions**: Common benchmark parsing functions used by other scripts
-- **Multiple Parsing Methods**: Both `while read` and `awk` implementations for different use cases
-- **Robust Regex Patterns**: Handles various benchmark output formats and edge cases
-- **Unit Normalization**: Standardizes time units (µs, us, μs) for consistency
-- **Flexible Output**: Configurable output formatting for different consumers
+- **Criterion JSON Parsing**: Direct parsing of Criterion's estimates.json for accuracy
+- **Baseline Generation**: `generate-baseline` command with git metadata
+- **Performance Comparison**: `compare` command with regression detection (>5% threshold)
+- **Hardware Integration**: Automatic hardware info inclusion and comparison
+- **Development Mode**: `--dev` flag for faster benchmarks (10x speedup)
+- **Timezone-Aware Dating**: Proper timezone handling for timestamps
+- **Modern Python**: Python 3.13+ with type hints and union syntax
 
-**Key Functions**:
+**Commands**:
 
 ```bash
-# Benchmark detection and parsing
-parse_benchmark_start("line")            # Extracts metadata from "Benchmarking..." lines
-extract_timing_data("line")              # Parses timing data from result lines
-parse_benchmark_identifier("line")       # Extracts point count and dimension
+# Generate performance baseline
+uv run scripts/benchmark_utils.py generate-baseline [--dev] [--output FILE]
 
-# Output formatting
-format_benchmark_result(...)             # Consistent output formatting
-
-# High-level parsing
-parse_benchmarks_with_while_read()       # Shell-based parsing implementation
-parse_benchmarks_with_awk()             # AWK-based parsing for complex scenarios
+# Compare against baseline 
+uv run scripts/benchmark_utils.py compare --baseline FILE [--dev] [--output FILE]
 ```
 
-**Input Format Support**:
+**Output Format**:
 
 ```bash
-# Supports Criterion benchmark output formats:
-# Benchmarking tds_new_2d/tds_new/10
-# tds_new_2d/tds_new/10   time:   [354.30 µs 356.10 µs 357.91 µs]
-#                         thrpt:  [28.135 Kelem/s 28.257 Kelem/s 28.381 Kelem/s]
-```
-
-**Output Format Generated**:
-
-```bash
-# Standardized output for baseline and comparison files:
+# Baseline file format:
 === 10 Points (2D) ===
 Time: [354.30, 356.10, 357.91] μs
 Throughput: [28.135, 28.257, 28.381] Kelem/s
+
+# Comparison file format:
+Current Time: [338.45, 340.12, 341.78] μs
+Baseline Time: [336.95, 338.61, 340.26] μs
+Time Change: [+0.45%, +0.45%, +0.45%]
+✅ OK: Time change within acceptable range
 ```
 
-**Usage Example**:
-
-```bash
-# Source the shared functions
-source "$(dirname "$0")/benchmark_parser.sh"
-
-# Parse benchmark output
-parse_benchmarks_with_while_read "input.txt" "output.txt"
-```
-
-**Dependencies**: No external dependencies beyond standard POSIX tools
+**Dependencies**: Python 3.13+, `hardware_utils.py`
 
 ---
 
-#### `compare_benchmarks.sh`
+#### `hardware_utils.py` 🐍
 
-**Purpose**: Runs fresh benchmark and compares results against baseline performance metrics.
+**Purpose**: Cross-platform hardware information detection and comparison.
 
 **Features**:
 
-- Runs `cargo bench --bench small_scale_triangulation` to get current performance data
-- Reads baseline values from `benches/baseline_results.txt`
-- Parses both current Criterion output and baseline file for comparison
-- Creates detailed `benches/compare_results.txt` with side-by-side comparison
-- Identifies performance regressions (>5% threshold) with clear indicators
-- Includes metadata from both current run and baseline (dates, git commits)
-- Exits with error code if significant regressions are detected (CI integration)
-- **Development Mode**: `--dev` flag for faster benchmarks during development
-- Robust parsing with extended regex support for unicode characters
-- Improved error handling with validation for all calculations
+- **Cross-platform**: macOS, Linux, Windows detection
+- **Hardware Detection**: CPU (model, cores, threads), memory, Rust toolchain
+- **Output Formats**: Formatted display (`info`) or key=value pairs (`kv`)
+- **Baseline Comparison**: Hardware compatibility warnings
+- **Modern Architecture Support**: Enhanced ARM/heterogeneous core detection
 
-**Parsing Logic and Formatting Conventions**:
+**Commands**:
 
 ```bash
-# INPUT: Fresh Criterion output + existing baseline file
-# OUTPUT FORMAT (benches/compare_results.txt):
-# === 10 Points (2D) ===
-# Current Time: [338.45, 340.12, 341.78] µs
-# Current Throughput: [29.467, 29.542, 29.618] Kelem/s
-# Baseline Time: [336.95, 338.61, 340.26] µs
-# Baseline Throughput: [29.389, 29.533, 29.678] Kelem/s
-# Time Change: [-1.24%, +0.45%, +0.45%]
-# ✅ OK: Time change within acceptable range
+# Display formatted hardware information
+uv run scripts/hardware_utils.py info
+
+# Display as key=value pairs
+uv run scripts/hardware_utils.py kv
+
+# Compare with baseline file
+uv run scripts/hardware_utils.py compare --baseline-file FILE
 ```
 
-**Regression Detection**:
-
-- Extracts Criterion's change percentages when available
-- Calculates manual comparison against baseline when needed
-- >5% performance degradation triggers ⚠️ REGRESSION warning
-- Returns exit code 1 for CI failure on significant regressions
-
-**Usage**:
+**Output Format**:
 
 ```bash
-# Standard benchmarking (full duration)
-./scripts/compare_benchmarks.sh
-
-# Development mode (faster benchmarks)
-./scripts/compare_benchmarks.sh --dev
-
-# Help information
-./scripts/compare_benchmarks.sh --help
+# Formatted output:
+Hardware Information:
+  OS: macOS
+  CPU: Apple M2 Pro
+  CPU Cores: 10
+  CPU Threads: 10
+  Memory: 16.0 GB
+  Rust: rustc 1.82.0
+  Target: aarch64-apple-darwin
 ```
 
-**Dependencies**: Requires `cargo`, shared `benchmark_parser.sh`
+**Dependencies**: Python 3.13+, system tools (`sysctl`, `lscpu`, PowerShell)
 
 ---
 
-#### `generate_baseline.sh`
+### Bash Scripts (Specialized)
 
-**Purpose**: Generates baseline performance results from fresh benchmark run.
-
-**Features**:
-
-- Runs `cargo clean` to clear previous benchmark history and ensure fresh measurements
-- Executes `cargo bench --bench small_scale_triangulation` with full Criterion output capture
-- Parses Criterion JSON output directly for accurate data extraction
-- Creates standardized `benches/baseline_results.txt` with consistent formatting
-- Includes git commit hash and timestamp for traceability
-- Captures both timing and throughput metrics for comprehensive analysis
-- Handles various time units (µs, ms, s) and throughput units (Kelem/s, elem/s) automatically
-- **Development Mode**: `--dev` flag for faster benchmarks during development
-
-**Parsing Logic and Formatting Conventions**:
-
-```bash
-# INPUT FORMAT (Criterion stdout):
-# tds_new_2d/tds_new/10   time:   [336.95 µs 338.61 µs 340.26 µs]
-#                         thrpt:  [29.389 Kelem/s 29.533 Kelem/s 29.678 Kelem/s]
-
-# OUTPUT FORMAT (benches/baseline_results.txt):
-# === 10 Points (2D) ===
-# Time: [336.95, 338.61, 340.26] µs
-# Throughput: [29.389, 29.533, 29.678] Kelem/s
-```
-
-**Regex Patterns Used**:
-
-- Benchmark results: `^(tds_new_([0-9])d/tds_new/([0-9]+))[[:space:]]+time:`
-- Timing extraction: Extract `[low, mean, high]` values and units
-- Throughput extraction: Extract throughput values from subsequent lines
-- Multi-line state machine parsing to associate timing with throughput data
-
-**Usage**:
-
-```bash
-# Standard baseline generation (full benchmarks)
-./scripts/generate_baseline.sh
-
-# Development mode (faster benchmarks)
-./scripts/generate_baseline.sh --dev
-
-# Help information
-./scripts/generate_baseline.sh --help
-```
-
-**Dependencies**: Requires `cargo`, `git`, `date`, shared `benchmark_parser.sh`
-
----
+The following bash scripts handle complex integrations with external tools (Node.js, Git) and provide specialized functionality.
 
 #### `generate_changelog.sh`
 
@@ -565,7 +490,7 @@ Tag message preview:
 
 ```bash
 # 1. Generate initial performance baseline
-./scripts/generate_baseline.sh
+uv run scripts/benchmark_utils.py generate-baseline
 
 # 2. Commit baseline for CI regression testing
 git add benches/baseline_results.txt
@@ -579,11 +504,11 @@ git commit -m "Add performance baseline for CI regression testing"
 # ... your modifications ...
 
 # 2. Test for performance regressions
-./scripts/compare_benchmarks.sh
+uv run scripts/benchmark_utils.py compare --baseline benches/baseline_results.txt
 
 # 3. Review results in benches/compare_results.txt
 # 4. If regressions are acceptable, update baseline:
-./scripts/generate_baseline.sh
+uv run scripts/benchmark_utils.py generate-baseline
 git add benches/baseline_results.txt
 git commit -m "Update performance baseline after optimization"
 ```
@@ -598,14 +523,14 @@ git commit -m "Update performance baseline after optimization"
 # ... your modifications ...
 
 # 2. Quick performance check
-./scripts/compare_benchmarks.sh --dev
+uv run scripts/benchmark_utils.py compare --baseline benches/baseline_results.txt --dev
 
 # 3. If major changes needed, generate new dev baseline:
-./scripts/generate_baseline.sh --dev
+uv run scripts/benchmark_utils.py generate-baseline --dev
 
 # 4. Final validation with full benchmarks before commit:
-./scripts/generate_baseline.sh          # Full baseline
-./scripts/compare_benchmarks.sh         # Full comparison
+uv run scripts/benchmark_utils.py generate-baseline          # Full baseline
+uv run scripts/benchmark_utils.py compare --baseline benches/baseline_results.txt         # Full comparison
 ```
 
 **Development Mode Benefits**:
@@ -645,10 +570,10 @@ git push origin main
 cargo bench --bench small_scale_triangulation
 
 # 2. Generate new baseline
-./scripts/generate_baseline.sh
+uv run scripts/benchmark_utils.py generate-baseline
 
 # 3. Compare against previous baseline
-./scripts/compare_benchmarks.sh
+uv run scripts/benchmark_utils.py compare --baseline benches/baseline_results.txt
 ```
 
 ### Continuous Integration
@@ -667,14 +592,14 @@ The repository includes automated performance regression testing via GitHub Acti
 
 ```bash
 # If baseline exists:
-# 1. Runs ./scripts/compare_benchmarks.sh
+# 1. Runs uv run scripts/benchmark_utils.py compare --baseline benches/baseline_results.txt
 # 2. Fails CI if >5% performance regression detected
 # 3. Uploads comparison results as artifacts
 
 # If no baseline exists:
 # 1. Logs instructions for creating baseline
 # 2. Skips regression testing (does not fail CI)
-# 3. Suggests running ./scripts/generate_baseline.sh locally
+# 3. Suggests running uv run scripts/benchmark_utils.py generate-baseline locally
 ```
 
 #### CI Integration Benefits
@@ -692,7 +617,7 @@ The repository includes automated performance regression testing via GitHub Acti
 1. **Missing Dependencies**: Install required packages using your system's package manager
 2. **Permission Errors**: Ensure scripts are executable with `chmod +x scripts/*.sh`
 3. **Path Issues**: Run scripts from the project root directory
-4. **Missing Baseline**: Run `./scripts/generate_baseline.sh` to generate initial baseline
+4. **Missing Baseline**: Run `uv run scripts/benchmark_utils.py generate-baseline` to generate initial baseline
 
 ### Exit Codes
 
@@ -706,8 +631,13 @@ The repository includes automated performance regression testing via GitHub Acti
 Add `set -x` to any script for verbose execution output:
 
 ```bash
-bash -x ./scripts/generate_baseline.sh
-bash -x ./scripts/compare_benchmarks.sh
+# For Python scripts, use -v flag for verbose output
+uv run scripts/benchmark_utils.py generate-baseline --help
+uv run scripts/hardware_utils.py info --help
+
+# For remaining bash scripts
+bash -x ./scripts/generate_changelog.sh
+bash -x ./scripts/run_all_examples.sh
 ```
 
 ## Script Maintenance

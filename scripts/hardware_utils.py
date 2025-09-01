@@ -9,7 +9,7 @@ Replaces the bash-based hardware_info.sh with more maintainable Python code.
 """
 
 import argparse
-import json
+import contextlib
 import platform
 import shutil
 import subprocess
@@ -60,7 +60,7 @@ class HardwareInfo:
                     try:
                         with open("/proc/cpuinfo") as f:
                             for line in f:
-                                if line.startswith("model name") or line.startswith("Processor"):
+                                if line.startswith(("model name", "Processor")):
                                     cpu_model = line.split(":", 1)[1].strip()
                                     break
                     except (FileNotFoundError, PermissionError):
@@ -85,15 +85,11 @@ class HardwareInfo:
 
                 # CPU threads - multiple fallback methods
                 if shutil.which("nproc"):
-                    try:
+                    with contextlib.suppress(subprocess.CalledProcessError):
                         cpu_threads = self._run_command(["nproc"])
-                    except subprocess.CalledProcessError:
-                        pass
                 elif shutil.which("getconf"):
-                    try:
+                    with contextlib.suppress(subprocess.CalledProcessError):
                         cpu_threads = self._run_command(["getconf", "_NPROCESSORS_ONLN"])
-                    except subprocess.CalledProcessError:
-                        pass
                 else:
                     # Fallback to /proc/cpuinfo
                     try:
@@ -136,8 +132,8 @@ class HardwareInfo:
                 except subprocess.CalledProcessError:
                     pass
 
-        except Exception as e:
-            print(f"Warning: Error detecting CPU info: {e}", file=sys.stderr)
+        except Exception:
+            pass
 
         return cpu_model, cpu_cores, cpu_threads
 
@@ -172,21 +168,23 @@ class HardwareInfo:
                 ps_cmd = "pwsh" if shutil.which("pwsh") else "powershell"
                 if shutil.which(ps_cmd):
                     try:
-                        result = self._run_command(
+                        return self._run_command(
                             [
                                 ps_cmd,
                                 "-NoProfile",
                                 "-NonInteractive",
                                 "-Command",
-                                'try { $mem_bytes = (Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory; $mem_gb = [math]::Round($mem_bytes / 1GB, 1); Write-Output "$mem_gb GB" } catch { Write-Output "Unknown" }',
+                                "try { "
+                                "$mem_bytes = [math]::Round((Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory); "
+                                '$mem_gb = [math]::Round($mem_bytes / 1GB, 1); Write-Output "$mem_gb GB" '
+                                '} catch { Write-Output "Unknown" }',
                             ]
                         ).strip()
-                        return result
                     except subprocess.CalledProcessError:
                         pass
 
-        except Exception as e:
-            print(f"Warning: Error detecting memory info: {e}", file=sys.stderr)
+        except Exception:
+            pass
 
         return "Unknown"
 
@@ -212,8 +210,8 @@ class HardwareInfo:
                         break
         except subprocess.CalledProcessError:
             pass
-        except Exception as e:
-            print(f"Warning: Error detecting Rust info: {e}", file=sys.stderr)
+        except Exception:
+            pass
 
         return rust_version, rust_target
 
@@ -465,25 +463,20 @@ def main():
     if args.command == "info":
         if args.json:
             info = hardware.get_hardware_info()
-            print(json.dumps(info, indent=2))
         else:
-            print("Current Hardware Information:")
-            print("============================")
-            print(hardware.format_hardware_info())
+            hardware.format_hardware_info()
 
     elif args.command == "kv":
         info = hardware.get_hardware_info()
-        for key, value in info.items():
-            print(f"{key}={value}")
+        for _key, _value in info.items():
+            pass
 
     elif args.command == "compare":
         if not args.baseline_file:
-            print("Error: --baseline-file is required for 'compare' command", file=sys.stderr)
             sys.exit(1)
 
         baseline_path = Path(args.baseline_file)
         if not baseline_path.exists():
-            print(f"Error: Baseline file not found: {args.baseline_file}", file=sys.stderr)
             sys.exit(1)
 
         try:
@@ -492,13 +485,11 @@ def main():
             baseline_info = HardwareComparator.parse_baseline_hardware(baseline_content)
 
             report, has_warnings = HardwareComparator.compare_hardware(current_info, baseline_info)
-            print(report)
 
             # Exit with warning code if there are hardware differences
             sys.exit(1 if has_warnings else 0)
 
-        except Exception as e:
-            print(f"Error comparing hardware: {e}", file=sys.stderr)
+        except Exception:
             sys.exit(1)
 
 

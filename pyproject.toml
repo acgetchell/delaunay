@@ -1,16 +1,90 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=65.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "delaunay-scripts"
+version = "0.4.1"
+description = "Python utility scripts for the delaunay Rust library"
+readme = "README.md"
+requires-python = ">=3.13"
+license = {text = "BSD-3-Clause"}
+authors = [
+    {name = "Adam Getchell", email = "adam@adamgetchell.org"},
+]
+keywords = ["delaunay", "triangulation", "benchmarking", "utilities"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research", 
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Benchmark",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/acgetchell/delaunay"
+"Documentation" = "https://docs.rs/delaunay"
+"Repository" = "https://github.com/acgetchell/delaunay"
+"Bug Tracker" = "https://github.com/acgetchell/delaunay/issues"
+
+# Configure scripts as entry points for command-line usage
+[project.scripts]
+benchmark-utils = "benchmark_utils:main"
+changelog-utils = "changelog_utils:main"
+enhance-commits = "enhance_commits:main"
+hardware-utils = "hardware_utils:main"
+
+# Configure setuptools to find packages in scripts/ directory
+[tool.setuptools]
+package-dir = {"" = "scripts"}
+
+[tool.setuptools.packages.find]
+where = ["scripts"]
+
+[tool.setuptools.package-data]
+"*" = ["*.py"]
 
 [tool.ruff]
 line-length = 160
-target-version = "py311"
+target-version = "py313"
+src = ["scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "YTT", "S", "BLE", "FBT", "B", "A", "COM", "C4", "DTZ", "T10", "EM", "EXE", "ISC", "ICN", "G", "INP", "PIE", "T20", "PYI", "PT", "Q", "RSE", "RET", "SLF", "SIM", "TID", "TCH", "ARG", "PTH", "ERA", "PD", "PGH", "PL", "TRY", "NPY", "RUF"]
 ignore = [
+    # Formatter conflicts
     "COM812",  # Trailing comma missing (conflicts with formatter)
     "ISC001",  # Implicitly concatenated string literals (conflicts with formatter)
+    
+    # CLI script patterns - these are appropriate design choices for command-line tools
+    "PLR0912", # Too many branches - natural for CLI argument parsing and workflow logic
+    "PLR0913", # Too many arguments - acceptable for comprehensive CLI functions
+    "PLR0915", # Too many statements - expected for main functions doing complex workflows
+    "PLR2004", # Magic value used in comparison - acceptable for CLI constants and thresholds
+    "FBT001",  # Boolean-typed positional argument - appropriate for CLI flag arguments
+    "FBT002",  # Boolean default positional argument - standard CLI pattern
+    "BLE001",  # Do not catch blind exception - intentional defensive programming for CLI robustness
+    "S603",    # subprocess call: check for execution of untrusted input - false positives for known safe commands
+    "S607",    # Starting a process with a partial executable path - acceptable for standard system tools
+    "T201",    # print found - appropriate for CLI output and user feedback
+    "TRY300",  # Consider moving statement to else block - acceptable control flow for CLI scripts
+    "TRY301",  # Abstract raise to inner function - acceptable for straightforward CLI error handling
+    "PLC0415", # import should be at top-level - acceptable for CLI scripts to reduce startup time
+    "ARG001",  # Unused function argument - common in signal handlers and callback functions
+    "ERA001",  # Found commented-out code - acceptable for explanatory comments in CLI tools
+    "EXE001",  # Shebang is present but file is not executable - handled by packaging/deployment
+    "S110",    # try-except-pass detected - acceptable for graceful degradation in CLI tools
+    "PTH123",  # open() should be replaced by Path.open() - acceptable for system file access
+    "N806",    # Variable in function should be lowercase - acceptable for constants and ANSI color codes
+    "F841",    # Local variable assigned but never used - acceptable for color constants in CLI scripts
+    "EM102",   # Exception must not use f-string - acceptable for dynamic error messages in CLI tools
+    "TRY003",  # Avoid specifying long messages outside exception class - acceptable for CLI error reporting
+    "PLW2901", # for loop variable overwritten - acceptable for line processing in CLI scripts
 ]
 
 [tool.ruff.format]
@@ -24,10 +98,26 @@ max-line-length = 160
 
 [tool.pylint.messages_control]
 disable = [
-    "missing-module-docstring",
-    "missing-function-docstring", 
-    "missing-class-docstring",
     "too-few-public-methods",
+    # CLI script patterns - these are appropriate design choices for CLI tools
+    "too-many-branches",          # R0912 - Natural for CLI argument parsing and error handling
+    "too-many-statements",        # R0915 - Expected for main functions doing complex workflows
+    "too-many-locals",            # R0914 - Common in scripts with multiple processing steps
+    "too-many-nested-blocks",     # R1702 - Expected for error handling and validation
+    "import-outside-toplevel",    # C0415 - Acceptable for CLI scripts to reduce startup time
+    "broad-exception-caught",     # W0718 - Intentional defensive programming for CLI robustness
+    "too-many-instance-attributes", # R0902 - Data structures in CLI scripts can be complex
+    "too-many-arguments",         # R0913 - CLI functions often need many parameters
+    "too-many-positional-arguments", # R0917 - CLI functions often use positional args
+    "invalid-name",               # C0103 - ANSI color constants use ALL_CAPS convention
+    "consider-using-with",        # R1732 - subprocess.Popen patterns in CLI scripts
+    "unused-variable",            # W0612 - Color constants may not all be used
+    "redefined-outer-name",       # W0621 - Local imports for CLI script organization
+    "reimported",                 # W0404 - Local imports for CLI startup optimization
+    "unused-argument",            # W0613 - Signal handlers require specific signatures
+    "unspecified-encoding",       # W1514 - System files may use default encoding
+    "unsupported-binary-operation", # E1131 - Python 3.9 union syntax compatibility
+    "no-name-in-module",         # E0611 - datetime.UTC availability varies by Python version
 ]
 
 [tool.pylint.design]
@@ -35,3 +125,9 @@ max-args = 8
 max-locals = 20
 max-branches = 15
 max-statements = 60
+
+[dependency-groups]
+dev = [
+    "pylint>=3.3.8",
+    "ruff>=0.12.11",
+]

@@ -65,59 +65,61 @@ jobs:
           RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
           # Also check that examples in documentation compile
           cargo test --doc --all-features
-      
+
       - name: Install uv (for Python linting)
         if: matrix.os == 'ubuntu-latest'
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-      
+
       - name: Lint Python scripts
         if: matrix.os == 'ubuntu-latest'
         run: |
           # Format check with ruff (non-blocking for now)
           uvx ruff format --check scripts/ || echo "Python formatting issues found"
-          
+
           # Lint check with ruff (non-blocking for now)
           uvx ruff check scripts/ || echo "Python linting issues found"
-          
+
           # Additional linting with pylint (non-blocking for now)
           uvx pylint scripts/ || echo "Pylint issues found"
-      
+
       - name: Install shellcheck and shfmt
         if: matrix.os == 'ubuntu-latest'
         run: |
           # Install shellcheck
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          
+
           # Install shfmt
           SHFMT_VERSION="3.7.0"
-          curl -fsSL "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64" -o shfmt
+          curl -fsSL \
+            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64" \
+            -o shfmt
           chmod +x shfmt
           sudo mv shfmt /usr/local/bin/
-      
+
       - name: Lint shell scripts
         if: matrix.os == 'ubuntu-latest'
         run: |
           # Lint shell scripts with shellcheck
           find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck
-          
+
           # Check shell script formatting with shfmt
           find scripts -type f -name '*.sh' -exec shfmt -d {} +
-      
+
       - name: Lint Markdown files
         if: matrix.os == 'ubuntu-latest'
         run: |
           # Lint Markdown files
           npx markdownlint "*.md" "scripts/*.md" "docs/*.md" ".github/*.md" || true
-      
+
       - name: Lint YAML files
         if: matrix.os == 'ubuntu-latest'
         run: |
           # Install yamllint
           pip install yamllint
-          
+
           # Lint YAML files
           find . -type f \( -name '*.yml' -o -name '*.yaml' \) -exec yamllint -c .yamllint {} + || true
 

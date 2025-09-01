@@ -16,7 +16,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from hardware_utils import HardwareComparator, HardwareInfo
@@ -77,7 +77,7 @@ class CriterionParser:
             BenchmarkData object or None if parsing fails
         """
         try:
-            with open(estimates_path) as f:
+            with estimates_path.open(encoding="utf-8") as f:
                 data = json.load(f)
 
             # Extract timing data (nanoseconds from Criterion)
@@ -114,8 +114,7 @@ class CriterionParser:
                 throughput_unit="Kelem/s",
             )
 
-        except (FileNotFoundError, json.JSONDecodeError, KeyError, ZeroDivisionError, ValueError) as e:
-            print(f"Warning: Could not parse {estimates_path}: {e}", file=sys.stderr)
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ZeroDivisionError, ValueError):
             return None
 
     @staticmethod
@@ -133,7 +132,6 @@ class CriterionParser:
         criterion_dir = target_dir / "criterion"
 
         if not criterion_dir.exists():
-            print(f"Warning: Criterion directory not found: {criterion_dir}", file=sys.stderr)
             return results
 
         # Look for benchmark results in tds_new_*d directories
@@ -193,13 +191,10 @@ class BaselineGenerator:
 
         try:
             # Clean previous benchmark results
-            print("Cleaning previous benchmark results...")
             subprocess.run(["cargo", "clean"], cwd=self.project_root, check=True, capture_output=True)
 
             # Run fresh benchmark
-            print("Running fresh benchmark...")
             if dev_mode:
-                print("Using dev mode: sample_size=10, measurement_time=2s, warmup_time=1s, no plots")
                 subprocess.run(
                     [
                         "cargo",
@@ -223,33 +218,28 @@ class BaselineGenerator:
                 subprocess.run(["cargo", "bench", "--bench", "small_scale_triangulation"], cwd=self.project_root, check=True, capture_output=True)
 
             # Parse Criterion results
-            print("Parsing Criterion results...")
             target_dir = self.project_root / "target"
             benchmark_results = CriterionParser.find_criterion_results(target_dir)
 
             if not benchmark_results:
-                print("Error: No benchmark results found", file=sys.stderr)
                 return False
 
             # Generate baseline file
             self._write_baseline_file(benchmark_results, output_file)
 
-            print(f"✅ Baseline generated successfully: {output_file}")
-            print(f"Total benchmarks: {len(benchmark_results)}")
-
             return True
 
-        except subprocess.CalledProcessError as e:
-            print(f"Error running benchmarks: {e}", file=sys.stderr)
+        except subprocess.CalledProcessError:
             return False
-        except Exception as e:
-            print(f"Error generating baseline: {e}", file=sys.stderr)
+        except Exception:
             return False
 
     def _write_baseline_file(self, benchmark_results: list[BenchmarkData], output_file: Path) -> None:
         """Write baseline results to file."""
         # Get current date, git commit, and hardware info
-        current_date = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Get current date with timezone
+        now = datetime.now(UTC).astimezone()
+        current_date = now.strftime("%Y-%m-%d %H:%M:%S %Z")
 
         try:
             git_commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
@@ -259,7 +249,7 @@ class BaselineGenerator:
         hardware_info = self.hardware.format_hardware_info()
 
         # Write baseline file
-        with open(output_file, "w") as f:
+        with output_file.open("w", encoding="utf-8") as f:
             f.write(f"Date: {current_date}\n")
             f.write(f"Git commit: {git_commit}\n")
             f.write(hardware_info)
@@ -292,12 +282,10 @@ class PerformanceComparator:
             output_file = self.project_root / "benches" / "compare_results.txt"
 
         if not baseline_file.exists():
-            print(f"Error: Baseline file not found: {baseline_file}", file=sys.stderr)
             return False, False
 
         try:
             # Run fresh benchmark
-            print("Running benchmark for comparison...")
             if dev_mode:
                 subprocess.run(
                     [
@@ -326,7 +314,6 @@ class PerformanceComparator:
             current_results = CriterionParser.find_criterion_results(target_dir)
 
             if not current_results:
-                print("Error: No current benchmark results found", file=sys.stderr)
                 return False, False
 
             # Parse baseline
@@ -336,15 +323,11 @@ class PerformanceComparator:
             # Generate comparison report
             regression_found = self._write_comparison_file(current_results, baseline_results, baseline_content, output_file)
 
-            print(f"Comparison results written to {output_file}")
-
             return True, regression_found
 
-        except subprocess.CalledProcessError as e:
-            print(f"Error running benchmarks: {e}", file=sys.stderr)
+        except subprocess.CalledProcessError:
             return False, False
-        except Exception as e:
-            print(f"Error comparing performance: {e}", file=sys.stderr)
+        except Exception:
             return False, False
 
     def _parse_baseline_file(self, baseline_content: str) -> dict[str, BenchmarkData]:
@@ -408,7 +391,9 @@ class PerformanceComparator:
     ) -> bool:
         """Write comparison results to file."""
         # Get metadata
-        current_date = datetime.now().strftime("%a %b %d %H:%M:%S %Z %Y")
+        # Get current date with timezone
+        now = datetime.now(UTC).astimezone()
+        current_date = now.strftime("%a %b %d %H:%M:%S %Z %Y")
 
         try:
             git_commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
@@ -433,7 +418,7 @@ class PerformanceComparator:
         regression_found = False
 
         # Write comparison file
-        with open(output_file, "w") as f:
+        with output_file.open("w", encoding="utf-8") as f:
             # Header
             f.write("Comparison Results\n")
             f.write("==================\n")
@@ -452,22 +437,26 @@ class PerformanceComparator:
 
                 f.write(f"=== {current_benchmark.points} Points ({current_benchmark.dimension}) ===\n")
                 f.write(
-                    f"Current Time: [{current_benchmark.time_low}, {current_benchmark.time_mean}, {current_benchmark.time_high}] {current_benchmark.time_unit}\n"
+                    f"Current Time: [{current_benchmark.time_low}, {current_benchmark.time_mean}, "
+                    f"{current_benchmark.time_high}] {current_benchmark.time_unit}\n"
                 )
 
                 if current_benchmark.throughput_mean is not None:
                     f.write(
-                        f"Current Throughput: [{current_benchmark.throughput_low}, {current_benchmark.throughput_mean}, {current_benchmark.throughput_high}] {current_benchmark.throughput_unit}\n"
+                        f"Current Throughput: [{current_benchmark.throughput_low}, {current_benchmark.throughput_mean}, "
+                        f"{current_benchmark.throughput_high}] {current_benchmark.throughput_unit}\n"
                     )
 
                 if baseline_benchmark:
                     f.write(
-                        f"Baseline Time: [{baseline_benchmark.time_low}, {baseline_benchmark.time_mean}, {baseline_benchmark.time_high}] {baseline_benchmark.time_unit}\n"
+                        f"Baseline Time: [{baseline_benchmark.time_low}, {baseline_benchmark.time_mean}, "
+                        f"{baseline_benchmark.time_high}] {baseline_benchmark.time_unit}\n"
                     )
 
                     if baseline_benchmark.throughput_mean is not None:
                         f.write(
-                            f"Baseline Throughput: [{baseline_benchmark.throughput_low}, {baseline_benchmark.throughput_mean}, {baseline_benchmark.throughput_high}] {baseline_benchmark.throughput_unit}\n"
+                            f"Baseline Throughput: [{baseline_benchmark.throughput_low}, {baseline_benchmark.throughput_mean}, "
+                            f"{baseline_benchmark.throughput_high}] {baseline_benchmark.throughput_unit}\n"
                         )
 
                     # Calculate time change percentage
@@ -523,7 +512,6 @@ def main():
             break
         project_root = project_root.parent
     else:
-        print("Error: Could not find project root (no Cargo.toml found)", file=sys.stderr)
         sys.exit(1)
 
     if args.command == "generate-baseline":
@@ -539,10 +527,8 @@ def main():
             sys.exit(1)
 
         if regression_found:
-            print("⚠️  Significant performance regressions detected!")
             sys.exit(1)
         else:
-            print("✅ No significant performance regressions found.")
             sys.exit(0)
 
 

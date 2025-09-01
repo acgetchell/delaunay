@@ -92,9 +92,11 @@ cargo clippy --all-targets --all-features -- -D warnings -D clippy::all -D clipp
 uvx ruff format scripts/
 
 # Fix imports, remove unused code, and other auto-fixable issues - replaces isort + autoflake
+# Uses pyproject.toml configuration with CLI-appropriate ignore patterns
 uvx ruff check --fix scripts/
 
 # Lint Python code (check for issues - does not auto-fix)
+# Uses pyproject.toml configuration optimized for CLI scripts
 uvx pylint scripts/
 ```
 
@@ -103,6 +105,13 @@ uvx pylint scripts/
 - `ruff format`: Fixes PEP 8 style violations (replaces autopep8)
 - `ruff check --fix`: Organizes imports, removes unused code, and fixes other linting issues (replaces isort + autoflake)
 - `pylint`: Reports code quality issues (manual fixes required)
+
+**Configuration**: Both tools use `pyproject.toml` settings optimized for CLI scripts, which appropriately ignore:
+
+- Complex control flow patterns natural to command-line tools (many branches, statements)
+- CLI-specific patterns like boolean flags, print statements, subprocess calls
+- Defensive exception handling and graceful degradation patterns
+- Import placement optimizations for CLI startup time
 
 **Installation**: The commands use `uvx` (uv's command runner) to execute Python tools:
 

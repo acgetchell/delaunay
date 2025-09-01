@@ -42,10 +42,19 @@ Before you begin, ensure you have:
 
 1. **Rust** (latest stable version): Install via [rustup.rs][rustup]
 2. **Git** for version control
-3. **System dependencies** (for running scripts):
-   - **macOS**: `brew install jq findutils coreutils`
-   - **Ubuntu/Debian**: `sudo apt-get install jq findutils coreutils bc`
-   - **Other systems**: Install equivalent packages for `jq`, `find`, `sort`, and `bc`
+3. **Python and uv** (for development scripts and automation):
+   - **Python 3.8+**: Most systems have this pre-installed
+   - **uv**: Fast Python package manager - Install via:
+     - **macOS/Linux**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+     - **Windows**: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+     - **Alternative**: `pip install uv` (if you prefer using pip)
+   - See [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/) for more options
+4. **System dependencies** (for shell scripts):
+   - **macOS**: `brew install findutils coreutils`
+   - **Ubuntu/Debian**: `sudo apt-get install findutils coreutils`
+   - **Other systems**: Install equivalent packages for `find` and `sort`
+
+**Note**: Many development tasks now use Python utilities (managed by uv) instead of traditional shell tools, reducing the number of required system dependencies.
 
 ### Quick Start
 
@@ -81,7 +90,6 @@ Before you begin, ensure you have:
 
    ```bash
    cargo bench
-   ./scripts/generate_baseline.sh  # Create performance baseline
    ```
 
 ## Development Environment Setup
@@ -138,6 +146,54 @@ rustup show
 # Should show: active toolchain: 1.89.0-<platform> (overridden by '/path/to/delaunay/rust-toolchain.toml')
 ```
 
+### Python Development Environment
+
+#### Python Utilities for Development Automation
+
+The project has transitioned from traditional shell scripts to Python-based utilities for better cross-platform compatibility and maintainability.
+
+**Key Python Configuration Files:**
+
+- **`pyproject.toml`**: Defines Python project metadata, dependencies, and tool configurations
+- **`uv.lock`**: Lockfile ensuring reproducible Python environments across different machines
+- **Python utilities** in `scripts/`: Modern replacements for legacy shell scripts
+
+**Python Dependencies Management:**
+
+The project uses `uv` for fast, reliable Python dependency management:
+
+```bash
+# Python dependencies are automatically managed
+# No manual installation required - uv handles everything
+
+# If you need to run Python tools directly:
+uvx ruff format scripts/     # Code formatting
+uvx ruff check --fix scripts/ # Linting with auto-fixes
+uvx pylint scripts/          # Code quality analysis
+```
+
+**Integration with Development Workflow:**
+
+- **GitHub Actions**: Python utilities integrate seamlessly with CI/CD
+- **Hardware Detection**: Cross-platform hardware information gathering
+- **Benchmark Processing**: Automated performance regression detection
+- **Changelog Management**: Enhanced changelog generation and git tagging with Python parsing
+
+**Migration from Shell Scripts:**
+
+The project has evolved from shell-based to Python-based automation:
+
+- ✅ **New**: `scripts/benchmark_utils.py`, `scripts/hardware_utils.py`, `scripts/changelog_utils.py` (with comprehensive changelog and git tagging functionality)
+- ❌ **Legacy**: Old shell scripts like `generate_baseline.sh`, `compare_benchmarks.sh` (now automated via GitHub Actions)
+- 🔄 **Hybrid**: Some shell scripts remain as simple wrappers (e.g., `run_all_examples.sh`, `tag-from-changelog.sh`)
+
+**Benefits of Python Utilities:**
+
+- **Cross-platform compatibility** (Windows, macOS, Linux)
+- **Better error handling** and structured data processing
+- **Integration with GitHub Actions** for automated workflows
+- **Easier maintenance** and testing compared to complex shell scripts
+
 ## Project Structure
 
 Understanding the project layout will help you navigate and contribute effectively:
@@ -181,7 +237,6 @@ delaunay/
 │   ├── test_circumsphere.rs                      # Circumsphere computation examples
 │   └── triangulation_3d_50_points.rs             # 3D triangulation example
 ├── benches/                                      # Performance benchmarks
-│   ├── results/                                  # Benchmark result files
 │   ├── README.md                                 # Benchmarking guide and performance results
 │   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
 │   ├── baseline_results.txt                      # Performance baseline data
@@ -207,14 +262,13 @@ delaunay/
 │   └── RELEASING.md                              # Release process documentation
 ├── scripts/                                      # Development and CI scripts
 │   ├── README.md                                 # Scripts documentation
-│   ├── benchmark_parser.sh                       # Shared benchmark parsing utilities
-│   ├── compare_benchmarks.sh                     # Performance regression testing
+│   ├── benchmark_utils.py                        # Python utilities for benchmark processing and hardware detection
+│   ├── changelog_utils.py                        # Comprehensive Python utilities for changelog generation, processing, and git tagging
 │   ├── enhance_commits.py                        # Commit enhancement utilities
-│   ├── generate_baseline.sh                      # Create performance baselines
 │   ├── generate_changelog.sh                     # Generate changelog with commit dates and squashed PR expansion
-│   ├── hardware_info.sh                          # Hardware information and system capabilities
+│   ├── hardware_utils.py                         # Python utilities for hardware information and system capabilities
 │   ├── run_all_examples.sh                       # Validate all examples
-│   └── tag-from-changelog.sh                     # Create git tags from changelog content
+│   └── tag-from-changelog.sh                     # Create git tags from changelog content (wrapper for Python implementation)
 ├── .cargo/                                       # Cargo configuration
 │   └── config.toml                               # Build configuration
 ├── .github/                                      # GitHub configuration
@@ -224,7 +278,7 @@ delaunay/
 │   │   ├── ci.yml                                # Main CI pipeline
 │   │   ├── codacy.yml                            # Code quality analysis
 │   │   ├── codecov.yml                           # Test coverage tracking
-│   │   ├── codeql.yml                            # Security analysis
+│   │   ├── generate-baseline.yml                 # Automated performance baseline generation on releases
 │   │   └── rust-clippy.yml                       # Additional clippy analysis
 │   ├── CODEOWNERS                                # Code ownership definitions
 │   └── dependabot.yml                            # Dependency update configuration
@@ -242,9 +296,12 @@ delaunay/
 ├── Cargo.toml                                    # Package configuration and dependencies
 ├── cspell.json                                   # Spell checking configuration
 ├── LICENSE                                       # MIT License
+├── pyproject.toml                                # Python project configuration for development scripts
 ├── README.md                                     # Project overview and getting started
 ├── REFERENCES.md                                 # Academic references and citations
+├── rust-toolchain.toml                           # Rust toolchain specification for consistent development environment
 ├── rustfmt.toml                                  # Code formatting configuration
+├── uv.lock                                       # Python dependency lockfile for uv package manager
 └── WARP.md                                       # WARP AI development guidance
 ```
 
@@ -286,6 +343,19 @@ git checkout -b docs/doc-improvement
 4. **Run the full test suite** before pushing
 5. **Check performance impact** for algorithmic changes
 6. **Push to your fork** and create a pull request to the main repository
+
+**Important Note on Git Operations:**
+
+Per project rules (see [WARP.md](WARP.md)), **DO NOT** include `git commit` or `git push` commands in
+development scripts. All git operations should be handled manually by contributors to maintain full control over
+version control operations. This ensures:
+
+- **User control** over commit messages and timing
+- **Prevention of accidental commits** during automated processes
+- **Compliance with project security policies**
+- **Flexibility** in branching and merging strategies
+
+Any automation scripts should stop at the point where git operations would be needed, allowing contributors to handle version control manually.
 
 ### 4. Continuous Integration
 
@@ -626,19 +696,29 @@ The project includes comprehensive benchmarking:
 - **Location**: `benches/` directory with detailed [README][benches-readme]
 - **Framework**: Criterion with allocation tracking
 - **Coverage**: Small-scale triangulations across dimensions
+- **Automated Baselines**: Performance baselines are automatically generated on releases
 
 ### Performance Testing Workflow
 
+**For development and manual testing:**
+
 ```bash
-# Generate performance baseline (first time)
-./scripts/generate_baseline.sh
+# Run benchmarks directly
+cargo bench
 
-# Test for performance regressions
-./scripts/compare_benchmarks.sh
-
-# Development mode (faster iteration)
-./scripts/compare_benchmarks.sh --dev
+# Run all examples to verify performance
+./scripts/run_all_examples.sh
 ```
+
+**Note**: The project uses an **automated performance baseline system**:
+
+- **Automatic baseline generation**: Baselines are created automatically when git tags are pushed via GitHub Actions
+- **CI regression testing**: Performance regressions are detected automatically in PRs against the latest baseline
+- **Hardware compatibility**: The system detects hardware differences and provides warnings when comparing across different configurations
+- **5% regression threshold**: CI fails if performance degrades by more than 5%
+
+The old shell scripts (`generate_baseline.sh`, `compare_benchmarks.sh`) mentioned in some documentation have been
+**replaced** with Python utilities that integrate with GitHub Actions for automated baseline management.
 
 ### Performance Guidelines
 
@@ -646,8 +726,10 @@ The project includes comprehensive benchmarking:
 - **Memory Allocation**: Minimize unnecessary allocations
 - **Numerical Stability**: Balance performance with numerical accuracy
 - **Regression Detection**: CI fails on >5% performance regressions
+- **Hardware Awareness**: Consider performance implications across different hardware configurations
 
-See [scripts documentation][scripts-readme] for detailed benchmarking workflows.
+See [scripts documentation][scripts-readme] for detailed benchmarking workflows and the [WARP.md](WARP.md) file
+for implementation details of the automated baseline system.
 
 ## Submitting Changes
 

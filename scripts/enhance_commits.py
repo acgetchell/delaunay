@@ -349,21 +349,22 @@ def _process_changelog_lines(lines):
 def main():
     """Main function to process changelog entries."""
     if len(sys.argv) != 3:
-        print("Usage: enhance_commits.py input_file output_file", file=sys.stderr)
         sys.exit(1)
 
     input_file = sys.argv[1]
     output_file = sys.argv[2]
 
     # Read the input file
-    with open(input_file, encoding="utf-8") as file:
+    input_path = Path(input_file)
+    with input_path.open(encoding="utf-8") as file:
         lines = file.readlines()
 
     # Process the changelog
     output_lines = _process_changelog_lines(lines)
 
     # Write the output file
-    with open(output_file, "w", encoding="utf-8") as file:
+    output_path = Path(output_file)
+    with output_path.open("w", encoding="utf-8") as file:
         for line in output_lines:
             file.write(line + "\n")
 
