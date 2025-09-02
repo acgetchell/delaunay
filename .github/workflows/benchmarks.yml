@@ -76,6 +76,7 @@ jobs:
             try {
               // Fetch all successful generate-baseline.yml runs once (O(runs) API calls)
               console.log('Fetching recent generate-baseline.yml runs...');
+              let count = 0;
               const runs = await github.paginate(
                 github.rest.actions.listWorkflowRuns,
                 {
@@ -87,10 +88,9 @@ jobs:
                   per_page: 100
                 },
                 (response, done) => {
-                  // Limit to 150 runs to avoid excessive API calls
-                  if (response.data.length >= 150) {
-                    done();
-                  }
+                  // Limit to 150 runs total across pages
+                  count += response.data.length;
+                  if (count >= 150) done();
                   return response.data;
                 }
               );
@@ -109,10 +109,12 @@ jobs:
 
                   for (const artifact of artifacts.data.artifacts) {
                     if (artifact.name.startsWith('performance-baseline-') && artifact.expired !== true) {
-                      artifactCache.set(artifact.name, {
-                        run_id: run.id,
-                        run_created_at: run.created_at
-                      });
+                      if (!artifactCache.has(artifact.name)) {
+                        artifactCache.set(artifact.name, {
+                          run_id: run.id,
+                          run_created_at: run.created_at
+                        });
+                      }
                     }
                   }
                 } catch (error) {
