@@ -74,6 +74,55 @@ jobs:
         with:
           script: |
             try {
+              // Fetch all successful generate-baseline.yml runs once (O(runs) API calls)
+              console.log('Fetching recent generate-baseline.yml runs...');
+              const runs = await github.paginate(
+                github.rest.actions.listWorkflowRuns,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: 'generate-baseline.yml',
+                  status: 'completed',
+                  conclusion: 'success',
+                  per_page: 100
+                },
+                (response, done) => {
+                  // Limit to 150 runs to avoid excessive API calls
+                  if (response.data.length >= 150) {
+                    done();
+                  }
+                  return response.data;
+                }
+              );
+
+              console.log(`Found ${runs.length} successful generate-baseline runs`);
+
+              // Build artifact cache: artifact name → {run_id, run_created_at}
+              const artifactCache = new Map();
+              for (const run of runs) {
+                try {
+                  const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    run_id: run.id
+                  });
+
+                  for (const artifact of artifacts.data.artifacts) {
+                    if (artifact.name.startsWith('performance-baseline-') && artifact.expired !== true) {
+                      artifactCache.set(artifact.name, {
+                        run_id: run.id,
+                        run_created_at: run.created_at
+                      });
+                    }
+                  }
+                } catch (error) {
+                  console.log(`Warning: Could not fetch artifacts for run ${run.id}: ${error.message}`);
+                  continue;
+                }
+              }
+
+              console.log(`Built cache of ${artifactCache.size} baseline artifacts`);
+
               // First, try to find baseline artifacts from release tags
               const releases = await github.paginate(
                 github.rest.repos.listReleases,
@@ -82,7 +131,7 @@ jobs:
 
               console.log(`Found ${releases.length} releases (paginated)`);
 
-              // Look for releases with baseline artifacts
+              // Look for releases with baseline artifacts (now O(releases) lookups)
               for (const release of releases) {
                 console.log(`Checking release ${release.tag_name}...`);
                 if (release.draft || release.prerelease) {
@@ -94,81 +143,48 @@ jobs:
                 const cleanTag = release.tag_name.replace(/[^a-zA-Z0-9._-]/g, '_');
                 const expectedName = `performance-baseline-${cleanTag}`;
 
-                // Search through recent generate-baseline.yml runs
-                for (let page = 1; page <= 3; page++) {
-                  const runs = await github.rest.actions.listWorkflowRuns({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    workflow_id: 'generate-baseline.yml',
-                    status: 'completed',
-                    conclusion: 'success',
-                    per_page: 50,
-                    page
-                  });
-
-                  for (const run of runs.data.workflow_runs) {
-                    const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      run_id: run.id
-                    });
-                    const baselineArtifact = artifacts.data.artifacts.find(
-                      a => a.name === expectedName && a.expired !== true
-                    );
-                    if (baselineArtifact) {
-                      console.log(
-                        `Found release baseline artifact ${expectedName} in run ${run.id} ` +
-                        `for release ${release.tag_name}`
-                      );
-                      core.setOutput('found', 'true');
-                      core.setOutput('release_tag', release.tag_name);
-                      core.setOutput('artifact_name', expectedName);
-                      core.setOutput('run_id', run.id.toString());
-                      core.setOutput('source_type', 'release');
-                      return;
-                    }
-                  }
+                if (artifactCache.has(expectedName)) {
+                  const artifactInfo = artifactCache.get(expectedName);
+                  console.log(
+                    `Found release baseline artifact ${expectedName} in run ${artifactInfo.run_id} ` +
+                    `for release ${release.tag_name}`
+                  );
+                  core.setOutput('found', 'true');
+                  core.setOutput('release_tag', release.tag_name);
+                  core.setOutput('artifact_name', expectedName);
+                  core.setOutput('run_id', artifactInfo.run_id.toString());
+                  core.setOutput('source_type', 'release');
+                  return;
                 }
               }
 
               console.log('No release baseline artifacts found, checking for any recent baselines...');
 
               // Fallback: look for any recent baseline artifact (including manual runs)
-              for (let page = 1; page <= 3; page++) {
-                const runs = await github.rest.actions.listWorkflowRuns({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  workflow_id: 'generate-baseline.yml',
-                  status: 'completed',
-                  conclusion: 'success',
-                  per_page: 50,
-                  page
-                });
+              if (artifactCache.size > 0) {
+                // Find the most recent artifact (by run creation time)
+                let mostRecentArtifact = null;
+                let mostRecentTime = null;
 
-                for (const run of runs.data.workflow_runs) {
-                  const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    run_id: run.id
-                  });
-
-                  // Look for any artifact starting with 'performance-baseline-'
-                  const baselineArtifact = artifacts.data.artifacts.find(a =>
-                    a.name.startsWith('performance-baseline-') && a.expired !== true
-                  );
-
-                  if (baselineArtifact) {
-                    console.log(
-                      `Found baseline artifact ${baselineArtifact.name} in run ${run.id} ` +
-                      `(created: ${run.created_at})`
-                    );
-                    core.setOutput('found', 'true');
-                    core.setOutput('release_tag', 'manual-baseline');
-                    core.setOutput('artifact_name', baselineArtifact.name);
-                    core.setOutput('run_id', run.id.toString());
-                    core.setOutput('source_type', 'manual');
-                    return;
+                for (const [artifactName, artifactInfo] of artifactCache.entries()) {
+                  const runTime = new Date(artifactInfo.run_created_at);
+                  if (!mostRecentTime || runTime > mostRecentTime) {
+                    mostRecentTime = runTime;
+                    mostRecentArtifact = { name: artifactName, ...artifactInfo };
                   }
+                }
+
+                if (mostRecentArtifact) {
+                  console.log(
+                    `Found baseline artifact ${mostRecentArtifact.name} in run ${mostRecentArtifact.run_id} ` +
+                    `(created: ${mostRecentArtifact.run_created_at})`
+                  );
+                  core.setOutput('found', 'true');
+                  core.setOutput('release_tag', 'manual-baseline');
+                  core.setOutput('artifact_name', mostRecentArtifact.name);
+                  core.setOutput('run_id', mostRecentArtifact.run_id.toString());
+                  core.setOutput('source_type', 'manual');
+                  return;
                 }
               }
 
@@ -300,8 +316,15 @@ jobs:
 
           # This will exit with code 1 if significant regressions are found
           echo "   Using full comparison mode against ${BASELINE_ORIGIN:-unknown} baseline"
-          uv run benchmark-utils compare --baseline benches/baseline_results.txt \
-            || uv run python -m scripts.benchmark_utils compare --baseline benches/baseline_results.txt
+          if uv run benchmark-utils --help >/dev/null 2>&1; then
+            uv run benchmark-utils compare --baseline benches/baseline_results.txt
+          elif uv run python -c "import importlib; importlib.import_module('scripts.benchmark_utils')" \
+               >/dev/null 2>&1; then
+            uv run python -m scripts.benchmark_utils compare --baseline benches/baseline_results.txt
+          else
+            echo "❌ benchmark-utils entrypoint and module not found" >&2
+            exit 2
+          fi
 
       - name: Display regression test results
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()
