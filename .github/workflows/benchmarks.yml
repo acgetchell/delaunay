@@ -174,29 +174,14 @@ jobs:
             echo "BASELINE_SOURCE=missing" >> "$GITHUB_ENV"
           fi
 
-      - name: Generate fallback baseline if none found
+      - name: Set baseline status if none found
         if: steps.find_baseline.outputs.found != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          echo "📈 No baseline artifact found, generating fallback baseline..."
-          echo "   This baseline will be used for this comparison only."
-          echo ""
-
-          # Generate baseline using dev mode for faster execution
-          if uv run benchmark-utils generate-baseline --dev \
-            || uv run python -m scripts.benchmark_utils generate-baseline --dev; then
-            echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
-            echo "BASELINE_SOURCE=generated" >> "$GITHUB_ENV"
-
-            echo "✅ Generated fallback baseline successfully"
-            echo "=== Generated Baseline Information ==="
-            head -n 3 benches/baseline_results.txt
-          else
-            echo "❌ Failed to generate fallback baseline"
-            echo "BASELINE_EXISTS=false" >> "$GITHUB_ENV"
-            echo "BASELINE_SOURCE=failed" >> "$GITHUB_ENV"
-          fi
+          echo "📈 No baseline artifact found for performance comparison"
+          echo "BASELINE_EXISTS=false" >> "$GITHUB_ENV"
+          echo "BASELINE_SOURCE=none" >> "$GITHUB_ENV"
 
       - name: Extract baseline commit SHA
         if: env.BASELINE_EXISTS == 'true'
@@ -254,18 +239,14 @@ jobs:
         run: |
           set -euo pipefail
           echo "⚠️ No performance baseline available for comparison."
-          if [[ "${BASELINE_SOURCE:-}" == "failed" ]]; then
-            echo "   - Failed to generate fallback baseline"
-            echo "   - Check the baseline generation workflow logs for issues"
-          else
-            echo "   - No baseline artifacts found in recent releases"
-            echo "   - Create a new release tag to generate a baseline"
-          fi
+          echo "   - No baseline artifacts found in recent releases"
+          echo "   - Performance regression testing requires a release baseline"
           echo ""
-          echo "💡 To resolve:"
-          echo "   1. Create a new release tag (e.g., v0.4.2)"
+          echo "💡 To enable performance regression testing:"
+          echo "   1. Create a new release tag (e.g., v0.4.3)"
           echo "   2. The baseline generation workflow will run automatically"
           echo "   3. Future PRs and pushes will use that baseline for comparison"
+          echo "   4. Baselines use full benchmark settings for accurate comparisons"
 
       - name: Run performance regression test
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false'
@@ -276,16 +257,9 @@ jobs:
           echo "   Baseline source: ${BASELINE_SOURCE:-unknown}"
 
           # This will exit with code 1 if significant regressions are found
-          # Use --dev mode when comparing against a generated baseline to match settings
-          if [[ "${BASELINE_SOURCE:-}" == "generated" ]]; then
-            echo "   Using --dev mode to match generated baseline settings"
-            uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev \
-              || uv run python -m scripts.benchmark_utils compare --baseline benches/baseline_results.txt --dev
-          else
-            echo "   Using full comparison mode against release baseline"
-            uv run benchmark-utils compare --baseline benches/baseline_results.txt \
-              || uv run python -m scripts.benchmark_utils compare --baseline benches/baseline_results.txt
-          fi
+          echo "   Using full comparison mode against release baseline"
+          uv run benchmark-utils compare --baseline benches/baseline_results.txt \
+            || uv run python -m scripts.benchmark_utils compare --baseline benches/baseline_results.txt
 
       - name: Display regression test results
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()
