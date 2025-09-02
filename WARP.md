@@ -30,8 +30,8 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 - **ALWAYS** run spell check after editing documentation files
 - **IF** cspell reports legitimate technical terms, programming keywords, or project-specific terminology as misspelled, add them to the `words` array in `cspell.json`
-- **EXAMPLES**: Python terms (`kwargs`, `args`, `asyncio`), Rust terms (`usize`, `clippy`, `rustc`), technical terms
-(`triangulation`, `circumsphere`, `delaunay`), project names (`nalgebra`, `serde`, `thiserror`)
+- **EXAMPLES**: Python terms (`kwargs`, `args`, `asyncio`), Rust terms (`usize`, `clippy`, `rustc`), technical terms (`triangulation`, `circumsphere`, `delaunay`),
+  project names (`nalgebra`, `serde`, `thiserror`)
 - **PURPOSE**: Maintains clean spell check while building comprehensive project dictionary
 
 #### Import Organization (AI Assistant Guidance)
@@ -65,7 +65,7 @@ uvx ruff format scripts/
 uvx ruff check --fix scripts/
 
 # Markdown linting
-npx markdownlint --fix "*.md" "scripts/*.md" "docs/*.md" ".github/*.md"
+npx markdownlint --fix "*.md" "examples/*.md" "tests/*.md" "scripts/*.md" "docs/*.md" ".github/*.md"
 
 # Spell checking
 npx cspell --config cspell.json --no-progress --gitignore --cache "**/*"

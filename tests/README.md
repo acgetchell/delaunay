@@ -1,15 +1,19 @@
 # Integration Tests
 
-This directory contains integration tests for the delaunay library, focusing on comprehensive testing scenarios, debugging utilities, regression testing, and performance analysis.
+This directory contains integration tests for the delaunay library, focusing on comprehensive testing scenarios, debugging utilities,
+regression testing, and performance analysis.
 
 ## Test Categories
 
 ### 🔧 Debugging and Analysis Tools
 
 #### `circumsphere_debug_tools.rs`
-Interactive debugging and testing tools for circumsphere calculations. Demonstrates and compares three methods for testing whether a point lies inside the circumsphere of a simplex in 2D, 3D, and 4D.
+
+Interactive debugging and testing tools for circumsphere calculations. Demonstrates and compares three methods for testing whether
+a point lies inside the circumsphere of a simplex in 2D, 3D, and 4D.
 
 **Key Features:**
+
 - Comprehensive circumsphere method comparison
 - Step-by-step matrix analysis
 - Interactive testing across dimensions
@@ -17,17 +21,19 @@ Interactive debugging and testing tools for circumsphere calculations. Demonstra
 - Orientation impact demonstration
 
 **Usage:**
+
 ```bash
 # Run specific debug test functions with verbose output
-cargo test test_2d_circumsphere_debug --test circumsphere_debug_tools -- --nocapture
-cargo test test_3d_circumsphere_debug --test circumsphere_debug_tools -- --nocapture
-cargo test test_all_debug --test circumsphere_debug_tools -- --nocapture
+cargo test --test circumsphere_debug_tools test_2d_circumsphere_debug -- --nocapture
+cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocapture
+cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
 
 # Run all debug tests at once
 cargo test --test circumsphere_debug_tools -- --nocapture
 ```
 
 **Available Test Functions:**
+
 - `test_2d_circumsphere_debug` - 2D triangle circumsphere testing
 - `test_3d_circumsphere_debug` - 3D tetrahedron circumsphere testing  
 - `test_4d_circumsphere_debug` - 4D simplex circumsphere testing
@@ -40,9 +46,11 @@ cargo test --test circumsphere_debug_tools -- --nocapture
 ### 🧪 Algorithm Integration Testing
 
 #### `convex_hull_bowyer_watson_integration.rs`
+
 Integration tests for convex hull algorithms with Bowyer-Watson triangulation, focusing on the interaction between hull computation and triangulation construction.
 
 **Test Coverage:**
+
 - Hull extension execution and validation
 - Cache behavior and reset operations
 - Multiple hull extension scenarios
@@ -52,9 +60,11 @@ Integration tests for convex hull algorithms with Bowyer-Watson triangulation, f
 **Run with:** `cargo test --test convex_hull_bowyer_watson_integration`
 
 #### `robust_predicates_comparison.rs`
+
 Comparative testing between robust and standard geometric predicates, focusing on numerical accuracy and edge case handling.
 
 **Test Scenarios:**
+
 - Cocircular and nearly coplanar points
 - High precision coordinate handling
 - Extreme aspect ratio configurations
@@ -64,9 +74,11 @@ Comparative testing between robust and standard geometric predicates, focusing o
 **Run with:** `cargo test --test robust_predicates_comparison`
 
 #### `robust_predicates_showcase.rs`
+
 Demonstration and stress testing of robust geometric predicates with focus on numerical edge cases and degenerate configurations.
 
 **Features:**
+
 - Degenerate failure recovery demonstrations
 - Tolerance limit stress testing
 - Real-world triangulation scenarios
@@ -77,9 +89,11 @@ Demonstration and stress testing of robust geometric predicates with focus on nu
 ### 🐛 Regression and Error Reproduction
 
 #### `test_cavity_boundary_error.rs`
+
 Reproduces and tests specific cavity boundary errors encountered during triangulation, ensuring fixes remain effective.
 
 **Purpose:**
+
 - Systematic reproduction of reported boundary errors
 - Geometric degeneracy case testing
 - Error condition validation and recovery
@@ -87,9 +101,11 @@ Reproduces and tests specific cavity boundary errors encountered during triangul
 **Run with:** `cargo test --test test_cavity_boundary_error`
 
 #### `coordinate_conversion_errors.rs`
+
 Tests error handling for coordinate conversion operations, particularly focusing on special floating-point values.
 
 **Error Scenarios:**
+
 - NaN coordinate handling
 - Infinity value processing
 - Subnormal value behavior
@@ -101,9 +117,11 @@ Tests error handling for coordinate conversion operations, particularly focusing
 ### 📊 Performance and Memory Testing
 
 #### `allocation_api.rs`
+
 Memory allocation profiling and testing utilities for tracking memory usage patterns during triangulation operations.
 
 **Monitoring Areas:**
+
 - Point and vertex creation allocations
 - Triangulation data structure memory usage
 - Complex workflow allocation patterns
@@ -112,14 +130,17 @@ Memory allocation profiling and testing utilities for tracking memory usage patt
 **Run with:** `cargo test --test allocation_api`
 
 **Note:** Requires the `count-allocations` feature flag:
+
 ```bash
 cargo test --test allocation_api --features count-allocations
 ```
 
 #### `bench_helpers_test.rs`
+
 Tests for benchmark helper functions, ensuring the reliability of performance measurement utilities used throughout the project.
 
 **Coverage:**
+
 - Benchmark helper function validation
 - Performance measurement accuracy
 - Test data generation consistency
@@ -129,6 +150,7 @@ Tests for benchmark helper functions, ensuring the reliability of performance me
 ## Running Tests
 
 ### All Integration Tests
+
 ```bash
 # Run all integration tests
 cargo test --release
@@ -138,6 +160,7 @@ cargo test --release -- --nocapture
 ```
 
 ### Individual Test Files
+
 ```bash
 # Run specific test file
 cargo test --test <test_file_name>
@@ -150,7 +173,8 @@ cargo test --test allocation_api --features count-allocations
 
 ### Performance Considerations
 
-⚠️ **Important**: Integration tests may run significantly slower in debug mode. For optimal performance and accurate performance measurements, run tests in release mode:
+⚠️ **Important**: Integration tests may run significantly slower in debug mode. For optimal performance and accurate performance
+measurements, run tests in release mode:
 
 ```bash
 # Recommended: Run in release mode
@@ -211,7 +235,7 @@ cargo test --test circumsphere_debug_tools -- --nocapture
 All integration tests are automatically run in the CI pipeline:
 
 - **GitHub Actions**: `.github/workflows/ci.yml`
-- **Coverage Tracking**: Results are uploaded to CodeCov
+- **Coverage Tracking**: Results are uploaded to Codecov
 - **Performance Regression**: Baseline comparisons are performed
 
 ### Development Testing

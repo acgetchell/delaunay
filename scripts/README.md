@@ -247,10 +247,10 @@ Hardware Information:
 
 ```bash
 # Create new tag with changelog content
-uv run changelog-utils tag v0.4.2
+uv run changelog-utils tag vX.Y.Z
 
 # Force recreate existing tag
-uv run changelog-utils tag v0.4.2 --force
+uv run changelog-utils tag vX.Y.Z --force
 
 # Show help information
 uv run changelog-utils tag --help
@@ -273,13 +273,13 @@ uv run changelog-utils tag --help
 ```bash
 # Workflow for GitHub releases:
 1. Create tag with changelog content:
-   uv run changelog-utils tag v0.4.2
+   uv run changelog-utils tag vX.Y.Z
 
 2. Push tag to remote:
-   git push origin v0.4.2
+   git push origin vX.Y.Z
 
 3. Create GitHub release using tag message:
-   gh release create v0.4.2 --notes-from-tag
+   gh release create vX.Y.Z --notes-from-tag
 ```
 
 **Advanced Usage**:
@@ -354,15 +354,15 @@ uv run benchmark-utils compare --baseline benches/baseline_results.txt         #
 
 ```bash
 # 1. Make commits and create git tags
-git tag v0.4.0
-git push origin v0.4.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 
 # 2. Generate updated changelog with accurate commit dates and AI enhancement
 uv run changelog-utils generate
 
 # 3. Review and commit the updated changelog
 git add CHANGELOG.md
-git commit -m "Update changelog with AI enhancement for v0.4.0"
+git commit -m "Update changelog with AI enhancement for vX.Y.Z"
 git push origin main
 ```
 
@@ -370,14 +370,14 @@ git push origin main
 
 ```bash
 # Create new tag with changelog content for GitHub releases
-uv run changelog-utils tag v0.4.2
+uv run changelog-utils tag vX.Y.Z
 
 # Force recreate existing tag
-uv run changelog-utils tag v0.4.2 --force
+uv run changelog-utils tag vX.Y.Z --force
 
 # Push tag and create GitHub release
-git push origin v0.4.2
-gh release create v0.4.2 --notes-from-tag
+git push origin vX.Y.Z
+gh release create vX.Y.Z --notes-from-tag
 ```
 
 **Benefits of Using changelog-utils**:
@@ -405,7 +405,7 @@ uv run benchmark-utils compare --baseline benches/baseline_results.txt
 
 The repository includes automated performance regression testing via GitHub Actions:
 
-#### Automated Baseline Generation
+#### Automated baseline generation
 
 - **Workflow file**: `.github/workflows/generate-baseline.yml`
 - **Trigger**: Automatic on git tag creation

@@ -44,18 +44,18 @@ with special emphasis on handling of NaN (Not a Number) and infinity values.
 **Run with:** `cargo run --release --example point_comparison_and_hashing`
 [View source](./point_comparison_and_hashing.rs)
 
-### 2. Implicit Conversion Example (`implicit_conversion.rs`)
+### 2. Into/From Conversions Example (`into_from_conversions.rs`)
 
-Demonstrates the implicit conversion capabilities of the delaunay library,
-showing how vertices and points can be automatically converted to coordinate
-arrays using Rust's `From` trait.
+Demonstrates ergonomic conversions using Rust's `Into`/`From` traits,
+showing how vertices and points can be converted to coordinate arrays
+using Rust's `Into`/`From` traits.
 
 **Key Features:**
 
-- **Vertex to coordinate conversion**: Both owned vertices and vertex references
-  can be implicitly converted to coordinate arrays
-- **Point to coordinate conversion**: Both owned points and point references
-  can be implicitly converted to coordinate arrays
+- **Vertex to coordinate conversion**: Owned vertices and references
+  convert to coordinate arrays via `Into`/`From`
+- **Point to coordinate conversion**: Owned points and references
+  convert to coordinate arrays via `Into`/`From`
 - **Type safety**: All conversions are compile-time checked and type-safe
 - **Zero-cost abstractions**: No runtime overhead for conversions
 - **Ergonomic syntax**: Cleaner, more readable code compared to explicit
@@ -77,8 +77,8 @@ let coords: [f64; 3] = point.into();
 let coords: [f64; 3] = (&point).into();
 ```
 
-**Run with:** `cargo run --release --example implicit_conversion`
-[View source](./implicit_conversion.rs)
+**Run with:** `cargo run --release --example into_from_conversions`
+[View source](./into_from_conversions.rs)
 
 ### 3. 3D Triangulation with 50 Points (`triangulation_3d_50_points.rs`)
 
@@ -160,4 +160,3 @@ their geometric properties and analysis.
 
 **Run with:** `cargo run --release --example convex_hull_3d_50_points`
 [View source](./convex_hull_3d_50_points.rs)
-

@@ -54,7 +54,7 @@ delaunay/
 ├── examples/                                     # Usage examples and demonstrations
 │   ├── README.md                                 # Examples documentation
 │   ├── convex_hull_3d_50_points.rs               # 3D convex hull extraction and analysis example
-│   ├── implicit_conversion.rs                    # Type conversion examples
+│   ├── into_from_conversions.rs                  # Into/From trait conversion examples
 │   ├── point_comparison_and_hashing.rs           # Point operations examples
 │   └── triangulation_3d_50_points.rs             # 3D triangulation example
 ├── benches/                                      # Performance benchmarks
@@ -112,7 +112,7 @@ delaunay/
 │   └── dependabot.yml                            # Dependency update configuration
 ├── .auto-changelog                               # Auto-changelog configuration
 ├── .codacy.yml                                   # Codacy code quality configuration
-├── .codecov.yml                                  # CodeCov configuration
+├── .codecov.yml                                  # Codecov configuration
 ├── .coderabbit.yml                               # CodeRabbit AI review configuration
 ├── .gitignore                                    # Git ignore patterns
 ├── .markdownlint.json                            # Markdown linting configuration
@@ -139,9 +139,9 @@ delaunay/
 
 ```bash
 # Run specific test functions with verbose output
-cargo test test_2d_circumsphere_debug --test circumsphere_debug_tools -- --nocapture
-cargo test test_3d_circumsphere_debug --test circumsphere_debug_tools -- --nocapture
-cargo test test_all_debug --test circumsphere_debug_tools -- --nocapture
+cargo test --test circumsphere_debug_tools test_2d_circumsphere_debug -- --nocapture
+cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocapture
+cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
 # Or run all debug tests at once
 cargo test --test circumsphere_debug_tools -- --nocapture
 ```

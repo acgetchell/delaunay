@@ -123,6 +123,7 @@ fn test_4d_methods_debug() {
 }
 
 #[test]
+#[ignore = "heavyweight aggregate test with lots of output - run manually for debugging"]
 fn test_all_debug() {
     run_all_debug_tests();
 }
@@ -148,6 +149,7 @@ fn test_all_single_points_debug() {
 }
 
 #[test]
+#[ignore = "comprehensive test suite with extensive output - run manually for full analysis"]
 fn test_everything_debug() {
     run_everything();
 }
@@ -1058,7 +1060,7 @@ fn print_method_comparison_results(
     println!();
     println!("Method comparison:");
     println!("  Standard method: {standard_result:?}");
-    println!("  Matrix method: {matrix_method_result}");
+    println!("  Matrix method: {matrix_method_result:?}");
     println!("  Geometric truth: {geometric_truth}");
 
     println!();
