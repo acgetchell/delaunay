@@ -47,13 +47,10 @@ jobs:
 
       - name: Determine tag information
         id: tag_info
-        env:
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "$REF_TYPE" == "tag" ]]; then
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             # Tag push trigger
-            TAG_NAME="$REF_NAME"
+            TAG_NAME="$GITHUB_REF_NAME"
             echo "Using push tag: $TAG_NAME"
           else
             # Fallback for manual dispatch
@@ -98,10 +95,6 @@ jobs:
       - name: Prepare baseline artifact
         env:
           TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
-          COMMIT_SHA: ${{ github.sha }}
-          RUN_ID: ${{ github.run_id }}
-          RUNNER_OS: ${{ runner.os }}
-          RUNNER_ARCH: ${{ runner.arch }}
         run: |
           # Create artifact directory
           mkdir -p baseline-artifact
@@ -116,8 +109,8 @@ jobs:
           cat > "baseline-artifact/metadata.json" <<EOF
           {
             "tag": "$TAG_NAME",
-            "commit": "$COMMIT_SHA",
-            "workflow_run_id": "$RUN_ID",
+            "commit": "$GITHUB_SHA",
+            "workflow_run_id": "$GITHUB_RUN_ID",
             "generated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
             "runner_os": "$RUNNER_OS",
             "runner_arch": "$RUNNER_ARCH"
@@ -128,26 +121,22 @@ jobs:
           ls -la baseline-artifact/
 
       - name: Upload baseline artifact
-        env:
-          TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: performance-baseline-${{ env.TAG_NAME }}
+          name: performance-baseline-${{ steps.tag_info.outputs.tag_name }}
           path: baseline-artifact/
           retention-days: 365  # Keep baselines for 1 year
           compression-level: 6  # Good balance of speed/compression
 
       - name: Display next steps
         env:
-          REF_TYPE: ${{ github.ref_type }}
-          COMMIT_SHA: ${{ github.sha }}
           TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
         run: |
           echo "🎉 Performance baseline generated successfully!"
           echo ""
           echo "📋 Summary:"
           echo "  Tag: $TAG_NAME"
-          echo "  Commit: $COMMIT_SHA"
+          echo "  Commit: $GITHUB_SHA"
           echo "  Artifact: performance-baseline-$TAG_NAME"
           echo ""
           echo "🔄 The benchmark workflow will now use this baseline for:"
@@ -155,6 +144,6 @@ jobs:
           echo "  • Main branch regression detection"
           echo "  • Manual performance comparisons"
           echo ""
-          if [[ "$REF_TYPE" == "tag" ]]; then
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             echo "💡 This baseline is now available for release $TAG_NAME"
           fi

@@ -399,17 +399,47 @@ class ChangelogUtils:
         Raises:
             GitRepoError: If git commands fail
         """
+        commit_msg = ChangelogUtils._get_commit_message(commit_sha)
+        content_lines = ChangelogUtils._extract_content_lines(commit_msg)
+
+        if not content_lines:
+            return ""
+
+        entries = ChangelogUtils._parse_commit_entries(content_lines)
+        return ChangelogUtils._format_entries(entries, commit_sha, repo_url)
+
+    @staticmethod
+    def _get_commit_message(commit_sha: str) -> str:
+        """
+        Get the full commit message for a given SHA.
+
+        Args:
+            commit_sha: Git commit SHA
+
+        Returns:
+            Full commit message
+
+        Raises:
+            GitRepoError: If git command fails
+        """
         try:
-            # Get the full commit message using secure subprocess wrapper
             result = run_git_command(["--no-pager", "show", commit_sha, "--format=%B", "--no-patch"])
-            commit_msg = result.stdout
+            return result.stdout
         except subprocess.CalledProcessError as e:
             msg = f"Failed to get commit message for {commit_sha}: {e}"
             raise GitRepoError(msg) from e
 
-        # Get markdown line limit
-        max_line_length = ChangelogUtils.get_markdown_line_limit()
+    @staticmethod
+    def _extract_content_lines(commit_msg: str) -> list[str]:
+        """
+        Extract content lines from commit message, skipping title and empty lines.
 
+        Args:
+            commit_msg: Full commit message
+
+        Returns:
+            List of content lines
+        """
         lines = commit_msg.strip().split("\n")
         content_lines = []
 
@@ -422,9 +452,19 @@ class ChangelogUtils:
         while content_lines and not content_lines[-1].strip():
             content_lines.pop()
 
-        if not content_lines:
-            return ""
+        return content_lines
 
+    @staticmethod
+    def _parse_commit_entries(content_lines: list[str]) -> list[dict[str, Any]]:
+        """
+        Parse content lines into structured entries.
+
+        Args:
+            content_lines: Lines of content to parse
+
+        Returns:
+            List of entry dictionaries with 'title' and 'body_lines' keys
+        """
         entries: list[dict[str, Any]] = []
         current_entry: dict[str, Any] | None = None
 
@@ -448,49 +488,102 @@ class ChangelogUtils:
         if current_entry:
             entries.append(current_entry)
 
-        # Format entries
+        return entries
+
+    @staticmethod
+    def _format_entries(entries: list[dict[str, Any]], commit_sha: str, repo_url: str) -> str:
+        """
+        Format parsed entries into markdown output.
+
+        Args:
+            entries: List of entry dictionaries
+            commit_sha: Git commit SHA for links
+            repo_url: Repository URL for links
+
+        Returns:
+            Formatted markdown string
+        """
+        max_line_length = ChangelogUtils.get_markdown_line_limit()
         output_lines = []
+
         for i, entry in enumerate(entries):
             if i > 0:
                 output_lines.append("")  # Blank line between entries
 
-            title = ChangelogUtils.escape_markdown(entry["title"])
-            title_line = f"- **{title}** [`{commit_sha}`]({repo_url}/commit/{commit_sha})"
+            # Format title with commit link
+            title_lines = ChangelogUtils._format_entry_title(entry["title"], commit_sha, repo_url, max_line_length)
+            output_lines.extend(title_lines)
 
-            # Keep bolded title intact; place commit link on its own line if too long
-            if len(title_line) <= max_line_length:
-                output_lines.append(title_line)
-            else:
-                output_lines.append(f"- **{title}**")
-                output_lines.append(f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})")
-
-            # Process body content
-            if entry["body_lines"]:
-                body_content = []
-                for line in entry["body_lines"]:
-                    if line.strip():
-                        body_content.append(line.strip())
-                    elif body_content and body_content[-1]:
-                        body_content.append("")  # Preserve paragraph breaks
-
-                while body_content and not body_content[-1]:
-                    body_content.pop()
-
-                if body_content:
-                    output_lines.append("")  # Blank line before body
-
-                    for line in body_content:
-                        if not line:  # Empty line - preserve as paragraph break
-                            output_lines.append("")
-                        elif line.startswith("    ") or "```" in line or re.search(r"\[.*\]\(.*\)|https?://\S+", line):
-                            # Code blocks, links, or structured content - preserve as-is
-                            output_lines.append(f"  {line}")
-                        else:
-                            # Regular text - wrap it
-                            wrapped_lines = ChangelogUtils.wrap_markdown_line(line, max_line_length, "  ")
-                            output_lines.extend(wrapped_lines)
+            # Format body content
+            body_lines = ChangelogUtils._format_entry_body(entry["body_lines"], max_line_length)
+            output_lines.extend(body_lines)
 
         return "\n".join(output_lines)
+
+    @staticmethod
+    def _format_entry_title(title: str, commit_sha: str, repo_url: str, max_line_length: int) -> list[str]:
+        """
+        Format an entry title with commit link.
+
+        Args:
+            title: Entry title
+            commit_sha: Git commit SHA
+            repo_url: Repository URL
+            max_line_length: Maximum line length
+
+        Returns:
+            List of formatted title lines
+        """
+        escaped_title = ChangelogUtils.escape_markdown(title)
+        title_line = f"- **{escaped_title}** [`{commit_sha}`]({repo_url}/commit/{commit_sha})"
+
+        # Keep bolded title intact; place commit link on its own line if too long
+        if len(title_line) <= max_line_length:
+            return [title_line]
+        return [f"- **{escaped_title}**", f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})"]
+
+    @staticmethod
+    def _format_entry_body(body_lines: list[str], max_line_length: int) -> list[str]:
+        """
+        Format entry body content with proper wrapping.
+
+        Args:
+            body_lines: Raw body lines
+            max_line_length: Maximum line length
+
+        Returns:
+            List of formatted body lines
+        """
+        if not body_lines:
+            return []
+
+        body_content = []
+        for line in body_lines:
+            if line.strip():
+                body_content.append(line.strip())
+            elif body_content and body_content[-1]:
+                body_content.append("")  # Preserve paragraph breaks
+
+        while body_content and not body_content[-1]:
+            body_content.pop()
+
+        if not body_content:
+            return []
+
+        output_lines = [""]  # Blank line before body
+
+        for line in body_content:
+            if not line:  # Empty line - preserve as paragraph break
+                output_lines.append("")
+            elif line.startswith("    ") or "```" in line or re.search(r"\[.*\]\(.*\)|https?://\S+", line):
+                # Code blocks, links, or structured content - preserve as-is
+                output_lines.append(f"  {line}")
+            else:
+                # Regular text - wrap it
+                wrapped_lines = ChangelogUtils.wrap_markdown_line(line, max_line_length, "  ")
+                output_lines.extend(wrapped_lines)
+
+        return output_lines
 
     @staticmethod
     def run_git_command(args: list[str], check: bool = True) -> tuple[str, int]:
@@ -538,21 +631,46 @@ class ChangelogUtils:
             ChangelogError: If changelog content cannot be extracted
             GitRepoError: If git operations fail
         """
-        import sys
-
-        # Colors for output
-        GREEN = "\033[0;32m"
-        YELLOW = "\033[1;33m"
-        BLUE = "\033[0;34m"
-        NC = "\033[0m"  # No Color
-
-        # Validate git repo and prerequisites
+        # Validate prerequisites
         ChangelogUtils.validate_git_repo()
         ChangelogUtils.validate_semver(tag_version)
 
-        # Check if tag already exists
+        # Handle existing tag
+        ChangelogUtils._handle_existing_tag(tag_version, force_recreate)
+
+        # Get changelog content
+        tag_message = ChangelogUtils._get_changelog_content(tag_version)
+
+        # Check git configuration
+        ChangelogUtils._check_git_config()
+
+        # Create the tag
+        ChangelogUtils._create_tag_with_message(tag_version, tag_message)
+
+        # Show success message
+        ChangelogUtils._show_success_message(tag_version)
+
+    @staticmethod
+    def _handle_existing_tag(tag_version: str, force_recreate: bool) -> None:
+        """
+        Handle existing tag detection and deletion if needed.
+
+        Args:
+            tag_version: The version tag to check
+            force_recreate: Whether to force recreate existing tag
+
+        Raises:
+            ChangelogError: If tag exists and force_recreate is False
+            GitRepoError: If git operations fail
+        """
+        import sys
+
+        YELLOW = "\033[1;33m"
+        BLUE = "\033[0;34m"
+        NC = "\033[0m"
+
         try:
-            result_output, result_code = ChangelogUtils.run_git_command(["rev-parse", "-q", "--verify", f"refs/tags/{tag_version}"], check=False)
+            _, result_code = ChangelogUtils.run_git_command(["rev-parse", "-q", "--verify", f"refs/tags/{tag_version}"], check=False)
             if result_code == 0:
                 if not force_recreate:
                     print(f"{YELLOW}Tag '{tag_version}' already exists.{NC}", file=sys.stderr)
@@ -565,61 +683,96 @@ class ChangelogUtils:
             msg = f"Failed to check for existing tag: {e}"
             raise GitRepoError(msg) from e
 
-        # Find changelog and extract content
+    @staticmethod
+    def _get_changelog_content(tag_version: str) -> str:
+        """
+        Get and preview changelog content for the tag.
+
+        Args:
+            tag_version: The version tag
+
+        Returns:
+            Changelog content for the tag message
+        """
+        BLUE = "\033[0;34m"
+        NC = "\033[0m"
+
         changelog_path = ChangelogUtils.find_changelog_path()
         version = ChangelogUtils.parse_version(tag_version)
         tag_message = ChangelogUtils.extract_changelog_section(changelog_path, version)
 
-        # Show preview of tag message
+        # Show preview
         print(f"{BLUE}Tag message preview:{NC}")
         print("----------------------------------------")
         print(tag_message)
         print("----------------------------------------")
 
-        # Check git user configuration
+        return tag_message
+
+    @staticmethod
+    def _check_git_config() -> None:
+        """
+        Check git user configuration and warn if not set.
+        """
+        import sys
+
+        YELLOW = "\033[1;33m"
+        NC = "\033[0m"
+
         try:
             ChangelogUtils.run_git_command(["config", "--get", "user.name"])
             ChangelogUtils.run_git_command(["config", "--get", "user.email"])
         except Exception:
             print(f"{YELLOW}Warning: git user.name/email not configured; tag creation may fail.{NC}", file=sys.stderr)
 
-        # Create the tag
-        print(f"{BLUE}Creating tag '{tag_version}' with changelog content...{NC}")
-        try:
-            # Use secure subprocess wrapper to get git path
-            # We need to use subprocess.Popen for stdin input
-            from subprocess_utils import get_safe_executable
+    @staticmethod
+    def _create_tag_with_message(tag_version: str, tag_message: str) -> None:
+        """
+        Create the git tag with the provided message.
 
-            git_path = get_safe_executable("git")
-            # Validate inputs before using them in subprocess
+        Args:
+            tag_version: The version tag to create
+            tag_message: The tag message content
+
+        Raises:
+            GitRepoError: If tag creation fails
+        """
+        BLUE = "\033[0;34m"
+        NC = "\033[0m"
+
+        print(f"{BLUE}Creating tag '{tag_version}' with changelog content...{NC}")
+
+        try:
+            from subprocess_utils import run_git_command_with_input
+
+            # Validate tag version format
             if not re.match(r"^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$", tag_version):
                 raise ValueError(f"Invalid tag version format: {tag_version}")
 
-            # skipcq: PYI-B603  # Security: This subprocess call is safe because:
-            # - git_path is obtained through get_safe_executable() which validates the full path
-            # - tag_version is validated with regex before use
-            # - No shell=True is used, preventing shell injection
-            # - Input comes from changelog file, not user input
-            process = subprocess.Popen(  # noqa: S603  # nosec B603 # Uses validated full git path and tag_version
-                [git_path, "tag", "-a", tag_version, "-F", "-"],
-                stdin=subprocess.PIPE,
-                text=True,
-            )
-            process.communicate(input=tag_message)
-
-            if process.returncode != 0:
-                msg = f"Failed to create tag '{tag_version}'"
-                raise GitRepoError(msg)
-
-            print(f"{GREEN}✓ Successfully created tag '{tag_version}'{NC}")
-            print("")
-            print("Next steps:")
-            print(f"  1. Push the tag: {BLUE}git push origin {tag_version}{NC}")
-            print(f"  2. Create GitHub release: {BLUE}gh release create {tag_version} --notes-from-tag{NC}")
+            # Use secure wrapper for git command with stdin input
+            run_git_command_with_input(["tag", "-a", tag_version, "-F", "-"], input_data=tag_message)
 
         except Exception as e:
             msg = f"Error creating tag: {e}"
             raise GitRepoError(msg) from e
+
+    @staticmethod
+    def _show_success_message(tag_version: str) -> None:
+        """
+        Show success message and next steps.
+
+        Args:
+            tag_version: The created tag version
+        """
+        GREEN = "\033[0;32m"
+        BLUE = "\033[0;34m"
+        NC = "\033[0m"
+
+        print(f"{GREEN}✓ Successfully created tag '{tag_version}'{NC}")
+        print("")
+        print("Next steps:")
+        print(f"  1. Push the tag: {BLUE}git push origin {tag_version}{NC}")
+        print(f"  2. Create GitHub release: {BLUE}gh release create {tag_version} --notes-from-tag{NC}")
 
 
 def main() -> None:
@@ -629,15 +782,93 @@ def main() -> None:
     This provides a Python replacement for generate_changelog.sh with the same
     functionality but better error handling and cross-platform support.
     """
-    import argparse
-    import shutil
     import signal
     import sys
-    from pathlib import Path
 
-    def show_help():
-        """Show help information."""
-        print("""
+    def signal_handler(signum, frame):
+        """Handle interrupt signals gracefully."""
+        sys.exit(1)
+
+    # Set up signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    # Check for tag subcommand first
+    if _is_tag_command():
+        _handle_tag_command()
+        return
+
+    # Handle generate command or legacy mode
+    args = _parse_generate_args()
+
+    if args.help:
+        _show_help()
+        return
+
+    if args.version:
+        _show_version()
+        return
+
+    # Execute changelog generation workflow
+    _execute_changelog_generation(args.debug)
+
+
+def _is_tag_command() -> bool:
+    """Check if the command is a tag operation."""
+    import sys
+
+    return len(sys.argv) > 1 and sys.argv[1] == "tag"
+
+
+def _handle_tag_command() -> None:
+    """Handle tag subcommand."""
+    import sys
+
+    if len(sys.argv) < 3:
+        print("Error: tag command requires a version argument", file=sys.stderr)
+        print("Usage: changelog-utils tag <version> [--force]", file=sys.stderr)
+        sys.exit(1)
+
+    tag_version = sys.argv[2]
+    force_recreate = len(sys.argv) > 3 and sys.argv[3] == "--force"
+
+    try:
+        ChangelogUtils.create_git_tag(tag_version, force_recreate)
+    except (ChangelogError, GitRepoError, VersionError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _parse_generate_args():
+    """Parse command line arguments for generate command."""
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description="Generate enhanced changelog with AI commit processing",
+        add_help=False,  # We'll handle help ourselves
+    )
+
+    # Handle 'generate' subcommand by removing it from args if present
+    args_to_parse = sys.argv[1:]
+    if args_to_parse and args_to_parse[0] == "generate":
+        args_to_parse = args_to_parse[1:]
+
+    parser.add_argument("--debug", action="store_true", help="Preserve intermediate files for debugging")
+    parser.add_argument("--help", "-h", action="store_true", help="Show help message")
+    parser.add_argument("--version", action="store_true", help="Show version information")
+
+    try:
+        return parser.parse_args(args_to_parse)
+    except SystemExit:
+        import sys
+
+        sys.exit(0)
+
+
+def _show_help() -> None:
+    """Show help information."""
+    print("""
 Usage: changelog-utils [COMMAND] [OPTIONS]
 
 A comprehensive changelog management tool with AI commit processing and Keep a Changelog categorization.
@@ -667,213 +898,227 @@ Intermediate files (when using --debug with generate):
 This tool replaces both generate_changelog.sh and tag-from-changelog.sh.
 """)
 
-    def signal_handler(signum, frame):
-        """Handle interrupt signals gracefully."""
-        sys.exit(1)
 
-    # Set up signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+def _show_version() -> None:
+    """Show version information."""
+    print("changelog-utils v0.4.1 (Python implementation)")
+    print("Part of delaunay-scripts package")
 
-    # Parse command line arguments - handle both subcommand and legacy modes
-    if len(sys.argv) > 1 and sys.argv[1] == "tag":
-        # Tag subcommand mode
-        if len(sys.argv) < 3:
-            print("Error: tag command requires a version argument", file=sys.stderr)
-            print("Usage: changelog-utils tag <version> [--force]", file=sys.stderr)
-            sys.exit(1)
 
-        tag_version = sys.argv[2]
-        force_recreate = len(sys.argv) > 3 and sys.argv[3] == "--force"
+def _execute_changelog_generation(debug_mode: bool) -> None:
+    """Execute the main changelog generation workflow."""
+    import os
 
-        try:
-            ChangelogUtils.create_git_tag(tag_version, force_recreate)
-        except (ChangelogError, GitRepoError, VersionError) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            sys.exit(1)
-        return
-
-    # Generate subcommand or legacy mode
-    parser = argparse.ArgumentParser(
-        description="Generate enhanced changelog with AI commit processing",
-        add_help=False,  # We'll handle help ourselves
-    )
-
-    # Handle 'generate' subcommand by removing it from args if present
-    args_to_parse = sys.argv[1:]
-    if args_to_parse and args_to_parse[0] == "generate":
-        args_to_parse = args_to_parse[1:]
-
-    parser.add_argument("--debug", action="store_true", help="Preserve intermediate files for debugging")
-    parser.add_argument("--help", "-h", action="store_true", help="Show help message")
-    parser.add_argument("--version", action="store_true", help="Show version information")
+    # Initialize file paths
+    file_paths = _initialize_file_paths()
 
     try:
-        args = parser.parse_args(args_to_parse)
-    except SystemExit:
-        return
-
-    if args.help:
-        show_help()
-        return
-
-    if args.version:
-        print("changelog-utils v0.4.1 (Python implementation)")
-        print("Part of delaunay-scripts package")
-        return
-
-    # File paths
-    changelog_file = Path("CHANGELOG.md")
-    temp_changelog = changelog_file.with_suffix(".md.tmp")
-    processed_changelog = changelog_file.with_suffix(".md.processed")
-    expanded_changelog = processed_changelog.with_suffix(".processed.expanded")
-    enhanced_changelog = changelog_file.with_suffix(".md.tmp2")
-    backup_file = changelog_file.with_suffix(".md.backup")
-
-    try:
-        # Get project root
-        project_root = Path(ChangelogUtils.get_project_root())
-        original_cwd = Path.cwd()
-
-        # Change to project root for auto-changelog
-        import os
-
-        os.chdir(project_root)
+        # Setup and validation
+        project_root, original_cwd = _setup_project_environment()
 
         try:
-            # Validate git repository
-            ChangelogUtils.validate_git_repo()
-            ChangelogUtils.check_git_history()
+            # Core workflow steps
+            _validate_prerequisites()
+            repo_url = _get_repository_url()
+            _backup_existing_changelog(file_paths)
 
-            # Check prerequisites
-            if not shutil.which("npx"):
-                print("Error: npx not found. Install Node.js (which provides npx). See https://nodejs.org/", file=sys.stderr)
-                sys.exit(1)
+            # Execute processing pipeline
+            _run_auto_changelog(file_paths, project_root)
+            _post_process_dates(file_paths)
+            _expand_squashed_commits(file_paths, repo_url)
+            _enhance_with_ai(file_paths, project_root)
+            _cleanup_final_output(file_paths)
 
-            # Verify auto-changelog is available
-            try:
-                run_safe_command("npx", ["--yes", "-p", "auto-changelog", "auto-changelog", "--version"])
-            except Exception:
-                print("Error: auto-changelog is not available via npx. Verify network access and try again.", file=sys.stderr)
-                sys.exit(1)
-
-            # Verify configuration files exist
-            if not Path(".auto-changelog").exists():
-                print("Error: .auto-changelog config not found at project root.", file=sys.stderr)
-                sys.exit(1)
-
-            template_path = Path("docs/templates/changelog.hbs")
-            if not template_path.exists():
-                print(f"Error: changelog template missing: {template_path}", file=sys.stderr)
-                sys.exit(1)
-
-            # Backup existing changelog
-            if changelog_file.exists():
-                shutil.copy2(changelog_file, backup_file)
-
-            # Get repository URL
-            try:
-                repo_url = ChangelogUtils.get_repository_url()
-            except GitRepoError:
-                repo_url = "https://github.com/acgetchell/delaunay"  # Default fallback
-
-            # Step 1: Run auto-changelog
-            try:
-                result = run_safe_command("npx", ["--yes", "-p", "auto-changelog", "auto-changelog", "--stdout"], cwd=project_root)
-                temp_changelog.write_text(result.stdout, encoding="utf-8")
-            except subprocess.CalledProcessError as e:
-                if e.stderr:
-                    pass
-                sys.exit(1)
-
-            # Step 2: Post-process dates (ISO format -> YYYY-MM-DD)
-            content = temp_changelog.read_text(encoding="utf-8")
-            # Remove time portion from ISO dates
-            processed_content = re.sub(r"T[0-9]{2}:[0-9]{2}:[0-9]{2}.*?Z", "", content)
-            processed_changelog.write_text(processed_content, encoding="utf-8")
-
-            # Step 3: Expand squashed PR commits
-            ChangelogGenerator.expand_squashed_prs(processed_changelog, expanded_changelog, repo_url)
-
-            # Step 4: Enhance AI commits with categorization
-            # Find enhance_commits.py in the same directory as this script
-            script_dir = Path(__file__).parent
-            enhance_script = script_dir / "enhance_commits.py"
-
-            if not enhance_script.exists():
-                sys.exit(1)
-
-            try:
-                python_exe = sys.executable or "python"
-                run_safe_command(python_exe, [str(enhance_script), str(expanded_changelog), str(enhanced_changelog)], cwd=project_root)
-            except Exception:
-                print("Error: auto-changelog is not available via npx. Verify network access and try again.", file=sys.stderr)
-                sys.exit(1)
-
-            # Step 5: Final cleanup - remove excessive blank lines
-            content = enhanced_changelog.read_text(encoding="utf-8")
-            lines = content.split("\n")
-            cleaned_lines = []
-            empty_count = 0
-
-            for line in lines:
-                if line.strip() == "":
-                    empty_count += 1
-                    if empty_count <= 1:
-                        cleaned_lines.append(line)
-                else:
-                    empty_count = 0
-                    cleaned_lines.append(line)
-
-            # Write final changelog
-            final_content = "\n".join(cleaned_lines)
-            changelog_file.write_text(final_content, encoding="utf-8")
-
-            # Clean up temporary files (unless debug mode)
-            if not args.debug:
-                for temp_file in [temp_changelog, processed_changelog, expanded_changelog, enhanced_changelog]:
-                    if temp_file.exists():
-                        temp_file.unlink()
-            else:
-                for temp_file in [temp_changelog, processed_changelog, expanded_changelog, enhanced_changelog]:
-                    if temp_file.exists():
-                        pass
-
-            # Remove backup on success
-            if backup_file.exists():
-                backup_file.unlink()
-
-            # Success messages
-            try:
-                release_count = len([line for line in final_content.split("\n") if line.startswith("## ")])
-                print("✅ Changelog generation completed successfully!")
-                print(f"   Processed {release_count} releases with enhanced commit categorization")
-            except Exception:
-                # If counting fails, still show basic success message
-                print("✅ Changelog generation completed successfully!")
+            # Cleanup and success
+            _cleanup_temp_files(file_paths, debug_mode)
+            _show_success_message(file_paths)
 
         finally:
-            # Always restore original working directory
             os.chdir(original_cwd)
 
     except (ChangelogError, GitRepoError, VersionError):
-        # Restore backup if it exists
-        if backup_file.exists() and changelog_file.exists():
-            shutil.copy2(backup_file, changelog_file)
-            backup_file.unlink()
-        sys.exit(1)
+        _restore_backup_and_exit(file_paths)
     except KeyboardInterrupt:
-        # Restore backup if it exists
-        if backup_file.exists() and changelog_file.exists():
-            shutil.copy2(backup_file, changelog_file)
-            backup_file.unlink()
-        sys.exit(1)
+        _restore_backup_and_exit(file_paths)
     except Exception:
-        # Restore backup if it exists
-        if backup_file.exists() and changelog_file.exists():
-            shutil.copy2(backup_file, changelog_file)
-            backup_file.unlink()
+        _restore_backup_and_exit(file_paths)
+
+
+def _initialize_file_paths() -> dict[str, Path]:
+    """Initialize file paths for changelog processing."""
+    from pathlib import Path
+
+    changelog_file = Path("CHANGELOG.md")
+    return {
+        "changelog": changelog_file,
+        "temp": changelog_file.with_suffix(".md.tmp"),
+        "processed": changelog_file.with_suffix(".md.processed"),
+        "expanded": changelog_file.with_suffix(".md.processed.expanded"),
+        "enhanced": changelog_file.with_suffix(".md.tmp2"),
+        "backup": changelog_file.with_suffix(".md.backup"),
+    }
+
+
+def _setup_project_environment() -> tuple[Path, Path]:
+    """Setup project environment and return project root and original cwd."""
+    import os
+    from pathlib import Path
+
+    project_root = Path(ChangelogUtils.get_project_root())
+    original_cwd = Path.cwd()
+    os.chdir(project_root)
+
+    return project_root, original_cwd
+
+
+def _validate_prerequisites() -> None:
+    """Validate git repository and required tools."""
+    import shutil
+    import sys
+    from pathlib import Path
+
+    ChangelogUtils.validate_git_repo()
+    ChangelogUtils.check_git_history()
+
+    if not shutil.which("npx"):
+        print("Error: npx not found. Install Node.js (which provides npx). See https://nodejs.org/", file=sys.stderr)
         sys.exit(1)
+
+    # Verify auto-changelog availability
+    try:
+        run_safe_command("npx", ["--yes", "-p", "auto-changelog", "auto-changelog", "--version"])
+    except Exception:
+        print("Error: auto-changelog is not available via npx. Verify network access and try again.", file=sys.stderr)
+        sys.exit(1)
+
+    # Verify configuration files
+    if not Path(".auto-changelog").exists():
+        print("Error: .auto-changelog config not found at project root.", file=sys.stderr)
+        sys.exit(1)
+
+    template_path = Path("docs/templates/changelog.hbs")
+    if not template_path.exists():
+        print(f"Error: changelog template missing: {template_path}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _get_repository_url() -> str:
+    """Get repository URL with fallback."""
+    try:
+        return ChangelogUtils.get_repository_url()
+    except GitRepoError:
+        return "https://github.com/acgetchell/delaunay"  # Default fallback
+
+
+def _backup_existing_changelog(file_paths: dict[str, Path]) -> None:
+    """Backup existing changelog if it exists."""
+    import shutil
+
+    if file_paths["changelog"].exists():
+        shutil.copy2(file_paths["changelog"], file_paths["backup"])
+
+
+def _run_auto_changelog(file_paths: dict[str, Path], project_root: Path) -> None:
+    """Run auto-changelog to generate initial changelog."""
+    import subprocess
+    import sys
+
+    try:
+        result = run_safe_command("npx", ["--yes", "-p", "auto-changelog", "auto-changelog", "--stdout"], cwd=project_root)
+        file_paths["temp"].write_text(result.stdout, encoding="utf-8")
+    except subprocess.CalledProcessError as e:
+        if e.stderr:
+            pass
+        sys.exit(1)
+
+
+def _post_process_dates(file_paths: dict[str, Path]) -> None:
+    """Post-process dates from ISO format to YYYY-MM-DD."""
+    import re
+
+    content = file_paths["temp"].read_text(encoding="utf-8")
+    processed_content = re.sub(r"T[0-9]{2}:[0-9]{2}:[0-9]{2}.*?Z", "", content)
+    file_paths["processed"].write_text(processed_content, encoding="utf-8")
+
+
+def _expand_squashed_commits(file_paths: dict[str, Path], repo_url: str) -> None:
+    """Expand squashed PR commits."""
+    ChangelogGenerator.expand_squashed_prs(file_paths["processed"], file_paths["expanded"], repo_url)
+
+
+def _enhance_with_ai(file_paths: dict[str, Path], project_root: Path) -> None:
+    """Enhance commits with AI categorization."""
+    import sys
+    from pathlib import Path
+
+    script_dir = Path(__file__).parent
+    enhance_script = script_dir / "enhance_commits.py"
+
+    if not enhance_script.exists():
+        sys.exit(1)
+
+    try:
+        python_exe = sys.executable or "python"
+        run_safe_command(python_exe, [str(enhance_script), str(file_paths["expanded"]), str(file_paths["enhanced"])], cwd=project_root)
+    except Exception:
+        print("Error: auto-changelog is not available via npx. Verify network access and try again.", file=sys.stderr)
+        sys.exit(1)
+
+
+def _cleanup_final_output(file_paths: dict[str, Path]) -> None:
+    """Clean up excessive blank lines in final output."""
+    content = file_paths["enhanced"].read_text(encoding="utf-8")
+    lines = content.split("\n")
+    cleaned_lines = []
+    empty_count = 0
+
+    for line in lines:
+        if line.strip() == "":
+            empty_count += 1
+            if empty_count <= 1:
+                cleaned_lines.append(line)
+        else:
+            empty_count = 0
+            cleaned_lines.append(line)
+
+    final_content = "\n".join(cleaned_lines)
+    file_paths["changelog"].write_text(final_content, encoding="utf-8")
+
+
+def _cleanup_temp_files(file_paths: dict[str, Path], debug_mode: bool) -> None:
+    """Clean up temporary files unless in debug mode."""
+    temp_files = ["temp", "processed", "expanded", "enhanced"]
+
+    if not debug_mode:
+        for key in temp_files:
+            if file_paths[key].exists():
+                file_paths[key].unlink()
+
+    # Remove backup on success
+    if file_paths["backup"].exists():
+        file_paths["backup"].unlink()
+
+
+def _show_success_message(file_paths: dict[str, Path]) -> None:
+    """Show success message with release count."""
+    try:
+        content = file_paths["changelog"].read_text(encoding="utf-8")
+        release_count = len([line for line in content.split("\n") if line.startswith("## ")])
+        print("✅ Changelog generation completed successfully!")
+        print(f"   Processed {release_count} releases with enhanced commit categorization")
+    except Exception:
+        print("✅ Changelog generation completed successfully!")
+
+
+def _restore_backup_and_exit(file_paths: dict[str, Path]) -> None:
+    """Restore backup file and exit with error."""
+    import shutil
+    import sys
+
+    if file_paths["backup"].exists() and file_paths["changelog"].exists():
+        shutil.copy2(file_paths["backup"], file_paths["changelog"])
+        file_paths["backup"].unlink()
+    sys.exit(1)
 
 
 class ChangelogGenerator:

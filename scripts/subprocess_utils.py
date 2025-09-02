@@ -118,7 +118,7 @@ def run_safe_command(command: str, args: list[str], cwd: Path | None = None, **k
         "check": True,  # Secure default
         **kwargs,  # Allow overriding defaults
     }
-    return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs  # pylint: disable=subprocess-run-check
+    return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
         [command_path, *args], cwd=cwd, **run_kwargs
     )
 
@@ -183,3 +183,29 @@ def check_git_history() -> bool:
         return True
     except (ExecutableNotFoundError, subprocess.CalledProcessError):
         return False
+
+
+def run_git_command_with_input(
+    args: list[str], input_data: str, cwd: Path | None = None, text: bool = True, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """
+    Run a git command securely with stdin input using full executable path.
+
+    Args:
+        args: Git command arguments (without 'git' prefix)
+        input_data: Data to send to stdin
+        cwd: Working directory for the command
+        text: Whether to handle text input/output
+        check: Whether to raise CalledProcessError on non-zero exit
+
+    Returns:
+        CompletedProcess result
+
+    Raises:
+        ExecutableNotFoundError: If git is not found
+        subprocess.CalledProcessError: If command fails and check=True
+    """
+    git_path = get_safe_executable("git")
+    return subprocess.run(  # noqa: S603  # Uses validated full executable path, no shell=True
+        [git_path, *args], cwd=cwd, input=input_data, text=text, check=check, capture_output=True
+    )

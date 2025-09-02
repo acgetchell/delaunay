@@ -116,9 +116,8 @@ uvx ruff check --fix scripts/
 uv sync --group dev  # Install test dependencies
 uv run pytest       # Run comprehensive Python utility tests
 
-# Lint Python code (check for issues - does not auto-fix)
-# Uses [tool.pylint] configuration from pyproject.toml (automatically discovered)
-uvx pylint scripts/
+# Comprehensive linting is handled by ruff check above
+# No additional linting step needed - ruff provides complete coverage
 ```
 
 #### Documentation Quality
@@ -135,11 +134,10 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 **Note**: Documentation build failures will prevent successful publishing to crates.io. Always verify docs build cleanly before releases.
 
-**Note**: The Python tools serve different purposes:
+**Note**: Ruff provides comprehensive Python code quality:
 
 - `ruff format`: Fixes PEP 8 style violations (replaces autopep8)
-- `ruff check --fix`: Organizes imports, removes unused code, and fixes other linting issues (replaces isort + autoflake)
-- `pylint`: Reports code quality issues (manual fixes required)
+- `ruff check --fix`: Organizes imports, removes unused code, fixes linting issues, and reports code quality problems (replaces isort, autoflake, and pylint)
 
 **Configuration**: Both tools use `pyproject.toml` settings optimized for CLI scripts, which appropriately ignore:
 
@@ -603,7 +601,7 @@ The CI includes Python linting that's currently non-blocking. Address gradually:
 # Fix formatting and linting issues in Python scripts
 uvx ruff format scripts/
 uvx ruff check --fix scripts/
-uvx pylint scripts/
+# Note: pylint has been retired in favor of comprehensive ruff linting
 ```
 
 Key improvements needed:

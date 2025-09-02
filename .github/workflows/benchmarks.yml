@@ -102,7 +102,7 @@ jobs:
                     workflow_id: 'generate-baseline.yml',
                     status: 'completed',
                     conclusion: 'success',
-                    per_page: 10
+                    per_page: 100
                   });
                   const expectedName = `performance-baseline-${release.tag_name}`;
                   for (const run of runs.data.workflow_runs) {
@@ -149,14 +149,15 @@ jobs:
       - name: Extract baseline from artifact
         if: steps.find_baseline.outputs.found == 'true'
         shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.find_baseline.outputs.release_tag }}
         run: |
           set -euo pipefail
           if [[ -f "baseline-artifact/baseline_results.txt" ]]; then
-            echo "📦 Extracted baseline from artifact for release ${{ steps.find_baseline.outputs.release_tag }}"
+            echo "📦 Extracted baseline from artifact for release ${RELEASE_TAG:-unknown}"
             mkdir -p "benches"
             cp "baseline-artifact/baseline_results.txt" "benches/baseline_results.txt"
             echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
-            echo "BASELINE_SOURCE=artifact" >> "$GITHUB_ENV"
             echo "BASELINE_SOURCE=artifact" >> "$GITHUB_ENV"
 
             # Show baseline metadata
@@ -206,13 +207,11 @@ jobs:
       - name: Determine if benchmarks should run
         if: env.BASELINE_EXISTS == 'true'
         shell: bash
-        env:
-          CURRENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [[ "$BASELINE_COMMIT" == "unknown" ]]; then
             echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
-          elif [[ "$BASELINE_COMMIT" == "$CURRENT_SHA" ]]; then
+          elif [[ "$BASELINE_COMMIT" == "$GITHUB_SHA" ]]; then
             echo "SKIP_BENCHMARKS=true" >> "$GITHUB_ENV"
           else
             if git diff --name-only "$BASELINE_COMMIT"... | grep -qE '^(src/|benches/|Cargo\.toml|Cargo\.lock)'; then

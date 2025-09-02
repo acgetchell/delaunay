@@ -10,6 +10,7 @@ Replaces the bash-based hardware_info.sh with more maintainable Python code.
 
 import argparse
 import contextlib
+import logging
 import platform
 import shutil
 import subprocess
@@ -17,6 +18,9 @@ import sys
 from pathlib import Path
 
 from subprocess_utils import run_safe_command
+
+# Configure a module-level logger
+logger = logging.getLogger(__name__)
 
 
 class HardwareInfo:
@@ -33,111 +37,192 @@ class HardwareInfo:
         Returns:
             Tuple of (cpu_model, cpu_cores, cpu_threads)
         """
-        cpu_model = "Unknown"
-        cpu_cores = "Unknown"
-        cpu_threads = "Unknown"
-
         try:
             if self.os_type == "Darwin":
-                # macOS
-                cpu_model = self._run_command(["sysctl", "-n", "machdep.cpu.brand_string"])
-                cpu_cores = self._run_command(["sysctl", "-n", "hw.physicalcpu"])
-                cpu_threads = self._run_command(["sysctl", "-n", "hw.logicalcpu"])
+                return self._get_cpu_info_darwin()
+            if self.os_type == "Linux":
+                return self._get_cpu_info_linux()
+            if self.os_type == "Windows":
+                return self._get_cpu_info_windows()
+        except Exception as e:
+            logger.debug("Failed to get CPU info for OS %s: %s", self.os_type, e)
 
-            elif self.os_type == "Linux":
-                # Linux
-                # Try lscpu first for model name
-                if shutil.which("lscpu"):
-                    try:
-                        lscpu_output = self._run_command(["lscpu"])
-                        for line in lscpu_output.split("\n"):
-                            if "Model name:" in line or "Model:" in line:
-                                cpu_model = line.split(":", 1)[1].strip()
-                                break
-                    except (subprocess.CalledProcessError, IndexError):
-                        pass
+        return "Unknown", "Unknown", "Unknown"
 
-                # Fallback to /proc/cpuinfo
-                if cpu_model == "Unknown":
-                    try:
-                        with open("/proc/cpuinfo") as f:
-                            for line in f:
-                                if line.startswith(("model name", "Processor")):
-                                    cpu_model = line.split(":", 1)[1].strip()
-                                    break
-                    except (FileNotFoundError, PermissionError):
-                        pass
+    def _get_cpu_info_darwin(self) -> tuple[str, str, str]:
+        """
+        Get CPU information on macOS using sysctl.
 
-                # CPU cores - try lscpu approach
-                if shutil.which("lscpu"):
-                    try:
-                        lscpu_output = self._run_command(["lscpu"])
-                        cores_per_socket = None
-                        sockets = None
-                        for line in lscpu_output.split("\n"):
-                            if "Core(s) per socket:" in line:
-                                cores_per_socket = int(line.split(":")[1].strip())
-                            elif "Socket(s):" in line:
-                                sockets = int(line.split(":")[1].strip())
+        Returns:
+            Tuple of (cpu_model, cpu_cores, cpu_threads)
+        """
+        cpu_model = self._run_command(["sysctl", "-n", "machdep.cpu.brand_string"])
+        cpu_cores = self._run_command(["sysctl", "-n", "hw.physicalcpu"])
+        cpu_threads = self._run_command(["sysctl", "-n", "hw.logicalcpu"])
+        return cpu_model, cpu_cores, cpu_threads
 
-                        if cores_per_socket and sockets:
-                            cpu_cores = str(cores_per_socket * sockets)
-                    except (subprocess.CalledProcessError, ValueError, IndexError):
-                        pass
+    def _get_cpu_info_linux(self) -> tuple[str, str, str]:
+        """
+        Get CPU information on Linux using various methods.
 
-                # CPU threads - multiple fallback methods
-                if shutil.which("nproc"):
-                    with contextlib.suppress(subprocess.CalledProcessError):
-                        cpu_threads = self._run_command(["nproc"])
-                elif shutil.which("getconf"):
-                    with contextlib.suppress(subprocess.CalledProcessError):
-                        cpu_threads = self._run_command(["getconf", "_NPROCESSORS_ONLN"])
-                else:
-                    # Fallback to /proc/cpuinfo
-                    try:
-                        with open("/proc/cpuinfo") as f:
-                            processor_count = sum(1 for line in f if line.startswith("processor"))
-                            cpu_threads = str(processor_count)
-                    except (FileNotFoundError, PermissionError):
-                        pass
+        Returns:
+            Tuple of (cpu_model, cpu_cores, cpu_threads)
+        """
+        cpu_model = self._get_linux_cpu_model()
+        cpu_cores = self._get_linux_cpu_cores()
+        cpu_threads = self._get_linux_cpu_threads()
+        return cpu_model, cpu_cores, cpu_threads
 
-            elif self.os_type == "Windows":
-                # Windows - Use PowerShell/WMI
-                try:
-                    # Try pwsh first, then powershell
-                    ps_cmd = "pwsh" if shutil.which("pwsh") else "powershell"
-                    if shutil.which(ps_cmd):
-                        # Get CPU info
-                        cpu_model = self._run_command(
-                            [ps_cmd, "-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).Name"]
-                        ).strip()
+    def _get_linux_cpu_model(self) -> str:
+        """
+        Get CPU model name on Linux.
 
-                        cpu_cores = self._run_command(
-                            [
-                                ps_cmd,
-                                "-NoProfile",
-                                "-NonInteractive",
-                                "-Command",
-                                "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfCores",
-                            ]
-                        ).strip()
+        Returns:
+            CPU model name or "Unknown"
+        """
+        # Try lscpu first
+        if shutil.which("lscpu"):
+            try:
+                lscpu_output = self._run_command(["lscpu"])
+                for line in lscpu_output.split("\n"):
+                    if "Model name:" in line or "Model:" in line:
+                        return line.split(":", 1)[1].strip()
+            except (subprocess.CalledProcessError, IndexError):
+                pass
 
-                        cpu_threads = self._run_command(
-                            [
-                                ps_cmd,
-                                "-NoProfile",
-                                "-NonInteractive",
-                                "-Command",
-                                "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfLogicalProcessors",
-                            ]
-                        ).strip()
-                except subprocess.CalledProcessError:
-                    pass
-
-        except Exception:
+        # Fallback to /proc/cpuinfo
+        try:
+            with open("/proc/cpuinfo") as f:
+                for line in f:
+                    if line.startswith(("model name", "Processor")):
+                        return line.split(":", 1)[1].strip()
+        except (FileNotFoundError, PermissionError):
             pass
 
-        return cpu_model, cpu_cores, cpu_threads
+        return "Unknown"
+
+    def _get_linux_cpu_cores(self) -> str:
+        """
+        Get CPU core count on Linux.
+
+        Returns:
+            CPU core count or "Unknown"
+        """
+        if not shutil.which("lscpu"):
+            return "Unknown"
+
+        try:
+            lscpu_output = self._run_command(["lscpu"])
+            cores_per_socket = None
+            sockets = None
+
+            for line in lscpu_output.split("\n"):
+                if "Core(s) per socket:" in line:
+                    cores_per_socket = int(line.split(":")[1].strip())
+                elif "Socket(s):" in line:
+                    sockets = int(line.split(":")[1].strip())
+
+            if cores_per_socket and sockets:
+                return str(cores_per_socket * sockets)
+        except (subprocess.CalledProcessError, ValueError, IndexError):
+            pass
+
+        return "Unknown"
+
+    def _get_linux_cpu_threads(self) -> str:
+        """
+        Get CPU thread count on Linux.
+
+        Returns:
+            CPU thread count or "Unknown"
+        """
+        # Try nproc first
+        if shutil.which("nproc"):
+            with contextlib.suppress(subprocess.CalledProcessError):
+                return self._run_command(["nproc"])
+
+        # Try getconf
+        if shutil.which("getconf"):
+            with contextlib.suppress(subprocess.CalledProcessError):
+                return self._run_command(["getconf", "_NPROCESSORS_ONLN"])
+
+        # Fallback to /proc/cpuinfo
+        try:
+            with open("/proc/cpuinfo") as f:
+                processor_count = sum(1 for line in f if line.startswith("processor"))
+                return str(processor_count)
+        except (FileNotFoundError, PermissionError):
+            pass
+
+        return "Unknown"
+
+    def _get_cpu_info_windows(self) -> tuple[str, str, str]:
+        """
+        Get CPU information on Windows using PowerShell/WMI.
+
+        Returns:
+            Tuple of (cpu_model, cpu_cores, cpu_threads)
+        """
+        # Try pwsh first, then powershell
+        ps_cmd = "pwsh" if shutil.which("pwsh") else "powershell"
+        if not shutil.which(ps_cmd):
+            return "Unknown", "Unknown", "Unknown"
+
+        try:
+            cpu_model = self._get_windows_cpu_model(ps_cmd)
+            cpu_cores = self._get_windows_cpu_cores(ps_cmd)
+            cpu_threads = self._get_windows_cpu_threads(ps_cmd)
+            return cpu_model, cpu_cores, cpu_threads
+        except subprocess.CalledProcessError:
+            return "Unknown", "Unknown", "Unknown"
+
+    def _get_windows_cpu_model(self, ps_cmd: str) -> str:
+        """
+        Get CPU model on Windows.
+
+        Args:
+            ps_cmd: PowerShell command to use
+
+        Returns:
+            CPU model name
+        """
+        return self._run_command(
+            [ps_cmd, "-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).Name"]
+        ).strip()
+
+    def _get_windows_cpu_cores(self, ps_cmd: str) -> str:
+        """
+        Get CPU core count on Windows.
+
+        Args:
+            ps_cmd: PowerShell command to use
+
+        Returns:
+            CPU core count
+        """
+        return self._run_command(
+            [ps_cmd, "-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfCores"]
+        ).strip()
+
+    def _get_windows_cpu_threads(self, ps_cmd: str) -> str:
+        """
+        Get CPU thread count on Windows.
+
+        Args:
+            ps_cmd: PowerShell command to use
+
+        Returns:
+            CPU thread count
+        """
+        return self._run_command(
+            [
+                ps_cmd,
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfLogicalProcessors",
+            ]
+        ).strip()
 
     def get_memory_info(self) -> str:
         """
@@ -185,8 +270,8 @@ class HardwareInfo:
                     except subprocess.CalledProcessError:
                         pass
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to get memory info for OS %s: %s", self.os_type, e)
 
         return "Unknown"
 
@@ -210,10 +295,10 @@ class HardwareInfo:
                     if line.startswith("host:"):
                         rust_target = line.split(":", 1)[1].strip()
                         break
-        except subprocess.CalledProcessError:
-            pass
-        except Exception:
-            pass
+        except subprocess.CalledProcessError as e:
+            logger.debug("rustc command failed: %s", e)
+        except Exception as e:
+            logger.debug("Failed to get Rust info: %s", e)
 
         return rust_version, rust_target
 

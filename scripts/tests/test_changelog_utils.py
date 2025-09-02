@@ -7,7 +7,6 @@ error handling, and changelog generation workflows.
 
 import json
 import shutil
-import subprocess
 
 # Import the module under test
 import sys
@@ -19,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 
 from changelog_utils import ChangelogError, ChangelogUtils, GitRepoError, VersionError
+from subprocess_utils import run_git_command
 
 
 class TestChangelogUtils:
@@ -251,14 +251,14 @@ class TestChangelogUtilsWithGitOperations:
         os.chdir(self.temp_dir)
 
         # Initialize git repo with initial commit
-        subprocess.run(["git", "init"], check=True, capture_output=True)  # noqa: S607
-        subprocess.run(["git", "config", "user.name", "Test User"], check=True)  # noqa: S607
-        subprocess.run(["git", "config", "user.email", "test@example.com"], check=True)  # noqa: S607
+        run_git_command(["init"])
+        run_git_command(["config", "user.name", "Test User"])
+        run_git_command(["config", "user.email", "test@example.com"])
 
         # Create initial commit
         Path("README.md").write_text("# Test Repo\n")
-        subprocess.run(["git", "add", "README.md"], check=True)  # noqa: S607
-        subprocess.run(["git", "commit", "-m", "Initial commit"], check=True)  # noqa: S607
+        run_git_command(["add", "README.md"])
+        run_git_command(["commit", "-m", "Initial commit"])
 
     def teardown_method(self, method):  # noqa: ARG002
         """Clean up temporary git repository."""
@@ -274,14 +274,14 @@ class TestChangelogUtilsWithGitOperations:
 
         try:
             # Verify tag doesn't exist initially
-            result = subprocess.run(["git", "tag", "-l", test_tag], check=False, capture_output=True, text=True)  # noqa: S603, S607
+            result = run_git_command(["tag", "-l", test_tag], check=False)
             assert result.stdout.strip() == ""
 
             # Create temporary tag
-            subprocess.run(["git", "tag", "-a", test_tag, "-m", "Test tag"], check=True)  # noqa: S603, S607
+            run_git_command(["tag", "-a", test_tag, "-m", "Test tag"])
 
             # Verify tag exists
-            result = subprocess.run(["git", "tag", "-l", test_tag], check=False, capture_output=True, text=True)  # noqa: S603, S607
+            result = run_git_command(["tag", "-l", test_tag], check=False)
             assert result.stdout.strip() == test_tag
 
             # Test tag validation would work
@@ -289,10 +289,10 @@ class TestChangelogUtilsWithGitOperations:
 
         finally:
             # Clean up - delete the temporary tag
-            subprocess.run(["git", "tag", "-d", test_tag], check=True, capture_output=True)  # noqa: S603, S607
+            run_git_command(["tag", "-d", test_tag])
 
             # Verify tag is deleted
-            result = subprocess.run(["git", "tag", "-l", test_tag], check=False, capture_output=True, text=True)  # noqa: S603, S607
+            result = run_git_command(["tag", "-l", test_tag], check=False)
             assert result.stdout.strip() == ""
 
     def test_git_repository_url_normalization(self):
@@ -306,7 +306,7 @@ class TestChangelogUtilsWithGitOperations:
 
         for input_url, expected_url in test_cases:
             # Add a test remote
-            subprocess.run(["git", "remote", "add", "test-origin", input_url], check=True, capture_output=True)  # noqa: S603, S607
+            run_git_command(["remote", "add", "test-origin", input_url])
 
             try:
                 # Mock the get_git_remote_url to return our test URL
@@ -315,7 +315,7 @@ class TestChangelogUtilsWithGitOperations:
                     assert result == expected_url, f"Failed for URL: {input_url!r}"
             finally:
                 # Clean up remote
-                subprocess.run(["git", "remote", "remove", "test-origin"], check=True, capture_output=True)  # noqa: S607
+                run_git_command(["remote", "remove", "test-origin"])
 
     def test_commit_processing_with_test_commits(self):
         """Test commit processing with specially crafted test commits."""
@@ -324,12 +324,12 @@ class TestChangelogUtilsWithGitOperations:
         test_file = Path("test.txt")
         test_file.write_text(test_content)
 
-        subprocess.run(["git", "add", "test.txt"], check=True)  # noqa: S607
+        run_git_command(["add", "test.txt"])
         commit_msg = "feat: Add *special* formatting and _emphasis_ with `code`"
-        subprocess.run(["git", "commit", "-m", commit_msg], check=True)  # noqa: S603, S607
+        run_git_command(["commit", "-m", commit_msg])
 
         # Get the commit SHA to verify git operations work
-        subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True)  # noqa: S607
+        run_git_command(["rev-parse", "HEAD"])
 
         # Test that markdown escaping would work on this commit
         escaped_title = ChangelogUtils.escape_markdown(commit_msg)

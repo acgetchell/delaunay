@@ -57,9 +57,9 @@ ignore = [
     "ISC001",  # Implicitly concatenated string literals (conflicts with formatter)
     
     # CLI script patterns - these are appropriate design choices for command-line tools
-    "PLR0912", # Too many branches - natural for CLI argument parsing and workflow logic
+    # "PLR0912" - Re-enabled: Too many branches - now enforced to maintain code quality
     # "PLR0913" - Re-enabled: Too many arguments - catch constructor complexity issues
-    "PLR0915", # Too many statements - expected for main functions doing complex workflows
+    # "PLR0915" - Re-enabled: Too many statements - now enforced after refactoring complex methods
     "PLR2004", # Magic value used in comparison - acceptable for CLI constants and thresholds
     "FBT001",  # Boolean-typed positional argument - appropriate for CLI flag arguments
     "FBT002",  # Boolean default positional argument - standard CLI pattern
@@ -73,7 +73,7 @@ ignore = [
     "ARG001",  # Unused function argument - common in signal handlers and callback functions
     "ERA001",  # Found commented-out code - acceptable for explanatory comments in CLI tools
     "EXE001",  # Shebang is present but file is not executable - handled by packaging/deployment
-    "S110",    # try-except-pass detected - acceptable for graceful degradation in CLI tools
+    # "S110" - Re-enabled: try-except-pass detected - now enforced to improve error handling
     "PTH123",  # open() should be replaced by Path.open() - acceptable for system file access
     "N806",    # Variable in function should be lowercase - acceptable for constants and ANSI color codes
     "F841",    # Local variable assigned but never used - acceptable for color constants in CLI scripts
@@ -91,38 +91,8 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
 
-[tool.pylint.format]
-max-line-length = 160
-
-[tool.pylint.messages_control]
-disable = [
-    "too-few-public-methods",
-    # CLI script patterns - these are appropriate design choices for CLI tools
-    "too-many-branches",          # R0912 - Natural for CLI argument parsing and error handling
-    "too-many-statements",        # R0915 - Expected for main functions doing complex workflows
-    "too-many-locals",            # R0914 - Common in scripts with multiple processing steps
-    "too-many-nested-blocks",     # R1702 - Expected for error handling and validation
-    "import-outside-toplevel",    # C0415 - Acceptable for CLI scripts to reduce startup time
-    "broad-exception-caught",     # W0718 - Intentional defensive programming for CLI robustness
-    "too-many-instance-attributes", # R0902 - Data structures in CLI scripts can be complex
-    # "too-many-arguments" - Re-enabled: R0913 - Catch constructor complexity issues
-    "too-many-positional-arguments", # R0917 - CLI functions often use positional args
-    "invalid-name",               # C0103 - ANSI color constants use ALL_CAPS convention
-    "consider-using-with",        # R1732 - subprocess.Popen patterns in CLI scripts
-    "unused-variable",            # W0612 - Color constants may not all be used
-    "redefined-outer-name",       # W0621 - Local imports for CLI script organization
-    "reimported",                 # W0404 - Local imports for CLI startup optimization
-    "unused-argument",            # W0613 - Signal handlers require specific signatures
-    "unspecified-encoding",       # W1514 - System files may use default encoding
-    "unsupported-binary-operation", # E1131 - Keep for edge cases with complex type expressions
-    "unsubscriptable-object",     # E1136 - False positives with union types checked with control flow
-]
-
-[tool.pylint.design]
-max-args = 5  # Reduced from 8 to catch parameter complexity issues earlier
-max-locals = 20
-max-branches = 15
-max-statements = 60
+# Pylint configuration removed - now using ruff exclusively for Python linting
+# Ruff provides faster, more comprehensive linting with better maintenance
 
 [tool.pytest.ini_options]
 minversion = "8.0"
@@ -139,7 +109,6 @@ python_functions = ["test_*"]
 
 [dependency-groups]
 dev = [
-    "pylint>=3.3.8",
     "pytest>=8.0.0",
     "ruff>=0.12.11",
 ]

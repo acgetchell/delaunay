@@ -33,7 +33,7 @@ reviews:
       instructions: |
         These are Python utility scripts for changelog and commit processing.
         Focus on code quality, maintainability, and adherence to Python best practices.
-        The scripts should maintain high pylint scores.
+        The scripts use ruff for comprehensive linting and formatting (pylint has been retired).
   abort_on_close: true
   disable_cache: false
   auto_review:
@@ -110,11 +110,12 @@ reviews:
     semgrep:
       enabled: true
 
-    # Python linters (enabled for scripts/enhance_commits.py)
+    # Python linter (ruff provides comprehensive Python analysis)
     ruff:
       enabled: true
+    # Note: pylint has been retired project-wide in favor of ruff
     pylint:
-      enabled: true
+      enabled: false
 
     # Disabled tools
     flake8:

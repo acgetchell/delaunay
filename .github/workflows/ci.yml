@@ -81,8 +81,7 @@ jobs:
           # Lint check with ruff (non-blocking for now)
           uvx ruff check scripts/ || echo "Python linting issues found"
 
-          # Additional linting with pylint (non-blocking for now)
-          uvx pylint scripts/ || echo "Pylint issues found"
+          # Note: Pylint retired in favor of comprehensive ruff linting
 
       - name: Install shellcheck and shfmt
         if: matrix.os == 'ubuntu-latest'

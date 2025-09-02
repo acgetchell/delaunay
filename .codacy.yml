@@ -19,8 +19,8 @@ engines:
       # Use configuration from pyproject.toml
       file: "pyproject.toml"
 
-  # Note: pylint is disabled because Codacy's implementation doesn't properly read pyproject.toml
-  # and ruff provides superior Python analysis with full pyproject.toml support
+  # Note: pylint has been retired project-wide in favor of ruff
+  # Ruff provides faster, more comprehensive Python analysis with excellent pyproject.toml support
 
   # Bandit for Python security analysis
   bandit:

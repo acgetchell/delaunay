@@ -15,7 +15,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import UTC, datetime  # pylint: disable=no-name-in-module
+from datetime import UTC, datetime
 from pathlib import Path
 
 from hardware_utils import HardwareComparator, HardwareInfo
