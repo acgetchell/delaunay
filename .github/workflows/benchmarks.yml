@@ -229,7 +229,7 @@ jobs:
           run-id: ${{ steps.find_baseline.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract baseline from artifact
+      - name: Prepare baseline for comparison
         if: steps.find_baseline.outputs.found == 'true'
         shell: bash
         env:
@@ -238,9 +238,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -f "baseline-artifact/baseline_results.txt" ]]; then
-            echo "📦 Extracted baseline from artifact for release ${RELEASE_TAG:-unknown}"
-            mkdir -p "benches"
-            cp "baseline-artifact/baseline_results.txt" "benches/baseline_results.txt"
+            echo "📦 Prepared baseline from artifact for release ${RELEASE_TAG:-unknown}"
             echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
             echo "BASELINE_SOURCE=artifact" >> "$GITHUB_ENV"
             echo "BASELINE_ORIGIN=${SOURCE_TYPE:-unknown}" >> "$GITHUB_ENV"
@@ -250,7 +248,7 @@ jobs:
 
             # Show baseline metadata
             echo "=== Baseline Information (from artifact) ==="
-            head -n 3 benches/baseline_results.txt
+            head -n 3 baseline-artifact/baseline_results.txt
           else
             echo "❌ Downloaded artifact but no baseline_results.txt found"
             echo "BASELINE_EXISTS=false" >> "$GITHUB_ENV"
@@ -272,7 +270,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bc_sha="$(grep "^Git commit:" benches/baseline_results.txt | awk '{print $3}' || true)"
+          bc_sha="$(grep "^Git commit:" baseline-artifact/baseline_results.txt | awk '{print $3}' || true)"
           if [[ -n "$bc_sha" && "$bc_sha" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
             echo "BASELINE_COMMIT=$bc_sha" >> "$GITHUB_ENV"
           else
@@ -344,10 +342,10 @@ jobs:
           # This will exit with code 1 if significant regressions are found
           echo "   Using full comparison mode against ${BASELINE_ORIGIN:-unknown} baseline"
           if uv run benchmark-utils --help >/dev/null 2>&1; then
-            uv run benchmark-utils compare --baseline benches/baseline_results.txt
+            uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
           elif uv run python -c "import importlib; importlib.import_module('scripts.benchmark_utils')" \
                >/dev/null 2>&1; then
-            uv run python -m scripts.benchmark_utils compare --baseline benches/baseline_results.txt
+            uv run python -m scripts.benchmark_utils compare --baseline baseline-artifact/baseline_results.txt
           else
             echo "❌ benchmark-utils entrypoint and module not found" >&2
             exit 2

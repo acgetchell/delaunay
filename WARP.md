@@ -41,6 +41,14 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **PREFERRED** over manual import cleanup - let ruff handle it automatically
 - **FOLLOW UP** with `uvx ruff format scripts/` and `uv run pytest` to ensure correctness
 
+#### Shell Script Formatting (AI Assistant Guidance)
+
+- **ALWAYS** run `shfmt` to format shell scripts after editing them
+- **REQUIRED**: Use `shfmt -w scripts/*.sh` to format in-place with tab indentation (default)
+- **LINT**: Use `shellcheck scripts/*.sh` to check for common shell scripting issues
+- **CI CRITICAL**: Shell script formatting failures will cause CI to fail - shfmt expects consistent tab indentation
+- **EXAMPLES**: `find scripts -type f -name '*.sh' -exec shfmt -w {} +` formats all shell scripts
+
 ### Python Scripts
 
 - **ALWAYS** use `uv run` when executing Python scripts in this project
@@ -49,11 +57,21 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - Examples: `uv run changelog-utils generate`, `uv run benchmark-utils --help`
 - Note: If the `benchmark-utils` console script isn't available, use `uv run python -m scripts.benchmark_utils --help`
 
+#### Python Testing Framework
+
+- **ALWAYS** use pytest when writing new Python script tests
+- **PREFERRED** over unittest for better fixtures, parametrization, and assertion introspection
+- **EXAMPLES**: Test files should be named `test_*.py` and use pytest fixtures and assertions
+- **EXECUTION**: Use `uv run pytest` to run all Python tests with proper dependency management
+
 ## Essential AI Commands
 
 ### Code Quality Checks
 
 Run these commands after making changes to ensure code quality:
+
+**Note**: When asked to run code quality checks on "changed files", use `git status --porcelain` to identify which files have been
+modified, added, or staged, and focus the quality tools on those specific files.
 
 ```bash
 # Rust code formatting and linting
@@ -64,8 +82,12 @@ cargo clippy --all-targets --all-features -- -D warnings -D clippy::all -D clipp
 uvx ruff format scripts/
 uvx ruff check --fix scripts/
 
+# Shell script formatting and linting
+find scripts -type f -name '*.sh' -exec shfmt -w {} +
+find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck
+
 # Markdown linting
-npx markdownlint --fix "*.md" "examples/*.md" "tests/*.md" "scripts/*.md" "docs/*.md" ".github/*.md"
+npx markdownlint --fix "*.md" "examples/*.md" "tests/*.md" "scripts/*.md" "docs/*.md" "docs/templates/*.md" "benches/*.md" ".github/*.md"
 
 # Spell checking
 npx cspell --config cspell.json --no-progress --gitignore --cache "**/*"

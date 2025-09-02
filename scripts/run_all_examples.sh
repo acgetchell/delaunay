@@ -3,15 +3,15 @@ set -euo pipefail
 
 # Error handling function
 error_exit() {
- local message="$1"
- local code="${2:-1}"
- echo "ERROR: $message" >&2
- exit "$code"
+	local message="$1"
+	local code="${2:-1}"
+	echo "ERROR: $message" >&2
+	exit "$code"
 }
 
 # Help function
 show_help() {
- cat << EOF
+	cat <<EOF
 run_all_examples.sh - Run all examples in the delaunay project
 
 USAGE:
@@ -50,28 +50,28 @@ EOF
 
 # Parse command line arguments
 for arg in "$@"; do
- case $arg in
-  -h | --help)
-   show_help
-   exit 0
-   ;;
-  *)
-   error_exit "Unknown option: $arg. Use --help for usage information."
-   ;;
- esac
+	case $arg in
+	-h | --help)
+		show_help
+		exit 0
+		;;
+	*)
+		error_exit "Unknown option: $arg. Use --help for usage information."
+		;;
+	esac
 done
 
 # Dependency checking function
 check_dependencies() {
- # Array of required commands
- local required_commands=("cargo" "find" "sort")
+	# Array of required commands
+	local required_commands=("cargo" "find" "sort")
 
- # Check each required command
- for cmd in "${required_commands[@]}"; do
-  if ! command -v "$cmd" > /dev/null 2>&1; then
-   error_exit "$cmd is required but not found. Please install it to proceed."
-  fi
- done
+	# Check each required command
+	for cmd in "${required_commands[@]}"; do
+		if ! command -v "$cmd" >/dev/null 2>&1; then
+			error_exit "$cmd is required but not found. Please install it to proceed."
+		fi
+	done
 }
 
 # Run dependency checks
@@ -91,29 +91,29 @@ echo "=============================================="
 
 # Automatically discover all examples (deterministic order, GNU/BSD portable)
 all_examples=()
-if sort --version > /dev/null 2>&1; then
- # GNU sort available: use -z safely
- while IFS= read -r -d '' file; do
-  example_name=$(basename "$file" .rs)
-  all_examples+=("$example_name")
- done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print0 | sort -z)
+if sort --version >/dev/null 2>&1; then
+	# GNU sort available: use -z safely
+	while IFS= read -r -d '' file; do
+		example_name=$(basename "$file" .rs)
+		all_examples+=("$example_name")
+	done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print0 | sort -z)
 else
- # Fallback for BSD sort: tolerate spaces; filenames in repo should not contain newlines
- while IFS= read -r file; do
-  example_name=$(basename "$file" .rs)
-  all_examples+=("$example_name")
- done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print | LC_ALL=C sort)
+	# Fallback for BSD sort: tolerate spaces; filenames in repo should not contain newlines
+	while IFS= read -r file; do
+		example_name=$(basename "$file" .rs)
+		all_examples+=("$example_name")
+	done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print | LC_ALL=C sort)
 fi
 
 # Guard against zero discovered examples
 if [ ${#all_examples[@]} -eq 0 ]; then
- error_exit "No examples found under ${PROJECT_ROOT}/examples"
+	error_exit "No examples found under ${PROJECT_ROOT}/examples"
 fi
 
 # Run all examples
 for example in "${all_examples[@]}"; do
- echo "=== Running $example ==="
- cargo run --release --example "$example" || error_exit "Example $example failed!"
+	echo "=== Running $example ==="
+	cargo run --release --example "$example" || error_exit "Example $example failed!"
 done
 
 echo
