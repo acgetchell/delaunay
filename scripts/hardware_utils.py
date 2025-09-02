@@ -10,8 +10,10 @@ Replaces the bash-based hardware_info.sh with more maintainable Python code.
 
 import argparse
 import contextlib
+import json
 import logging
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -532,8 +534,6 @@ class HardwareComparator:
         """Extract numeric memory value from string like '16.0 GB'."""
         try:
             # Replace comma decimal separator with dot and extract first number
-            import re
-
             memory_clean = memory_str.replace(",", ".")
             match = re.search(r"([0-9]+(?:\.[0-9]+)?)", memory_clean)
             if match:
@@ -556,8 +556,6 @@ def main():
 
     if args.command == "info":
         if args.json:
-            import json
-
             info = hardware.get_hardware_info()
             print(json.dumps(info, indent=2))
         else:

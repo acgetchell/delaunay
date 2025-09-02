@@ -19,6 +19,13 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - This includes: `cargo fmt`, `cargo clippy`, `ruff format`, `ruff check --fix`, `markdownlint --fix`, `shfmt`, etc.
 - Quality tools improve code without changing functionality or version control state
 
+#### Import Organization (AI Assistant Guidance)
+
+- **ALWAYS** use `uvx ruff check --fix --select F401,F403,I001,I002 scripts/` to fix import issues
+- **AUTOMATICALLY** removes duplicate imports, unused imports, and organizes import order
+- **PREFERRED** over manual import cleanup - let ruff handle it automatically
+- **FOLLOW UP** with `uvx ruff format scripts/` and `uv run pytest` to ensure correctness
+
 ### Python Scripts
 
 - **ALWAYS** use `uv run` when executing Python scripts in this project
@@ -108,9 +115,13 @@ cargo clippy --all-targets --all-features -- -D warnings -D clippy::all -D clipp
 # Format Python code (PEP 8 compliance) - replaces autopep8
 uvx ruff format scripts/
 
-# Fix imports, remove unused code, and other auto-fixable issues - replaces isort + autoflake
+# Fix imports, remove unused code, organize imports, and other auto-fixable issues
+# Replaces isort + autoflake + import organization tools
 # Uses pyproject.toml configuration with CLI-appropriate ignore patterns
 uvx ruff check --fix scripts/
+
+# Alternative: Fix only import-related issues (organize, remove duplicates, fix unused)
+uvx ruff check --fix --select F401,F403,I001,I002 scripts/
 
 # Test Python utilities to ensure they still work correctly
 uv sync --group dev  # Install test dependencies

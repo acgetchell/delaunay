@@ -8,9 +8,15 @@ for changelog generation, parsing, and git tag management.
 Requires Python 3.13+ for modern typing features and datetime.UTC.
 """
 
+import argparse
 import json
+import os
 import re
+import shutil
+import signal
 import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -247,6 +253,8 @@ class ChangelogUtils:
         patterns = [
             r"^git@github\.com:(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
             r"^ssh://git@github\.com[:/](?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
+            r"^ssh://github\.com[:/](?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
+            r"^git\+ssh://git@github\.com[:/](?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
             r"^https://github\.com/(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
             r"^http://github\.com/(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
             r"^git://github\.com/(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
@@ -272,18 +280,11 @@ class ChangelogUtils:
         Raises:
             ChangelogError: If project root cannot be determined
         """
-        current_dir = Path.cwd()
-
-        # Check if we're already in project root
-        if (current_dir / "CHANGELOG.md").exists():
-            return str(current_dir)
-
-        # Check if we're in scripts/ subdirectory
-        if (current_dir.parent / "CHANGELOG.md").exists():
-            return str(current_dir.parent)
-
-        msg = "Cannot determine project root. CHANGELOG.md not found in current or parent directory."
-        raise ChangelogError(msg)
+        try:
+            return str(Path(ChangelogUtils.find_changelog_path()).parent)
+        except ChangelogNotFoundError as e:
+            msg = "Cannot determine project root. CHANGELOG.md not found in current or parent directory."
+            raise ChangelogError(msg) from e
 
     @staticmethod
     def escape_version_for_regex(version: str) -> str:
@@ -309,8 +310,6 @@ class ChangelogUtils:
         Returns:
             Text with Markdown characters escaped
         """
-        import re
-
         # Escape minimal set we use in formatting
         return re.sub(r"([\\*_`\[\]])", r"\\\1", text)
 
@@ -352,8 +351,6 @@ class ChangelogUtils:
         Returns:
             List of wrapped lines
         """
-        import textwrap
-
         if not text.strip():
             return []
 
@@ -434,7 +431,10 @@ class ChangelogUtils:
         content_lines = []
 
         # Skip the first line (PR title) and empty lines at start
+        trailer_re = re.compile(r"^\s*(Co-authored-by|Signed-off-by|Change-Id|Reviewed-on|Reviewed-by|Refs|See-Also):", re.I)
         for line in lines[1:]:
+            if trailer_re.match(line):
+                continue
             if line.strip() or content_lines:
                 content_lines.append(line)
 
@@ -595,12 +595,13 @@ class ChangelogUtils:
             return result.stdout.strip(), result.returncode
         except subprocess.CalledProcessError as e:
             if check:
-                msg = f"Git command failed: git {' '.join(args)}: {e.stderr}"
+                err = (e.stderr or e.stdout or str(e)).strip()
+                msg = f"Git command failed: git {' '.join(args)}: {err}"
                 raise GitRepoError(msg) from e
             return e.stdout.strip() if hasattr(e, "stdout") and e.stdout else "", e.returncode
         except Exception as exc:
             if check:
-                msg = f"Git command failed: {exc}"
+                msg = f"Git command failed: git {' '.join(args)}: {exc}"
                 raise GitRepoError(msg) from exc
             return "", 1
 
@@ -651,8 +652,6 @@ class ChangelogUtils:
             ChangelogError: If tag exists and force_recreate is False
             GitRepoError: If git operations fail
         """
-        import sys
-
         YELLOW = "\033[1;33m"
         BLUE = "\033[0;34m"
         NC = "\033[0m"
@@ -702,8 +701,6 @@ class ChangelogUtils:
         """
         Check git user configuration and warn if not set.
         """
-        import sys
-
         YELLOW = "\033[1;33m"
         NC = "\033[0m"
 
@@ -733,9 +730,7 @@ class ChangelogUtils:
         try:
             from subprocess_utils import run_git_command_with_input
 
-            # Validate tag version format
-            if not re.match(r"^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$", tag_version):
-                raise ValueError(f"Invalid tag version format: {tag_version}")
+            # Tag format already validated by validate_semver(); no second check needed
 
             # Use secure wrapper for git command with stdin input
             run_git_command_with_input(["tag", "-a", tag_version, "-F", "-"], input_data=tag_message)
@@ -770,8 +765,6 @@ def main() -> None:
     This provides a Python replacement for generate_changelog.sh with the same
     functionality but better error handling and cross-platform support.
     """
-    import signal
-    import sys
 
     def signal_handler(signum, frame):
         """Handle interrupt signals gracefully."""
@@ -803,15 +796,11 @@ def main() -> None:
 
 def _is_tag_command() -> bool:
     """Check if the command is a tag operation."""
-    import sys
-
     return len(sys.argv) > 1 and sys.argv[1] == "tag"
 
 
 def _handle_tag_command() -> None:
     """Handle tag subcommand."""
-    import sys
-
     if len(sys.argv) < 3:
         print("Error: tag command requires a version argument", file=sys.stderr)
         print("Usage: changelog-utils tag <version> [--force]", file=sys.stderr)
@@ -829,9 +818,6 @@ def _handle_tag_command() -> None:
 
 def _parse_generate_args():
     """Parse command line arguments for generate command."""
-    import argparse
-    import sys
-
     parser = argparse.ArgumentParser(
         description="Generate enhanced changelog with AI commit processing",
         add_help=False,  # We'll handle help ourselves
@@ -849,8 +835,6 @@ def _parse_generate_args():
     try:
         return parser.parse_args(args_to_parse)
     except SystemExit:
-        import sys
-
         sys.exit(0)
 
 
@@ -895,8 +879,6 @@ def _show_version() -> None:
 
 def _execute_changelog_generation(debug_mode: bool) -> None:
     """Execute the main changelog generation workflow."""
-    import os
-
     # Initialize file paths
     file_paths = _initialize_file_paths()
 
@@ -934,8 +916,6 @@ def _execute_changelog_generation(debug_mode: bool) -> None:
 
 def _initialize_file_paths() -> dict[str, Path]:
     """Initialize file paths for changelog processing."""
-    from pathlib import Path
-
     changelog_file = Path("CHANGELOG.md")
     return {
         "changelog": changelog_file,
@@ -949,9 +929,6 @@ def _initialize_file_paths() -> dict[str, Path]:
 
 def _setup_project_environment() -> tuple[Path, Path]:
     """Setup project environment and return project root and original cwd."""
-    import os
-    from pathlib import Path
-
     project_root = Path(ChangelogUtils.get_project_root())
     original_cwd = Path.cwd()
     os.chdir(project_root)
@@ -961,10 +938,6 @@ def _setup_project_environment() -> tuple[Path, Path]:
 
 def _validate_prerequisites() -> None:
     """Validate git repository and required tools."""
-    import shutil
-    import sys
-    from pathlib import Path
-
     ChangelogUtils.validate_git_repo()
     ChangelogUtils.check_git_history()
 
@@ -1000,32 +973,30 @@ def _get_repository_url() -> str:
 
 def _backup_existing_changelog(file_paths: dict[str, Path]) -> None:
     """Backup existing changelog if it exists."""
-    import shutil
-
     if file_paths["changelog"].exists():
         shutil.copy2(file_paths["changelog"], file_paths["backup"])
 
 
 def _run_auto_changelog(file_paths: dict[str, Path], project_root: Path) -> None:
     """Run auto-changelog to generate initial changelog."""
-    import subprocess
-    import sys
-
     try:
         result = run_safe_command("npx", ["--yes", "-p", "auto-changelog", "auto-changelog", "--stdout"], cwd=project_root)
         file_paths["temp"].write_text(result.stdout, encoding="utf-8")
     except subprocess.CalledProcessError as e:
         if e.stderr:
-            pass
+            print(e.stderr, file=sys.stderr)
+        print("Error: auto-changelog failed.", file=sys.stderr)
         sys.exit(1)
 
 
 def _post_process_dates(file_paths: dict[str, Path]) -> None:
     """Post-process dates from ISO format to YYYY-MM-DD."""
-    import re
-
     content = file_paths["temp"].read_text(encoding="utf-8")
-    processed_content = re.sub(r"T[0-9]{2}:[0-9]{2}:[0-9]{2}.*?Z", "", content)
+    processed_content = re.sub(
+        r"T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+        "",
+        content,
+    )
     file_paths["processed"].write_text(processed_content, encoding="utf-8")
 
 
@@ -1036,9 +1007,6 @@ def _expand_squashed_commits(file_paths: dict[str, Path], repo_url: str) -> None
 
 def _enhance_with_ai(file_paths: dict[str, Path], project_root: Path) -> None:
     """Enhance commits with AI categorization."""
-    import sys
-    from pathlib import Path
-
     script_dir = Path(__file__).parent
     enhance_script = script_dir / "enhance_commits.py"
 
@@ -1100,9 +1068,6 @@ def _show_success_message(file_paths: dict[str, Path]) -> None:
 
 def _restore_backup_and_exit(file_paths: dict[str, Path]) -> None:
     """Restore backup file and exit with error."""
-    import shutil
-    import sys
-
     if file_paths["backup"].exists():
         shutil.copy2(file_paths["backup"], file_paths["changelog"])
         file_paths["backup"].unlink()

@@ -15,7 +15,7 @@ on:
 # Security: Define minimal required permissions
 permissions:
   contents: read
-  actions: write  # Needed to upload artifacts
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -49,20 +49,15 @@ jobs:
 
       - name: Determine tag information
         id: tag_info
-        env:
-          SAFE_REF_TYPE: ${{ github.ref_type }}
-          SAFE_REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "$SAFE_REF_TYPE" == "tag" ]]; then
-            # Tag push trigger
-            TAG_NAME="$SAFE_REF_NAME"
+          if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
             echo "Using push tag: $TAG_NAME"
           else
-            # Fallback for manual dispatch
             TAG_NAME="manual-$(date -u +%Y%m%d-%H%M%S)"
             echo "Using generated tag name: $TAG_NAME"
           fi
-
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "Final tag name: $TAG_NAME"
 

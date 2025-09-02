@@ -6,6 +6,7 @@ error handling, and changelog generation workflows.
 """
 
 import json
+import os
 import shutil
 
 # Import the module under test
@@ -187,49 +188,33 @@ class TestChangelogUtils:
             result = ChangelogUtils.escape_version_for_regex(version)
             assert result == expected, f"Failed for version: {version!r}"
 
-    @patch("pathlib.Path.cwd")
-    def test_get_project_root_current_dir(self, mock_cwd):
+    @patch("changelog_utils.ChangelogUtils.find_changelog_path")
+    def test_get_project_root_current_dir(self, mock_find_changelog):
         """Test project root detection when in project root."""
-        mock_dir = MagicMock()
-        mock_cwd.return_value = mock_dir
-
-        # Mock CHANGELOG.md exists in current directory
-        changelog_path = MagicMock()
-        changelog_path.exists.return_value = True
-        mock_dir.__truediv__.return_value = changelog_path
+        # Mock find_changelog_path to return a path in current directory
+        mock_changelog_path = "/test/project/CHANGELOG.md"
+        mock_find_changelog.return_value = mock_changelog_path
 
         result = ChangelogUtils.get_project_root()
-        assert result == str(mock_dir)
+        assert result == "/test/project"
 
-    @patch("pathlib.Path.cwd")
-    def test_get_project_root_parent_dir(self, mock_cwd):
+    @patch("changelog_utils.ChangelogUtils.find_changelog_path")
+    def test_get_project_root_parent_dir(self, mock_find_changelog):
         """Test project root detection when in subdirectory."""
-        mock_dir = MagicMock()
-        mock_cwd.return_value = mock_dir
-
-        # Mock CHANGELOG.md doesn't exist in current dir but exists in parent
-        changelog_current = MagicMock()
-        changelog_current.exists.return_value = False
-        changelog_parent = MagicMock()
-        changelog_parent.exists.return_value = True
-
-        mock_dir.__truediv__.return_value = changelog_current
-        mock_dir.parent.__truediv__.return_value = changelog_parent
+        # Mock find_changelog_path to return a path in parent directory
+        mock_changelog_path = "/test/project/CHANGELOG.md"
+        mock_find_changelog.return_value = mock_changelog_path
 
         result = ChangelogUtils.get_project_root()
-        assert result == str(mock_dir.parent)
+        assert result == "/test/project"
 
-    @patch("pathlib.Path.cwd")
-    def test_get_project_root_not_found(self, mock_cwd):
+    @patch("changelog_utils.ChangelogUtils.find_changelog_path")
+    def test_get_project_root_not_found(self, mock_find_changelog):
         """Test project root detection failure."""
-        mock_dir = MagicMock()
-        mock_cwd.return_value = mock_dir
+        # Mock find_changelog_path to raise ChangelogNotFoundError
+        from changelog_utils import ChangelogNotFoundError
 
-        # Mock CHANGELOG.md doesn't exist anywhere
-        changelog_mock = MagicMock()
-        changelog_mock.exists.return_value = False
-        mock_dir.__truediv__.return_value = changelog_mock
-        mock_dir.parent.__truediv__.return_value = changelog_mock
+        mock_find_changelog.side_effect = ChangelogNotFoundError("CHANGELOG.md not found")
 
         with pytest.raises(ChangelogError) as cm:
             ChangelogUtils.get_project_root()
@@ -246,8 +231,6 @@ class TestChangelogUtilsWithGitOperations:
         self.original_cwd = Path.cwd()
 
         # Change to temp directory and initialize git repo
-        import os
-
         os.chdir(self.temp_dir)
 
         # Initialize git repo with initial commit
@@ -262,8 +245,6 @@ class TestChangelogUtilsWithGitOperations:
 
     def teardown_method(self, method):  # noqa: ARG002
         """Clean up temporary git repository."""
-        import os
-
         os.chdir(self.original_cwd)
         if self.temp_dir:
             shutil.rmtree(self.temp_dir, ignore_errors=True)

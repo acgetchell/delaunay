@@ -51,6 +51,8 @@ src = ["scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "YTT", "S", "BLE", "FBT", "B", "A", "COM", "C4", "DTZ", "T10", "EM", "EXE", "ISC", "ICN", "G", "INP", "PIE", "T20", "PYI", "PT", "Q", "RSE", "RET", "SLF", "SIM", "TID", "TCH", "ARG", "PTH", "ERA", "PD", "PGH", "PL", "TRY", "NPY", "RUF"]
+fixable = ["ALL"]
+unfixable = []
 ignore = [
     # Formatter conflicts
     "COM812",  # Trailing comma missing (conflicts with formatter)
@@ -84,6 +86,13 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/test_*.py" = ["S101"]  # Allow assert statements in test files
+
+# Import sorting and organization configuration
+[tool.ruff.lint.isort]
+known-first-party = ["benchmark_utils", "changelog_utils", "enhance_commits", "hardware_utils", "subprocess_utils"]
+force-single-line = false
+split-on-trailing-comma = true
+# Organize imports: standard library, third-party, first-party, local
 
 [tool.ruff.format]
 quote-style = "double"
