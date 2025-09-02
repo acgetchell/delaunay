@@ -77,7 +77,7 @@ jobs:
             jq -c '.runs[]' results.sarif | while IFS= read -r run; do
               tool_name=$(echo "$run" | \
                 jq -r '.tool.driver.name' | \
-                tr '/' '_' | tr ' ' '_')
+                tr -cs '[:alnum:]_.-' '_' | sed 's/^_*//; s/_*$//')
               echo "Processing tool: $tool_name"
 
               # Create a proper SARIF file for this tool
@@ -98,8 +98,8 @@ jobs:
             # Ensure at least one SARIF file exists for upload
             # If no split files were created, use the original results.sarif
             if ! ls sarif_*.sarif &>/dev/null; then
-              echo "No split SARIF files found, using original results.sarif"
-              cp results.sarif sarif_codacy_results.sarif
+              echo "No split SARIF files found; preselecting results.sarif for upload"
+              echo "SARIF_FILE=results.sarif" >> "$GITHUB_ENV"
             fi
           else
             echo "No SARIF file found or file is empty"
@@ -120,6 +120,11 @@ jobs:
       - name: Upload SARIF files
         run: |
           set -euo pipefail
+          # Honor preselected SARIF_FILE from earlier steps (e.g., empty SARIF case)
+          if [ -n "${SARIF_FILE:-}" ]; then
+            echo "Preselected SARIF_FILE=$SARIF_FILE; not overriding."
+            exit 0
+          fi
           # First, try to upload the original results.sarif if it exists
           if [ -f "results.sarif" ] && [ -s "results.sarif" ]; then
             echo "Found results.sarif, attempting upload..."

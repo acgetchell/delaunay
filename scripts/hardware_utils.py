@@ -19,7 +19,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from subprocess_utils import run_safe_command
+try:
+    # When executed as a script from scripts/
+    from subprocess_utils import run_safe_command  # type: ignore[no-redef]
+except ModuleNotFoundError:
+    # When imported as a module (e.g., scripts.hardware_utils)
+    from scripts.subprocess_utils import run_safe_command  # type: ignore[no-redef]
 
 # Configure a module-level logger
 logger = logging.getLogger(__name__)
@@ -111,6 +116,23 @@ class HardwareInfo:
             CPU core count or "Unknown"
         """
         if not shutil.which("lscpu"):
+            # Fallback: parse physical core count from /proc/cpuinfo
+            try:
+                physical_cores: set[tuple[str, str]] = set()
+                with open("/proc/cpuinfo") as f:
+                    physical_id = core_id = None
+                    for line in f:
+                        if line.startswith("physical id"):
+                            physical_id = line.split(":", 1)[1].strip()
+                        elif line.startswith("core id"):
+                            core_id = line.split(":", 1)[1].strip()
+                        if physical_id is not None and core_id is not None:
+                            physical_cores.add((physical_id, core_id))
+                            physical_id = core_id = None
+                if physical_cores:
+                    return str(len(physical_cores))
+            except (FileNotFoundError, PermissionError, ValueError):
+                return "Unknown"
             return "Unknown"
 
         try:
@@ -354,7 +376,7 @@ class HardwareInfo:
 
 """
 
-    def _run_command(self, cmd: list) -> str:
+    def _run_command(self, cmd: list[str]) -> str:
         """
         Run a command and return its output using secure subprocess wrapper.
 
@@ -515,7 +537,7 @@ class HardwareComparator:
                 warnings_found = True
 
         if current_info["RUST"] != baseline_info["RUST"] and baseline_info["RUST"] != "Unknown":
-            report_lines.append("⚠️  Rust version differs: Performance may be affected by compiler changes")
+            report_lines.append(f"⚠️  Rust version differs: '{current_info['RUST']}' vs '{baseline_info['RUST']}' — performance may be affected")
             warnings_found = True
 
         if current_info["TARGET"] != baseline_info["TARGET"] and baseline_info["TARGET"] != "Unknown":
@@ -569,14 +591,16 @@ def main():
 
     elif args.command == "compare":
         if not args.baseline_file:
-            sys.exit(1)
+            print("error: --baseline-file is required for 'compare'", file=sys.stderr)
+            sys.exit(2)
 
         baseline_path = Path(args.baseline_file)
         if not baseline_path.exists():
-            sys.exit(1)
+            print(f"error: baseline file not found: {baseline_path}", file=sys.stderr)
+            sys.exit(2)
 
         try:
-            baseline_content = baseline_path.read_text()
+            baseline_content = baseline_path.read_text(encoding="utf-8", errors="replace")
             current_info = hardware.get_hardware_info()
             baseline_info = HardwareComparator.parse_baseline_hardware(baseline_content)
 
@@ -586,7 +610,8 @@ def main():
             # Exit with warning code if there are hardware differences
             sys.exit(1 if has_warnings else 0)
 
-        except Exception:
+        except Exception as exc:
+            print(f"error: comparison failed: {exc}", file=sys.stderr)
             sys.exit(1)
 
 

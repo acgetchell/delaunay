@@ -73,9 +73,6 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 # Check documentation for errors (comprehensive, including private items)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
 
-# Build docs without dependency docs (for crates.io publishing validation)
-cargo doc --no-deps
-
 # Run all tests (library, doc tests, examples)
 cargo test --lib --verbose
 cargo test --doc --verbose  
@@ -115,9 +112,7 @@ cargo clippy --all-targets --all-features -- -D warnings -D clippy::all -D clipp
 # Format Python code (PEP 8 compliance) - replaces autopep8
 uvx ruff format scripts/
 
-# Fix imports, remove unused code, organize imports, and other auto-fixable issues
-# Replaces isort + autoflake + import organization tools
-# Uses pyproject.toml configuration with CLI-appropriate ignore patterns
+# Lint & auto-fix (imports, unused, style per pyproject.toml)
 uvx ruff check --fix scripts/
 
 # Alternative: Fix only import-related issues (organize, remove duplicates, fix unused)
@@ -136,10 +131,7 @@ uv run pytest       # Run comprehensive Python utility tests
 **IMPORTANT**: Since this crate is published to crates.io, ensure documentation builds correctly:
 
 ```bash
-# Build documentation without errors (basic check)
-cargo doc --no-deps
-
-# Build documentation with warnings treated as errors (strict)
+# Build documentation with warnings treated as errors (preferred)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
 
@@ -342,10 +334,8 @@ uv run changelog-utils tag v0.4.2
 # Force recreate existing tag
 uv run changelog-utils tag v0.4.2 --force
 
-# Generate changelog with unreleased changes included (direct auto-changelog)
+# Advanced: direct auto-changelog usage (bypasses project wrappers)
 npx auto-changelog --unreleased
-
-# Generate changelog for specific version (direct auto-changelog)
 npx auto-changelog --latest-version v0.3.4
 
 # Test changelog generation without writing to file (direct auto-changelog)

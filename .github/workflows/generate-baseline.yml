@@ -23,6 +23,9 @@ env:
 
 jobs:
   generate-baseline:
+    concurrency:
+      group: generate-baseline-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: macos-15  # Use same runner as benchmark workflow for consistency
     timeout-minutes: 60
 
@@ -58,7 +61,6 @@ jobs:
             echo "Using generated tag name: $TAG_NAME"
           fi
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
-          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "Final tag name: $TAG_NAME"
 
       - name: Install uv (Python package manager)
@@ -79,7 +81,7 @@ jobs:
           uv run benchmark-utils generate-baseline
 
           # Verify baseline was created
-          if [[ ! -f "benches/baseline_results.txt" ]]; then
+          if [ ! -f "benches/baseline_results.txt" ]; then
             echo "❌ Baseline generation failed - no baseline file created"
             exit 1
           fi
@@ -90,7 +92,8 @@ jobs:
           echo "📊 Baseline summary:"
           head -n 10 benches/baseline_results.txt
           echo "..."
-          echo "Total benchmarks: $(grep -c "^===" benches/baseline_results.txt || echo "0")"
+          benchmark_count=$(grep -c "^===" benches/baseline_results.txt || echo "0")
+          echo "Total benchmarks: $benchmark_count"
 
       - name: Prepare baseline artifact
         env:
@@ -122,10 +125,20 @@ jobs:
           echo "📦 Artifact contents:"
           ls -la baseline-artifact/
 
+      - name: Create safe artifact name
+        id: safe_name
+        env:
+          SAFE_TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+        run: |
+          # Sanitize tag name for artifact upload (remove special characters)
+          CLEAN_TAG_NAME=$(echo "$SAFE_TAG_NAME" | sed 's/[^a-zA-Z0-9._-]/_/g')
+          echo "artifact_name=performance-baseline-$CLEAN_TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "Using sanitized artifact name: performance-baseline-$CLEAN_TAG_NAME"
+
       - name: Upload baseline artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: performance-baseline-${{ steps.tag_info.outputs.tag_name }}
+          name: ${{ steps.safe_name.outputs.artifact_name }}
           path: baseline-artifact/
           retention-days: 365  # Keep baselines for 1 year
           compression-level: 6  # Good balance of speed/compression
@@ -148,6 +161,6 @@ jobs:
           echo "  • Main branch regression detection"
           echo "  • Manual performance comparisons"
           echo ""
-          if [[ "$SAFE_REF_TYPE" == "tag" ]]; then
+          if [ "$SAFE_REF_TYPE" = "tag" ]; then
             echo "💡 This baseline is now available for release $TAG_NAME"
           fi

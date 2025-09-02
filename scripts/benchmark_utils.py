@@ -13,13 +13,20 @@ Replaces complex bash parsing logic with maintainable Python code.
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from hardware_utils import HardwareComparator, HardwareInfo
-from subprocess_utils import get_git_commit_hash, run_cargo_command
+try:
+    # When executed as a script from scripts/
+    from hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
+    from subprocess_utils import get_git_commit_hash, run_cargo_command  # type: ignore[no-redef]
+except ModuleNotFoundError:
+    # When imported as a module (e.g., scripts.benchmark_utils)
+    from scripts.hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
+    from scripts.subprocess_utils import get_git_commit_hash, run_cargo_command  # type: ignore[no-redef]
 
 
 class BenchmarkData:
@@ -169,9 +176,10 @@ class CriterionParser:
 class BaselineGenerator:
     """Generate performance baselines from benchmark data."""
 
-    def __init__(self, project_root: Path):
+    def __init__(self, project_root: Path, tag: str | None = None):
         self.project_root = project_root
         self.hardware = HardwareInfo()
+        self.tag = tag
 
     def generate_baseline(self, dev_mode: bool = False, output_file: Path | None = None) -> bool:
         """
@@ -247,6 +255,8 @@ class BaselineGenerator:
         with output_file.open("w", encoding="utf-8") as f:
             f.write(f"Date: {current_date}\n")
             f.write(f"Git commit: {git_commit}\n")
+            if self.tag:
+                f.write(f"Tag: {self.tag}\n")
             f.write(hardware_info)
 
             for benchmark in benchmark_results:
@@ -483,6 +493,7 @@ def main():
     gen_parser = subparsers.add_parser("generate-baseline", help="Generate performance baseline")
     gen_parser.add_argument("--dev", action="store_true", help="Use development mode with faster benchmark settings")
     gen_parser.add_argument("--output", type=Path, help="Output file path")
+    gen_parser.add_argument("--tag", type=str, default=os.getenv("TAG_NAME"), help="Tag name for this baseline (from TAG_NAME env or --tag option)")
 
     # Compare benchmarks command
     cmp_parser = subparsers.add_parser("compare", help="Compare current performance against baseline")
@@ -507,7 +518,7 @@ def main():
         sys.exit(1)
 
     if args.command == "generate-baseline":
-        generator = BaselineGenerator(project_root)
+        generator = BaselineGenerator(project_root, tag=args.tag)
         success = generator.generate_baseline(dev_mode=args.dev, output_file=args.output)
         sys.exit(0 if success else 1)
 

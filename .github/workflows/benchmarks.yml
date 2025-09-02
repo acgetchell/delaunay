@@ -72,7 +72,7 @@ jobs:
           # macOS runner should have jq, but ensure it's available
           if ! command -v jq >/dev/null 2>&1; then
             echo "Installing jq..."
-            brew install jq
+            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install jq
           else
             echo "jq is already available: $(jq --version)"
           fi
@@ -98,34 +98,40 @@ jobs:
 
                 // List recent runs and look for an artifact matching the release tag
                 try {
-                  const runs = await github.rest.actions.listWorkflowRuns({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    workflow_id: 'generate-baseline.yml',
-                    status: 'completed',
-                    conclusion: 'success',
-                    per_page: 100
-                  });
                   const expectedName = `performance-baseline-${release.tag_name}`;
-                  for (const run of runs.data.workflow_runs) {
-                    const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                  let found = false;
+                  for (let page = 1; page <= 5 && !found; page++) {
+                    const runs = await github.rest.actions.listWorkflowRuns({
                       owner: context.repo.owner,
                       repo: context.repo.repo,
-                      run_id: run.id
+                      workflow_id: 'generate-baseline.yml',
+                      status: 'completed',
+                      conclusion: 'success',
+                      per_page: 100,
+                      page
                     });
-                    const baselineArtifact = artifacts.data.artifacts.find(a => a.name === expectedName);
-                    if (baselineArtifact) {
-                      console.log(
-                        `Found baseline artifact ${expectedName} in run ${run.id} ` +
-                        `for release ${release.tag_name}`
-                      );
-                      core.setOutput('found', 'true');
-                      core.setOutput('release_tag', release.tag_name);
-                      core.setOutput('artifact_name', expectedName);
-                      core.setOutput('run_id', run.id.toString());
-                      return;
+                    for (const run of runs.data.workflow_runs) {
+                      const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        run_id: run.id
+                      });
+                      const baselineArtifact = artifacts.data.artifacts.find(a => a.name === expectedName);
+                      if (baselineArtifact) {
+                        console.log(
+                          `Found baseline artifact ${expectedName} in run ${run.id} ` +
+                          `for release ${release.tag_name}`
+                        );
+                        core.setOutput('found', 'true');
+                        core.setOutput('release_tag', release.tag_name);
+                        core.setOutput('artifact_name', expectedName);
+                        core.setOutput('run_id', run.id.toString());
+                        found = true;
+                        break;
+                      }
                     }
                   }
+                  if (found) return;
                 } catch (error) {
                   console.log(`Error checking release ${release.tag_name}: ${error.message}`);
                   continue;
@@ -181,7 +187,8 @@ jobs:
           echo ""
 
           # Generate baseline using dev mode for faster execution
-          if uv run benchmark-utils generate-baseline --dev; then
+          if uv run benchmark-utils generate-baseline --dev \
+            || uv run python -m scripts.benchmark_utils generate-baseline --dev; then
             echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
             echo "BASELINE_SOURCE=generated" >> "$GITHUB_ENV"
 
@@ -200,7 +207,7 @@ jobs:
         run: |
           set -euo pipefail
           bc_sha="$(grep "^Git commit:" benches/baseline_results.txt | awk '{print $3}' || true)"
-          if [[ -n "$bc_sha" && "$bc_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
+          if [[ -n "$bc_sha" && "$bc_sha" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
             echo "BASELINE_COMMIT=$bc_sha" >> "$GITHUB_ENV"
           else
             echo "BASELINE_COMMIT=unknown" >> "$GITHUB_ENV"
@@ -215,13 +222,17 @@ jobs:
           set -euo pipefail
           if [[ "$BASELINE_COMMIT" == "unknown" ]]; then
             echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
+            echo "SKIP_REASON=unknown_baseline" >> "$GITHUB_ENV"
           elif [[ "$BASELINE_COMMIT" == "$SAFE_COMMIT_SHA" ]]; then
             echo "SKIP_BENCHMARKS=true" >> "$GITHUB_ENV"
+            echo "SKIP_REASON=same_commit" >> "$GITHUB_ENV"
           else
             if git diff --name-only "$BASELINE_COMMIT"..HEAD | grep -qE '^(src/|benches/|Cargo\.toml|Cargo\.lock)'; then
               echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
+              echo "SKIP_REASON=changes_detected" >> "$GITHUB_ENV"
             else
               echo "SKIP_BENCHMARKS=true" >> "$GITHUB_ENV"
+              echo "SKIP_REASON=no_relevant_changes" >> "$GITHUB_ENV"
             fi
           fi
 
@@ -230,7 +241,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "🔍 Current commit matches baseline (${BASELINE_COMMIT}), skipping benchmarks."
+          case "${SKIP_REASON:-unknown}" in
+            same_commit) echo "🔍 Current commit matches baseline (${BASELINE_COMMIT}); skipping benchmarks.";;
+            no_relevant_changes) echo "🔍 No relevant code changes since ${BASELINE_COMMIT}; skipping benchmarks.";;
+            *) echo "🔍 Benchmarks skipped.";;
+          esac
 
       - name: Skip benchmarks - no baseline available
         if: env.BASELINE_EXISTS != 'true'
@@ -292,6 +307,7 @@ jobs:
           echo "Baseline source: ${BASELINE_SOURCE:-none}"
           echo "Baseline exists: ${BASELINE_EXISTS:-false}"
           echo "Skip benchmarks: ${SKIP_BENCHMARKS:-unknown}"
+          echo "Skip reason: ${SKIP_REASON:-n/a}"
 
           if [[ "${BASELINE_EXISTS:-false}" == "true" && "${SKIP_BENCHMARKS:-true}" == "false" ]]; then
             if [[ -f "benches/compare_results.txt" ]]; then
@@ -304,7 +320,11 @@ jobs:
               echo "Result: ❓ Benchmark comparison completed but no results file found"
             fi
           elif [[ "${SKIP_BENCHMARKS:-true}" == "true" ]]; then
-            echo "Result: ⏭️ Benchmarks skipped (no relevant code changes)"
+            case "${SKIP_REASON:-unknown}" in
+              same_commit) echo "Result: ⏭️ Benchmarks skipped (same commit as baseline)";;
+              no_relevant_changes) echo "Result: ⏭️ Benchmarks skipped (no relevant code changes)";;
+              *) echo "Result: ⏭️ Benchmarks skipped";;
+            esac
           else
             echo "Result: ⏭️ Benchmarks skipped (no baseline available)"
           fi
