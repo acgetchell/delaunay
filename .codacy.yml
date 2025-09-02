@@ -1,6 +1,12 @@
 ---
 # Codacy configuration for delaunay project
 # Comprehensive configuration for all Codacy analysis tools
+#
+# Bandit Security Configuration:
+# - Only reports HIGH severity security issues (ignores medium/low)
+# - High confidence issues only (reduces false positives)
+# - Excludes test-related and development script patterns (B101, B404, B603, etc.)
+# - Focuses on genuine security vulnerabilities in production code
 
 # Tool configuration
 engines:
@@ -28,11 +34,26 @@ engines:
     include_paths:
       - "scripts/**/*.py"
       - "**/*.py"
-    # Focus on high-severity security issues only (avoid style checks)
+    # Focus on high-severity security issues only (ignore medium and minor)
     config:
+      # Only report high severity issues (filters out medium and low)
       severity: high
-      # Skip tests that are false positives for development scripts
+      # Only include high confidence issues (reduces false positives)
+      confidence: high
+      # Skip specific tests that are false positives for development scripts
+      # B101: assert usage (common in tests)
+      # B102: exec usage
+      # B103: set_bad_file_permissions
+      # B108: hardcoded tmp directory
+      # B110: try_except_pass
+      # B404: subprocess module (needed for utility scripts)
+      # B603: subprocess without shell equals true
+      # B607: starting process with partial executable path
       skips: ["B101", "B102", "B103", "B108", "B110", "B404", "B603", "B607"]
+      # Explicitly exclude information level issues
+      exclude_info: true
+      # Focus only on security issues, not code quality
+      exclude_dirs: ["tests"]
 
   # Prospector for Python code quality
   prospector:

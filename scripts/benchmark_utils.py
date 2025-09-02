@@ -291,9 +291,9 @@ class PerformanceComparator:
                         "--sample-size",
                         "10",
                         "--measurement-time",
-                        "2",
+                        "2s",
                         "--warm-up-time",
-                        "1",
+                        "1s",
                         "--noplot",
                     ],
                     cwd=self.project_root,
@@ -443,23 +443,31 @@ class PerformanceComparator:
                             f"{baseline_benchmark.throughput_high}] {baseline_benchmark.throughput_unit}\n"
                         )
 
-                    # Calculate time change percentage
-                    time_change_pct = ((current_benchmark.time_mean - baseline_benchmark.time_mean) / baseline_benchmark.time_mean) * 100
-                    f.write(f"Time Change: [{time_change_pct:.1f}%, {time_change_pct:.1f}%, {time_change_pct:.1f}%]\n")
-
-                    # Check for regression
-                    if time_change_pct > self.regression_threshold:
-                        f.write(f"⚠️  REGRESSION: Time increased by {time_change_pct:.1f}% (slower performance)\n")
-                        regression_found = True
-                    elif time_change_pct < -self.regression_threshold:
-                        f.write(f"✅ IMPROVEMENT: Time decreased by {abs(time_change_pct):.1f}% (faster performance)\n")
+                    # Calculate time change percentage (mean) with safety guard
+                    if baseline_benchmark.time_mean <= 0:
+                        f.write("Time Change: N/A (baseline mean is 0)\n")
                     else:
-                        f.write("✅ OK: Time change within acceptable range\n")
+                        time_change_pct = ((current_benchmark.time_mean - baseline_benchmark.time_mean) / baseline_benchmark.time_mean) * 100
+                        f.write(f"Time Change (mean): {time_change_pct:.1f}%\n")
+
+                        # Check for regression
+                        if time_change_pct > self.regression_threshold:
+                            f.write(f"⚠️  REGRESSION: Time increased by {time_change_pct:.1f}% (slower performance)\n")
+                            regression_found = True
+                        elif time_change_pct < -self.regression_threshold:
+                            f.write(f"✅ IMPROVEMENT: Time decreased by {abs(time_change_pct):.1f}% (faster performance)\n")
+                        else:
+                            f.write("✅ OK: Time change within acceptable range\n")
 
                     # Throughput change if available
                     if current_benchmark.throughput_mean is not None and baseline_benchmark.throughput_mean is not None:
-                        thrpt_change_pct = ((current_benchmark.throughput_mean - baseline_benchmark.throughput_mean) / baseline_benchmark.throughput_mean) * 100
-                        f.write(f"Throughput Change: [{thrpt_change_pct:.1f}%, {thrpt_change_pct:.1f}%, {thrpt_change_pct:.1f}%]\n")
+                        if baseline_benchmark.throughput_mean <= 0:
+                            f.write("Throughput Change: N/A (baseline throughput is 0)\n")
+                        else:
+                            thrpt_change_pct = (
+                                (current_benchmark.throughput_mean - baseline_benchmark.throughput_mean) / baseline_benchmark.throughput_mean
+                            ) * 100
+                            f.write(f"Throughput Change (mean): {thrpt_change_pct:.1f}%\n")
 
                 f.write("\n")
 

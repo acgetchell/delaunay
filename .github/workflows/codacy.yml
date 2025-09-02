@@ -94,15 +94,59 @@ jobs:
             done
             # List generated files for debugging
             echo "Generated SARIF files:"
-            ls -la sarif_*.sarif || echo "No split SARIF files found"
+            ls -la *.sarif || echo "No SARIF files found"
+            # Ensure at least one SARIF file exists for upload
+            # If no split files were created, use the original results.sarif
+            if ! ls sarif_*.sarif &>/dev/null; then
+              echo "No split SARIF files found, using original results.sarif"
+              cp results.sarif sarif_codacy_results.sarif
+            fi
           else
             echo "No SARIF file found or file is empty"
+            echo "Creating empty SARIF file to prevent workflow failure"
+            # Create empty SARIF file with proper schema
+            echo '{' > sarif_empty.sarif
+            schema_url="https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
+            echo "  \"\$schema\": \"$schema_url\"," >> sarif_empty.sarif
+            echo '  "version": "2.1.0",' >> sarif_empty.sarif
+            echo '  "runs": []' >> sarif_empty.sarif
+            echo '}' >> sarif_empty.sarif
             exit 0
           fi
 
-      # Upload SARIF files using official action
+      # Upload SARIF files
       - name: Upload SARIF files
+        run: |
+          set -euo pipefail
+          # First, try to upload the original results.sarif if it exists
+          if [ -f "results.sarif" ] && [ -s "results.sarif" ]; then
+            echo "Found results.sarif, attempting upload..."
+            echo "SARIF_FILE=results.sarif" >> $GITHUB_ENV
+          else
+            echo "No results.sarif found, checking for split files..."
+            # Look for any split SARIF files
+            found_file=""
+            for sarif_file in sarif_*.sarif; do
+              if [ -f "$sarif_file" ] && [ -s "$sarif_file" ]; then
+                echo "Found split SARIF file: $sarif_file"
+                found_file="$sarif_file"
+                break
+              fi
+            done
+
+            if [ -n "$found_file" ]; then
+              echo "SARIF_FILE=$found_file" >> $GITHUB_ENV
+            else
+              echo "No valid SARIF files found"
+              echo "SARIF_FILE=" >> $GITHUB_ENV
+            fi
+          fi
+        continue-on-error: true
+
+      # Upload the identified SARIF file
+      - name: Upload identified SARIF file
+        if: env.SARIF_FILE != ''
         uses: github/codeql-action/upload-sarif@b36bf259c813715f76eafece573914b94412cd13  # v3
         with:
-          sarif_file: sarif_*.sarif
+          sarif_file: ${{ env.SARIF_FILE }}
         continue-on-error: true

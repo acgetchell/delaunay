@@ -1,6 +1,8 @@
 name: Generate Performance Baseline
 
 # Generate performance baselines for new releases
+# Security: All GitHub context variables are passed through safe environment variables
+# to prevent code injection attacks via malicious branch names or commit data
 on:
   # Trigger on tag creation (releases)
   push:
@@ -47,10 +49,13 @@ jobs:
 
       - name: Determine tag information
         id: tag_info
+        env:
+          SAFE_REF_TYPE: ${{ github.ref_type }}
+          SAFE_REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          if [[ "$SAFE_REF_TYPE" == "tag" ]]; then
             # Tag push trigger
-            TAG_NAME="$GITHUB_REF_NAME"
+            TAG_NAME="$SAFE_REF_NAME"
             echo "Using push tag: $TAG_NAME"
           else
             # Fallback for manual dispatch
@@ -95,6 +100,8 @@ jobs:
       - name: Prepare baseline artifact
         env:
           TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+          SAFE_COMMIT_SHA: ${{ github.sha }}
+          SAFE_RUN_ID: ${{ github.run_id }}
         run: |
           # Create artifact directory
           mkdir -p baseline-artifact
@@ -109,8 +116,8 @@ jobs:
           cat > "baseline-artifact/metadata.json" <<EOF
           {
             "tag": "$TAG_NAME",
-            "commit": "$GITHUB_SHA",
-            "workflow_run_id": "$GITHUB_RUN_ID",
+            "commit": "$SAFE_COMMIT_SHA",
+            "workflow_run_id": "$SAFE_RUN_ID",
             "generated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
             "runner_os": "$RUNNER_OS",
             "runner_arch": "$RUNNER_ARCH"
@@ -131,12 +138,14 @@ jobs:
       - name: Display next steps
         env:
           TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+          SAFE_COMMIT_SHA: ${{ github.sha }}
+          SAFE_REF_TYPE: ${{ github.ref_type }}
         run: |
           echo "🎉 Performance baseline generated successfully!"
           echo ""
           echo "📋 Summary:"
           echo "  Tag: $TAG_NAME"
-          echo "  Commit: $GITHUB_SHA"
+          echo "  Commit: $SAFE_COMMIT_SHA"
           echo "  Artifact: performance-baseline-$TAG_NAME"
           echo ""
           echo "🔄 The benchmark workflow will now use this baseline for:"
@@ -144,6 +153,6 @@ jobs:
           echo "  • Main branch regression detection"
           echo "  • Manual performance comparisons"
           echo ""
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          if [[ "$SAFE_REF_TYPE" == "tag" ]]; then
             echo "💡 This baseline is now available for release $TAG_NAME"
           fi

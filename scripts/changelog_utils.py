@@ -17,7 +17,6 @@ from typing import Any
 from subprocess_utils import (
     ExecutableNotFoundError,
     get_git_remote_url,
-    run_git_command,
     run_safe_command,
 )
 from subprocess_utils import (
@@ -25,6 +24,9 @@ from subprocess_utils import (
 )
 from subprocess_utils import (
     check_git_repo as _check_git_repo,
+)
+from subprocess_utils import (
+    run_git_command as _run_git_command,
 )
 
 
@@ -350,39 +352,27 @@ class ChangelogUtils:
         Returns:
             List of wrapped lines
         """
+        import textwrap
+
         if not text.strip():
             return []
 
         # Calculate available space for content (subtract indent length)
-        available_length = max_length - len(indent)
+        available_length = max(1, max_length - len(indent))
 
         # If the line is short enough, return as-is
         if len(indent + text) <= max_length:
             return [indent + text]
 
-        # Split into words for wrapping
-        words = text.split()
-        lines = []
-        current_line = ""
+        # Use textwrap for proper line wrapping with long word breaking
+        wrapped = textwrap.wrap(
+            text,
+            width=available_length,
+            break_long_words=True,
+            break_on_hyphens=False,
+        )
 
-        for word in words:
-            # Check if adding this word would exceed the limit
-            test_line = current_line + (" " if current_line else "") + word
-            if len(test_line) <= available_length:
-                current_line = test_line
-            # Current line is full, start a new line
-            elif current_line:
-                lines.append(indent + current_line)
-                current_line = word
-            else:
-                # Single word is too long, force break
-                lines.append(indent + word)
-
-        # Add the last line if it has content
-        if current_line:
-            lines.append(indent + current_line)
-
-        return lines
+        return [indent + line for line in wrapped]
 
     @staticmethod
     def process_squashed_commit(commit_sha: str, repo_url: str) -> str:
@@ -423,7 +413,7 @@ class ChangelogUtils:
             GitRepoError: If git command fails
         """
         try:
-            result = run_git_command(["--no-pager", "show", commit_sha, "--format=%B", "--no-patch"])
+            result = _run_git_command(["--no-pager", "show", commit_sha, "--format=%B", "--no-patch"])
             return result.stdout
         except subprocess.CalledProcessError as e:
             msg = f"Failed to get commit message for {commit_sha}: {e}"
@@ -600,10 +590,8 @@ class ChangelogUtils:
         Raises:
             GitRepoError: If command fails and check=True
         """
-        from subprocess_utils import run_git_command as secure_git_command
-
         try:
-            result = secure_git_command(args, check=check)
+            result = _run_git_command(args, check=check)
             return result.stdout.strip(), result.returncode
         except subprocess.CalledProcessError as e:
             if check:
@@ -1061,7 +1049,7 @@ def _enhance_with_ai(file_paths: dict[str, Path], project_root: Path) -> None:
         python_exe = sys.executable or "python"
         run_safe_command(python_exe, [str(enhance_script), str(file_paths["expanded"]), str(file_paths["enhanced"])], cwd=project_root)
     except Exception:
-        print("Error: auto-changelog is not available via npx. Verify network access and try again.", file=sys.stderr)
+        print("Error: enhance_commits.py failed. Verify your Python environment and try again.", file=sys.stderr)
         sys.exit(1)
 
 
@@ -1115,7 +1103,7 @@ def _restore_backup_and_exit(file_paths: dict[str, Path]) -> None:
     import shutil
     import sys
 
-    if file_paths["backup"].exists() and file_paths["changelog"].exists():
+    if file_paths["backup"].exists():
         shutil.copy2(file_paths["backup"], file_paths["changelog"])
         file_paths["backup"].unlink()
     sys.exit(1)
