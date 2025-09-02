@@ -74,6 +74,21 @@ jobs:
         with:
           script: |
             try {
+              // Precompute expected baseline names for early-hit optimization
+              const releases = await github.paginate(
+                github.rest.repos.listReleases,
+                { owner: context.repo.owner, repo: context.repo.repo, per_page: 50 }
+              );
+
+              const expectedReleaseBaselines = new Set();
+              for (const release of releases) {
+                if (!release.draft && !release.prerelease) {
+                  const cleanTag = release.tag_name.replace(/[^a-zA-Z0-9._-]/g, '_');
+                  expectedReleaseBaselines.add(`performance-baseline-${cleanTag}`);
+                }
+              }
+              console.log(`Precomputed ${expectedReleaseBaselines.size} expected release baseline names`);
+
               // Fetch all successful generate-baseline.yml runs once (O(runs) API calls)
               console.log('Fetching recent generate-baseline.yml runs...');
               let count = 0;
@@ -88,10 +103,13 @@ jobs:
                   per_page: 100
                 },
                 (response, done) => {
-                  // Limit to 150 runs total across pages
-                  count += response.data.length;
+                  // Limit to 150 runs total across pages (no overshoot)
+                  const remaining = Math.max(0, 150 - count);
+                  if (remaining === 0) { done(); return []; }
+                  const slice = response.data.slice(0, remaining);
+                  count += slice.length;
                   if (count >= 150) done();
-                  return response.data;
+                  return slice;
                 }
               );
 
@@ -99,6 +117,7 @@ jobs:
 
               // Build artifact cache: artifact name → {run_id, run_created_at}
               const artifactCache = new Map();
+              let foundReleaseBaseline = false;
               for (const run of runs) {
                 try {
                   const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
@@ -114,9 +133,18 @@ jobs:
                           run_id: run.id,
                           run_created_at: run.created_at
                         });
+
+                        // Early-hit optimization: stop if we found a release baseline
+                        if (expectedReleaseBaselines.has(artifact.name)) {
+                          console.log(`Early hit: found release baseline ${artifact.name}, stopping search`);
+                          foundReleaseBaseline = true;
+                        }
                       }
                     }
                   }
+
+                  // Short-circuit if we found a release baseline
+                  if (foundReleaseBaseline) break;
                 } catch (error) {
                   console.log(`Warning: Could not fetch artifacts for run ${run.id}: ${error.message}`);
                   continue;
@@ -125,13 +153,7 @@ jobs:
 
               console.log(`Built cache of ${artifactCache.size} baseline artifacts`);
 
-              // First, try to find baseline artifacts from release tags
-              const releases = await github.paginate(
-                github.rest.repos.listReleases,
-                { owner: context.repo.owner, repo: context.repo.repo, per_page: 50 }
-              );
-
-              console.log(`Found ${releases.length} releases (paginated)`);
+              console.log(`Found ${releases.length} releases (already fetched)`);
 
               // Look for releases with baseline artifacts (now O(releases) lookups)
               for (const release of releases) {
@@ -222,6 +244,9 @@ jobs:
             echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
             echo "BASELINE_SOURCE=artifact" >> "$GITHUB_ENV"
             echo "BASELINE_ORIGIN=${SOURCE_TYPE:-unknown}" >> "$GITHUB_ENV"
+            if [[ -n "${RELEASE_TAG:-}" ]]; then
+              echo "BASELINE_TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
+            fi
 
             # Show baseline metadata
             echo "=== Baseline Information (from artifact) ==="
@@ -358,6 +383,7 @@ jobs:
           echo "==========================================="
           echo "Baseline source: ${BASELINE_SOURCE:-none}"
           echo "Baseline origin: ${BASELINE_ORIGIN:-unknown}"
+          echo "Baseline tag: ${BASELINE_TAG:-n/a}"
           echo "Baseline exists: ${BASELINE_EXISTS:-false}"
           echo "Skip benchmarks: ${SKIP_BENCHMARKS:-unknown}"
           echo "Skip reason: ${SKIP_REASON:-n/a}"
