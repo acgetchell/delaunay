@@ -72,35 +72,9 @@ jobs:
           # Fail fast and surface errors clearly
           set -euo pipefail
           if [ -f "results.sarif" ] && [ -s "results.sarif" ]; then
-            echo "Processing SARIF file with multiple tools..."
-            # Extract each run and create separate SARIF files
-            jq -c '.runs[]' results.sarif | while IFS= read -r run; do
-              tool_name=$(echo "$run" | \
-                jq -r '.tool.driver.name' | \
-                tr -cs '[:alnum:]_.-' '_' | sed 's/^_*//; s/_*$//')
-              echo "Processing tool: $tool_name"
-
-              # Create a proper SARIF file for this tool
-              schema_url="https://raw.githubusercontent.com/oasis-tcs/"
-              schema_url+="sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
-              jq -n --argjson run "$run" \
-                --arg schema "$schema_url" '{
-                "$schema": $schema,
-                "version": "2.1.0",
-                "runs": [$run]
-              }' > "sarif_${tool_name}.sarif"
-
-              echo "Created sarif_${tool_name}.sarif"
-            done
-            # List generated files for debugging
-            echo "Generated SARIF files:"
-            ls -la *.sarif || echo "No SARIF files found"
-            # Ensure at least one SARIF file exists for upload
-            # If no split files were created, use the original results.sarif
-            if ! ls sarif_*.sarif &>/dev/null; then
-              echo "No split SARIF files found; preselecting results.sarif for upload"
-              echo "SARIF_FILE=results.sarif" >> "$GITHUB_ENV"
-            fi
+            echo "results.sarif present; preselecting for upload and skipping split."
+            echo "SARIF_FILE=results.sarif" >> "$GITHUB_ENV"
+            exit 0
           else
             echo "No SARIF file found or file is empty"
             echo "Creating empty SARIF file to prevent workflow failure"

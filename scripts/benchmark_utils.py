@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,21 +30,20 @@ except ModuleNotFoundError:
     from scripts.subprocess_utils import get_git_commit_hash, run_cargo_command  # type: ignore[no-redef]
 
 
+@dataclass
 class BenchmarkData:
     """Represents benchmark data for a single test case."""
 
-    def __init__(self, points: int, dimension: str):
-        """Initialize with required fields only."""
-        self.points = points
-        self.dimension = dimension
-        self.time_low: float = 0.0
-        self.time_mean: float = 0.0
-        self.time_high: float = 0.0
-        self.time_unit: str = ""
-        self.throughput_low: float | None = None
-        self.throughput_mean: float | None = None
-        self.throughput_high: float | None = None
-        self.throughput_unit: str | None = None
+    points: int
+    dimension: str
+    time_low: float = 0.0
+    time_mean: float = 0.0
+    time_high: float = 0.0
+    time_unit: str = ""
+    throughput_low: float | None = None
+    throughput_mean: float | None = None
+    throughput_high: float | None = None
+    throughput_unit: str | None = None
 
     def with_timing(self, low: float, mean: float, high: float, unit: str) -> "BenchmarkData":
         """Set timing data (fluent interface)."""
@@ -115,7 +115,7 @@ class CriterionParser:
 
             return (
                 BenchmarkData(points, dimension)
-                .with_timing(round(low_us, 2), round(mean_us, 2), round(high_us, 2), "μs")
+                .with_timing(round(low_us, 2), round(mean_us, 2), round(high_us, 2), "µs")
                 .with_throughput(round(thrpt_low, 3), round(thrpt_mean, 3), round(thrpt_high, 3), "Kelem/s")
             )
 

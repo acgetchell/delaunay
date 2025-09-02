@@ -98,7 +98,9 @@ jobs:
 
                 // List recent runs and look for an artifact matching the release tag
                 try {
-                  const expectedName = `performance-baseline-${release.tag_name}`;
+                  // Mirror sanitization in generate-baseline.yml (allow [A-Za-z0-9._-], replace others with _)
+                  const cleanTag = release.tag_name.replace(/[^a-zA-Z0-9._-]/g, '_');
+                  const expectedName = `performance-baseline-${cleanTag}`;
                   let found = false;
                   for (let page = 1; page <= 5 && !found; page++) {
                     const runs = await github.rest.actions.listWorkflowRuns({
@@ -275,7 +277,16 @@ jobs:
           echo "   Baseline source: ${BASELINE_SOURCE:-unknown}"
 
           # This will exit with code 1 if significant regressions are found
-          uv run benchmark-utils compare --baseline benches/baseline_results.txt
+          # Use --dev mode when comparing against a generated baseline to match settings
+          if [[ "${BASELINE_SOURCE:-}" == "generated" ]]; then
+            echo "   Using --dev mode to match generated baseline settings"
+            uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev \
+              || uv run python -m scripts.benchmark_utils compare --baseline benches/baseline_results.txt --dev
+          else
+            echo "   Using full comparison mode against release baseline"
+            uv run benchmark-utils compare --baseline benches/baseline_results.txt \
+              || uv run python -m scripts.benchmark_utils compare --baseline benches/baseline_results.txt
+          fi
 
       - name: Display regression test results
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()

@@ -78,7 +78,8 @@ jobs:
           echo "🚀 Generating performance baseline for tag $TAG_NAME"
 
           # Run baseline generation using Python CLI tool
-          uv run benchmark-utils generate-baseline
+          uv run benchmark-utils generate-baseline \
+            || uv run python -m scripts.benchmark_utils generate-baseline
 
           # Verify baseline was created
           if [ ! -f "benches/baseline_results.txt" ]; then

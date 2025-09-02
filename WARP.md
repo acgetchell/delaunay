@@ -31,7 +31,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **ALWAYS** use `uv run` when executing Python scripts in this project
 - **DO NOT** use `python3` or `python` directly
 - This ensures correct Python environment (minimum version in `.python-version`, enforced for performance) and dependency management
-- Examples: `uv run python scripts/changelog_utils.py`, `uv run python -c "import scripts.subprocess_utils"`
+- Examples: `uv run python -m scripts.changelog_utils`, `uv run python -c "import scripts.subprocess_utils"`
 
 ## Overview
 
@@ -290,9 +290,11 @@ uv run benchmark-utils generate-baseline --dev
 
 # Compare performance against baseline
 uv run benchmark-utils compare --baseline benches/baseline_results.txt
+# Note: exits 1 on significant regressions (CI will mark job failed)
 
 # Compare with development settings (faster)
 uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev
+# Note: exits 1 on significant regressions (CI will mark job failed)
 ```
 
 ### Examples and Development Scripts
