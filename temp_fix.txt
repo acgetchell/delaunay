@@ -1,0 +1,15 @@
+```rust
+/// Manual implementation of Deserialize for [Type]
+impl<'de, G> serde::Deserialize<'de> for Type<G>
+where
+    G: /* trait bounds as needed */,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Visitor pattern implementation
+        // Ok(Self { /* ... */ })
+    }
+}
+```

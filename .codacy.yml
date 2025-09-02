@@ -31,8 +31,8 @@ engines:
     # Focus on high-severity security issues only (avoid style checks)
     config:
       severity: high
-      # Skip tests that are already covered by Ruff security checks
-      skips: ["B101", "B102", "B103", "B108", "B110"]
+      # Skip tests that are false positives for development scripts
+      skips: ["B101", "B102", "B103", "B108", "B110", "B404", "B603", "B607"]
 
   # Prospector for Python code quality
   prospector:
@@ -56,21 +56,6 @@ engines:
       # Read from pyproject.toml
       profile: "pyproject.toml"
 
-  # === DISABLE CONFLICTING PYTHON TOOLS ===
-  # Disable tools that overlap with our enabled tools to avoid duplicate issues
-  flake8:
-    enabled: false  # Ruff replaces flake8
-  pycodestyle:
-    enabled: false  # Ruff includes pycodestyle checks
-  pydocstyle:
-    enabled: false  # Ruff includes docstring checks
-  isort:
-    enabled: false  # Ruff includes import sorting (I rules)
-  black:
-    enabled: false  # Ruff includes formatting
-  pylintpython3:
-    enabled: false  # Ruff provides superior analysis with pyproject.toml support
-
   # === OTHER LANGUAGES/FORMATS ===
   # ShellCheck for shell scripts (scripts/*.sh)
   shellcheck:
@@ -92,16 +77,8 @@ engines:
       # Reference existing config file
       file: ".markdownlint.json"
 
-  # YAML linting for CI and config files
-  yamllint:
-    enabled: true
-    include_paths:
-      - "**/*.yml"
-      - "**/*.yaml"
-      - ".github/**/*.yml"
-    config:
-      # Reference existing config file
-      file: ".yamllint"
+  # Note: yamllint is not supported by Codacy - handled by GitHub Actions CI instead
+  # YAML validation is performed in our CI workflows
 
   # Note: Jackson Linter is disabled because our JSON files are simple config files
   # that are already valid and rarely change. JSON validation is handled by IDEs.
@@ -156,6 +133,22 @@ engines:
       # Enable scanning for secrets
       enable_secret_scanning: true
 
+  # === DUPLICATION DETECTION ===
+  # Move duplication under engines (Codacy schema requirement)
+  duplication:
+    enabled: true
+    # Configuration for duplication thresholds
+    config:
+      # Minimum number of lines to consider duplication
+      minimum_mass: 60
+      # Minimum number of tokens to consider duplication
+      minimum_tokens: 80
+    exclude_paths:
+      - "target/**"
+      - "benches/**"     # Benchmarks may have similar setup patterns
+      - "examples/**"    # Examples may demonstrate similar concepts
+      - "tests/**"       # Test patterns may be repetitive by design
+
 # === GLOBAL EXCLUSION PATTERNS ===
 exclude_paths:
   # Rust build artifacts and dependencies
@@ -204,48 +197,26 @@ include_paths:
   - "*.sh"
   - ".github/**"
 
-# === COVERAGE SETTINGS ===
-coverage:
-  # Enable coverage for Rust (cargo-tarpaulin or similar)
-  enabled: true
-
-  # Exclude certain paths from coverage analysis
-  exclude_paths:
-    - "benches/**"      # Benchmarks don't need coverage
-    - "examples/**"     # Examples are for demonstration
-    - "scripts/**"      # Python utility scripts
-
-# === DUPLICATION DETECTION ===
-duplication:
-  enabled: true
-
-  # Configuration for duplication thresholds
-  config:
-    # Minimum number of lines to consider duplication
-    minimum_mass: 60
-
-    # Minimum number of tokens to consider duplication
-    minimum_tokens: 80
-
-  exclude_paths:
-    - "target/**"
-    - "benches/**"     # Benchmarks may have similar setup patterns
-    - "examples/**"    # Examples may demonstrate similar concepts
-    - "tests/**"       # Test patterns may be repetitive by design
 
 # === ADDITIONAL SETTINGS ===
-# Custom file extensions (if needed)
-file_extensions:
+# Custom file extensions per language (Codacy schema compliant)
+languages:
   rust:
-    - ".rs"
+    extensions:
+      - ".rs"
   python:
-    - ".py"
+    extensions:
+      - ".py"
   markdown:
-    - ".md"
+    extensions:
+      - ".md"
   yaml:
-    - ".yml"
-    - ".yaml"
+    extensions:
+      - ".yml"
+      - ".yaml"
   json:
-    - ".json"
+    extensions:
+      - ".json"
   shell:
-    - ".sh"
+    extensions:
+      - ".sh"

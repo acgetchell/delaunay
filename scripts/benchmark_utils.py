@@ -243,6 +243,7 @@ class BaselineGenerator:
         hardware_info = self.hardware.format_hardware_info()
 
         # Write baseline file
+        output_file.parent.mkdir(parents=True, exist_ok=True)
         with output_file.open("w", encoding="utf-8") as f:
             f.write(f"Date: {current_date}\n")
             f.write(f"Git commit: {git_commit}\n")
@@ -400,6 +401,7 @@ class PerformanceComparator:
         regression_found = False
 
         # Write comparison file
+        output_file.parent.mkdir(parents=True, exist_ok=True)
         with output_file.open("w", encoding="utf-8") as f:
             # Header
             f.write("Comparison Results\n")

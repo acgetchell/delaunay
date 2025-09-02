@@ -153,9 +153,10 @@ jobs:
           set -euo pipefail
           if [[ -f "baseline-artifact/baseline_results.txt" ]]; then
             echo "📦 Extracted baseline from artifact for release ${{ steps.find_baseline.outputs.release_tag }}"
+            mkdir -p "benches"
             cp "baseline-artifact/baseline_results.txt" "benches/baseline_results.txt"
-
             echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
+            echo "BASELINE_SOURCE=artifact" >> "$GITHUB_ENV"
             echo "BASELINE_SOURCE=artifact" >> "$GITHUB_ENV"
 
             # Show baseline metadata
