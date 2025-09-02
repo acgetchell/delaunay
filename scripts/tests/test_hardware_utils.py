@@ -37,9 +37,8 @@ class TestHardwareInfo(unittest.TestCase):
 
     def test_run_command_empty_cmd(self):
         """Test _run_command with empty command list."""
-        with pytest.raises(ValueError) as context:
-            self.hardware._run_command([])
-        assert "Command list cannot be empty" in str(context.value)
+        with pytest.raises(ValueError, match="Command list cannot be empty"):
+            self.hardware._run_command([])  # noqa: SLF001
 
     @patch("hardware_utils.run_safe_command")
     def test_run_command_success(self, mock_run_safe):
@@ -48,7 +47,7 @@ class TestHardwareInfo(unittest.TestCase):
         mock_result.stdout = "test output\n"
         mock_run_safe.return_value = mock_result
 
-        result = self.hardware._run_command(["echo", "test"])
+        result = self.hardware._run_command(["echo", "test"])  # noqa: SLF001
 
         assert result == "test output"
         mock_run_safe.assert_called_once_with("echo", ["test"], check=True)
@@ -59,7 +58,7 @@ class TestHardwareInfo(unittest.TestCase):
         mock_run_safe.side_effect = subprocess.CalledProcessError(1, "cmd")
 
         with pytest.raises(subprocess.CalledProcessError):
-            self.hardware._run_command(["false"])
+            self.hardware._run_command(["false"])  # noqa: SLF001
 
     @patch("hardware_utils.platform.system")
     @patch.object(HardwareInfo, "_run_command")
@@ -106,7 +105,7 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.platform.system")
     @patch("hardware_utils.shutil.which")
     @patch("builtins.open", new_callable=mock_open, read_data="processor\t: 0\nmodel name\t: AMD Ryzen 5 3600\nprocessor\t: 1\n")
-    def test_get_cpu_info_linux_fallback_cpuinfo(self, mock_file, mock_which, mock_system):
+    def test_get_cpu_info_linux_fallback_cpuinfo(self, _mock_file, mock_which, mock_system):  # noqa: PT019
         """Test CPU info detection on Linux using /proc/cpuinfo fallback."""
         mock_system.return_value = "Linux"
         mock_which.return_value = None  # No commands available
@@ -175,7 +174,7 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.platform.system")
     @patch("builtins.open", new_callable=mock_open, read_data="MemTotal:       16384000 kB\n")
-    def test_get_memory_info_linux(self, mock_file, mock_system):
+    def test_get_memory_info_linux(self, _mock_file, mock_system):  # noqa: PT019
         """Test memory info detection on Linux."""
         mock_system.return_value = "Linux"
 
@@ -538,7 +537,7 @@ Other content here...
 
         for memory_str, expected in test_cases:
             with self.subTest(memory_str=memory_str):
-                result = HardwareComparator._extract_memory_value(memory_str)
+                result = HardwareComparator._extract_memory_value(memory_str)  # noqa: SLF001
                 assert result == expected
 
 

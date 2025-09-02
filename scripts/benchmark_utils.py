@@ -169,7 +169,7 @@ class CriterionParser:
                         results.append(benchmark_data)
 
         # Sort by dimension, then by point count
-        results.sort(key=lambda x: (int(x.dimension[0]), x.points))
+        results.sort(key=lambda x: (int(x.dimension.rstrip("D")), x.points))
         return results
 
 
@@ -196,8 +196,9 @@ class BaselineGenerator:
             output_file = self.project_root / "benches" / "baseline_results.txt"
 
         try:
-            # Clean previous benchmark results - using secure subprocess wrapper
-            run_cargo_command(["clean"], cwd=self.project_root)
+            # Clean previous results only for full runs to keep dev mode fast
+            if not dev_mode:
+                run_cargo_command(["clean"], cwd=self.project_root)
 
             # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
@@ -382,13 +383,25 @@ class PerformanceComparator:
         self, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData], baseline_content: str, output_file: Path
     ) -> bool:
         """Write comparison results to file."""
-        # Get metadata
+        # Prepare metadata
+        metadata = self._prepare_comparison_metadata(baseline_content)
+
+        # Prepare hardware comparison
+        hardware_report = self._prepare_hardware_comparison(baseline_content)
+
+        # Write comparison file
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        with output_file.open("w", encoding="utf-8") as f:
+            self._write_comparison_header(f, metadata, hardware_report)
+            return self._write_performance_comparison(f, current_results, baseline_results)
+
+    def _prepare_comparison_metadata(self, baseline_content: str) -> dict[str, str]:
+        """Prepare metadata for comparison report."""
         # Get current date with timezone
         now = datetime.now(UTC).astimezone()
         current_date = now.strftime("%a %b %d %H:%M:%S %Z %Y")
 
         try:
-            # Use secure subprocess wrapper for git command
             git_commit = get_git_commit_hash()
         except Exception:
             git_commit = "unknown"
@@ -403,85 +416,98 @@ class PerformanceComparator:
             elif line.startswith("Git commit: "):
                 baseline_commit = line[12:].strip()
 
-        # Hardware comparison
+        return {
+            "current_date": current_date,
+            "current_commit": git_commit,
+            "baseline_date": baseline_date,
+            "baseline_commit": baseline_commit,
+        }
+
+    def _prepare_hardware_comparison(self, baseline_content: str) -> str:
+        """Prepare hardware comparison report."""
         current_hardware = self.hardware.get_hardware_info()
         baseline_hardware = HardwareComparator.parse_baseline_hardware(baseline_content)
         hardware_report, _ = HardwareComparator.compare_hardware(current_hardware, baseline_hardware)
+        return hardware_report
 
+    def _write_comparison_header(self, f, metadata: dict[str, str], hardware_report: str) -> None:
+        """Write the header section of comparison file."""
+        f.write("Comparison Results\n")
+        f.write("==================\n")
+        f.write(f"Current Date: {metadata['current_date']}\n")
+        f.write(f"Current Git commit: {metadata['current_commit']}\n\n")
+        f.write(f"Baseline Date: {metadata['baseline_date']}\n")
+        f.write(f"Baseline Git commit: {metadata['baseline_commit']}\n\n")
+        f.write(hardware_report)
+
+    def _write_performance_comparison(self, f, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> bool:
+        """Write performance comparison section and return whether regression was found."""
         regression_found = False
 
-        # Write comparison file
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        with output_file.open("w", encoding="utf-8") as f:
-            # Header
-            f.write("Comparison Results\n")
-            f.write("==================\n")
-            f.write(f"Current Date: {current_date}\n")
-            f.write(f"Current Git commit: {git_commit}\n\n")
-            f.write(f"Baseline Date: {baseline_date}\n")
-            f.write(f"Baseline Git commit: {baseline_commit}\n\n")
+        for current_benchmark in current_results:
+            key = f"{current_benchmark.points}_{current_benchmark.dimension}"
+            baseline_benchmark = baseline_results.get(key)
 
-            # Hardware comparison
-            f.write(hardware_report)
+            self._write_benchmark_header(f, current_benchmark)
+            self._write_current_benchmark_data(f, current_benchmark)
 
-            # Performance comparison
-            for current_benchmark in current_results:
-                key = f"{current_benchmark.points}_{current_benchmark.dimension}"
-                baseline_benchmark = baseline_results.get(key)
+            if baseline_benchmark:
+                self._write_baseline_benchmark_data(f, baseline_benchmark)
+                if self._write_time_comparison(f, current_benchmark, baseline_benchmark):
+                    regression_found = True
+                self._write_throughput_comparison(f, current_benchmark, baseline_benchmark)
 
-                f.write(f"=== {current_benchmark.points} Points ({current_benchmark.dimension}) ===\n")
-                f.write(
-                    f"Current Time: [{current_benchmark.time_low}, {current_benchmark.time_mean}, "
-                    f"{current_benchmark.time_high}] {current_benchmark.time_unit}\n"
-                )
-
-                if current_benchmark.throughput_mean is not None:
-                    f.write(
-                        f"Current Throughput: [{current_benchmark.throughput_low}, {current_benchmark.throughput_mean}, "
-                        f"{current_benchmark.throughput_high}] {current_benchmark.throughput_unit}\n"
-                    )
-
-                if baseline_benchmark:
-                    f.write(
-                        f"Baseline Time: [{baseline_benchmark.time_low}, {baseline_benchmark.time_mean}, "
-                        f"{baseline_benchmark.time_high}] {baseline_benchmark.time_unit}\n"
-                    )
-
-                    if baseline_benchmark.throughput_mean is not None:
-                        f.write(
-                            f"Baseline Throughput: [{baseline_benchmark.throughput_low}, {baseline_benchmark.throughput_mean}, "
-                            f"{baseline_benchmark.throughput_high}] {baseline_benchmark.throughput_unit}\n"
-                        )
-
-                    # Calculate time change percentage (mean) with safety guard
-                    if baseline_benchmark.time_mean <= 0:
-                        f.write("Time Change: N/A (baseline mean is 0)\n")
-                    else:
-                        time_change_pct = ((current_benchmark.time_mean - baseline_benchmark.time_mean) / baseline_benchmark.time_mean) * 100
-                        f.write(f"Time Change (mean): {time_change_pct:.1f}%\n")
-
-                        # Check for regression
-                        if time_change_pct > self.regression_threshold:
-                            f.write(f"⚠️  REGRESSION: Time increased by {time_change_pct:.1f}% (slower performance)\n")
-                            regression_found = True
-                        elif time_change_pct < -self.regression_threshold:
-                            f.write(f"✅ IMPROVEMENT: Time decreased by {abs(time_change_pct):.1f}% (faster performance)\n")
-                        else:
-                            f.write("✅ OK: Time change within acceptable range\n")
-
-                    # Throughput change if available
-                    if current_benchmark.throughput_mean is not None and baseline_benchmark.throughput_mean is not None:
-                        if baseline_benchmark.throughput_mean <= 0:
-                            f.write("Throughput Change: N/A (baseline throughput is 0)\n")
-                        else:
-                            thrpt_change_pct = (
-                                (current_benchmark.throughput_mean - baseline_benchmark.throughput_mean) / baseline_benchmark.throughput_mean
-                            ) * 100
-                            f.write(f"Throughput Change (mean): {thrpt_change_pct:.1f}%\n")
-
-                f.write("\n")
+            f.write("\n")
 
         return regression_found
+
+    def _write_benchmark_header(self, f, benchmark: BenchmarkData) -> None:
+        """Write benchmark section header."""
+        f.write(f"=== {benchmark.points} Points ({benchmark.dimension}) ===\n")
+
+    def _write_current_benchmark_data(self, f, benchmark: BenchmarkData) -> None:
+        """Write current benchmark data."""
+        f.write(f"Current Time: [{benchmark.time_low}, {benchmark.time_mean}, {benchmark.time_high}] {benchmark.time_unit}\n")
+        if benchmark.throughput_mean is not None:
+            f.write(f"Current Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, {benchmark.throughput_high}] {benchmark.throughput_unit}\n")
+
+    def _write_baseline_benchmark_data(self, f, benchmark: BenchmarkData) -> None:
+        """Write baseline benchmark data."""
+        f.write(f"Baseline Time: [{benchmark.time_low}, {benchmark.time_mean}, {benchmark.time_high}] {benchmark.time_unit}\n")
+        if benchmark.throughput_mean is not None:
+            f.write(
+                f"Baseline Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, {benchmark.throughput_high}] {benchmark.throughput_unit}\n"
+            )
+
+    def _write_time_comparison(self, f, current: BenchmarkData, baseline: BenchmarkData) -> bool:
+        """Write time comparison and return whether regression was found."""
+        if baseline.time_mean <= 0:
+            f.write("Time Change: N/A (baseline mean is 0)\n")
+            return False
+
+        time_change_pct = ((current.time_mean - baseline.time_mean) / baseline.time_mean) * 100
+        f.write(f"Time Change (mean): {time_change_pct:.1f}%\n")
+
+        if time_change_pct > self.regression_threshold:
+            f.write(f"⚠️  REGRESSION: Time increased by {time_change_pct:.1f}% (slower performance)\n")
+            return True
+        if time_change_pct < -self.regression_threshold:
+            f.write(f"✅ IMPROVEMENT: Time decreased by {abs(time_change_pct):.1f}% (faster performance)\n")
+        else:
+            f.write("✅ OK: Time change within acceptable range\n")
+
+        return False
+
+    def _write_throughput_comparison(self, f, current: BenchmarkData, baseline: BenchmarkData) -> None:
+        """Write throughput comparison if data is available."""
+        if current.throughput_mean is None or baseline.throughput_mean is None:
+            return
+
+        if baseline.throughput_mean <= 0:
+            f.write("Throughput Change: N/A (baseline throughput is 0)\n")
+        else:
+            thrpt_change_pct = ((current.throughput_mean - baseline.throughput_mean) / baseline.throughput_mean) * 100
+            f.write(f"Throughput Change (mean): {thrpt_change_pct:.1f}%\n")
 
 
 def main():
@@ -515,7 +541,8 @@ def main():
             break
         project_root = project_root.parent
     else:
-        sys.exit(1)
+        print("error: could not locate Cargo.toml to determine project root", file=sys.stderr)
+        sys.exit(2)
 
     if args.command == "generate-baseline":
         generator = BaselineGenerator(project_root, tag=args.tag)

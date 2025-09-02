@@ -67,15 +67,6 @@ jobs:
       - name: Verify uv installation
         run: uv --version
 
-      - name: Install jq (required for baseline generation fallback)
-        run: |
-          # macOS runner should have jq, but ensure it's available
-          if ! command -v jq >/dev/null 2>&1; then
-            echo "Installing jq..."
-            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install jq
-          else
-            echo "jq is already available: $(jq --version)"
-          fi
 
       - name: Find latest release with baseline artifact
         id: find_baseline
