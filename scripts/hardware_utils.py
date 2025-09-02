@@ -225,7 +225,13 @@ class HardwareInfo:
             CPU core count
         """
         return self._run_command(
-            [ps_cmd, "-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfCores"]
+            [
+                ps_cmd,
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfCores",
+            ]
         ).strip()
 
     def _get_windows_cpu_threads(self, ps_cmd: str) -> str:
@@ -510,7 +516,11 @@ class HardwareComparator:
             report_lines.append(f"⚠️  CPU differs: '{current_info['CPU']}' vs '{baseline_info['CPU']}' — results may not be directly comparable")
             warnings_found = True
 
-        if current_info["CPU_CORES"] != baseline_info["CPU_CORES"] and baseline_info["CPU_CORES"] != "Unknown" and current_info["CPU_CORES"] != "Unknown":
+        if (
+            current_info["CPU_CORES"] != baseline_info["CPU_CORES"]
+            and baseline_info["CPU_CORES"] != "Unknown"
+            and current_info["CPU_CORES"] != "Unknown"
+        ):
             report_lines.append(f"⚠️  CPU core count differs: {current_info['CPU_CORES']} vs {baseline_info['CPU_CORES']} cores")
             warnings_found = True
 

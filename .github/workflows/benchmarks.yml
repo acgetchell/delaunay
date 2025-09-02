@@ -74,18 +74,21 @@ jobs:
         with:
           script: |
             try {
-              // Get all releases, sorted by creation date (newest first)
-              const releases = await github.rest.repos.listReleases({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                per_page: 100
-              });
+              // Get all releases with pagination to handle large repos
+              const releases = await github.paginate(
+                github.rest.repos.listReleases,
+                { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 }
+              );
 
-              console.log(`Found ${releases.data.length} releases`);
+              console.log(`Found ${releases.length} releases (paginated)`);
 
               // Look for releases with baseline artifacts
-              for (const release of releases.data) {
+              for (const release of releases) {
                 console.log(`Checking release ${release.tag_name}...`);
+                if (release.draft || release.prerelease) {
+                  console.log(`Skipping draft/prerelease ${release.tag_name}`);
+                  continue;
+                }
 
                 // List recent runs and look for an artifact matching the release tag
                 try {
@@ -141,6 +144,7 @@ jobs:
       - name: Download latest baseline artifact
         if: steps.find_baseline.outputs.found == 'true'
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        continue-on-error: true
         with:
           name: ${{ steps.find_baseline.outputs.artifact_name }}
           path: baseline-artifact/
@@ -220,7 +224,11 @@ jobs:
             echo "SKIP_BENCHMARKS=true" >> "$GITHUB_ENV"
             echo "SKIP_REASON=same_commit" >> "$GITHUB_ENV"
           else
-            if git diff --name-only "$BASELINE_COMMIT"..HEAD | grep -qE '^(src/|benches/|Cargo\.toml|Cargo\.lock)'; then
+            if ! git cat-file -e "$BASELINE_COMMIT^{commit}" 2>/dev/null; then
+              echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
+              echo "SKIP_REASON=baseline_commit_not_found" >> "$GITHUB_ENV"
+            elif git diff --name-only "$BASELINE_COMMIT"..HEAD | \
+                   grep -qE '^(src/|benches/|Cargo\.toml|Cargo\.lock)'; then
               echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
               echo "SKIP_REASON=changes_detected" >> "$GITHUB_ENV"
             else
@@ -297,6 +305,7 @@ jobs:
         with:
           name: performance-regression-results-${{ github.run_number }}
           path: benches/compare_results.txt
+          if-no-files-found: warn
           retention-days: 30
 
       - name: Summary
@@ -325,6 +334,8 @@ jobs:
             case "${SKIP_REASON:-unknown}" in
               same_commit) echo "Result: ⏭️ Benchmarks skipped (same commit as baseline)";;
               no_relevant_changes) echo "Result: ⏭️ Benchmarks skipped (no relevant code changes)";;
+              baseline_commit_not_found) \
+                echo "Result: ⚠️ Baseline commit not found in history (force-push/shallow clone?)";;
               *) echo "Result: ⏭️ Benchmarks skipped";;
             esac
           else

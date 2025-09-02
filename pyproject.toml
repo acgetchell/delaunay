@@ -45,7 +45,7 @@ package-dir = {"" = "scripts"}
 py-modules = ["benchmark_utils", "changelog_utils", "enhance_commits", "hardware_utils"]
 
 [tool.ruff]
-line-length = 160
+line-length = 150
 target-version = "py313"
 src = ["scripts"]
 

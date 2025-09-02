@@ -469,14 +469,18 @@ class PerformanceComparator:
         """Write current benchmark data."""
         f.write(f"Current Time: [{benchmark.time_low}, {benchmark.time_mean}, {benchmark.time_high}] {benchmark.time_unit}\n")
         if benchmark.throughput_mean is not None:
-            f.write(f"Current Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, {benchmark.throughput_high}] {benchmark.throughput_unit}\n")
+            f.write(
+                f"Current Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, "
+                f"{benchmark.throughput_high}] {benchmark.throughput_unit}\n"
+            )
 
     def _write_baseline_benchmark_data(self, f, benchmark: BenchmarkData) -> None:
         """Write baseline benchmark data."""
         f.write(f"Baseline Time: [{benchmark.time_low}, {benchmark.time_mean}, {benchmark.time_high}] {benchmark.time_unit}\n")
         if benchmark.throughput_mean is not None:
             f.write(
-                f"Baseline Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, {benchmark.throughput_high}] {benchmark.throughput_unit}\n"
+                f"Baseline Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, "
+                f"{benchmark.throughput_high}] {benchmark.throughput_unit}\n"
             )
 
     def _write_time_comparison(self, f, current: BenchmarkData, baseline: BenchmarkData) -> bool:

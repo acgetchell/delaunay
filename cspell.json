@@ -4,7 +4,15 @@
     "ignorePaths": [
         "**/.git/**",
         "**/.cache/**",
-        "**/.pytest_cache/**"
+        "**/.pytest_cache/**",
+        "**/target/**",
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/build/**",
+        "**/coverage/**",
+        "**/venv/**",
+        "**/.mypy_cache/**",
+        "**/.ruff_cache/**"
     ],
     "ignoreRegExpList": [
         "_SC_[A-Z0-9_]+",
@@ -13,13 +21,8 @@
     "dictionaryDefinitions": [],
     "dictionaries": [],
     "files": [
-        "**/*",
-        ".*",
-        "**/.*",
-        "**/*.yml",
-        "**/*.yaml",
-        "**/.*.yml",
-        "**/.*.yaml"
+        "**/*.{md,mdx,txt,rs,py,sh,ps1,toml,json,yml,yaml,ini,cfg,conf,html,css,js,ts,tsx}",
+        "**/.*.{md,yml,yaml,toml,json}"
     ],
     "words": [
         "__pycache__",
@@ -75,6 +78,7 @@
         "Edelsbrunner",
         "elif",
         "endfor",
+        "esac",
         "findutils",
         "fuga",
         "functiongenerics",
@@ -95,7 +99,6 @@
         "hypot",
         "incrementalboyerwatson",
         "isort",
-        "itional",
         "itoa",
         "Jürgen",
         "kdtree",
@@ -119,6 +122,7 @@
         "MSRV",
         "msvc",
         "msys",
+        "mypy",
         "nalgebra",
         "nanos",
         "ncols",
@@ -151,7 +155,6 @@
         "pycodestyle",
         "pydocstyle",
         "pylint",
-        "pylintpython",
         "pyproject",
         "pytest",
         "Quickhull",
@@ -166,7 +169,6 @@
         "rubocop",
         "rustc",
         "rustdoc",
-        "Rustdoc",
         "RUSTDOCFLAGS",
         "rustup",
         "rustversion",

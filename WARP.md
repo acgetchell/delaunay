@@ -16,7 +16,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 - **ALLOWED** to automatically run all code quality and formatting tools
 - **ALLOWED** to fix auto-fixable issues (formatting, linting, etc.)
-- This includes: `cargo fmt`, `cargo clippy`, `ruff format`, `ruff check --fix`, `markdownlint --fix`, `shfmt`, etc.
+- This includes: `cargo fmt`, `cargo clippy`, `uvx ruff format`, `uvx ruff check --fix`, `markdownlint --fix`, `shfmt`, etc.
 - Quality tools improve code without changing functionality or version control state
 
 #### Import Organization (AI Assistant Guidance)
@@ -31,7 +31,8 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **ALWAYS** use `uv run` when executing Python scripts in this project
 - **DO NOT** use `python3` or `python` directly
 - This ensures correct Python environment (minimum version in `.python-version`, enforced for performance) and dependency management
-- Examples: `uv run changelog-utils generate`, `uv run python -m scripts.benchmark_utils --help`
+- Examples: `uv run changelog-utils generate`, `uv run benchmark-utils --help`
+- Note: If the `benchmark-utils` console script isn't available, use `uv run python -m scripts.benchmark_utils --help`
 
 ## Overview
 
@@ -581,12 +582,15 @@ The automated performance baseline system has been successfully implemented with
 #### Priority 1: Test the Release Flow
 
 ```bash
+# Set your desired release tag
+NEXT_TAG="vX.Y.Z"
+
 # Create and push a release tag to test automatic baseline generation
-git tag v0.4.2
-git push origin v0.4.2
+git tag "$NEXT_TAG"
+git push origin "$NEXT_TAG"
 
 # Verify baseline generation workflow runs successfully
-# Check that performance-baseline-v0.4.2 artifact is created
+# Check that performance-baseline-$NEXT_TAG artifact is created
 ```
 
 #### Priority 2: Test PR Performance Regression
@@ -626,7 +630,7 @@ Key improvements needed:
 **Baseline Storage Strategy:**
 
 - Uses GitHub Actions artifacts instead of committing to repo
-- Artifacts tied to specific releases with 365-day retention
+- Artifacts tied to specific releases; retention follows the workflow's `retention-days` (e.g., baselines 365 days, benchmarks 30 days) or repo settings
 - Fallback generation if no baseline found (dev mode for speed)
 
 **Hardware Compatibility:**
@@ -638,7 +642,7 @@ Key improvements needed:
 **Performance Comparison:**
 
 - 5% regression threshold for time measurements
-- Hardware-normalized comparisons where possible
+- Hardware metadata included in comparisons; results may vary across different machines
 - Comprehensive reporting with improvement/regression indicators
 
 ### Mathematical References
