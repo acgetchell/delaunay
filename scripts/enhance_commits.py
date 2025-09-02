@@ -8,6 +8,14 @@ Keep a Changelog format (Added/Changed/Fixed/Removed/Deprecated/Security).
 
 import re
 import sys
+from pathlib import Path
+
+# Add the script directory to Python path for shared utilities
+SCRIPT_DIR = Path(__file__).parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+# Shared utilities available but not yet used in this script
+# Can be imported when needed: from changelog_utils import ChangelogUtils
 
 
 def _get_regex_patterns():
@@ -72,6 +80,10 @@ def _get_regex_patterns():
             r"\bresolve\b",
             r"\bresolves\b",
             r"\bresolved\b",
+            r"\bcorrect\b",
+            r"\bcorrects\b",
+            r"\bcorrecting\b",
+            r"\bcorrected\b",
             r"\baddress\b.*\b(error|issue|problem)\b",
             r"\brobustness\b",
             r"\bstability\b",
@@ -81,6 +93,10 @@ def _get_regex_patterns():
             r"\bfallback\b",
             r"\berror handling\b",
             r"\bconsistency check\b",
+            r"\bfalse positives?\b",
+            r"\bfalse negatives?\b",
+            r"\bimproves?.*\b(error|stability|robustness|numerical|precision|fallback|consistency)\b",
+            r"\benhances?.*\b(error|stability|robustness|numerical|precision|fallback|consistency)\b",
         ],
         "changed": [
             r"\bupdate\b",
@@ -153,9 +169,7 @@ def _categorize_entry(title_text, patterns):
                 "deprecated",
                 "security",
             ]
-            if any(
-                re.search(pattern, title_text) for pattern in patterns.get(category, [])
-            )
+            if any(re.search(pattern, title_text) for pattern in patterns.get(category, []))
         ),
         "changed",
     )
@@ -291,9 +305,7 @@ def _process_changelog_lines(lines):
         if is_release_end or is_file_end:
             # Process any pending entries
             if categorize_entries_list:
-                process_and_output_categorized_entries(
-                    categorize_entries_list, output_lines
-                )
+                process_and_output_categorized_entries(categorize_entries_list, output_lines)
                 categorize_entries_list.clear()
 
             # Reset section state
@@ -316,9 +328,7 @@ def _process_changelog_lines(lines):
             continue
 
         # Process commit lines in Changes or Fixed Issues sections
-        if (
-            section_state["in_changes_section"] or section_state["in_fixed_issues"]
-        ) and re.match(r"^- \*\*", line):
+        if (section_state["in_changes_section"] or section_state["in_fixed_issues"]) and re.match(r"^- \*\*", line):
             entry, next_index = _collect_commit_entry(lines, line_index)
             categorize_entries_list.append(entry)
             line_index = next_index
@@ -339,21 +349,22 @@ def _process_changelog_lines(lines):
 def main():
     """Main function to process changelog entries."""
     if len(sys.argv) != 3:
-        print("Usage: enhance_commits.py input_file output_file", file=sys.stderr)
         sys.exit(1)
 
     input_file = sys.argv[1]
     output_file = sys.argv[2]
 
     # Read the input file
-    with open(input_file, "r", encoding="utf-8") as file:
+    input_path = Path(input_file)
+    with input_path.open(encoding="utf-8") as file:
         lines = file.readlines()
 
     # Process the changelog
     output_lines = _process_changelog_lines(lines)
 
     # Write the output file
-    with open(output_file, "w", encoding="utf-8") as file:
+    output_path = Path(output_file)
+    with output_path.open("w", encoding="utf-8") as file:
         for line in output_lines:
             file.write(line + "\n")
 

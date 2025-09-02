@@ -42,10 +42,19 @@ Before you begin, ensure you have:
 
 1. **Rust** (latest stable version): Install via [rustup.rs][rustup]
 2. **Git** for version control
-3. **System dependencies** (for running scripts):
-   - **macOS**: `brew install jq findutils coreutils`
-   - **Ubuntu/Debian**: `sudo apt-get install jq findutils coreutils bc`
-   - **Other systems**: Install equivalent packages for `jq`, `find`, `sort`, and `bc`
+3. **Python and uv** (for development scripts and automation):
+   - **Python**: Minimum version specified in `.python-version` (enforced for performance reasons)
+   - **uv**: Fast Python package manager - Install via:
+     - **macOS/Linux**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+     - **Windows**: `powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+     - **Alternative**: `pip install uv` (if you prefer using pip)
+   - See [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/) for more options
+4. **System dependencies** (for shell scripts):
+   - **macOS**: `brew install findutils coreutils`
+   - **Ubuntu/Debian**: `sudo apt-get install findutils coreutils`
+   - **Other systems**: Install equivalent packages for `find` and `sort`
+
+**Note**: Many development tasks now use Python utilities (managed by uv) instead of traditional shell tools, reducing the number of required system dependencies.
 
 ### Quick Start
 
@@ -67,7 +76,9 @@ Before you begin, ensure you have:
 3. **Run tests**:
 
    ```bash
-   cargo test
+   cargo test                # Rust library tests
+   uv sync --group dev       # Install Python dev dependencies  
+   uv run pytest             # Python utility tests
    ```
 
 4. **Try the examples**:
@@ -81,7 +92,6 @@ Before you begin, ensure you have:
 
    ```bash
    cargo bench
-   ./scripts/generate_baseline.sh  # Create performance baseline
    ```
 
 ## Development Environment Setup
@@ -138,117 +148,86 @@ rustup show
 # Should show: active toolchain: 1.89.0-<platform> (overridden by '/path/to/delaunay/rust-toolchain.toml')
 ```
 
-## Project Structure
+### Python Development Environment
 
-Understanding the project layout will help you navigate and contribute effectively:
+#### Python Utilities for Development Automation
 
-```text
-delaunay/
-├── src/                                          # Core library code
-│   ├── core/                                     # Core triangulation structures
-│   │   ├── algorithms/                           # Triangulation algorithms
-│   │   │   ├── bowyer_watson.rs                  # Incremental Bowyer-Watson algorithm
-│   │   │   └── robust_bowyer_watson.rs           # Robust geometric predicates version
-│   │   ├── traits/                               # Core traits for data types and algorithms
-│   │   │   ├── boundary_analysis.rs              # Boundary analysis traits
-│   │   │   ├── data_type.rs                      # DataType trait definitions
-│   │   │   └── insertion_algorithm.rs            # Insertion algorithm traits
-│   │   ├── boundary.rs                           # Boundary analysis and facet detection
-│   │   ├── cell.rs                               # Cell (simplex) implementation
-│   │   ├── facet.rs                              # Facet implementation
-│   │   ├── triangulation_data_structure.rs       # Main Tds struct
-│   │   ├── util.rs                               # Helper functions for triangulation operations
-│   │   └── vertex.rs                             # Vertex implementation with generic support
-│   ├── geometry/                                 # Geometric algorithms and predicates
-│   │   ├── algorithms/                           # Geometric algorithms
-│   │   │   └── convex_hull.rs                    # Convex hull computation
-│   │   ├── traits/                               # Coordinate abstractions and floating-point traits
-│   │   │   └── coordinate.rs                     # Core Coordinate trait abstraction
-│   │   ├── matrix.rs                             # Matrix operations for geometric computations
-│   │   ├── point.rs                              # Generic Point struct with NaN-aware operations
-│   │   ├── predicates.rs                         # Geometric predicates (insphere, orientation)
-│   │   ├── robust_predicates.rs                  # Robust geometric predicates
-│   │   └── util.rs                               # Geometric utility functions
-│   └── lib.rs                                    # Main library file with module declarations and prelude
-├── examples/                                     # Usage examples and demonstrations
-│   ├── README.md                                 # Examples documentation
-│   ├── boundary_analysis_trait.rs                # Boundary analysis examples
-│   ├── check_float_traits.rs                     # Floating-point trait examples
-│   ├── convex_hull_3d_50_points.rs               # 3D convex hull extraction and analysis example
-│   ├── implicit_conversion.rs                    # Type conversion examples
-│   ├── point_comparison_and_hashing.rs           # Point operations examples
-│   ├── test_alloc_api.rs                         # Allocation API examples
-│   ├── test_circumsphere.rs                      # Circumsphere computation examples
-│   └── triangulation_3d_50_points.rs             # 3D triangulation example
-├── benches/                                      # Performance benchmarks
-│   ├── results/                                  # Benchmark result files
-│   ├── README.md                                 # Benchmarking guide and performance results
-│   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
-│   ├── baseline_results.txt                      # Performance baseline data
-│   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
-│   ├── helpers.rs                                # Benchmark helper functions
-│   ├── microbenchmarks.rs                        # Fine-grained performance tests
-│   ├── small_scale_triangulation.rs              # Small triangulation benchmarks
-│   └── triangulation_creation.rs                 # Triangulation creation benchmarks
-├── tests/                                        # Integration tests
-│   ├── bench_helpers_test.rs                     # Tests for benchmark helper functions
-│   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
-│   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
-│   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
-│   ├── robust_predicates_showcase.rs             # Robust predicates demonstration tests
-│   └── test_cavity_boundary_error.rs             # Cavity boundary error reproduction tests
-├── docs/                                         # Additional documentation
-│   ├── templates/                                # Templates for automated generation
-│   │   ├── README.md                             # Templates documentation
-│   │   └── changelog.hbs                         # Custom changelog template
-│   ├── code_organization.md                      # Code organization patterns
-│   ├── numerical_robustness_guide.md             # Numerical robustness and stability guide
-│   ├── optimization_recommendations.md           # Performance optimization guide
-│   └── RELEASING.md                              # Release process documentation
-├── scripts/                                      # Development and CI scripts
-│   ├── README.md                                 # Scripts documentation
-│   ├── benchmark_parser.sh                       # Shared benchmark parsing utilities
-│   ├── compare_benchmarks.sh                     # Performance regression testing
-│   ├── enhance_commits.py                        # Commit enhancement utilities
-│   ├── generate_baseline.sh                      # Create performance baselines
-│   ├── generate_changelog.sh                     # Generate changelog with commit dates and squashed PR expansion
-│   ├── hardware_info.sh                          # Hardware information and system capabilities
-│   ├── run_all_examples.sh                       # Validate all examples
-│   └── tag-from-changelog.sh                     # Create git tags from changelog content
-├── .cargo/                                       # Cargo configuration
-│   └── config.toml                               # Build configuration
-├── .github/                                      # GitHub configuration
-│   ├── workflows/                                # CI/CD workflows
-│   │   ├── audit.yml                             # Security vulnerability scanning
-│   │   ├── benchmarks.yml                        # Performance regression testing
-│   │   ├── ci.yml                                # Main CI pipeline
-│   │   ├── codacy.yml                            # Code quality analysis
-│   │   ├── codecov.yml                           # Test coverage tracking
-│   │   ├── codeql.yml                            # Security analysis
-│   │   └── rust-clippy.yml                       # Additional clippy analysis
-│   ├── CODEOWNERS                                # Code ownership definitions
-│   └── dependabot.yml                            # Dependency update configuration
-├── .auto-changelog                               # Auto-changelog configuration
-├── .codecov.yml                                  # CodeCov configuration
-├── .coderabbit.yml                               # CodeRabbit AI review configuration
-├── .gitignore                                    # Git ignore patterns
-├── .markdownlint.json                            # Markdown linting configuration
-├── .yamllint                                     # YAML linting configuration
-├── CHANGELOG.md                                  # Version history with enhanced squashed PR support
-├── CITATION.cff                                  # Citation metadata for academic use
-├── CODE_OF_CONDUCT.md                            # Community guidelines
-├── CONTRIBUTING.md                               # This file
-├── Cargo.lock                                    # Dependency lockfile
-├── Cargo.toml                                    # Package configuration and dependencies
-├── cspell.json                                   # Spell checking configuration
-├── LICENSE                                       # MIT License
-├── README.md                                     # Project overview and getting started
-├── REFERENCES.md                                 # Academic references and citations
-├── rustfmt.toml                                  # Code formatting configuration
-└── WARP.md                                       # WARP AI development guidance
+The project has transitioned from traditional shell scripts to Python-based utilities for better cross-platform compatibility and maintainability.
+
+**Key Python Configuration Files:**
+
+- **`pyproject.toml`**: Defines Python project metadata, dependencies, and tool configurations
+- **`uv.lock`**: Lockfile ensuring reproducible Python environments across different machines
+- **Python utilities** in `scripts/`: Modern replacements for legacy shell scripts
+
+**Python Dependencies Management:**
+
+The project uses `uv` for fast, reliable Python dependency management:
+
+```bash
+# Python dependencies are automatically managed
+# No manual installation required - uv handles everything
+
+# If you need to run Python tools directly:
+uvx ruff format scripts/     # Code formatting
+uvx ruff check --fix scripts/ # Linting with auto-fixes
+uvx pylint scripts/          # Code quality analysis
 ```
 
-For detailed code organization patterns, see [code organization documentation][code-organization].
+**Integration with Development Workflow:**
+
+- **GitHub Actions**: Python utilities integrate seamlessly with CI/CD
+- **Hardware Detection**: Cross-platform hardware information gathering
+- **Benchmark Processing**: Automated performance regression detection
+- **Changelog Management**: Enhanced changelog generation and git tagging with Python parsing
+
+**Migration from Shell Scripts:**
+
+The project has evolved from shell-based to Python-based automation:
+
+- ✅ **New**: Python utilities (`benchmark-utils`, `hardware-utils`, `changelog-utils`) accessible via `uv run`
+  with comprehensive benchmark processing, hardware detection, and changelog management functionality
+- ❌ **Legacy**: Old shell scripts like `generate_baseline.sh`, `compare_benchmarks.sh`, `tag-from-changelog.sh` (replaced by Python equivalents)
+- 🔄 **Hybrid**: Some shell scripts remain as simple wrappers (e.g., `run_all_examples.sh`)
+
+**Benefits of Python Utilities:**
+
+- **Cross-platform compatibility** (Windows, macOS, Linux)
+- **Better error handling** and structured data processing
+- **Integration with GitHub Actions** for automated workflows
+- **Easier maintenance** and testing compared to complex shell scripts
+
+## Project Structure
+
+The project follows a standard Rust library structure with additional tooling for computational geometry research:
+
+### Key Directories
+
+- **`src/`** - Core library code
+  - **`core/`** - Triangulation data structures and algorithms (Bowyer-Watson, boundary analysis)
+  - **`geometry/`** - Geometric predicates, point operations, and convex hull algorithms
+- **`examples/`** - Usage examples and demonstrations (see [examples documentation][examples-readme])
+- **`benches/`** - Performance benchmarks with Criterion (see [benchmarks documentation][benches-readme])
+- **`tests/`** - Integration tests and regression test suites
+- **`docs/`** - Additional documentation and guides
+- **`scripts/`** - Development automation (Python utilities, shell scripts)
+
+### Configuration Files
+
+- **`.codacy.yml`** - Code quality analysis configuration
+- **`Cargo.toml`** - Package metadata and Rust tooling configuration
+- **`pyproject.toml`** - Python development tools configuration
+- **`rustfmt.toml`** - Code formatting rules
+- **`rust-toolchain.toml`** - Pinned Rust version for reproducible builds
+
+### Development Resources
+
+- **`WARP.md`** - AI development assistant guidance
+- **`CONTRIBUTING.md`** - This file
+- **`REFERENCES.md`** - Academic citations and bibliography
+- **`.github/workflows/`** - CI/CD automation (testing, benchmarks, quality checks)
+
+For detailed code organization patterns and module structure, see [code organization documentation][code-organization].
 
 ## Development Workflow
 
@@ -287,6 +266,19 @@ git checkout -b docs/doc-improvement
 5. **Check performance impact** for algorithmic changes
 6. **Push to your fork** and create a pull request to the main repository
 
+**Important Note on Git Operations:**
+
+Per project rules (see [WARP.md](WARP.md)), **DO NOT** include `git commit` or `git push` commands in
+development scripts. All git operations should be handled manually by contributors to maintain full control over
+version control operations. This ensures:
+
+- **User control** over commit messages and timing
+- **Prevention of accidental commits** during automated processes
+- **Compliance with project security policies**
+- **Flexibility** in branching and merging strategies
+
+Any automation scripts should stop at the point where git operations would be needed, allowing contributors to handle version control manually.
+
 ### 4. Continuous Integration
 
 The project uses comprehensive CI workflows:
@@ -295,9 +287,33 @@ The project uses comprehensive CI workflows:
 - **Benchmarks** (`.github/workflows/benchmarks.yml`): Performance regression testing
 - **Security** (`.github/workflows/audit.yml`): Dependency vulnerability scanning
 - **Code Quality** (`.github/workflows/rust-clippy.yml`): Strict linting
+- **Codacy** (`.github/workflows/codacy.yml`): Code quality analysis using project configurations
 - **Coverage** (`.github/workflows/codecov.yml`): Test coverage tracking
 
 All PRs must pass CI checks before merging.
+
+### 5. Code Quality Analysis
+
+The project uses **Codacy** for automated code quality analysis across both Rust and Python code:
+
+- **Configuration**: `.codacy.yml` in the project root
+- **Rust Analysis**: Uses Clippy (configured via `Cargo.toml`) and rustfmt (configured via `rustfmt.toml`)
+- **Python Analysis**: Uses Ruff and Pylint (configured via `pyproject.toml`)
+- **Additional Tools**: ShellCheck for shell scripts, markdownlint for documentation, yamllint for config files
+
+**Key Benefits:**
+
+- **Unified Quality Dashboard**: Single view of code quality across all languages
+- **Uses Project Settings**: Respects your local tool configurations (no duplicate/conflicting rules)
+- **Pull Request Integration**: Quality feedback directly in PR reviews
+- **Trend Tracking**: Monitor code quality improvements over time
+
+**For Contributors:**
+
+- Codacy analysis runs automatically on all PRs
+- Quality issues are reported as PR comments
+- The same tools and rules used locally in development (following WARP.md guidelines)
+- No additional setup required - uses existing project configurations
 
 ## Commit Message Format
 
@@ -433,6 +449,10 @@ cargo test
 
 # Integration tests
 cargo test --tests
+
+# Python utility tests (development scripts)
+uv sync --group dev  # Install test dependencies
+uv run pytest       # Run Python tests
 
 # Example tests (ensure examples compile and run)
 ./scripts/run_all_examples.sh
@@ -626,19 +646,29 @@ The project includes comprehensive benchmarking:
 - **Location**: `benches/` directory with detailed [README][benches-readme]
 - **Framework**: Criterion with allocation tracking
 - **Coverage**: Small-scale triangulations across dimensions
+- **Automated Baselines**: Performance baselines are automatically generated on releases
 
 ### Performance Testing Workflow
 
+**For development and manual testing:**
+
 ```bash
-# Generate performance baseline (first time)
-./scripts/generate_baseline.sh
+# Run benchmarks directly
+cargo bench
 
-# Test for performance regressions
-./scripts/compare_benchmarks.sh
-
-# Development mode (faster iteration)
-./scripts/compare_benchmarks.sh --dev
+# Run all examples to verify performance
+./scripts/run_all_examples.sh
 ```
+
+**Note**: The project uses an **automated performance baseline system**:
+
+- **Automatic baseline generation**: Baselines are created automatically when git tags are pushed via GitHub Actions
+- **CI regression testing**: Performance regressions are detected automatically in PRs against the latest baseline
+- **Hardware compatibility**: The system detects hardware differences and provides warnings when comparing across different configurations
+- **5% regression threshold**: CI fails if performance degrades by more than 5%
+
+The old shell scripts (`generate_baseline.sh`, `compare_benchmarks.sh`) mentioned in some documentation have been
+**replaced** with Python utilities that integrate with GitHub Actions for automated baseline management.
 
 ### Performance Guidelines
 
@@ -646,8 +676,10 @@ The project includes comprehensive benchmarking:
 - **Memory Allocation**: Minimize unnecessary allocations
 - **Numerical Stability**: Balance performance with numerical accuracy
 - **Regression Detection**: CI fails on >5% performance regressions
+- **Hardware Awareness**: Consider performance implications across different hardware configurations
 
-See [scripts documentation][scripts-readme] for detailed benchmarking workflows.
+See [scripts documentation][scripts-readme] for detailed benchmarking workflows and the [WARP.md](WARP.md) file
+for implementation details of the automated baseline system.
 
 ## Submitting Changes
 

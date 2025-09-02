@@ -1,0 +1,243 @@
+---
+# Codacy configuration for delaunay project
+# Comprehensive configuration for all Codacy analysis tools
+#
+# Bandit Security Configuration:
+# - Only reports HIGH severity security issues (ignores medium/low)
+# - High confidence issues only (reduces false positives)
+# - Excludes test-related and development script patterns (B101, B404, B603, etc.)
+# - Focuses on genuine security vulnerabilities in production code
+
+# Tool configuration
+engines:
+  # === RUST TOOLS ===
+  # Note: clippy and rustfmt are not supported by Codacy
+  # These are handled by our GitHub Actions CI instead
+
+  # === PYTHON TOOLS ===
+  # Ruff for Python linting and formatting (reads from pyproject.toml)
+  ruff:
+    enabled: true
+    include_paths:
+      - "scripts/**/*.py"
+      - "**/*.py"
+    config:
+      # Use configuration from pyproject.toml
+      file: "pyproject.toml"
+
+  # Note: pylint has been retired project-wide in favor of ruff
+  # Ruff provides faster, more comprehensive Python analysis with excellent pyproject.toml support
+
+  # Bandit for Python security analysis
+  bandit:
+    enabled: true
+    include_paths:
+      - "scripts/**/*.py"
+      - "**/*.py"
+    # Focus on high-severity security issues only (ignore medium and minor)
+    config:
+      # Only report high severity issues (filters out medium and low)
+      severity: high
+      # Only include high confidence issues (reduces false positives)
+      confidence: high
+      # Skip specific tests that are false positives for development scripts
+      # B101: assert usage (common in tests)
+      # B102: exec usage
+      # B103: set_bad_file_permissions
+      # B108: hardcoded tmp directory
+      # B110: try_except_pass
+      # B404: subprocess module (needed for utility scripts)
+      # B603: subprocess without shell equals true
+      # B607: starting process with partial executable path
+      skips: ["B101", "B102", "B103", "B108", "B110", "B404", "B603", "B607"]
+      # Explicitly exclude information level issues
+      exclude_info: true
+      # Focus only on security issues, not code quality
+      exclude_dirs: ["tests"]
+
+  # Prospector for Python code quality
+  prospector:
+    enabled: false
+    include_paths:
+      - "scripts/**/*.py"
+      - "**/*.py"
+    # Use project settings and focus on high-impact issues
+    config:
+      max_line_length: 160
+      # Limit to higher-impact checks to avoid noise
+      strictness: medium
+      # Avoid duplicating Ruff and Pylint checks
+      uses:
+        - security
+        - performance
+      # Skip style/formatting checks already handled by Ruff
+      ignore_patterns:
+        - "^E\\d+$"  # Skip PEP8 errors
+        - "^W\\d+$"  # Skip style warnings
+      # Read from pyproject.toml
+      profile: "pyproject.toml"
+
+  # === OTHER LANGUAGES/FORMATS ===
+  # ShellCheck for shell scripts (scripts/*.sh)
+  shellcheck:
+    enabled: true
+    include_paths:
+      - "scripts/**/*.sh"
+      - "**/*.sh"
+    config:
+      shell: bash  # Default shell dialect
+      severity: warning  # Reduce noise
+      include_code: true  # Include code in findings
+
+  # Markdown linting for documentation
+  markdownlint:
+    enabled: true
+    include_paths:
+      - "**/*.md"
+    config:
+      # Reference existing config file
+      file: ".markdownlint.json"
+
+  # Note: yamllint is not supported by Codacy - handled by GitHub Actions CI instead
+  # YAML validation is performed in our CI workflows
+
+  # Note: Jackson Linter is disabled because our JSON files are simple config files
+  # that are already valid and rarely change. JSON validation is handled by IDEs.
+
+  # Lizard (code complexity analysis)
+  lizard:
+    enabled: true
+    include_paths:
+      - "src/**/*.rs"
+      - "scripts/**/*.py"
+    config:
+      # Customize thresholds to match project practices
+      languages: ["rust", "python"]
+      threshold:
+        cyclomatic_complexity: 15
+        token_count: 300
+        nesting_depth: 5
+        parameter_count: 5
+        length: 1000
+
+  # Semgrep (static analysis for security)
+  semgrep:
+    enabled: true
+    include_paths:
+      - "src/**/*.rs"
+      - "scripts/**/*.py"
+      - "scripts/**/*.sh"
+
+  # Spectral (OpenAPI/AsyncAPI linting)
+  spectral:
+    enabled: true
+    include_paths:
+      - "**/*.yml"
+      - "**/*.yaml"
+      - "**/*.json"
+    # Focus on schemas if they exist in the project
+    config:
+      extends:
+        - spectral:oas
+        - spectral:asyncapi
+      rules:
+        no-$ref-siblings: off  # Common exception needed in many schemas
+
+  # Trivy (security vulnerability scanner)
+  trivy:
+    enabled: true
+    config:
+      # Focus on high and critical vulnerabilities
+      severity: ["HIGH", "CRITICAL"]
+      # Skip development dependencies
+      skip_dev_dependencies: true
+      # Enable scanning for secrets
+      enable_secret_scanning: true
+
+  # === DUPLICATION DETECTION ===
+  # Move duplication under engines (Codacy schema requirement)
+  duplication:
+    enabled: true
+    # Configuration for duplication thresholds
+    config:
+      # Minimum number of lines to consider duplication
+      minimum_mass: 60
+      # Minimum number of tokens to consider duplication
+      minimum_tokens: 80
+    exclude_paths:
+      - "target/**"
+      - "benches/**"     # Benchmarks may have similar setup patterns
+      - "examples/**"    # Examples may demonstrate similar concepts
+      - "tests/**"       # Test patterns may be repetitive by design
+
+# === GLOBAL EXCLUSION PATTERNS ===
+exclude_paths:
+  # Rust build artifacts and dependencies
+  - "target/**"
+  - "Cargo.lock"
+
+  # Python artifacts
+  - "__pycache__/**"
+  - "*.pyc"
+  - ".pytest_cache/**"
+  - "venv/**"
+  - ".venv/**"
+
+  # General artifacts
+  - "node_modules/**"
+  - ".git/**"
+  - "**/*.min.js"
+  - "**/*.min.css"
+  - "**/vendor/**"
+  - "benches/baseline_results.txt"
+  - "benches/benchmark_results/**"
+  - "uv.lock"
+  - ".cspellcache"
+
+# Focus analysis on source code and documentation
+include_paths:
+  # Rust source code
+  - "src/**"
+  - "benches/**"
+  - "examples/**"
+  - "tests/**"
+  - "build.rs"
+  - "Cargo.toml"
+  - "rustfmt.toml"
+
+  # Python scripts
+  - "scripts/**"
+  - "*.py"
+  - "pyproject.toml"
+
+  # Documentation and configuration
+  - "*.md"
+  - "*.yml"
+  - "*.yaml"
+  - "*.json"
+  - "*.sh"
+  - ".github/**"
+
+
+# === ADDITIONAL SETTINGS ===
+# Custom file extensions per language (Codacy schema compliant)
+languages:
+  rust:
+    extensions:
+      - ".rs"
+  python:
+    extensions:
+      - ".py"
+  markdown:
+    extensions:
+      - ".md"
+  yaml:
+    extensions:
+      - ".yml"
+      - ".yaml"
+  json:
+    extensions:
+      - ".json"
+  shell:
+    extensions:
+      - ".sh"

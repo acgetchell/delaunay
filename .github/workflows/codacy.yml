@@ -45,7 +45,7 @@ jobs:
     steps:
       # Checkout the repository to the GitHub Actions runner
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
 
       # Execute Codacy Analysis CLI and generate a SARIF output with
       # the security issues identified during the analysis
@@ -72,74 +72,47 @@ jobs:
           # Fail fast and surface errors clearly
           set -euo pipefail
           if [ -f "results.sarif" ] && [ -s "results.sarif" ]; then
-            echo "Processing SARIF file with multiple tools..."
-            # Extract each run and create separate SARIF files
-            jq -c '.runs[]' results.sarif | while IFS= read -r run; do
-              tool_name=$(echo "$run" | \
-                jq -r '.tool.driver.name' | \
-                tr '/' '_' | tr ' ' '_')
-              echo "Processing tool: $tool_name"
-
-              # Create a proper SARIF file for this tool
-              schema_url="https://raw.githubusercontent.com/oasis-tcs/"
-              schema_url+="sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
-              jq -n --argjson run "$run" \
-                --arg schema "$schema_url" '{
-                "$schema": $schema,
-                "version": "2.1.0",
-                "runs": [$run]
-              }' > "sarif_${tool_name}.sarif"
-
-              echo "Created sarif_${tool_name}.sarif"
-            done
-            # List generated files for debugging
-            echo "Generated SARIF files:"
-            ls -la sarif_*.sarif || echo "No split SARIF files found"
+            echo "results.sarif present; preselecting for upload and skipping split."
+            echo "SARIF_FILE=results.sarif" >> "$GITHUB_ENV"
+            exit 0
           else
             echo "No SARIF file found or file is empty"
+            echo "Creating empty SARIF file to prevent workflow failure"
+            # Create empty SARIF file with proper schema
+            echo '{' > sarif_empty.sarif
+            schema_url="https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
+            echo "  \"\$schema\": \"$schema_url\"," >> sarif_empty.sarif
+            echo '  "version": "2.1.0",' >> sarif_empty.sarif
+            echo '  "runs": []' >> sarif_empty.sarif
+            echo '}' >> sarif_empty.sarif
+            # Mark the empty SARIF for upload
+            echo "SARIF_FILE=sarif_empty.sarif" >> "$GITHUB_ENV"
             exit 0
           fi
 
-      # Upload each SARIF file separately
-      - name: Upload SARIF files
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # Select SARIF file for upload
+      - name: Select SARIF file for upload
         run: |
-          # Don't iterate literal patterns when no files exist
-          shopt -s nullglob
-          upload_count=0
-          for sarif_file in sarif_*.sarif; do
-            if [ -f "$sarif_file" ]; then
-              echo "Uploading $sarif_file"
-              # Extract tool name for category
-              tool_name=$(basename "$sarif_file" .sarif | sed 's/^sarif_//')
-              # Upload using the action (we'll call it via environment variables)
-              # Use GitHub CLI to upload if available, otherwise use curl
-              if command -v gh >/dev/null 2>&1; then
-                gh api "repos/${{ github.repository }}/code-scanning/sarifs" \
-                  --method POST \
-                  --field sarif="$(base64 -w 0 < "$sarif_file")" \
-                  --field commit_sha="${{ github.sha }}" \
-                  --field ref="${{ github.ref }}" \
-                  --field category="codacy-$tool_name" || echo "Failed to upload $sarif_file via gh"
-              else
-                # Fallback to curl
-                curl -L \
-                  -X POST \
-                  -H "Accept: application/vnd.github+json" \
-                  -H "Authorization: Bearer ${{ github.token }}" \
-                  -H "X-GitHub-Api-Version: 2022-11-28" \
-                  "https://api.github.com/repos/${{ github.repository }}/code-scanning/sarifs" \
-                  -d "$(jq -n \
-                    --arg sarif "$(base64 -w 0 < "$sarif_file")" \
-                    --arg commit "${{ github.sha }}" \
-                    --arg ref "${{ github.ref }}" \
-                    --arg category "codacy-$tool_name" \
-                    '{sarif: $sarif, commit_sha: $commit, ref: $ref, category: $category}')" \
-                  || echo "Failed to upload $sarif_file via curl"
-              fi
-              upload_count=$((upload_count + 1))
-            fi
-          done
-          echo "Attempted to upload $upload_count SARIF files"
+          set -euo pipefail
+          # Honor preselected SARIF_FILE from earlier steps (e.g., empty SARIF case)
+          if [ -n "${SARIF_FILE:-}" ]; then
+            echo "Preselected SARIF_FILE=$SARIF_FILE; not overriding."
+            exit 0
+          fi
+          # First, try to upload the original results.sarif if it exists
+          if [ -f "results.sarif" ] && [ -s "results.sarif" ]; then
+            echo "Found results.sarif, attempting upload..."
+            echo "SARIF_FILE=results.sarif" >> "$GITHUB_ENV"
+          else
+            echo "No valid SARIF files found"
+            echo "SARIF_FILE=" >> "$GITHUB_ENV"
+          fi
+        continue-on-error: true
+
+      # Upload the identified SARIF file
+      - name: Upload identified SARIF file
+        if: always() && env.SARIF_FILE != ''
+        uses: github/codeql-action/upload-sarif@b36bf259c813715f76eafece573914b94412cd13  # v3
+        with:
+          sarif_file: ${{ env.SARIF_FILE }}
         continue-on-error: true

@@ -1,0 +1,167 @@
+name: Generate Performance Baseline
+
+# Generate performance baselines for new releases
+# Security: All GitHub context variables are passed through safe environment variables
+# to prevent code injection attacks via malicious branch names or commit data
+on:
+  # Trigger on tag creation (releases)
+  push:
+    tags:
+      - 'v*'
+
+  # Manual trigger for testing
+  workflow_dispatch:
+
+# Security: Define minimal required permissions
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  generate-baseline:
+    concurrency:
+      group: generate-baseline-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: macos-15  # Use same runner as benchmark workflow for consistency
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          fetch-depth: 0  # Full history for tag operations
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a  # v1.14.1
+        with:
+          cache: true
+          # Toolchain from rust-toolchain.toml
+
+      - name: Install jq (required for baseline generation)
+        run: |
+          # macOS runner should have jq, but ensure it's available
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "Installing jq..."
+            brew install jq
+          else
+            echo "jq is already available: $(jq --version)"
+          fi
+
+      - name: Determine tag information
+        id: tag_info
+        run: |
+          if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            echo "Using push tag: $TAG_NAME"
+          else
+            TAG_NAME="manual-$(date -u +%Y%m%d-%H%M%S)"
+            echo "Using generated tag name: $TAG_NAME"
+          fi
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "Final tag name: $TAG_NAME"
+
+      - name: Install uv (Python package manager)
+        uses: astral-sh/setup-uv@557e51de59eb14aaaba2ed9621916900a91d50c6  # v6.6.1
+        with:
+          version: "latest"
+
+      - name: Verify uv installation
+        run: uv --version
+
+      - name: Generate performance baseline
+        env:
+          TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+        run: |
+          echo "🚀 Generating performance baseline for tag $TAG_NAME"
+
+          # Run baseline generation using Python CLI tool
+          uv run benchmark-utils generate-baseline \
+            || uv run python -m scripts.benchmark_utils generate-baseline
+
+          # Verify baseline was created
+          if [ ! -f "benches/baseline_results.txt" ]; then
+            echo "❌ Baseline generation failed - no baseline file created"
+            exit 1
+          fi
+
+          echo "✅ Baseline generated successfully"
+
+          # Show baseline summary
+          echo "📊 Baseline summary:"
+          head -n 10 benches/baseline_results.txt
+          echo "..."
+          benchmark_count=$(grep -c "^===" benches/baseline_results.txt || echo "0")
+          echo "Total benchmarks: $benchmark_count"
+
+      - name: Prepare baseline artifact
+        env:
+          TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+          SAFE_COMMIT_SHA: ${{ github.sha }}
+          SAFE_RUN_ID: ${{ github.run_id }}
+        run: |
+          # Create artifact directory
+          mkdir -p baseline-artifact
+
+          # Copy baseline file with tag-specific name
+          cp benches/baseline_results.txt "baseline-artifact/baseline-$TAG_NAME.txt"
+
+          # Also copy as generic name for easy download
+          cp benches/baseline_results.txt "baseline-artifact/baseline_results.txt"
+
+          # Create metadata file
+          cat > "baseline-artifact/metadata.json" <<EOF
+          {
+            "tag": "$TAG_NAME",
+            "commit": "$SAFE_COMMIT_SHA",
+            "workflow_run_id": "$SAFE_RUN_ID",
+            "generated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "runner_os": "$RUNNER_OS",
+            "runner_arch": "$RUNNER_ARCH"
+          }
+          EOF
+
+          echo "📦 Artifact contents:"
+          ls -la baseline-artifact/
+
+      - name: Create safe artifact name
+        id: safe_name
+        env:
+          SAFE_TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+        run: |
+          # Sanitize tag name for artifact upload (remove special characters)
+          CLEAN_TAG_NAME=$(echo "$SAFE_TAG_NAME" | sed 's/[^a-zA-Z0-9._-]/_/g')
+          echo "artifact_name=performance-baseline-$CLEAN_TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "Using sanitized artifact name: performance-baseline-$CLEAN_TAG_NAME"
+
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: ${{ steps.safe_name.outputs.artifact_name }}
+          path: baseline-artifact/
+          retention-days: 365  # Keep baselines for 1 year
+          compression-level: 6  # Good balance of speed/compression
+
+      - name: Display next steps
+        env:
+          TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+          SAFE_COMMIT_SHA: ${{ github.sha }}
+          SAFE_REF_TYPE: ${{ github.ref_type }}
+        run: |
+          echo "🎉 Performance baseline generated successfully!"
+          echo ""
+          echo "📋 Summary:"
+          echo "  Tag: $TAG_NAME"
+          echo "  Commit: $SAFE_COMMIT_SHA"
+          echo "  Artifact: performance-baseline-$TAG_NAME"
+          echo ""
+          echo "🔄 The benchmark workflow will now use this baseline for:"
+          echo "  • Pull request performance testing"
+          echo "  • Main branch regression detection"
+          echo "  • Manual performance comparisons"
+          echo ""
+          if [ "$SAFE_REF_TYPE" = "tag" ]; then
+            echo "💡 This baseline is now available for release $TAG_NAME"
+          fi

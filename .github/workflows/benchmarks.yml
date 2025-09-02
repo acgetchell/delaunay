@@ -1,11 +1,24 @@
 name: Performance Regression Testing
 
 # Run performance regression testing on important changes
+# Security: All GitHub context variables are passed through safe environment variables
+# to prevent code injection attacks via malicious branch names or commit data
 on:
   # Manual trigger
   workflow_dispatch:
 
-  # On pushes to main branch (not PRs to avoid CI environment noise)
+  # Pull requests to main branch
+  pull_request:
+    branches:
+      - main
+    # Only run on changes that could affect performance
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+  # On pushes to main branch
   push:
     branches:
       - main
@@ -15,6 +28,16 @@ on:
       - 'benches/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+
+# Security: Define minimal required permissions
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: perf-regress-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,36 +49,153 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
           fetch-depth: 0  # required to diff against BASELINE_COMMIT
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a  # v1.14.1
         with:
           cache: true
           # Toolchain from rust-toolchain.toml; no extra target needed on macOS-ARM
 
-      - name: Check for performance baseline
+      - name: Install uv (Python package manager)
+        uses: astral-sh/setup-uv@557e51de59eb14aaaba2ed9621916900a91d50c6  # v6.6.1
+        with:
+          version: "latest"
+
+      - name: Verify uv installation
+        run: uv --version
+
+
+      - name: Find latest release with baseline artifact
+        id: find_baseline
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          script: |
+            try {
+              // Get all releases with pagination to handle large repos
+              const releases = await github.paginate(
+                github.rest.repos.listReleases,
+                { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 }
+              );
+
+              console.log(`Found ${releases.length} releases (paginated)`);
+
+              // Look for releases with baseline artifacts
+              for (const release of releases) {
+                console.log(`Checking release ${release.tag_name}...`);
+                if (release.draft || release.prerelease) {
+                  console.log(`Skipping draft/prerelease ${release.tag_name}`);
+                  continue;
+                }
+
+                // List recent runs and look for an artifact matching the release tag
+                try {
+                  // Mirror sanitization in generate-baseline.yml (allow [A-Za-z0-9._-], replace others with _)
+                  const cleanTag = release.tag_name.replace(/[^a-zA-Z0-9._-]/g, '_');
+                  const expectedName = `performance-baseline-${cleanTag}`;
+                  let found = false;
+                  for (let page = 1; page <= 5 && !found; page++) {
+                    const runs = await github.rest.actions.listWorkflowRuns({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      workflow_id: 'generate-baseline.yml',
+                      status: 'completed',
+                      conclusion: 'success',
+                      per_page: 100,
+                      page
+                    });
+                    for (const run of runs.data.workflow_runs) {
+                      const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        run_id: run.id
+                      });
+                      const baselineArtifact = artifacts.data.artifacts.find(a => a.name === expectedName);
+                      if (baselineArtifact) {
+                        console.log(
+                          `Found baseline artifact ${expectedName} in run ${run.id} ` +
+                          `for release ${release.tag_name}`
+                        );
+                        core.setOutput('found', 'true');
+                        core.setOutput('release_tag', release.tag_name);
+                        core.setOutput('artifact_name', expectedName);
+                        core.setOutput('run_id', run.id.toString());
+                        found = true;
+                        break;
+                      }
+                    }
+                  }
+                  if (found) return;
+                } catch (error) {
+                  console.log(`Error checking release ${release.tag_name}: ${error.message}`);
+                  continue;
+                }
+              }
+
+              console.log('No baseline artifacts found in any release');
+              core.setOutput('found', 'false');
+            } catch (error) {
+              console.error(`Error searching for baseline artifacts: ${error.message}`);
+              core.setOutput('found', 'false');
+            }
+
+      - name: Download latest baseline artifact
+        if: steps.find_baseline.outputs.found == 'true'
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        continue-on-error: true
+        with:
+          name: ${{ steps.find_baseline.outputs.artifact_name }}
+          path: baseline-artifact/
+          run-id: ${{ steps.find_baseline.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract baseline from artifact
+        if: steps.find_baseline.outputs.found == 'true'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.find_baseline.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ -f "baseline-artifact/baseline_results.txt" ]]; then
+            echo "📦 Extracted baseline from artifact for release ${RELEASE_TAG:-unknown}"
+            mkdir -p "benches"
+            cp "baseline-artifact/baseline_results.txt" "benches/baseline_results.txt"
+            echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
+            echo "BASELINE_SOURCE=artifact" >> "$GITHUB_ENV"
+
+            # Show baseline metadata
+            echo "=== Baseline Information (from artifact) ==="
+            head -n 3 benches/baseline_results.txt
+          else
+            echo "❌ Downloaded artifact but no baseline_results.txt found"
+            echo "BASELINE_EXISTS=false" >> "$GITHUB_ENV"
+            echo "BASELINE_SOURCE=missing" >> "$GITHUB_ENV"
+          fi
+
+      - name: Generate fallback baseline if none found
+        if: steps.find_baseline.outputs.found != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -f "benches/baseline_results.txt" ]]; then
-            echo "✅ Found performance baseline, proceeding with regression testing"
-            echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
+          echo "📈 No baseline artifact found, generating fallback baseline..."
+          echo "   This baseline will be used for this comparison only."
+          echo ""
 
-            # Show baseline metadata
-            echo "=== Baseline Information ==="
+          # Generate baseline using dev mode for faster execution
+          if uv run benchmark-utils generate-baseline --dev \
+            || uv run python -m scripts.benchmark_utils generate-baseline --dev; then
+            echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
+            echo "BASELINE_SOURCE=generated" >> "$GITHUB_ENV"
+
+            echo "✅ Generated fallback baseline successfully"
+            echo "=== Generated Baseline Information ==="
             head -n 3 benches/baseline_results.txt
           else
-            echo "⚠️ No performance baseline found at benches/baseline_results.txt"
-            echo "   To enable performance regression testing:"
-            echo "   1. Run locally: ./scripts/generate_baseline.sh"
-            echo "   2. Commit the generated benches/baseline_results.txt file"
-            echo "   3. Future CI runs will test for performance regressions"
-            echo ""
-            echo "   Skipping benchmark regression testing for now."
+            echo "❌ Failed to generate fallback baseline"
             echo "BASELINE_EXISTS=false" >> "$GITHUB_ENV"
+            echo "BASELINE_SOURCE=failed" >> "$GITHUB_ENV"
           fi
 
       - name: Extract baseline commit SHA
@@ -64,7 +204,7 @@ jobs:
         run: |
           set -euo pipefail
           bc_sha="$(grep "^Git commit:" benches/baseline_results.txt | awk '{print $3}' || true)"
-          if [[ -n "$bc_sha" && "$bc_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
+          if [[ -n "$bc_sha" && "$bc_sha" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
             echo "BASELINE_COMMIT=$bc_sha" >> "$GITHUB_ENV"
           else
             echo "BASELINE_COMMIT=unknown" >> "$GITHUB_ENV"
@@ -73,24 +213,59 @@ jobs:
       - name: Determine if benchmarks should run
         if: env.BASELINE_EXISTS == 'true'
         shell: bash
+        env:
+          SAFE_COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [[ "$BASELINE_COMMIT" == "${{ github.sha }}" ]]; then
+          if [[ "$BASELINE_COMMIT" == "unknown" ]]; then
+            echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
+            echo "SKIP_REASON=unknown_baseline" >> "$GITHUB_ENV"
+          elif [[ "$BASELINE_COMMIT" == "$SAFE_COMMIT_SHA" ]]; then
             echo "SKIP_BENCHMARKS=true" >> "$GITHUB_ENV"
+            echo "SKIP_REASON=same_commit" >> "$GITHUB_ENV"
           else
-            if git diff --name-only "$BASELINE_COMMIT"... | grep -qE '^(src/|benches/|Cargo\.toml|Cargo\.lock)'; then
+            if ! git cat-file -e "$BASELINE_COMMIT^{commit}" 2>/dev/null; then
               echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
+              echo "SKIP_REASON=baseline_commit_not_found" >> "$GITHUB_ENV"
+            elif git diff --name-only "$BASELINE_COMMIT"..HEAD | \
+                   grep -qE '^(src/|benches/|Cargo\.toml|Cargo\.lock)'; then
+              echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
+              echo "SKIP_REASON=changes_detected" >> "$GITHUB_ENV"
             else
               echo "SKIP_BENCHMARKS=true" >> "$GITHUB_ENV"
+              echo "SKIP_REASON=no_relevant_changes" >> "$GITHUB_ENV"
             fi
           fi
 
-      - name: Skip benchmarks if no code change
-        if: env.SKIP_BENCHMARKS == 'true'
+      - name: Skip benchmarks - no code changes
+        if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          echo "🔍 Current commit matches baseline (${BASELINE_COMMIT}), skipping benchmarks."
+          case "${SKIP_REASON:-unknown}" in
+            same_commit) echo "🔍 Current commit matches baseline (${BASELINE_COMMIT}); skipping benchmarks.";;
+            no_relevant_changes) echo "🔍 No relevant code changes since ${BASELINE_COMMIT}; skipping benchmarks.";;
+            *) echo "🔍 Benchmarks skipped.";;
+          esac
+
+      - name: Skip benchmarks - no baseline available
+        if: env.BASELINE_EXISTS != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "⚠️ No performance baseline available for comparison."
+          if [[ "${BASELINE_SOURCE:-}" == "failed" ]]; then
+            echo "   - Failed to generate fallback baseline"
+            echo "   - Check the baseline generation workflow logs for issues"
+          else
+            echo "   - No baseline artifacts found in recent releases"
+            echo "   - Create a new release tag to generate a baseline"
+          fi
+          echo ""
+          echo "💡 To resolve:"
+          echo "   1. Create a new release tag (e.g., v0.4.2)"
+          echo "   2. The baseline generation workflow will run automatically"
+          echo "   3. Future PRs and pushes will use that baseline for comparison"
 
       - name: Run performance regression test
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false'
@@ -98,9 +273,19 @@ jobs:
         run: |
           set -euo pipefail
           echo "🚀 Running performance regression test..."
+          echo "   Baseline source: ${BASELINE_SOURCE:-unknown}"
 
           # This will exit with code 1 if significant regressions are found
-          ./scripts/compare_benchmarks.sh
+          # Use --dev mode when comparing against a generated baseline to match settings
+          if [[ "${BASELINE_SOURCE:-}" == "generated" ]]; then
+            echo "   Using --dev mode to match generated baseline settings"
+            uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev \
+              || uv run python -m scripts.benchmark_utils compare --baseline benches/baseline_results.txt --dev
+          else
+            echo "   Using full comparison mode against release baseline"
+            uv run benchmark-utils compare --baseline benches/baseline_results.txt \
+              || uv run python -m scripts.benchmark_utils compare --baseline benches/baseline_results.txt
+          fi
 
       - name: Display regression test results
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()
@@ -110,12 +295,49 @@ jobs:
           if [[ -f "benches/compare_results.txt" ]]; then
             echo "=== Performance Regression Test Results ==="
             cat benches/compare_results.txt
+          else
+            echo "⚠️ No comparison results file found"
           fi
 
       - name: Upload regression test results
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: performance-regression-results
+          name: performance-regression-results-${{ github.run_number }}
           path: benches/compare_results.txt
+          if-no-files-found: warn
           retention-days: 30
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "📊 Performance Regression Testing Summary"
+          echo "==========================================="
+          echo "Baseline source: ${BASELINE_SOURCE:-none}"
+          echo "Baseline exists: ${BASELINE_EXISTS:-false}"
+          echo "Skip benchmarks: ${SKIP_BENCHMARKS:-unknown}"
+          echo "Skip reason: ${SKIP_REASON:-n/a}"
+
+          if [[ "${BASELINE_EXISTS:-false}" == "true" && "${SKIP_BENCHMARKS:-true}" == "false" ]]; then
+            if [[ -f "benches/compare_results.txt" ]]; then
+              if grep -q "REGRESSION" benches/compare_results.txt; then
+                echo "Result: ⚠️ Performance regressions detected"
+              else
+                echo "Result: ✅ No significant performance regressions"
+              fi
+            else
+              echo "Result: ❓ Benchmark comparison completed but no results file found"
+            fi
+          elif [[ "${SKIP_BENCHMARKS:-true}" == "true" ]]; then
+            case "${SKIP_REASON:-unknown}" in
+              same_commit) echo "Result: ⏭️ Benchmarks skipped (same commit as baseline)";;
+              no_relevant_changes) echo "Result: ⏭️ Benchmarks skipped (no relevant code changes)";;
+              baseline_commit_not_found) \
+                echo "Result: ⚠️ Baseline commit not found in history (force-push/shallow clone?)";;
+              *) echo "Result: ⏭️ Benchmarks skipped";;
+            esac
+          else
+            echo "Result: ⏭️ Benchmarks skipped (no baseline available)"
+          fi

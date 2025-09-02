@@ -16,3 +16,10 @@
 /__pycache__/
 **/__pycache__/
 .cspellcache
+
+# Python packaging artifacts
+*.egg-info/
+.ruff_cache/
+uv.lock
+.pytest_cache/
+.venv/

@@ -12,6 +12,28 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - You may suggest git commands for the user to run, but never execute them
 - This ensures the user maintains full control over version control operations
 
+### Code Quality Tools
+
+- **ALLOWED** to automatically run all code quality and formatting tools
+- **ALLOWED** to fix auto-fixable issues (formatting, linting, etc.)
+- This includes: `cargo fmt`, `cargo clippy`, `uvx ruff format`, `uvx ruff check --fix`, `markdownlint --fix`, `shfmt`, etc.
+- Quality tools improve code without changing functionality or version control state
+
+#### Import Organization (AI Assistant Guidance)
+
+- **ALWAYS** use `uvx ruff check --fix --select F401,F403,I001,I002 scripts/` to fix import issues
+- **AUTOMATICALLY** removes duplicate imports, unused imports, and organizes import order
+- **PREFERRED** over manual import cleanup - let ruff handle it automatically
+- **FOLLOW UP** with `uvx ruff format scripts/` and `uv run pytest` to ensure correctness
+
+### Python Scripts
+
+- **ALWAYS** use `uv run` when executing Python scripts in this project
+- **DO NOT** use `python3` or `python` directly
+- This ensures correct Python environment (minimum version in `.python-version`, enforced for performance) and dependency management
+- Examples: `uv run changelog-utils generate`, `uv run benchmark-utils --help`
+- Note: If the `benchmark-utils` console script isn't available, use `uv run python -m scripts.benchmark_utils --help`
+
 ## Overview
 
 The `delaunay` library implements d-dimensional Delaunay triangulations in Rust,
@@ -91,24 +113,48 @@ cargo clippy --all-targets --all-features -- -D warnings -D clippy::all -D clipp
 # Format Python code (PEP 8 compliance) - replaces autopep8
 uvx ruff format scripts/
 
-# Fix imports, remove unused code, and other auto-fixable issues - replaces isort + autoflake
+# Lint & auto-fix (imports, unused, style per pyproject.toml)
 uvx ruff check --fix scripts/
 
-# Lint Python code (check for issues - does not auto-fix)
-uvx pylint scripts/
+# Alternative: Fix only import-related issues (organize, remove duplicates, fix unused)
+uvx ruff check --fix --select F401,F403,I001,I002 scripts/
+
+# Test Python utilities to ensure they still work correctly
+uv sync --group dev  # Install test dependencies
+uv run pytest       # Run comprehensive Python utility tests
+
+# Comprehensive linting is handled by ruff check above
+# No additional linting step needed - ruff provides complete coverage
 ```
 
-**Note**: The Python tools serve different purposes:
+#### Documentation Quality
+
+**IMPORTANT**: Since this crate is published to crates.io, ensure documentation builds correctly:
+
+```bash
+# Build documentation with warnings treated as errors (preferred)
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+```
+
+**Note**: Documentation build failures will prevent successful publishing to crates.io. Always verify docs build cleanly before releases.
+
+**Note**: Ruff provides comprehensive Python code quality:
 
 - `ruff format`: Fixes PEP 8 style violations (replaces autopep8)
-- `ruff check --fix`: Organizes imports, removes unused code, and fixes other linting issues (replaces isort + autoflake)
-- `pylint`: Reports code quality issues (manual fixes required)
+- `ruff check --fix`: Organizes imports, removes unused code, fixes linting issues, and reports code quality problems (replaces isort, autoflake, and pylint)
+
+**Configuration**: Both tools use `pyproject.toml` settings optimized for CLI scripts, which appropriately ignore:
+
+- Complex control flow patterns natural to command-line tools (many branches, statements)
+- CLI-specific patterns like boolean flags, print statements, subprocess calls
+- Defensive exception handling and graceful degradation patterns
+- Import placement optimizations for CLI startup time
 
 **Installation**: The commands use `uvx` (uv's command runner) to execute Python tools:
 
 - **uv**: Install via `curl -LsSf https://astral.sh/uv/install.sh | sh` or see [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/)
 - **macOS**: `brew install uv`
-- **Windows**: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+- **Windows**: `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"`
 - **pip**: `pip install uv` (if you prefer installing via pip)
 
 `uvx` automatically manages tool dependencies and provides isolated execution environments without requiring global installations.
@@ -122,7 +168,7 @@ uvx pylint scripts/
 find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck
 
 # Lint a specific shell script (follow sourced files)
-shellcheck -x scripts/generate_changelog.sh
+shellcheck -x scripts/run_all_examples.sh
 
 # Show all shellcheck warnings including informational ones
 find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck -S info
@@ -204,11 +250,27 @@ yamllint -c .yamllint .github/workflows/ci.yml
 #### Spell Checking
 
 ```bash
-# Check spelling with project configuration
-npx cspell --config cspell.json --gitignore --no-progress --cache \
-  --exclude "target/**" --exclude "node_modules/**" \
-  "**/*"
+# Check spelling with project configuration (respects .gitignore)
+npx cspell --config cspell.json --no-progress --gitignore --cache "**/*"
 ```
+
+#### Codacy Analysis (Local)
+
+**IMPORTANT**: Use absolute paths when running Codacy Analysis CLI locally:
+
+```bash
+# Analyze specific directory with Ruff (most common)
+codacy-analysis-cli analyze --tool ruff --directory /absolute/path/to/project/scripts/ --format json
+
+# Analyze entire project
+codacy-analysis-cli analyze --tool ruff --directory /absolute/path/to/project/ --format json
+
+# Example for this project (adjust path to your system)
+codacy-analysis-cli analyze --tool ruff --directory /Users/username/projects/delaunay/scripts/ --format json
+```
+
+**Note**: The Codacy CLI requires absolute directory paths and will fail with relative paths like `scripts/` or `./`.
+Always use the full path when specifying the `--directory` parameter. Empty JSON array output `[]` indicates no issues found.
 
 ### Benchmarking
 
@@ -222,16 +284,18 @@ cargo bench --bench small_scale_triangulation
 cargo bench --bench triangulation_creation
 
 # Generate performance baseline for CI
-./scripts/generate_baseline.sh
+uv run benchmark-utils generate-baseline
 
 # Generate baseline for development (faster)
-./scripts/generate_baseline.sh --dev
+uv run benchmark-utils generate-baseline --dev
 
 # Compare performance against baseline
-./scripts/compare_benchmarks.sh
+uv run benchmark-utils compare --baseline benches/baseline_results.txt
+# Note: exits 1 on significant regressions (CI will mark job failed)
 
 # Compare with development settings (faster)
-./scripts/compare_benchmarks.sh --dev
+uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev
+# Note: exits 1 on significant regressions (CI will mark job failed)
 ```
 
 ### Examples and Development Scripts
@@ -262,26 +326,28 @@ cargo test -- --nocapture
 
 ```bash
 # Generate changelog with commit dates (recommended)
-./scripts/generate_changelog.sh
+uv run changelog-utils generate
 
-# Generate changelog with unreleased changes included
+# Generate changelog with debug output (keeps intermediate files)
+uv run changelog-utils generate --debug
+
+# Create git tag with changelog content as tag message
+uv run changelog-utils tag v0.4.2
+
+# Force recreate existing tag
+uv run changelog-utils tag v0.4.2 --force
+
+# Advanced: direct auto-changelog usage (bypasses project wrappers)
 npx auto-changelog --unreleased
-
-# Generate changelog for specific version
 npx auto-changelog --latest-version v0.3.4
 
-# Generate changelog with custom commit limit per release
-npx auto-changelog --commit-limit 10
-
-# Use the project script; it transforms the template into Keep a Changelog format
-# See scripts/generate_changelog.sh for details.
-
-# Test changelog generation without writing to file
+# Test changelog generation without writing to file (direct auto-changelog)
 npx auto-changelog --stdout
 ```
 
-**Note**: The project uses `./scripts/generate_changelog.sh` to generate changelogs with commit dates instead of tag creation dates.
+**Note**: The project uses `uv run changelog-utils generate` to generate changelogs with commit dates instead of tag creation dates.
 This provides more accurate release timing that reflects when the actual work was completed rather than when tags were created.
+The tool also supports creating git tags with changelog content for GitHub releases.
 
 ## Architecture Overview
 
@@ -342,17 +408,20 @@ The library extensively uses generics:
 2. **Make changes** following architectural patterns
 3. **Build and test** with `cargo build && cargo test`
 4. **Format and lint** with `cargo fmt && cargo clippy`
-5. **Run examples** with `./scripts/run_all_examples.sh`
-6. **Check performance impact** with `./scripts/compare_benchmarks.sh --dev`
-7. **Commit and push** for CI validation
+5. **Test benchmarks compile** with `cargo bench --no-run` (avoids long execution time)
+6. **Run examples** with `./scripts/run_all_examples.sh`
+7. **Check performance impact** with `uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev` (only if performance-critical changes)
+8. **Commit and push** for CI validation
+
+**Note**: Use `cargo bench --no-run` to verify benchmarks compile without actually running them, as full benchmark execution takes several minutes.
 
 ### Performance-Critical Changes
 
 For changes affecting algorithmic performance:
 
-1. **Generate baseline** before changes: `./scripts/generate_baseline.sh`
+1. **Generate baseline** before changes: `uv run benchmark-utils generate-baseline`
 2. **Make modifications**
-3. **Test regression** with `./scripts/compare_benchmarks.sh`
+3. **Test regression** with `uv run benchmark-utils compare --baseline benches/baseline_results.txt`
 4. **If >5% regression detected**, investigate and optimize
 5. **Update baseline** if performance change is acceptable
 
@@ -364,6 +433,42 @@ Examples in `examples/` demonstrate library capabilities:
 - Include comprehensive documentation header
 - Show error handling patterns
 - Validate with `./scripts/run_all_examples.sh`
+
+### Documentation Maintenance
+
+**CRITICAL**: When adding, removing, or significantly restructuring files, always update `docs/code_organization.md`:
+
+#### File Structure Changes
+
+```bash
+# After adding new files/directories:
+# 1. Update the Complete Directory Tree section in docs/code_organization.md
+# 2. Add descriptions for new files with their purpose
+# 3. Update Architecture Overview if the change affects core structure
+```
+
+**Examples of changes requiring documentation updates:**
+
+- **New modules**: `src/core/new_module.rs` → Add to directory tree with description
+- **New directories**: `src/algorithms/` → Update architecture overview
+- **Removed files**: Delete from directory tree, update references
+- **Moved files**: Update both old and new locations, check all references
+- **New examples**: Add to `examples/` section with purpose
+- **New scripts**: Add to `scripts/` section with functionality description
+- **New workflows**: Add to `.github/workflows/` section
+
+**Why this matters:**
+
+- `docs/code_organization.md` serves as the authoritative project structure reference
+- Contributors rely on it to understand the codebase architecture  
+- Out-of-date documentation creates confusion and slows development
+- The directory tree is used by new contributors for navigation
+
+**Quick check**: If you've added/removed files, run:
+
+```bash
+find . -type f -name '*.rs' | wc -l  # Compare with documented file count
+```
 
 ## Benchmarking and Performance
 
@@ -457,10 +562,88 @@ Following `docs/code_organization.md`, modules use consistent structure:
 
 ### Scripts and Tools
 
-- **`scripts/generate_baseline.sh`** - Create performance baselines
-- **`scripts/compare_benchmarks.sh`** - Performance regression testing
+- **`uv run benchmark-utils`** - Modern Python utility for performance baselines and regression testing
 - **`scripts/run_all_examples.sh`** - Validate all examples
-- **`scripts/benchmark_parser.sh`** - Shared benchmark parsing utilities
+
+## TODOs - Automated Performance Baseline System
+
+### Implementation Complete ✅
+
+The automated performance baseline system has been successfully implemented with:
+
+- **Automated baseline generation** on git tag creation (`.github/workflows/generate-baseline.yml`)
+- **Enhanced benchmark testing** for PRs and main branch commits
+- **Python utilities** replacing complex bash scripts (`scripts/hardware_utils.py`, `scripts/benchmark_utils.py`)
+- **GitHub Actions artifacts** for baseline storage (no repo commits needed)
+- **Backward-compatible shell wrappers** preserving existing CLIs
+
+### Next Steps - Testing and Validation
+
+#### Priority 1: Test the Release Flow
+
+```bash
+# Set your desired release tag
+NEXT_TAG="vX.Y.Z"
+
+# Create and push a release tag to test automatic baseline generation
+git tag "$NEXT_TAG"
+git push origin "$NEXT_TAG"
+
+# Verify baseline generation workflow runs successfully
+# Check that performance-baseline-$NEXT_TAG artifact is created
+```
+
+#### Priority 2: Test PR Performance Regression
+
+- Create a PR with some benchmark-affecting changes
+- Verify that the benchmark workflow downloads the baseline artifact
+- Confirm regression detection works with 5% threshold
+- Validate hardware compatibility warnings
+
+#### Priority 3: Python Code Quality Improvements
+
+The CI includes Python linting that's currently non-blocking. Address gradually:
+
+```bash
+# Fix formatting and linting issues in Python scripts
+uvx ruff format scripts/
+uvx ruff check --fix scripts/
+# Note: pylint has been retired in favor of comprehensive ruff linting
+```
+
+Key improvements needed:
+
+- Replace deprecated `typing.Dict/List/Tuple` with modern syntax
+- Fix print statements in library code (use logging)
+- Address error handling patterns
+- Improve function signatures (reduce argument counts)
+
+#### Priority 4: Monitor and Iterate
+
+- Monitor performance baseline accuracy across different hardware
+- Adjust regression thresholds if needed (currently 5%)
+- Consider expanding to additional benchmark suites
+- Optimize CI runtime if 5-minute constraint becomes an issue
+
+### System Architecture Notes
+
+**Baseline Storage Strategy:**
+
+- Uses GitHub Actions artifacts instead of committing to repo
+- Artifacts tied to specific releases; retention follows the workflow's `retention-days` (e.g., baselines 365 days, benchmarks 30 days) or repo settings
+- Fallback generation if no baseline found (dev mode for speed)
+
+**Hardware Compatibility:**
+
+- Cross-platform hardware detection (macOS, Linux, Windows)
+- Warnings when comparing across different hardware configurations
+- Detailed hardware metadata in all baselines for troubleshooting
+
+**Performance Comparison:**
+
+- 5% regression threshold for time measurements
+- Hardware metadata included in comparisons; results may vary across different machines
+- Comprehensive reporting with improvement/regression indicators
 
 ### Mathematical References
 

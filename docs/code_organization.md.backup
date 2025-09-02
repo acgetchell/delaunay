@@ -376,16 +376,15 @@ where
 
 ```rust
 /// Manual implementation of Deserialize for [Type]
-impl<'de, G> serde::Deserialize<'de> for Type<G>
+impl<generics> Deserialize<generics> for Type<generics>
 where
-    G: /* trait bounds as needed */,
+    // trait bounds
 {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<generics>(deserializer: Deserializer) -> Result<Self, De::Error>
     where
-        D: serde::Deserializer<'de>,
+        De: serde::Deserializer<generics>,
     {
         // Visitor pattern implementation
-        // Ok(Self { /* ... */ })
     }
 }
 ```
@@ -472,11 +471,11 @@ where
 ///
 /// Note: [excluded fields] are excluded from hashing to match
 /// the `PartialEq` implementation.
-impl<G> core::hash::Hash for StructName<G>
+impl<generics> Hash for StructName<generics>
 where
-    G: /* trait bounds as needed */,
+    // trait bounds
 {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+    fn hash<generics>(self, state: &mut Hasher) {
         // implementation with explanation comments
     }
 }
