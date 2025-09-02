@@ -68,16 +68,16 @@ jobs:
         run: uv --version
 
 
-      - name: Find latest release with baseline artifact
+      - name: Find baseline artifact
         id: find_baseline
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
         with:
           script: |
             try {
-              // Get all releases with pagination to handle large repos
+              // First, try to find baseline artifacts from release tags
               const releases = await github.paginate(
                 github.rest.repos.listReleases,
-                { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 }
+                { owner: context.repo.owner, repo: context.repo.repo, per_page: 50 }
               );
 
               console.log(`Found ${releases.length} releases (paginated)`);
@@ -90,51 +90,87 @@ jobs:
                   continue;
                 }
 
-                // List recent runs and look for an artifact matching the release tag
-                try {
-                  // Mirror sanitization in generate-baseline.yml (allow [A-Za-z0-9._-], replace others with _)
-                  const cleanTag = release.tag_name.replace(/[^a-zA-Z0-9._-]/g, '_');
-                  const expectedName = `performance-baseline-${cleanTag}`;
-                  let found = false;
-                  for (let page = 1; page <= 5 && !found; page++) {
-                    const runs = await github.rest.actions.listWorkflowRuns({
+                // Mirror sanitization in generate-baseline.yml (allow [A-Za-z0-9._-], replace others with _)
+                const cleanTag = release.tag_name.replace(/[^a-zA-Z0-9._-]/g, '_');
+                const expectedName = `performance-baseline-${cleanTag}`;
+
+                // Search through recent generate-baseline.yml runs
+                for (let page = 1; page <= 3; page++) {
+                  const runs = await github.rest.actions.listWorkflowRuns({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    workflow_id: 'generate-baseline.yml',
+                    status: 'completed',
+                    conclusion: 'success',
+                    per_page: 50,
+                    page
+                  });
+
+                  for (const run of runs.data.workflow_runs) {
+                    const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
                       owner: context.repo.owner,
                       repo: context.repo.repo,
-                      workflow_id: 'generate-baseline.yml',
-                      status: 'completed',
-                      conclusion: 'success',
-                      per_page: 100,
-                      page
+                      run_id: run.id
                     });
-                    for (const run of runs.data.workflow_runs) {
-                      const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        run_id: run.id
-                      });
-                      const baselineArtifact = artifacts.data.artifacts.find(a => a.name === expectedName);
-                      if (baselineArtifact) {
-                        console.log(
-                          `Found baseline artifact ${expectedName} in run ${run.id} ` +
-                          `for release ${release.tag_name}`
-                        );
-                        core.setOutput('found', 'true');
-                        core.setOutput('release_tag', release.tag_name);
-                        core.setOutput('artifact_name', expectedName);
-                        core.setOutput('run_id', run.id.toString());
-                        found = true;
-                        break;
-                      }
+                    const baselineArtifact = artifacts.data.artifacts.find(a => a.name === expectedName);
+                    if (baselineArtifact) {
+                      console.log(
+                        `Found release baseline artifact ${expectedName} in run ${run.id} ` +
+                        `for release ${release.tag_name}`
+                      );
+                      core.setOutput('found', 'true');
+                      core.setOutput('release_tag', release.tag_name);
+                      core.setOutput('artifact_name', expectedName);
+                      core.setOutput('run_id', run.id.toString());
+                      core.setOutput('source_type', 'release');
+                      return;
                     }
                   }
-                  if (found) return;
-                } catch (error) {
-                  console.log(`Error checking release ${release.tag_name}: ${error.message}`);
-                  continue;
                 }
               }
 
-              console.log('No baseline artifacts found in any release');
+              console.log('No release baseline artifacts found, checking for any recent baselines...');
+
+              // Fallback: look for any recent baseline artifact (including manual runs)
+              for (let page = 1; page <= 3; page++) {
+                const runs = await github.rest.actions.listWorkflowRuns({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: 'generate-baseline.yml',
+                  status: 'completed',
+                  conclusion: 'success',
+                  per_page: 50,
+                  page
+                });
+
+                for (const run of runs.data.workflow_runs) {
+                  const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    run_id: run.id
+                  });
+
+                  // Look for any artifact starting with 'performance-baseline-'
+                  const baselineArtifact = artifacts.data.artifacts.find(a =>
+                    a.name.startsWith('performance-baseline-')
+                  );
+
+                  if (baselineArtifact) {
+                    console.log(
+                      `Found baseline artifact ${baselineArtifact.name} in run ${run.id} ` +
+                      `(created: ${run.created_at})`
+                    );
+                    core.setOutput('found', 'true');
+                    core.setOutput('release_tag', 'manual-baseline');
+                    core.setOutput('artifact_name', baselineArtifact.name);
+                    core.setOutput('run_id', run.id.toString());
+                    core.setOutput('source_type', 'manual');
+                    return;
+                  }
+                }
+              }
+
+              console.log('No baseline artifacts found in any recent runs');
               core.setOutput('found', 'false');
             } catch (error) {
               console.error(`Error searching for baseline artifacts: ${error.message}`);
@@ -239,12 +275,12 @@ jobs:
         run: |
           set -euo pipefail
           echo "⚠️ No performance baseline available for comparison."
-          echo "   - No baseline artifacts found in recent releases"
-          echo "   - Performance regression testing requires a release baseline"
+          echo "   - No baseline artifacts found in recent workflow runs"
+          echo "   - Performance regression testing requires a baseline"
           echo ""
           echo "💡 To enable performance regression testing:"
-          echo "   1. Create a new release tag (e.g., v0.4.3)"
-          echo "   2. The baseline generation workflow will run automatically"
+          echo "   1. Create a release tag (e.g., v0.4.3), or"
+          echo "   2. Manually trigger the 'Generate Performance Baseline' workflow"
           echo "   3. Future PRs and pushes will use that baseline for comparison"
           echo "   4. Baselines use full benchmark settings for accurate comparisons"
 
