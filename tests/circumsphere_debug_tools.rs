@@ -1,12 +1,16 @@
-//! # Circumsphere Containment Test Example
+//! # Circumsphere Debug Tools
 //!
-//! This example demonstrates and compares three methods for testing whether a point
+//! This test module provides interactive debugging and testing tools for circumsphere
+//! calculations. It demonstrates and compares three methods for testing whether a point
 //! lies inside the circumsphere of a simplex in 2D, 3D, and 4D.
 //!
 //! ## Usage
 //!
+//! Run specific test functions with:
 //! ```bash
-//! cargo run --example test_circumsphere [2d|3d|4d|all|help]
+//! cargo test test_2d_circumsphere_debug --test circumsphere_debug_tools -- --nocapture
+//! cargo test test_3d_circumsphere_debug --test circumsphere_debug_tools -- --nocapture
+//! cargo test test_all_debug --test circumsphere_debug_tools -- --nocapture
 //! ```
 
 use delaunay::geometry::util::squared_norm;
@@ -14,9 +18,6 @@ use delaunay::prelude::*;
 use nalgebra as na;
 use peroxide::fuga::{LinearAlgebra, zeros};
 use serde::{Serialize, de::DeserializeOwned};
-use std::{collections::HashMap, env};
-
-type TestFunction = fn();
 
 // Macro for standard test output formatting
 macro_rules! test_output {
@@ -55,113 +56,100 @@ macro_rules! print_result {
     };
 }
 
-fn get_test_registry() -> HashMap<&'static str, TestFunction> {
-    HashMap::from([
-        // Basic tests
-        ("2d", test_2d_circumsphere as TestFunction),
-        ("3d", test_3d_circumsphere as TestFunction),
-        ("4d", test_4d_circumsphere as TestFunction),
-        ("orientation", test_all_orientations as TestFunction),
-        ("all", run_all_basic_tests as TestFunction),
-        // Debug tests
-        ("debug-3d", test_3d_simplex_analysis as TestFunction),
-        ("debug-3d-matrix", test_3d_matrix_analysis as TestFunction),
-        (
-            "debug-3d-properties",
-            debug_3d_circumsphere_properties as TestFunction,
-        ),
-        (
-            "debug-4d-properties",
-            debug_4d_circumsphere_properties as TestFunction,
-        ),
-        (
-            "debug-compare",
-            compare_circumsphere_methods as TestFunction,
-        ),
-        (
-            "debug-orientation",
-            demonstrate_orientation_impact_on_circumsphere as TestFunction,
-        ),
-        (
-            "debug-containment",
-            test_circumsphere_containment as TestFunction,
-        ),
-        (
-            "debug-4d-methods",
-            test_4d_circumsphere_methods as TestFunction,
-        ),
-        ("debug-all", run_all_debug_tests as TestFunction),
-        // Single point tests
-        ("test-2d-point", test_single_2d_point as TestFunction),
-        ("test-3d-point", test_single_3d_point as TestFunction),
-        ("test-4d-point", test_single_4d_point as TestFunction),
-        ("test-all-points", test_all_single_points as TestFunction),
-        // Comprehensive
-        ("everything", run_everything as TestFunction),
-    ])
+// Test functions organized by category
+#[test]
+fn test_2d_circumsphere_debug() {
+    test_2d_circumsphere();
 }
 
-fn main() {
-    // Security note: args usage is safe here as all arguments are validated against
-    // a predefined whitelist of test functions. No arbitrary code execution occurs.
-    let args: Vec<String> = env::args().collect();
-    let registry = get_test_registry();
-
-    match args.get(1).map(String::as_str) {
-        Some(test_name) if registry.contains_key(test_name) => {
-            registry[test_name]();
-        }
-        Some(arg) if ["help", "--help", "-h"].contains(&arg) => {
-            print_help();
-        }
-        Some(unknown) => {
-            println!("Unknown argument: {unknown}");
-            print_help();
-        }
-        None => print_help(),
-    }
+#[test]
+fn test_3d_circumsphere_debug() {
+    test_3d_circumsphere();
 }
 
-fn print_help() {
-    println!("Circumsphere Containment Test Suite");
-    println!("=====================================");
-    println!();
-    println!("Usage: cargo run --example test_circumsphere [TEST]");
-    println!();
-    println!("Basic tests:");
-    println!("  2d          - Test 2D circumsphere methods (triangle)");
-    println!("  3d          - Test 3D circumsphere methods (tetrahedron)");
-    println!("  4d          - Test 4D circumsphere methods (4D simplex)");
-    println!("  orientation - Test simplex orientation in 2D, 3D, and 4D");
-    println!("  all         - Run all basic dimensional tests and orientation tests");
-    println!();
-    println!("Debug tests:");
-    println!("  debug-3d           - Detailed 3D simplex analysis and debugging");
-    println!("  debug-3d-matrix    - Step-by-step 3D matrix method analysis");
-    println!("  debug-3d-properties - 3D circumsphere properties analysis");
-    println!("  debug-4d-properties - 4D circumsphere properties analysis");
-    println!("  debug-compare      - Compare circumsphere methods across dimensions");
-    println!("  debug-orientation  - Demonstrate orientation impact on circumsphere");
-    println!("  debug-containment  - Detailed circumsphere containment testing");
-    println!("  debug-4d-methods   - Compare 4D circumsphere methods in detail");
-    println!("  debug-all          - Run all debug tests");
-    println!();
-    println!("Single point tests:");
-    println!("  test-2d-point  - Test specific 2D point against triangle circumsphere");
-    println!("  test-3d-point  - Test specific 3D point against tetrahedron circumsphere");
-    println!("  test-4d-point  - Test specific 4D point against 4D simplex circumsphere");
-    println!("  test-all-points - Test specific points in all dimensions");
-    println!();
-    println!("Comprehensive:");
-    println!("  everything  - Run all tests and all debug functions");
-    println!("  help        - Show this help message");
-    println!();
-    println!("Examples:");
-    println!("  cargo run --example test_circumsphere 2d");
-    println!("  cargo run --example test_circumsphere debug-3d-matrix");
-    println!("  cargo run --example test_circumsphere debug-3d-properties");
-    println!("  cargo run --example test_circumsphere debug-all");
-    println!("  cargo run --example test_circumsphere everything");
+#[test]
+fn test_4d_circumsphere_debug() {
+    test_4d_circumsphere();
+}
+
+#[test]
+fn test_all_orientations_debug() {
+    test_all_orientations();
+}
+
+#[test]
+fn test_all_basic_debug() {
+    run_all_basic_tests();
+}
+
+#[test]
+fn test_3d_simplex_analysis_debug() {
+    test_3d_simplex_analysis();
+}
+
+#[test]
+fn test_3d_matrix_analysis_debug() {
+    test_3d_matrix_analysis();
+}
+
+#[test]
+fn test_3d_properties_debug() {
+    debug_3d_circumsphere_properties();
+}
+
+#[test]
+fn test_4d_properties_debug() {
+    debug_4d_circumsphere_properties();
+}
+
+#[test]
+fn test_compare_methods_debug() {
+    compare_circumsphere_methods();
+}
+
+#[test]
+fn test_orientation_impact_debug() {
+    demonstrate_orientation_impact_on_circumsphere();
+}
+
+#[test]
+fn test_containment_debug() {
+    test_circumsphere_containment();
+}
+
+#[test]
+fn test_4d_methods_debug() {
+    test_4d_circumsphere_methods();
+}
+
+#[test]
+fn test_all_debug() {
+    run_all_debug_tests();
+}
+
+#[test]
+fn test_single_2d_point_debug() {
+    test_single_2d_point();
+}
+
+#[test]
+fn test_single_3d_point_debug() {
+    test_single_3d_point();
+}
+
+#[test]
+fn test_single_4d_point_debug() {
+    test_single_4d_point();
+}
+
+#[test]
+fn test_all_single_points_debug() {
+    test_all_single_points();
+}
+
+#[test]
+fn test_everything_debug() {
+    run_everything();
 }
 
 /// Test 2D circumsphere methods with a triangle

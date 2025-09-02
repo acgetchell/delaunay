@@ -128,77 +128,6 @@ pub mod test_helpers {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::test_helpers::*;
-    // Only import what we actually use from the parent module
-    // (the test_helpers module provides all the functions we need)
-
-    #[test]
-    fn test_basic_allocation_counting() {
-        init_test_env();
-
-        let (result, info) = measure_with_result(|| {
-            let _v: Vec<i32> = (0..100).collect();
-            42
-        });
-
-        assert_eq!(result, 42);
-        print_alloc_summary(&info, "basic vector creation");
-    }
-
-    #[test]
-    fn test_point_creation_allocations() {
-        init_test_env();
-
-        let (points, info) = measure_with_result(|| create_test_points_2d(10));
-
-        assert_eq!(points.len(), 10);
-        print_alloc_summary(&info, "2D point creation");
-    }
-
-    #[test]
-    fn test_3d_point_creation_allocations() {
-        init_test_env();
-
-        let (points, info) = measure_with_result(|| create_test_points_3d(10));
-
-        assert_eq!(points.len(), 10);
-        print_alloc_summary(&info, "3D point creation");
-    }
-
-    #[test]
-    fn test_tds_creation_allocations() {
-        init_test_env();
-
-        let (tds, info) = measure_with_result(|| create_test_tds());
-
-        // Verify TDS was created successfully
-        assert_eq!(tds.number_of_vertices(), 0);
-        print_alloc_summary(&info, "TDS creation");
-    }
-
-    #[test]
-    fn test_complex_triangulation_workflow() {
-        init_test_env();
-
-        let (result, info) = measure_with_result(|| {
-            // Create points
-            let points = create_test_points_3d(5);
-
-            // Create TDS
-            let tds = create_test_tds();
-
-            // Return some result to verify the workflow
-            (points.len(), tds.number_of_vertices())
-        });
-
-        assert_eq!(result.0, 5); // 5 points created
-        assert_eq!(result.1, 0); // Empty TDS
-        print_alloc_summary(&info, "complex triangulation workflow");
-    }
-}
-
 /// Test the allocation counter API
 fn main() {
     test_helpers::init_test_env();
@@ -270,4 +199,75 @@ fn main() {
     test_helpers::print_alloc_summary(&info_workflow, "complex workflow");
 
     println!("\n🎉 All allocation counter tests completed successfully!");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_helpers::*;
+    // Only import what we actually use from the parent module
+    // (the test_helpers module provides all the functions we need)
+
+    #[test]
+    fn test_basic_allocation_counting() {
+        init_test_env();
+
+        let (result, info) = measure_with_result(|| {
+            let _v: Vec<i32> = (0..100).collect();
+            42
+        });
+
+        assert_eq!(result, 42);
+        print_alloc_summary(&info, "basic vector creation");
+    }
+
+    #[test]
+    fn test_point_creation_allocations() {
+        init_test_env();
+
+        let (points, info) = measure_with_result(|| create_test_points_2d(10));
+
+        assert_eq!(points.len(), 10);
+        print_alloc_summary(&info, "2D point creation");
+    }
+
+    #[test]
+    fn test_3d_point_creation_allocations() {
+        init_test_env();
+
+        let (points, info) = measure_with_result(|| create_test_points_3d(10));
+
+        assert_eq!(points.len(), 10);
+        print_alloc_summary(&info, "3D point creation");
+    }
+
+    #[test]
+    fn test_tds_creation_allocations() {
+        init_test_env();
+
+        let (tds, info) = measure_with_result(create_test_tds);
+
+        // Verify TDS was created successfully
+        assert_eq!(tds.number_of_vertices(), 0);
+        print_alloc_summary(&info, "TDS creation");
+    }
+
+    #[test]
+    fn test_complex_triangulation_workflow() {
+        init_test_env();
+
+        let (result, info) = measure_with_result(|| {
+            // Create points
+            let points = create_test_points_3d(5);
+
+            // Create TDS
+            let tds = create_test_tds();
+
+            // Return some result to verify the workflow
+            (points.len(), tds.number_of_vertices())
+        });
+
+        assert_eq!(result.0, 5); // 5 points created
+        assert_eq!(result.1, 0); // Empty TDS
+        print_alloc_summary(&info, "complex triangulation workflow");
+    }
 }

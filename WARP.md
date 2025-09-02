@@ -83,6 +83,10 @@ cargo test --lib --verbose
 cargo test --doc --verbose
 cargo test --examples --verbose
 
+# Integration tests (comprehensive)
+cargo test --release  # Run all tests in release mode for performance
+cargo test --test circumsphere_debug_tools -- --nocapture  # Debug tools with output
+
 # Benchmarks
 cargo bench --no-run
 
@@ -156,3 +160,33 @@ These items are incomplete and may require future attention:
 - **Status**: Ongoing
 - **Critical**: When adding/removing files, always update `docs/code_organization.md`
 - **Reason**: Serves as authoritative project structure reference for contributors
+
+## AI Assistant Guidelines
+
+### Integration Testing Patterns
+
+- **Debug Tools**: Use `cargo test --test circumsphere_debug_tools -- --nocapture` for interactive debugging
+- **Performance Tests**: Always run integration tests in `--release` mode for accurate performance measurements
+- **Test Categories**: Organize tests by purpose: debugging tools (`*_debug_tools.rs`), integration (`*_integration.rs`), regression (`*_error.rs`), comparison (`*_comparison.rs`)
+- **Test Documentation**: Each test file should have clear module documentation explaining purpose, usage, and test coverage
+
+### Testing Best Practices
+
+- **Performance Considerations**: Integration tests run significantly slower in debug mode - always recommend `--release` flag
+- **Verbose Output**: Use `--nocapture` flag for debugging tests that produce detailed analysis output
+- **Test Structure**: Convert CLI-style applications in tests to proper `#[test]` functions for better integration with cargo test framework
+- **Memory Testing**: Use `--features count-allocations` for allocation profiling tests
+
+### Documentation Standards
+
+- **Directory READMEs**: Major directories (`examples/`, `benches/`, `tests/`) should have comprehensive README.md files
+- **Usage Instructions**: Include specific command examples with proper flags (e.g., `--nocapture`, `--release`)
+- **Test Categories**: Organize documentation by test purpose with clear headings and emoji indicators
+- **Cross-References**: Link related documentation files and provide navigation between different documentation types
+
+### File Organization Guidance
+
+- **Test Files**: Place debugging utilities in `tests/` directory as proper test functions, not CLI applications
+- **Integration Tests**: Use descriptive naming patterns that indicate test purpose and type
+- **Documentation Updates**: When restructuring test files, update both `docs/code_organization.md` and relevant README files
+- **Consistency**: Maintain consistent documentation patterns across `examples/README.md`, `benches/README.md`, and `tests/README.md`

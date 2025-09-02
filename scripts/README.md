@@ -224,8 +224,7 @@ Hardware Information:
 **Features**:
 
 - Automatically discovers all examples in the `examples/` directory
-- Runs simple examples in release mode for representative performance
-- Provides comprehensive testing for `test_circumsphere` example
+- Runs examples in release mode for representative performance
 - Creates results directory structure
 
 **Usage**:
@@ -233,12 +232,6 @@ Hardware Information:
 ```bash
 ./scripts/run_all_examples.sh
 ```
-
-**Test Categories for `test_circumsphere`**:
-
-- `all` - Basic dimensional tests and orientation tests
-- `test-all-points` - Single point tests in all dimensions
-- `debug-all` - All debug tests
 
 **Dependencies**: Requires `cargo`, `find`, `sort` (GNU sort preferred but not required)
 

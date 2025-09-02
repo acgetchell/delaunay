@@ -53,13 +53,9 @@ delaunay/
 │   └── lib.rs                                    # Main library file with module declarations and prelude
 ├── examples/                                     # Usage examples and demonstrations
 │   ├── README.md                                 # Examples documentation
-│   ├── boundary_analysis_trait.rs                # Boundary analysis examples
-│   ├── check_float_traits.rs                     # Floating-point trait examples
 │   ├── convex_hull_3d_50_points.rs               # 3D convex hull extraction and analysis example
 │   ├── implicit_conversion.rs                    # Type conversion examples
 │   ├── point_comparison_and_hashing.rs           # Point operations examples
-│   ├── test_alloc_api.rs                         # Allocation API examples
-│   ├── test_circumsphere.rs                      # Circumsphere computation examples
 │   └── triangulation_3d_50_points.rs             # 3D triangulation example
 ├── benches/                                      # Performance benchmarks
 │   ├── README.md                                 # Benchmarking guide and performance results
@@ -71,7 +67,10 @@ delaunay/
 │   ├── small_scale_triangulation.rs              # Small triangulation benchmarks
 │   └── triangulation_creation.rs                 # Triangulation creation benchmarks
 ├── tests/                                        # Integration tests
+│   ├── README.md                                 # Integration tests guide and usage instructions
+│   ├── allocation_api.rs                         # Memory allocation profiling and testing utilities
 │   ├── bench_helpers_test.rs                     # Tests for benchmark helper functions
+│   ├── circumsphere_debug_tools.rs               # Interactive circumsphere testing and debugging utilities
 │   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
 │   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
 │   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
@@ -136,6 +135,17 @@ delaunay/
 └── WARP.md                                       # WARP AI development guidance
 ```
 
+**Note**: `tests/circumsphere_debug_tools.rs` contains interactive debugging test functions that can be run with:
+
+```bash
+# Run specific test functions with verbose output
+cargo test test_2d_circumsphere_debug --test circumsphere_debug_tools -- --nocapture
+cargo test test_3d_circumsphere_debug --test circumsphere_debug_tools -- --nocapture
+cargo test test_all_debug --test circumsphere_debug_tools -- --nocapture
+# Or run all debug tests at once
+cargo test --test circumsphere_debug_tools -- --nocapture
+```
+
 ### Architecture Overview
 
 #### Core Library (`src/`)
@@ -160,7 +170,7 @@ delaunay/
 
 - **`examples/`** - Usage demonstrations and trait examples
 - **`benches/`** - Performance benchmarks with automated baseline management
-- **`tests/`** - Integration tests and regression testing
+- **`tests/`** - Integration tests, debugging utilities, and regression testing
 - **`docs/`** - Architecture guides, performance documentation, and templates
 - **`scripts/`** - Python utilities for automation and CI integration
 

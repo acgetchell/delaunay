@@ -44,45 +44,7 @@ with special emphasis on handling of NaN (Not a Number) and infinity values.
 **Run with:** `cargo run --release --example point_comparison_and_hashing`
 [View source](./point_comparison_and_hashing.rs)
 
-### 2. Circumsphere Containment and Simplex Orientation Testing (`test_circumsphere.rs`)
-
-Demonstrates and compares two methods for determining if a point lies inside
-the circumsphere of a 4D simplex (5-cell/hypertetrahedron), plus comprehensive
-testing of simplex orientation across multiple dimensions.
-
-**Key Features:**
-
-- **Distance-based method** (`circumsphere_contains`): Computes the circumcenter
-  and circumradius explicitly, then checks if the test point is within that
-  distance from the circumcenter.
-- **Determinant-based method** (`insphere`): Uses a matrix
-  determinant approach that avoids explicit circumcenter calculation and
-  provides superior numerical stability.
-- **4D simplex testing**: Uses a unit 4D simplex with vertices at:
-  - `[0,0,0,0]` (origin)
-  - `[1,0,0,0]` (unit vector along x-axis)
-  - `[0,1,0,0]` (unit vector along y-axis)
-  - `[0,0,1,0]` (unit vector along z-axis)
-  - `[0,0,0,1]` (unit vector along w-axis)
-- **Comprehensive testing**: Tests various categories of points including:
-  - Inside points (well within the circumsphere)
-  - Outside points (clearly beyond the circumsphere)
-  - Boundary points (on edges and faces of the 4D simplex)
-  - Vertex points (the simplex vertices themselves)
-- **Simplex orientation testing**: Tests simplex orientation across dimensions:
-  - 4D simplex orientation with positive and negative variants
-  - 3D tetrahedron orientation for comparison
-  - 2D triangle orientation with normal and reversed vertex ordering
-  - Degenerate cases (collinear points)
-- **Orientation impact demonstration**: Shows how the determinant-based method
-  automatically handles orientation differences while maintaining consistent results.
-- **Method comparison**: Shows how both methods perform on the same test cases,
-  demonstrating where they agree and where numerical differences may occur.
-
-**Run with:** `cargo run --release --example test_circumsphere`
-[View source](./test_circumsphere.rs)
-
-### 3. Implicit Conversion Example (`implicit_conversion.rs`)
+### 2. Implicit Conversion Example (`implicit_conversion.rs`)
 
 Demonstrates the implicit conversion capabilities of the delaunay library,
 showing how vertices and points can be automatically converted to coordinate
@@ -118,7 +80,7 @@ let coords: [f64; 3] = (&point).into();
 **Run with:** `cargo run --release --example implicit_conversion`
 [View source](./implicit_conversion.rs)
 
-### 4. 3D Triangulation with 50 Points (`triangulation_3d_50_points.rs`)
+### 3. 3D Triangulation with 50 Points (`triangulation_3d_50_points.rs`)
 
 A comprehensive example demonstrating the creation and analysis of a 3D Delaunay
 triangulation using 50 randomly generated points. This example showcases the
@@ -181,113 +143,21 @@ Triangulation Analysis:
 **Run with:** `cargo run --release --example triangulation_3d_50_points`
 [View source](./triangulation_3d_50_points.rs)
 
-### 5. Boundary Analysis Trait Demonstration (`boundary_analysis_trait.rs`)
+### 4. 3D Convex Hull with 50 Points (`convex_hull_3d_50_points.rs`)
 
-Demonstrates the clean separation of boundary analysis functionality from the main
-`Tds` struct using a trait-based approach. This example showcases the modular
-design of the boundary analysis system.
-
-**Key Features:**
-
-- **Trait-based Design**: Shows how the `BoundaryAnalysis` trait cleanly separates
-  boundary operations from the core triangulation data structure
-- **Multiple Boundary Methods**: Demonstrates different approaches to boundary analysis:
-  - `boundary_facets()` - Get all boundary facets as a collection
-  - `number_of_boundary_facets()` - Efficient counting without creating vectors
-  - `is_boundary_facet()` - Check individual facets
-- **Modular Architecture**: Illustrates benefits of trait-based design including
-  better testability, extensibility, and separation of concerns
-- **Complex Examples**: Shows boundary analysis on both simple (tetrahedron) and
-  complex (multiple tetrahedra) triangulations
-- **Performance Considerations**: Demonstrates efficient boundary detection methods
-
-**Benefits Highlighted:**
-
-- Clean separation of concerns in the codebase
-- Easy extensibility for future boundary algorithms
-- Better IDE support and discoverability
-- Consistent interface across different triangulation types
-
-**Run with:** `cargo run --release --example boundary_analysis_trait`
-[View source](./boundary_analysis_trait.rs)
-
-### 6. Float Traits Validation (`check_float_traits.rs`)
-
-A technical example that validates and demonstrates which traits are included
-in the `Float` trait from `num_traits`, helping you understand the trait bounds
-used throughout the library.
+Demonstrates convex hull extraction and analysis from a 3D Delaunay triangulation.
+This example showcases the extraction of convex hulls from triangulations and
+their geometric properties and analysis.
 
 **Key Features:**
 
-- **Trait Analysis**: Compile-time verification of traits included in `Float`
-- **Included Traits**: Confirms `Float` includes `PartialEq`, `PartialOrd`, `Copy`, and `Clone`
-- **Missing Traits**: Demonstrates that `Default` is NOT included in `Float`
-- **Design Rationale**: Explains why `Default` must be explicitly specified in
-  trait bounds even when using `Float`
-- **Educational Value**: Helps developers understand the library's type system
-  and floating-point abstractions
+- **Triangulation to convex hull**: Extracts convex hull from existing triangulation
+- **Hull validation**: Comprehensive validation of convex hull properties
+- **Point containment testing**: Tests various points for containment within the hull
+- **Visible facet analysis**: Determines which hull facets are visible from external points
+- **Performance analysis**: Benchmarks hull extraction and query operations
+- **Geometric analysis**: Detailed analysis of hull properties and facet structure
 
-**Technical Insights:**
+**Run with:** `cargo run --release --example convex_hull_3d_50_points`
+[View source](./convex_hull_3d_50_points.rs)
 
-```rust
-// Float includes these traits automatically:
-fn requires_partial_eq<U: PartialEq>() {}
-fn requires_partial_ord<U: PartialOrd>() {}
-fn requires_copy<U: Copy>() {}
-fn requires_clone<U: Clone>() {}
-
-// But Default must be specified separately:
-// fn requires_default<U: Default>() {} // This would NOT compile with just Float
-```
-
-**Run with:** `cargo run --release --example check_float_traits`
-[View source](./check_float_traits.rs)
-
-### 7. Memory Allocation Testing API (`test_alloc_api.rs`)
-
-Comprehensive testing utilities and examples for memory allocation tracking
-in Delaunay triangulation operations. This example provides both a testing
-framework and a demonstration of memory usage patterns.
-
-**Key Features:**
-
-- **Allocation Counter Integration**: Shows how to use the `allocation-counter`
-  feature for memory profiling
-- **Comprehensive Test Helpers**: Provides utilities for:
-  - Measuring allocations with error handling
-  - Creating test points in 2D and 3D
-  - Building test triangulations
-  - Printing detailed memory summaries
-- **Feature-Aware Design**: Gracefully handles both enabled and disabled
-  allocation counting modes
-- **Real-World Testing**: Demonstrates allocation patterns for actual
-  triangulation operations
-- **Performance Analysis**: Tools for understanding memory usage in
-  computational geometry operations
-
-**Allocation Testing Categories:**
-
-- Basic vector operations baseline
-- Point creation in multiple dimensions
-- Triangulation data structure initialization
-- Complex triangulation workflows
-
-**Usage Examples:**
-
-```sh
-// Test with allocation counting enabled:
-cargo test --example test_alloc_api --features count-allocations
-```
-
-```rust
-// View memory usage for operations:
-let (result, info) = measure_with_result(|| {
-    create_test_points_3d(100)
-});
-print_alloc_summary(&info, "3D point creation");
-```
-
-**Run with:** `cargo run --release --example test_alloc_api`
-
-**Test with allocation tracking:** `cargo test --example test_alloc_api --features count-allocations`
-[View source](./test_alloc_api.rs)

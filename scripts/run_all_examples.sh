@@ -22,8 +22,7 @@ DESCRIPTION:
     directory. All examples are executed in release mode (--release) for optimal
     performance.
 
-    The script handles special examples that require additional test parameters,
-    such as test_circumsphere which runs multiple comprehensive test suites.
+    The script automatically discovers and runs all standard examples.
 
 OPTIONS:
     -h, --help     Show this help message and exit
@@ -106,47 +105,11 @@ else
 	done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print | LC_ALL=C sort)
 fi
 
-# Define special example that needs special handling
-special_example="test_circumsphere"
-
-# Filter all_examples to exclude test_circumsphere into simple_examples
-simple_examples=()
+# Run all examples
 for example in "${all_examples[@]}"; do
-	if [[ "$example" != "$special_example" ]]; then
-		simple_examples+=("$example")
-	fi
-done
-
-# Run simple examples
-for example in "${simple_examples[@]}"; do
 	echo "=== Running $example ==="
 	cargo run --release --example "$example" || error_exit "Example $example failed!"
 done
-
-# Run test_circumsphere with comprehensive test categories (only if it exists)
-if [[ -f "${PROJECT_ROOT}/examples/test_circumsphere.rs" ]]; then
-	test_circumsphere_tests=(
-		"all"             # All basic dimensional tests and orientation tests
-		"test-all-points" # Single point tests in all dimensions
-		"debug-all"       # All debug tests
-	)
-
-	echo
-	echo "=== Running test_circumsphere comprehensive tests ==="
-	echo "---------------------------------------------------"
-
-	for test_name in "${test_circumsphere_tests[@]}"; do
-		echo
-		echo "--- Running test_circumsphere $test_name ---"
-		if ! cargo run --release --example test_circumsphere -- "$test_name"; then
-			error_exit "test_circumsphere $test_name failed!"
-		fi
-	done
-else
-	echo
-	echo "=== Skipping test_circumsphere (not found) ==="
-	echo "test_circumsphere.rs not found in examples/ directory"
-fi
 
 echo
 echo "=============================================="
