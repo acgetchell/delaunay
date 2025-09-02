@@ -86,13 +86,16 @@ delaunay/
 │   ├── optimization_recommendations.md           # Performance optimization guide
 │   └── RELEASING.md                              # Release process documentation
 ├── scripts/                                      # Development and CI scripts
+│   ├── tests/                                    # Python utility tests
+│   │   ├── __init__.py                           # Test package initialization
+│   │   └── test_subprocess_utils.py              # Comprehensive tests for subprocess_utils.py
 │   ├── README.md                                 # Scripts documentation
 │   ├── benchmark_utils.py                        # Python utilities for benchmark processing and hardware detection
 │   ├── changelog_utils.py                        # Comprehensive Python utilities for changelog generation, processing, and git tagging
 │   ├── enhance_commits.py                        # Commit enhancement utilities
-│   ├── generate_changelog.sh                     # Generate changelog with commit dates and squashed PR expansion
 │   ├── hardware_utils.py                         # Python utilities for hardware information and system capabilities
-│   └── run_all_examples.sh                       # Validate all examples
+│   ├── run_all_examples.sh                       # Validate all examples
+│   └── subprocess_utils.py                       # Secure subprocess execution utilities for git and system commands
 ├── .cargo/                                       # Cargo configuration
 │   └── config.toml                               # Build configuration
 ├── .github/                                      # GitHub configuration
@@ -112,6 +115,8 @@ delaunay/
 ├── .coderabbit.yml                               # CodeRabbit AI review configuration
 ├── .gitignore                                    # Git ignore patterns
 ├── .markdownlint.json                            # Markdown linting configuration
+├── .python-version                               # Python version specification for performance requirements
+├── .semgrep.yaml                                 # Semgrep static analysis configuration for security and code quality
 ├── .yamllint                                     # YAML linting configuration
 ├── CHANGELOG.md                                  # Version history with enhanced squashed PR support
 ├── CITATION.cff                                  # Citation metadata for academic use
@@ -160,7 +165,7 @@ delaunay/
 #### Configuration
 
 - **Quality Control**: `.codacy.yml`, `rustfmt.toml`, `pyproject.toml`, linting configurations
-- **Environment**: `rust-toolchain.toml`, `.cargo/config.toml`, GitHub Actions workflows
+- **Environment**: `rust-toolchain.toml`, `.python-version`, `.cargo/config.toml`, GitHub Actions workflows
 - **Project Metadata**: `CITATION.cff`, `REFERENCES.md`, `WARP.md`
 
 ### Architectural Principles

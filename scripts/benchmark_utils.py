@@ -14,12 +14,12 @@ Replaces complex bash parsing logic with maintainable Python code.
 import argparse
 import json
 import re
-import subprocess
 import sys
 from datetime import UTC, datetime  # pylint: disable=no-name-in-module
 from pathlib import Path
 
 from hardware_utils import HardwareComparator, HardwareInfo
+from subprocess_utils import get_git_commit_hash, run_cargo_command
 
 
 class BenchmarkData:
@@ -188,14 +188,13 @@ class BaselineGenerator:
             output_file = self.project_root / "benches" / "baseline_results.txt"
 
         try:
-            # Clean previous benchmark results
-            subprocess.run(["cargo", "clean"], cwd=self.project_root, check=True, capture_output=True)
+            # Clean previous benchmark results - using secure subprocess wrapper
+            run_cargo_command(["clean"], cwd=self.project_root)
 
-            # Run fresh benchmark
+            # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
-                subprocess.run(
+                run_cargo_command(
                     [
-                        "cargo",
                         "bench",
                         "--bench",
                         "small_scale_triangulation",
@@ -209,11 +208,9 @@ class BaselineGenerator:
                         "--noplot",
                     ],
                     cwd=self.project_root,
-                    check=True,
-                    capture_output=True,
                 )
             else:
-                subprocess.run(["cargo", "bench", "--bench", "small_scale_triangulation"], cwd=self.project_root, check=True, capture_output=True)
+                run_cargo_command(["bench", "--bench", "small_scale_triangulation"], cwd=self.project_root)
 
             # Parse Criterion results
             target_dir = self.project_root / "target"
@@ -227,8 +224,6 @@ class BaselineGenerator:
 
             return True
 
-        except subprocess.CalledProcessError:
-            return False
         except Exception:
             return False
 
@@ -240,8 +235,9 @@ class BaselineGenerator:
         current_date = now.strftime("%Y-%m-%d %H:%M:%S %Z")
 
         try:
-            git_commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-        except subprocess.CalledProcessError:
+            # Use secure subprocess wrapper for git command
+            git_commit = get_git_commit_hash()
+        except Exception:
             git_commit = "unknown"
 
         hardware_info = self.hardware.format_hardware_info()
@@ -283,11 +279,10 @@ class PerformanceComparator:
             return False, False
 
         try:
-            # Run fresh benchmark
+            # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
-                subprocess.run(
+                run_cargo_command(
                     [
-                        "cargo",
                         "bench",
                         "--bench",
                         "small_scale_triangulation",
@@ -301,11 +296,9 @@ class PerformanceComparator:
                         "--noplot",
                     ],
                     cwd=self.project_root,
-                    check=True,
-                    capture_output=True,
                 )
             else:
-                subprocess.run(["cargo", "bench", "--bench", "small_scale_triangulation"], cwd=self.project_root, check=True, capture_output=True)
+                run_cargo_command(["bench", "--bench", "small_scale_triangulation"], cwd=self.project_root)
 
             # Parse current results
             target_dir = self.project_root / "target"
@@ -323,8 +316,6 @@ class PerformanceComparator:
 
             return True, regression_found
 
-        except subprocess.CalledProcessError:
-            return False, False
         except Exception:
             return False, False
 
@@ -386,8 +377,9 @@ class PerformanceComparator:
         current_date = now.strftime("%a %b %d %H:%M:%S %Z %Y")
 
         try:
-            git_commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-        except subprocess.CalledProcessError:
+            # Use secure subprocess wrapper for git command
+            git_commit = get_git_commit_hash()
+        except Exception:
             git_commit = "unknown"
 
         # Parse baseline metadata

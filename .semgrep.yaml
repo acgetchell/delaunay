@@ -1,0 +1,60 @@
+# Semgrep configuration for delaunay project
+# This file is automatically picked up by Codacy's Semgrep integration
+# See: https://semgrep.dev/docs/writing-rules/rule-syntax/
+
+rules:
+  # === SECURITY RULESETS ===
+  # Focus on high-impact security issues relevant to computational geometry libraries
+
+  # Rust security patterns
+  - p/rust-security-audit
+  - p/security-audit
+
+  # Generic security patterns that apply across languages
+  - p/secrets  # Detect hardcoded secrets
+  - p/command-injection
+  - p/sql-injection
+
+  # === PERFORMANCE RULESETS ===
+  # Performance patterns relevant to computational code
+  - p/performance
+
+  # === RUST-SPECIFIC RULES ===
+  # Additional Rust patterns beyond security
+  - p/rust-correctness
+
+  # === PYTHON SECURITY (for scripts) ===
+  - p/python-security-audit
+  - p/bandit
+
+# Severity filtering - only show meaningful issues
+severity:
+  - ERROR
+  - WARNING
+
+# Confidence filtering - avoid false positives
+confidence:
+  - HIGH
+  - MEDIUM
+
+# Exclude paths to reduce noise and avoid scanning generated/third-party code
+exclude:
+  - "target/"
+  - "node_modules/"
+  - "*.min.js"
+  - "*.min.css"
+  - "__pycache__/"
+  - ".git/"
+  - "Cargo.lock"
+  - "benches/baseline_results.txt"
+  - "benches/benchmark_results/"
+
+# Include only relevant file types
+include:
+  - "*.rs"
+  - "*.py"
+  - "*.sh"
+
+# Custom rules for this project (can be extended as needed)
+# Currently empty - using community rulesets above
+# Add project-specific patterns here if needed in the future

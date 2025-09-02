@@ -19,6 +19,13 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - This includes: `cargo fmt`, `cargo clippy`, `ruff format`, `ruff check --fix`, `markdownlint --fix`, `shfmt`, etc.
 - Quality tools improve code without changing functionality or version control state
 
+### Python Scripts
+
+- **ALWAYS** use `uv run` when executing Python scripts in this project
+- **DO NOT** use `python3` or `python` directly
+- This ensures correct Python environment (minimum version in `.python-version`, enforced for performance) and dependency management
+- Examples: `uv run python scripts/changelog_utils.py`, `uv run python -c "import scripts.subprocess_utils"`
+
 ## Overview
 
 The `delaunay` library implements d-dimensional Delaunay triangulations in Rust,
@@ -58,6 +65,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 # Check documentation for errors (comprehensive, including private items)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
+
+# Build docs without dependency docs (for crates.io publishing validation)
+cargo doc --no-deps
 
 # Run all tests (library, doc tests, examples)
 cargo test --lib --verbose
@@ -102,10 +112,28 @@ uvx ruff format scripts/
 # Uses pyproject.toml configuration with CLI-appropriate ignore patterns
 uvx ruff check --fix scripts/
 
+# Test Python utilities to ensure they still work correctly
+uv sync --group dev  # Install test dependencies
+uv run pytest       # Run comprehensive Python utility tests
+
 # Lint Python code (check for issues - does not auto-fix)
-# Uses pyproject.toml configuration optimized for CLI scripts
+# Uses [tool.pylint] configuration from pyproject.toml (automatically discovered)
 uvx pylint scripts/
 ```
+
+#### Documentation Quality
+
+**IMPORTANT**: Since this crate is published to crates.io, ensure documentation builds correctly:
+
+```bash
+# Build documentation without errors (basic check)
+cargo doc --no-deps
+
+# Build documentation with warnings treated as errors (strict)
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+```
+
+**Note**: Documentation build failures will prevent successful publishing to crates.io. Always verify docs build cleanly before releases.
 
 **Note**: The Python tools serve different purposes:
 
@@ -124,7 +152,7 @@ uvx pylint scripts/
 
 - **uv**: Install via `curl -LsSf https://astral.sh/uv/install.sh | sh` or see [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/)
 - **macOS**: `brew install uv`
-- **Windows**: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+- **Windows**: `powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"`
 - **pip**: `pip install uv` (if you prefer installing via pip)
 
 `uvx` automatically manages tool dependencies and provides isolated execution environments without requiring global installations.
@@ -221,8 +249,26 @@ yamllint -c .yamllint .github/workflows/ci.yml
 
 ```bash
 # Check spelling with project configuration (respects .gitignore)
-npx cspell --config cspell.json --no-progress --cache "**/*"
+npx cspell --config cspell.json --no-progress --gitignore --cache "**/*"
 ```
+
+#### Codacy Analysis (Local)
+
+**IMPORTANT**: Use absolute paths when running Codacy Analysis CLI locally:
+
+```bash
+# Analyze specific directory with Ruff (most common)
+codacy-analysis-cli analyze --tool ruff --directory /absolute/path/to/project/scripts/ --format json
+
+# Analyze entire project
+codacy-analysis-cli analyze --tool ruff --directory /absolute/path/to/project/ --format json
+
+# Example for this project (adjust path to your system)
+codacy-analysis-cli analyze --tool ruff --directory /Users/username/projects/delaunay/scripts/ --format json
+```
+
+**Note**: The Codacy CLI requires absolute directory paths and will fail with relative paths like `scripts/` or `./`.
+Always use the full path when specifying the `--directory` parameter. Empty JSON array output `[]` indicates no issues found.
 
 ### Benchmarking
 
@@ -516,7 +562,6 @@ Following `docs/code_organization.md`, modules use consistent structure:
 
 - **`uv run benchmark-utils`** - Modern Python utility for performance baselines and regression testing
 - **`scripts/run_all_examples.sh`** - Validate all examples
-- **`scripts/benchmark_parser.sh`** - Shared benchmark parsing utilities
 
 ## TODOs - Automated Performance Baseline System
 
@@ -528,7 +573,7 @@ The automated performance baseline system has been successfully implemented with
 - **Enhanced benchmark testing** for PRs and main branch commits
 - **Python utilities** replacing complex bash scripts (`scripts/hardware_utils.py`, `scripts/benchmark_utils.py`)
 - **GitHub Actions artifacts** for baseline storage (no repo commits needed)
-- **Backward-compatible shell wrappers** preserving existing CLI interfaces
+- **Backward-compatible shell wrappers** preserving existing CLIs
 
 ### Next Steps - Testing and Validation
 

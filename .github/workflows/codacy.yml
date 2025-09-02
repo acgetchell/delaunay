@@ -45,7 +45,7 @@ jobs:
     steps:
       # Checkout the repository to the GitHub Actions runner
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
 
       # Execute Codacy Analysis CLI and generate a SARIF output with
       # the security issues identified during the analysis
@@ -100,55 +100,9 @@ jobs:
             exit 0
           fi
 
-      # Upload each SARIF file separately
+      # Upload SARIF files using official action
       - name: Upload SARIF files
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPO: ${{ github.repository }}
-          COMMIT_SHA: ${{ github.sha }}
-          GITHUB_REF: ${{ github.ref }}
-        run: |
-          # Don't iterate literal patterns when no files exist
-          shopt -s nullglob
-          # Compute a branch ref for PRs
-          if [ -n "${GITHUB_HEAD_REF:-}" ]; then
-            REF="refs/heads/${GITHUB_HEAD_REF}"
-          else
-            REF="${GITHUB_REF}"
-          fi
-          upload_count=0
-          for sarif_file in sarif_*.sarif; do
-            if [ -f "$sarif_file" ]; then
-              echo "Uploading $sarif_file"
-              # Extract tool name for category
-              tool_name=$(basename "$sarif_file" .sarif | sed 's/^sarif_//')
-              # Upload using the action (we'll call it via environment variables)
-              # Use GitHub CLI to upload if available, otherwise use curl
-              if command -v gh >/dev/null 2>&1; then
-                gh api "repos/$GITHUB_REPO/code-scanning/sarifs" \
-                  --method POST \
-                  --field sarif="$(base64 -w 0 < "$sarif_file")" \
-                  --field commit_sha="$COMMIT_SHA" \
-                  --field ref="$REF" \
-                  --field category="codacy-$tool_name" || echo "Failed to upload $sarif_file via gh"
-              else
-                # Fallback to curl
-                curl -L \
-                  -X POST \
-                  -H "Accept: application/vnd.github+json" \
-                  -H "Authorization: Bearer $GH_TOKEN" \
-                  -H "X-GitHub-Api-Version: 2022-11-28" \
-                  "https://api.github.com/repos/$GITHUB_REPO/code-scanning/sarifs" \
-                  -d "$(jq -n \
-                    --arg sarif "$(base64 -w 0 < "$sarif_file")" \
-                    --arg commit "$COMMIT_SHA" \
-                    --arg ref "$REF" \
-                    --arg category "codacy-$tool_name" \
-                    '{sarif: $sarif, commit_sha: $commit, ref: $ref, category: $category}')" \
-                  || echo "Failed to upload $sarif_file via curl"
-              fi
-              upload_count=$((upload_count + 1))
-            fi
-          done
-          echo "Attempted to upload $upload_count SARIF files"
+        uses: github/codeql-action/upload-sarif@b36bf259c813715f76eafece573914b94412cd13  # v3
+        with:
+          sarif_file: sarif_*.sarif
         continue-on-error: true

@@ -17,24 +17,26 @@ on:
   # Run manually
   workflow_dispatch:
 
+# Security: Define minimal required permissions
+permissions:
+  contents: read
+  issues: write
+  security-events: write
+
 jobs:
   audit:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-      security-events: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a  # v1.14.1
         with:
           cache: true
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
       - name: Cache audit database
-        uses: actions/cache@v4
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809  # v4.2.4
         with:
           path: ~/.cargo/advisory-db
           key: advisory-db-${{ github.ref_name }}-v1
@@ -51,7 +53,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload audit results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         if: always()
         with:
           name: audit-results

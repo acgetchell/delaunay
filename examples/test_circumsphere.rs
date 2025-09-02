@@ -102,6 +102,8 @@ fn get_test_registry() -> HashMap<&'static str, TestFunction> {
 }
 
 fn main() {
+    // Security note: args usage is safe here as all arguments are validated against
+    // a predefined whitelist of test functions. No arbitrary code execution occurs.
     let args: Vec<String> = env::args().collect();
     let registry = get_test_registry();
 

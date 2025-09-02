@@ -64,8 +64,8 @@ ignore = [
     "FBT001",  # Boolean-typed positional argument - appropriate for CLI flag arguments
     "FBT002",  # Boolean default positional argument - standard CLI pattern
     "BLE001",  # Do not catch blind exception - intentional defensive programming for CLI robustness
-    "S603",    # subprocess call: check for execution of untrusted input - false positives for known safe commands
-    "S607",    # Starting a process with a partial executable path - acceptable for standard system tools
+    # "S603" - Re-enabled: subprocess call: check for execution of untrusted input - now using secure subprocess wrappers
+    # "S607" - Re-enabled: Starting a process with a partial executable path - now using full paths
     "T201",    # print found - appropriate for CLI output and user feedback
     "TRY300",  # Consider moving statement to else block - acceptable control flow for CLI scripts
     "TRY301",  # Abstract raise to inner function - acceptable for straightforward CLI error handling
@@ -81,6 +81,9 @@ ignore = [
     "TRY003",  # Avoid specifying long messages outside exception class - acceptable for CLI error reporting
     "PLW2901", # for loop variable overwritten - acceptable for line processing in CLI scripts
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/test_*.py" = ["S101"]  # Allow assert statements in test files
 
 [tool.ruff.format]
 quote-style = "double"
@@ -121,8 +124,22 @@ max-locals = 20
 max-branches = 15
 max-statements = 60
 
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--color=yes",
+]
+testpaths = ["scripts/tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
 [dependency-groups]
 dev = [
     "pylint>=3.3.8",
+    "pytest>=8.0.0",
     "ruff>=0.12.11",
 ]

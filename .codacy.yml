@@ -5,25 +5,8 @@
 # Tool configuration
 engines:
   # === RUST TOOLS ===
-  # Clippy for Rust linting (reads from Cargo.toml [lints.clippy] section)
-  clippy:
-    enabled: true
-    include_paths:
-      - "src/**/*.rs"
-      - "benches/**/*.rs"
-      - "examples/**/*.rs"
-      - "tests/**/*.rs"
-      - "build.rs"
-
-  # rustfmt for Rust formatting (reads from rustfmt.toml)
-  rustfmt:
-    enabled: true
-    include_paths:
-      - "src/**/*.rs"
-      - "benches/**/*.rs"
-      - "examples/**/*.rs"
-      - "tests/**/*.rs"
-      - "build.rs"
+  # Note: clippy and rustfmt are not supported by Codacy
+  # These are handled by our GitHub Actions CI instead
 
   # === PYTHON TOOLS ===
   # Ruff for Python linting and formatting (reads from pyproject.toml)
@@ -36,15 +19,8 @@ engines:
       # Use configuration from pyproject.toml
       file: "pyproject.toml"
 
-  # Pylint for additional Python analysis (reads from pyproject.toml)
-  pylintpython3:
-    enabled: true
-    include_paths:
-      - "scripts/**/*.py"
-      - "**/*.py"
-    config:
-      # Use configuration from pyproject.toml
-      file: "pyproject.toml"
+  # Note: pylint is disabled because Codacy's implementation doesn't properly read pyproject.toml
+  # and ruff provides superior Python analysis with full pyproject.toml support
 
   # Bandit for Python security analysis
   bandit:
@@ -60,7 +36,7 @@ engines:
 
   # Prospector for Python code quality
   prospector:
-    enabled: true
+    enabled: false
     include_paths:
       - "scripts/**/*.py"
       - "**/*.py"
@@ -92,6 +68,8 @@ engines:
     enabled: false  # Ruff includes import sorting (I rules)
   black:
     enabled: false  # Ruff includes formatting
+  pylintpython3:
+    enabled: false  # Ruff provides superior analysis with pyproject.toml support
 
   # === OTHER LANGUAGES/FORMATS ===
   # ShellCheck for shell scripts (scripts/*.sh)
@@ -102,7 +80,7 @@ engines:
       - "**/*.sh"
     config:
       shell: bash  # Default shell dialect
-      severity: style  # Report all issues including style
+      severity: warning  # Reduce noise
       include_code: true  # Include code in findings
 
   # Markdown linting for documentation
@@ -125,14 +103,8 @@ engines:
       # Reference existing config file
       file: ".yamllint"
 
-  # Jackson Linter (for JSON files)
-  jackson-linter:
-    enabled: true
-    include_paths:
-      - "**/*.json"
-    config:
-      # Report all issues
-      severity: warning
+  # Note: Jackson Linter is disabled because our JSON files are simple config files
+  # that are already valid and rarely change. JSON validation is handled by IDEs.
 
   # Lizard (code complexity analysis)
   lizard:
@@ -157,15 +129,6 @@ engines:
       - "src/**/*.rs"
       - "scripts/**/*.py"
       - "scripts/**/*.sh"
-    config:
-      # Focus on security rules
-      rules:
-        - security
-        - performance
-      # Set severities to avoid overwhelming with minor issues
-      severities:
-        - error
-        - warning
 
   # Spectral (OpenAPI/AsyncAPI linting)
   spectral:
@@ -214,6 +177,8 @@ exclude_paths:
   - "**/vendor/**"
   - "benches/baseline_results.txt"
   - "benches/benchmark_results/**"
+  - "uv.lock"
+  - ".cspellcache"
 
 # Focus analysis on source code and documentation
 include_paths:

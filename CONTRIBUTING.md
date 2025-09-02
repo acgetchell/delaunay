@@ -43,10 +43,10 @@ Before you begin, ensure you have:
 1. **Rust** (latest stable version): Install via [rustup.rs][rustup]
 2. **Git** for version control
 3. **Python and uv** (for development scripts and automation):
-   - **Python 3.13+**: Required for modern Python features used in development scripts
+   - **Python**: Minimum version specified in `.python-version` (enforced for performance reasons)
    - **uv**: Fast Python package manager - Install via:
      - **macOS/Linux**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-     - **Windows**: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+     - **Windows**: `powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"`
      - **Alternative**: `pip install uv` (if you prefer using pip)
    - See [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/) for more options
 4. **System dependencies** (for shell scripts):
@@ -76,7 +76,9 @@ Before you begin, ensure you have:
 3. **Run tests**:
 
    ```bash
-   cargo test
+   cargo test                # Rust library tests
+   uv sync --group dev       # Install Python dev dependencies  
+   uv run pytest             # Python utility tests
    ```
 
 4. **Try the examples**:
@@ -447,6 +449,10 @@ cargo test
 
 # Integration tests
 cargo test --tests
+
+# Python utility tests (development scripts)
+uv sync --group dev  # Install test dependencies
+uv run pytest       # Run Python tests
 
 # Example tests (ensure examples compile and run)
 ./scripts/run_all_examples.sh

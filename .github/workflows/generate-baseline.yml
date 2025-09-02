@@ -9,11 +9,11 @@ on:
 
   # Manual trigger for testing
   workflow_dispatch:
-    inputs:
-      tag_name:
-        description: 'Tag name to generate baseline for (optional - uses current commit if not provided)'
-        required: false
-        type: string
+
+# Security: Define minimal required permissions
+permissions:
+  contents: read
+  actions: write  # Needed to upload artifacts
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,12 +25,12 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
           fetch-depth: 0  # Full history for tag operations
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a  # v1.14.1
         with:
           cache: true
           # Toolchain from rust-toolchain.toml
@@ -48,20 +48,15 @@ jobs:
       - name: Determine tag information
         id: tag_info
         env:
-          INPUT_TAG_NAME: ${{ github.event.inputs.tag_name }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ -n "$INPUT_TAG_NAME" ]]; then
-            # Manual workflow dispatch with tag name
-            TAG_NAME="$INPUT_TAG_NAME"
-            echo "Using manually specified tag: $TAG_NAME"
-          elif [[ "$REF_TYPE" == "tag" ]]; then
+          if [[ "$REF_TYPE" == "tag" ]]; then
             # Tag push trigger
             TAG_NAME="$REF_NAME"
             echo "Using push tag: $TAG_NAME"
           else
-            # Fallback for manual dispatch without tag name
+            # Fallback for manual dispatch
             TAG_NAME="manual-$(date -u +%Y%m%d-%H%M%S)"
             echo "Using generated tag name: $TAG_NAME"
           fi
@@ -70,7 +65,7 @@ jobs:
           echo "Final tag name: $TAG_NAME"
 
       - name: Install uv (Python package manager)
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@557e51de59eb14aaaba2ed9621916900a91d50c6  # v6.6.1
         with:
           version: "latest"
 
@@ -135,7 +130,7 @@ jobs:
       - name: Upload baseline artifact
         env:
           TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: performance-baseline-${{ env.TAG_NAME }}
           path: baseline-artifact/

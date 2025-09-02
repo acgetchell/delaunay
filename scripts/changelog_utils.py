@@ -14,6 +14,19 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from subprocess_utils import (
+    ExecutableNotFoundError,
+    get_git_remote_url,
+    run_git_command,
+    run_safe_command,
+)
+from subprocess_utils import (
+    check_git_history as _check_git_history,
+)
+from subprocess_utils import (
+    check_git_repo as _check_git_repo,
+)
+
 
 class ChangelogError(Exception):
     """Base exception for changelog operations."""
@@ -72,17 +85,11 @@ class ChangelogUtils:
             GitRepoError: If not in a git repository or git is not available
         """
         try:
-            subprocess.run(
-                ["git", "rev-parse", "--git-dir"],
-                capture_output=True,
-                check=True,
-                text=True,
-            )
-            return True
-        except subprocess.CalledProcessError as exc:
+            if _check_git_repo():
+                return True
             msg = "Not in a git repository"
-            raise GitRepoError(msg) from exc
-        except FileNotFoundError as exc:
+            raise GitRepoError(msg)
+        except ExecutableNotFoundError as exc:
             msg = "git command not found"
             raise GitRepoError(msg) from exc
 
@@ -98,15 +105,12 @@ class ChangelogUtils:
             GitRepoError: If no git history found
         """
         try:
-            subprocess.run(
-                ["git", "log", "--oneline", "-n", "1"],
-                capture_output=True,
-                check=True,
-                text=True,
-            )
-            return True
-        except subprocess.CalledProcessError as exc:
+            if _check_git_history():
+                return True
             msg = "No git history found. Cannot generate changelog."
+            raise GitRepoError(msg)
+        except ExecutableNotFoundError as exc:
+            msg = "git command not found"
             raise GitRepoError(msg) from exc
 
     @staticmethod
@@ -228,14 +232,8 @@ class ChangelogUtils:
             GitRepoError: If remote origin URL cannot be determined
         """
         try:
-            result = subprocess.run(
-                ["git", "remote", "get-url", "origin"],
-                capture_output=True,
-                check=True,
-                text=True,
-            )
-            repo_url = result.stdout.strip()
-        except subprocess.CalledProcessError as exc:
+            repo_url = get_git_remote_url("origin")
+        except (ExecutableNotFoundError, Exception) as exc:
             msg = "Could not detect git remote origin URL"
             raise GitRepoError(msg) from exc
 
@@ -245,16 +243,21 @@ class ChangelogUtils:
 
         # Normalize to https://github.com/owner/repo
         patterns = [
-            r"^git@github\.com:(?P<slug>.+?)(?:\.git)?/?$",
-            r"^ssh://git@github\.com[:/](?P<slug>.+?)(?:\.git)?/?$",
-            r"^https://github\.com/(?P<slug>.+?)(?:\.git)?/?$",
+            r"^git@github\.com:(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
+            r"^ssh://git@github\.com[:/](?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
+            r"^https://github\.com/(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
+            r"^http://github\.com/(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
+            r"^git://github\.com/(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
         ]
+        normalized = None
         for pat in patterns:
             m = re.match(pat, repo_url)
             if m:
-                repo_url = f"https://github.com/{m.group('slug')}"
+                normalized = f"https://github.com/{m.group('slug')}".rstrip("/")
                 break
-        return repo_url.rstrip("/")
+        if not normalized:
+            raise GitRepoError(f"Unsupported git remote URL: {repo_url}")
+        return normalized
 
     @staticmethod
     def get_project_root() -> str:
@@ -292,6 +295,22 @@ class ChangelogUtils:
             Escaped version string safe for regex use
         """
         return re.escape(version)
+
+    @staticmethod
+    def escape_markdown(text: str) -> str:
+        """
+        Escape Markdown formatting characters to prevent output corruption.
+
+        Args:
+            text: Text that may contain Markdown formatting characters
+
+        Returns:
+            Text with Markdown characters escaped
+        """
+        import re
+
+        # Escape minimal set we use in formatting
+        return re.sub(r"([\\*_`\[\]])", r"\\\1", text)
 
     @staticmethod
     def get_markdown_line_limit() -> int:
@@ -381,13 +400,8 @@ class ChangelogUtils:
             GitRepoError: If git commands fail
         """
         try:
-            # Get the full commit message
-            result = subprocess.run(
-                ["git", "--no-pager", "show", commit_sha, "--format=%B", "--no-patch"],
-                capture_output=True,
-                check=True,
-                text=True,
-            )
+            # Get the full commit message using secure subprocess wrapper
+            result = run_git_command(["--no-pager", "show", commit_sha, "--format=%B", "--no-patch"])
             commit_msg = result.stdout
         except subprocess.CalledProcessError as e:
             msg = f"Failed to get commit message for {commit_sha}: {e}"
@@ -440,35 +454,14 @@ class ChangelogUtils:
             if i > 0:
                 output_lines.append("")  # Blank line between entries
 
-            title = entry["title"]
+            title = ChangelogUtils.escape_markdown(entry["title"])
             title_line = f"- **{title}** [`{commit_sha}`]({repo_url}/commit/{commit_sha})"
 
-            # Handle title line wrapping
+            # Keep bolded title intact; place commit link on its own line if too long
             if len(title_line) <= max_line_length:
                 output_lines.append(title_line)
             else:
-                # Title/link wrapping: keep bold closed on every line, link on its own line
-                first_prefix, next_prefix, bold_close = "- **", "  **", "**"
-                avail_first = max_line_length - len(first_prefix) - len(bold_close)
-                avail_next = max_line_length - len(next_prefix) - len(bold_close)
-
-                words = title.split()
-                line_words, lines_bold = [], []
-                avail = avail_first
-                for w in words:
-                    test = (" ".join([*line_words, w])).strip()
-                    if len(test) <= avail:
-                        line_words.append(w)
-                    else:
-                        # flush current bold line
-                        prefix = first_prefix if not lines_bold else next_prefix
-                        lines_bold.append(f"{prefix}{' '.join(line_words)}{bold_close}")
-                        line_words = [w]
-                        avail = avail_next
-                if line_words:
-                    prefix = first_prefix if not lines_bold else next_prefix
-                    lines_bold.append(f"{prefix}{' '.join(line_words)}{bold_close}")
-                output_lines.extend(lines_bold)
+                output_lines.append(f"- **{title}**")
                 output_lines.append(f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})")
 
             # Process body content
@@ -502,7 +495,7 @@ class ChangelogUtils:
     @staticmethod
     def run_git_command(args: list[str], check: bool = True) -> tuple[str, int]:
         """
-        Run a git command and return output and exit code.
+        Run a git command and return output and exit code using secure subprocess wrapper.
 
         Args:
             args: Git command arguments (without 'git')
@@ -514,17 +507,21 @@ class ChangelogUtils:
         Raises:
             GitRepoError: If command fails and check=True
         """
+        from subprocess_utils import run_git_command as secure_git_command
+
         try:
-            result = subprocess.run(["git", *args], capture_output=True, check=check, text=True)
+            result = secure_git_command(args, check=check)
             return result.stdout.strip(), result.returncode
         except subprocess.CalledProcessError as e:
             if check:
                 msg = f"Git command failed: git {' '.join(args)}: {e.stderr}"
                 raise GitRepoError(msg) from e
-            return e.stdout.strip(), e.returncode
-        except FileNotFoundError as exc:
-            msg = "git command not found"
-            raise GitRepoError(msg) from exc
+            return e.stdout.strip() if hasattr(e, "stdout") and e.stdout else "", e.returncode
+        except Exception as exc:
+            if check:
+                msg = f"Git command failed: {exc}"
+                raise GitRepoError(msg) from exc
+            return "", 1
 
     @staticmethod
     def create_git_tag(tag_version: str, force_recreate: bool = False) -> None:
@@ -555,20 +552,15 @@ class ChangelogUtils:
 
         # Check if tag already exists
         try:
-            result = subprocess.run(
-                ["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag_version}"],
-                capture_output=True,
-                check=False,
-                text=True,
-            )
-            if result.returncode == 0:
+            result_output, result_code = ChangelogUtils.run_git_command(["rev-parse", "-q", "--verify", f"refs/tags/{tag_version}"], check=False)
+            if result_code == 0:
                 if not force_recreate:
                     print(f"{YELLOW}Tag '{tag_version}' already exists.{NC}", file=sys.stderr)
                     print("Use --force to recreate it, or delete it first with:", file=sys.stderr)
                     print(f"  git tag -d {tag_version}", file=sys.stderr)
                     raise ChangelogError(f"Tag '{tag_version}' already exists")
                 print(f"{BLUE}Deleting existing tag '{tag_version}'...{NC}")
-                subprocess.run(["git", "tag", "-d", tag_version], check=True)
+                ChangelogUtils.run_git_command(["tag", "-d", tag_version])
         except subprocess.CalledProcessError as e:
             msg = f"Failed to check for existing tag: {e}"
             raise GitRepoError(msg) from e
@@ -586,16 +578,30 @@ class ChangelogUtils:
 
         # Check git user configuration
         try:
-            subprocess.run(["git", "config", "--get", "user.name"], capture_output=True, check=True)
-            subprocess.run(["git", "config", "--get", "user.email"], capture_output=True, check=True)
-        except subprocess.CalledProcessError:
+            ChangelogUtils.run_git_command(["config", "--get", "user.name"])
+            ChangelogUtils.run_git_command(["config", "--get", "user.email"])
+        except Exception:
             print(f"{YELLOW}Warning: git user.name/email not configured; tag creation may fail.{NC}", file=sys.stderr)
 
         # Create the tag
         print(f"{BLUE}Creating tag '{tag_version}' with changelog content...{NC}")
         try:
-            process = subprocess.Popen(
-                ["git", "tag", "-a", tag_version, "-F", "-"],
+            # Use secure subprocess wrapper to get git path
+            # We need to use subprocess.Popen for stdin input
+            from subprocess_utils import get_safe_executable
+
+            git_path = get_safe_executable("git")
+            # Validate inputs before using them in subprocess
+            if not re.match(r"^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$", tag_version):
+                raise ValueError(f"Invalid tag version format: {tag_version}")
+
+            # skipcq: PYI-B603  # Security: This subprocess call is safe because:
+            # - git_path is obtained through get_safe_executable() which validates the full path
+            # - tag_version is validated with regex before use
+            # - No shell=True is used, preventing shell injection
+            # - Input comes from changelog file, not user input
+            process = subprocess.Popen(  # noqa: S603  # nosec B603 # Uses validated full git path and tag_version
+                [git_path, "tag", "-a", tag_version, "-F", "-"],
                 stdin=subprocess.PIPE,
                 text=True,
             )
@@ -741,20 +747,24 @@ This tool replaces both generate_changelog.sh and tag-from-changelog.sh.
 
             # Check prerequisites
             if not shutil.which("npx"):
+                print("Error: npx not found. Install Node.js (which provides npx). See https://nodejs.org/", file=sys.stderr)
                 sys.exit(1)
 
             # Verify auto-changelog is available
             try:
-                result = subprocess.run(["npx", "--yes", "-p", "auto-changelog", "auto-changelog", "--version"], capture_output=True, check=True, text=True)
-            except subprocess.CalledProcessError:
+                run_safe_command("npx", ["--yes", "-p", "auto-changelog", "auto-changelog", "--version"])
+            except Exception:
+                print("Error: auto-changelog is not available via npx. Verify network access and try again.", file=sys.stderr)
                 sys.exit(1)
 
             # Verify configuration files exist
             if not Path(".auto-changelog").exists():
+                print("Error: .auto-changelog config not found at project root.", file=sys.stderr)
                 sys.exit(1)
 
             template_path = Path("docs/templates/changelog.hbs")
             if not template_path.exists():
+                print(f"Error: changelog template missing: {template_path}", file=sys.stderr)
                 sys.exit(1)
 
             # Backup existing changelog
@@ -769,9 +779,7 @@ This tool replaces both generate_changelog.sh and tag-from-changelog.sh.
 
             # Step 1: Run auto-changelog
             try:
-                result = subprocess.run(
-                    ["npx", "--yes", "-p", "auto-changelog", "auto-changelog", "--stdout"], capture_output=True, check=True, text=True, cwd=project_root
-                )
+                result = run_safe_command("npx", ["--yes", "-p", "auto-changelog", "auto-changelog", "--stdout"], cwd=project_root)
                 temp_changelog.write_text(result.stdout, encoding="utf-8")
             except subprocess.CalledProcessError as e:
                 if e.stderr:
@@ -788,9 +796,6 @@ This tool replaces both generate_changelog.sh and tag-from-changelog.sh.
             ChangelogGenerator.expand_squashed_prs(processed_changelog, expanded_changelog, repo_url)
 
             # Step 4: Enhance AI commits with categorization
-            if not shutil.which("python3"):
-                sys.exit(1)
-
             # Find enhance_commits.py in the same directory as this script
             script_dir = Path(__file__).parent
             enhance_script = script_dir / "enhance_commits.py"
@@ -799,8 +804,10 @@ This tool replaces both generate_changelog.sh and tag-from-changelog.sh.
                 sys.exit(1)
 
             try:
-                subprocess.run(["python3", str(enhance_script), str(expanded_changelog), str(enhanced_changelog)], check=True, cwd=project_root)
-            except subprocess.CalledProcessError:
+                python_exe = sys.executable or "python"
+                run_safe_command(python_exe, [str(enhance_script), str(expanded_changelog), str(enhanced_changelog)], cwd=project_root)
+            except Exception:
+                print("Error: auto-changelog is not available via npx. Verify network access and try again.", file=sys.stderr)
                 sys.exit(1)
 
             # Step 5: Final cleanup - remove excessive blank lines
@@ -896,8 +903,8 @@ class ChangelogGenerator:
 
                 # Check if this is a squashed PR commit
                 try:
-                    result = subprocess.run(["git", "--no-pager", "show", commit_sha, "--format=%s", "--no-patch"], capture_output=True, check=True, text=True)
-                    commit_subject = result.stdout.strip()
+                    result_output, _ = ChangelogUtils.run_git_command(["--no-pager", "show", commit_sha, "--format=%s", "--no-patch"])
+                    commit_subject = result_output.strip()
 
                     if re.search(r"\(#[0-9]+\)$", commit_subject):
                         # Use Python utility to process the commit
@@ -915,7 +922,7 @@ class ChangelogGenerator:
                         # Not a squashed PR, keep original line
                         output_lines.append(line)
 
-                except subprocess.CalledProcessError:
+                except Exception:
                     # Git command failed, keep original line
                     output_lines.append(line)
             else:

@@ -16,6 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from subprocess_utils import run_safe_command
+
 
 class HardwareInfo:
     """Cross-platform hardware information detection."""
@@ -267,7 +269,7 @@ class HardwareInfo:
 
     def _run_command(self, cmd: list) -> str:
         """
-        Run a command and return its output.
+        Run a command and return its output using secure subprocess wrapper.
 
         Args:
             cmd: Command to run as list
@@ -278,7 +280,14 @@ class HardwareInfo:
         Raises:
             subprocess.CalledProcessError: If command fails
         """
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        if not cmd:
+            error_msg = "Command list cannot be empty"
+            raise ValueError(error_msg)
+
+        command_name = cmd[0]
+        args = cmd[1:] if len(cmd) > 1 else []
+
+        result = run_safe_command(command_name, args, check=True)
         return result.stdout.strip()
 
 
