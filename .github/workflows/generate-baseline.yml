@@ -141,7 +141,7 @@ jobs:
         with:
           name: ${{ steps.safe_name.outputs.artifact_name }}
           path: baseline-artifact/
-          retention-days: 90   # Keep baselines for 90 days (repository maximum)
+          retention-days: 90   # Keep baselines ~90 days (align with repo settings; adjust if needed)
           compression-level: 6  # Good balance of speed/compression
 
       - name: Display next steps

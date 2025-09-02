@@ -90,7 +90,7 @@ jobs:
                   continue;
                 }
 
-                // Mirror sanitization in generate-baseline.yml (allow [A-Za-z0-9._-], replace others with _)
+                // Must match sanitize step in .github/workflows/generate-baseline.yml
                 const cleanTag = release.tag_name.replace(/[^a-zA-Z0-9._-]/g, '_');
                 const expectedName = `performance-baseline-${cleanTag}`;
 
@@ -112,7 +112,9 @@ jobs:
                       repo: context.repo.repo,
                       run_id: run.id
                     });
-                    const baselineArtifact = artifacts.data.artifacts.find(a => a.name === expectedName);
+                    const baselineArtifact = artifacts.data.artifacts.find(
+                      a => a.name === expectedName && a.expired !== true
+                    );
                     if (baselineArtifact) {
                       console.log(
                         `Found release baseline artifact ${expectedName} in run ${run.id} ` +
@@ -152,7 +154,7 @@ jobs:
 
                   // Look for any artifact starting with 'performance-baseline-'
                   const baselineArtifact = artifacts.data.artifacts.find(a =>
-                    a.name.startsWith('performance-baseline-')
+                    a.name.startsWith('performance-baseline-') && a.expired !== true
                   );
 
                   if (baselineArtifact) {
@@ -192,6 +194,7 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ steps.find_baseline.outputs.release_tag }}
+          SOURCE_TYPE: ${{ steps.find_baseline.outputs.source_type }}
         run: |
           set -euo pipefail
           if [[ -f "baseline-artifact/baseline_results.txt" ]]; then
@@ -200,6 +203,7 @@ jobs:
             cp "baseline-artifact/baseline_results.txt" "benches/baseline_results.txt"
             echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
             echo "BASELINE_SOURCE=artifact" >> "$GITHUB_ENV"
+            echo "BASELINE_ORIGIN=${SOURCE_TYPE:-unknown}" >> "$GITHUB_ENV"
 
             # Show baseline metadata
             echo "=== Baseline Information (from artifact) ==="
@@ -218,6 +222,7 @@ jobs:
           echo "📈 No baseline artifact found for performance comparison"
           echo "BASELINE_EXISTS=false" >> "$GITHUB_ENV"
           echo "BASELINE_SOURCE=none" >> "$GITHUB_ENV"
+          echo "BASELINE_ORIGIN=none" >> "$GITHUB_ENV"
 
       - name: Extract baseline commit SHA
         if: env.BASELINE_EXISTS == 'true'
@@ -291,9 +296,10 @@ jobs:
           set -euo pipefail
           echo "🚀 Running performance regression test..."
           echo "   Baseline source: ${BASELINE_SOURCE:-unknown}"
+          echo "   Baseline origin: ${BASELINE_ORIGIN:-unknown}"
 
           # This will exit with code 1 if significant regressions are found
-          echo "   Using full comparison mode against release baseline"
+          echo "   Using full comparison mode against ${BASELINE_ORIGIN:-unknown} baseline"
           uv run benchmark-utils compare --baseline benches/baseline_results.txt \
             || uv run python -m scripts.benchmark_utils compare --baseline benches/baseline_results.txt
 
@@ -326,6 +332,7 @@ jobs:
           echo "📊 Performance Regression Testing Summary"
           echo "==========================================="
           echo "Baseline source: ${BASELINE_SOURCE:-none}"
+          echo "Baseline origin: ${BASELINE_ORIGIN:-unknown}"
           echo "Baseline exists: ${BASELINE_EXISTS:-false}"
           echo "Skip benchmarks: ${SKIP_BENCHMARKS:-unknown}"
           echo "Skip reason: ${SKIP_REASON:-n/a}"
