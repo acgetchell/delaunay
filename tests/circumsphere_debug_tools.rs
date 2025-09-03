@@ -17,7 +17,7 @@ use delaunay::geometry::util::squared_norm;
 use delaunay::prelude::*;
 use nalgebra as na;
 use peroxide::fuga::{LinearAlgebra, zeros};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 
 // Macro for standard test output formatting
 macro_rules! test_output {
@@ -47,10 +47,10 @@ macro_rules! print_result {
             "  {:<18} {}",
             format!("{}:", $method),
             match $result {
-                Ok(InSphere::INSIDE) => "INSIDE",
-                Ok(InSphere::BOUNDARY) => "BOUNDARY",
-                Ok(InSphere::OUTSIDE) => "OUTSIDE",
-                Err(_) => "ERROR",
+                &Ok(InSphere::INSIDE) => "INSIDE",
+                &Ok(InSphere::BOUNDARY) => "BOUNDARY",
+                &Ok(InSphere::OUTSIDE) => "OUTSIDE",
+                &Err(_) => "ERROR",
             }
         );
     };
@@ -194,7 +194,7 @@ fn test_circumsphere_generic<const D: usize>(
     vertices: &[Vertex<f64, i32, D>],
     test_points: Vec<([f64; D], &str)>,
 ) where
-    [f64; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Copy + Default + Sized + Serialize + for<'de> Deserialize<'de>,
 {
     println!("Testing {dimension_name} circumsphere methods");
     println!("=============================================");
@@ -234,7 +234,7 @@ fn test_point_generic<const D: usize>(
     center: &[f64; D],
     radius: f64,
 ) where
-    [f64; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Copy + Default + Sized + Serialize + for<'de> Deserialize<'de>,
 {
     let test_vertex: Vertex<f64, i32, D> = vertex!(coords, 99);
 
@@ -252,9 +252,9 @@ fn test_point_generic<const D: usize>(
     println!("Point {description} {coords:?}:");
     println!("  Distance to center: {distance_to_center:.6}");
     println!("  Expected inside: {}", distance_to_center <= radius);
-    print_result!("insphere", &result_insphere);
-    print_result!("insphere_distance", &result_distance);
-    print_result!("insphere_lifted", &result_lifted);
+    print_result!("determinant-based", &result_insphere);
+    print_result!("distance-based", &result_distance);
+    print_result!("matrix-based", &result_lifted);
 
     // Check agreement between methods
     let methods_agree =
@@ -409,7 +409,7 @@ fn test_4d_circumsphere_methods() {
 #[allow(clippy::too_many_lines)]
 fn test_circumsphere_containment() {
     println!("Testing circumsphere containment:");
-    println!("  determinant-based (insphere) vs distance-based (circumsphere_contains)");
+    println!("  determinant-based (insphere) vs distance-based (insphere_distance)");
     println!("=============================================");
 
     // Define the 4D simplex vertices that form a unit 5-cell
@@ -819,8 +819,8 @@ fn test_circumsphere_methods(
         Ok(standard_method_3d) => match insphere_lifted(&simplex_points, Point::from(&test_vertex))
         {
             Ok(matrix_method_3d) => {
-                println!("Standard method result: {standard_method_3d:?}");
-                println!("Matrix method result: {matrix_method_3d:?}");
+                println!("Determinant-based method result: {standard_method_3d:?}");
+                println!("Matrix-based method result: {matrix_method_3d:?}");
             }
             Err(e) => println!("Matrix method error: {e}"),
         },
@@ -836,8 +836,8 @@ fn test_boundary_vertex_case(simplex_vertices: &[Vertex<f64, i32, 3>]) {
     match insphere(&simplex_points, Point::from(&vertex1)) {
         Ok(standard_vertex) => match insphere_lifted(&simplex_points, Point::from(&vertex1)) {
             Ok(matrix_vertex) => {
-                println!("Standard method for vertex1: {standard_vertex:?}");
-                println!("Matrix method for vertex1: {matrix_vertex:?}");
+                println!("Determinant-based method for vertex1: {standard_vertex:?}");
+                println!("Matrix-based method for vertex1: {matrix_vertex:?}");
             }
             Err(e) => println!("Matrix method error for vertex1: {e}"),
         },
@@ -976,7 +976,10 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
                 if det < 0.0 { "<" } else { ">" },
                 if matrix_result { "INSIDE" } else { "OUTSIDE" }
             );
-            println!("Matrix method result: {matrix_result}");
+            println!(
+                "Matrix method result: {}",
+                if matrix_result { "INSIDE" } else { "OUTSIDE" }
+            );
 
             (det, matrix_result)
         }
@@ -1064,14 +1067,14 @@ fn print_method_comparison_results(
     println!("  Geometric truth: {geometric_truth}");
 
     println!();
-    let standard_inside = matches!(standard_result, InSphere::INSIDE);
+    let standard_inside = matches!(standard_result, InSphere::INSIDE | InSphere::BOUNDARY);
     if standard_inside == geometric_truth {
         println!("✓ Standard method matches geometric truth");
     } else {
         println!("✗ Standard method disagrees with geometric truth");
     }
 
-    let matrix_inside = matches!(matrix_method_result, InSphere::INSIDE);
+    let matrix_inside = matches!(matrix_method_result, InSphere::INSIDE | InSphere::BOUNDARY);
     let matrix_agrees = matrix_inside == geometric_truth;
     let methods_agree = standard_inside == matrix_inside;
 

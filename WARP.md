@@ -85,20 +85,21 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::
 uvx ruff check --select F401,F403,I001,I002 --fix scripts/
 uvx ruff format scripts/
 
-# Shell script formatting and linting
-git status -z --porcelain | awk -v RS='\0' '/\.sh$/ {print $2}' | xargs -r -n1 shfmt -i 2 -ci -sr -bn -kp -ln bash -w
-git status -z --porcelain | awk -v RS='\0' '/\.sh$/ {print $2}' | xargs -r -n4 shellcheck -x
+# Shell script formatting and linting (path-safe)
+git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -i 2 -ci -sr -bn -kp -ln bash -w
+git ls-files -z '*.sh' | xargs -0 -r -n4 shellcheck -x
 
 # Markdown linting
 npx markdownlint --config .markdownlint.json --fix $(git status --porcelain | awk '/\.md$/ {print $2}')
 
-# Spell checking
-npx cspell lint --config cspell.json --no-progress --gitignore --cache $(git ls-files '*.md' '*.rs' '*.toml' '*.json')
+# Spell checking (path-safe)
+git ls-files -z '*.md' '*.rs' '*.toml' '*.json' \
+  | xargs -0 -r npx cspell lint --config cspell.json --no-progress --gitignore --cache
 # Or for PRs:
 # npx cspell lint --config cspell.json --no-progress --gitignore --cache $(git status --porcelain | awk '{print $2}')
 
-# JSON validation (when JSON files are modified)
-git ls-files '*.json' | xargs -r -n1 jq empty
+# JSON validation (when JSON files are modified, path-safe)
+git ls-files -z '*.json' | xargs -0 -r -n1 jq empty
 ```
 
 ### Testing and Validation
@@ -190,6 +191,21 @@ These items are incomplete and may require future attention:
 - **Reason**: Serves as authoritative project structure reference for contributors
 
 ## AI Assistant Guidelines
+
+### Context-Aware Test Execution (AI Assistant Guidance)
+
+- **IF** Rust code changed in `tests/` directory → **MUST** run integration/debug tests:
+  - `cargo test --release` (for performance)
+  - `cargo test --test circumsphere_debug_tools -- --nocapture` (for debug output)
+- **IF** Rust code changed in `examples/` directory → **MUST** run examples validation:
+  - `chmod +x scripts/run_all_examples.sh && ./scripts/run_all_examples.sh`
+- **IF** Rust code changed in `benches/` directory → **MUST** run benchmark verification:
+  - `cargo bench --no-run` (verifies benchmarks compile without executing them)
+- **IF** other Rust code changed (`src/`, etc.) → **MUST** run standard Rust tests:
+  - `cargo test --lib --verbose`
+  - `cargo test --doc --verbose`
+  - `cargo test --examples --verbose`
+- **PURPOSE**: Ensures appropriate validation for the type of code changes made
 
 ### Integration Testing Patterns
 

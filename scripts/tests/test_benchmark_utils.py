@@ -17,7 +17,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-from scripts.benchmark_utils import (
+
+from benchmark_utils import (
     BenchmarkData,
     CriterionParser,
     PerformanceComparator,
@@ -140,8 +141,8 @@ class TestCriterionParser:
         finally:
             estimates_path.unlink()
 
-    @patch("scripts.benchmark_utils.Path.exists")
-    @patch("scripts.benchmark_utils.Path.iterdir")
+    @patch("benchmark_utils.Path.exists")
+    @patch("benchmark_utils.Path.iterdir")
     def test_find_criterion_results_no_criterion_dir(self, mock_iterdir, mock_exists):  # noqa: ARG002
         """Test finding criterion results when criterion directory doesn't exist."""
         mock_exists.return_value = False
@@ -241,7 +242,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
 
         result = output.getvalue()
         assert "4.8%" in result
-        assert "✅ OK" in result
+        assert "✅ OK: Time change +4.8% within acceptable range" in result
 
     def test_write_time_comparison_with_regression(self, comparator):
         """Test time comparison writing with regression."""
@@ -272,8 +273,8 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert not is_regression
 
         result = output.getvalue()
-        assert "-10.0%" in result
-        assert "✅ IMPROVEMENT" in result
+        assert "10.0%" in result
+        assert "✅ IMPROVEMENT: Time decreased by 10.0% (faster performance)" in result
 
     def test_write_time_comparison_zero_baseline(self, comparator):
         """Test time comparison with zero baseline time."""
@@ -418,8 +419,8 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         # Should return False when no benchmarks to compare
         assert not regression_found
 
-    @patch("scripts.benchmark_utils.get_git_commit_hash")
-    @patch("scripts.benchmark_utils.datetime")
+    @patch("benchmark_utils.get_git_commit_hash")
+    @patch("benchmark_utils.datetime")
     def test_prepare_comparison_metadata(self, mock_datetime, mock_git, comparator, sample_baseline_content):
         """Test preparation of comparison metadata."""
         # Mock current datetime
@@ -437,7 +438,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert metadata["baseline_date"] == "2023-06-15 10:30:00 PDT"
         assert metadata["baseline_commit"] == "abc123def456"
 
-    @patch("scripts.benchmark_utils.get_git_commit_hash")
+    @patch("benchmark_utils.get_git_commit_hash")
     def test_prepare_comparison_metadata_git_failure(self, mock_git, comparator, sample_baseline_content):
         """Test metadata preparation when git command fails."""
         mock_git.side_effect = Exception("Git not available")

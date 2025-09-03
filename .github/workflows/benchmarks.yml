@@ -249,11 +249,12 @@ jobs:
             # Show baseline metadata
             echo "=== Baseline Information (from artifact) ==="
             head -n 3 baseline-artifact/baseline_results.txt
-          else
-            echo "❌ Downloaded artifact but no baseline_results.txt found"
-            echo "BASELINE_EXISTS=false" >> "$GITHUB_ENV"
-            echo "BASELINE_SOURCE=missing" >> "$GITHUB_ENV"
-          fi
+        else
+          echo "❌ Downloaded artifact but no baseline_results.txt found"
+          echo "BASELINE_EXISTS=false" >> "$GITHUB_ENV"
+          echo "BASELINE_SOURCE=missing" >> "$GITHUB_ENV"
+          echo "BASELINE_ORIGIN=unknown" >> "$GITHUB_ENV"
+        fi
 
       - name: Set baseline status if none found
         if: steps.find_baseline.outputs.found != 'true'
@@ -273,8 +274,7 @@ jobs:
           bc_sha="$(grep "^Git commit:" baseline-artifact/baseline_results.txt | awk '{print $3}' || true)"
           if [[ -z "$bc_sha" || ! "$bc_sha" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
             if [[ -f "baseline-artifact/metadata.json" ]]; then
-              bc_sha="$(python3 -c 'import json,sys; p="baseline-artifact/metadata.json"; \
-d=json.load(open(p)); print(d.get("commit",""))' || true)"
+              bc_sha="$(jq -r '.commit // empty' baseline-artifact/metadata.json 2>/dev/null || true)"
             fi
           fi
           if [[ -n "$bc_sha" && "$bc_sha" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
@@ -347,11 +347,12 @@ d=json.load(open(p)); print(d.get("commit",""))' || true)"
 
           # This will exit with code 1 if significant regressions are found
           echo "   Using full comparison mode against ${BASELINE_ORIGIN:-unknown} baseline"
+          BASELINE_PATH="baseline-artifact/baseline_results.txt"
           if uv run benchmark-utils --help >/dev/null 2>&1; then
-            uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
+            uv run benchmark-utils compare --baseline "$BASELINE_PATH"
           elif uv run python -c "import importlib; importlib.import_module('scripts.benchmark_utils')" \
                >/dev/null 2>&1; then
-            uv run python -m scripts.benchmark_utils compare --baseline baseline-artifact/baseline_results.txt
+            uv run python -m scripts.benchmark_utils compare --baseline "$BASELINE_PATH"
           else
             echo "❌ benchmark-utils entrypoint and module not found" >&2
             exit 2

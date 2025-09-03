@@ -470,8 +470,14 @@ class PerformanceComparator:
         if time_changes:
             # Prefer geometric mean of ratios to reflect multiplicative changes across benchmarks
             ratios = [1.0 + (tc / 100.0) for tc in time_changes]
-            avg_ratio = math.prod(ratios) ** (1.0 / len(ratios))
-            average_change = (avg_ratio - 1.0) * 100.0
+            # Guard against non-positive ratios (defensive; should not occur with sane data)
+            positive_ratios = [r for r in ratios if r > 0]
+            if not positive_ratios:
+                average_change = 0.0
+            else:
+                avg_log = sum(math.log(r) for r in positive_ratios) / len(positive_ratios)
+                avg_ratio = math.exp(avg_log)
+                average_change = (avg_ratio - 1.0) * 100.0
             f.write("\n=== SUMMARY ===\n")
             f.write(f"Total benchmarks compared: {len(time_changes)}\n")
             f.write(f"Individual regressions (>{self.regression_threshold}%): {individual_regressions}\n")
@@ -527,20 +533,27 @@ class PerformanceComparator:
         if baseline.time_mean <= 0:
             f.write("Time Change: N/A (baseline mean is 0)\n")
             return None, False
-        if current.time_unit and baseline.time_unit and current.time_unit != baseline.time_unit:
-            f.write(f"Time Change: N/A (unit mismatch: {current.time_unit} vs {baseline.time_unit})\n")
+        # Normalize to microseconds when units differ (supports ns, µs/us, ms, s)
+        unit_scale = {"ns": 1e-3, "µs": 1.0, "us": 1.0, "ms": 1e3, "s": 1e6}
+        cur_unit = current.time_unit or "µs"
+        base_unit = baseline.time_unit or "µs"
+        if cur_unit not in unit_scale or base_unit not in unit_scale:
+            f.write(f"Time Change: N/A (unit mismatch: {cur_unit} vs {base_unit})\n")
+            return None, False
+        cur_mean_us = current.time_mean * unit_scale[cur_unit]
+        base_mean_us = baseline.time_mean * unit_scale[base_unit]
+        if base_mean_us <= 0:
+            f.write("Time Change: N/A (baseline mean is 0)\n")
             return None, False
 
-        time_change_pct = ((current.time_mean - baseline.time_mean) / baseline.time_mean) * 100
-        f.write(f"Time Change (mean): {time_change_pct:.1f}%\n")
-
+        time_change_pct = ((cur_mean_us - base_mean_us) / base_mean_us) * 100
         is_individual_regression = time_change_pct > self.regression_threshold
         if is_individual_regression:
             f.write(f"⚠️  REGRESSION: Time increased by {time_change_pct:.1f}% (slower performance)\n")
         elif time_change_pct < -self.regression_threshold:
             f.write(f"✅ IMPROVEMENT: Time decreased by {abs(time_change_pct):.1f}% (faster performance)\n")
         else:
-            f.write("✅ OK: Time change within acceptable range\n")
+            f.write(f"✅ OK: Time change {time_change_pct:+.1f}% within acceptable range\n")
 
         return time_change_pct, is_individual_regression
 
