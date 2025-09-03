@@ -51,6 +51,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **LINT**: Use `shellcheck -x scripts/*.sh` to follow sourced files and catch include issues
 - **CI CRITICAL**: Shell script formatting failures will cause CI to fail – must use default shfmt options to match CI
 - **INDENTATION**: Uses shfmt default settings (tabs for indentation, standard spacing)
+- **NOTE**: If the repo ever standardizes on spaces instead of tabs, document the required flags (e.g., `-i 2` for 2-space indentation)
 - **POST-EDIT REQUIREMENT**: After any shell script edits, immediately run `shfmt -w` to prevent CI failures
 - **EXAMPLES**: `find scripts -type f -name '*.sh' -exec shfmt -w {} +` formats all shell scripts
 - **TROUBLESHOOTING**: If CI shows formatting diffs, run `shfmt -w` on the affected scripts
@@ -112,7 +113,6 @@ git ls-files -z '*.json' | xargs -0 -r -n1 jq empty
 cargo build
 cargo test --lib --verbose
 cargo test --doc --verbose
-cargo test --examples --verbose
 
 # Integration tests (comprehensive)
 cargo test --release  # Run all tests in release mode for performance
@@ -174,24 +174,28 @@ These items are incomplete and may require future attention:
 - **Status**: Not started
 - **Scope**: Algorithmic performance improvements, memory optimization, SIMD utilization
 - **Dependencies**: Baseline system is complete and ready for optimization work
+- **Tracking**: Create GitHub issue for performance optimization roadmap
 
 ### Python Code Quality Improvements
 
 - **Status**: Partially complete
 - **Remaining**: Replace deprecated `typing.Dict/List/Tuple`, improve error handling patterns, reduce function argument counts
 - **Tools**: Uses ruff for comprehensive linting (replaces pylint)
+- **Tracking**: Create GitHub issue for Python code modernization checklist
 
 ### Benchmark System Validation
 
 - **Status**: Implementation complete, testing in progress
 - **Remaining**: Test release flow with git tag generation, validate hardware compatibility warnings
 - **Architecture**: GitHub Actions artifacts for baseline storage, 5% regression threshold
+- **Tracking**: Create GitHub issue for benchmark system testing validation
 
 ### Documentation Maintenance
 
 - **Status**: Ongoing
 - **Critical**: When adding/removing files, always update `docs/code_organization.md`
 - **Reason**: Serves as authoritative project structure reference for contributors
+- **Tracking**: This is ongoing maintenance - create issues for specific documentation gaps as discovered
 
 ### Dependency Migration
 
@@ -200,6 +204,7 @@ These items are incomplete and may require future attention:
 - **Rationale**: nalgebra is more mature, better maintained, and has better ecosystem integration
 - **Impact**: Will affect matrix operations, potentially improving performance and reducing compilation times
 - **Dependencies**: None - can be done independently when time permits
+- **Tracking**: Issue #61
 
 ## AI Assistant Guidelines
 

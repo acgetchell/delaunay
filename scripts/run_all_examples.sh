@@ -38,7 +38,7 @@ NOTES:
     - Examples are discovered automatically from the examples/ directory
     - Output is shown in real-time as examples execute
     - Script exits with error code if any example fails
-    - Set EXAMPLE_TIMEOUT (seconds, default 600) to bound per-example runtime
+    - Set EXAMPLE_TIMEOUT to bound per-example runtime (supports units like 30s, 5m; default 600s)
     - On macOS, install coreutils and ensure gtimeout is available (auto-detected)
 
 SEE ALSO:
@@ -80,9 +80,6 @@ check_dependencies
 
 # Find project root (directory containing Cargo.toml)
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
-
-# Create results directory for future use
-mkdir -p "${PROJECT_ROOT}/benches/results"
 
 # Ensure we're executing from the project root
 cd "${PROJECT_ROOT}"
