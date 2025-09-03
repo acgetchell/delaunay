@@ -10,7 +10,7 @@
 //! ```bash
 //! cargo test --test circumsphere_debug_tools test_2d_circumsphere_debug -- --nocapture
 //! cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocapture
-//! cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
+//! cargo test --test circumsphere_debug_tools test_all_debug -- --ignored --nocapture
 //! ```
 
 use delaunay::geometry::util::squared_norm;

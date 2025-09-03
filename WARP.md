@@ -134,10 +134,10 @@ uv run pytest
 uv run benchmark-utils generate-baseline
 
 # Compare performance against baseline
-uv run benchmark-utils compare --baseline benches/baseline_results.txt
+uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 
 # Development mode (10x faster for iteration)
-uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev
+uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
 ```
 
 ### Changelog Management
@@ -146,8 +146,9 @@ uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev
 # Generate enhanced changelog with AI categorization
 uv run changelog-utils generate
 
-# Create git tag with changelog content
-uv run changelog-utils tag v0.4.2
+# Create git tag with changelog content (user-only; WARP must not execute)
+# Run manually from your terminal:
+# uv run changelog-utils tag v0.4.2
 ```
 
 ## Project Context

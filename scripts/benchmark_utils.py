@@ -476,6 +476,10 @@ class PerformanceComparator:
             f.write(f"Total benchmarks compared: {len(time_changes)}\n")
             f.write(f"Individual regressions (>{self.regression_threshold}%): {individual_regressions}\n")
             f.write(f"Average time change: {average_change:.1f}%\n")
+            # Optional: top regressions
+            top = sorted(time_changes, reverse=True)[:5]
+            if top:
+                f.write("Top regressions (by time change %): " + ", ".join(f"{t:.1f}%" for t in top) + "\n")
 
             average_regression_found = average_change > self.regression_threshold
             if average_regression_found:

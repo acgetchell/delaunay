@@ -38,6 +38,8 @@ NOTES:
     - Examples are discovered automatically from the examples/ directory
     - Output is shown in real-time as examples execute
     - Script exits with error code if any example fails
+    - Set EXAMPLE_TIMEOUT (seconds, default 600) to bound per-example runtime
+    - On macOS, install coreutils and ensure gtimeout is available (auto-detected)
 
 SEE ALSO:
     examples/README.md - Detailed documentation for each example
@@ -124,15 +126,22 @@ if [ ${#all_examples[@]} -eq 0 ]; then
 fi
 
 # Run all examples
+TIMEOUT_CMD=""
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="gtimeout"
+fi
+
 for example in "${all_examples[@]}"; do
-	echo "=== Running $example ==="
-	if command -v timeout >/dev/null 2>&1; then
-		timeout "${EXAMPLE_TIMEOUT:-600}" cargo run --release --example "$example" ||
-			error_exit "Example $example failed!"
-	else
-		cargo run --release --example "$example" ||
-			error_exit "Example $example failed!"
-	fi
+  echo "=== Running $example ==="
+  if [[ -n "$TIMEOUT_CMD" ]]; then
+    "$TIMEOUT_CMD" "${EXAMPLE_TIMEOUT:-600}" cargo run --release --example "$example" ||
+      error_exit "Example $example failed!"
+  else
+    cargo run --release --example "$example" ||
+      error_exit "Example $example failed!"
+  fi
 done
 
 echo

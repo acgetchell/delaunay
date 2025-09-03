@@ -539,7 +539,7 @@ Other content here...
             with self.subTest(memory_str=memory_str):
                 result = HardwareComparator._extract_memory_value(memory_str)  # noqa: SLF001
                 if expected is None:
-                    assert result == expected
+                    assert result is None
                 else:
                     assert result == pytest.approx(expected, abs=1e-9)
 

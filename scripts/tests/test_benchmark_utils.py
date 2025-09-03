@@ -311,7 +311,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change should be: (20 + (-2) + (-15)) / 3 = 1%
+        # Average change using geometric mean: ~0.0%
         # This is less than 5% threshold, so no overall regression
         assert not regression_found
 
@@ -319,7 +319,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert "SUMMARY" in result
         assert "Total benchmarks compared: 3" in result
         assert "Individual regressions (>5.0%): 1" in result  # Only the +20% one
-        assert "Average time change: 1.0%" in result
+        assert "Average time change: -0.0%" in result
         assert "✅ OVERALL OK" in result
 
     def test_write_performance_comparison_with_average_regression(self, comparator):
@@ -344,7 +344,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change should be: (10 + 8 + (-1)) / 3 = 5.67%
+        # Average change using geometric mean: 5.6%
         # This exceeds 5% threshold, so overall regression found
         assert regression_found
 
@@ -352,7 +352,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert "SUMMARY" in result
         assert "Total benchmarks compared: 3" in result
         assert "Individual regressions (>5.0%): 2" in result  # The +10% and +8% ones
-        assert "Average time change: 5.7%" in result
+        assert "Average time change: 5.6%" in result
         assert "🚨 OVERALL REGRESSION" in result
 
     def test_write_performance_comparison_with_average_improvement(self, comparator):
@@ -377,7 +377,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change should be: (-10 + (-8) + 2) / 3 = -5.33%
+        # Average change using geometric mean: -5.5%
         # This is significant improvement, so no regression found
         assert not regression_found
 
@@ -385,7 +385,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert "SUMMARY" in result
         assert "Total benchmarks compared: 3" in result
         assert "Individual regressions (>5.0%): 0" in result
-        assert "Average time change: -5.3%" in result
+        assert "Average time change: -5.5%" in result
         assert "🎉 OVERALL IMPROVEMENT" in result
 
     def test_write_performance_comparison_missing_baseline(self, comparator):
@@ -501,14 +501,14 @@ class TestIntegrationScenarios:
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change: (3 + 7 + (-2) + (-12) + 4) / 5 = 0%
+        # Average change using geometric mean: -0.2%
         # No overall regression should be detected
         assert not regression_found
 
         result = output.getvalue()
         assert "Total benchmarks compared: 5" in result
         assert "Individual regressions (>5.0%): 1" in result  # Only the 7% one
-        assert "Average time change: 0.0%" in result
+        assert "Average time change: -0.2%" in result
         assert "✅ OVERALL OK" in result
 
     def test_gradual_performance_degradation_scenario(self, comparator):
@@ -571,15 +571,15 @@ class TestIntegrationScenarios:
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change: (2 + (-4) + 3 + 40 + (-10)) / 5 = 6.2%
-        # Despite the one big outlier, overall regression should be detected
-        assert regression_found
+        # Average change using geometric mean: 4.9%
+        # Despite the one big outlier, no overall regression should be detected (4.9% < 5.0% threshold)
+        assert not regression_found
 
         result = output.getvalue()
         assert "Total benchmarks compared: 5" in result
         assert "Individual regressions (>5.0%): 1" in result  # Only the 40% outlier
-        assert "Average time change: 6.2%" in result
-        assert "🚨 OVERALL REGRESSION" in result
+        assert "Average time change: 4.9%" in result
+        assert "✅ OVERALL OK" in result
 
 
 class TestEdgeCases:
@@ -651,6 +651,9 @@ class TestEdgeCases:
 
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
+
+        # Should find regression due to the 10% change in the valid comparison
+        assert regression_found
 
         result = output.getvalue()
         assert "Total benchmarks compared: 1" in result  # Only one valid comparison

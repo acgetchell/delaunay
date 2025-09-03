@@ -273,14 +273,8 @@ jobs:
           bc_sha="$(grep "^Git commit:" baseline-artifact/baseline_results.txt | awk '{print $3}' || true)"
           if [[ -z "$bc_sha" || ! "$bc_sha" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
             if [[ -f "baseline-artifact/metadata.json" ]]; then
-              bc_sha="$(python3 - <<'PY'
-import json,sys
-try:
-  print(json.load(open("baseline-artifact/metadata.json"))["commit"])
-except Exception:
-  sys.exit(0)
-PY
-)"
+              bc_sha="$(python3 -c 'import json,sys; p="baseline-artifact/metadata.json"; \
+d=json.load(open(p)); print(d.get("commit",""))' || true)"
             fi
           fi
           if [[ -n "$bc_sha" && "$bc_sha" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then

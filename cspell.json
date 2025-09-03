@@ -90,6 +90,7 @@
         "getrandom",
         "golangci",
         "gsub",
+        "gtimeout",
         "Guibas",
         "hashset",
         "htmlhint",
