@@ -238,7 +238,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -f "baseline-artifact/baseline_results.txt" ]]; then
-            echo "📦 Prepared baseline from artifact for release ${RELEASE_TAG:-unknown}"
+            echo "📦 Prepared baseline from artifact (origin: ${SOURCE_TYPE:-unknown}, tag: ${RELEASE_TAG:-n/a})"
             echo "BASELINE_EXISTS=true" >> "$GITHUB_ENV"
             echo "BASELINE_SOURCE=artifact" >> "$GITHUB_ENV"
             echo "BASELINE_ORIGIN=${SOURCE_TYPE:-unknown}" >> "$GITHUB_ENV"
@@ -271,6 +271,18 @@ jobs:
         run: |
           set -euo pipefail
           bc_sha="$(grep "^Git commit:" baseline-artifact/baseline_results.txt | awk '{print $3}' || true)"
+          if [[ -z "$bc_sha" || ! "$bc_sha" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
+            if [[ -f "baseline-artifact/metadata.json" ]]; then
+              bc_sha="$(python3 - <<'PY'
+import json,sys
+try:
+  print(json.load(open("baseline-artifact/metadata.json"))["commit"])
+except Exception:
+  sys.exit(0)
+PY
+)"
+            fi
+          fi
           if [[ -n "$bc_sha" && "$bc_sha" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
             echo "BASELINE_COMMIT=$bc_sha" >> "$GITHUB_ENV"
           else

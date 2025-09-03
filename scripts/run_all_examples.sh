@@ -18,11 +18,10 @@ USAGE:
     ./scripts/run_all_examples.sh [OPTIONS]
 
 DESCRIPTION:
-    This script automatically discovers and runs all examples in the examples/
-    directory. All examples are executed in release mode (--release) for optimal
-    performance.
-
-    The script automatically discovers and runs all standard examples.
+    Automatically discovers and runs Cargo examples in examples/:
+      - examples/<name>.rs
+      - examples/<name>/main.rs
+    All examples run in release mode (--release).
 
 OPTIONS:
     -h, --help     Show this help message and exit
@@ -89,21 +88,35 @@ cd "${PROJECT_ROOT}"
 echo "Running all examples for delaunay project..."
 echo "=============================================="
 
-# Automatically discover all examples (deterministic order, GNU/BSD portable)
+# Discover Cargo examples deterministically:
+# - Top-level files: examples/foo.rs           -> example name "foo"
+# - Nested dirs:    examples/bar/main.rs       -> example name "bar"
 all_examples=()
 if sort --version >/dev/null 2>&1; then
-	# GNU sort available: use -z safely
-	while IFS= read -r -d '' file; do
-		example_name=$(basename "$file" .rs)
-		all_examples+=("$example_name")
-	done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print0 | sort -z)
+	example_names=$(
+		{
+			# top-level *.rs files
+			while IFS= read -r -d '' f; do basename "$f" .rs; done \
+				< <(find "${PROJECT_ROOT}/examples" -maxdepth 1 -type f -name '*.rs' -print0)
+			# nested example directories with main.rs
+			while IFS= read -r -d '' f; do basename "$(dirname "$f")"; done \
+				< <(find "${PROJECT_ROOT}/examples" -mindepth 2 -maxdepth 2 -type f -name 'main.rs' -print0)
+		} | LC_ALL=C sort -u
+	)
 else
-	# Fallback for BSD sort: tolerate spaces; filenames in repo should not contain newlines
-	while IFS= read -r file; do
-		example_name=$(basename "$file" .rs)
-		all_examples+=("$example_name")
-	done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print | LC_ALL=C sort)
+	example_names=$(
+		{
+			find "${PROJECT_ROOT}/examples" -maxdepth 1 -type f -name '*.rs' -print |
+				while IFS= read -r f; do basename "$f" .rs; done
+			find "${PROJECT_ROOT}/examples" -mindepth 2 -maxdepth 2 -type f -name 'main.rs' -print |
+				while IFS= read -r f; do basename "$(dirname "$f")"; done
+		} | LC_ALL=C sort -u
+	)
 fi
+# Load names into array
+while IFS= read -r name; do
+	[[ -n "$name" ]] && all_examples+=("$name")
+done <<<"$example_names"
 
 # Guard against zero discovered examples
 if [ ${#all_examples[@]} -eq 0 ]; then
@@ -113,9 +126,15 @@ fi
 # Run all examples
 for example in "${all_examples[@]}"; do
 	echo "=== Running $example ==="
-	cargo run --release --example "$example" || error_exit "Example $example failed!"
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "${EXAMPLE_TIMEOUT:-600}" cargo run --release --example "$example" ||
+			error_exit "Example $example failed!"
+	else
+		cargo run --release --example "$example" ||
+			error_exit "Example $example failed!"
+	fi
 done
 
 echo
 echo "=============================================="
-echo "All examples and tests completed successfully!"
+echo "All examples completed successfully!"

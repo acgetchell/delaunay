@@ -538,7 +538,10 @@ Other content here...
         for memory_str, expected in test_cases:
             with self.subTest(memory_str=memory_str):
                 result = HardwareComparator._extract_memory_value(memory_str)  # noqa: SLF001
-                assert result == expected
+                if expected is None:
+                    assert result == expected
+                else:
+                    assert result == pytest.approx(expected, abs=1e-9)
 
 
 class TestHardwareUtilsIntegration(unittest.TestCase):

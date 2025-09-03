@@ -25,6 +25,8 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **PREFERRED**: Use `jq empty <filename>.json` for quick validation
 - **ALTERNATIVE**: Use `npx --yes jsonlint --quiet <filename>.json` for validation
 - **REQUIRED** when modifying `cspell.json`, `package.json`, or any other JSON configuration files
+- Validate all modified JSON files:
+  - `git status --porcelain | awk '/\.json$/ {print $2}' | xargs -r -n1 jq empty`
 
 #### Spell Check Dictionary Management (AI Assistant Guidance)
 
@@ -32,7 +34,8 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **IF** cspell reports legitimate technical terms, programming keywords, or project-specific terminology as misspelled, add them to the `words` array in `cspell.json`
 - **EXAMPLES**: Python terms (`kwargs`, `args`, `asyncio`), Rust terms (`usize`, `clippy`, `rustc`), technical terms (`triangulation`, `circumsphere`, `delaunay`),
   project names (`nalgebra`, `serde`, `thiserror`)
-- **PURPOSE**: Maintains clean spell check while building comprehensive project dictionary
+- **PURPOSE**: Maintains a clean spell-check while building a comprehensive project dictionary
+- Prefer `ignorePaths` for generated files (e.g., build artifacts) instead of adding their tokens to `words`.
 
 #### Import Organization (AI Assistant Guidance)
 
@@ -44,10 +47,10 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 #### Shell Script Formatting (AI Assistant Guidance)
 
 - **ALWAYS** run `shfmt` to format shell scripts after editing them
-- **REQUIRED**: Use `shfmt -w scripts/*.sh` to format in-place with tab indentation (default)
-- **LINT**: Use `shellcheck scripts/*.sh` to check for common shell scripting issues
-- **CI CRITICAL**: Shell script formatting failures will cause CI to fail - shfmt expects consistent tab indentation
-- **EXAMPLES**: `find scripts -type f -name '*.sh' -exec shfmt -w {} +` formats all shell scripts
+- **REQUIRED**: Use `shfmt -i 2 -ci -sr -bn -kp -ln bash -w scripts/*.sh` to format consistently
+- **LINT**: Use `shellcheck -x scripts/*.sh` to follow sourced files and catch include issues
+- **CI CRITICAL**: Shell script formatting failures will cause CI to fail – shfmt options are pinned to avoid editor diffs
+- **EXAMPLES**: `find scripts -type f -name '*.sh' -exec shfmt -i 2 -ci -sr -bn -kp -ln bash -w {} +` formats all shell scripts
 
 ### Python Scripts
 
@@ -68,32 +71,34 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ### Code Quality Checks
 
-Run these commands after making changes to ensure code quality:
+Run these commands after making changes to ensure code quality (the assistant must not execute git-altering commands; present them for the user to run):
 
 **Note**: When asked to run code quality checks on "changed files", use `git status --porcelain` to identify which files have been
-modified, added, or staged, and focus the quality tools on those specific files.
+modified, added, or staged, and then focus the quality tools on those specific files.
 
 ```bash
 # Rust code formatting and linting
 cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings -D clippy::all -D clippy::pedantic -W clippy::nursery -W clippy::cargo
+cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Python code quality (for scripts/ directory)
+uvx ruff check --select F401,F403,I001,I002 --fix scripts/
 uvx ruff format scripts/
-uvx ruff check --fix scripts/
 
 # Shell script formatting and linting
-find scripts -type f -name '*.sh' -exec shfmt -w {} +
-find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck
+git status -z --porcelain | awk -v RS='\0' '/\.sh$/ {print $2}' | xargs -r -n1 shfmt -i 2 -ci -sr -bn -kp -ln bash -w
+git status -z --porcelain | awk -v RS='\0' '/\.sh$/ {print $2}' | xargs -r -n4 shellcheck -x
 
 # Markdown linting
-npx markdownlint --fix "*.md" "examples/*.md" "tests/*.md" "scripts/*.md" "docs/*.md" "docs/templates/*.md" "benches/*.md" ".github/*.md"
+npx markdownlint --config .markdownlint.json --fix $(git status --porcelain | awk '/\.md$/ {print $2}')
 
 # Spell checking
-npx cspell --config cspell.json --no-progress --gitignore --cache "**/*"
+npx cspell lint --config cspell.json --no-progress --gitignore --cache $(git ls-files '*.md' '*.rs' '*.toml' '*.json')
+# Or for PRs:
+# npx cspell lint --config cspell.json --no-progress --gitignore --cache $(git status --porcelain | awk '{print $2}')
 
 # JSON validation (when JSON files are modified)
-jq empty cspell.json
+git ls-files '*.json' | xargs -r -n1 jq empty
 ```
 
 ### Testing and Validation
@@ -116,7 +121,7 @@ cargo bench --no-run
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 # Run all examples
-./scripts/run_all_examples.sh
+chmod +x scripts/run_all_examples.sh && ./scripts/run_all_examples.sh
 
 # Python utility testing (if Python scripts modified)
 uv run pytest
@@ -163,7 +168,7 @@ These items are incomplete and may require future attention:
 
 - **Status**: Not started
 - **Scope**: Algorithmic performance improvements, memory optimization, SIMD utilization
-- **Dependencies**: Baseline system is complete, ready for optimization work
+- **Dependencies**: Baseline system is complete and ready for optimization work
 
 ### Python Code Quality Improvements
 

@@ -8,9 +8,9 @@
 //!
 //! Run specific test functions with:
 //! ```bash
-//! cargo test test_2d_circumsphere_debug --test circumsphere_debug_tools -- --nocapture
-//! cargo test test_3d_circumsphere_debug --test circumsphere_debug_tools -- --nocapture
-//! cargo test test_all_debug --test circumsphere_debug_tools -- --nocapture
+//! cargo test --test circumsphere_debug_tools test_2d_circumsphere_debug -- --nocapture
+//! cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocapture
+//! cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
 //! ```
 
 use delaunay::geometry::util::squared_norm;

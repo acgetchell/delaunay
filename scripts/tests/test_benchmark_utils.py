@@ -17,8 +17,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-
-from benchmark_utils import (
+from scripts.benchmark_utils import (
     BenchmarkData,
     CriterionParser,
     PerformanceComparator,
@@ -141,8 +140,8 @@ class TestCriterionParser:
         finally:
             estimates_path.unlink()
 
-    @patch("benchmark_utils.Path.exists")
-    @patch("benchmark_utils.Path.iterdir")
+    @patch("scripts.benchmark_utils.Path.exists")
+    @patch("scripts.benchmark_utils.Path.iterdir")
     def test_find_criterion_results_no_criterion_dir(self, mock_iterdir, mock_exists):  # noqa: ARG002
         """Test finding criterion results when criterion directory doesn't exist."""
         mock_exists.return_value = False
@@ -253,7 +252,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         time_change, is_regression = comparator._write_time_comparison(output, current, baseline)
 
         # Change is (115 - 100) / 100 * 100 = 15%
-        assert time_change == 15.0
+        assert time_change == pytest.approx(15.0, abs=1e-9)
         assert is_regression  # Greater than 5% threshold
 
         result = output.getvalue()
@@ -269,7 +268,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         time_change, is_regression = comparator._write_time_comparison(output, current, baseline)
 
         # Change is (90 - 100) / 100 * 100 = -10%
-        assert time_change == -10.0
+        assert time_change == pytest.approx(-10.0, abs=1e-9)
         assert not is_regression
 
         result = output.getvalue()
@@ -403,7 +402,10 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Only one benchmark should be compared
+        # Only one benchmark should be compared, regression could be found based on that single comparison
+        # In this case, we have 10% regression (110 vs 100), so regression should be detected
+        assert regression_found
+
         result = output.getvalue()
         assert "Total benchmarks compared: 1" in result
         assert "3000 Points (2D)" in result  # Should still show the benchmark without baseline
@@ -416,8 +418,8 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         # Should return False when no benchmarks to compare
         assert not regression_found
 
-    @patch("benchmark_utils.get_git_commit_hash")
-    @patch("benchmark_utils.datetime")
+    @patch("scripts.benchmark_utils.get_git_commit_hash")
+    @patch("scripts.benchmark_utils.datetime")
     def test_prepare_comparison_metadata(self, mock_datetime, mock_git, comparator, sample_baseline_content):
         """Test preparation of comparison metadata."""
         # Mock current datetime
@@ -435,7 +437,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert metadata["baseline_date"] == "2023-06-15 10:30:00 PDT"
         assert metadata["baseline_commit"] == "abc123def456"
 
-    @patch("benchmark_utils.get_git_commit_hash")
+    @patch("scripts.benchmark_utils.get_git_commit_hash")
     def test_prepare_comparison_metadata_git_failure(self, mock_git, comparator, sample_baseline_content):
         """Test metadata preparation when git command fails."""
         mock_git.side_effect = Exception("Git not available")

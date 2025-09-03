@@ -13,6 +13,7 @@ Replaces complex bash parsing logic with maintainable Python code.
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -444,7 +445,6 @@ class PerformanceComparator:
         """Write performance comparison section and return whether average regression exceeds threshold."""
         time_changes = []  # Track all time changes for average calculation
         individual_regressions = 0
-        total_comparisons = 0
 
         for current_benchmark in current_results:
             key = f"{current_benchmark.points}_{current_benchmark.dimension}"
@@ -458,18 +458,22 @@ class PerformanceComparator:
                 time_change, is_individual_regression = self._write_time_comparison(f, current_benchmark, baseline_benchmark)
                 if time_change is not None:
                     time_changes.append(time_change)
-                    total_comparisons += 1
                     if is_individual_regression:
                         individual_regressions += 1
                 self._write_throughput_comparison(f, current_benchmark, baseline_benchmark)
+            else:
+                f.write("Baseline: N/A (no matching entry)\n")
 
             f.write("\n")
 
         # Calculate and report average regression
         if time_changes:
-            average_change = sum(time_changes) / len(time_changes)
+            # Prefer geometric mean of ratios to reflect multiplicative changes across benchmarks
+            ratios = [1.0 + (tc / 100.0) for tc in time_changes]
+            avg_ratio = math.prod(ratios) ** (1.0 / len(ratios))
+            average_change = (avg_ratio - 1.0) * 100.0
             f.write("\n=== SUMMARY ===\n")
-            f.write(f"Total benchmarks compared: {total_comparisons}\n")
+            f.write(f"Total benchmarks compared: {len(time_changes)}\n")
             f.write(f"Individual regressions (>{self.regression_threshold}%): {individual_regressions}\n")
             f.write(f"Average time change: {average_change:.1f}%\n")
 
@@ -518,6 +522,9 @@ class PerformanceComparator:
         """Write time comparison and return time change percentage and whether individual regression was found."""
         if baseline.time_mean <= 0:
             f.write("Time Change: N/A (baseline mean is 0)\n")
+            return None, False
+        if current.time_unit and baseline.time_unit and current.time_unit != baseline.time_unit:
+            f.write(f"Time Change: N/A (unit mismatch: {current.time_unit} vs {baseline.time_unit})\n")
             return None, False
 
         time_change_pct = ((current.time_mean - baseline.time_mean) / baseline.time_mean) * 100
