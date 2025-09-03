@@ -47,13 +47,13 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 #### Shell Script Formatting (AI Assistant Guidance)
 
 - **ALWAYS** run `shfmt` to format shell scripts after editing them
-- **REQUIRED**: Use `shfmt -i 0 -ci -sr -bn -kp -ln bash -w scripts/*.sh` to format consistently
+- **REQUIRED**: Use `shfmt -w scripts/*.sh` to format consistently (uses default shfmt settings)
 - **LINT**: Use `shellcheck -x scripts/*.sh` to follow sourced files and catch include issues
-- **CI CRITICAL**: Shell script formatting failures will cause CI to fail – shfmt options are pinned to avoid editor diffs
-- **INDENTATION**: The `-i 0` flag uses tabs for indentation, NOT spaces - this must match CI exactly
-- **POST-EDIT REQUIREMENT**: After any shell script edits, immediately run the exact shfmt command to prevent CI failures
-- **EXAMPLES**: `find scripts -type f -name '*.sh' -exec shfmt -i 0 -ci -sr -bn -kp -ln bash -w {} +` formats all shell scripts
-- **TROUBLESHOOTING**: If CI shows formatting diffs, the script wasn't formatted with the exact shfmt options
+- **CI CRITICAL**: Shell script formatting failures will cause CI to fail – must use default shfmt options to match CI
+- **INDENTATION**: Uses shfmt default settings (tabs for indentation, standard spacing)
+- **POST-EDIT REQUIREMENT**: After any shell script edits, immediately run `shfmt -w` to prevent CI failures
+- **EXAMPLES**: `find scripts -type f -name '*.sh' -exec shfmt -w {} +` formats all shell scripts
+- **TROUBLESHOOTING**: If CI shows formatting diffs, run `shfmt -w` on the affected scripts
 
 ### Python Scripts
 
@@ -89,7 +89,7 @@ uvx ruff check --select F401,F403,I001,I002 --fix scripts/
 uvx ruff format scripts/
 
 # Shell script formatting and linting (path-safe)
-git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -i 0 -ci -sr -bn -kp -ln bash -w
+git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -w
 git ls-files -z '*.sh' | xargs -0 -r -n4 shellcheck -x
 
 # Markdown linting (path-safe)

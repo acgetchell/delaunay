@@ -11,7 +11,7 @@ error_exit() {
 
 # Help function
 show_help() {
-	cat << EOF
+	cat <<EOF
 run_all_examples.sh - Run all examples in the delaunay project
 
 USAGE:
@@ -52,13 +52,13 @@ EOF
 # Parse command line arguments
 for arg in "$@"; do
 	case $arg in
-		-h | --help)
-			show_help
-			exit 0
-			;;
-		*)
-			error_exit "Unknown option: $arg. Use --help for usage information."
-			;;
+	-h | --help)
+		show_help
+		exit 0
+		;;
+	*)
+		error_exit "Unknown option: $arg. Use --help for usage information."
+		;;
 	esac
 done
 
@@ -69,7 +69,7 @@ check_dependencies() {
 
 	# Check each required command
 	for cmd in "${required_commands[@]}"; do
-		if ! command -v "$cmd" > /dev/null 2>&1; then
+		if ! command -v "$cmd" >/dev/null 2>&1; then
 			error_exit "$cmd is required but not found. Please install it to proceed."
 		fi
 	done
@@ -110,7 +110,7 @@ example_names=$(
 # Load names into array
 while IFS= read -r name; do
 	[[ -n "$name" ]] && all_examples+=("$name")
-done <<< "$example_names"
+done <<<"$example_names"
 
 # Guard against zero discovered examples
 if [ ${#all_examples[@]} -eq 0 ]; then
@@ -119,9 +119,9 @@ fi
 
 # Run all examples
 TIMEOUT_CMD=""
-if command -v timeout > /dev/null 2>&1; then
+if command -v timeout >/dev/null 2>&1; then
 	TIMEOUT_CMD="timeout"
-elif command -v gtimeout > /dev/null 2>&1; then
+elif command -v gtimeout >/dev/null 2>&1; then
 	TIMEOUT_CMD="gtimeout"
 fi
 
