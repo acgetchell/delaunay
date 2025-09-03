@@ -27,7 +27,7 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 - [x]  d-dimensional [Delaunay triangulations]
 - [x]  d-dimensional [Convex hulls]
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
-- [x]  Tested for 3-, 4-, and 5-dimensional triangulations
+- [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
 
 See [CHANGELOG.md](CHANGELOG.md) for details.
 

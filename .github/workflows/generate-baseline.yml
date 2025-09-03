@@ -77,7 +77,7 @@ jobs:
         run: |
           echo "🚀 Generating performance baseline for tag $TAG_NAME"
 
-          # Run baseline generation using Python CLI tool
+          # Run baseline generation using Python CLI tool with CI performance suite
           uv run benchmark-utils generate-baseline \
             || uv run python -m scripts.benchmark_utils generate-baseline
 

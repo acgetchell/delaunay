@@ -210,7 +210,7 @@ class BaselineGenerator:
                     [
                         "bench",
                         "--bench",
-                        "small_scale_triangulation",
+                        "ci_performance_suite",
                         "--",
                         "--sample-size",
                         "10",
@@ -223,7 +223,7 @@ class BaselineGenerator:
                     cwd=self.project_root,
                 )
             else:
-                run_cargo_command(["bench", "--bench", "small_scale_triangulation"], cwd=self.project_root)
+                run_cargo_command(["bench", "--bench", "ci_performance_suite"], cwd=self.project_root)
 
             # Parse Criterion results
             target_dir = self.project_root / "target"
@@ -301,7 +301,7 @@ class PerformanceComparator:
                     [
                         "bench",
                         "--bench",
-                        "small_scale_triangulation",
+                        "ci_performance_suite",
                         "--",
                         "--sample-size",
                         "10",
@@ -314,7 +314,7 @@ class PerformanceComparator:
                     cwd=self.project_root,
                 )
             else:
-                run_cargo_command(["bench", "--bench", "small_scale_triangulation"], cwd=self.project_root)
+                run_cargo_command(["bench", "--bench", "ci_performance_suite"], cwd=self.project_root)
 
             # Parse current results
             target_dir = self.project_root / "target"

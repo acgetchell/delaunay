@@ -57,8 +57,17 @@ harness = false
 name = "assign_neighbors_performance"
 harness = false
 
+
 [[bench]]
-name = "small_scale_triangulation"
+name = "memory_scaling"
+harness = false
+
+[[bench]]
+name = "triangulation_vs_hull_memory"
+harness = false
+
+[[bench]]
+name = "ci_performance_suite"
 harness = false
 
 [lints.rust]

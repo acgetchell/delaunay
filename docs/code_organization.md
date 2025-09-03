@@ -61,11 +61,13 @@ delaunay/
 │   ├── README.md                                 # Benchmarking guide and performance results
 │   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
 │   ├── baseline_results.txt                      # Performance baseline data
+│   ├── ci_performance_suite.rs                   # CI-optimized performance suite (2D-5D regression testing)
 │   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
 │   ├── helpers.rs                                # Benchmark helper functions
+│   ├── memory_scaling.rs                         # Memory usage scaling benchmarks
 │   ├── microbenchmarks.rs                        # Fine-grained performance tests
-│   ├── small_scale_triangulation.rs              # Small triangulation benchmarks
-│   └── triangulation_creation.rs                 # Triangulation creation benchmarks
+│   ├── triangulation_creation.rs                 # Triangulation creation benchmarks
+│   └── triangulation_vs_hull_memory.rs           # Memory comparison benchmarks
 ├── tests/                                        # Integration tests
 │   ├── README.md                                 # Integration tests guide and usage instructions
 │   ├── allocation_api.rs                         # Memory allocation profiling and testing utilities
@@ -169,7 +171,7 @@ cargo test --test circumsphere_debug_tools -- --nocapture
 #### Development Infrastructure
 
 - **`examples/`** - Usage demonstrations and trait examples
-- **`benches/`** - Performance benchmarks with automated baseline management
+- **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage)
 - **`tests/`** - Integration tests, debugging utilities, and regression testing
 - **`docs/`** - Architecture guides, performance documentation, and templates
 - **`scripts/`** - Python utilities for automation and CI integration
