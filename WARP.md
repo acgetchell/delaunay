@@ -18,6 +18,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **ALLOWED** to fix auto-fixable issues (formatting, linting, etc.)
 - This includes: `cargo fmt`, `cargo clippy`, `uvx ruff format`, `uvx ruff check --fix`, `markdownlint --fix`, `shfmt`, etc.
 - Quality tools improve code without changing functionality or version control state
+- **IMPORTANT**: Benchmark files (in `benches/` directory) are Rust code and must follow the same quality standards as core library code
 
 #### JSON File Validation (AI Assistant Guidance)
 
@@ -30,10 +31,11 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 #### Spell Check Dictionary Management (AI Assistant Guidance)
 
-- **ALWAYS** run spell check after editing documentation files
+- **ALWAYS** run spell check after editing ANY files (code, documentation, configuration files, etc.)
+- **REQUIRED** when adding or modifying any files to ensure proper spelling throughout the project
 - **IF** cspell reports legitimate technical terms, programming keywords, or project-specific terminology as misspelled, add them to the `words` array in `cspell.json`
 - **EXAMPLES**: Python terms (`kwargs`, `args`, `asyncio`), Rust terms (`usize`, `clippy`, `rustc`), technical terms (`triangulation`, `circumsphere`, `delaunay`),
-  project names (`nalgebra`, `serde`, `thiserror`)
+  project names (`nalgebra`, `serde`, `thiserror`), crate names (`pastey`)
 - **PURPOSE**: Maintains a clean spell-check while building a comprehensive project dictionary
 - Prefer `ignorePaths` for generated files (e.g., build artifacts) instead of adding their tokens to `words`.
 
@@ -80,8 +82,10 @@ Run these commands after making changes to ensure code quality (the assistant mu
 **Note**: When asked to run code quality checks on "changed files", use `git status --porcelain` to identify which files have been
 modified, added, or staged, and then focus the quality tools on those specific files.
 
+**CRITICAL**: Always run spell check when any files are changed or added - this includes code files, not just documentation.
+
 ```bash
-# Rust code formatting and linting
+# Rust code formatting and linting (includes src/, tests/, benches/, examples/)
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 

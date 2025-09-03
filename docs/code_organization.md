@@ -63,7 +63,7 @@ delaunay/
 │   ├── baseline_results.txt                      # Performance baseline data
 │   ├── ci_performance_suite.rs                   # CI-optimized performance suite (2D-5D regression testing)
 │   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
-│   ├── helpers.rs                                # Benchmark helper functions
+│   ├── util.rs                                   # Benchmark utility functions
 │   ├── memory_scaling.rs                         # Memory usage scaling benchmarks
 │   ├── microbenchmarks.rs                        # Fine-grained performance tests
 │   ├── triangulation_creation.rs                 # Triangulation creation benchmarks
@@ -71,7 +71,7 @@ delaunay/
 ├── tests/                                        # Integration tests
 │   ├── README.md                                 # Integration tests guide and usage instructions
 │   ├── allocation_api.rs                         # Memory allocation profiling and testing utilities
-│   ├── bench_helpers_test.rs                     # Tests for benchmark helper functions
+│   ├── bench_util_test.rs                        # Tests for benchmark utility functions
 │   ├── circumsphere_debug_tools.rs               # Interactive circumsphere testing and debugging utilities
 │   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
 │   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests

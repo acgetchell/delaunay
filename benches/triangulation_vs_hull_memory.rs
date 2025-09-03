@@ -12,12 +12,17 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use delaunay::geometry::algorithms::ConvexHull;
 use delaunay::prelude::*;
 use delaunay::vertex;
-use rand::{Rng, SeedableRng};
 use std::fs::File;
 use std::hint::black_box;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
+
+mod util;
+use util::{
+    generate_random_points_2d_seeded, generate_random_points_3d_seeded,
+    generate_random_points_4d_seeded, generate_random_points_5d_seeded,
+};
 
 /// Convex hull memory measurement record
 #[derive(Debug, Clone)]
@@ -137,45 +142,7 @@ impl HullMemoryRecord {
     }
 }
 
-/// Generate random points for testing
-fn generate_points_2d(n: usize, seed: u64) -> Vec<Point<f64, 2>> {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    (0..n)
-        .map(|_| {
-            Point::new([
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-            ])
-        })
-        .collect()
-}
-
-fn generate_points_3d(n: usize, seed: u64) -> Vec<Point<f64, 3>> {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    (0..n)
-        .map(|_| {
-            Point::new([
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-            ])
-        })
-        .collect()
-}
-
-fn generate_points_4d(n: usize, seed: u64) -> Vec<Point<f64, 4>> {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    (0..n)
-        .map(|_| {
-            Point::new([
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-            ])
-        })
-        .collect()
-}
+// Point generation functions are now imported from util module
 
 /// Store hull memory records for later CSV output
 static HULL_MEMORY_RECORDS: Mutex<Vec<HullMemoryRecord>> = Mutex::new(Vec::new());
@@ -324,6 +291,47 @@ fn measure_hull_memory_4d(points: &[Point<f64, 4>]) -> HullMemoryRecord {
     );
 }
 
+/// Measure memory usage for 5D triangulation and hull construction
+#[allow(unused_variables)] // tri_info and hull_info are used conditionally based on count-allocations feature
+fn measure_hull_memory_5d(points: &[Point<f64, 5>]) -> HullMemoryRecord {
+    let (tds, tri_info) = measure_with_result(|| {
+        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+        Tds::<f64, (), (), 5>::new(&vertices).unwrap()
+    });
+
+    let num_vertices = tds.number_of_vertices();
+    let num_cells = tds.number_of_cells();
+
+    // Measure hull extraction
+    let (hull, hull_info) = measure_with_result(|| ConvexHull::from_triangulation(&tds).unwrap());
+
+    let hull_facets = hull.facet_count();
+
+    // Drop structures to release memory
+    drop(hull);
+    drop(tds);
+
+    #[cfg(feature = "count-allocations")]
+    return HullMemoryRecord::new(
+        5,
+        points.len(),
+        num_vertices,
+        num_cells,
+        hull_facets,
+        &tri_info,
+        &hull_info,
+    );
+
+    #[cfg(not(feature = "count-allocations"))]
+    return HullMemoryRecord::new_placeholder(
+        5,
+        points.len(),
+        num_vertices,
+        num_cells,
+        hull_facets,
+    );
+}
+
 /// Benchmark hull memory usage for 2D
 fn benchmark_hull_memory_2d(c: &mut Criterion) {
     let point_counts = [10, 20, 50, 100];
@@ -336,7 +344,7 @@ fn benchmark_hull_memory_2d(c: &mut Criterion) {
             BenchmarkId::new("hull_2d", n_points),
             &n_points,
             |b, &n_points| {
-                let points = generate_points_2d(n_points, 54321);
+                let points = generate_random_points_2d_seeded(n_points, 54321);
 
                 b.iter(|| {
                     let record = measure_hull_memory_2d(&points);
@@ -368,7 +376,7 @@ fn benchmark_hull_memory_3d(c: &mut Criterion) {
             BenchmarkId::new("hull_3d", n_points),
             &n_points,
             |b, &n_points| {
-                let points = generate_points_3d(n_points, 65432);
+                let points = generate_random_points_3d_seeded(n_points, 65432);
 
                 b.iter(|| {
                     let record = measure_hull_memory_3d(&points);
@@ -400,10 +408,42 @@ fn benchmark_hull_memory_4d(c: &mut Criterion) {
             BenchmarkId::new("hull_4d", n_points),
             &n_points,
             |b, &n_points| {
-                let points = generate_points_4d(n_points, 76543);
+                let points = generate_random_points_4d_seeded(n_points, 76543);
 
                 b.iter(|| {
                     let record = measure_hull_memory_4d(&points);
+
+                    // Store record for CSV output
+                    HULL_MEMORY_RECORDS.lock().unwrap().push(record.clone());
+
+                    black_box(record);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Benchmark hull memory usage for 5D
+fn benchmark_hull_memory_5d(c: &mut Criterion) {
+    let point_counts = [8, 10, 12];
+    let mut group = c.benchmark_group("hull_memory_5d");
+
+    // Minimal sample size for 5D due to computational complexity
+    group.sample_size(5);
+
+    for &n_points in &point_counts {
+        group.throughput(Throughput::Elements(n_points as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("hull_5d", n_points),
+            &n_points,
+            |b, &n_points| {
+                let points = generate_random_points_5d_seeded(n_points, 87654);
+
+                b.iter(|| {
+                    let record = measure_hull_memory_5d(&points);
 
                     // Store record for CSV output
                     HULL_MEMORY_RECORDS.lock().unwrap().push(record.clone());
@@ -459,6 +499,7 @@ fn run_all_hull_memory_benchmarks(c: &mut Criterion) {
     benchmark_hull_memory_2d(c);
     benchmark_hull_memory_3d(c);
     benchmark_hull_memory_4d(c);
+    benchmark_hull_memory_5d(c);
 
     // Print summary
     {
@@ -471,7 +512,7 @@ fn run_all_hull_memory_benchmarks(c: &mut Criterion) {
             println!("\n=== Convex Hull Memory Summary ===");
             println!("Total measurements: {}", all_records.len());
 
-            for dimension in [2, 3, 4] {
+            for dimension in [2, 3, 4, 5] {
                 let dim_records: Vec<_> = all_records
                     .iter()
                     .filter(|r| r.dimension == dimension)

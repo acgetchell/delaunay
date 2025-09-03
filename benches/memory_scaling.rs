@@ -8,12 +8,17 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::*;
 use delaunay::vertex;
-use rand::{Rng, SeedableRng};
 use std::fs::File;
 use std::hint::black_box;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
+
+mod util;
+use util::{
+    generate_random_points_2d_seeded, generate_random_points_3d_seeded,
+    generate_random_points_4d_seeded, generate_random_points_5d_seeded,
+};
 
 /// Memory measurement record for CSV output
 #[derive(Debug, Clone)]
@@ -135,45 +140,7 @@ where
     (f(), ())
 }
 
-/// Generate random points for testing
-fn generate_points_2d(n: usize, seed: u64) -> Vec<Point<f64, 2>> {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    (0..n)
-        .map(|_| {
-            Point::new([
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-            ])
-        })
-        .collect()
-}
-
-fn generate_points_3d(n: usize, seed: u64) -> Vec<Point<f64, 3>> {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    (0..n)
-        .map(|_| {
-            Point::new([
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-            ])
-        })
-        .collect()
-}
-
-fn generate_points_4d(n: usize, seed: u64) -> Vec<Point<f64, 4>> {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    (0..n)
-        .map(|_| {
-            Point::new([
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-            ])
-        })
-        .collect()
-}
+// Point generation functions are now imported from util module
 
 /// Store a memory record safely
 fn store_memory_record(record: MemoryRecord) {
@@ -236,6 +203,24 @@ fn measure_4d_memory(points: &[Point<f64, 4>], n_points: usize) -> MemoryRecord 
     return MemoryRecord::new_placeholder(4, n_points, vertices, cells);
 }
 
+/// Measure memory for 5D triangulations
+#[allow(unused_variables)] // info is used conditionally based on count-allocations feature
+fn measure_5d_memory(points: &[Point<f64, 5>], n_points: usize) -> MemoryRecord {
+    let (tds, info) = measure_with_result(|| {
+        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+        Tds::<f64, (), (), 5>::new(&vertices).unwrap()
+    });
+
+    let vertices = tds.number_of_vertices();
+    let cells = tds.number_of_cells();
+
+    #[cfg(feature = "count-allocations")]
+    return MemoryRecord::new(5, n_points, vertices, cells, &info);
+
+    #[cfg(not(feature = "count-allocations"))]
+    return MemoryRecord::new_placeholder(5, n_points, vertices, cells);
+}
+
 /// Benchmark memory scaling for 2D triangulations
 fn benchmark_memory_scaling_2d(c: &mut Criterion) {
     let point_counts = [10, 20, 50, 100];
@@ -248,7 +233,7 @@ fn benchmark_memory_scaling_2d(c: &mut Criterion) {
             BenchmarkId::new("triangulation_2d", n_points),
             &n_points,
             |b, &n_points| {
-                let points = generate_points_2d(n_points, 12345);
+                let points = generate_random_points_2d_seeded(n_points, 12345);
 
                 b.iter(|| {
                     let record = measure_2d_memory(&points, n_points);
@@ -275,7 +260,7 @@ fn benchmark_memory_scaling_3d(c: &mut Criterion) {
             BenchmarkId::new("triangulation_3d", n_points),
             &n_points,
             |b, &n_points| {
-                let points = generate_points_3d(n_points, 23456);
+                let points = generate_random_points_3d_seeded(n_points, 23456);
 
                 b.iter(|| {
                     let record = measure_3d_memory(&points, n_points);
@@ -302,10 +287,37 @@ fn benchmark_memory_scaling_4d(c: &mut Criterion) {
             BenchmarkId::new("triangulation_4d", n_points),
             &n_points,
             |b, &n_points| {
-                let points = generate_points_4d(n_points, 34567);
+                let points = generate_random_points_4d_seeded(n_points, 34567);
 
                 b.iter(|| {
                     let record = measure_4d_memory(&points, n_points);
+                    store_memory_record(record.clone());
+                    black_box(record)
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Benchmark memory scaling for 5D triangulations
+fn benchmark_memory_scaling_5d(c: &mut Criterion) {
+    let point_counts = [8, 10];
+    let mut group = c.benchmark_group("memory_scaling_5d");
+    group.sample_size(5); // Further reduce sample size for 5D
+
+    for &n_points in &point_counts {
+        group.throughput(Throughput::Elements(n_points as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("triangulation_5d", n_points),
+            &n_points,
+            |b, &n_points| {
+                let points = generate_random_points_5d_seeded(n_points, 45678);
+
+                b.iter(|| {
+                    let record = measure_5d_memory(&points, n_points);
                     store_memory_record(record.clone());
                     black_box(record)
                 });
@@ -346,7 +358,7 @@ fn print_memory_summary() {
         println!("\n=== Memory Scaling Summary ===");
         println!("Total measurements: {}", records.len());
 
-        for dimension in [2, 3, 4] {
+        for dimension in [2, 3, 4, 5] {
             let dim_records: Vec<_> = records
                 .iter()
                 .filter(|r| r.dimension == dimension)
@@ -397,6 +409,7 @@ fn run_all_memory_benchmarks(c: &mut Criterion) {
     benchmark_memory_scaling_2d(c);
     benchmark_memory_scaling_3d(c);
     benchmark_memory_scaling_4d(c);
+    benchmark_memory_scaling_5d(c);
 }
 
 criterion_group!(
