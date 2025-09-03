@@ -924,7 +924,7 @@ where
 /// - Richter-Gebert, Jürgen. "Perspectives on Projective Geometry" (2011), Section 14.3
 /// - Edelsbrunner, Herbert. "Geometry and Topology for Mesh Generation" (2001), Chapter 2
 ///
-/// The method constructs the Gram matrix G where G[i,j] = `v_i` · `v_j` (dot product of
+/// The method constructs the Gram matrix G where G\[i,j\] = `v_i` · `v_j` (dot product of
 /// edge vectors), then computes the volume as the square root of the determinant
 /// divided by the appropriate factorial.
 ///

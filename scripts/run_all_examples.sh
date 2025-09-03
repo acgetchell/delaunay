@@ -18,12 +18,10 @@ USAGE:
     ./scripts/run_all_examples.sh [OPTIONS]
 
 DESCRIPTION:
-    This script automatically discovers and runs all examples in the examples/
-    directory. All examples are executed in release mode (--release) for optimal
-    performance.
-
-    The script handles special examples that require additional test parameters,
-    such as test_circumsphere which runs multiple comprehensive test suites.
+    Automatically discovers and runs Cargo examples in examples/:
+      - examples/<name>.rs
+      - examples/<name>/main.rs
+    All examples run in release mode (--release).
 
 OPTIONS:
     -h, --help     Show this help message and exit
@@ -40,6 +38,8 @@ NOTES:
     - Examples are discovered automatically from the examples/ directory
     - Output is shown in real-time as examples execute
     - Script exits with error code if any example fails
+    - Set EXAMPLE_TIMEOUT to bound per-example runtime (supports units like 30s, 5m; default 600s)
+    - On macOS, install coreutils and ensure gtimeout is available (auto-detected)
 
 SEE ALSO:
     examples/README.md - Detailed documentation for each example
@@ -81,73 +81,60 @@ check_dependencies
 # Find project root (directory containing Cargo.toml)
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
 
-# Create results directory for future use
-mkdir -p "${PROJECT_ROOT}/benches/results"
-
 # Ensure we're executing from the project root
 cd "${PROJECT_ROOT}"
 
 echo "Running all examples for delaunay project..."
 echo "=============================================="
 
-# Automatically discover all examples (deterministic order, GNU/BSD portable)
+# Discover Cargo examples deterministically:
+# - Top-level files: examples/foo.rs           -> example name "foo"
+# - Nested dirs:    examples/bar/main.rs       -> example name "bar"
 all_examples=()
-if sort --version >/dev/null 2>&1; then
-	# GNU sort available: use -z safely
-	while IFS= read -r -d '' file; do
-		example_name=$(basename "$file" .rs)
-		all_examples+=("$example_name")
-	done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print0 | sort -z)
-else
-	# Fallback for BSD sort: tolerate spaces; filenames in repo should not contain newlines
-	while IFS= read -r file; do
-		example_name=$(basename "$file" .rs)
-		all_examples+=("$example_name")
-	done < <(find "${PROJECT_ROOT}/examples" -name "*.rs" -type f -print | LC_ALL=C sort)
+if [[ ! -d "${PROJECT_ROOT}/examples" ]]; then
+	error_exit "Examples directory not found at ${PROJECT_ROOT}/examples"
+fi
+example_names=$(
+	{
+		# top-level *.rs files
+		while IFS= read -r -d '' f; do basename "$f" .rs; done \
+			< <(find "${PROJECT_ROOT}/examples" -maxdepth 1 -type f -name '*.rs' -print0)
+		# nested example directories with main.rs
+		while IFS= read -r -d '' f; do basename "$(dirname "$f")"; done \
+			< <(find "${PROJECT_ROOT}/examples" -mindepth 2 -maxdepth 2 -type f -name 'main.rs' -print0)
+	} | LC_ALL=C sort -u
+)
+# Load names into array
+while IFS= read -r name; do
+	[[ -n "$name" ]] && all_examples+=("$name")
+done <<<"$example_names"
+
+# Guard against zero discovered examples
+if [ ${#all_examples[@]} -eq 0 ]; then
+	error_exit "No examples found under ${PROJECT_ROOT}/examples"
 fi
 
-# Define special example that needs special handling
-special_example="test_circumsphere"
+# Run all examples
+TIMEOUT_CMD=""
+if command -v timeout >/dev/null 2>&1; then
+	TIMEOUT_CMD="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+	TIMEOUT_CMD="gtimeout"
+fi
 
-# Filter all_examples to exclude test_circumsphere into simple_examples
-simple_examples=()
 for example in "${all_examples[@]}"; do
-	if [[ "$example" != "$special_example" ]]; then
-		simple_examples+=("$example")
+	echo "=== Running $example ==="
+	if [[ -n "$TIMEOUT_CMD" ]]; then
+		DURATION="${EXAMPLE_TIMEOUT:-600s}"
+		# If DURATION has no unit suffix, assume seconds
+		case "$DURATION" in *[a-zA-Z]) ;; *) DURATION="${DURATION}s" ;; esac
+		"$TIMEOUT_CMD" --preserve-status --signal=TERM --kill-after=10s "$DURATION" \
+			cargo run --release --example "$example" || error_exit "Example $example failed!"
+	else
+		cargo run --release --example "$example" || error_exit "Example $example failed!"
 	fi
 done
 
-# Run simple examples
-for example in "${simple_examples[@]}"; do
-	echo "=== Running $example ==="
-	cargo run --release --example "$example" || error_exit "Example $example failed!"
-done
-
-# Run test_circumsphere with comprehensive test categories (only if it exists)
-if [[ -f "${PROJECT_ROOT}/examples/test_circumsphere.rs" ]]; then
-	test_circumsphere_tests=(
-		"all"             # All basic dimensional tests and orientation tests
-		"test-all-points" # Single point tests in all dimensions
-		"debug-all"       # All debug tests
-	)
-
-	echo
-	echo "=== Running test_circumsphere comprehensive tests ==="
-	echo "---------------------------------------------------"
-
-	for test_name in "${test_circumsphere_tests[@]}"; do
-		echo
-		echo "--- Running test_circumsphere $test_name ---"
-		if ! cargo run --release --example test_circumsphere -- "$test_name"; then
-			error_exit "test_circumsphere $test_name failed!"
-		fi
-	done
-else
-	echo
-	echo "=== Skipping test_circumsphere (not found) ==="
-	echo "test_circumsphere.rs not found in examples/ directory"
-fi
-
 echo
 echo "=============================================="
-echo "All examples and tests completed successfully!"
+echo "All examples completed successfully!"

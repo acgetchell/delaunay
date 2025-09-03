@@ -1,22 +1,23 @@
-//! # Circumsphere Containment Test Example
+//! # Circumsphere Debug Tools
 //!
-//! This example demonstrates and compares three methods for testing whether a point
+//! This test module provides interactive debugging and testing tools for circumsphere
+//! calculations. It demonstrates and compares three methods for testing whether a point
 //! lies inside the circumsphere of a simplex in 2D, 3D, and 4D.
 //!
 //! ## Usage
 //!
+//! Run specific test functions with:
 //! ```bash
-//! cargo run --example test_circumsphere [2d|3d|4d|all|help]
+//! cargo test --test circumsphere_debug_tools test_2d_circumsphere_debug -- --nocapture
+//! cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocapture
+//! cargo test --test circumsphere_debug_tools test_all_debug -- --ignored --nocapture
 //! ```
 
 use delaunay::geometry::util::squared_norm;
 use delaunay::prelude::*;
 use nalgebra as na;
 use peroxide::fuga::{LinearAlgebra, zeros};
-use serde::{Serialize, de::DeserializeOwned};
-use std::{collections::HashMap, env};
-
-type TestFunction = fn();
+use serde::{Deserialize, Serialize};
 
 // Macro for standard test output formatting
 macro_rules! test_output {
@@ -46,122 +47,111 @@ macro_rules! print_result {
             "  {:<18} {}",
             format!("{}:", $method),
             match $result {
-                Ok(InSphere::INSIDE) => "INSIDE",
-                Ok(InSphere::BOUNDARY) => "BOUNDARY",
-                Ok(InSphere::OUTSIDE) => "OUTSIDE",
-                Err(_) => "ERROR",
+                &Ok(InSphere::INSIDE) => "INSIDE",
+                &Ok(InSphere::BOUNDARY) => "BOUNDARY",
+                &Ok(InSphere::OUTSIDE) => "OUTSIDE",
+                &Err(_) => "ERROR",
             }
         );
     };
 }
 
-fn get_test_registry() -> HashMap<&'static str, TestFunction> {
-    HashMap::from([
-        // Basic tests
-        ("2d", test_2d_circumsphere as TestFunction),
-        ("3d", test_3d_circumsphere as TestFunction),
-        ("4d", test_4d_circumsphere as TestFunction),
-        ("orientation", test_all_orientations as TestFunction),
-        ("all", run_all_basic_tests as TestFunction),
-        // Debug tests
-        ("debug-3d", test_3d_simplex_analysis as TestFunction),
-        ("debug-3d-matrix", test_3d_matrix_analysis as TestFunction),
-        (
-            "debug-3d-properties",
-            debug_3d_circumsphere_properties as TestFunction,
-        ),
-        (
-            "debug-4d-properties",
-            debug_4d_circumsphere_properties as TestFunction,
-        ),
-        (
-            "debug-compare",
-            compare_circumsphere_methods as TestFunction,
-        ),
-        (
-            "debug-orientation",
-            demonstrate_orientation_impact_on_circumsphere as TestFunction,
-        ),
-        (
-            "debug-containment",
-            test_circumsphere_containment as TestFunction,
-        ),
-        (
-            "debug-4d-methods",
-            test_4d_circumsphere_methods as TestFunction,
-        ),
-        ("debug-all", run_all_debug_tests as TestFunction),
-        // Single point tests
-        ("test-2d-point", test_single_2d_point as TestFunction),
-        ("test-3d-point", test_single_3d_point as TestFunction),
-        ("test-4d-point", test_single_4d_point as TestFunction),
-        ("test-all-points", test_all_single_points as TestFunction),
-        // Comprehensive
-        ("everything", run_everything as TestFunction),
-    ])
+// Test functions organized by category
+#[test]
+fn test_2d_circumsphere_debug() {
+    test_2d_circumsphere();
 }
 
-fn main() {
-    // Security note: args usage is safe here as all arguments are validated against
-    // a predefined whitelist of test functions. No arbitrary code execution occurs.
-    let args: Vec<String> = env::args().collect();
-    let registry = get_test_registry();
-
-    match args.get(1).map(String::as_str) {
-        Some(test_name) if registry.contains_key(test_name) => {
-            registry[test_name]();
-        }
-        Some(arg) if ["help", "--help", "-h"].contains(&arg) => {
-            print_help();
-        }
-        Some(unknown) => {
-            println!("Unknown argument: {unknown}");
-            print_help();
-        }
-        None => print_help(),
-    }
+#[test]
+fn test_3d_circumsphere_debug() {
+    test_3d_circumsphere();
 }
 
-fn print_help() {
-    println!("Circumsphere Containment Test Suite");
-    println!("=====================================");
-    println!();
-    println!("Usage: cargo run --example test_circumsphere [TEST]");
-    println!();
-    println!("Basic tests:");
-    println!("  2d          - Test 2D circumsphere methods (triangle)");
-    println!("  3d          - Test 3D circumsphere methods (tetrahedron)");
-    println!("  4d          - Test 4D circumsphere methods (4D simplex)");
-    println!("  orientation - Test simplex orientation in 2D, 3D, and 4D");
-    println!("  all         - Run all basic dimensional tests and orientation tests");
-    println!();
-    println!("Debug tests:");
-    println!("  debug-3d           - Detailed 3D simplex analysis and debugging");
-    println!("  debug-3d-matrix    - Step-by-step 3D matrix method analysis");
-    println!("  debug-3d-properties - 3D circumsphere properties analysis");
-    println!("  debug-4d-properties - 4D circumsphere properties analysis");
-    println!("  debug-compare      - Compare circumsphere methods across dimensions");
-    println!("  debug-orientation  - Demonstrate orientation impact on circumsphere");
-    println!("  debug-containment  - Detailed circumsphere containment testing");
-    println!("  debug-4d-methods   - Compare 4D circumsphere methods in detail");
-    println!("  debug-all          - Run all debug tests");
-    println!();
-    println!("Single point tests:");
-    println!("  test-2d-point  - Test specific 2D point against triangle circumsphere");
-    println!("  test-3d-point  - Test specific 3D point against tetrahedron circumsphere");
-    println!("  test-4d-point  - Test specific 4D point against 4D simplex circumsphere");
-    println!("  test-all-points - Test specific points in all dimensions");
-    println!();
-    println!("Comprehensive:");
-    println!("  everything  - Run all tests and all debug functions");
-    println!("  help        - Show this help message");
-    println!();
-    println!("Examples:");
-    println!("  cargo run --example test_circumsphere 2d");
-    println!("  cargo run --example test_circumsphere debug-3d-matrix");
-    println!("  cargo run --example test_circumsphere debug-3d-properties");
-    println!("  cargo run --example test_circumsphere debug-all");
-    println!("  cargo run --example test_circumsphere everything");
+#[test]
+fn test_4d_circumsphere_debug() {
+    test_4d_circumsphere();
+}
+
+#[test]
+fn test_all_orientations_debug() {
+    test_all_orientations();
+}
+
+#[test]
+fn test_all_basic_debug() {
+    run_all_basic_tests();
+}
+
+#[test]
+fn test_3d_simplex_analysis_debug() {
+    test_3d_simplex_analysis();
+}
+
+#[test]
+fn test_3d_matrix_analysis_debug() {
+    test_3d_matrix_analysis();
+}
+
+#[test]
+fn test_3d_properties_debug() {
+    debug_3d_circumsphere_properties();
+}
+
+#[test]
+fn test_4d_properties_debug() {
+    debug_4d_circumsphere_properties();
+}
+
+#[test]
+fn test_compare_methods_debug() {
+    compare_circumsphere_methods();
+}
+
+#[test]
+fn test_orientation_impact_debug() {
+    demonstrate_orientation_impact_on_circumsphere();
+}
+
+#[test]
+fn test_containment_debug() {
+    test_circumsphere_containment();
+}
+
+#[test]
+fn test_4d_methods_debug() {
+    test_4d_circumsphere_methods();
+}
+
+#[test]
+#[ignore = "heavyweight aggregate test with lots of output - run manually for debugging"]
+fn test_all_debug() {
+    run_all_debug_tests();
+}
+
+#[test]
+fn test_single_2d_point_debug() {
+    test_single_2d_point();
+}
+
+#[test]
+fn test_single_3d_point_debug() {
+    test_single_3d_point();
+}
+
+#[test]
+fn test_single_4d_point_debug() {
+    test_single_4d_point();
+}
+
+#[test]
+fn test_all_single_points_debug() {
+    test_all_single_points();
+}
+
+#[test]
+#[ignore = "comprehensive test suite with extensive output - run manually for full analysis"]
+fn test_everything_debug() {
+    run_everything();
 }
 
 /// Test 2D circumsphere methods with a triangle
@@ -204,7 +194,7 @@ fn test_circumsphere_generic<const D: usize>(
     vertices: &[Vertex<f64, i32, D>],
     test_points: Vec<([f64; D], &str)>,
 ) where
-    [f64; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Copy + Default + Sized + Serialize + for<'de> Deserialize<'de>,
 {
     println!("Testing {dimension_name} circumsphere methods");
     println!("=============================================");
@@ -244,7 +234,7 @@ fn test_point_generic<const D: usize>(
     center: &[f64; D],
     radius: f64,
 ) where
-    [f64; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Copy + Default + Sized + Serialize + for<'de> Deserialize<'de>,
 {
     let test_vertex: Vertex<f64, i32, D> = vertex!(coords, 99);
 
@@ -262,9 +252,9 @@ fn test_point_generic<const D: usize>(
     println!("Point {description} {coords:?}:");
     println!("  Distance to center: {distance_to_center:.6}");
     println!("  Expected inside: {}", distance_to_center <= radius);
-    print_result!("insphere", &result_insphere);
-    print_result!("insphere_distance", &result_distance);
-    print_result!("insphere_lifted", &result_lifted);
+    print_result!("determinant-based", &result_insphere);
+    print_result!("distance-based", &result_distance);
+    print_result!("matrix-based", &result_lifted);
 
     // Check agreement between methods
     let methods_agree =
@@ -419,7 +409,7 @@ fn test_4d_circumsphere_methods() {
 #[allow(clippy::too_many_lines)]
 fn test_circumsphere_containment() {
     println!("Testing circumsphere containment:");
-    println!("  determinant-based (insphere) vs distance-based (circumsphere_contains)");
+    println!("  determinant-based (insphere) vs distance-based (insphere_distance)");
     println!("=============================================");
 
     // Define the 4D simplex vertices that form a unit 5-cell
@@ -470,19 +460,19 @@ fn test_circumsphere_containment() {
     }
     println!();
 
-    // Test points that should be outside the circumsphere
+    // Test points that should be outside (or on the boundary) of the circumsphere
     // These include points with large coordinates and points along the axes
     // that extend beyond the simplex vertices
     let test_points_outside: [Vertex<f64, i32, 4>; 6] = [
         vertex!([2.0, 2.0, 2.0, 2.0], 20),
-        vertex!([1.0, 1.0, 1.0, 1.0], 21),
+        vertex!([1.0, 1.0, 1.0, 1.0], 21), // boundary
         vertex!([0.8, 0.8, 0.8, 0.8], 22),
         vertex!([1.5, 0.0, 0.0, 0.0], 23),
         vertex!([0.0, 1.5, 0.0, 0.0], 24),
         vertex!([0.0, 0.0, 1.5, 0.0], 25),
     ];
 
-    println!("Testing points that should be OUTSIDE the circumsphere:");
+    println!("Testing points that should be OUTSIDE (or on boundary) the circumsphere:");
     for (i, point) in test_points_outside.iter().enumerate() {
         let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
         let result_determinant = insphere(&vertex_points, Point::from(point));
@@ -829,8 +819,8 @@ fn test_circumsphere_methods(
         Ok(standard_method_3d) => match insphere_lifted(&simplex_points, Point::from(&test_vertex))
         {
             Ok(matrix_method_3d) => {
-                println!("Standard method result: {standard_method_3d:?}");
-                println!("Matrix method result: {matrix_method_3d:?}");
+                println!("Determinant-based method result: {standard_method_3d:?}");
+                println!("Matrix-based method result: {matrix_method_3d:?}");
             }
             Err(e) => println!("Matrix method error: {e}"),
         },
@@ -846,8 +836,8 @@ fn test_boundary_vertex_case(simplex_vertices: &[Vertex<f64, i32, 3>]) {
     match insphere(&simplex_points, Point::from(&vertex1)) {
         Ok(standard_vertex) => match insphere_lifted(&simplex_points, Point::from(&vertex1)) {
             Ok(matrix_vertex) => {
-                println!("Standard method for vertex1: {standard_vertex:?}");
-                println!("Matrix method for vertex1: {matrix_vertex:?}");
+                println!("Determinant-based method for vertex1: {standard_vertex:?}");
+                println!("Matrix-based method for vertex1: {matrix_vertex:?}");
             }
             Err(e) => println!("Matrix method error for vertex1: {e}"),
         },
@@ -975,7 +965,11 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
             );
 
             // Apply the sign interpretation from the matrix method
-            let matrix_result = if is_positive {
+            let eps = 1e-12;
+            let matrix_result = if det.abs() <= eps {
+                // boundary; treat as inside for comparison, or print explicitly
+                true
+            } else if is_positive {
                 det < 0.0 // For positive orientation, negative det means inside
             } else {
                 det > 0.0 // For negative orientation, positive det means inside
@@ -986,7 +980,10 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
                 if det < 0.0 { "<" } else { ">" },
                 if matrix_result { "INSIDE" } else { "OUTSIDE" }
             );
-            println!("Matrix method result: {matrix_result}");
+            println!(
+                "Matrix method result: {}",
+                if matrix_result { "INSIDE" } else { "OUTSIDE" }
+            );
 
             (det, matrix_result)
         }
@@ -1070,18 +1067,18 @@ fn print_method_comparison_results(
     println!();
     println!("Method comparison:");
     println!("  Standard method: {standard_result:?}");
-    println!("  Matrix method: {matrix_method_result}");
+    println!("  Matrix method: {matrix_method_result:?}");
     println!("  Geometric truth: {geometric_truth}");
 
     println!();
-    let standard_inside = matches!(standard_result, InSphere::INSIDE);
+    let standard_inside = matches!(standard_result, InSphere::INSIDE | InSphere::BOUNDARY);
     if standard_inside == geometric_truth {
         println!("✓ Standard method matches geometric truth");
     } else {
         println!("✗ Standard method disagrees with geometric truth");
     }
 
-    let matrix_inside = matches!(matrix_method_result, InSphere::INSIDE);
+    let matrix_inside = matches!(matrix_method_result, InSphere::INSIDE | InSphere::BOUNDARY);
     let matrix_agrees = matrix_inside == geometric_truth;
     let methods_agree = standard_inside == matrix_inside;
 

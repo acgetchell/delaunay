@@ -53,13 +53,9 @@ delaunay/
 │   └── lib.rs                                    # Main library file with module declarations and prelude
 ├── examples/                                     # Usage examples and demonstrations
 │   ├── README.md                                 # Examples documentation
-│   ├── boundary_analysis_trait.rs                # Boundary analysis examples
-│   ├── check_float_traits.rs                     # Floating-point trait examples
 │   ├── convex_hull_3d_50_points.rs               # 3D convex hull extraction and analysis example
-│   ├── implicit_conversion.rs                    # Type conversion examples
+│   ├── into_from_conversions.rs                  # Into/From trait conversion examples
 │   ├── point_comparison_and_hashing.rs           # Point operations examples
-│   ├── test_alloc_api.rs                         # Allocation API examples
-│   ├── test_circumsphere.rs                      # Circumsphere computation examples
 │   └── triangulation_3d_50_points.rs             # 3D triangulation example
 ├── benches/                                      # Performance benchmarks
 │   ├── README.md                                 # Benchmarking guide and performance results
@@ -71,7 +67,10 @@ delaunay/
 │   ├── small_scale_triangulation.rs              # Small triangulation benchmarks
 │   └── triangulation_creation.rs                 # Triangulation creation benchmarks
 ├── tests/                                        # Integration tests
+│   ├── README.md                                 # Integration tests guide and usage instructions
+│   ├── allocation_api.rs                         # Memory allocation profiling and testing utilities
 │   ├── bench_helpers_test.rs                     # Tests for benchmark helper functions
+│   ├── circumsphere_debug_tools.rs               # Interactive circumsphere testing and debugging utilities
 │   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
 │   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
 │   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
@@ -88,6 +87,8 @@ delaunay/
 ├── scripts/                                      # Development and CI scripts
 │   ├── tests/                                    # Python utility tests
 │   │   ├── __init__.py                           # Test package initialization
+│   │   ├── test_changelog_utils.py               # Comprehensive tests for changelog_utils.py
+│   │   ├── test_hardware_utils.py                # Tests for hardware_utils.py
 │   │   └── test_subprocess_utils.py              # Comprehensive tests for subprocess_utils.py
 │   ├── README.md                                 # Scripts documentation
 │   ├── benchmark_utils.py                        # Python utilities for benchmark processing and hardware detection
@@ -111,7 +112,7 @@ delaunay/
 │   └── dependabot.yml                            # Dependency update configuration
 ├── .auto-changelog                               # Auto-changelog configuration
 ├── .codacy.yml                                   # Codacy code quality configuration
-├── .codecov.yml                                  # CodeCov configuration
+├── .codecov.yml                                  # Codecov configuration
 ├── .coderabbit.yml                               # CodeRabbit AI review configuration
 ├── .gitignore                                    # Git ignore patterns
 ├── .markdownlint.json                            # Markdown linting configuration
@@ -132,6 +133,17 @@ delaunay/
 ├── rust-toolchain.toml                           # Rust toolchain specification for consistent development environment
 ├── rustfmt.toml                                  # Code formatting configuration
 └── WARP.md                                       # WARP AI development guidance
+```
+
+**Note**: `tests/circumsphere_debug_tools.rs` contains interactive debugging test functions that can be run with:
+
+```bash
+# Run specific test functions with verbose output
+cargo test --test circumsphere_debug_tools test_2d_circumsphere_debug -- --nocapture
+cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocapture
+cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
+# Or run all debug tests at once
+cargo test --test circumsphere_debug_tools -- --nocapture
 ```
 
 ### Architecture Overview
@@ -158,7 +170,7 @@ delaunay/
 
 - **`examples/`** - Usage demonstrations and trait examples
 - **`benches/`** - Performance benchmarks with automated baseline management
-- **`tests/`** - Integration tests and regression testing
+- **`tests/`** - Integration tests, debugging utilities, and regression testing
 - **`docs/`** - Architecture guides, performance documentation, and templates
 - **`scripts/`** - Python utilities for automation and CI integration
 

@@ -2,6 +2,8 @@
 
 This directory contains utility scripts for building, testing, and benchmarking the delaunay library.
 
+**Note**: Tests for the Python utilities are located in `scripts/tests/` and can be run with `uv run pytest`.
+
 ## Prerequisites
 
 Before running these scripts, ensure you have the following dependencies installed:
@@ -28,7 +30,15 @@ sudo apt-get install -y jq
 
 ### Python Utilities (Primary)
 
-All Python utilities require Python 3.13+ and support `--help` for detailed usage.
+All Python utilities require Python 3.13+ and support `--help` for detailed usage. The project uses modern Python with comprehensive utilities for
+benchmarking, changelog management, and hardware detection.
+
+**Available Commands**:
+
+- `uv run benchmark-utils` - Performance baseline generation and comparison
+- `uv run changelog-utils` - Enhanced changelog generation with AI commit processing and git tagging
+- `uv run hardware-utils` - Cross-platform hardware information detection
+- `uv run enhance-commits` - AI-powered commit message enhancement (internal utility)
 
 #### `benchmark_utils.py` 🐍
 
@@ -73,6 +83,48 @@ Time Change: [+0.45%, +0.45%, +0.45%]
 
 ---
 
+#### `changelog_utils.py` 🐍
+
+**Purpose**: Comprehensive changelog management tool with AI commit processing and Keep a Changelog categorization.
+
+**Features**:
+
+- **Enhanced Changelog Generation**: Creates changelogs with commit dates instead of tag creation dates
+- **AI Commit Processing**: Uses `enhance_commits.py` for intelligent commit categorization
+- **Git Tag Management**: Creates git tags with changelog content as tag messages
+- **Squashed PR Expansion**: Advanced parsing of squashed PR commits to extract detailed commit message bodies
+- **Multi-format Support**: Handles various commit message formats and bullet styles
+- **Cross-platform Compatibility**: Works consistently across Windows, macOS, and Linux
+- **Comprehensive Error Handling**: Clear error messages and usage instructions
+
+**Commands**:
+
+```bash
+# Generate enhanced changelog (default command)
+uv run changelog-utils
+uv run changelog-utils generate
+
+# Generate changelog with debug output (keeps intermediate files)
+uv run changelog-utils generate --debug
+
+# Create git tag with changelog content as message
+uv run changelog-utils tag v0.4.2
+
+# Force recreate existing tag
+uv run changelog-utils tag v0.4.2 --force
+```
+
+**Enhanced Features**:
+
+- **Accurate Dating**: Shows when development work was actually completed
+- **Squashed PR Expansion**: Extracts bullet points and descriptions from squashed commits
+- **AI Categorization**: Uses Keep a Changelog format (Added/Changed/Fixed/Removed/Deprecated/Security)
+- **GitHub Integration**: Tag messages work with `gh release create --notes-from-tag`
+
+**Dependencies**: Python 3.13+, `enhance_commits.py`, `subprocess_utils.py`, Node.js (`npx`), `auto-changelog`
+
+---
+
 #### `hardware_utils.py` 🐍
 
 **Purpose**: Cross-platform hardware information detection and comparison.
@@ -81,7 +133,7 @@ Time Change: [+0.45%, +0.45%, +0.45%]
 
 - **Cross-platform**: macOS, Linux, Windows detection
 - **Hardware Detection**: CPU (model, cores, threads), memory, Rust toolchain
-- **Output Formats**: Formatted display (`info`) or key=value pairs (`kv`)
+- **Output Formats**: Formatted display (`info`), key=value pairs (`kv`), or JSON format
 - **Baseline Comparison**: Hardware compatibility warnings
 - **Modern Architecture Support**: Enhanced ARM/heterogeneous core detection
 
@@ -93,6 +145,9 @@ uv run hardware-utils info
 
 # Display as key=value pairs
 uv run hardware-utils kv
+
+# Display as JSON
+uv run hardware-utils info --json
 
 # Compare with baseline file
 uv run hardware-utils compare --baseline-file FILE
@@ -112,244 +167,55 @@ Hardware Information:
   Target: aarch64-apple-darwin
 ```
 
-**Dependencies**: Python 3.13+, system tools (`sysctl`, `lscpu`, PowerShell)
+**Dependencies**: Python 3.13+, `subprocess_utils.py`, system tools (`sysctl`, `lscpu`, PowerShell)
 
 ---
 
-### Bash Scripts (Specialized)
+#### `enhance_commits.py` 🐍
 
-The following bash scripts handle complex integrations with external tools (Node.js, Git) and provide specialized functionality.
-
-#### `generate_changelog.sh`
-
-**Purpose**: Generates changelog with commit dates instead of tag creation dates and enhanced squashed PR commit expansion for more comprehensive release documentation.
+**Purpose**: AI-powered commit message enhancement with Keep a Changelog categorization.
 
 **Features**:
 
-- **Enhanced Error Handling**: Comprehensive validation of prerequisites (npx, git, configuration files)
-- **Backup/Recovery**: Automatic backup creation with rollback capability on failure
-- **Configuration Validation**: Verifies `.auto-changelog` config and custom template existence
-- **Git Repository Validation**: Ensures script runs in valid git repository with history
-- **Safe Processing**: Uses temporary files to prevent partial writes to CHANGELOG.md
-- **Progress Reporting**: Clear status messages and success confirmation with statistics
-- **Robust Date Processing**: Improved regex for converting ISO 8601 to YYYY-MM-DD format
-- **Automatic Root Detection**: Uses `BASH_SOURCE[0]` for reliable project root detection
-- **🆕 Enhanced Squashed PR Expansion**: Advanced parsing of squashed PR commits to extract detailed commit message bodies
-- **🆕 Multi-format Bullet Support**: Handles `*`, `-`, and numbered (`1.`, `2.`, etc.) bullet points in commit messages
-- **🆕 Paragraph Preservation**: Maintains multi-line descriptions with proper paragraph breaks and formatting
-- **🆕 Word Wrapping**: Intelligent word wrapping at 75 characters with fallback handling
+- **Keep a Changelog Format**: Categorizes commits as Added/Changed/Fixed/Removed/Deprecated/Security
+- **Pattern Matching**: Advanced regex patterns for accurate categorization
+- **Markdown Processing**: Handles markdown formatting and line wrapping
+- **Internal Utility**: Used by `changelog_utils.py` for AI-enhanced changelog generation
 
-**Comparison with Standard auto-changelog**:
+**Usage**: This is an internal utility called by `changelog-utils`. Not typically used directly.
 
-```bash
-# Standard auto-changelog (tag creation dates):
-# v0.3.4: 2025-08-14  (all releases show same date)
-# v0.3.3: 2025-08-14
-# v0.3.2: 2025-08-14
-# v0.3.1: 2025-08-14
-
-# generate_changelog.sh (actual commit dates):
-# v0.3.4: 2025-08-15
-# v0.3.3: 2025-08-14  
-# v0.3.2: 2025-08-14
-# v0.3.1: 2025-07-26
-# v0.3.0: 2025-06-17
-```
-
-**Technical Implementation**:
-
-- **Configuration**: Uses `docs/templates/changelog.hbs` template configured in `.auto-changelog`
-- **Date Extraction**: Template extracts `commits.[0].date` (ISO 8601 timestamp) instead of `isoDate` (tag date)
-- **Date Processing**: Converts `2025-08-15T04:44:21.000Z` → `2025-08-15` using `sed 's/T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].*Z//g'`
-- **Safety Measures**: Creates `CHANGELOG.md.backup` before modification, restores on failure
-- **Temporary Files**: Uses `CHANGELOG.md.tmp` for atomic writes
-- **Error Capture**: Captures stderr from auto-changelog for debugging
-
-**Safety Features**:
-
-```bash
-# Script creates backups and handles failures gracefully:
-# 1. Backs up existing CHANGELOG.md → CHANGELOG.md.backup
-# 2. Generates to temporary file CHANGELOG.md.tmp
-# 3. Processes dates and writes final output
-# 4. Removes backup only on success
-# 5. Restores backup if any step fails
-```
-
-**Validation Checks**:
-
-- ✅ `npx` command availability (Node.js/npm installation)
-- ✅ Git repository detection (`git rev-parse --git-dir`)
-- ✅ Git history existence (`git log --oneline -n 1`)
-- ✅ `.auto-changelog` configuration file presence
-- ✅ `docs/templates/changelog.hbs` template file existence
-
-**Usage**:
-
-```bash
-# Generate changelog with accurate commit dates (recommended)
-./scripts/generate_changelog.sh
-
-# Alternative: Direct auto-changelog usage (less accurate dating)
-npx auto-changelog
-
-# Manual auto-changelog with specific options
-npx auto-changelog --unreleased --commit-limit 10
-```
-
-**Enhanced Squashed PR Expansion**:
-
-The script now provides sophisticated parsing of squashed PR commits to extract detailed information from commit message bodies:
-
-```bash
-# INPUT: Squashed PR commit message
-# Feature/convex hull (#50)
-# 
-# * Implements incremental Delaunay triangulation
-# 
-# Refactors the triangulation algorithm to use a pure
-# incremental Bowyer-Watson approach, improving performance and code organization.
-# 
-# * Refactors TDS to use IncrementalBoyerWatson
-# 
-# Completes the TDS refactoring to exclusively use the 
-# IncrementalBoyerWatson algorithm, removing legacy methods.
-
-# OUTPUT: Expanded changelog entries
-# - **implements incremental delaunay triangulation**
-#   Refactors the triangulation algorithm to use a pure incremental 
-#   Bowyer-Watson approach, improving performance and code organization.
-# 
-# - **refactors tds to use incrementalboyerwatson**
-#   Completes the TDS refactoring to exclusively use the 
-#   IncrementalBoyerWatson algorithm, removing legacy methods.
-```
-
-**Supported Bullet Formats**:
-
-- **Asterisk bullets**: `* Title` followed by description
-- **Dash bullets**: `- Title` followed by description  
-- **Numbered bullets**: `1. Title`, `2. Title` etc. followed by description
-- **Fallback handling**: Non-bullet commits treated as single entries
-
-**Parsing Features**:
-
-- **Multi-line descriptions**: Preserves paragraph breaks and formatting
-- **Word wrapping**: Intelligent wrapping at 75 characters
-- **Whitespace handling**: Cleans leading/trailing whitespace while preserving structure
-- **Error recovery**: Falls back to original changelog line if parsing fails
-
-**Testing**:
-
-```bash
-# Test the parsing logic with sample commit messages
-./scripts/test_squashed_pr_parsing.sh
-```
-
-**Dependencies**:
-
-- **Required**: `npx` (Node.js), `git`, `sed`, `awk`
-- **Configuration Files**: `.auto-changelog`, `docs/templates/changelog.hbs`
-- **npm Package**: `auto-changelog` (installed automatically by npx)
-- **Testing**: `scripts/test_squashed_pr_parsing.sh` for validation
+**Dependencies**: Python 3.13+
 
 ---
 
-#### `hardware_info.sh`
+#### `subprocess_utils.py` 🐍
 
-**Purpose**: Cross-platform hardware information detection utility for benchmark baseline generation and comparison.
+**Purpose**: Secure subprocess utilities for all Python scripts providing security-hardened subprocess execution.
 
 **Features**:
 
-- **Cross-platform detection** for macOS, Linux, and Windows (MSYS2/Cygwin)
-- **CPU information**: Brand, core count, thread count detection
-- **Memory detection**: Total system memory with GB conversion
-- **Rust toolchain info**: Version and target architecture
-- **Multiple output formats**: Formatted display or key=value pairs
-- **Baseline extraction**: Parse hardware info from existing baseline files
-- **Hardware comparison**: Side-by-side environment comparison with warnings
-- **Robust fallbacks**: Multiple detection methods per platform
+- **Secure Execution**: Uses full executable paths instead of command names
+- **Executable Validation**: Validates executables exist before running
+- **Consistent Error Handling**: Standardized error handling across all utilities
+- **Security Mitigation**: Addresses security vulnerabilities flagged by static analysis
+- **Git Integration**: Convenient wrappers for common git operations
 
 **Key Functions**:
 
-```bash
-# Primary hardware detection
-get_hardware_info()                     # Returns formatted hardware block
-get_hardware_info_kv()                  # Returns key=value pairs
+- `get_safe_executable(command)` - Get validated full path to executable
+- `run_safe_command(command, args, **kwargs)` - Secure subprocess execution
+- `run_git_command(args, **kwargs)` - Git-specific secure execution
+- `run_cargo_command(args, **kwargs)` - Cargo-specific secure execution
+- `check_git_repo()` - Validate git repository
+- `check_git_history()` - Validate git history exists
 
-# Baseline file integration
-extract_baseline_hardware("file.txt")    # Extracts hardware from baseline
-compare_hardware(current, baseline)      # Compares two hardware configs
-```
+**Usage**: This is a shared library used by all other Python utilities. Not typically used directly.
 
-**Hardware Detection Methods**:
-
-- **macOS**: Uses `sysctl` for CPU/memory information
-- **Linux**: Uses `lscpu` for accurate multi-socket core detection, with `/proc/cpuinfo` and `/proc/meminfo` fallbacks
-- **Windows**: Uses PowerShell (`Get-CimInstance`) for hardware detection
-- **Rust info**: Extracted via `rustc --version` and `rustc -vV`
-
-**Output Formats**:
-
-```bash
-# Formatted output (default):
-# Hardware Information:
-#   OS: macOS
-#   CPU: Apple M2 Pro
-#   CPU Cores: 10
-#   CPU Threads: 10
-#   Memory: 16.0 GB
-#   Rust: rustc 1.82.0
-#   Target: aarch64-apple-darwin
-
-# Key=value output (--kv flag):
-# OS=macOS
-# CPU=Apple M2 Pro
-# CPU_CORES=10
-# CPU_THREADS=10
-# MEMORY=16.0 GB
-# RUST=rustc 1.82.0
-# TARGET=aarch64-apple-darwin
-```
-
-**Hardware Comparison Warnings**:
-
-```bash
-# Example comparison output with warnings:
-# Hardware Compatibility:
-# ⚠️  CPU differs: Results may not be directly comparable
-# ⚠️  CPU core count differs: 8 vs 10 cores
-# ⚠️  Rust version differs: Performance may be affected by compiler changes
-```
-
-**Usage**:
-
-```bash
-# Display formatted hardware information
-./scripts/hardware_info.sh
-
-# Display as key=value pairs (useful for parsing)
-./scripts/hardware_info.sh --kv
-
-# Source for use in other scripts
-source scripts/hardware_info.sh
-hardware_info=$(get_hardware_info)
-```
-
-**Integration with Other Scripts**:
-
-- Used by `generate_baseline.sh` to include hardware context
-- Used by `compare_benchmarks.sh` to detect environment differences
-- Provides hardware compatibility warnings for benchmark comparisons
-
-**Dependencies**:
-
-- macOS: `sysctl` (built-in)
-- Linux: `/proc/cpuinfo` and `/proc/meminfo` (built-in)
-- Windows: PowerShell (`pwsh` or `powershell`) for hardware detection
-- All platforms: `rustc` for Rust toolchain info
+**Dependencies**: Python 3.13+ standard library
 
 ---
+
+### Shell Scripts (Specialized)
 
 #### `run_all_examples.sh`
 
@@ -358,8 +224,7 @@ hardware_info=$(get_hardware_info)
 **Features**:
 
 - Automatically discovers all examples in the `examples/` directory
-- Runs simple examples in release mode for representative performance
-- Provides comprehensive testing for `test_circumsphere` example
+- Runs examples in release mode for representative performance
 - Creates results directory structure
 
 **Usage**:
@@ -367,12 +232,6 @@ hardware_info=$(get_hardware_info)
 ```bash
 ./scripts/run_all_examples.sh
 ```
-
-**Test Categories for `test_circumsphere`**:
-
-- `all` - Basic dimensional tests and orientation tests
-- `test-all-points` - Single point tests in all dimensions
-- `debug-all` - All debug tests
 
 **Dependencies**: Requires `cargo`, `find`, `sort` (GNU sort preferred but not required)
 
@@ -388,10 +247,10 @@ hardware_info=$(get_hardware_info)
 
 ```bash
 # Create new tag with changelog content
-uv run changelog-utils tag v0.4.2
+uv run changelog-utils tag vX.Y.Z
 
 # Force recreate existing tag
-uv run changelog-utils tag v0.4.2 --force
+uv run changelog-utils tag vX.Y.Z --force
 
 # Show help information
 uv run changelog-utils tag --help
@@ -414,13 +273,13 @@ uv run changelog-utils tag --help
 ```bash
 # Workflow for GitHub releases:
 1. Create tag with changelog content:
-   uv run changelog-utils tag v0.4.2
+   uv run changelog-utils tag vX.Y.Z
 
 2. Push tag to remote:
-   git push origin v0.4.2
+   git push origin vX.Y.Z
 
 3. Create GitHub release using tag message:
-   gh release create v0.4.2 --notes-from-tag
+   gh release create vX.Y.Z --notes-from-tag
 ```
 
 **Advanced Usage**:
@@ -495,24 +354,39 @@ uv run benchmark-utils compare --baseline benches/baseline_results.txt         #
 
 ```bash
 # 1. Make commits and create git tags
-git tag v0.4.0
-git push origin v0.4.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 
-# 2. Generate updated changelog with accurate commit dates
-./scripts/generate_changelog.sh
+# 2. Generate updated changelog with accurate commit dates and AI enhancement
+uv run changelog-utils generate
 
 # 3. Review and commit the updated changelog
 git add CHANGELOG.md
-git commit -m "Update changelog with commit dates for v0.4.0"
+git commit -m "Update changelog with AI enhancement for vX.Y.Z"
 git push origin main
 ```
 
-**Benefits of Using generate_changelog.sh**:
+### Git Tagging from Changelog
+
+```bash
+# Create new tag with changelog content for GitHub releases
+uv run changelog-utils tag vX.Y.Z
+
+# Force recreate existing tag
+uv run changelog-utils tag vX.Y.Z --force
+
+# Push tag and create GitHub release
+git push origin vX.Y.Z
+gh release create vX.Y.Z --notes-from-tag
+```
+
+**Benefits of Using changelog-utils**:
 
 - **Accurate Dating**: Shows when development work was actually completed
-- **Chronological Accuracy**: Releases show their true development timeline
+- **AI Enhancement**: Categorizes commits using Keep a Changelog format
+- **Squashed PR Expansion**: Extracts detailed information from squashed commits
 - **Professional Presentation**: Avoids all releases showing the same tag creation date
-- **Historical Clarity**: Makes it easier to understand project development pace
+- **GitHub Integration**: Seamless integration with GitHub releases
 
 ### Manual Benchmark Analysis
 
@@ -531,6 +405,13 @@ uv run benchmark-utils compare --baseline benches/baseline_results.txt
 
 The repository includes automated performance regression testing via GitHub Actions:
 
+#### Automated baseline generation
+
+- **Workflow file**: `.github/workflows/generate-baseline.yml`
+- **Trigger**: Automatic on git tag creation
+- **Artifacts**: Creates performance baseline artifacts for download
+- **Integration**: Baselines are automatically available for benchmark comparisons
+
 #### Separate Benchmark Workflow
 
 - **Workflow file**: `.github/workflows/benchmarks.yml`
@@ -543,18 +424,20 @@ The repository includes automated performance regression testing via GitHub Acti
 
 ```bash
 # If baseline exists:
-# 1. Runs uv run benchmark-utils compare --baseline benches/baseline_results.txt
-# 2. Fails CI if >5% performance regression detected
-# 3. Uploads comparison results as artifacts
+# 1. Downloads baseline from artifacts
+# 2. Runs uv run benchmark-utils compare --baseline benches/baseline_results.txt
+# 3. Fails CI if >5% performance regression detected
+# 4. Uploads comparison results as artifacts
 
 # If no baseline exists:
 # 1. Logs instructions for creating baseline
 # 2. Skips regression testing (does not fail CI)
-# 3. Suggests running uv run benchmark-utils generate-baseline locally
+# 3. Suggests creating a git tag to generate baseline automatically
 ```
 
 #### CI Integration Benefits
 
+- **Automated baseline management**: No manual baseline commits needed
 - **Separate from main CI**: Avoids slowing down regular development workflow
 - **Environment consistency**: Uses macOS runners (Apple Silicon) for reproducible benchmark comparisons
 - **Smart triggering**: Only runs on changes that could affect performance
@@ -568,7 +451,8 @@ The repository includes automated performance regression testing via GitHub Acti
 1. **Missing Dependencies**: Install required packages using your system's package manager
 2. **Permission Errors**: Ensure scripts are executable with `chmod +x scripts/*.sh`
 3. **Path Issues**: Run scripts from the project root directory
-4. **Missing Baseline**: Run `uv run benchmark-utils generate-baseline` to generate initial baseline
+4. **Missing Baseline**: Create a git tag to automatically generate baseline via CI, or run `uv run benchmark-utils generate-baseline` locally
+5. **Python Version**: Ensure Python 3.13+ is installed and available
 
 ### Exit Codes
 
@@ -579,21 +463,67 @@ The repository includes automated performance regression testing via GitHub Acti
 
 ### Debug Mode
 
-Add `set -x` to any script for verbose execution output:
-
 ```bash
-# For Python scripts, use -v flag for verbose output
-uv run benchmark-utils generate-baseline --help
-uv run hardware-utils info --help
+# For Python scripts, use built-in help and verbose options
+uv run benchmark-utils --help
+uv run changelog-utils --help
+uv run hardware-utils --help
 
-# For remaining bash scripts
-bash -x ./scripts/generate_changelog.sh
+# For changelog generation with debug output
+uv run changelog-utils generate --debug
+
+# For shell scripts
 bash -x ./scripts/run_all_examples.sh
 ```
+
+## Development Integration
+
+### CI/CD Integration
+
+The scripts are fully integrated with GitHub Actions workflows:
+
+- **`generate-baseline.yml`**: Automatically generates performance baselines on git tag creation
+- **`benchmarks.yml`**: Runs performance regression testing on relevant changes
+- **`ci.yml`**: Includes Python code quality checks for all utilities
+
+### Code Quality
+
+All Python scripts are automatically checked in CI:
+
+```bash
+# Format Python code
+uvx ruff format scripts/
+
+# Lint and auto-fix Python code
+uvx ruff check --fix scripts/
+
+# Run tests
+uv run pytest
+```
+
+### Module Organization
+
+- **`subprocess_utils.py`**: Shared security-hardened subprocess utilities
+- **`benchmark_utils.py`**: Standalone benchmarking functionality
+- **`changelog_utils.py`**: Shared changelog operations and utilities
+- **`hardware_utils.py`**: Standalone hardware detection functionality
+- **`enhance_commits.py`**: AI-powered commit categorization (used by changelog_utils)
+
+This modular design ensures code reuse and maintainability across all utilities.
 
 ## Script Maintenance
 
 All scripts follow consistent patterns:
+
+### Python Scripts
+
+- **Modern Python**: Python 3.13+ with type hints and union syntax
+- **Security**: Uses `subprocess_utils.py` for secure subprocess execution
+- **Error Handling**: Custom exception classes with clear error messages
+- **Configuration**: Uses `pyproject.toml` for dependencies and tool configuration
+- **Code Quality**: Comprehensive linting with ruff and formatting standards
+
+### Shell Scripts
 
 - **Error Handling**: Strict mode with `set -euo pipefail`
 - **Dependency Checking**: Validation of required commands

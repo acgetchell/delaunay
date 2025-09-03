@@ -23,3 +23,4 @@
 uv.lock
 .pytest_cache/
 .venv/
+/benches/baseline_results.txt

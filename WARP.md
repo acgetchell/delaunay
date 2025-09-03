@@ -19,12 +19,42 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - This includes: `cargo fmt`, `cargo clippy`, `uvx ruff format`, `uvx ruff check --fix`, `markdownlint --fix`, `shfmt`, etc.
 - Quality tools improve code without changing functionality or version control state
 
+#### JSON File Validation (AI Assistant Guidance)
+
+- **ALWAYS** validate JSON files after editing them
+- **PREFERRED**: Use `jq empty <filename>.json` for quick validation
+- **ALTERNATIVE**: Use `npx --yes jsonlint --quiet <filename>.json` for validation
+- **REQUIRED** when modifying `cspell.json`, `package.json`, or any other JSON configuration files
+- Validate all modified JSON files:
+  - `git status --porcelain | awk '/\.json$/ {print $2}' | xargs -r -n1 jq empty`
+
+#### Spell Check Dictionary Management (AI Assistant Guidance)
+
+- **ALWAYS** run spell check after editing documentation files
+- **IF** cspell reports legitimate technical terms, programming keywords, or project-specific terminology as misspelled, add them to the `words` array in `cspell.json`
+- **EXAMPLES**: Python terms (`kwargs`, `args`, `asyncio`), Rust terms (`usize`, `clippy`, `rustc`), technical terms (`triangulation`, `circumsphere`, `delaunay`),
+  project names (`nalgebra`, `serde`, `thiserror`)
+- **PURPOSE**: Maintains a clean spell-check while building a comprehensive project dictionary
+- Prefer `ignorePaths` for generated files (e.g., build artifacts) instead of adding their tokens to `words`.
+
 #### Import Organization (AI Assistant Guidance)
 
 - **ALWAYS** use `uvx ruff check --fix --select F401,F403,I001,I002 scripts/` to fix import issues
 - **AUTOMATICALLY** removes duplicate imports, unused imports, and organizes import order
 - **PREFERRED** over manual import cleanup - let ruff handle it automatically
 - **FOLLOW UP** with `uvx ruff format scripts/` and `uv run pytest` to ensure correctness
+
+#### Shell Script Formatting (AI Assistant Guidance)
+
+- **ALWAYS** run `shfmt` to format shell scripts after editing them
+- **REQUIRED**: Use `shfmt -w scripts/*.sh` to format consistently (uses default shfmt settings)
+- **LINT**: Use `shellcheck -x scripts/*.sh` to follow sourced files and catch include issues
+- **CI CRITICAL**: Shell script formatting failures will cause CI to fail – must use default shfmt options to match CI
+- **INDENTATION**: Uses shfmt default settings (tabs for indentation, standard spacing)
+- **NOTE**: If the repo ever standardizes on spaces instead of tabs, document the required flags (e.g., `-i 2` for 2-space indentation)
+- **POST-EDIT REQUIREMENT**: After any shell script edits, immediately run `shfmt -w` to prevent CI failures
+- **EXAMPLES**: `find scripts -type f -name '*.sh' -exec shfmt -w {} +` formats all shell scripts
+- **TROUBLESHOOTING**: If CI shows formatting diffs, run `shfmt -w` on the affected scripts
 
 ### Python Scripts
 
@@ -34,622 +64,189 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - Examples: `uv run changelog-utils generate`, `uv run benchmark-utils --help`
 - Note: If the `benchmark-utils` console script isn't available, use `uv run python -m scripts.benchmark_utils --help`
 
-## Overview
+#### Python Testing Framework
 
-The `delaunay` library implements d-dimensional Delaunay triangulations in Rust,
-inspired by CGAL. It provides a lightweight alternative for computational geometry
-applications with support for arbitrary data types associated with vertices and
-cells, d-dimensional triangulations, and serialization/deserialization capabilities.
+- **ALWAYS** use pytest when writing new Python script tests
+- **PREFERRED** over unittest for better fixtures, parametrization, and assertion introspection
+- **EXAMPLES**: Test files should be named `test_*.py` and use pytest fixtures and assertions
+- **EXECUTION**: Use `uv run pytest` to run all Python tests with proper dependency management
 
-## Essential Development Commands
+## Essential AI Commands
 
-### Rust Toolchain
+### Code Quality Checks
 
-The project uses a pinned Rust toolchain via `rust-toolchain.toml`:
+Run these commands after making changes to ensure code quality (the assistant must not execute git-altering commands; present them for the user to run):
 
-- **Version**: 1.89.0 (matches MSRV in Cargo.toml)
-- **Automatically enforced** when entering the project directory
-- **Includes all necessary components**: clippy, rustfmt, rust-docs, rust-src
-- **Cross-platform targets**: macOS (Intel/Apple Silicon), Linux, Windows
-- **Team-friendly**: New contributors get the correct setup automatically via `rustup`
-
-The toolchain file ensures consistent Rust versions across development, CI, and deployment
-environments, preventing version drift issues and ensuring reproducible builds.
-
-### Building and Testing
+**Note**: When asked to run code quality checks on "changed files", use `git status --porcelain` to identify which files have been
+modified, added, or staged, and then focus the quality tools on those specific files.
 
 ```bash
-# Build the library
-cargo build
-
-# Build in release mode
-cargo build --release
-
-# Verify benchmarks compile (without running them)
-cargo bench --no-run
-
-# Check documentation for errors (public API)
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-
-# Check documentation for errors (comprehensive, including private items)
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
-
-# Run all tests (library, doc tests, examples)
-cargo test --lib --verbose
-cargo test --doc --verbose  
-cargo test --examples --verbose
-
-# Run tests with allocation counting feature
-cargo test --features count-allocations -- allocation_counting 
-```
-
-### Identifying Changed Files
-
-```bash
-# Show changed files in machine-readable format
-git status --porcelain=v1 -z
-```
-
-### Code Quality
-
-#### Rust Code Quality
-
-```bash
-# Format Rust code
+# Rust code formatting and linting
 cargo fmt --all
+cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
-# Check Rust formatting without modifying files
-cargo fmt --all -- --check
-
-# Run clippy (strict pedantic mode configured)
-cargo clippy --all-targets --all-features -- -D warnings -D clippy::all -D clippy::pedantic -W clippy::nursery -W clippy::cargo
-```
-
-#### Python Code Quality
-
-**IMPORTANT**: Run these commands after any changes to Python scripts in the `scripts/` directory:
-
-```bash
-# Format Python code (PEP 8 compliance) - replaces autopep8
+# Python code quality (for scripts/ directory)
+uvx ruff check --select F401,F403,I001,I002 --fix scripts/
 uvx ruff format scripts/
 
-# Lint & auto-fix (imports, unused, style per pyproject.toml)
-uvx ruff check --fix scripts/
+# Shell script formatting and linting (path-safe)
+git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -w
+git ls-files -z '*.sh' | xargs -0 -r -n4 shellcheck -x
 
-# Alternative: Fix only import-related issues (organize, remove duplicates, fix unused)
-uvx ruff check --fix --select F401,F403,I001,I002 scripts/
+# Markdown linting (path-safe)
+git ls-files -z '*.md' | xargs -0 -r -n100 npx markdownlint --config .markdownlint.json --fix
 
-# Test Python utilities to ensure they still work correctly
-uv sync --group dev  # Install test dependencies
-uv run pytest       # Run comprehensive Python utility tests
+# Spell checking (path-safe)
+git ls-files -z '*.md' '*.rs' '*.toml' '*.json' \
+  | xargs -0 -r npx cspell lint --config cspell.json --no-progress --gitignore --cache
+# Or for PRs:
+# npx cspell lint --config cspell.json --no-progress --gitignore --cache $(git status --porcelain | awk '{print $2}')
 
-# Comprehensive linting is handled by ruff check above
-# No additional linting step needed - ruff provides complete coverage
+# JSON validation (when JSON files are modified, path-safe)
+git ls-files -z '*.json' | xargs -0 -r -n1 jq empty
 ```
 
-#### Documentation Quality
-
-**IMPORTANT**: Since this crate is published to crates.io, ensure documentation builds correctly:
+### Testing and Validation
 
 ```bash
-# Build documentation with warnings treated as errors (preferred)
+# Build and test
+cargo build
+cargo test --lib --verbose
+cargo test --doc --verbose
+
+# Integration tests (comprehensive)
+cargo test --release  # Run all tests in release mode for performance
+cargo test --test circumsphere_debug_tools -- --nocapture  # Debug tools with output
+
+# Benchmarks
+cargo bench --no-run
+
+# Documentation validation (required for crates.io publishing)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-```
-
-**Note**: Documentation build failures will prevent successful publishing to crates.io. Always verify docs build cleanly before releases.
-
-**Note**: Ruff provides comprehensive Python code quality:
-
-- `ruff format`: Fixes PEP 8 style violations (replaces autopep8)
-- `ruff check --fix`: Organizes imports, removes unused code, fixes linting issues, and reports code quality problems (replaces isort, autoflake, and pylint)
-
-**Configuration**: Both tools use `pyproject.toml` settings optimized for CLI scripts, which appropriately ignore:
-
-- Complex control flow patterns natural to command-line tools (many branches, statements)
-- CLI-specific patterns like boolean flags, print statements, subprocess calls
-- Defensive exception handling and graceful degradation patterns
-- Import placement optimizations for CLI startup time
-
-**Installation**: The commands use `uvx` (uv's command runner) to execute Python tools:
-
-- **uv**: Install via `curl -LsSf https://astral.sh/uv/install.sh | sh` or see [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/)
-- **macOS**: `brew install uv`
-- **Windows**: `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"`
-- **pip**: `pip install uv` (if you prefer installing via pip)
-
-`uvx` automatically manages tool dependencies and provides isolated execution environments without requiring global installations.
-
-#### Shell Script Code Quality
-
-**IMPORTANT**: Run these commands after any changes to shell scripts in the `scripts/` directory:
-
-```bash
-# Lint shell scripts with shellcheck (detects common issues)
-find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck
-
-# Lint a specific shell script (follow sourced files)
-shellcheck -x scripts/run_all_examples.sh
-
-# Show all shellcheck warnings including informational ones
-find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck -S info
-
-# Check scripts with specific shell (if not detected automatically)
-find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck -s bash
-```
-
-Additionally, use shfmt for consistent formatting:
-
-```bash
-# Format all shell scripts in-place (tabs by default)
-find scripts -type f -name '*.sh' -exec shfmt -w {} +
-
-# Check formatting without modifying files (useful in CI)
-find scripts -type f -name '*.sh' -exec shfmt -d {} +
-
-# Example: enforce 2-space indentation and named functions style
-find scripts -type f -name '*.sh' -exec shfmt -i 2 -fn -w {} +
-```
-
-**Note**: shellcheck helps detect:
-
-- Syntax errors and typos
-- Quoting issues that could cause word splitting
-- Incorrect variable usage patterns
-- Potential security vulnerabilities
-- POSIX compliance issues
-- Performance anti-patterns
-
-shfmt ensures consistent, idiomatic formatting, which reduces diffs and aids readability.
-
-**Installation**: Install tools via:
-
-- shellcheck
-  - macOS: `brew install shellcheck`
-  - Ubuntu/Debian: `apt install shellcheck`
-  - Other platforms: See [shellcheck.net](https://www.shellcheck.net/)
-- shfmt
-  - macOS: `brew install shfmt`
-  - Linux/Windows: See <https://github.com/mvdan/sh#shfmt> for binaries and package options
-
-#### Markdown Code Quality
-
-**IMPORTANT**: Run these commands after any changes to Markdown files:
-
-```bash
-# Lint project Markdown files (uses project .markdownlint.json configuration)
-npx markdownlint "*.md" "scripts/*.md" "docs/*.md" ".github/*.md"
-
-# Fix auto-fixable Markdown issues
-npx markdownlint --fix "*.md" "scripts/*.md" "docs/*.md" ".github/*.md"
-
-# Lint specific files
-npx markdownlint README.md CONTRIBUTING.md WARP.md
-```
-
-**Note**: markdownlint detects formatting and style issues including inconsistent headings, improper list formatting, missing link formatting,
-line length violations, and trailing whitespace.
-
-**Installation**: markdownlint is automatically available via npx.
-
-#### YAML Code Quality
-
-**IMPORTANT**: Run these commands after any changes to YAML files:
-
-```bash
-# Lint all YAML files (uses project .yamllint configuration)
-find . -type f \( -name '*.yml' -o -name '*.yaml' \) -exec yamllint -c .yamllint {} +
-
-# Lint specific YAML files
-yamllint -c .yamllint .github/workflows/ci.yml
-```
-
-**Note**: yamllint detects YAML syntax errors, indentation issues, line length violations, and trailing whitespace.
-
-**Installation**: Install yamllint via `brew install yamllint` or `pip install yamllint`.
-
-#### Spell Checking
-
-```bash
-# Check spelling with project configuration (respects .gitignore)
-npx cspell --config cspell.json --no-progress --gitignore --cache "**/*"
-```
-
-#### Codacy Analysis (Local)
-
-**IMPORTANT**: Use absolute paths when running Codacy Analysis CLI locally:
-
-```bash
-# Analyze specific directory with Ruff (most common)
-codacy-analysis-cli analyze --tool ruff --directory /absolute/path/to/project/scripts/ --format json
-
-# Analyze entire project
-codacy-analysis-cli analyze --tool ruff --directory /absolute/path/to/project/ --format json
-
-# Example for this project (adjust path to your system)
-codacy-analysis-cli analyze --tool ruff --directory /Users/username/projects/delaunay/scripts/ --format json
-```
-
-**Note**: The Codacy CLI requires absolute directory paths and will fail with relative paths like `scripts/` or `./`.
-Always use the full path when specifying the `--directory` parameter. Empty JSON array output `[]` indicates no issues found.
-
-### Benchmarking
-
-```bash
-# Run all benchmarks
-cargo bench
-
-# Run specific benchmarks
-cargo bench --bench circumsphere_containment
-cargo bench --bench small_scale_triangulation
-cargo bench --bench triangulation_creation
-
-# Generate performance baseline for CI
-uv run benchmark-utils generate-baseline
-
-# Generate baseline for development (faster)
-uv run benchmark-utils generate-baseline --dev
-
-# Compare performance against baseline
-uv run benchmark-utils compare --baseline benches/baseline_results.txt
-# Note: exits 1 on significant regressions (CI will mark job failed)
-
-# Compare with development settings (faster)
-uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev
-# Note: exits 1 on significant regressions (CI will mark job failed)
-```
-
-### Examples and Development Scripts
-
-```bash
-# Run specific example
-cargo run --example triangulation_3d_50_points
-cargo run --example test_circumsphere
 
 # Run all examples
-./scripts/run_all_examples.sh
+chmod +x scripts/run_all_examples.sh && ./scripts/run_all_examples.sh
+
+# Python utility testing (if Python scripts modified)
+uv run pytest
 ```
 
-### Running Single Tests
+### Performance and Benchmarks
 
 ```bash
-# Run specific test module
-cargo test triangulation_validation
+# Generate performance baseline
+uv run benchmark-utils generate-baseline
 
-# Run specific test function
-cargo test test_basic_allocation_counting
+# Compare performance against baseline
+uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 
-# Run tests with output
-cargo test -- --nocapture
+# Development mode (10x faster for iteration)
+uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
 ```
 
-### Changelog Generation
+### Changelog Management
 
 ```bash
-# Generate changelog with commit dates (recommended)
+# Generate enhanced changelog with AI categorization
 uv run changelog-utils generate
 
-# Generate changelog with debug output (keeps intermediate files)
-uv run changelog-utils generate --debug
-
-# Create git tag with changelog content as tag message
-uv run changelog-utils tag v0.4.2
-
-# Force recreate existing tag
-uv run changelog-utils tag v0.4.2 --force
-
-# Advanced: direct auto-changelog usage (bypasses project wrappers)
-npx auto-changelog --unreleased
-npx auto-changelog --latest-version v0.3.4
-
-# Test changelog generation without writing to file (direct auto-changelog)
-npx auto-changelog --stdout
+# Create git tag with changelog content (user-only; WARP must not execute)
+# Run manually from your terminal:
+# uv run changelog-utils tag v0.4.2
 ```
 
-**Note**: The project uses `uv run changelog-utils generate` to generate changelogs with commit dates instead of tag creation dates.
-This provides more accurate release timing that reflects when the actual work was completed rather than when tags were created.
-The tool also supports creating git tags with changelog content for GitHub releases.
+## Project Context
 
-## Architecture Overview
+The `delaunay` library implements d-dimensional Delaunay triangulations in Rust, inspired by CGAL. Key facts for AI assistants:
 
-### Core Module Structure
+- **Language**: Rust (MSRV 1.89.0, Edition 2024)
+- **Unsafe code**: Forbidden via `#![forbid(unsafe_code)]`
+- **Published to**: crates.io (documentation build failures will prevent publishing)
+- **CI**: GitHub Actions with strict quality requirements (clippy pedantic mode, rustfmt, no security vulnerabilities)
+- **Architecture**: Generic design with `T: CoordinateScalar`, `U: DataType` for vertex data, `V: DataType` for cell data, `const D: usize` for dimensionality
 
-**`src/core/`** - Primary data structures and algorithms
+## Ongoing Projects
 
-- **`triangulation_data_structure.rs`** - Main `Tds` struct for triangulation data management
-- **`vertex.rs`** - Vertex representation with generic coordinate support
-- **`cell.rs`** - D-dimensional cells (simplices) with neighbor relationships
-- **`facet.rs`** - (D-1)-dimensional faces derived from cells
-- **`boundary.rs`** - Boundary analysis and facet detection
-- **`util.rs`** - Helper functions for triangulation operations
-- **`algorithms/`** - Triangulation construction algorithms
-  - **`bowyer_watson.rs`** - Incremental Bowyer-Watson algorithm implementation
-  - **`robust_bowyer_watson.rs`** - Enhanced Bowyer-Watson with robust geometric predicates
-- **`traits/`** - Core traits for triangulation operations
-  - **`boundary_analysis.rs`** - Boundary detection and analysis trait
-  - **`data_type.rs`** - Generic data type constraints
-  - **`insertion_algorithm.rs`** - Unified interface for vertex insertion algorithms
+These items are incomplete and may require future attention:
 
-**`src/geometry/`** - Geometric algorithms and predicates
+### Performance Optimization
 
-- **`point.rs`** - Generic Point struct with NaN-aware equality and hashing
-- **`predicates.rs`** - Standard geometric predicates (insphere, orientation tests)
-- **`robust_predicates.rs`** - Enhanced predicates with improved numerical stability
-- **`matrix.rs`** - Matrix operations for geometric computations
-- **`util.rs`** - Geometric utility functions
-- **`algorithms/`** - Geometric algorithms
-  - **`convex_hull.rs`** - Convex hull extraction from Delaunay triangulations
-- **`traits/`** - Coordinate system abstractions
-  - **`coordinate.rs`** - Unified coordinate traits including primary coordinate trait, scalar types, finite value validation,
-    consistent hashing for floating-point coordinates, and NaN-aware equality comparison
+- **Status**: Not started
+- **Scope**: Algorithmic performance improvements, memory optimization, SIMD utilization
+- **Dependencies**: Baseline system is complete and ready for optimization work
+- **Tracking**: Create GitHub issue for performance optimization roadmap
 
-**`src/lib.rs`** - Main library file with module declarations and prelude module
+### Python Code Quality Improvements
 
-### Key Relationships
+- **Status**: Partially complete
+- **Remaining**: Replace deprecated `typing.Dict/List/Tuple`, improve error handling patterns, reduce function argument counts
+- **Tools**: Uses ruff for comprehensive linting (replaces pylint)
+- **Tracking**: Create GitHub issue for Python code modernization checklist
 
-- `core` modules use `geometry` for predicates and coordinate operations
-- `Tds` (Triangulation Data Structure) is the main entry point containing vertices and cells
-- Cells maintain neighbor relationships via SlotMap-based storage
-- Facets are computed on-demand from cell data rather than stored explicitly
+### Benchmark System Validation
 
-### Generic Design
-
-The library extensively uses generics:
-
-- `T: CoordinateScalar` for coordinate types (f32, f64, etc.)
-- `U: DataType` for vertex-associated data
-- `V: DataType` for cell-associated data  
-- `const D: usize` for dimensionality
-
-## Development Workflows
-
-### Standard Development Process
-
-1. **Create feature/fix branch** from main
-2. **Make changes** following architectural patterns
-3. **Build and test** with `cargo build && cargo test`
-4. **Format and lint** with `cargo fmt && cargo clippy`
-5. **Test benchmarks compile** with `cargo bench --no-run` (avoids long execution time)
-6. **Run examples** with `./scripts/run_all_examples.sh`
-7. **Check performance impact** with `uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev` (only if performance-critical changes)
-8. **Commit and push** for CI validation
-
-**Note**: Use `cargo bench --no-run` to verify benchmarks compile without actually running them, as full benchmark execution takes several minutes.
-
-### Performance-Critical Changes
-
-For changes affecting algorithmic performance:
-
-1. **Generate baseline** before changes: `uv run benchmark-utils generate-baseline`
-2. **Make modifications**
-3. **Test regression** with `uv run benchmark-utils compare --baseline benches/baseline_results.txt`
-4. **If >5% regression detected**, investigate and optimize
-5. **Update baseline** if performance change is acceptable
-
-### Adding New Examples
-
-Examples in `examples/` demonstrate library capabilities:
-
-- Use `delaunay::prelude::*` for imports
-- Include comprehensive documentation header
-- Show error handling patterns
-- Validate with `./scripts/run_all_examples.sh`
+- **Status**: Implementation complete, testing in progress
+- **Remaining**: Test release flow with git tag generation, validate hardware compatibility warnings
+- **Architecture**: GitHub Actions artifacts for baseline storage, 5% regression threshold
+- **Tracking**: Create GitHub issue for benchmark system testing validation
 
 ### Documentation Maintenance
 
-**CRITICAL**: When adding, removing, or significantly restructuring files, always update `docs/code_organization.md`:
-
-#### File Structure Changes
-
-```bash
-# After adding new files/directories:
-# 1. Update the Complete Directory Tree section in docs/code_organization.md
-# 2. Add descriptions for new files with their purpose
-# 3. Update Architecture Overview if the change affects core structure
-```
-
-**Examples of changes requiring documentation updates:**
-
-- **New modules**: `src/core/new_module.rs` → Add to directory tree with description
-- **New directories**: `src/algorithms/` → Update architecture overview
-- **Removed files**: Delete from directory tree, update references
-- **Moved files**: Update both old and new locations, check all references
-- **New examples**: Add to `examples/` section with purpose
-- **New scripts**: Add to `scripts/` section with functionality description
-- **New workflows**: Add to `.github/workflows/` section
-
-**Why this matters:**
-
-- `docs/code_organization.md` serves as the authoritative project structure reference
-- Contributors rely on it to understand the codebase architecture  
-- Out-of-date documentation creates confusion and slows development
-- The directory tree is used by new contributors for navigation
-
-**Quick check**: If you've added/removed files, run:
-
-```bash
-find . -type f -name '*.rs' | wc -l  # Compare with documented file count
-```
-
-## Benchmarking and Performance
-
-### Key Benchmarks
-
-- **`circumsphere_containment`** - Geometric predicate performance across methods
-- **`small_scale_triangulation`** - Triangulation creation for 10-50 points in 2D/3D/4D
-- **`assign_neighbors_performance`** - Neighbor relationship computation
-- **`microbenchmarks`** - Fine-grained performance tests for specific operations
-- **`triangulation_creation`** - Basic triangulation creation benchmarks
-
-### Performance Characteristics
-
-- **2D triangulations**: Excellent performance, sub-millisecond for ≤10 points
-
----
-
-## Coding Standards and Patterns
-
-### Language Requirements
-
-- **Rust Edition**: 2024
-- **MSRV**: 1.89.0
-- **Unsafe code**: Forbidden via `#![forbid(unsafe_code)]`
-- **Missing docs**: Warnings enabled
-
-### Code Organization Pattern
-
-Following `docs/code_organization.md`, modules use consistent structure:
-
-1. **Module documentation** (`//!` comments)
-2. **Imports** (grouped and ordered)
-3. **Error types** (using `thiserror::Error`)
-4. **Convenience macros** (with comprehensive docs)
-5. **Struct definitions** (with Builder pattern)
-6. **Deserialization** (manual implementation)
-7. **Core implementations**
-8. **Trait implementations**
-9. **Tests** (with subsection separators)
-
-### Key Dependencies and Patterns
-
-- **`derive_builder`** - Builder pattern for complex structs
-- **`serde`** - Serialization with manual Deserialize for complex types
-- **`slotmap`** - Efficient storage for cells and vertices with stable keys
-- **`uuid`** - Unique identification for vertices and cells
-- **`nalgebra`** - Linear algebra operations
-- **`ordered-float`** - Consistent floating-point handling
-
-### Error Handling
-
-- Custom error types inherit from standard patterns
-- Use `thiserror::Error` for automatic Display/Error implementations
-- Chain errors with `#[from]` attribute for source tracking
-- Provide context-rich error messages
-
-## CI and Automation
-
-### GitHub Workflows
-
-- **`.github/workflows/ci.yml`** - Build, test, format, and lint on all platforms
-- **`.github/workflows/benchmarks.yml`** - Performance regression testing (main branch only)
-- **`.github/workflows/rust-clippy.yml`** - Additional clippy analysis
-- **`.github/workflows/audit.yml`** - Security vulnerability scanning
-- **`.github/workflows/codecov.yml`** - Test coverage tracking
-
-### CI Requirements
-
-- All tests must pass across Ubuntu, macOS, and Windows
-- Clippy pedantic mode must pass without warnings
-- Code must be properly formatted with rustfmt
-- No security vulnerabilities in dependencies
-
-### Performance CI
-
-- Benchmarks run automatically on main branch changes affecting performance-critical files
-- Separate from main CI to avoid blocking development
-- Fails if >5% performance regression detected
-- Skips gracefully if baseline doesn't exist
-
-## Development Resources
-
-### Documentation
-
-- **`README.md`** - Project overview and features
-- **`CONTRIBUTING.md`** - Comprehensive contribution guidelines  
-- **`docs/code_organization.md`** - Module organization patterns
-- **`scripts/README.md`** - Development script documentation
-- **`benches/README.md`** - Benchmarking guide and performance results
-- **`examples/README.md`** - Example program descriptions
-
-### Scripts and Tools
-
-- **`uv run benchmark-utils`** - Modern Python utility for performance baselines and regression testing
-- **`scripts/run_all_examples.sh`** - Validate all examples
-
-## TODOs - Automated Performance Baseline System
-
-### Implementation Complete ✅
-
-The automated performance baseline system has been successfully implemented with:
-
-- **Automated baseline generation** on git tag creation (`.github/workflows/generate-baseline.yml`)
-- **Enhanced benchmark testing** for PRs and main branch commits
-- **Python utilities** replacing complex bash scripts (`scripts/hardware_utils.py`, `scripts/benchmark_utils.py`)
-- **GitHub Actions artifacts** for baseline storage (no repo commits needed)
-- **Backward-compatible shell wrappers** preserving existing CLIs
-
-### Next Steps - Testing and Validation
-
-#### Priority 1: Test the Release Flow
-
-```bash
-# Set your desired release tag
-NEXT_TAG="vX.Y.Z"
-
-# Create and push a release tag to test automatic baseline generation
-git tag "$NEXT_TAG"
-git push origin "$NEXT_TAG"
-
-# Verify baseline generation workflow runs successfully
-# Check that performance-baseline-$NEXT_TAG artifact is created
-```
-
-#### Priority 2: Test PR Performance Regression
-
-- Create a PR with some benchmark-affecting changes
-- Verify that the benchmark workflow downloads the baseline artifact
-- Confirm regression detection works with 5% threshold
-- Validate hardware compatibility warnings
-
-#### Priority 3: Python Code Quality Improvements
-
-The CI includes Python linting that's currently non-blocking. Address gradually:
-
-```bash
-# Fix formatting and linting issues in Python scripts
-uvx ruff format scripts/
-uvx ruff check --fix scripts/
-# Note: pylint has been retired in favor of comprehensive ruff linting
-```
-
-Key improvements needed:
-
-- Replace deprecated `typing.Dict/List/Tuple` with modern syntax
-- Fix print statements in library code (use logging)
-- Address error handling patterns
-- Improve function signatures (reduce argument counts)
-
-#### Priority 4: Monitor and Iterate
-
-- Monitor performance baseline accuracy across different hardware
-- Adjust regression thresholds if needed (currently 5%)
-- Consider expanding to additional benchmark suites
-- Optimize CI runtime if 5-minute constraint becomes an issue
-
-### System Architecture Notes
-
-**Baseline Storage Strategy:**
-
-- Uses GitHub Actions artifacts instead of committing to repo
-- Artifacts tied to specific releases; retention follows the workflow's `retention-days` (e.g., baselines 365 days, benchmarks 30 days) or repo settings
-- Fallback generation if no baseline found (dev mode for speed)
-
-**Hardware Compatibility:**
-
-- Cross-platform hardware detection (macOS, Linux, Windows)
-- Warnings when comparing across different hardware configurations
-- Detailed hardware metadata in all baselines for troubleshooting
-
-**Performance Comparison:**
-
-- 5% regression threshold for time measurements
-- Hardware metadata included in comparisons; results may vary across different machines
-- Comprehensive reporting with improvement/regression indicators
-
-### Mathematical References
-
-The library implements algorithms based on established computational geometry literature:
-
-- Bowyer-Watson algorithm for Delaunay triangulation
-- Shewchuk's robust geometric predicates
-- Lifted paraboloid method for circumsphere tests
-- CGAL-inspired triangulation data structures
+- **Status**: Ongoing
+- **Critical**: When adding/removing files, always update `docs/code_organization.md`
+- **Reason**: Serves as authoritative project structure reference for contributors
+- **Tracking**: This is ongoing maintenance - create issues for specific documentation gaps as discovered
+
+### Dependency Migration
+
+- **Status**: Not started
+- **Scope**: Replace peroxide with nalgebra for linear algebra operations
+- **Rationale**: nalgebra is more mature, better maintained, and has better ecosystem integration
+- **Impact**: Will affect matrix operations, potentially improving performance and reducing compilation times
+- **Dependencies**: None - can be done independently when time permits
+- **Tracking**: Issue #61
+
+## AI Assistant Guidelines
+
+### Context-Aware Test Execution (AI Assistant Guidance)
+
+- **IF** Rust code changed in `tests/` directory → **MUST** run integration/debug tests:
+  - `cargo test --release` (for performance)
+  - `cargo test --test circumsphere_debug_tools -- --nocapture` (for debug output)
+- **IF** Rust code changed in `examples/` directory → **MUST** run examples validation:
+  - `chmod +x scripts/run_all_examples.sh && ./scripts/run_all_examples.sh`
+- **IF** Rust code changed in `benches/` directory → **MUST** run benchmark verification:
+  - `cargo bench --no-run` (verifies benchmarks compile without executing them)
+- **IF** other Rust code changed (`src/`, etc.) → **MUST** run standard Rust tests:
+  - `cargo test --lib --verbose`
+  - `cargo test --doc --verbose`
+  - `cargo test --examples --verbose`
+- **PURPOSE**: Ensures appropriate validation for the type of code changes made
+
+### Integration Testing Patterns
+
+- **Debug Tools**: Use `cargo test --test circumsphere_debug_tools -- --nocapture` for interactive debugging
+- **Performance Tests**: Always run integration tests in `--release` mode for accurate performance measurements
+- **Test Categories**: Organize tests by purpose: debugging tools (`*_debug_tools.rs`), integration (`*_integration.rs`), regression (`*_error.rs`), comparison (`*_comparison.rs`)
+- **Test Documentation**: Each test file should have clear module documentation explaining purpose, usage, and test coverage
+
+### Testing Best Practices
+
+- **Performance Considerations**: Integration tests run significantly slower in debug mode - always recommend `--release` flag
+- **Verbose Output**: Use `--nocapture` flag for debugging tests that produce detailed analysis output
+- **Test Structure**: Convert CLI-style applications in tests to proper `#[test]` functions for better integration with cargo test framework
+- **Memory Testing**: Use `--features count-allocations` for allocation profiling tests
+
+### Documentation Standards
+
+- **Directory READMEs**: Major directories (`examples/`, `benches/`, `tests/`) should have comprehensive README.md files
+- **Usage Instructions**: Include specific command examples with proper flags (e.g., `--nocapture`, `--release`)
+- **Test Categories**: Organize documentation by test purpose with clear headings and emoji indicators
+- **Cross-References**: Link related documentation files and provide navigation between different documentation types
+
+### File Organization Guidance
+
+- **Test Files**: Place debugging utilities in `tests/` directory as proper test functions, not CLI applications
+- **Integration Tests**: Use descriptive naming patterns that indicate test purpose and type
+- **Documentation Updates**: When restructuring test files, update both `docs/code_organization.md` and relevant README files
+- **Consistency**: Maintain consistent documentation patterns across `examples/README.md`, `benches/README.md`, and `tests/README.md`

@@ -65,6 +65,8 @@ cargo clippy --all-targets --all-features
 # Run a specific example
 cargo run --example triangulation_3d_50_points
 cargo run --example convex_hull_3d_50_points
+cargo run --example into_from_conversions
+cargo run --example point_comparison_and_hashing
 ```
 
 ## 📋 Examples
@@ -73,9 +75,8 @@ The `examples/` directory contains several demonstrations:
 
 - **`triangulation_3d_50_points`**: Complete 3D Delaunay triangulation with 50 random points
 - **`convex_hull_3d_50_points`**: 3D convex hull extraction and analysis with performance benchmarks
-- **`boundary_analysis_trait`**: Demonstrates boundary facet analysis using the trait system
-- **`implicit_conversion`**: Shows coordinate conversion patterns and utilities
-- **`test_circumsphere`**: Comprehensive geometric predicate testing suite
+- **`into_from_conversions`**: Demonstrates Into/From trait conversions and utilities
+- **`point_comparison_and_hashing`**: Demonstrates point comparison and hashing behavior
 
 For comprehensive guidelines on development environment setup,
 testing, benchmarking, performance analysis, and development workflow, please see [CONTRIBUTING.md](CONTRIBUTING.md).

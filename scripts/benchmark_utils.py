@@ -13,6 +13,7 @@ Replaces complex bash parsing logic with maintainable Python code.
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -140,8 +141,11 @@ class CriterionParser:
             return results
 
         # Look for benchmark results in tds_new_*d directories
-        for dim in [2, 3, 4]:
-            benchmark_dir = criterion_dir / f"tds_new_{dim}d" / "tds_new"
+        for dim_dir in sorted(criterion_dir.glob("tds_new_*d")):
+            dim = dim_dir.name.removeprefix("tds_new_").removesuffix("d")
+            if not dim.isdigit():
+                continue
+            benchmark_dir = dim_dir / "tds_new"
 
             if not benchmark_dir.exists():
                 continue
@@ -193,7 +197,7 @@ class BaselineGenerator:
             True if successful, False otherwise
         """
         if output_file is None:
-            output_file = self.project_root / "benches" / "baseline_results.txt"
+            output_file = self.project_root / "baseline-artifact" / "baseline_results.txt"
 
         try:
             # Clean previous results only for full runs to keep dev mode fast
@@ -441,8 +445,9 @@ class PerformanceComparator:
         f.write(hardware_report)
 
     def _write_performance_comparison(self, f, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> bool:
-        """Write performance comparison section and return whether regression was found."""
-        regression_found = False
+        """Write performance comparison section and return whether average regression exceeds threshold."""
+        time_changes = []  # Track all time changes for average calculation
+        individual_regressions = 0
 
         for current_benchmark in current_results:
             key = f"{current_benchmark.points}_{current_benchmark.dimension}"
@@ -453,13 +458,56 @@ class PerformanceComparator:
 
             if baseline_benchmark:
                 self._write_baseline_benchmark_data(f, baseline_benchmark)
-                if self._write_time_comparison(f, current_benchmark, baseline_benchmark):
-                    regression_found = True
+                time_change, is_individual_regression = self._write_time_comparison(f, current_benchmark, baseline_benchmark)
+                if time_change is not None:
+                    time_changes.append(time_change)
+                    if is_individual_regression:
+                        individual_regressions += 1
                 self._write_throughput_comparison(f, current_benchmark, baseline_benchmark)
+            else:
+                f.write("Baseline: N/A (no matching entry)\n")
 
             f.write("\n")
 
-        return regression_found
+        # Calculate and report average regression
+        if time_changes:
+            # Prefer geometric mean of ratios to reflect multiplicative changes across benchmarks
+            ratios = [1.0 + (tc / 100.0) for tc in time_changes]
+            # Guard against non-positive ratios (defensive; should not occur with sane data)
+            positive_ratios = [r for r in ratios if r > 0]
+            if not positive_ratios:
+                average_change = 0.0
+            else:
+                avg_log = sum(math.log(r) for r in positive_ratios) / len(positive_ratios)
+                avg_ratio = math.exp(avg_log)
+                average_change = (avg_ratio - 1.0) * 100.0
+            f.write("\n=== SUMMARY ===\n")
+            f.write(f"Total benchmarks compared: {len(time_changes)}\n")
+            f.write(f"Individual regressions (>{self.regression_threshold}%): {individual_regressions}\n")
+            f.write(f"Average time change: {average_change:.1f}%\n")
+            # Optional: top regressions
+            top = sorted(time_changes, reverse=True)[:5]
+            if top:
+                f.write("Top regressions (by time change %): " + ", ".join(f"{t:.1f}%" for t in top) + "\n")
+
+            average_regression_found = average_change > self.regression_threshold
+            if average_regression_found:
+                f.write(
+                    f"🚨 OVERALL REGRESSION: Average performance decreased by {average_change:.1f}% "
+                    f"(exceeds {self.regression_threshold}% threshold)\n"
+                )
+            elif average_change < -self.regression_threshold:
+                f.write(
+                    f"🎉 OVERALL IMPROVEMENT: Average performance improved by {abs(average_change):.1f}% "
+                    f"(exceeds {self.regression_threshold}% threshold)\n"
+                )
+            else:
+                f.write(f"✅ OVERALL OK: Average change within acceptable range (±{self.regression_threshold}%)\n")
+
+            f.write("\n")
+            return average_regression_found
+
+        return False
 
     def _write_benchmark_header(self, f, benchmark: BenchmarkData) -> None:
         """Write benchmark section header."""
@@ -483,24 +531,34 @@ class PerformanceComparator:
                 f"{benchmark.throughput_high}] {benchmark.throughput_unit}\n"
             )
 
-    def _write_time_comparison(self, f, current: BenchmarkData, baseline: BenchmarkData) -> bool:
-        """Write time comparison and return whether regression was found."""
+    def _write_time_comparison(self, f, current: BenchmarkData, baseline: BenchmarkData) -> tuple[float | None, bool]:
+        """Write time comparison and return time change percentage and whether individual regression was found."""
         if baseline.time_mean <= 0:
             f.write("Time Change: N/A (baseline mean is 0)\n")
-            return False
+            return None, False
+        # Normalize to microseconds when units differ (supports ns, µs/us, ms, s)
+        unit_scale = {"ns": 1e-3, "µs": 1.0, "us": 1.0, "ms": 1e3, "s": 1e6}
+        cur_unit = current.time_unit or "µs"
+        base_unit = baseline.time_unit or "µs"
+        if cur_unit not in unit_scale or base_unit not in unit_scale:
+            f.write(f"Time Change: N/A (unit mismatch: {cur_unit} vs {base_unit})\n")
+            return None, False
+        cur_mean_us = current.time_mean * unit_scale[cur_unit]
+        base_mean_us = baseline.time_mean * unit_scale[base_unit]
+        if base_mean_us <= 0:
+            f.write("Time Change: N/A (baseline mean is 0)\n")
+            return None, False
 
-        time_change_pct = ((current.time_mean - baseline.time_mean) / baseline.time_mean) * 100
-        f.write(f"Time Change (mean): {time_change_pct:.1f}%\n")
-
-        if time_change_pct > self.regression_threshold:
+        time_change_pct = ((cur_mean_us - base_mean_us) / base_mean_us) * 100
+        is_individual_regression = time_change_pct > self.regression_threshold
+        if is_individual_regression:
             f.write(f"⚠️  REGRESSION: Time increased by {time_change_pct:.1f}% (slower performance)\n")
-            return True
-        if time_change_pct < -self.regression_threshold:
+        elif time_change_pct < -self.regression_threshold:
             f.write(f"✅ IMPROVEMENT: Time decreased by {abs(time_change_pct):.1f}% (faster performance)\n")
         else:
-            f.write("✅ OK: Time change within acceptable range\n")
+            f.write(f"✅ OK: Time change {time_change_pct:+.1f}% within acceptable range\n")
 
-        return False
+        return time_change_pct, is_individual_regression
 
     def _write_throughput_comparison(self, f, current: BenchmarkData, baseline: BenchmarkData) -> None:
         """Write throughput comparison if data is available."""

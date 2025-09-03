@@ -144,6 +144,13 @@ jobs:
           retention-days: 90   # Keep baselines ~90 days (align with repo settings; adjust if needed)
           compression-level: 6  # Good balance of speed/compression
 
+      - name: Cleanup temporary baseline file
+        if: ${{ success() }}
+        run: |
+          # Remove temporary baseline file from working directory
+          rm -f benches/baseline_results.txt
+          echo "✅ Cleaned up temporary baseline file"
+
       - name: Display next steps
         env:
           TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
