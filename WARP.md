@@ -47,10 +47,13 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 #### Shell Script Formatting (AI Assistant Guidance)
 
 - **ALWAYS** run `shfmt` to format shell scripts after editing them
-- **REQUIRED**: Use `shfmt -i 2 -ci -sr -bn -kp -ln bash -w scripts/*.sh` to format consistently
+- **REQUIRED**: Use `shfmt -i 0 -ci -sr -bn -kp -ln bash -w scripts/*.sh` to format consistently
 - **LINT**: Use `shellcheck -x scripts/*.sh` to follow sourced files and catch include issues
 - **CI CRITICAL**: Shell script formatting failures will cause CI to fail – shfmt options are pinned to avoid editor diffs
-- **EXAMPLES**: `find scripts -type f -name '*.sh' -exec shfmt -i 2 -ci -sr -bn -kp -ln bash -w {} +` formats all shell scripts
+- **INDENTATION**: The `-i 0` flag uses tabs for indentation, NOT spaces - this must match CI exactly
+- **POST-EDIT REQUIREMENT**: After any shell script edits, immediately run the exact shfmt command to prevent CI failures
+- **EXAMPLES**: `find scripts -type f -name '*.sh' -exec shfmt -i 0 -ci -sr -bn -kp -ln bash -w {} +` formats all shell scripts
+- **TROUBLESHOOTING**: If CI shows formatting diffs, the script wasn't formatted with the exact shfmt options
 
 ### Python Scripts
 
@@ -86,11 +89,11 @@ uvx ruff check --select F401,F403,I001,I002 --fix scripts/
 uvx ruff format scripts/
 
 # Shell script formatting and linting (path-safe)
-git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -i 2 -ci -sr -bn -kp -ln bash -w
+git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -i 0 -ci -sr -bn -kp -ln bash -w
 git ls-files -z '*.sh' | xargs -0 -r -n4 shellcheck -x
 
-# Markdown linting
-npx markdownlint --config .markdownlint.json --fix $(git status --porcelain | awk '/\.md$/ {print $2}')
+# Markdown linting (path-safe)
+git ls-files -z '*.md' | xargs -0 -r -n100 npx markdownlint --config .markdownlint.json --fix
 
 # Spell checking (path-safe)
 git ls-files -z '*.md' '*.rs' '*.toml' '*.json' \
@@ -189,6 +192,14 @@ These items are incomplete and may require future attention:
 - **Status**: Ongoing
 - **Critical**: When adding/removing files, always update `docs/code_organization.md`
 - **Reason**: Serves as authoritative project structure reference for contributors
+
+### Dependency Migration
+
+- **Status**: Not started
+- **Scope**: Replace peroxide with nalgebra for linear algebra operations
+- **Rationale**: nalgebra is more mature, better maintained, and has better ecosystem integration
+- **Impact**: Will affect matrix operations, potentially improving performance and reducing compilation times
+- **Dependencies**: None - can be done independently when time permits
 
 ## AI Assistant Guidelines
 

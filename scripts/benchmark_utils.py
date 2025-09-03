@@ -141,8 +141,11 @@ class CriterionParser:
             return results
 
         # Look for benchmark results in tds_new_*d directories
-        for dim in [2, 3, 4]:
-            benchmark_dir = criterion_dir / f"tds_new_{dim}d" / "tds_new"
+        for dim_dir in sorted(criterion_dir.glob("tds_new_*d")):
+            dim = dim_dir.name.removeprefix("tds_new_").removesuffix("d")
+            if not dim.isdigit():
+                continue
+            benchmark_dir = dim_dir / "tds_new"
 
             if not benchmark_dir.exists():
                 continue
@@ -194,7 +197,7 @@ class BaselineGenerator:
             True if successful, False otherwise
         """
         if output_file is None:
-            output_file = self.project_root / "benches" / "baseline_results.txt"
+            output_file = self.project_root / "baseline-artifact" / "baseline_results.txt"
 
         try:
             # Clean previous results only for full runs to keep dev mode fast

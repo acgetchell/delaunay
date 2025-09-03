@@ -460,19 +460,19 @@ fn test_circumsphere_containment() {
     }
     println!();
 
-    // Test points that should be outside the circumsphere
+    // Test points that should be outside (or on the boundary) of the circumsphere
     // These include points with large coordinates and points along the axes
     // that extend beyond the simplex vertices
     let test_points_outside: [Vertex<f64, i32, 4>; 6] = [
         vertex!([2.0, 2.0, 2.0, 2.0], 20),
-        vertex!([1.0, 1.0, 1.0, 1.0], 21),
+        vertex!([1.0, 1.0, 1.0, 1.0], 21), // boundary
         vertex!([0.8, 0.8, 0.8, 0.8], 22),
         vertex!([1.5, 0.0, 0.0, 0.0], 23),
         vertex!([0.0, 1.5, 0.0, 0.0], 24),
         vertex!([0.0, 0.0, 1.5, 0.0], 25),
     ];
 
-    println!("Testing points that should be OUTSIDE the circumsphere:");
+    println!("Testing points that should be OUTSIDE (or on boundary) the circumsphere:");
     for (i, point) in test_points_outside.iter().enumerate() {
         let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
         let result_determinant = insphere(&vertex_points, Point::from(point));
@@ -965,7 +965,11 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
             );
 
             // Apply the sign interpretation from the matrix method
-            let matrix_result = if is_positive {
+            let eps = 1e-12;
+            let matrix_result = if det.abs() <= eps {
+                // boundary; treat as inside for comparison, or print explicitly
+                true
+            } else if is_positive {
                 det < 0.0 // For positive orientation, negative det means inside
             } else {
                 det > 0.0 // For negative orientation, positive det means inside

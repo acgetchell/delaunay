@@ -3,15 +3,15 @@ set -euo pipefail
 
 # Error handling function
 error_exit() {
-  local message="$1"
-  local code="${2:-1}"
-  echo "ERROR: $message" >&2
-  exit "$code"
+	local message="$1"
+	local code="${2:-1}"
+	echo "ERROR: $message" >&2
+	exit "$code"
 }
 
 # Help function
 show_help() {
-  cat << EOF
+	cat << EOF
 run_all_examples.sh - Run all examples in the delaunay project
 
 USAGE:
@@ -51,28 +51,28 @@ EOF
 
 # Parse command line arguments
 for arg in "$@"; do
-  case $arg in
-    -h | --help)
-      show_help
-      exit 0
-      ;;
-    *)
-      error_exit "Unknown option: $arg. Use --help for usage information."
-      ;;
-  esac
+	case $arg in
+		-h | --help)
+			show_help
+			exit 0
+			;;
+		*)
+			error_exit "Unknown option: $arg. Use --help for usage information."
+			;;
+	esac
 done
 
 # Dependency checking function
 check_dependencies() {
-  # Array of required commands
-  local required_commands=("cargo" "find" "sort")
+	# Array of required commands
+	local required_commands=("cargo" "find" "sort")
 
-  # Check each required command
-  for cmd in "${required_commands[@]}"; do
-    if ! command -v "$cmd" > /dev/null 2>&1; then
-      error_exit "$cmd is required but not found. Please install it to proceed."
-    fi
-  done
+	# Check each required command
+	for cmd in "${required_commands[@]}"; do
+		if ! command -v "$cmd" > /dev/null 2>&1; then
+			error_exit "$cmd is required but not found. Please install it to proceed."
+		fi
+	done
 }
 
 # Run dependency checks
@@ -95,44 +95,47 @@ echo "=============================================="
 # - Nested dirs:    examples/bar/main.rs       -> example name "bar"
 all_examples=()
 if [[ ! -d "${PROJECT_ROOT}/examples" ]]; then
-  error_exit "Examples directory not found at ${PROJECT_ROOT}/examples"
+	error_exit "Examples directory not found at ${PROJECT_ROOT}/examples"
 fi
 example_names=$(
-  {
-    # top-level *.rs files
-    while IFS= read -r -d '' f; do basename "$f" .rs; done \
-      < <(find "${PROJECT_ROOT}/examples" -maxdepth 1 -type f -name '*.rs' -print0)
-    # nested example directories with main.rs
-    while IFS= read -r -d '' f; do basename "$(dirname "$f")"; done \
-      < <(find "${PROJECT_ROOT}/examples" -mindepth 2 -maxdepth 2 -type f -name 'main.rs' -print0)
-  } | LC_ALL=C sort -u
+	{
+		# top-level *.rs files
+		while IFS= read -r -d '' f; do basename "$f" .rs; done \
+			< <(find "${PROJECT_ROOT}/examples" -maxdepth 1 -type f -name '*.rs' -print0)
+		# nested example directories with main.rs
+		while IFS= read -r -d '' f; do basename "$(dirname "$f")"; done \
+			< <(find "${PROJECT_ROOT}/examples" -mindepth 2 -maxdepth 2 -type f -name 'main.rs' -print0)
+	} | LC_ALL=C sort -u
 )
 # Load names into array
 while IFS= read -r name; do
-  [[ -n "$name" ]] && all_examples+=("$name")
+	[[ -n "$name" ]] && all_examples+=("$name")
 done <<< "$example_names"
 
 # Guard against zero discovered examples
 if [ ${#all_examples[@]} -eq 0 ]; then
-  error_exit "No examples found under ${PROJECT_ROOT}/examples"
+	error_exit "No examples found under ${PROJECT_ROOT}/examples"
 fi
 
 # Run all examples
 TIMEOUT_CMD=""
 if command -v timeout > /dev/null 2>&1; then
-  TIMEOUT_CMD="timeout"
+	TIMEOUT_CMD="timeout"
 elif command -v gtimeout > /dev/null 2>&1; then
-  TIMEOUT_CMD="gtimeout"
+	TIMEOUT_CMD="gtimeout"
 fi
 
 for example in "${all_examples[@]}"; do
-  echo "=== Running $example ==="
-  if [[ -n "$TIMEOUT_CMD" ]]; then
-    "$TIMEOUT_CMD" --preserve-status --signal=TERM --kill-after=10s "${EXAMPLE_TIMEOUT:-600}s" \
-      cargo run --release --example "$example" || error_exit "Example $example failed!"
-  else
-    cargo run --release --example "$example" || error_exit "Example $example failed!"
-  fi
+	echo "=== Running $example ==="
+	if [[ -n "$TIMEOUT_CMD" ]]; then
+		DURATION="${EXAMPLE_TIMEOUT:-600s}"
+		# If DURATION has no unit suffix, assume seconds
+		case "$DURATION" in *[a-zA-Z]) ;; *) DURATION="${DURATION}s" ;; esac
+		"$TIMEOUT_CMD" --preserve-status --signal=TERM --kill-after=10s "$DURATION" \
+			cargo run --release --example "$example" || error_exit "Example $example failed!"
+	else
+		cargo run --release --example "$example" || error_exit "Example $example failed!"
+	fi
 done
 
 echo

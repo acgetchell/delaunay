@@ -249,12 +249,12 @@ jobs:
             # Show baseline metadata
             echo "=== Baseline Information (from artifact) ==="
             head -n 3 baseline-artifact/baseline_results.txt
-        else
-          echo "❌ Downloaded artifact but no baseline_results.txt found"
-          echo "BASELINE_EXISTS=false" >> "$GITHUB_ENV"
-          echo "BASELINE_SOURCE=missing" >> "$GITHUB_ENV"
-          echo "BASELINE_ORIGIN=unknown" >> "$GITHUB_ENV"
-        fi
+          else
+            echo "❌ Downloaded artifact but no baseline_results.txt found"
+            echo "BASELINE_EXISTS=false" >> "$GITHUB_ENV"
+            echo "BASELINE_SOURCE=missing" >> "$GITHUB_ENV"
+            echo "BASELINE_ORIGIN=unknown" >> "$GITHUB_ENV"
+          fi
 
       - name: Set baseline status if none found
         if: steps.find_baseline.outputs.found != 'true'
