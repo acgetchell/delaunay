@@ -129,7 +129,7 @@ cargo test --release  # Run all tests in release mode for performance
 cargo test --test circumsphere_debug_tools -- --nocapture  # Debug tools with output
 
 # Benchmarks
-cargo bench --no-run
+cargo bench --workspace --no-run
 
 # Documentation validation (required for crates.io publishing)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
