@@ -151,7 +151,7 @@ class TestChangelogUtils:
     @patch("changelog_utils.json.load", side_effect=json.JSONDecodeError("Invalid JSON", "", 0))
     def test_get_markdown_line_limit_invalid_config(self, _mock_json_load):  # noqa: PT019
         """Test markdown line limit with invalid JSON config."""
-        with patch("pathlib.Path.exists", return_value=True), patch("pathlib.Path.open", mock_open(read_data="{}")):
+        with patch("changelog_utils.Path.exists", return_value=True), patch("changelog_utils.Path.open", mock_open(read_data="{}")):
             limit = ChangelogUtils.get_markdown_line_limit()
             assert limit == 160  # Should fall back to default
 
@@ -446,7 +446,9 @@ class TestChangelogTitleFormatting:
             assert len(line) <= max_line_length
 
         # Check that markdown characters are escaped in the wrapped content
-        title_content = "".join(result[:-1])  # Exclude commit link
+        # Exclude any commit-link lines (whether single-line or split)
+        title_only_lines = [line for line in result if not line.startswith(("  [", "  ("))]
+        title_content = "".join(title_only_lines)
         assert "\\*bold\\*" in title_content
         assert "\\_italic\\_" in title_content
         assert "\\`code\\`" in title_content
@@ -472,12 +474,16 @@ class TestChangelogTitleFormatting:
         result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 160)  # noqa: SLF001
         assert len(result) >= 1
         assert result[0].startswith("- ")
+        # Commit SHA should appear somewhere in the output (either same line or separate line)
+        assert any(commit_sha in line for line in result)
 
         # Test title with only spaces
         title = "   "
         result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 160)  # noqa: SLF001
         assert len(result) >= 1
         assert result[0].startswith("- ")
+        # Commit SHA should appear somewhere in the output (either same line or separate line)
+        assert any(commit_sha in line for line in result)
 
     def test_format_entry_title_tiny_limit_drops_bold_and_splits_link(self):
         """Force tiny limits: no bold on wrapped lines; commit link must split."""
@@ -548,12 +554,15 @@ class TestChangelogTitleFormatting:
         )  # URL part of split commit link
 
         # Verify the title content is preserved across lines (minus escaping)
-        title_lines_content = []
+        title_lines_content: list[str] = []
         for line in result[:-1]:  # Exclude commit link
-            if line.startswith("- **"):
-                title_lines_content.append(line[4:-2])  # Remove "- **" and "**"
-            elif line.startswith("  **"):
-                title_lines_content.append(line[4:-2])  # Remove "  **" and "**"
+            if line.startswith(("- ", "  ")):
+                core = line[2:]
+            else:
+                continue
+            if core.startswith("**") and core.endswith("**"):
+                core = core[2:-2]
+            title_lines_content.append(core)
 
         reconstructed_title = "".join(title_lines_content)
         # Should contain the key parts of the original title (allowing for escaping)
@@ -571,6 +580,9 @@ class TestChangelogTitleFormatting:
                 160,
                 2,
             ),  # Long - should split
+            ("abcdefghijklmno", 50, 2),  # Short title, reasonable limit - should wrap
+            ("feat: long commit message that exceeds limit", 60, 2),  # Forces wrapping with reasonable limit
+            ("X" * 60, 80, 2),  # Single long token: break_long_words=True path
         ],
     )
     def test_format_entry_title_typical_github_length(self, title, max_length, expected_min_lines):

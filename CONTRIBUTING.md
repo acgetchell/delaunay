@@ -11,6 +11,7 @@ to experienced developers looking to contribute significant features.
 - [Development Environment Setup](#development-environment-setup)
 - [Project Structure](#project-structure)
 - [Development Workflow](#development-workflow)
+- [CI Performance Testing](#ci-performance-testing)
 - [Code Style and Standards](#code-style-and-standards)
 - [Testing](#testing)
 - [Documentation](#documentation)
@@ -228,6 +229,55 @@ The project follows a standard Rust library structure with additional tooling fo
 - **`.github/workflows/`** - CI/CD automation (testing, benchmarks, quality checks)
 
 For detailed code organization patterns and module structure, see [code organization documentation][code-organization].
+
+## CI Performance Testing
+
+### ⚠️ **Important: Rust Code Changes Trigger Lengthy Baseline Comparisons**
+
+**Any changes to Rust code will automatically trigger performance regression testing in CI, which can take 30-45 minutes to complete.**
+
+The benchmark workflow runs on changes to:
+
+- `src/**` - Any core library code
+- `benches/**` - Benchmark code  
+- `Cargo.toml` or `Cargo.lock` - Dependencies
+
+### **Branch Strategy Recommendation**
+
+To avoid triggering lengthy baseline comparisons unnecessarily:
+
+✅ **Recommended**: Keep documentation and Python utility updates in **separate branches/PRs** from Rust code changes
+
+❌ **Avoid**: Mixing documentation updates with Rust code changes in the same commit/PR
+
+### **Examples**
+
+**Good workflow:**
+
+```bash
+# Branch 1: Documentation updates only
+git checkout -b docs/update-readme
+# Edit README.md, CONTRIBUTING.md, etc.
+git commit -m "docs: update contributing guidelines"
+# → No benchmarks triggered, fast CI
+
+# Branch 2: Rust code changes (separate PR)
+git checkout -b feat/improve-algorithm 
+# Edit src/core/triangulation.rs
+git commit -m "feat: optimize triangulation algorithm"
+# → Benchmarks triggered, but isolated to code changes
+```
+
+**Avoid:**
+
+```bash
+# Mixed changes (triggers benchmarks for trivial doc fixes)
+git add README.md src/core/triangulation.rs
+git commit -m "feat: algorithm improvement + doc updates"
+# → 45-minute benchmark run for a simple doc fix
+```
+
+This strategy helps maintain fast feedback loops for documentation work while ensuring proper performance regression testing for code changes.
 
 ## Development Workflow
 

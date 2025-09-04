@@ -18,7 +18,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **ALLOWED** to fix auto-fixable issues (formatting, linting, etc.)
 - This includes: `cargo fmt`, `cargo clippy`, `uvx ruff format`, `uvx ruff check --fix`, `markdownlint --fix`, `shfmt`, etc.
 - Quality tools improve code without changing functionality or version control state
-- **DO NOT** use scripts or automated tools (like `sed`, `awk`) to perform code edits or refactoring—only use them for checks and formatting
+- **DO NOT** use scripts or automated tools (like `sed`, `awk`) for refactoring or logic-altering edits—only for non-semantic formatting and read-only checks
 - **PREFERRED**: Interactive code editing using the `edit_files` tool for precise, reviewed changes
 - **IMPORTANT**: Benchmark files (in `benches/`) are Rust code and must follow the same quality standards as core library code
   (e.g., `cargo clippy --benches -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo`)
@@ -38,13 +38,13 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **REQUIRED** when adding or modifying any files to ensure proper spelling throughout the project
 - **IF** cspell reports legitimate technical terms, programming keywords, or project-specific terminology as misspelled, add them to the `words` array in `cspell.json`
 - **EXAMPLES**: Python terms (`kwargs`, `args`, `asyncio`), Rust terms (`usize`, `clippy`, `rustc`), technical terms (`triangulation`, `circumsphere`, `delaunay`),
-  project/crate names (e.g., `nalgebra`, `serde`, `thiserror`, `pastey`)
+  project/crate names (e.g., `nalgebra`, `serde`, `thiserror`, `pastey`).
 - **PURPOSE**: Maintains a clean spell-check while building a comprehensive project dictionary
 - Prefer `ignorePaths` for generated files (e.g., build artifacts) instead of adding their tokens to `words`.
 
 #### Import Organization (AI Assistant Guidance)
 
-- **ALWAYS** use `uvx ruff check --fix scripts/` to fix import issues and other code quality problems
+- **ALWAYS** use `uvx ruff check --fix $(git ls-files '*.py')` to fix import issues and other code quality problems
 - **AUTOMATICALLY** removes unused imports, organizes import order, fixes line length, and other style issues
 - **PREFERRED** over manual cleanup - let ruff handle it automatically
 - **FOLLOW UP** with `uvx ruff format scripts/` and `uv run pytest` to ensure correctness
@@ -78,6 +78,12 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **EXECUTION**: Use `uv run pytest` to run all Python tests with proper dependency management
 
 ## Essential AI Commands
+
+### ⚠️ **CI Performance Impact Warning**
+
+**CRITICAL**: Any changes to Rust code (`src/**`, `benches/**`, `Cargo.toml/lock`) will trigger lengthy performance regression testing (30-45 minutes) in CI.
+
+**Best Practice**: Keep documentation/Python updates in separate branches from Rust code changes to avoid triggering benchmarks unnecessarily.
 
 ### Code Quality Checks
 
@@ -224,15 +230,14 @@ These items are incomplete and may require future attention:
   - `cargo test --release` (for performance)
   - `cargo test --test circumsphere_debug_tools -- --nocapture` (for debug output)
 - **IF** Rust code changed in `examples/` directory → **MUST** run examples validation:
-  - `bash scripts/run_all_examples.sh`
+  - See "Testing and Validation → Run all examples" for the canonical command
 - **IF** Rust code changed in `benches/` directory → **MUST** run benchmark verification:
   - `cargo bench --no-run` (verifies benchmarks compile without executing them)
 - **IF** other Rust code changed (`src/`, etc.) → **MUST** run standard Rust tests:
   - `cargo test --lib --verbose`
   - `cargo test --doc --verbose`
   - `cargo test --examples --verbose`
-- **FOR ANY** Rust code changes → **MUST** validate documentation:
-  - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` (critical for crates.io publishing)
+- **FOR ANY** Rust code changes → validate documentation (see "Code Quality Checks → Rust documentation validation")
 - **IMPORTANT**: For allocation testing, use `cargo test --test allocation_api --features count-allocations`
 - **PURPOSE**: Ensures appropriate validation for the type of code changes made
 

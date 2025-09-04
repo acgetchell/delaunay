@@ -55,15 +55,14 @@ delaunay/
 │   ├── README.md                                 # Examples documentation
 │   ├── convex_hull_3d_50_points.rs               # 3D convex hull extraction and analysis example
 │   ├── into_from_conversions.rs                  # Into/From trait conversion examples
+│   ├── memory_analysis.rs                        # Memory usage analysis example
 │   ├── point_comparison_and_hashing.rs           # Point operations examples
 │   └── triangulation_3d_50_points.rs             # 3D triangulation example
 ├── benches/                                      # Performance benchmarks
 │   ├── README.md                                 # Benchmarking guide and performance results
 │   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
-│   ├── baseline_results.txt                      # Performance baseline data
 │   ├── ci_performance_suite.rs                   # CI-optimized performance suite (2D-5D regression testing)
 │   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
-│   ├── util.rs                                   # Benchmark utility functions
 │   ├── memory_scaling.rs                         # Memory usage scaling benchmarks
 │   ├── microbenchmarks.rs                        # Fine-grained performance tests
 │   ├── triangulation_creation.rs                 # Triangulation creation benchmarks
@@ -120,6 +119,7 @@ delaunay/
 ├── .python-version                               # Python version specification for performance requirements
 ├── .semgrep.yaml                                 # Semgrep static analysis configuration for security and code quality
 ├── .yamllint                                     # YAML linting configuration
+├── clippy.toml                                   # Clippy configuration for additional linting rules
 ├── CHANGELOG.md                                  # Version history with enhanced squashed PR support
 ├── CITATION.cff                                  # Citation metadata for academic use
 ├── CODE_OF_CONDUCT.md                            # Community guidelines
