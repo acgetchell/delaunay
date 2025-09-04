@@ -86,7 +86,7 @@ uv run changelog-utils generate
 4. Stage and commit release artifacts
 
 ```bash
-git add Cargo.toml CHANGELOG.md docs/
+git add Cargo.toml Cargo.lock CHANGELOG.md docs/
 
 git commit -m "chore(release): release $TAG
 
