@@ -82,7 +82,7 @@ jobs:
             || uv run python -m scripts.benchmark_utils generate-baseline
 
           # Verify baseline was created
-          if [ ! -f "benches/baseline_results.txt" ]; then
+          if [ ! -f "baseline-artifact/baseline_results.txt" ]; then
             echo "❌ Baseline generation failed - no baseline file created"
             exit 1
           fi
@@ -91,9 +91,9 @@ jobs:
 
           # Show baseline summary
           echo "📊 Baseline summary:"
-          head -n 10 benches/baseline_results.txt
+          head -n 10 baseline-artifact/baseline_results.txt
           echo "..."
-          benchmark_count=$(grep -c "^===" benches/baseline_results.txt || echo "0")
+          benchmark_count=$(grep -c "^===" baseline-artifact/baseline_results.txt || echo "0")
           echo "Total benchmarks: $benchmark_count"
 
       - name: Prepare baseline artifact
@@ -102,14 +102,9 @@ jobs:
           SAFE_COMMIT_SHA: ${{ github.sha }}
           SAFE_RUN_ID: ${{ github.run_id }}
         run: |
-          # Create artifact directory
-          mkdir -p baseline-artifact
-
-          # Copy baseline file with tag-specific name
-          cp benches/baseline_results.txt "baseline-artifact/baseline-$TAG_NAME.txt"
-
-          # Also copy as generic name for easy download
-          cp benches/baseline_results.txt "baseline-artifact/baseline_results.txt"
+          # The baseline file is already in baseline-artifact/ from the script
+          # Just copy it with tag-specific name
+          cp baseline-artifact/baseline_results.txt "baseline-artifact/baseline-$TAG_NAME.txt"
 
           # Create metadata file
           cat > "baseline-artifact/metadata.json" <<EOF
@@ -148,7 +143,7 @@ jobs:
         if: ${{ success() }}
         run: |
           # Remove temporary baseline file from working directory
-          rm -f benches/baseline_results.txt
+          rm -f baseline-artifact/baseline_results.txt
           echo "✅ Cleaned up temporary baseline file"
 
       - name: Display next steps

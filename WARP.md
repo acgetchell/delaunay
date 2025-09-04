@@ -44,10 +44,11 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 #### Import Organization (AI Assistant Guidance)
 
-- **ALWAYS** use `uvx ruff check --fix --select F401,F403,I001,I002 scripts/` to fix import issues
-- **AUTOMATICALLY** removes duplicate imports, unused imports, and organizes import order
-- **PREFERRED** over manual import cleanup - let ruff handle it automatically
+- **ALWAYS** use `uvx ruff check --fix scripts/` to fix import issues and other code quality problems
+- **AUTOMATICALLY** removes unused imports, organizes import order, fixes line length, and other style issues
+- **PREFERRED** over manual cleanup - let ruff handle it automatically
 - **FOLLOW UP** with `uvx ruff format scripts/` and `uv run pytest` to ensure correctness
+- **NOTE**: The comprehensive Python quality check in the main commands section covers all ruff rules including import organization
 
 #### Shell Script Formatting (AI Assistant Guidance)
 
@@ -95,7 +96,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 # Python code quality (for scripts/ directory)
-uvx ruff check --select F401,F403,I001,I002 --fix scripts/
+uvx ruff check --fix scripts/
 uvx ruff format scripts/
 
 # Shell script formatting and linting (path-safe)

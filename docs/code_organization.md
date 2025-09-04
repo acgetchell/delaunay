@@ -71,7 +71,6 @@ delaunay/
 ├── tests/                                        # Integration tests
 │   ├── README.md                                 # Integration tests guide and usage instructions
 │   ├── allocation_api.rs                         # Memory allocation profiling and testing utilities
-│   ├── bench_util_test.rs                        # Tests for benchmark utility functions
 │   ├── circumsphere_debug_tools.rs               # Interactive circumsphere testing and debugging utilities
 │   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
 │   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests

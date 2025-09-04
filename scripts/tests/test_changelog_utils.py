@@ -385,7 +385,7 @@ class TestChangelogTitleFormatting:
         repo_url = "https://github.com/owner/repo"
         max_line_length = 160
 
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)  # noqa: SLF001
 
         # Should return a single line
         assert len(result) == 1
@@ -401,7 +401,7 @@ class TestChangelogTitleFormatting:
         repo_url = "https://github.com/owner/repo"
         max_line_length = 50
 
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)  # noqa: SLF001
 
         # Should wrap the title into multiple lines
         assert len(result) > 1
@@ -438,7 +438,7 @@ class TestChangelogTitleFormatting:
         repo_url = "https://github.com/owner/repo"
         max_line_length = 60
 
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)  # noqa: SLF001
 
         # Should wrap the title
         assert len(result) > 1
@@ -462,7 +462,7 @@ class TestChangelogTitleFormatting:
 
         # Test reasonably short line limit (shorter than normal but not extreme)
         title = "Short title"
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 60)
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 60)  # noqa: SLF001
 
         # Should still produce valid output
         assert len(result) >= 1
@@ -471,23 +471,27 @@ class TestChangelogTitleFormatting:
 
         # Test empty title
         title = ""
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 160)
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 160)  # noqa: SLF001
         assert len(result) >= 1
 
         # Test title with only spaces
         title = "   "
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 160)
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 160)  # noqa: SLF001
         assert len(result) >= 1
 
     def test_format_entry_title_regression_long_line(self):
         """Regression test for the specific long line issue found in CHANGELOG.md."""
         # This is the actual long title that caused the markdown lint failure
-        title = "Moves the test_alloc_api.rs and test_circumsphere.rs examples to the tests/ directory and renames them to allocation_api.rs and circumsphere_debug_tools.rs, respectively, to reflect their role as debugging and testing utilities."
+        title = (
+            "Moves the test_alloc_api.rs and test_circumsphere.rs examples to the tests/ directory and renames "
+            "them to allocation_api.rs and circumsphere_debug_tools.rs, respectively, to reflect their role as "
+            "debugging and testing utilities."
+        )
         commit_sha = "f10aba3"
         repo_url = "https://github.com/acgetchell/delaunay"
         max_line_length = 160  # From .markdownlint.json
 
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)  # noqa: SLF001
 
         # Should produce multiple lines due to length
         assert len(result) > 1
@@ -535,7 +539,7 @@ class TestChangelogTitleFormatting:
         repo_url = "https://github.com/test/repo"
 
         for title, max_length, expected_min_lines in test_cases:
-            result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_length)
+            result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_length)  # noqa: SLF001
 
             # Should have at least expected minimum lines
             assert len(result) >= expected_min_lines, f"Title '{title}' should produce at least {expected_min_lines} lines"

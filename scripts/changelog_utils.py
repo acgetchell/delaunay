@@ -534,37 +534,36 @@ class ChangelogUtils:
         # If the title alone (with bullet and bold formatting) is still too long, wrap it
         title_only = f"- **{escaped_title}**"
         if len(title_only) > max_line_length:
-            # Wrap the title content while preserving markdown formatting
-            # Calculate space for "- **" (4 chars) and "**" (2 chars) = 6 chars
-            available_width = max_line_length - 6  # Space for "- **" + "**"
-            if available_width < 10:  # Ensure we have reasonable space
-                available_width = max_line_length - 2  # Just "- " prefix
+            # Compute exact overhead; drop bold if the line would be too cramped.
+            first_prefix, cont_prefix, bold_suffix = "- **", "  **", "**"
+            avail_first = max(1, max_line_length - len(first_prefix) - len(bold_suffix))
+            avail_cont = max(1, max_line_length - len(cont_prefix) - len(bold_suffix))
+            wrap_width = min(avail_first, avail_cont)
 
-            # Wrap the title text
+            use_bold = wrap_width >= 8
+            if not use_bold:
+                first_prefix, cont_prefix, bold_suffix = "- ", "  ", ""
+                avail_first = max(1, max_line_length - len(first_prefix) - len(bold_suffix))
+                avail_cont = max(1, max_line_length - len(cont_prefix) - len(bold_suffix))
+                wrap_width = min(avail_first, avail_cont)
+
             wrapped_title_lines = textwrap.wrap(
                 escaped_title,
-                width=available_width,
+                width=wrap_width,
                 break_long_words=True,
                 break_on_hyphens=True,
-            )
+            ) or [escaped_title[:wrap_width]]
 
-            if not wrapped_title_lines:
-                wrapped_title_lines = [escaped_title[:available_width]]  # Fallback
-
-            # Format the wrapped lines with bold formatting
-            result_lines = []
+            result_lines: list[str] = []
             for i, line in enumerate(wrapped_title_lines):
-                if i == 0:
-                    result_lines.append(f"- **{line}**")
-                else:
-                    result_lines.append(f"  **{line}**")
+                prefix = first_prefix if i == 0 else cont_prefix
+                result_lines.append(f"{prefix}{line}{bold_suffix}" if use_bold else f"{prefix}{line}")
 
-            # Add commit link on separate line, handle very short limits
+            # Add commit link on a separate line; split only if necessary.
             commit_link = f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})"
             if len(commit_link) <= max_line_length:
                 result_lines.append(commit_link)
             else:
-                # For very short limits, put commit link on multiple lines if needed
                 result_lines.append(f"  [`{commit_sha}`]")
                 result_lines.append(f"  ({repo_url}/commit/{commit_sha})")
             return result_lines
@@ -573,9 +572,8 @@ class ChangelogUtils:
         commit_link = f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})"
         if len(commit_link) <= max_line_length:
             return [f"- **{escaped_title}**", commit_link]
-        else:
-            # Very short limit - split commit link too
-            return [f"- **{escaped_title}**", f"  [`{commit_sha}`]", f"  ({repo_url}/commit/{commit_sha})"]
+        # Very short limit - split commit link too
+        return [f"- **{escaped_title}**", f"  [`{commit_sha}`]", f"  ({repo_url}/commit/{commit_sha})"]
 
     @staticmethod
     def _format_entry_body(body_lines: list[str], max_line_length: int) -> list[str]:

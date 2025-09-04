@@ -135,20 +135,6 @@ Memory allocation profiling and testing utilities for tracking memory usage patt
 cargo test --test allocation_api --features count-allocations
 ```
 
-#### `bench_util_test.rs`
-
-Tests for benchmark utility functions, ensuring the reliability of performance-measurement utilities used throughout the project.
-
-**Coverage:**
-
-- Benchmark utility validation
-- Performance measurement accuracy
-- Test data generation consistency
-
-**Run with:** `cargo test --test bench_util_test`
-
-[View source](./bench_util_test.rs)
-
 ## Running Tests
 
 ### All Integration Tests
