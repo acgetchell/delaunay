@@ -17,15 +17,10 @@
 #![allow(missing_docs)] // Criterion macros generate undocumented functions
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::geometry::util::generate_random_points;
 use delaunay::prelude::*;
 use delaunay::{cell, vertex};
 use std::hint::black_box;
-
-mod util;
-use util::{
-    clear_all_neighbors, generate_random_points_2d, generate_random_points_3d,
-    generate_random_points_4d, generate_random_points_5d,
-};
 
 /// Macro to generate comprehensive dimensional benchmarks for core algorithms
 macro_rules! generate_dimensional_benchmarks {
@@ -48,7 +43,7 @@ macro_rules! generate_dimensional_benchmarks {
                         |b, &n_points| {
                             b.iter_with_setup(
                                 || {
-                                    let points = [<generate_random_points_ $dim d>](n_points);
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                                     points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                                 },
                                 |vertices| black_box(Tds::<f64, (), (), $dim>::new(&vertices).unwrap()),
@@ -77,11 +72,11 @@ macro_rules! generate_dimensional_benchmarks {
                         |b, &n_points| {
                             b.iter_with_setup(
                                 || {
-                                    let points = [<generate_random_points_ $dim d>](n_points);
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                                     let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
                                     // Clear existing neighbors to benchmark the assignment process
-                                    clear_all_neighbors(&mut tds);
+                                    tds.clear_all_neighbors();
                                     tds
                                 },
                                 |mut tds| {
@@ -114,7 +109,7 @@ macro_rules! generate_dimensional_benchmarks {
                         |b, &n_points| {
                             b.iter_with_setup(
                                 || {
-                                    let points = [<generate_random_points_ $dim d>](n_points);
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                                     let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
@@ -124,7 +119,10 @@ macro_rules! generate_dimensional_benchmarks {
                                         // Create a few duplicate cells
                                         for _ in 0..3 {
                                             let duplicate_cell = cell!(cell_vertices[0..($dim + 1)].to_vec());
-                                            tds.cells_mut().insert(duplicate_cell);
+                                            let cell_key = tds.cells_mut().insert(duplicate_cell);
+                                            let cell_uuid = tds.cells_mut()[cell_key].uuid();
+                                            // Note: Intentionally not updating bimap to create true duplicates for testing
+                                            let _ = cell_uuid; // Suppress unused variable warning
                                         }
                                     }
                                     tds
@@ -195,7 +193,7 @@ macro_rules! generate_memory_usage_benchmarks {
                         |b, &n_points| {
                             b.iter(|| {
                                 // Measure complete triangulation creation and destruction
-                                let points = [<generate_random_points_ $dim d>](n_points);
+                                let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                                 let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
                                 black_box((tds.number_of_vertices(), tds.number_of_cells()))
@@ -242,7 +240,7 @@ macro_rules! generate_validation_benchmarks {
                         |b, &n_points| {
                             b.iter_with_setup(
                                 || {
-                                    let points = [<generate_random_points_ $dim d>](n_points);
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                                     Tds::<f64, (), (), $dim>::new(&vertices).unwrap()
                                 },
@@ -261,7 +259,7 @@ macro_rules! generate_validation_benchmarks {
             /// Benchmark individual validation components for [<$dim>]D
             fn [<benchmark_validation_components_ $dim d>](c: &mut Criterion) {
                 let n_points = if $dim <= 3 { 50 } else { 25 }; // Fixed size for component benchmarks
-                let points = [<generate_random_points_ $dim d>](n_points);
+                let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                 let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
@@ -357,7 +355,7 @@ macro_rules! generate_incremental_construction_benchmarks {
                             b.iter_with_setup(
                                 || {
                                     let tds = Tds::<f64, (), (), $dim>::new(&initial_vertices).unwrap();
-                                    let additional_points = [<generate_random_points_ $dim d>](count);
+                                    let additional_points: Vec<Point<f64, $dim>> = generate_random_points(count, (-100.0, 100.0)).unwrap();
                                     let additional_vertices: Vec<_> =
                                         additional_points.iter().map(|p| vertex!(*p)).collect();
                                     (tds, additional_vertices)

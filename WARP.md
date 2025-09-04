@@ -18,7 +18,10 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **ALLOWED** to fix auto-fixable issues (formatting, linting, etc.)
 - This includes: `cargo fmt`, `cargo clippy`, `uvx ruff format`, `uvx ruff check --fix`, `markdownlint --fix`, `shfmt`, etc.
 - Quality tools improve code without changing functionality or version control state
-- **IMPORTANT**: Benchmark files (in `benches/` directory) are Rust code and must follow the same quality standards as core library code
+- **DO NOT** use scripts or automated tools (like `sed`, `awk`) to perform code edits or refactoring—only use them for checks and formatting
+- **PREFERRED**: Interactive code editing using the `edit_files` tool for precise, reviewed changes
+- **IMPORTANT**: Benchmark files (in `benches/`) are Rust code and must follow the same quality standards as core library code
+  (e.g., `cargo clippy --benches -D warnings`)
 
 #### JSON File Validation (AI Assistant Guidance)
 
@@ -82,12 +85,14 @@ Run these commands after making changes to ensure code quality (the assistant mu
 **Note**: When asked to run code quality checks on "changed files", use `git status --porcelain` to identify which files have been
 modified, added, or staged, and then focus the quality tools on those specific files.
 
-**CRITICAL**: Always run spell check when any files are changed or added - this includes code files, not just documentation.
-
 ```bash
 # Rust code formatting and linting (includes src/, tests/, benches/, examples/)
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+
+# Rust documentation validation (required for crates.io publishing)
+# NOTE: Documentation failures will prevent publishing to crates.io
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 # Python code quality (for scripts/ directory)
 uvx ruff check --select F401,F403,I001,I002 --fix scripts/
@@ -128,7 +133,7 @@ cargo bench --no-run
 # Documentation validation (required for crates.io publishing)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
-# Run all examples
+# Run all examples (validates functionality)
 chmod +x scripts/run_all_examples.sh && ./scripts/run_all_examples.sh
 
 # Python utility testing (if Python scripts modified)
@@ -168,6 +173,10 @@ The `delaunay` library implements d-dimensional Delaunay triangulations in Rust,
 - **Published to**: crates.io (documentation build failures will prevent publishing)
 - **CI**: GitHub Actions with strict quality requirements (clippy pedantic mode, rustfmt, no security vulnerabilities)
 - **Architecture**: Generic design with `T: CoordinateScalar`, `U: DataType` for vertex data, `V: DataType` for cell data, `const D: usize` for dimensionality
+- **Core Modules**:
+  - `src/core/` - Triangulation data structures (Tds, Cell, Vertex, Facet) and Bowyer-Watson algorithms
+  - `src/geometry/` - Geometric predicates, Point abstraction, and convex hull algorithms
+- **Key Features**: Arbitrary dimensions (tested 2D-5D), generic coordinate types (f32/f64), serialization/deserialization, convex hull extraction
 
 ## Ongoing Projects
 
@@ -225,6 +234,9 @@ These items are incomplete and may require future attention:
   - `cargo test --lib --verbose`
   - `cargo test --doc --verbose`
   - `cargo test --examples --verbose`
+- **FOR ANY** Rust code changes → **MUST** validate documentation:
+  - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` (critical for crates.io publishing)
+- **IMPORTANT**: For allocation testing, use `cargo test --test allocation_api --features count-allocations`
 - **PURPOSE**: Ensures appropriate validation for the type of code changes made
 
 ### Integration Testing Patterns
@@ -233,6 +245,11 @@ These items are incomplete and may require future attention:
 - **Performance Tests**: Always run integration tests in `--release` mode for accurate performance measurements
 - **Test Categories**: Organize tests by purpose: debugging tools (`*_debug_tools.rs`), integration (`*_integration.rs`), regression (`*_error.rs`), comparison (`*_comparison.rs`)
 - **Test Documentation**: Each test file should have clear module documentation explaining purpose, usage, and test coverage
+- **Specialized Tests**: Available integration tests include:
+  - `circumsphere_debug_tools.rs` - Interactive debugging across dimensions (2D-4D)
+  - `robust_predicates_comparison.rs` - Numerical accuracy testing
+  - `convex_hull_bowyer_watson_integration.rs` - Algorithm integration testing
+  - `allocation_api.rs` - Memory allocation profiling (requires `count-allocations` feature)
 
 ### Testing Best Practices
 

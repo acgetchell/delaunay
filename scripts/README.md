@@ -401,13 +401,12 @@ uv run benchmark-utils generate-baseline
 uv run benchmark-utils compare --baseline benches/baseline_results.txt
 ```
 
-**CI Performance Suite**: The benchmark utilities now use `benches/ci_performance_suite.rs` for optimized
-CI/CD performance testing:
+**CI Performance Suite**: The benchmark utilities now use `benches/ci_performance_suite.rs` for CI/CD-optimized performance testing:
 
-- **Dimensions**: Tests 2D, 3D, 4D, and 5D triangulations (comprehensive coverage)
-- **Point counts**: [10, 25, 50] points (optimized for CI runtime)
-- **Runtime**: ~5-10 minutes for comprehensive regression detection
-- **Coverage**: Core triangulation performance across all supported dimensions
+- **Dimensions**: 2D, 3D, 4D, and 5D triangulations.
+- **Point counts**: [10, 25, 50].
+- **Runtime**: ~5–10 minutes.
+- **Coverage**: Core triangulation performance across all supported dimensions.
 
 **Migration Notes**:
 

@@ -15,18 +15,18 @@ cargo bench --bench circumsphere_containment
 cargo bench --bench circumsphere_containment -- --test
 ```
 
-### CI Performance Suite (Primary)
+### CI Performance Suite (primary)
 
 ```bash
 # Run CI performance suite benchmarks for 2D, 3D, 4D, and 5D (optimized for CI)
 cargo bench --bench ci_performance_suite
 ```
 
-**CI Performance Suite** is the primary benchmarking suite used for automated performance regression testing:
+The CI Performance Suite is the primary benchmarking suite used for automated performance-regression testing:
 
-- **Dimensions**: 2D, 3D, 4D, 5D triangulations (comprehensive coverage of all supported dimensions)
-- **Point counts**: [10, 25, 50] points per dimension
-- **Runtime**: ~5-10 minutes for comprehensive regression detection
+- **Dimensions**: 2D–5D triangulations
+- **Point counts**: 10, 25, 50 per dimension
+- **Runtime**: ~5–10 minutes (hardware dependent)
 - **Integration**: Used by GitHub Actions for automated baseline generation and comparison
 
 ### All Benchmarks

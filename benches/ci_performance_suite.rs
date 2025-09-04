@@ -20,75 +20,40 @@
 #![allow(missing_docs)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::geometry::util::generate_random_points;
 use delaunay::prelude::*;
 use delaunay::vertex;
-use rand::Rng;
 use std::hint::black_box;
+
+/// Common sample sizes used across all CI performance benchmarks
+const COUNTS: &[usize] = &[10, 25, 50];
 
 /// Generate random 2D points for benchmarking
 fn generate_points_2d(count: usize) -> Vec<Point<f64, 2>> {
-    let mut rng = rand::rng();
-    (0..count)
-        .map(|_| {
-            Point::new([
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-            ])
-        })
-        .collect()
+    generate_random_points(count, (-100.0, 100.0)).unwrap()
 }
 
 /// Generate random 3D points for benchmarking
 fn generate_points_3d(count: usize) -> Vec<Point<f64, 3>> {
-    let mut rng = rand::rng();
-    (0..count)
-        .map(|_| {
-            Point::new([
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-            ])
-        })
-        .collect()
+    generate_random_points(count, (-100.0, 100.0)).unwrap()
 }
 
 /// Generate random 4D points for benchmarking
 fn generate_points_4d(count: usize) -> Vec<Point<f64, 4>> {
-    let mut rng = rand::rng();
-    (0..count)
-        .map(|_| {
-            Point::new([
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-            ])
-        })
-        .collect()
+    generate_random_points(count, (-100.0, 100.0)).unwrap()
 }
 
 /// Generate random 5D points for benchmarking
 fn generate_points_5d(count: usize) -> Vec<Point<f64, 5>> {
-    let mut rng = rand::rng();
-    (0..count)
-        .map(|_| {
-            Point::new([
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-            ])
-        })
-        .collect()
+    generate_random_points(count, (-100.0, 100.0)).unwrap()
 }
 
 /// Benchmark `Tds::new` for 2D triangulations
 fn benchmark_tds_new_2d(c: &mut Criterion) {
-    let counts = [10, 25, 50];
+    let counts = COUNTS;
     let mut group = c.benchmark_group("tds_new_2d");
 
-    for &count in &counts {
+    for &count in counts {
         group.throughput(Throughput::Elements(count as u64));
 
         group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
@@ -109,10 +74,10 @@ fn benchmark_tds_new_2d(c: &mut Criterion) {
 
 /// Benchmark `Tds::new` for 3D triangulations
 fn benchmark_tds_new_3d(c: &mut Criterion) {
-    let counts = [10, 25, 50];
+    let counts = COUNTS;
     let mut group = c.benchmark_group("tds_new_3d");
 
-    for &count in &counts {
+    for &count in counts {
         group.throughput(Throughput::Elements(count as u64));
 
         group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
@@ -133,10 +98,10 @@ fn benchmark_tds_new_3d(c: &mut Criterion) {
 
 /// Benchmark `Tds::new` for 4D triangulations
 fn benchmark_tds_new_4d(c: &mut Criterion) {
-    let counts = [10, 25, 50];
+    let counts = COUNTS;
     let mut group = c.benchmark_group("tds_new_4d");
 
-    for &count in &counts {
+    for &count in counts {
         group.throughput(Throughput::Elements(count as u64));
 
         group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
@@ -157,10 +122,10 @@ fn benchmark_tds_new_4d(c: &mut Criterion) {
 
 /// Benchmark `Tds::new` for 5D triangulations
 fn benchmark_tds_new_5d(c: &mut Criterion) {
-    let counts = [10, 25, 50];
+    let counts = COUNTS;
     let mut group = c.benchmark_group("tds_new_5d");
 
-    for &count in &counts {
+    for &count in counts {
         group.throughput(Throughput::Elements(count as u64));
 
         group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {

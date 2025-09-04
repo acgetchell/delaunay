@@ -196,19 +196,10 @@ class TestCriterionParser:
         # Sort using the same logic as the actual function (by dimension, then points)
         ci_suite_results.sort(key=lambda x: (int(x.dimension.rstrip("D")), x.points))
 
-        # Verify CI performance suite sorting order: 2D < 3D < 4D < 5D, then by points within dimension
-        assert ci_suite_results[0].dimension == "2D" and ci_suite_results[0].points == 10
-        assert ci_suite_results[1].dimension == "2D" and ci_suite_results[1].points == 25
-        assert ci_suite_results[2].dimension == "2D" and ci_suite_results[2].points == 50
-        assert ci_suite_results[3].dimension == "3D" and ci_suite_results[3].points == 10
-        assert ci_suite_results[4].dimension == "3D" and ci_suite_results[4].points == 25
-        assert ci_suite_results[5].dimension == "3D" and ci_suite_results[5].points == 50
-        assert ci_suite_results[6].dimension == "4D" and ci_suite_results[6].points == 10
-        assert ci_suite_results[7].dimension == "4D" and ci_suite_results[7].points == 25
-        assert ci_suite_results[8].dimension == "4D" and ci_suite_results[8].points == 50
-        assert ci_suite_results[9].dimension == "5D" and ci_suite_results[9].points == 10
-        assert ci_suite_results[10].dimension == "5D" and ci_suite_results[10].points == 25
-        assert ci_suite_results[11].dimension == "5D" and ci_suite_results[11].points == 50
+        # Verify sorting order: 2D..5D, then 10,25,50 within each dimension
+        expected_order = [(d, p) for d in ("2D", "3D", "4D", "5D") for p in (10, 25, 50)]
+        actual_order = [(b.dimension, b.points) for b in ci_suite_results]
+        assert actual_order == expected_order
 
 
 class TestPerformanceComparator:

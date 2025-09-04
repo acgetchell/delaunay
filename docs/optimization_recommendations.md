@@ -706,7 +706,7 @@ cargo bench --bench microbenchmarks validation_components/validate_vertex_mappin
 
 The project also includes specialized benchmark suites:
 
-- **`ci_performance_suite.rs`** - Primary CI benchmark for performance regression detection (2D/3D/4D/5D scaling)
+- **[`ci_performance_suite.rs`](../benches/ci_performance_suite.rs)** - Primary CI benchmark for performance regression detection (2D–5D scaling)
 - **`circumsphere_containment.rs`** - Geometric predicate performance across dimensions
 - **`assign_neighbors_performance.rs`** - Detailed neighbor assignment analysis
 - **`triangulation_creation.rs`** - High-volume triangulation creation (1000+ vertices)
