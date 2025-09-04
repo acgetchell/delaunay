@@ -21,7 +21,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **DO NOT** use scripts or automated tools (like `sed`, `awk`) to perform code edits or refactoring—only use them for checks and formatting
 - **PREFERRED**: Interactive code editing using the `edit_files` tool for precise, reviewed changes
 - **IMPORTANT**: Benchmark files (in `benches/`) are Rust code and must follow the same quality standards as core library code
-  (e.g., `cargo clippy --benches -D warnings`)
+  (e.g., `cargo clippy --benches -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo`)
 
 #### JSON File Validation (AI Assistant Guidance)
 
@@ -38,7 +38,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **REQUIRED** when adding or modifying any files to ensure proper spelling throughout the project
 - **IF** cspell reports legitimate technical terms, programming keywords, or project-specific terminology as misspelled, add them to the `words` array in `cspell.json`
 - **EXAMPLES**: Python terms (`kwargs`, `args`, `asyncio`), Rust terms (`usize`, `clippy`, `rustc`), technical terms (`triangulation`, `circumsphere`, `delaunay`),
-  project names (`nalgebra`, `serde`, `thiserror`), crate names (`pastey`)
+  project/crate names (e.g., `nalgebra`, `serde`, `thiserror`, `pastey`)
 - **PURPOSE**: Maintains a clean spell-check while building a comprehensive project dictionary
 - Prefer `ignorePaths` for generated files (e.g., build artifacts) instead of adding their tokens to `words`.
 
@@ -96,8 +96,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 # Python code quality (for scripts/ directory)
-uvx ruff check --fix scripts/
-uvx ruff format scripts/
+# See "Import Organization (AI Assistant Guidance)" section for detailed ruff usage
 
 # Shell script formatting and linting (path-safe)
 git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -w
@@ -131,11 +130,8 @@ cargo test --test circumsphere_debug_tools -- --nocapture  # Debug tools with ou
 # Benchmarks
 cargo bench --workspace --no-run
 
-# Documentation validation (required for crates.io publishing)
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-
 # Run all examples (validates functionality)
-chmod +x scripts/run_all_examples.sh && ./scripts/run_all_examples.sh
+bash scripts/run_all_examples.sh
 
 # Python utility testing (if Python scripts modified)
 uv run pytest
@@ -228,7 +224,7 @@ These items are incomplete and may require future attention:
   - `cargo test --release` (for performance)
   - `cargo test --test circumsphere_debug_tools -- --nocapture` (for debug output)
 - **IF** Rust code changed in `examples/` directory → **MUST** run examples validation:
-  - `chmod +x scripts/run_all_examples.sh && ./scripts/run_all_examples.sh`
+  - `bash scripts/run_all_examples.sh`
 - **IF** Rust code changed in `benches/` directory → **MUST** run benchmark verification:
   - `cargo bench --no-run` (verifies benchmarks compile without executing them)
 - **IF** other Rust code changed (`src/`, etc.) → **MUST** run standard Rust tests:
@@ -249,7 +245,10 @@ These items are incomplete and may require future attention:
 - **Specialized Tests**: Available integration tests include:
   - `circumsphere_debug_tools.rs` - Interactive debugging across dimensions (2D-4D)
   - `robust_predicates_comparison.rs` - Numerical accuracy testing
+  - `robust_predicates_showcase.rs` - Focused showcase of robust predicates solving degenerate cases
   - `convex_hull_bowyer_watson_integration.rs` - Algorithm integration testing
+  - `coordinate_conversion_errors.rs` - Error handling tests for extreme values, NaN, infinity
+  - `test_cavity_boundary_error.rs` - Reproduction tests for cavity boundary facet errors
   - `allocation_api.rs` - Memory allocation profiling (requires `count-allocations` feature)
 
 ### Testing Best Practices

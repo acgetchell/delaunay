@@ -148,12 +148,10 @@ class TestChangelogUtils:
         limit = ChangelogUtils.get_markdown_line_limit()
         assert limit == 160  # Default value
 
-    @patch("builtins.open", new_callable=mock_open)
-    def test_get_markdown_line_limit_invalid_config(self, mock_file):
+    @patch("changelog_utils.json.load", side_effect=json.JSONDecodeError("Invalid JSON", "", 0))
+    def test_get_markdown_line_limit_invalid_config(self, _mock_json_load):  # noqa: PT019
         """Test markdown line limit with invalid JSON config."""
-        mock_file.return_value.read.side_effect = json.JSONDecodeError("Invalid JSON", "", 0)
-
-        with patch("pathlib.Path.exists", return_value=True):
+        with patch("pathlib.Path.exists", return_value=True), patch("pathlib.Path.open", mock_open(read_data="{}")):
             limit = ChangelogUtils.get_markdown_line_limit()
             assert limit == 160  # Should fall back to default
 
