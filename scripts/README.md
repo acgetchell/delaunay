@@ -391,8 +391,8 @@ gh release create vX.Y.Z --notes-from-tag
 ### Manual Benchmark Analysis
 
 ```bash
-# 1. Run benchmarks directly
-cargo bench --bench small_scale_triangulation
+# 1. Run benchmarks directly (CI performance suite)
+cargo bench --bench ci_performance_suite
 
 # 2. Generate new baseline
 uv run benchmark-utils generate-baseline
@@ -400,6 +400,19 @@ uv run benchmark-utils generate-baseline
 # 3. Compare against previous baseline
 uv run benchmark-utils compare --baseline benches/baseline_results.txt
 ```
+
+**CI Performance Suite**: The benchmark utilities now use `benches/ci_performance_suite.rs` for CI/CD-optimized performance testing:
+
+- **Dimensions**: 2D, 3D, 4D, and 5D triangulations.
+- **Point counts**: [10, 25, 50].
+- **Runtime**: ~5–10 minutes.
+- **Coverage**: Core triangulation performance across all supported dimensions.
+
+**Migration Notes**:
+
+- The CI performance suite now includes 2D triangulations for comprehensive coverage
+- Existing baselines remain compatible as the CI suite maintains the same benchmark format
+- Development workflow unchanged - use `--dev` flag for fast iteration
 
 ### Continuous Integration
 

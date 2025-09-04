@@ -1397,6 +1397,55 @@ where
         Ok(())
     }
 
+    /// Clears all neighbor relationships between cells in the triangulation.
+    ///
+    /// This method removes all neighbor relationships by setting the `neighbors` field
+    /// to `None` for every cell in the triangulation. This is useful for:
+    /// - Benchmarking neighbor assignment in isolation
+    /// - Testing triangulations in a known state without neighbors
+    /// - Debugging neighbor-related algorithms
+    /// - Implementing custom neighbor assignment algorithms
+    ///
+    /// This is the inverse operation of [`assign_neighbors`](Self::assign_neighbors),
+    /// and is commonly used in benchmarks and testing scenarios where you want to
+    /// measure the performance of neighbor assignment starting from a clean state.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// // Initially has neighbors assigned during construction
+    /// tds.assign_neighbors().unwrap();
+    ///
+    /// // Clear all neighbor relationships
+    /// tds.clear_all_neighbors();
+    ///
+    /// // All cells now have neighbors = None
+    /// for cell in tds.cells().values() {
+    ///     assert!(cell.neighbors.is_none());
+    /// }
+    ///
+    /// // Can reassign neighbors later
+    /// tds.assign_neighbors().unwrap();
+    /// ```
+    #[inline]
+    pub fn clear_all_neighbors(&mut self) {
+        for cell in self.cells.values_mut() {
+            cell.clear_neighbors();
+        }
+    }
+
     /// Assigns incident cells to vertices in the triangulation.
     ///
     /// This method establishes a mapping from each vertex to one of the cells that contains it,
@@ -3866,6 +3915,8 @@ mod tests {
 
     // =============================================================================
     // VALIDATION TESTS
+    // =============================================================================
+
     #[test]
     fn test_assign_neighbors_edge_cases() {
         // Edge case: Degenerate case with no neighbors expected
@@ -5575,6 +5626,68 @@ mod tests {
         );
 
         println!("✓ After fixing facet sharing, is_valid() passes validation");
+    }
+
+    #[test]
+    fn test_clear_all_neighbors() {
+        // Create a triangulation with multiple cells to test neighbor clearing
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+            Point::new([1.0, 1.0, 0.0]),
+            Point::new([0.5, 0.5, 0.5]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        // Ensure neighbors are assigned
+        tds.assign_neighbors().unwrap();
+
+        // Verify at least one cell has neighbors (if we have multiple cells)
+        let has_neighbors_before = tds.cells.values().any(|cell| cell.neighbors.is_some());
+
+        if tds.number_of_cells() > 1 {
+            assert!(
+                has_neighbors_before,
+                "At least one cell should have neighbors before clearing"
+            );
+        }
+
+        // Clear all neighbor relationships
+        tds.clear_all_neighbors();
+
+        // Verify ALL cells have neighbors = None
+        for cell in tds.cells.values() {
+            assert!(
+                cell.neighbors.is_none(),
+                "All cells should have neighbors=None after clearing"
+            );
+        }
+
+        println!(
+            "✓ Successfully cleared all neighbor relationships in triangulation with {} cells",
+            tds.number_of_cells()
+        );
+    }
+
+    #[test]
+    fn test_clear_all_neighbors_empty_triangulation() {
+        // Create an empty triangulation
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Call clear_all_neighbors on empty triangulation (shouldn't panic)
+        tds.clear_all_neighbors();
+
+        // Verify there are no cells (nothing to check for neighbors)
+        assert_eq!(
+            tds.number_of_cells(),
+            0,
+            "Empty triangulation should have no cells"
+        );
+
+        println!("✓ Successfully handled clear_all_neighbors on empty triangulation");
     }
 
     #[test]

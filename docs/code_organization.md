@@ -55,21 +55,21 @@ delaunay/
 │   ├── README.md                                 # Examples documentation
 │   ├── convex_hull_3d_50_points.rs               # 3D convex hull extraction and analysis example
 │   ├── into_from_conversions.rs                  # Into/From trait conversion examples
+│   ├── memory_analysis.rs                        # Memory usage analysis example
 │   ├── point_comparison_and_hashing.rs           # Point operations examples
 │   └── triangulation_3d_50_points.rs             # 3D triangulation example
 ├── benches/                                      # Performance benchmarks
 │   ├── README.md                                 # Benchmarking guide and performance results
 │   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
-│   ├── baseline_results.txt                      # Performance baseline data
+│   ├── ci_performance_suite.rs                   # CI-optimized performance suite (2D-5D regression testing)
 │   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
-│   ├── helpers.rs                                # Benchmark helper functions
+│   ├── memory_scaling.rs                         # Memory usage scaling benchmarks
 │   ├── microbenchmarks.rs                        # Fine-grained performance tests
-│   ├── small_scale_triangulation.rs              # Small triangulation benchmarks
-│   └── triangulation_creation.rs                 # Triangulation creation benchmarks
+│   ├── triangulation_creation.rs                 # Triangulation creation benchmarks
+│   └── triangulation_vs_hull_memory.rs           # Memory comparison benchmarks
 ├── tests/                                        # Integration tests
 │   ├── README.md                                 # Integration tests guide and usage instructions
 │   ├── allocation_api.rs                         # Memory allocation profiling and testing utilities
-│   ├── bench_helpers_test.rs                     # Tests for benchmark helper functions
 │   ├── circumsphere_debug_tools.rs               # Interactive circumsphere testing and debugging utilities
 │   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
 │   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
@@ -119,6 +119,7 @@ delaunay/
 ├── .python-version                               # Python version specification for performance requirements
 ├── .semgrep.yaml                                 # Semgrep static analysis configuration for security and code quality
 ├── .yamllint                                     # YAML linting configuration
+├── clippy.toml                                   # Clippy configuration for additional linting rules
 ├── CHANGELOG.md                                  # Version history with enhanced squashed PR support
 ├── CITATION.cff                                  # Citation metadata for academic use
 ├── CODE_OF_CONDUCT.md                            # Community guidelines
@@ -169,7 +170,7 @@ cargo test --test circumsphere_debug_tools -- --nocapture
 #### Development Infrastructure
 
 - **`examples/`** - Usage demonstrations and trait examples
-- **`benches/`** - Performance benchmarks with automated baseline management
+- **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage)
 - **`tests/`** - Integration tests, debugging utilities, and regression testing
 - **`docs/`** - Architecture guides, performance documentation, and templates
 - **`scripts/`** - Python utilities for automation and CI integration

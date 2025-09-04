@@ -17,321 +17,427 @@
 #![allow(missing_docs)] // Criterion macros generate undocumented functions
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::geometry::util::generate_random_points;
 use delaunay::prelude::*;
 use delaunay::{cell, vertex};
-use rand::Rng;
 use std::hint::black_box;
 
-mod helpers;
-use helpers::clear_all_neighbors;
+/// Macro to generate comprehensive dimensional benchmarks for core algorithms
+macro_rules! generate_dimensional_benchmarks {
+    ($dim:literal) => {
+        pastey::paste! {
+            /// Benchmark Bowyer-Watson triangulation for [<$dim>]D
+            fn [<benchmark_bowyer_watson_triangulation_ $dim d>](c: &mut Criterion) {
+                let point_counts = [10, 25, 50, 100, 250];
 
-/// Creates random points for benchmarking
-fn generate_random_points(n_points: usize) -> Vec<Point<f64, 3>> {
-    let mut rng = rand::rng();
-    (0..n_points)
-        .map(|_| {
-            Point::new([
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-            ])
-        })
-        .collect()
+                let mut group = c.benchmark_group(concat!("bowyer_watson_triangulation_", stringify!([<$dim>]), "d"));
+
+                for &n_points in &point_counts {
+                    #[allow(clippy::cast_sign_loss)]
+                    let throughput = n_points as u64;
+                    group.throughput(Throughput::Elements(throughput));
+
+                    group.bench_with_input(
+                        BenchmarkId::new("tds_new", n_points),
+                        &n_points,
+                        |b, &n_points| {
+                            b.iter_with_setup(
+                                || {
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                    points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
+                                },
+                                |vertices| black_box(Tds::<f64, (), (), $dim>::new(&vertices).unwrap()),
+                            );
+                        },
+                    );
+                }
+
+                group.finish();
+            }
+
+            /// Benchmark `assign_neighbors` for [<$dim>]D
+            fn [<benchmark_assign_neighbors_ $dim d>](c: &mut Criterion) {
+                let point_counts = [10, 25, 50, 100];
+
+                let mut group = c.benchmark_group(concat!("assign_neighbors_", stringify!([<$dim>]), "d"));
+
+                for &n_points in &point_counts {
+                    #[allow(clippy::cast_sign_loss)]
+                    let throughput = n_points as u64;
+                    group.throughput(Throughput::Elements(throughput));
+
+                    group.bench_with_input(
+                        BenchmarkId::new("assign_neighbors", n_points),
+                        &n_points,
+                        |b, &n_points| {
+                            b.iter_with_setup(
+                                || {
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                    let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                    let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
+                                    // Clear existing neighbors to benchmark the assignment process
+                                    tds.clear_all_neighbors();
+                                    tds
+                                },
+                                |mut tds| {
+                                    tds.assign_neighbors()
+                                        .expect("assign_neighbors failed");
+                                    black_box(tds);
+                                },
+                            );
+                        },
+                    );
+                }
+
+                group.finish();
+            }
+
+            /// Benchmark `remove_duplicate_cells` for [<$dim>]D
+            fn [<benchmark_remove_duplicate_cells_ $dim d>](c: &mut Criterion) {
+                let point_counts = [10, 25, 50, 100];
+
+                let mut group = c.benchmark_group(concat!("remove_duplicate_cells_", stringify!([<$dim>]), "d"));
+
+                for &n_points in &point_counts {
+                    #[allow(clippy::cast_sign_loss)]
+                    let throughput = n_points as u64;
+                    group.throughput(Throughput::Elements(throughput));
+
+                    group.bench_with_input(
+                        BenchmarkId::new("remove_duplicate_cells", n_points),
+                        &n_points,
+                        |b, &n_points| {
+                            b.iter_with_setup(
+                                || {
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                    let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                    let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
+
+                                    // Add some duplicate cells to make the benchmark meaningful
+                                    let cell_vertices: Vec<_> = tds.vertices.values().copied().collect();
+                                    if cell_vertices.len() >= ($dim + 1) {
+                                        // Create a few duplicate cells
+                                        for _ in 0..3 {
+                                            let duplicate_cell = cell!(cell_vertices[0..($dim + 1)].to_vec());
+                                            let cell_key = tds.cells_mut().insert(duplicate_cell);
+                                            let cell_uuid = tds.cells_mut()[cell_key].uuid();
+                                            // Note: Intentionally not updating bimap to create true duplicates for testing
+                                            let _ = cell_uuid; // Suppress unused variable warning
+                                        }
+                                    }
+                                    tds
+                                },
+                                |mut tds| {
+                                    let removed = tds.remove_duplicate_cells();
+                                    black_box((tds, removed));
+                                },
+                            );
+                        },
+                    );
+                }
+
+                group.finish();
+            }
+        }
+    };
 }
 
-/// Benchmark the complete Bowyer-Watson triangulation process via `Tds::new`
+// Generate comprehensive benchmarks for dimensions 2-5
+generate_dimensional_benchmarks!(2);
+generate_dimensional_benchmarks!(3);
+generate_dimensional_benchmarks!(4);
+generate_dimensional_benchmarks!(5);
+
+// Legacy 3D benchmark function for backward compatibility
 fn benchmark_bowyer_watson_triangulation(c: &mut Criterion) {
-    let point_counts = [10, 25, 50, 100, 250];
-
-    let mut group = c.benchmark_group("bowyer_watson_triangulation");
-
-    for &n_points in &point_counts {
-        #[allow(clippy::cast_sign_loss)]
-        let throughput = n_points as u64;
-        group.throughput(Throughput::Elements(throughput));
-
-        group.bench_with_input(
-            BenchmarkId::new("tds_new", n_points),
-            &n_points,
-            |b, &n_points| {
-                b.iter_with_setup(
-                    || {
-                        let points = generate_random_points(n_points);
-                        points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
-                    },
-                    |vertices| black_box(Tds::<f64, (), (), 3>::new(&vertices).unwrap()),
-                );
-            },
-        );
-    }
-
-    group.finish();
+    benchmark_bowyer_watson_triangulation_3d(c);
 }
 
-/// Benchmark the `assign_neighbors` method specifically
+// Legacy 3D benchmark function for backward compatibility
 fn benchmark_assign_neighbors(c: &mut Criterion) {
-    let point_counts = [10, 25, 50, 100];
-
-    let mut group = c.benchmark_group("assign_neighbors");
-
-    for &n_points in &point_counts {
-        #[allow(clippy::cast_sign_loss)]
-        let throughput = n_points as u64;
-        group.throughput(Throughput::Elements(throughput));
-
-        group.bench_with_input(
-            BenchmarkId::new("assign_neighbors", n_points),
-            &n_points,
-            |b, &n_points| {
-                b.iter_with_setup(
-                    || {
-                        let points = generate_random_points(n_points);
-                        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
-                        // Clear existing neighbors to benchmark the assignment process
-                        clear_all_neighbors(&mut tds);
-                        tds
-                    },
-                    |mut tds| {
-                        tds.assign_neighbors()
-                            .expect("assign_neighbors failed in benchmark_assign_neighbors");
-                        black_box(tds);
-                    },
-                );
-            },
-        );
-    }
-
-    group.finish();
+    benchmark_assign_neighbors_3d(c);
 }
 
-/// Benchmark the `remove_duplicate_cells` method
+// Legacy 3D benchmark function for backward compatibility
 fn benchmark_remove_duplicate_cells(c: &mut Criterion) {
-    let point_counts = [10, 25, 50, 100];
-
-    let mut group = c.benchmark_group("remove_duplicate_cells");
-
-    for &n_points in &point_counts {
-        #[allow(clippy::cast_sign_loss)]
-        let throughput = n_points as u64;
-        group.throughput(Throughput::Elements(throughput));
-
-        group.bench_with_input(
-            BenchmarkId::new("remove_duplicate_cells", n_points),
-            &n_points,
-            |b, &n_points| {
-                b.iter_with_setup(
-                    || {
-                        let points = generate_random_points(n_points);
-                        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
-
-                        // Add some duplicate cells to make the benchmark meaningful
-                        // Note: these duplicates mimic those generated by the
-                        // Bowyer-Watson algorithm (e.g. during supercell removal)
-                        let cell_vertices: Vec<_> = tds.vertices.values().copied().collect();
-                        if cell_vertices.len() >= 4 {
-                            // Create a few duplicate cells
-                            for _ in 0..3 {
-                                let duplicate_cell = cell!(cell_vertices[0..4].to_vec());
-                                tds.cells_mut().insert(duplicate_cell);
-                            }
-                        }
-                        tds
-                    },
-                    |mut tds| {
-                        let removed = tds.remove_duplicate_cells();
-                        black_box((tds, removed));
-                    },
-                );
-            },
-        );
-    }
-
-    group.finish();
+    benchmark_remove_duplicate_cells_3d(c);
 }
 
-/// Benchmark 2D triangulations for comparison
+// Legacy dimensional benchmark functions for backward compatibility
 fn benchmark_2d_triangulation(c: &mut Criterion) {
-    let point_counts = [10, 25, 50, 100, 250];
-
-    let mut group = c.benchmark_group("2d_triangulation");
-
-    for &n_points in &point_counts {
-        #[allow(clippy::cast_sign_loss)]
-        let throughput = n_points as u64;
-        group.throughput(Throughput::Elements(throughput));
-
-        group.bench_with_input(
-            BenchmarkId::new("tds_new_2d", n_points),
-            &n_points,
-            |b, &n_points| {
-                b.iter_with_setup(
-                    || {
-                        let mut rng = rand::rng();
-                        let points: Vec<Point<f64, 2>> = (0..n_points)
-                            .map(|_| {
-                                Point::new([
-                                    rng.random_range(-100.0..100.0),
-                                    rng.random_range(-100.0..100.0),
-                                ])
-                            })
-                            .collect();
-                        points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
-                    },
-                    |vertices| black_box(Tds::<f64, (), (), 2>::new(&vertices).unwrap()),
-                );
-            },
-        );
-    }
-
-    group.finish();
+    benchmark_bowyer_watson_triangulation_2d(c);
 }
 
-/// Benchmark memory allocation patterns
+fn benchmark_4d_triangulation(c: &mut Criterion) {
+    benchmark_bowyer_watson_triangulation_4d(c);
+}
+
+fn benchmark_5d_triangulation(c: &mut Criterion) {
+    benchmark_bowyer_watson_triangulation_5d(c);
+}
+
+/// Macro to generate memory usage benchmarks for all dimensions
+macro_rules! generate_memory_usage_benchmarks {
+    ($dim:literal) => {
+        pastey::paste! {
+            /// Benchmark memory allocation patterns for [<$dim>]D
+            fn [<benchmark_memory_usage_ $dim d>](c: &mut Criterion) {
+                let point_counts: &[usize] = if $dim <= 3 { &[50, 100, 200] } else { &[20, 50, 100] };
+
+                let mut group = c.benchmark_group(&format!("memory_usage_{}d", $dim));
+
+                for &n_points in point_counts {
+                    group.bench_with_input(
+                        BenchmarkId::new("triangulation_memory", n_points),
+                        &n_points,
+                        |b, &n_points| {
+                            b.iter(|| {
+                                // Measure complete triangulation creation and destruction
+                                let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
+                                black_box((tds.number_of_vertices(), tds.number_of_cells()))
+                            });
+                        },
+                    );
+                }
+
+                group.finish();
+            }
+        }
+    };
+}
+
+// Generate memory usage benchmarks for dimensions 2-5
+generate_memory_usage_benchmarks!(2);
+generate_memory_usage_benchmarks!(3);
+generate_memory_usage_benchmarks!(4);
+generate_memory_usage_benchmarks!(5);
+
+// Legacy wrapper for backward compatibility
 fn benchmark_memory_usage(c: &mut Criterion) {
-    let point_counts = [50, 100, 200];
+    benchmark_memory_usage_3d(c);
+}
 
-    let mut group = c.benchmark_group("memory_usage");
+/// Macro to generate validation method benchmarks for all dimensions
+macro_rules! generate_validation_benchmarks {
+    ($dim:literal) => {
+        pastey::paste! {
+            /// Benchmark validation methods performance for [<$dim>]D
+            fn [<benchmark_validation_methods_ $dim d>](c: &mut Criterion) {
+                let point_counts: &[usize] = if $dim <= 3 { &[10, 25, 50, 100] } else { &[10, 25, 50] };
 
-    for &n_points in &point_counts {
-        group.bench_with_input(
-            BenchmarkId::new("triangulation_memory", n_points),
-            &n_points,
-            |b, &n_points| {
-                b.iter(|| {
-                    // Measure complete triangulation creation and destruction
-                    let points = generate_random_points(n_points);
-                    let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                    let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
-                    black_box((tds.number_of_vertices(), tds.number_of_cells()))
+                let mut group = c.benchmark_group(&format!("validation_methods_{}d", $dim));
+
+                for &n_points in point_counts {
+                    #[allow(clippy::cast_sign_loss)]
+                    let throughput = n_points as u64;
+                    group.throughput(Throughput::Elements(throughput));
+
+                    group.bench_with_input(
+                        BenchmarkId::new("is_valid", n_points),
+                        &n_points,
+                        |b, &n_points| {
+                            b.iter_with_setup(
+                                || {
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                    let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                    Tds::<f64, (), (), $dim>::new(&vertices).unwrap()
+                                },
+                                |tds| {
+                                    tds.is_valid().unwrap();
+                                    black_box(tds);
+                                },
+                            );
+                        },
+                    );
+                }
+
+                group.finish();
+            }
+
+            /// Benchmark individual validation components for [<$dim>]D
+            fn [<benchmark_validation_components_ $dim d>](c: &mut Criterion) {
+                let n_points = if $dim <= 3 { 50 } else { 25 }; // Fixed size for component benchmarks
+                let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
+
+                let mut group = c.benchmark_group(&format!("validation_components_{}d", $dim));
+
+                group.bench_function("validate_vertex_mappings", |b| {
+                    b.iter(|| {
+                        tds.validate_vertex_mappings().unwrap();
+                        black_box(&tds);
+                    });
                 });
-            },
-        );
-    }
 
-    group.finish();
+                group.bench_function("validate_cell_mappings", |b| {
+                    b.iter(|| {
+                        tds.validate_cell_mappings().unwrap();
+                        black_box(&tds);
+                    });
+                });
+
+                // Note: validate_no_duplicate_cells and validate_facet_sharing are private methods
+                // They are tested indirectly through the full is_valid() benchmark
+
+                group.finish();
+            }
+        }
+    };
 }
 
-/// Benchmark validation methods performance
+// Generate validation benchmarks for dimensions 2-5
+generate_validation_benchmarks!(2);
+generate_validation_benchmarks!(3);
+generate_validation_benchmarks!(4);
+generate_validation_benchmarks!(5);
+
+// Legacy wrappers for backward compatibility
 fn benchmark_validation_methods(c: &mut Criterion) {
-    let point_counts = [10, 25, 50, 100];
-
-    let mut group = c.benchmark_group("validation_methods");
-
-    for &n_points in &point_counts {
-        #[allow(clippy::cast_sign_loss)]
-        let throughput = n_points as u64;
-        group.throughput(Throughput::Elements(throughput));
-
-        group.bench_with_input(
-            BenchmarkId::new("is_valid", n_points),
-            &n_points,
-            |b, &n_points| {
-                b.iter_with_setup(
-                    || {
-                        let points = generate_random_points(n_points);
-                        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        Tds::<f64, (), (), 3>::new(&vertices).unwrap()
-                    },
-                    |tds| {
-                        tds.is_valid().unwrap();
-                        black_box(tds);
-                    },
-                );
-            },
-        );
-    }
-
-    group.finish();
+    benchmark_validation_methods_3d(c);
 }
 
-/// Benchmark individual validation components
 fn benchmark_validation_components(c: &mut Criterion) {
-    let n_points = 50; // Fixed size for component benchmarks
-    let points = generate_random_points(n_points);
-    let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-    let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
-
-    let mut group = c.benchmark_group("validation_components");
-
-    group.bench_function("validate_vertex_mappings", |b| {
-        b.iter(|| {
-            tds.validate_vertex_mappings().unwrap();
-            black_box(&tds);
-        });
-    });
-
-    group.bench_function("validate_cell_mappings", |b| {
-        b.iter(|| {
-            tds.validate_cell_mappings().unwrap();
-            black_box(&tds);
-        });
-    });
-
-    // Note: validate_no_duplicate_cells and validate_facet_sharing are private methods
-    // They are tested indirectly through the full is_valid() benchmark
-
-    group.finish();
+    benchmark_validation_components_3d(c);
 }
 
-/// Benchmark incremental vertex addition
+/// Macro to generate incremental construction benchmarks for all dimensions
+macro_rules! generate_incremental_construction_benchmarks {
+    ($dim:literal) => {
+        pastey::paste! {
+            /// Benchmark incremental vertex addition for [<$dim>]D
+            fn [<benchmark_incremental_construction_ $dim d>](c: &mut Criterion) {
+                let mut group = c.benchmark_group(&format!("incremental_construction_{}d", $dim));
+
+                // Generate initial simplex for the given dimension
+                let mut initial_coords = Vec::new();
+                for i in 0..=$dim {
+                    let mut coords = vec![0.0; $dim];
+                    if i < $dim {
+                        coords[i] = 1.0;
+                    }
+                    initial_coords.push(coords);
+                }
+                let initial_vertices: Vec<_> = initial_coords
+                    .into_iter()
+                    .map(|coords| {
+                        let mut array = [0.0; $dim];
+                        array.copy_from_slice(&coords);
+                        vertex!(array)
+                    })
+                    .collect();
+
+                // Test single vertex addition
+                let additional_coords = vec![0.5; $dim];
+                let mut additional_array = [0.0; $dim];
+                additional_array.copy_from_slice(&additional_coords);
+                let additional_vertex = vertex!(additional_array);
+
+                group.bench_function("single_vertex_addition", |b| {
+                    b.iter_with_setup(
+                        || Tds::<f64, (), (), $dim>::new(&initial_vertices).unwrap(),
+                        |mut tds| {
+                            tds.add(additional_vertex).unwrap();
+                            black_box(tds);
+                        },
+                    );
+                });
+
+                // Test multiple vertex additions with dimension-appropriate counts
+                let counts: &[usize] = if $dim <= 3 { &[2, 5, 10] } else { &[2, 4, 6] };
+                for &count in counts {
+                    group.bench_with_input(
+                        BenchmarkId::new("multiple_vertex_addition", count),
+                        &count,
+                        |b, &count| {
+                            b.iter_with_setup(
+                                || {
+                                    let tds = Tds::<f64, (), (), $dim>::new(&initial_vertices).unwrap();
+                                    let additional_points: Vec<Point<f64, $dim>> = generate_random_points(count, (-100.0, 100.0)).unwrap();
+                                    let additional_vertices: Vec<_> =
+                                        additional_points.iter().map(|p| vertex!(*p)).collect();
+                                    (tds, additional_vertices)
+                                },
+                                |(mut tds, additional_vertices)| {
+                                    for vertex in additional_vertices {
+                                        tds.add(vertex).unwrap();
+                                    }
+                                    black_box(tds);
+                                },
+                            );
+                        },
+                    );
+                }
+
+                group.finish();
+            }
+        }
+    };
+}
+
+// Generate incremental construction benchmarks for dimensions 2-5
+generate_incremental_construction_benchmarks!(2);
+generate_incremental_construction_benchmarks!(3);
+generate_incremental_construction_benchmarks!(4);
+generate_incremental_construction_benchmarks!(5);
+
+// Legacy wrapper for backward compatibility
 fn benchmark_incremental_construction(c: &mut Criterion) {
-    let mut group = c.benchmark_group("incremental_construction");
-
-    // Start with basic tetrahedron
-    let initial_vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ];
-
-    // Test single vertex addition
-    let additional_vertex = vertex!([0.5, 0.5, 0.5]);
-
-    group.bench_function("single_vertex_addition", |b| {
-        b.iter_with_setup(
-            || Tds::<f64, (), (), 3>::new(&initial_vertices).unwrap(),
-            |mut tds| {
-                tds.add(additional_vertex).unwrap();
-                black_box(tds);
-            },
-        );
-    });
-
-    // Test multiple vertex additions
-    let counts = [2, 5, 10];
-    for &count in &counts {
-        group.bench_with_input(
-            BenchmarkId::new("multiple_vertex_addition", count),
-            &count,
-            |b, &count| {
-                b.iter_with_setup(
-                    || {
-                        let tds = Tds::<f64, (), (), 3>::new(&initial_vertices).unwrap();
-                        let additional_points = generate_random_points(count);
-                        let additional_vertices: Vec<_> =
-                            additional_points.iter().map(|p| vertex!(*p)).collect();
-                        (tds, additional_vertices)
-                    },
-                    |(mut tds, additional_vertices)| {
-                        for vertex in additional_vertices {
-                            tds.add(vertex).unwrap();
-                        }
-                        black_box(tds);
-                    },
-                );
-            },
-        );
-    }
-
-    group.finish();
+    benchmark_incremental_construction_3d(c);
 }
 
 criterion_group!(
     name = benches;
     config = Criterion::default();
-    targets = benchmark_bowyer_watson_triangulation, benchmark_assign_neighbors, benchmark_remove_duplicate_cells, benchmark_2d_triangulation, benchmark_validation_methods, benchmark_validation_components, benchmark_incremental_construction, benchmark_memory_usage
+    targets =
+        // Core triangulation benchmarks (2D-5D)
+        benchmark_bowyer_watson_triangulation_2d,
+        benchmark_bowyer_watson_triangulation_3d,
+        benchmark_bowyer_watson_triangulation_4d,
+        benchmark_bowyer_watson_triangulation_5d,
+        benchmark_assign_neighbors_2d,
+        benchmark_assign_neighbors_3d,
+        benchmark_assign_neighbors_4d,
+        benchmark_assign_neighbors_5d,
+        benchmark_remove_duplicate_cells_2d,
+        benchmark_remove_duplicate_cells_3d,
+        benchmark_remove_duplicate_cells_4d,
+        benchmark_remove_duplicate_cells_5d,
+
+        // Memory usage benchmarks (2D-5D)
+        benchmark_memory_usage_2d,
+        benchmark_memory_usage_3d,
+        benchmark_memory_usage_4d,
+        benchmark_memory_usage_5d,
+
+        // Validation benchmarks (2D-5D)
+        benchmark_validation_methods_2d,
+        benchmark_validation_methods_3d,
+        benchmark_validation_methods_4d,
+        benchmark_validation_methods_5d,
+        benchmark_validation_components_2d,
+        benchmark_validation_components_3d,
+        benchmark_validation_components_4d,
+        benchmark_validation_components_5d,
+
+        // Incremental construction benchmarks (2D-5D)
+        benchmark_incremental_construction_2d,
+        benchmark_incremental_construction_3d,
+        benchmark_incremental_construction_4d,
+        benchmark_incremental_construction_5d,
+
+        // Legacy wrappers for backward compatibility
+        benchmark_bowyer_watson_triangulation,
+        benchmark_assign_neighbors,
+        benchmark_remove_duplicate_cells,
+        benchmark_2d_triangulation,
+        benchmark_4d_triangulation,
+        benchmark_5d_triangulation,
+        benchmark_validation_methods,
+        benchmark_validation_components,
+        benchmark_incremental_construction,
+        benchmark_memory_usage
 );
 criterion_main!(benches);

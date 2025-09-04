@@ -6,27 +6,12 @@
 #![allow(missing_docs, unused_doc_comments, unused_attributes)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::geometry::util::generate_random_points;
 use delaunay::prelude::*;
 use delaunay::vertex;
+use pastey::paste;
 use rand::Rng;
 use std::hint::black_box;
-
-mod helpers;
-use helpers::clear_all_neighbors;
-
-/// Creates random points for benchmarking
-fn generate_random_points_3d(n_points: usize) -> Vec<Point<f64, 3>> {
-    let mut rng = rand::rng();
-    (0..n_points)
-        .map(|_| {
-            Point::new([
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-                rng.random_range(-100.0..100.0),
-            ])
-        })
-        .collect()
-}
 
 /// Creates a regular grid of points for consistent benchmarking
 fn generate_grid_points_3d(n_side: usize) -> Vec<Point<f64, 3>> {
@@ -64,42 +49,119 @@ fn generate_spherical_points_3d(n_points: usize) -> Vec<Point<f64, 3>> {
         .collect()
 }
 
-/// Benchmark `assign_neighbors` with random point distributions
-fn benchmark_assign_neighbors_random(c: &mut Criterion) {
-    let point_counts = [10, 20, 30, 40, 50];
+/// Macro to generate `assign_neighbors` benchmarks for all dimensions
+macro_rules! generate_assign_neighbors_benchmarks {
+    ($($dim:literal),* $(,)?) => {
+        $(
+            paste! {
+                /// Benchmark `assign_neighbors` with random point distributions for [<$dim>]D
+                fn [<benchmark_assign_neighbors_ $dim d_random>](c: &mut Criterion) {
+                    let point_counts = [10, 20, 30, 40, 50];
 
-    let mut group = c.benchmark_group("assign_neighbors_random");
+                    let mut group = c.benchmark_group(&format!("assign_neighbors_{}d_random", $dim));
+                    if $dim >= 4 {
+                        group.sample_size(10);
+                    }
 
-    for &n_points in &point_counts {
-        group.throughput(Throughput::Elements(n_points as u64));
+                    for &n_points in &point_counts {
+                        group.throughput(Throughput::Elements(n_points as u64));
 
-        group.bench_with_input(
-            BenchmarkId::new("random_points", n_points),
-            &n_points,
-            |b, &n_points| {
-                b.iter_with_setup(
-                    || {
-                        let points = generate_random_points_3d(n_points);
+                        group.bench_with_input(
+                            BenchmarkId::new("random_points", n_points),
+                            &n_points,
+                            |b, &n_points| {
+                                b.iter_with_setup(
+                                    || {
+                                        let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                        let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
+
+                                        // Clear existing neighbors to benchmark the assignment process
+                                        tds.clear_all_neighbors();
+                                        tds
+                                    },
+                                    |mut tds| {
+                                        tds.assign_neighbors().unwrap();
+                                        black_box(tds);
+                                    },
+                                );
+                            },
+                        );
+                    }
+
+                    group.finish();
+                }
+
+                /// Benchmark `assign_neighbors` scaling with different triangulation sizes for [<$dim>]D
+                fn [<benchmark_assign_neighbors_ $dim d_scaling>](c: &mut Criterion) {
+                    let point_counts = [8, 16, 24, 32];
+
+                    let mut group = c.benchmark_group(&format!("assign_neighbors_{}d_scaling", $dim));
+                    group.sample_size(20); // Reduce sample size for longer tests
+
+                    // Pre-compute (optional verbose) outside timing
+                    let verbose = std::env::var_os("BENCH_VERBOSE").is_some();
+                    if verbose {
+                        println!("\n=== {}D Scaling Analysis Pre-computation ===", $dim);
+                    }
+                    for &n_points in &point_counts {
+                        let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
+                        let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
-                        // Clear existing neighbors to benchmark the assignment process
-                        clear_all_neighbors(&mut tds);
-                        tds
-                    },
-                    |mut tds| {
-                        tds.assign_neighbors().unwrap();
-                        black_box(tds);
-                    },
-                );
-            },
-        );
-    }
+                        let num_cells = tds.number_of_cells();
+                        let num_vertices = tds.number_of_vertices();
 
-    group.finish();
+                        #[allow(clippy::cast_precision_loss)]
+                        let ratio = num_cells as f64 / n_points as f64;
+
+                        if verbose {
+                            println!(
+                                "Points: {n_points}, Cells: {num_cells}, Vertices: {num_vertices} (ratio: {ratio:.2} cells/point)"
+                            );
+                        }
+                    }
+                    if verbose {
+                        println!("==========================================\n");
+                    }
+
+                    for &n_points in &point_counts {
+                        group.throughput(Throughput::Elements(n_points as u64));
+
+                        group.bench_with_input(
+                            BenchmarkId::new("scaling", n_points),
+                            &n_points,
+                            |b, &n_points| {
+                                b.iter_with_setup(
+                                    || {
+                                        let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                        let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
+
+                                        // Clear existing neighbors to benchmark the assignment process
+                                        tds.clear_all_neighbors();
+                                        tds
+                                    },
+                                    |mut tds| {
+                                        tds.assign_neighbors().unwrap();
+                                        black_box(tds);
+                                    },
+                                );
+                            },
+                        );
+                    }
+
+                    group.finish();
+                }
+            }
+        )*
+    };
 }
 
-/// Benchmark `assign_neighbors` with grid point distributions
+// Generate benchmarks for dimensions 2, 3, 4, 5
+generate_assign_neighbors_benchmarks!(2, 3, 4, 5);
+
+/// Benchmark `assign_neighbors` with grid point distributions (3D only)
 fn benchmark_assign_neighbors_grid(c: &mut Criterion) {
     let grid_sizes = [2, 3, 4]; // 2^3=8, 3^3=27, 4^3=64 points
 
@@ -120,7 +182,7 @@ fn benchmark_assign_neighbors_grid(c: &mut Criterion) {
                         let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
                         // Clear existing neighbors to benchmark the assignment process
-                        clear_all_neighbors(&mut tds);
+                        tds.clear_all_neighbors();
                         tds
                     },
                     |mut tds| {
@@ -135,7 +197,7 @@ fn benchmark_assign_neighbors_grid(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark `assign_neighbors` with spherical point distributions
+/// Benchmark `assign_neighbors` with spherical point distributions (3D only)
 fn benchmark_assign_neighbors_spherical(c: &mut Criterion) {
     let point_counts = [15, 25, 35, 45];
 
@@ -155,7 +217,7 @@ fn benchmark_assign_neighbors_spherical(c: &mut Criterion) {
                         let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
                         // Clear existing neighbors to benchmark the assignment process
-                        clear_all_neighbors(&mut tds);
+                        tds.clear_all_neighbors();
                         tds
                     },
                     |mut tds| {
@@ -170,109 +232,29 @@ fn benchmark_assign_neighbors_spherical(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark the scaling behavior with different triangulation sizes
-fn benchmark_assign_neighbors_scaling(c: &mut Criterion) {
-    let point_counts = [8, 16, 24, 32];
-
-    let mut group = c.benchmark_group("assign_neighbors_scaling");
-    group.sample_size(20); // Reduce sample size for longer tests
-
-    // Pre-compute and print scaling information outside of benchmark timing
-    println!("\n=== Scaling Analysis Pre-computation ===");
-    for &n_points in &point_counts {
-        let points = generate_random_points_3d(n_points);
-        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
-
-        let num_cells = tds.number_of_cells();
-        let num_vertices = tds.number_of_vertices();
-
-        // Calculate ratio with explicit precision handling
-        // For benchmark display purposes, f64 precision is sufficient
-        // Alternative approaches shown in comments below
-
-        // Approach 1: Simple with clippy allow (most practical)
-        #[allow(clippy::cast_precision_loss)]
-        let ratio = num_cells as f64 / n_points as f64;
-
-        // Approach 2: Check for precision loss (more defensive)
-        // let ratio = if num_cells < (1_u64 << 53) && n_points < (1_u64 << 53) {
-        //     num_cells as f64 / n_points as f64
-        // } else {
-        //     // For very large numbers, use integer arithmetic with rounding
-        //     (num_cells * 100 / n_points) as f64 / 100.0
-        // };
-
-        // Approach 3: Using ordered-float for guaranteed precision (overkill for this case)
-        // use ordered_float::OrderedFloat;
-        // let ratio_of = OrderedFloat(num_cells as f64) / OrderedFloat(n_points as f64);
-        // let ratio = ratio_of.into_inner();
-
-        println!(
-            "Points: {n_points}, Cells: {num_cells}, Vertices: {num_vertices} (ratio: {ratio:.2} cells/point)"
-        );
-    }
-    println!("==========================================\n");
-
-    for &n_points in &point_counts {
-        group.throughput(Throughput::Elements(n_points as u64));
-
-        group.bench_with_input(
-            BenchmarkId::new("scaling", n_points),
-            &n_points,
-            |b, &n_points| {
-                b.iter_with_setup(
-                    || {
-                        let points = generate_random_points_3d(n_points);
-                        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
-
-                        // Clear existing neighbors to benchmark the assignment process
-                        clear_all_neighbors(&mut tds);
-                        tds
-                    },
-                    |mut tds| {
-                        tds.assign_neighbors().unwrap();
-                        black_box(tds);
-                    },
-                );
-            },
-        );
-    }
-
-    group.finish();
-}
-
-/// Compare `assign_neighbors` performance across different dimensions
-fn benchmark_assign_neighbors_2d_vs_3d(c: &mut Criterion) {
+/// Compare `assign_neighbors` performance across dimensions 2D through 5D
+fn benchmark_assign_neighbors_multi_dimensional(c: &mut Criterion) {
     let point_counts = [10, 20, 30];
 
-    let mut group = c.benchmark_group("assign_neighbors_2d_vs_3d");
+    let mut group = c.benchmark_group("assign_neighbors_multi_dimensional");
 
-    // 2D benchmarks
     for &n_points in &point_counts {
         group.throughput(Throughput::Elements(n_points as u64));
 
+        // 2D benchmarks
         group.bench_with_input(
             BenchmarkId::new("2d", n_points),
             &n_points,
             |b, &n_points| {
                 b.iter_with_setup(
                     || {
-                        let mut rng = rand::rng();
-                        let points: Vec<Point<f64, 2>> = (0..n_points)
-                            .map(|_| {
-                                Point::new([
-                                    rng.random_range(-100.0..100.0),
-                                    rng.random_range(-100.0..100.0),
-                                ])
-                            })
-                            .collect();
+                        let points: Vec<Point<f64, 2>> =
+                            generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                         let mut tds = Tds::<f64, (), (), 2>::new(&vertices).unwrap();
 
                         // Clear existing neighbors
-                        clear_all_neighbors(&mut tds);
+                        tds.clear_all_neighbors();
                         tds
                     },
                     |mut tds| {
@@ -290,12 +272,61 @@ fn benchmark_assign_neighbors_2d_vs_3d(c: &mut Criterion) {
             |b, &n_points| {
                 b.iter_with_setup(
                     || {
-                        let points = generate_random_points_3d(n_points);
+                        let points: Vec<Point<f64, 3>> =
+                            generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                         let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
                         // Clear existing neighbors
-                        clear_all_neighbors(&mut tds);
+                        tds.clear_all_neighbors();
+                        tds
+                    },
+                    |mut tds| {
+                        tds.assign_neighbors().unwrap();
+                        black_box(tds);
+                    },
+                );
+            },
+        );
+
+        // 4D benchmarks
+        group.bench_with_input(
+            BenchmarkId::new("4d", n_points),
+            &n_points,
+            |b, &n_points| {
+                b.iter_with_setup(
+                    || {
+                        let points: Vec<Point<f64, 4>> =
+                            generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                        let mut tds = Tds::<f64, (), (), 4>::new(&vertices).unwrap();
+
+                        // Clear existing neighbors
+                        tds.clear_all_neighbors();
+                        tds
+                    },
+                    |mut tds| {
+                        tds.assign_neighbors().unwrap();
+                        black_box(tds);
+                    },
+                );
+            },
+        );
+
+        // 5D benchmarks
+        group.bench_with_input(
+            BenchmarkId::new("5d", n_points),
+            &n_points,
+            |b, &n_points| {
+                b.iter_with_setup(
+                    || {
+                        let points: Vec<Point<f64, 5>> =
+                            generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                        let mut tds = Tds::<f64, (), (), 5>::new(&vertices).unwrap();
+
+                        // Clear existing neighbors
+                        tds.clear_all_neighbors();
                         tds
                     },
                     |mut tds| {
@@ -314,10 +345,18 @@ criterion_group!(
     name = benches;
     config = Criterion::default();
     targets =
-        benchmark_assign_neighbors_random,
+        // Specialized benchmarks
         benchmark_assign_neighbors_grid,
         benchmark_assign_neighbors_spherical,
-        benchmark_assign_neighbors_scaling,
-        benchmark_assign_neighbors_2d_vs_3d
+        // Dimension-specific benchmarks
+        benchmark_assign_neighbors_2d_random,
+        benchmark_assign_neighbors_3d_random,
+        benchmark_assign_neighbors_4d_random,
+        benchmark_assign_neighbors_5d_random,
+        benchmark_assign_neighbors_2d_scaling,
+        benchmark_assign_neighbors_3d_scaling,
+        benchmark_assign_neighbors_4d_scaling,
+        benchmark_assign_neighbors_5d_scaling,
+        benchmark_assign_neighbors_multi_dimensional
 );
 criterion_main!(benches);

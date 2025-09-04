@@ -37,6 +37,7 @@ uuid = { version = "1.18.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
+pastey = "0.1"
 
 [features]
 count-allocations = ["allocation-counter"]
@@ -57,8 +58,17 @@ harness = false
 name = "assign_neighbors_performance"
 harness = false
 
+
 [[bench]]
-name = "small_scale_triangulation"
+name = "memory_scaling"
+harness = false
+
+[[bench]]
+name = "triangulation_vs_hull_memory"
+harness = false
+
+[[bench]]
+name = "ci_performance_suite"
 harness = false
 
 [lints.rust]

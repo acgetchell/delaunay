@@ -15,15 +15,19 @@ cargo bench --bench circumsphere_containment
 cargo bench --bench circumsphere_containment -- --test
 ```
 
-### Small-Scale Triangulation Benchmarks
+### CI Performance Suite (primary)
 
 ```bash
-# Run small-scale triangulation benchmarks for 2D, 3D, and 4D
-cargo bench --bench small_scale_triangulation
-
-# Generate baseline results
-scripts/generate_baseline.sh
+# Run CI performance suite benchmarks for 2D, 3D, 4D, and 5D (optimized for CI)
+cargo bench --bench ci_performance_suite
 ```
+
+The CI Performance Suite is the primary benchmarking suite used for automated performance-regression testing:
+
+- **Dimensions**: 2D–5D triangulations
+- **Point counts**: 10, 25, 50 per dimension
+- **Runtime**: ~5–10 minutes (hardware dependent)
+- **Integration**: Used by GitHub Actions for automated baseline generation and comparison
 
 ### All Benchmarks
 

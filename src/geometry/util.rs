@@ -7,6 +7,8 @@
 use num_traits::{Float, Zero};
 use peroxide::fuga::{LinearAlgebra, MatrixTrait, zeros};
 use peroxide::statistics::ops::factorial;
+use rand::Rng;
+use rand::distr::uniform::SampleUniform;
 use std::iter::Sum;
 
 use crate::geometry::matrix::{MatrixError, invert};
@@ -30,6 +32,37 @@ pub enum ValueConversionError {
         to_type: &'static str,
         /// Additional details about the failure
         details: String,
+    },
+}
+
+/// Errors that can occur during random point generation.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum RandomPointGenerationError {
+    /// Invalid coordinate range provided
+    #[error("Invalid coordinate range: minimum {min} must be less than maximum {max}")]
+    InvalidRange {
+        /// The minimum value of the range
+        min: String,
+        /// The maximum value of the range
+        max: String,
+    },
+
+    /// Failed to generate random value within range
+    #[error("Failed to generate random value in range [{min}, {max}]: {details}")]
+    RandomGenerationFailed {
+        /// The minimum value of the range
+        min: String,
+        /// The maximum value of the range
+        max: String,
+        /// Additional details about the failure
+        details: String,
+    },
+
+    /// Invalid number of points requested
+    #[error("Invalid number of points: {n_points} (must be non-negative)")]
+    InvalidPointCount {
+        /// The invalid number of points requested
+        n_points: isize,
     },
 }
 
@@ -1078,6 +1111,143 @@ where
     }
 
     Ok(total_measure)
+}
+
+// ============================================================================
+// Random Point Generation Utilities
+// ============================================================================
+
+/// Generate random points in D-dimensional space with uniform distribution.
+///
+/// This function provides a flexible way to generate random points for testing,
+/// benchmarking, or example applications. Points are generated with coordinates
+/// uniformly distributed within the specified range.
+///
+/// # Arguments
+///
+/// * `n_points` - Number of points to generate
+/// * `range` - Range for coordinate values (min, max)
+///
+/// # Returns
+///
+/// Vector of random points with coordinates in the specified range,
+/// or a `RandomPointGenerationError` if the parameters are invalid.
+///
+/// # Errors
+///
+/// * `RandomPointGenerationError::InvalidRange` if min >= max
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::generate_random_points;
+///
+/// // Generate 100 random 2D points with coordinates in [-10.0, 10.0]
+/// let points_2d = generate_random_points::<f64, 2>(100, (-10.0, 10.0)).unwrap();
+/// assert_eq!(points_2d.len(), 100);
+///
+/// // Generate 3D points with coordinates in [0.0, 1.0] (unit cube)
+/// let points_3d = generate_random_points::<f64, 3>(50, (0.0, 1.0)).unwrap();
+/// assert_eq!(points_3d.len(), 50);
+///
+/// // Generate 4D points centered around origin
+/// let points_4d = generate_random_points::<f32, 4>(25, (-1.0, 1.0)).unwrap();
+/// assert_eq!(points_4d.len(), 25);
+///
+/// // Error handling
+/// let result = generate_random_points::<f64, 2>(100, (10.0, -10.0));
+/// assert!(result.is_err()); // Invalid range
+/// ```
+pub fn generate_random_points<T: CoordinateScalar + SampleUniform, const D: usize>(
+    n_points: usize,
+    range: (T, T),
+) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
+    // Validate range
+    if range.0 >= range.1 {
+        return Err(RandomPointGenerationError::InvalidRange {
+            min: format!("{:?}", range.0),
+            max: format!("{:?}", range.1),
+        });
+    }
+
+    let mut rng = rand::rng();
+    let mut points = Vec::with_capacity(n_points);
+
+    for _ in 0..n_points {
+        let coords = [T::zero(); D].map(|_| rng.random_range(range.0..range.1));
+        points.push(Point::new(coords));
+    }
+
+    Ok(points)
+}
+
+/// Generate random points with a seeded RNG for reproducible results.
+///
+/// This function is useful when you need consistent point generation across
+/// multiple runs for testing, benchmarking, or debugging purposes.
+///
+/// # Arguments
+///
+/// * `n_points` - Number of points to generate
+/// * `range` - Range for coordinate values (min, max)
+/// * `seed` - Seed for the random number generator
+///
+/// # Returns
+///
+/// Vector of random points with coordinates in the specified range,
+/// or a `RandomPointGenerationError` if the parameters are invalid.
+///
+/// # Errors
+///
+/// * `RandomPointGenerationError::InvalidRange` if min >= max
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::generate_random_points_seeded;
+///
+/// // Generate reproducible random points
+/// let points1 = generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 42).unwrap();
+/// let points2 = generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 42).unwrap();
+/// assert_eq!(points1, points2); // Same seed produces identical results
+///
+/// // Different seeds produce different results
+/// let points3 = generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 123).unwrap();
+/// assert_ne!(points1, points3);
+///
+/// // Common ranges - unit cube [0,1]
+/// let unit_points = generate_random_points_seeded::<f64, 3>(50, (0.0, 1.0), 42).unwrap();
+///
+/// // Centered around origin [-1,1]
+/// let centered_points = generate_random_points_seeded::<f64, 3>(50, (-1.0, 1.0), 42).unwrap();
+/// ```
+pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const D: usize>(
+    n_points: usize,
+    range: (T, T),
+    seed: u64,
+) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
+    use rand::SeedableRng;
+
+    // Validate range
+    if range.0 >= range.1 {
+        return Err(RandomPointGenerationError::InvalidRange {
+            min: format!("{:?}", range.0),
+            max: format!("{:?}", range.1),
+        });
+    }
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut points = Vec::with_capacity(n_points);
+
+    for _ in 0..n_points {
+        let coords = [T::zero(); D].map(|_| {
+            use rand::Rng;
+            rng.random_range(range.0..range.1)
+        });
+        points.push(Point::new(coords));
+    }
+
+    Ok(points)
 }
 
 #[cfg(test)]
@@ -2812,5 +2982,352 @@ mod tests {
 
         assert_relative_eq!(original_measure, rotated_measure, epsilon = 1e-10);
         assert_relative_eq!(original_measure, 5.0, epsilon = 1e-10); // Both should be 5.0
+    }
+
+    // =============================================================================
+    // RANDOM POINT GENERATION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_generate_random_points_2d() {
+        // Test 2D random point generation
+        let points = generate_random_points::<f64, 2>(100, (-10.0, 10.0)).unwrap();
+
+        assert_eq!(points.len(), 100);
+
+        // Check that all points are within range
+        for point in &points {
+            let coords: [f64; 2] = point.into();
+            assert!(coords[0] >= -10.0 && coords[0] < 10.0);
+            assert!(coords[1] >= -10.0 && coords[1] < 10.0);
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_3d() {
+        // Test 3D random point generation
+        let points = generate_random_points::<f64, 3>(75, (0.0, 5.0)).unwrap();
+
+        assert_eq!(points.len(), 75);
+
+        for point in &points {
+            let coords: [f64; 3] = point.into();
+            assert!(coords[0] >= 0.0 && coords[0] < 5.0);
+            assert!(coords[1] >= 0.0 && coords[1] < 5.0);
+            assert!(coords[2] >= 0.0 && coords[2] < 5.0);
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_4d() {
+        // Test 4D random point generation
+        let points = generate_random_points::<f32, 4>(50, (-2.0, 2.0)).unwrap();
+
+        assert_eq!(points.len(), 50);
+
+        for point in &points {
+            let coords: [f32; 4] = point.into();
+            for &coord in &coords {
+                assert!((-2.0..2.0).contains(&coord));
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_5d() {
+        // Test 5D random point generation
+        let points = generate_random_points::<f64, 5>(25, (-1.0, 1.0)).unwrap();
+
+        assert_eq!(points.len(), 25);
+
+        for point in &points {
+            let coords: [f64; 5] = point.into();
+            for &coord in &coords {
+                assert!((-1.0..1.0).contains(&coord));
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_error_handling() {
+        // Test invalid range (min >= max) across all dimensions
+
+        // 2D
+        let result = generate_random_points::<f64, 2>(100, (10.0, -10.0));
+        assert!(result.is_err());
+        match result {
+            Err(RandomPointGenerationError::InvalidRange { min, max }) => {
+                assert_eq!(min, "10.0");
+                assert_eq!(max, "-10.0");
+            }
+            _ => panic!("Expected InvalidRange error"),
+        }
+
+        // 3D
+        let result = generate_random_points::<f64, 3>(50, (5.0, 5.0));
+        assert!(result.is_err());
+
+        // 4D
+        let result = generate_random_points::<f32, 4>(25, (1.0, 0.5));
+        assert!(result.is_err());
+
+        // 5D
+        let result = generate_random_points::<f64, 5>(10, (2.0, 2.0));
+        assert!(result.is_err());
+
+        // Test valid edge case - very small range
+        let result = generate_random_points::<f64, 2>(10, (0.0, 0.001));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_generate_random_points_zero_points() {
+        // Test generating zero points across all dimensions
+        let points_2d = generate_random_points::<f64, 2>(0, (-1.0, 1.0)).unwrap();
+        assert_eq!(points_2d.len(), 0);
+
+        let points_3d = generate_random_points::<f64, 3>(0, (-1.0, 1.0)).unwrap();
+        assert_eq!(points_3d.len(), 0);
+
+        let points_4d = generate_random_points::<f64, 4>(0, (-1.0, 1.0)).unwrap();
+        assert_eq!(points_4d.len(), 0);
+
+        let points_5d = generate_random_points::<f64, 5>(0, (-1.0, 1.0)).unwrap();
+        assert_eq!(points_5d.len(), 0);
+    }
+
+    #[test]
+    fn test_generate_random_points_seeded_2d() {
+        // Test seeded 2D generation reproducibility
+        let seed = 42_u64;
+        let points1 = generate_random_points_seeded::<f64, 2>(50, (-5.0, 5.0), seed).unwrap();
+        let points2 = generate_random_points_seeded::<f64, 2>(50, (-5.0, 5.0), seed).unwrap();
+
+        assert_eq!(points1.len(), points2.len());
+
+        // Points should be identical with same seed
+        for (p1, p2) in points1.iter().zip(points2.iter()) {
+            let coords1: [f64; 2] = p1.into();
+            let coords2: [f64; 2] = p2.into();
+
+            for (c1, c2) in coords1.iter().zip(coords2.iter()) {
+                assert_relative_eq!(c1, c2, epsilon = 1e-15);
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_seeded_3d() {
+        // Test seeded 3D generation reproducibility
+        let seed = 123_u64;
+        let points1 = generate_random_points_seeded::<f64, 3>(40, (0.0, 10.0), seed).unwrap();
+        let points2 = generate_random_points_seeded::<f64, 3>(40, (0.0, 10.0), seed).unwrap();
+
+        assert_eq!(points1.len(), points2.len());
+
+        for (p1, p2) in points1.iter().zip(points2.iter()) {
+            let coords1: [f64; 3] = p1.into();
+            let coords2: [f64; 3] = p2.into();
+
+            for (c1, c2) in coords1.iter().zip(coords2.iter()) {
+                assert_relative_eq!(c1, c2, epsilon = 1e-15);
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_seeded_4d() {
+        // Test seeded 4D generation reproducibility
+        let seed = 789_u64;
+        let points1 = generate_random_points_seeded::<f32, 4>(30, (-2.5, 2.5), seed).unwrap();
+        let points2 = generate_random_points_seeded::<f32, 4>(30, (-2.5, 2.5), seed).unwrap();
+
+        assert_eq!(points1.len(), points2.len());
+
+        for (p1, p2) in points1.iter().zip(points2.iter()) {
+            let coords1: [f32; 4] = p1.into();
+            let coords2: [f32; 4] = p2.into();
+
+            for (c1, c2) in coords1.iter().zip(coords2.iter()) {
+                assert_relative_eq!(c1, c2, epsilon = 1e-6); // f32 precision
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_seeded_5d() {
+        // Test seeded 5D generation reproducibility
+        let seed = 456_u64;
+        let points1 = generate_random_points_seeded::<f64, 5>(20, (-1.0, 3.0), seed).unwrap();
+        let points2 = generate_random_points_seeded::<f64, 5>(20, (-1.0, 3.0), seed).unwrap();
+
+        assert_eq!(points1.len(), points2.len());
+
+        for (p1, p2) in points1.iter().zip(points2.iter()) {
+            let coords1: [f64; 5] = p1.into();
+            let coords2: [f64; 5] = p2.into();
+
+            for (c1, c2) in coords1.iter().zip(coords2.iter()) {
+                assert_relative_eq!(c1, c2, epsilon = 1e-15);
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_seeded_different_seeds() {
+        // Test that different seeds produce different results across all dimensions
+
+        // 2D
+        let points1_2d = generate_random_points_seeded::<f64, 2>(50, (0.0, 1.0), 42).unwrap();
+        let points2_2d = generate_random_points_seeded::<f64, 2>(50, (0.0, 1.0), 123).unwrap();
+        assert_ne!(points1_2d, points2_2d);
+
+        // 3D
+        let points1_3d = generate_random_points_seeded::<f64, 3>(30, (-5.0, 5.0), 42).unwrap();
+        let points2_3d = generate_random_points_seeded::<f64, 3>(30, (-5.0, 5.0), 999).unwrap();
+        assert_ne!(points1_3d, points2_3d);
+
+        // 4D
+        let points1_4d = generate_random_points_seeded::<f32, 4>(25, (-1.0, 1.0), 1337).unwrap();
+        let points2_4d = generate_random_points_seeded::<f32, 4>(25, (-1.0, 1.0), 7331).unwrap();
+        assert_ne!(points1_4d, points2_4d);
+
+        // 5D
+        let points1_5d = generate_random_points_seeded::<f64, 5>(15, (0.0, 10.0), 2021).unwrap();
+        let points2_5d = generate_random_points_seeded::<f64, 5>(15, (0.0, 10.0), 2024).unwrap();
+        assert_ne!(points1_5d, points2_5d);
+    }
+
+    #[test]
+    fn test_generate_random_points_coordinate_types() {
+        // Test with different coordinate scalar types across dimensions
+
+        // f64 tests
+        let points_f64_2d = generate_random_points::<f64, 2>(20, (0.0, 1.0)).unwrap();
+        let points_f64_3d = generate_random_points::<f64, 3>(20, (0.0, 1.0)).unwrap();
+        let points_f64_4d = generate_random_points::<f64, 4>(20, (0.0, 1.0)).unwrap();
+        let points_f64_5d = generate_random_points::<f64, 5>(20, (0.0, 1.0)).unwrap();
+
+        // f32 tests
+        let points_f32_2d = generate_random_points::<f32, 2>(20, (0.0_f32, 1.0_f32)).unwrap();
+        let points_f32_3d = generate_random_points::<f32, 3>(20, (0.0_f32, 1.0_f32)).unwrap();
+        let points_f32_4d = generate_random_points::<f32, 4>(20, (0.0_f32, 1.0_f32)).unwrap();
+        let points_f32_5d = generate_random_points::<f32, 5>(20, (0.0_f32, 1.0_f32)).unwrap();
+
+        // Verify lengths
+        assert_eq!(points_f64_2d.len(), 20);
+        assert_eq!(points_f64_3d.len(), 20);
+        assert_eq!(points_f64_4d.len(), 20);
+        assert_eq!(points_f64_5d.len(), 20);
+        assert_eq!(points_f32_2d.len(), 20);
+        assert_eq!(points_f32_3d.len(), 20);
+        assert_eq!(points_f32_4d.len(), 20);
+        assert_eq!(points_f32_5d.len(), 20);
+
+        // Check ranges for f64 points
+        for point in &points_f64_2d {
+            let coords: [f64; 2] = point.into();
+            for &coord in &coords {
+                assert!((0.0..1.0).contains(&coord));
+            }
+        }
+
+        // Check ranges for f32 points
+        for point in &points_f32_5d {
+            let coords: [f32; 5] = point.into();
+            for &coord in &coords {
+                assert!((0.0..1.0).contains(&coord));
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_distribution_coverage_all_dimensions() {
+        // Test that points cover the range reasonably well across all dimensions
+
+        // 2D coverage test
+        let points_2d = generate_random_points::<f64, 2>(500, (0.0, 10.0)).unwrap();
+        let mut min_2d = [f64::INFINITY; 2];
+        let mut max_2d = [f64::NEG_INFINITY; 2];
+
+        for point in &points_2d {
+            let coords: [f64; 2] = point.into();
+            for (i, &coord) in coords.iter().enumerate() {
+                min_2d[i] = min_2d[i].min(coord);
+                max_2d[i] = max_2d[i].max(coord);
+            }
+        }
+
+        // Should cover most of the range in each dimension
+        for i in 0..2 {
+            assert!(
+                min_2d[i] < 2.0,
+                "Min in dimension {i} should be close to lower bound"
+            );
+            assert!(
+                max_2d[i] > 8.0,
+                "Max in dimension {i} should be close to upper bound"
+            );
+        }
+
+        // 5D coverage test (smaller sample)
+        let points_5d = generate_random_points::<f64, 5>(200, (-5.0, 5.0)).unwrap();
+        let mut min_5d = [f64::INFINITY; 5];
+        let mut max_5d = [f64::NEG_INFINITY; 5];
+
+        for point in &points_5d {
+            let coords: [f64; 5] = point.into();
+            for (i, &coord) in coords.iter().enumerate() {
+                min_5d[i] = min_5d[i].min(coord);
+                max_5d[i] = max_5d[i].max(coord);
+            }
+        }
+
+        // Should have reasonable coverage in each dimension
+        for i in 0..5 {
+            assert!(
+                min_5d[i] < -2.0,
+                "Min in 5D dimension {i} should be reasonably low"
+            );
+            assert!(
+                max_5d[i] > 2.0,
+                "Max in 5D dimension {i} should be reasonably high"
+            );
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_common_ranges() {
+        // Test common useful ranges across dimensions
+
+        // Unit cube [0,1] for all dimensions
+        let unit_2d = generate_random_points::<f64, 2>(50, (0.0, 1.0)).unwrap();
+        let unit_3d = generate_random_points::<f64, 3>(50, (0.0, 1.0)).unwrap();
+        let unit_4d = generate_random_points::<f64, 4>(50, (0.0, 1.0)).unwrap();
+        let unit_5d = generate_random_points::<f64, 5>(50, (0.0, 1.0)).unwrap();
+
+        assert_eq!(unit_2d.len(), 50);
+        assert_eq!(unit_3d.len(), 50);
+        assert_eq!(unit_4d.len(), 50);
+        assert_eq!(unit_5d.len(), 50);
+
+        // Centered cube [-1,1] for all dimensions
+        let centered_2d = generate_random_points::<f64, 2>(30, (-1.0, 1.0)).unwrap();
+        let centered_3d = generate_random_points::<f64, 3>(30, (-1.0, 1.0)).unwrap();
+        let centered_4d = generate_random_points::<f64, 4>(30, (-1.0, 1.0)).unwrap();
+        let centered_5d = generate_random_points::<f64, 5>(30, (-1.0, 1.0)).unwrap();
+
+        assert_eq!(centered_2d.len(), 30);
+        assert_eq!(centered_3d.len(), 30);
+        assert_eq!(centered_4d.len(), 30);
+        assert_eq!(centered_5d.len(), 30);
+
+        // Verify ranges for centered points
+        for point in &centered_5d {
+            let coords: [f64; 5] = point.into();
+            for &coord in &coords {
+                assert!((-1.0..1.0).contains(&coord));
+            }
+        }
     }
 }

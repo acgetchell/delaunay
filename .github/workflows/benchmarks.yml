@@ -346,7 +346,7 @@ jobs:
           echo "   Baseline origin: ${BASELINE_ORIGIN:-unknown}"
 
           # This will exit with code 1 if significant regressions are found
-          echo "   Using full comparison mode against ${BASELINE_ORIGIN:-unknown} baseline"
+          echo "   Using CI performance suite against ${BASELINE_ORIGIN:-unknown} baseline"
           BASELINE_PATH="baseline-artifact/baseline_results.txt"
           if uv run benchmark-utils --help >/dev/null 2>&1; then
             uv run benchmark-utils compare --baseline "$BASELINE_PATH"

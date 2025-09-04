@@ -18,6 +18,10 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - **ALLOWED** to fix auto-fixable issues (formatting, linting, etc.)
 - This includes: `cargo fmt`, `cargo clippy`, `uvx ruff format`, `uvx ruff check --fix`, `markdownlint --fix`, `shfmt`, etc.
 - Quality tools improve code without changing functionality or version control state
+- **DO NOT** use scripts or automated tools (like `sed`, `awk`) for refactoring or logic-altering edits—only for non-semantic formatting and read-only checks
+- **PREFERRED**: Interactive code editing using the `edit_files` tool for precise, reviewed changes
+- **IMPORTANT**: Benchmark files (in `benches/`) are Rust code and must follow the same quality standards as core library code
+  (e.g., `cargo clippy --benches -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo`)
 
 #### JSON File Validation (AI Assistant Guidance)
 
@@ -30,19 +34,21 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 #### Spell Check Dictionary Management (AI Assistant Guidance)
 
-- **ALWAYS** run spell check after editing documentation files
+- **ALWAYS** run spell check after editing ANY files (code, documentation, configuration files, etc.)
+- **REQUIRED** when adding or modifying any files to ensure proper spelling throughout the project
 - **IF** cspell reports legitimate technical terms, programming keywords, or project-specific terminology as misspelled, add them to the `words` array in `cspell.json`
 - **EXAMPLES**: Python terms (`kwargs`, `args`, `asyncio`), Rust terms (`usize`, `clippy`, `rustc`), technical terms (`triangulation`, `circumsphere`, `delaunay`),
-  project names (`nalgebra`, `serde`, `thiserror`)
+  project/crate names (e.g., `nalgebra`, `serde`, `thiserror`, `pastey`).
 - **PURPOSE**: Maintains a clean spell-check while building a comprehensive project dictionary
 - Prefer `ignorePaths` for generated files (e.g., build artifacts) instead of adding their tokens to `words`.
 
 #### Import Organization (AI Assistant Guidance)
 
-- **ALWAYS** use `uvx ruff check --fix --select F401,F403,I001,I002 scripts/` to fix import issues
-- **AUTOMATICALLY** removes duplicate imports, unused imports, and organizes import order
-- **PREFERRED** over manual import cleanup - let ruff handle it automatically
+- **ALWAYS** use `uvx ruff check --fix $(git ls-files '*.py')` to fix import issues and other code quality problems
+- **AUTOMATICALLY** removes unused imports, organizes import order, fixes line length, and other style issues
+- **PREFERRED** over manual cleanup - let ruff handle it automatically
 - **FOLLOW UP** with `uvx ruff format scripts/` and `uv run pytest` to ensure correctness
+- **NOTE**: The comprehensive Python quality check in the main commands section covers all ruff rules including import organization
 
 #### Shell Script Formatting (AI Assistant Guidance)
 
@@ -73,6 +79,12 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Essential AI Commands
 
+### ⚠️ **CI Performance Impact Warning**
+
+**CRITICAL**: Any changes to Rust code (`src/**`, `benches/**`, `Cargo.toml/lock`) will trigger lengthy performance regression testing (30-45 minutes) in CI.
+
+**Best Practice**: Keep documentation/Python updates in separate branches from Rust code changes to avoid triggering benchmarks unnecessarily.
+
 ### Code Quality Checks
 
 Run these commands after making changes to ensure code quality (the assistant must not execute git-altering commands; present them for the user to run):
@@ -81,13 +93,16 @@ Run these commands after making changes to ensure code quality (the assistant mu
 modified, added, or staged, and then focus the quality tools on those specific files.
 
 ```bash
-# Rust code formatting and linting
+# Rust code formatting and linting (includes src/, tests/, benches/, examples/)
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
+# Rust documentation validation (required for crates.io publishing)
+# NOTE: Documentation failures will prevent publishing to crates.io
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
 # Python code quality (for scripts/ directory)
-uvx ruff check --select F401,F403,I001,I002 --fix scripts/
-uvx ruff format scripts/
+# See "Import Organization (AI Assistant Guidance)" section for detailed ruff usage
 
 # Shell script formatting and linting (path-safe)
 git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -w
@@ -119,13 +134,10 @@ cargo test --release  # Run all tests in release mode for performance
 cargo test --test circumsphere_debug_tools -- --nocapture  # Debug tools with output
 
 # Benchmarks
-cargo bench --no-run
+cargo bench --workspace --no-run
 
-# Documentation validation (required for crates.io publishing)
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-
-# Run all examples
-chmod +x scripts/run_all_examples.sh && ./scripts/run_all_examples.sh
+# Run all examples (validates functionality)
+bash scripts/run_all_examples.sh
 
 # Python utility testing (if Python scripts modified)
 uv run pytest
@@ -164,6 +176,10 @@ The `delaunay` library implements d-dimensional Delaunay triangulations in Rust,
 - **Published to**: crates.io (documentation build failures will prevent publishing)
 - **CI**: GitHub Actions with strict quality requirements (clippy pedantic mode, rustfmt, no security vulnerabilities)
 - **Architecture**: Generic design with `T: CoordinateScalar`, `U: DataType` for vertex data, `V: DataType` for cell data, `const D: usize` for dimensionality
+- **Core Modules**:
+  - `src/core/` - Triangulation data structures (Tds, Cell, Vertex, Facet) and Bowyer-Watson algorithms
+  - `src/geometry/` - Geometric predicates, Point abstraction, and convex hull algorithms
+- **Key Features**: Arbitrary dimensions (tested 2D-5D), generic coordinate types (f32/f64), serialization/deserialization, convex hull extraction
 
 ## Ongoing Projects
 
@@ -214,13 +230,15 @@ These items are incomplete and may require future attention:
   - `cargo test --release` (for performance)
   - `cargo test --test circumsphere_debug_tools -- --nocapture` (for debug output)
 - **IF** Rust code changed in `examples/` directory → **MUST** run examples validation:
-  - `chmod +x scripts/run_all_examples.sh && ./scripts/run_all_examples.sh`
+  - See "Testing and Validation → Run all examples" for the canonical command
 - **IF** Rust code changed in `benches/` directory → **MUST** run benchmark verification:
   - `cargo bench --no-run` (verifies benchmarks compile without executing them)
 - **IF** other Rust code changed (`src/`, etc.) → **MUST** run standard Rust tests:
   - `cargo test --lib --verbose`
   - `cargo test --doc --verbose`
   - `cargo test --examples --verbose`
+- **FOR ANY** Rust code changes → validate documentation (see "Code Quality Checks → Rust documentation validation")
+- **IMPORTANT**: For allocation testing, use `cargo test --test allocation_api --features count-allocations`
 - **PURPOSE**: Ensures appropriate validation for the type of code changes made
 
 ### Integration Testing Patterns
@@ -229,6 +247,14 @@ These items are incomplete and may require future attention:
 - **Performance Tests**: Always run integration tests in `--release` mode for accurate performance measurements
 - **Test Categories**: Organize tests by purpose: debugging tools (`*_debug_tools.rs`), integration (`*_integration.rs`), regression (`*_error.rs`), comparison (`*_comparison.rs`)
 - **Test Documentation**: Each test file should have clear module documentation explaining purpose, usage, and test coverage
+- **Specialized Tests**: Available integration tests include:
+  - `circumsphere_debug_tools.rs` - Interactive debugging across dimensions (2D-4D)
+  - `robust_predicates_comparison.rs` - Numerical accuracy testing
+  - `robust_predicates_showcase.rs` - Focused showcase of robust predicates solving degenerate cases
+  - `convex_hull_bowyer_watson_integration.rs` - Algorithm integration testing
+  - `coordinate_conversion_errors.rs` - Error handling tests for extreme values, NaN, infinity
+  - `test_cavity_boundary_error.rs` - Reproduction tests for cavity boundary facet errors
+  - `allocation_api.rs` - Memory allocation profiling (requires `count-allocations` feature)
 
 ### Testing Best Practices
 

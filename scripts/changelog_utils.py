@@ -530,7 +530,50 @@ class ChangelogUtils:
         # Keep bolded title intact; place commit link on its own line if too long
         if len(title_line) <= max_line_length:
             return [title_line]
-        return [f"- **{escaped_title}**", f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})"]
+
+        # If the title alone (with bullet and bold formatting) is still too long, wrap it
+        title_only = f"- **{escaped_title}**"
+        if len(title_only) > max_line_length:
+            # Compute exact overhead; drop bold if the line would be too cramped.
+            first_prefix, cont_prefix, bold_suffix = "- **", "  **", "**"
+            avail_first = max(1, max_line_length - len(first_prefix) - len(bold_suffix))
+            avail_cont = max(1, max_line_length - len(cont_prefix) - len(bold_suffix))
+            wrap_width = min(avail_first, avail_cont)
+
+            use_bold = wrap_width >= 8
+            if not use_bold:
+                first_prefix, cont_prefix, bold_suffix = "- ", "  ", ""
+                avail_first = max(1, max_line_length - len(first_prefix) - len(bold_suffix))
+                avail_cont = max(1, max_line_length - len(cont_prefix) - len(bold_suffix))
+                wrap_width = min(avail_first, avail_cont)
+
+            wrapped_title_lines = textwrap.wrap(
+                escaped_title,
+                width=wrap_width,
+                break_long_words=True,
+                break_on_hyphens=True,
+            ) or [escaped_title[:wrap_width]]
+
+            result_lines: list[str] = []
+            for i, line in enumerate(wrapped_title_lines):
+                prefix = first_prefix if i == 0 else cont_prefix
+                result_lines.append(f"{prefix}{line}{bold_suffix}" if use_bold else f"{prefix}{line}")
+
+            # Add commit link on a separate line; split only if necessary.
+            commit_link = f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})"
+            if len(commit_link) <= max_line_length:
+                result_lines.append(commit_link)
+            else:
+                result_lines.append(f"  [`{commit_sha}`]")
+                result_lines.append(f"  ({repo_url}/commit/{commit_sha})")
+            return result_lines
+
+        # Title fits but full line doesn't - split normally
+        commit_link = f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})"
+        if len(commit_link) <= max_line_length:
+            return [f"- **{escaped_title}**", commit_link]
+        # Very short limit - split commit link too
+        return [f"- **{escaped_title}**", f"  [`{commit_sha}`]", f"  ({repo_url}/commit/{commit_sha})"]
 
     @staticmethod
     def _format_entry_body(body_lines: list[str], max_line_length: int) -> list[str]:

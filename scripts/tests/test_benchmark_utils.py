@@ -175,6 +175,32 @@ class TestCriterionParser:
         assert test_results[3].dimension == "4D"
         assert test_results[3].points == 1000
 
+    def test_ci_performance_suite_patterns(self):
+        """Test CI performance suite benchmark patterns (2D, 3D, 4D, 5D with 10, 25, 50 points)."""
+        # Test data representing CI performance suite dimensions and point counts
+        ci_suite_results = [
+            BenchmarkData(10, "2D").with_timing(18.0, 20.0, 22.0, "µs"),
+            BenchmarkData(25, "2D").with_timing(38.0, 40.0, 42.0, "µs"),
+            BenchmarkData(50, "2D").with_timing(78.0, 80.0, 82.0, "µs"),
+            BenchmarkData(10, "3D").with_timing(48.0, 50.0, 52.0, "µs"),
+            BenchmarkData(25, "3D").with_timing(118.0, 125.0, 132.0, "µs"),
+            BenchmarkData(50, "3D").with_timing(245.0, 250.0, 255.0, "µs"),
+            BenchmarkData(10, "4D").with_timing(58.0, 60.0, 62.0, "µs"),
+            BenchmarkData(25, "4D").with_timing(118.0, 120.0, 122.0, "µs"),
+            BenchmarkData(50, "4D").with_timing(290.0, 300.0, 310.0, "µs"),
+            BenchmarkData(10, "5D").with_timing(78.0, 80.0, 82.0, "µs"),
+            BenchmarkData(25, "5D").with_timing(145.0, 150.0, 155.0, "µs"),
+            BenchmarkData(50, "5D").with_timing(290.0, 300.0, 310.0, "µs"),
+        ]
+
+        # Sort using the same logic as the actual function (by dimension, then points)
+        ci_suite_results.sort(key=lambda x: (int(x.dimension.rstrip("D")), x.points))
+
+        # Verify sorting order: 2D..5D, then 10,25,50 within each dimension
+        expected_order = [(d, p) for d in ("2D", "3D", "4D", "5D") for p in (10, 25, 50)]
+        actual_order = [(b.dimension, b.points) for b in ci_suite_results]
+        assert actual_order == expected_order
+
 
 class TestPerformanceComparator:
     """Test cases for PerformanceComparator class."""

@@ -135,18 +135,6 @@ Memory allocation profiling and testing utilities for tracking memory usage patt
 cargo test --test allocation_api --features count-allocations
 ```
 
-#### `bench_helpers_test.rs`
-
-Tests for benchmark helper functions, ensuring the reliability of performance measurement utilities used throughout the project.
-
-**Coverage:**
-
-- Benchmark helper function validation
-- Performance measurement accuracy
-- Test data generation consistency
-
-**Run with:** `cargo test --test bench_helpers_test`
-
 ## Running Tests
 
 ### All Integration Tests
