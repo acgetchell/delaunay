@@ -11,6 +11,9 @@ and necessary for comprehensive unit testing of internal functionality.
 """
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 from io import StringIO
 from pathlib import Path
@@ -20,8 +23,10 @@ import pytest
 
 from benchmark_utils import (
     BenchmarkData,
+    BenchmarkRegressionHelper,
     CriterionParser,
     PerformanceComparator,
+    WorkflowHelper,
 )
 
 
@@ -686,3 +691,621 @@ class TestEdgeCases:
         assert "Total benchmarks compared: 1" in result  # Only one valid comparison
         assert "N/A (baseline mean is 0)" in result
         assert "10.0%" in result  # The valid comparison shows 10% change
+
+
+class TestWorkflowHelper:
+    """Test cases for WorkflowHelper class."""
+
+    @patch.dict(os.environ, {"GITHUB_REF": "refs/tags/v1.2.3"}, clear=False)
+    @patch("benchmark_utils.os.getenv")
+    def test_determine_tag_name_from_github_ref(self, mock_getenv):
+        """Test tag name determination from GITHUB_REF with tag."""
+        mock_getenv.side_effect = lambda key, default="": {
+            "GITHUB_REF": "refs/tags/v1.2.3",
+            "GITHUB_OUTPUT": None,
+        }.get(key, default)
+
+        tag_name = WorkflowHelper.determine_tag_name()
+        assert tag_name == "v1.2.3"
+
+    @patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main"}, clear=False)
+    @patch("benchmark_utils.datetime")
+    @patch("benchmark_utils.os.getenv")
+    def test_determine_tag_name_generated(self, mock_getenv, mock_datetime):
+        """Test tag name generation when not from a tag push."""
+        # Mock datetime
+        mock_now = Mock()
+        mock_now.strftime.return_value = "20231215-143000"
+        mock_datetime.now.return_value = mock_now
+
+        mock_getenv.side_effect = lambda key, default="": {
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_OUTPUT": None,
+        }.get(key, default)
+
+        tag_name = WorkflowHelper.determine_tag_name()
+        assert tag_name == "manual-20231215-143000"
+
+    @patch.dict(os.environ, {"GITHUB_REF": "refs/tags/v2.0.0"}, clear=False)
+    def test_determine_tag_name_with_github_output(self):
+        """Test tag name determination with GITHUB_OUTPUT file."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            output_file = f.name
+
+        try:
+            with patch.dict(os.environ, {"GITHUB_OUTPUT": output_file}):
+                tag_name = WorkflowHelper.determine_tag_name()
+                assert tag_name == "v2.0.0"
+
+            # Check that GITHUB_OUTPUT file was written
+            with open(output_file, encoding="utf-8") as f:
+                content = f.read()
+                assert "tag_name=v2.0.0\n" in content
+        finally:
+            Path(output_file).unlink(missing_ok=True)
+
+    def test_create_metadata_success(self):
+        """Test successful metadata creation."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "GITHUB_SHA": "abc123def456",
+                    "GITHUB_RUN_ID": "123456789",
+                    "RUNNER_OS": "macOS",
+                    "RUNNER_ARCH": "ARM64",
+                },
+            ):
+                success = WorkflowHelper.create_metadata("v1.0.0", output_dir)
+                assert success
+
+            # Check metadata file was created
+            metadata_file = output_dir / "metadata.json"
+            assert metadata_file.exists()
+
+            # Check metadata content
+            with metadata_file.open("r", encoding="utf-8") as f:
+                metadata = json.load(f)
+
+            assert metadata["tag"] == "v1.0.0"
+            assert metadata["commit"] == "abc123def456"
+            assert metadata["workflow_run_id"] == "123456789"
+            assert metadata["runner_os"] == "macOS"
+            assert metadata["runner_arch"] == "ARM64"
+            assert "generated_at" in metadata
+            # Check ISO format timestamp
+            assert metadata["generated_at"].endswith("Z")
+
+    def test_create_metadata_with_safe_env_vars(self):
+        """Test metadata creation with SAFE_ prefixed environment variables."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "SAFE_COMMIT_SHA": "def456abc789",
+                    "SAFE_RUN_ID": "987654321",
+                    "RUNNER_OS": "Linux",
+                    "RUNNER_ARCH": "X64",
+                },
+                clear=True,
+            ):
+                success = WorkflowHelper.create_metadata("v2.0.0", output_dir)
+                assert success
+
+            # Check metadata file was created
+            metadata_file = output_dir / "metadata.json"
+            assert metadata_file.exists()
+
+            # Check metadata content uses SAFE_ variables
+            with metadata_file.open("r", encoding="utf-8") as f:
+                metadata = json.load(f)
+
+            assert metadata["commit"] == "def456abc789"
+            assert metadata["workflow_run_id"] == "987654321"
+
+    def test_create_metadata_missing_env_vars(self):
+        """Test metadata creation with missing environment variables."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+
+            # Clear environment variables
+            with patch.dict(os.environ, {}, clear=True):
+                success = WorkflowHelper.create_metadata("v1.0.0", output_dir)
+                assert success
+
+            # Check metadata file was created with "unknown" values
+            metadata_file = output_dir / "metadata.json"
+            with metadata_file.open("r", encoding="utf-8") as f:
+                metadata = json.load(f)
+
+            assert metadata["tag"] == "v1.0.0"
+            assert metadata["commit"] == "unknown"
+            assert metadata["workflow_run_id"] == "unknown"
+            assert metadata["runner_os"] == "unknown"
+            assert metadata["runner_arch"] == "unknown"
+
+    def test_create_metadata_directory_creation(self):
+        """Test that metadata creation creates directory if it doesn't exist."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "nested" / "path"
+
+            success = WorkflowHelper.create_metadata("v1.0.0", output_dir)
+            assert success
+            assert output_dir.exists()
+            assert (output_dir / "metadata.json").exists()
+
+    def test_display_baseline_summary_success(self):
+        """Test successful baseline summary display."""
+        baseline_content = """Date: 2023-12-15 14:30:00 UTC
+Git commit: abc123def456
+Hardware Information:
+  OS: macOS
+  CPU: Apple M4 Max
+  Memory: 64.0 GB
+
+=== 1000 Points (2D) ===
+Time: [95.0, 100.0, 105.0] µs
+Throughput: [9.524, 10.0, 10.526] Kelem/s
+
+=== 2000 Points (2D) ===
+Time: [190.0, 200.0, 210.0] µs
+
+=== 1000 Points (3D) ===
+Time: [220.0, 250.0, 280.0] µs
+"""
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(baseline_content)
+            f.flush()
+            baseline_file = Path(f.name)
+
+        try:
+            with patch("builtins.print") as mock_print:
+                success = WorkflowHelper.display_baseline_summary(baseline_file)
+                assert success
+
+                # Check that summary was printed
+                print_calls = [call.args[0] for call in mock_print.call_args_list]
+                assert any("📊 Baseline summary:" in call for call in print_calls)
+                assert any("Total benchmarks: 3" in call for call in print_calls)
+                assert any("Date: 2023-12-15 14:30:00 UTC" in call for call in print_calls)
+        finally:
+            baseline_file.unlink()
+
+    def test_display_baseline_summary_nonexistent_file(self):
+        """Test baseline summary with non-existent file."""
+        baseline_file = Path("/nonexistent/file.txt")
+
+        with patch("builtins.print") as mock_print:
+            success = WorkflowHelper.display_baseline_summary(baseline_file)
+            assert not success
+
+            # Check error message was printed to stderr
+            stderr_calls = [call for call in mock_print.call_args_list if call.kwargs.get("file") == sys.stderr]
+            assert len(stderr_calls) > 0
+            assert "❌ Baseline file not found" in stderr_calls[0].args[0]
+
+    def test_display_baseline_summary_long_file(self):
+        """Test baseline summary with file longer than 10 lines."""
+        baseline_content = "\n".join([f"Line {i}" for i in range(20)])
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(baseline_content)
+            f.flush()
+            baseline_file = Path(f.name)
+
+        try:
+            with patch("builtins.print") as mock_print:
+                success = WorkflowHelper.display_baseline_summary(baseline_file)
+                assert success
+
+                # Check that "..." was printed (indicates truncation)
+                print_calls = [call.args[0] for call in mock_print.call_args_list]
+                assert "..." in print_calls
+        finally:
+            baseline_file.unlink()
+
+    def test_sanitize_artifact_name_basic(self):
+        """Test basic artifact name sanitization."""
+        artifact_name = WorkflowHelper.sanitize_artifact_name("v1.2.3")
+        assert artifact_name == "performance-baseline-v1.2.3"
+
+    def test_sanitize_artifact_name_with_special_chars(self):
+        """Test artifact name sanitization with special characters."""
+        artifact_name = WorkflowHelper.sanitize_artifact_name("manual-2023/12/15-14:30:00")
+        assert artifact_name == "performance-baseline-manual-2023_12_15-14_30_00"
+
+    def test_sanitize_artifact_name_with_github_output(self):
+        """Test artifact name sanitization with GITHUB_OUTPUT file."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            output_file = f.name
+
+        try:
+            with patch.dict(os.environ, {"GITHUB_OUTPUT": output_file}):
+                artifact_name = WorkflowHelper.sanitize_artifact_name("v2.0.0-beta.1")
+                assert artifact_name == "performance-baseline-v2.0.0-beta.1"
+
+            # Check that GITHUB_OUTPUT file was written
+            with open(output_file, encoding="utf-8") as f:
+                content = f.read()
+                assert "artifact_name=performance-baseline-v2.0.0-beta.1\n" in content
+        finally:
+            Path(output_file).unlink(missing_ok=True)
+
+    def test_sanitize_artifact_name_edge_cases(self):
+        """Test artifact name sanitization with edge cases."""
+        # Test with unicode and various special characters
+        test_cases = [
+            ("v1.0.0-alpha.1", "performance-baseline-v1.0.0-alpha.1"),
+            ("tag with spaces", "performance-baseline-tag_with_spaces"),
+            ("v1.0.0+build.123", "performance-baseline-v1.0.0_build.123"),
+            ("@#$%^&*()[]{}|\\<>?", "performance-baseline-__________________"),
+        ]
+
+        for input_tag, expected_output in test_cases:
+            result = WorkflowHelper.sanitize_artifact_name(input_tag)
+            assert result == expected_output
+
+
+class TestBenchmarkRegressionHelper:
+    """Test cases for BenchmarkRegressionHelper class."""
+
+    def test_prepare_baseline_success(self):
+        """Test successful baseline preparation."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            baseline_file = baseline_dir / "baseline_results.txt"
+
+            # Create a test baseline file
+            baseline_content = """Date: 2023-12-15 10:30:00 UTC
+Git commit: abc123def456
+Hardware Information:
+  OS: macOS
+  CPU: Apple M4 Max
+
+=== 1000 Points (2D) ===
+Time: [95.0, 100.0, 105.0] µs
+"""
+            baseline_file.write_text(baseline_content)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}), patch("builtins.print") as mock_print:
+                    success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
+
+                    assert success
+
+                    # Check that environment variables were set
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_EXISTS=true" in env_content
+                        assert "BASELINE_SOURCE=artifact" in env_content
+
+                    # Check that baseline info was printed
+                    print_calls = [call.args[0] for call in mock_print.call_args_list]
+                    assert any("📦 Prepared baseline from artifact" in call for call in print_calls)
+                    assert any("=== Baseline Information" in call for call in print_calls)
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_prepare_baseline_missing_file(self):
+        """Test baseline preparation when baseline file is missing."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            # No baseline_results.txt file created
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}), patch("builtins.print") as mock_print:
+                    success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
+
+                    assert not success
+
+                    # Check that environment variables were set
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_EXISTS=false" in env_content
+                        assert "BASELINE_SOURCE=missing" in env_content
+
+                    # Check error message was printed
+                    print_calls = [call.args[0] for call in mock_print.call_args_list]
+                    assert any("❌ Downloaded artifact but no baseline_results.txt found" in call for call in print_calls)
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_set_no_baseline_status(self):
+        """Test setting no baseline status."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+            env_path = env_file.name
+
+        try:
+            with patch.dict(os.environ, {"GITHUB_ENV": env_path}), patch("builtins.print") as mock_print:
+                BenchmarkRegressionHelper.set_no_baseline_status()
+
+                # Check that environment variables were set
+                with open(env_path, encoding="utf-8") as f:
+                    env_content = f.read()
+                    assert "BASELINE_EXISTS=false" in env_content
+                    assert "BASELINE_SOURCE=none" in env_content
+                    assert "BASELINE_ORIGIN=none" in env_content
+
+                # Check message was printed
+                print_calls = [call.args[0] for call in mock_print.call_args_list]
+                assert any("📈 No baseline artifact found" in call for call in print_calls)
+        finally:
+            Path(env_path).unlink(missing_ok=True)
+
+    def test_extract_baseline_commit_from_baseline_file(self):
+        """Test extracting commit SHA from baseline_results.txt."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            baseline_file = baseline_dir / "baseline_results.txt"
+
+            baseline_content = """Date: 2023-12-15 10:30:00 UTC
+Git commit: abc123def456
+Hardware Information:
+  OS: macOS
+"""
+            baseline_file.write_text(baseline_content)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
+
+                    assert commit_sha == "abc123def456"
+
+                    # Check that environment variable was set
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_COMMIT=abc123def456" in env_content
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_extract_baseline_commit_from_metadata(self):
+        """Test extracting commit SHA from metadata.json when baseline file fails."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            metadata_file = baseline_dir / "metadata.json"
+
+            metadata = {"tag": "v1.0.0", "commit": "def456abc789", "generated_at": "2023-12-15T10:30:00Z"}
+
+            with metadata_file.open("w", encoding="utf-8") as f:
+                json.dump(metadata, f)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
+
+                    assert commit_sha == "def456abc789"
+
+                    # Check that environment variable was set
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_COMMIT=def456abc789" in env_content
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_extract_baseline_commit_unknown(self):
+        """Test extracting commit SHA when no valid SHA is found."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            # No files created
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
+
+                    assert commit_sha == "unknown"
+
+                    # Check that environment variable was set
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_COMMIT=unknown" in env_content
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_determine_benchmark_skip_unknown_baseline(self):
+        """Test skip determination with unknown baseline commit."""
+        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("unknown", "def456")
+
+        assert not should_skip
+        assert reason == "unknown_baseline"
+
+    def test_determine_benchmark_skip_same_commit(self):
+        """Test skip determination with same commit."""
+        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc123", "abc123")
+
+        assert should_skip
+        assert reason == "same_commit"
+
+    @patch("subprocess.run")
+    def test_determine_benchmark_skip_baseline_not_found(self, mock_subprocess):
+        """Test skip determination when baseline commit not found in history."""
+        # Simulate git cat-file failing
+        mock_subprocess.side_effect = subprocess.CalledProcessError(1, "git cat-file")
+
+        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc123", "def456")
+
+        assert not should_skip
+        assert reason == "baseline_commit_not_found"
+
+    @patch("subprocess.run")
+    def test_determine_benchmark_skip_no_changes(self, mock_subprocess):
+        """Test skip determination when no relevant changes found."""
+        # Mock successful git commands
+        mock_subprocess.side_effect = [
+            Mock(returncode=0),  # git cat-file succeeds
+            Mock(returncode=0, stdout="docs/README.md\n.github/workflows/other.yml\n", stderr=""),  # git diff
+        ]
+
+        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc123", "def456")
+
+        assert should_skip
+        assert reason == "no_relevant_changes"
+
+    @patch("subprocess.run")
+    def test_determine_benchmark_skip_changes_detected(self, mock_subprocess):
+        """Test skip determination when relevant changes are detected."""
+        # Mock successful git commands
+        mock_subprocess.side_effect = [
+            Mock(returncode=0),  # git cat-file succeeds
+            Mock(returncode=0, stdout="src/core/mod.rs\nbenches/performance.rs\n", stderr=""),  # git diff
+        ]
+
+        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc123", "def456")
+
+        assert not should_skip
+        assert reason == "changes_detected"
+
+    def test_display_skip_message(self):
+        """Test displaying skip messages."""
+        with patch("builtins.print") as mock_print:
+            BenchmarkRegressionHelper.display_skip_message("same_commit", "abc123")
+
+            print_calls = [call.args[0] for call in mock_print.call_args_list]
+            assert any("🔍 Current commit matches baseline (abc123)" in call for call in print_calls)
+
+    def test_display_no_baseline_message(self):
+        """Test displaying no baseline message."""
+        with patch("builtins.print") as mock_print:
+            BenchmarkRegressionHelper.display_no_baseline_message()
+
+            print_calls = [call.args[0] for call in mock_print.call_args_list]
+            assert any("⚠️ No performance baseline available" in call for call in print_calls)
+            assert any("💡 To enable performance regression testing" in call for call in print_calls)
+
+    def test_run_regression_test_success(self):
+        """Test successful regression test run."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_file = Path(temp_dir) / "baseline.txt"
+            baseline_file.write_text("mock baseline content")
+
+            with patch("benchmark_utils.PerformanceComparator") as mock_comparator_class:
+                mock_comparator = Mock()
+                mock_comparator.compare_with_baseline.return_value = (True, False)  # success, no regression
+                mock_comparator_class.return_value = mock_comparator
+
+                with patch("builtins.print") as mock_print:
+                    success = BenchmarkRegressionHelper.run_regression_test(baseline_file)
+
+                    assert success
+                    mock_comparator.compare_with_baseline.assert_called_once_with(baseline_file)
+
+                    print_calls = [call.args[0] for call in mock_print.call_args_list]
+                    assert any("🚀 Running performance regression test" in call for call in print_calls)
+
+    def test_run_regression_test_failure(self):
+        """Test regression test run failure."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_file = Path(temp_dir) / "baseline.txt"
+            baseline_file.write_text("mock baseline content")
+
+            with patch("benchmark_utils.PerformanceComparator") as mock_comparator_class:
+                mock_comparator = Mock()
+                mock_comparator.compare_with_baseline.return_value = (False, False)  # failure
+                mock_comparator_class.return_value = mock_comparator
+
+                success = BenchmarkRegressionHelper.run_regression_test(baseline_file)
+
+                assert not success
+
+    def test_display_results_file_exists(self):
+        """Test displaying results when file exists."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            results_file = Path(temp_dir) / "results.txt"
+            results_content = "=== Performance Test Results ===\nAll tests passed\n"
+            results_file.write_text(results_content)
+
+            with patch("builtins.print") as mock_print:
+                BenchmarkRegressionHelper.display_results(results_file)
+
+                print_calls = [call.args[0] for call in mock_print.call_args_list]
+                assert any("=== Performance Regression Test Results ===" in call for call in print_calls)
+                assert any("All tests passed" in call for call in print_calls)
+
+    def test_display_results_file_missing(self):
+        """Test displaying results when file is missing."""
+        missing_file = Path("/nonexistent/results.txt")
+
+        with patch("builtins.print") as mock_print:
+            BenchmarkRegressionHelper.display_results(missing_file)
+
+            print_calls = [call.args[0] for call in mock_print.call_args_list]
+            assert any("⚠️ No comparison results file found" in call for call in print_calls)
+
+    def test_generate_summary_with_regression(self):
+        """Test generating summary when regression is detected."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            results_file = Path(temp_dir) / "benches" / "compare_results.txt"
+            results_file.parent.mkdir(parents=True)
+            results_file.write_text("REGRESSION detected in benchmark xyz")
+
+            env_vars = {
+                "BASELINE_SOURCE": "artifact",
+                "BASELINE_ORIGIN": "release",
+                "BASELINE_TAG": "v1.0.0",
+                "BASELINE_EXISTS": "true",
+                "SKIP_BENCHMARKS": "false",
+                "SKIP_REASON": "changes_detected",
+            }
+
+            with patch.dict(os.environ, env_vars):
+                # Change working directory to temp_dir so Path("benches/compare_results.txt") works
+                original_cwd = Path.cwd()
+                os.chdir(temp_dir)
+                try:
+                    with patch("builtins.print") as mock_print:
+                        BenchmarkRegressionHelper.generate_summary()
+
+                        print_calls = [call.args[0] for call in mock_print.call_args_list]
+                        assert any("📊 Performance Regression Testing Summary" in call for call in print_calls)
+                        assert any("Baseline source: artifact" in call for call in print_calls)
+                        assert any("Result: ⚠️ Performance regressions detected" in call for call in print_calls)
+                finally:
+                    os.chdir(original_cwd)
+
+    def test_generate_summary_skip_same_commit(self):
+        """Test generating summary when benchmarks skipped due to same commit."""
+        env_vars = {
+            "BASELINE_SOURCE": "artifact",
+            "BASELINE_ORIGIN": "manual",
+            "BASELINE_EXISTS": "true",
+            "SKIP_BENCHMARKS": "true",
+            "SKIP_REASON": "same_commit",
+        }
+
+        with patch.dict(os.environ, env_vars), patch("builtins.print") as mock_print:
+            BenchmarkRegressionHelper.generate_summary()
+
+            print_calls = [call.args[0] for call in mock_print.call_args_list]
+            assert any("Result: ⏭️ Benchmarks skipped (same commit as baseline)" in call for call in print_calls)
+
+    def test_generate_summary_no_baseline(self):
+        """Test generating summary when no baseline available."""
+        env_vars = {
+            "BASELINE_EXISTS": "false",
+            "SKIP_BENCHMARKS": "unknown",
+        }
+
+        with patch.dict(os.environ, env_vars, clear=True), patch("builtins.print") as mock_print:
+            BenchmarkRegressionHelper.generate_summary()
+
+            print_calls = [call.args[0] for call in mock_print.call_args_list]
+            assert any("Result: ⏭️ Benchmarks skipped (no baseline available)" in call for call in print_calls)
