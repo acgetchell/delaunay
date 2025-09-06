@@ -571,12 +571,15 @@ mod tests {
 - Performance benchmarking
 - Integration with TDS
 
-#### `util.rs` (871 lines)
+#### `util.rs` (3,806 lines)
 
-- Function-focused (not struct-focused)
-- Extensive edge case testing
+- Function-focused (not struct-focused)  
+- Comprehensive test coverage with systematic multi-dimensional testing
+- Point generation utilities (random, grid, and Poisson disk sampling)
+- Function categorization by geometric operations (circumcenter, facet measure, surface measure, etc.)
+- Multi-dimensional testing across 2D-5D with both f32 and f64 coordinate types
+- Extensive edge case testing and error handling validation
 - Generic type coverage
-- Utility function combinations
 
 ### Key Conventions
 

@@ -29,11 +29,40 @@ The CI Performance Suite is the primary benchmarking suite used for automated pe
 - **Runtime**: ~5–10 minutes (hardware dependent)
 - **Integration**: Used by GitHub Actions for automated baseline generation and comparison
 
+### Profiling Suite (comprehensive)
+
+```bash
+# Run comprehensive profiling suite (1-2 hours, 10³-10⁶ points)
+cargo bench --bench profiling_suite --features count-allocations
+
+# Development mode (faster, reduced scale)
+PROFILING_DEV_MODE=1 cargo bench --bench profiling_suite --features count-allocations
+
+# Run specific profiling categories
+cargo bench --bench profiling_suite --features count-allocations -- triangulation_scaling
+cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
+cargo bench --bench profiling_suite --features count-allocations -- query_latency
+```
+
+The **Profiling Suite** provides comprehensive performance analysis for optimization work:
+
+- **Large-scale triangulation performance** (10³ to 10⁶ points across multiple decades)
+- **Multiple point distributions** (random, grid, Poisson disk)
+- **Memory allocation tracking** (requires `--features count-allocations`)
+- **Query latency analysis** (circumsphere tests, neighbor queries)
+- **Multi-dimensional scaling** (2D through 5D)
+- **Algorithmic bottleneck identification** (boundary facets, convex hull operations)
+
+**⚠️ Note**: This suite is designed for optimization work and takes significantly longer than CI benchmarks.
+
 ### All Benchmarks
 
 ```bash
-# Run all available benchmarks
+# Run all available benchmarks (includes CI + profiling suites)
 cargo bench
+
+# Run all benchmarks with memory tracking
+cargo bench --features count-allocations
 ```
 
 ## Methods Compared
@@ -390,3 +419,51 @@ The optimization successfully achieved the goal of reducing complexity from O(N�
 The benchmark results demonstrate linear scaling with problem size, making the algorithm suitable for large-scale triangulation analysis and boundary detection operations.
 
 The performance improvement is particularly significant for large triangulations where the quadratic approach would become prohibitively expensive.
+
+## GitHub Actions Integration
+
+### Workflow Separation Strategy
+
+The project uses a two-tier benchmarking approach to balance comprehensive analysis with CI efficiency:
+
+#### 1. **CI Performance Suite** (`ci_performance_suite.rs`)
+- **Purpose**: Fast performance regression detection for regular CI/CD
+- **Runtime**: ~5-10 minutes 
+- **Scale**: Small point counts (10, 25, 50 points)
+- **Frequency**: Every PR and push to main
+- **Integration**: `.github/workflows/benchmarks.yml` and `.github/workflows/generate-baseline.yml`
+
+#### 2. **Profiling Suite** (`profiling_suite.rs`)
+- **Purpose**: Comprehensive performance analysis for optimization work
+- **Runtime**: 1-2 hours (full production mode)
+- **Scale**: Large point counts (10³ to 10⁶ points)
+- **Frequency**: Monthly scheduled + manual triggers + release tags
+- **Integration**: `.github/workflows/profiling-benchmarks.yml`
+
+### Automated Profiling Triggers
+
+```bash
+# Manual trigger via GitHub Actions UI:
+# 1. Go to Actions tab → "Comprehensive Profiling Benchmarks"
+# 2. Click "Run workflow" 
+# 3. Select mode: development (faster) or production (full scale)
+# 4. Optional: Filter specific benchmarks
+
+# Automatic triggers:
+# - Monthly: First Sunday of each month at 2 AM UTC  
+# - Release tags: Every version tag (v*.*.*) for baseline generation
+```
+
+### Profiling Results and Artifacts
+
+- **Profiling Results**: Available as GitHub Actions artifacts for 30 days
+- **Profiling Baselines**: Release-tagged baselines kept for 90 days
+- **Memory Analysis**: Detailed allocation tracking with `count-allocations` feature
+- **HTML Reports**: Criterion-generated performance reports with statistical analysis
+
+### Development Workflow
+
+1. **Regular Development**: Use CI Performance Suite for quick feedback
+2. **Optimization Work**: Trigger Profiling Suite manually in development mode
+3. **Release Preparation**: Full profiling suite runs automatically on version tags
+4. **Performance Monitoring**: Monthly automated runs track long-term trends

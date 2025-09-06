@@ -71,10 +71,21 @@ harness = false
 name = "ci_performance_suite"
 harness = false
 
+[[bench]]
+name = "profiling_suite"
+harness = false
+
 [lints.rust]
 unsafe_code = "forbid"
 dead_code = "warn"
 missing_docs = "warn"
+
+[tool.tarpaulin]
+# Exclude benchmarks and examples from coverage analysis
+exclude = [
+    "benches/*",
+    "examples/*",
+]
 
 [lints.clippy]
 extra_unused_type_parameters = "warn"
