@@ -40,28 +40,9 @@ jobs:
           cache: true
           # Toolchain from rust-toolchain.toml
 
-      - name: Install jq (required for baseline generation)
-        run: |
-          # macOS runner should have jq, but ensure it's available
-          if ! command -v jq >/dev/null 2>&1; then
-            echo "Installing jq..."
-            brew install jq
-          else
-            echo "jq is already available: $(jq --version)"
-          fi
-
       - name: Determine tag information
         id: tag_info
-        run: |
-          if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
-            TAG_NAME="${GITHUB_REF#refs/tags/}"
-            echo "Using push tag: $TAG_NAME"
-          else
-            TAG_NAME="manual-$(date -u +%Y%m%d-%H%M%S)"
-            echo "Using generated tag name: $TAG_NAME"
-          fi
-          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
-          echo "Final tag name: $TAG_NAME"
+        run: uv run benchmark-utils determine-tag
 
       - name: Install uv (Python package manager)
         uses: astral-sh/setup-uv@557e51de59eb14aaaba2ed9621916900a91d50c6  # v6.6.1
@@ -76,25 +57,17 @@ jobs:
           TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
         run: |
           echo "🚀 Generating performance baseline for tag $TAG_NAME"
-
-          # Run baseline generation using Python CLI tool with CI performance suite
+          
+          # Generate baseline using Python CLI tool
           uv run benchmark-utils generate-baseline \
-            || uv run python -m scripts.benchmark_utils generate-baseline
-
-          # Verify baseline was created
-          if [ ! -f "baseline-artifact/baseline_results.txt" ]; then
-            echo "❌ Baseline generation failed - no baseline file created"
-            exit 1
-          fi
-
+            --output "baseline-artifact/baseline-$TAG_NAME.txt" \
+            --tag "$TAG_NAME"
+          
           echo "✅ Baseline generated successfully"
-
-          # Show baseline summary
-          echo "📊 Baseline summary:"
-          head -n 10 baseline-artifact/baseline_results.txt
-          echo "..."
-          benchmark_count=$(grep -c "^===" baseline-artifact/baseline_results.txt || echo "0")
-          echo "Total benchmarks: $benchmark_count"
+          
+          # Display baseline summary
+          uv run benchmark-utils display-summary \
+            --baseline "baseline-artifact/baseline-$TAG_NAME.txt"
 
       - name: Prepare baseline artifact
         env:
@@ -102,34 +75,17 @@ jobs:
           SAFE_COMMIT_SHA: ${{ github.sha }}
           SAFE_RUN_ID: ${{ github.run_id }}
         run: |
-          # The baseline file is already in baseline-artifact/ from the script
-          # Just copy it with tag-specific name
-          cp baseline-artifact/baseline_results.txt "baseline-artifact/baseline-$TAG_NAME.txt"
-
-          # Create metadata file
-          cat > "baseline-artifact/metadata.json" <<EOF
-          {
-            "tag": "$TAG_NAME",
-            "commit": "$SAFE_COMMIT_SHA",
-            "workflow_run_id": "$SAFE_RUN_ID",
-            "generated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-            "runner_os": "$RUNNER_OS",
-            "runner_arch": "$RUNNER_ARCH"
-          }
-          EOF
-
+          # Create metadata file using Python utility
+          uv run benchmark-utils create-metadata --tag "$TAG_NAME"
+          
           echo "📦 Artifact contents:"
           ls -la baseline-artifact/
 
       - name: Create safe artifact name
         id: safe_name
         env:
-          SAFE_TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
-        run: |
-          # Sanitize tag name for artifact upload (remove special characters)
-          CLEAN_TAG_NAME=$(echo "$SAFE_TAG_NAME" | sed 's/[^a-zA-Z0-9._-]/_/g')
-          echo "artifact_name=performance-baseline-$CLEAN_TAG_NAME" >> "$GITHUB_OUTPUT"
-          echo "Using sanitized artifact name: performance-baseline-$CLEAN_TAG_NAME"
+          TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+        run: uv run benchmark-utils sanitize-artifact-name --tag "$TAG_NAME"
 
       - name: Upload baseline artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
@@ -139,12 +95,6 @@ jobs:
           retention-days: 90   # Keep baselines ~90 days (align with repo settings; adjust if needed)
           compression-level: 6  # Good balance of speed/compression
 
-      - name: Cleanup temporary baseline file
-        if: ${{ success() }}
-        run: |
-          # Remove temporary baseline file from working directory
-          rm -f baseline-artifact/baseline_results.txt
-          echo "✅ Cleaned up temporary baseline file"
 
       - name: Display next steps
         env:

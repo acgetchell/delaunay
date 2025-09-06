@@ -1250,6 +1250,212 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
     Ok(points)
 }
 
+/// Generate points arranged in a regular grid pattern.
+///
+/// This function creates points arranged in a D-dimensional hypercube grid,
+/// which provides a structured, predictable point distribution useful for
+/// benchmarking and testing geometric algorithms under best-case scenarios.
+///
+/// # Arguments
+///
+/// * `points_per_dim` - Number of points along each dimension
+/// * `spacing` - Distance between adjacent grid points
+/// * `offset` - Translation offset for the entire grid
+///
+/// # Returns
+///
+/// Vector of grid points, or a `RandomPointGenerationError` if parameters are invalid.
+///
+/// # Errors
+///
+/// * `RandomPointGenerationError::InvalidPointCount` if `points_per_dim` is zero
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::generate_grid_points;
+///
+/// // Generate 2D grid: 4x4 = 16 points with unit spacing
+/// let grid_2d = generate_grid_points::<f64, 2>(4, 1.0, [0.0, 0.0]).unwrap();
+/// assert_eq!(grid_2d.len(), 16);
+///
+/// // Generate 3D grid: 3x3x3 = 27 points with spacing 2.0
+/// let grid_3d = generate_grid_points::<f64, 3>(3, 2.0, [0.0, 0.0, 0.0]).unwrap();
+/// assert_eq!(grid_3d.len(), 27);
+///
+/// // Generate 4D grid centered at origin
+/// let grid_4d = generate_grid_points::<f64, 4>(2, 1.0, [-0.5, -0.5, -0.5, -0.5]).unwrap();
+/// assert_eq!(grid_4d.len(), 16); // 2^4 = 16 points
+/// ```
+pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
+    points_per_dim: usize,
+    spacing: T,
+    offset: [T; D],
+) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
+    if points_per_dim == 0 {
+        return Err(RandomPointGenerationError::InvalidPointCount { n_points: 0 });
+    }
+
+    // Safely convert dimension to u32 for pow function
+    let d_u32 =
+        u32::try_from(D).map_err(|_| RandomPointGenerationError::RandomGenerationFailed {
+            min: "0".to_string(),
+            max: format!("{}", points_per_dim - 1),
+            details: format!("Dimension {D} is too large to fit in u32"),
+        })?;
+    let total_points = points_per_dim.pow(d_u32);
+    let mut points = Vec::with_capacity(total_points);
+
+    // Generate all combinations of grid indices
+    #[allow(clippy::items_after_statements)]
+    fn generate_indices(
+        current: &mut Vec<usize>,
+        dim: usize,
+        max_dims: usize,
+        points_per_dim: usize,
+        all_indices: &mut Vec<Vec<usize>>,
+    ) {
+        if dim == max_dims {
+            all_indices.push(current.clone());
+            return;
+        }
+
+        for i in 0..points_per_dim {
+            current.push(i);
+            generate_indices(current, dim + 1, max_dims, points_per_dim, all_indices);
+            current.pop();
+        }
+    }
+
+    let mut all_indices = Vec::new();
+    let mut current = Vec::new();
+    generate_indices(&mut current, 0, D, points_per_dim, &mut all_indices);
+
+    // Convert indices to coordinates
+    for indices in all_indices {
+        let mut coords = [T::zero(); D];
+        for (dim, &index) in indices.iter().enumerate() {
+            // Convert usize index to coordinate scalar safely
+            let index_as_scalar = safe_usize_to_scalar::<T>(index).map_err(|_| {
+                RandomPointGenerationError::RandomGenerationFailed {
+                    min: "0".to_string(),
+                    max: format!("{}", points_per_dim - 1),
+                    details: format!("Failed to convert grid index {index} to coordinate type"),
+                }
+            })?;
+            coords[dim] = offset[dim] + index_as_scalar * spacing;
+        }
+        points.push(Point::new(coords));
+    }
+
+    Ok(points)
+}
+
+/// Generate points using Poisson disk sampling for uniform distribution.
+///
+/// This function creates points with approximately uniform spacing using a
+/// simplified Poisson disk sampling algorithm. This provides a more natural
+/// point distribution than pure random sampling, useful for benchmarking
+/// algorithms under realistic scenarios.
+///
+/// # Arguments
+///
+/// * `n_points` - Target number of points to generate
+/// * `bounds` - Bounding box as (min, max) coordinates
+/// * `min_distance` - Minimum distance between any two points
+/// * `seed` - Seed for reproducible results
+///
+/// # Returns
+///
+/// Vector of Poisson-distributed points, or a `RandomPointGenerationError` if parameters are invalid.
+/// Note: The actual number of points may be less than `n_points` due to spacing constraints.
+///
+/// # Errors
+///
+/// * `RandomPointGenerationError::InvalidRange` if min >= max in bounds
+/// * `RandomPointGenerationError::RandomGenerationFailed` if `min_distance` is too large for the bounds
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::generate_poisson_points;
+///
+/// // Generate ~100 2D points with minimum distance 0.1 in unit square
+/// let poisson_2d = generate_poisson_points::<f64, 2>(100, (0.0, 1.0), 0.1, 42).unwrap();
+/// // Actual count may be less than 100 due to spacing constraints
+///
+/// // Generate 3D points in a cube
+/// let poisson_3d = generate_poisson_points::<f64, 3>(50, (-1.0, 1.0), 0.2, 123).unwrap();
+/// ```
+pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usize>(
+    n_points: usize,
+    bounds: (T, T),
+    min_distance: T,
+    seed: u64,
+) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
+    use rand::Rng;
+    use rand::SeedableRng;
+
+    // Validate bounds
+    if bounds.0 >= bounds.1 {
+        return Err(RandomPointGenerationError::InvalidRange {
+            min: format!("{:?}", bounds.0),
+            max: format!("{:?}", bounds.1),
+        });
+    }
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut points: Vec<Point<T, D>> = Vec::new();
+
+    // Simple Poisson disk sampling: rejection method
+    // For efficiency, we limit attempts to avoid infinite loops
+    let max_attempts = n_points * 30; // 30 attempts per desired point
+    let mut attempts = 0;
+
+    while points.len() < n_points && attempts < max_attempts {
+        attempts += 1;
+
+        // Generate candidate point
+        let coords = [T::zero(); D].map(|_| rng.random_range(bounds.0..bounds.1));
+        let candidate = Point::new(coords);
+
+        // Check distance to all existing points
+        let mut valid = true;
+        for existing_point in &points {
+            let existing_coords: [T; D] = existing_point.into();
+            let candidate_coords: [T; D] = (&candidate).into();
+
+            // Calculate distance using hypot for numerical stability
+            let mut diff_coords = [T::zero(); D];
+            for i in 0..D {
+                diff_coords[i] = candidate_coords[i] - existing_coords[i];
+            }
+            let distance = hypot(diff_coords);
+
+            if distance < min_distance {
+                valid = false;
+                break;
+            }
+        }
+
+        if valid {
+            points.push(candidate);
+        }
+    }
+
+    if points.is_empty() {
+        return Err(RandomPointGenerationError::RandomGenerationFailed {
+            min: format!("{:?}", bounds.0),
+            max: format!("{:?}", bounds.1),
+            details: format!(
+                "Could not generate any points with minimum distance {min_distance:?} in given bounds"
+            ),
+        });
+    }
+
+    Ok(points)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3327,6 +3533,307 @@ mod tests {
             let coords: [f64; 5] = point.into();
             for &coord in &coords {
                 assert!((-1.0..1.0).contains(&coord));
+            }
+        }
+    }
+
+    // =============================================================================
+    // GRID POINT GENERATION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_generate_grid_points_2d() {
+        // Test 2D grid generation
+        let grid = generate_grid_points::<f64, 2>(3, 1.0, [0.0, 0.0]).unwrap();
+
+        assert_eq!(grid.len(), 9); // 3^2 = 9 points
+
+        // Check that we get the expected coordinates
+        let expected_coords = [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [2.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [2.0, 1.0],
+            [0.0, 2.0],
+            [1.0, 2.0],
+            [2.0, 2.0],
+        ];
+
+        for point in &grid {
+            let coords: [f64; 2] = point.into();
+            // Grid generation order might vary, so check if point exists in expected set
+            assert!(
+                expected_coords.iter().any(|&expected| {
+                    (coords[0] - expected[0]).abs() < 1e-10
+                        && (coords[1] - expected[1]).abs() < 1e-10
+                }),
+                "Point {coords:?} not found in expected coordinates"
+            );
+        }
+    }
+
+    #[test]
+    fn test_generate_grid_points_3d() {
+        // Test 3D grid generation
+        let grid = generate_grid_points::<f64, 3>(2, 2.0, [1.0, 1.0, 1.0]).unwrap();
+
+        assert_eq!(grid.len(), 8); // 2^3 = 8 points
+
+        // Check that all points are within expected bounds
+        for point in &grid {
+            let coords: [f64; 3] = point.into();
+            for &coord in &coords {
+                assert!((1.0..=3.0).contains(&coord)); // offset 1.0 + (0 or 1) * spacing 2.0
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_grid_points_4d() {
+        // Test 4D grid generation
+        let grid = generate_grid_points::<f32, 4>(2, 0.5, [-0.5, -0.5, -0.5, -0.5]).unwrap();
+
+        assert_eq!(grid.len(), 16); // 2^4 = 16 points
+
+        // Check coordinate ranges
+        for point in &grid {
+            let coords: [f32; 4] = point.into();
+            for &coord in &coords {
+                assert!((-0.5..=0.0).contains(&coord)); // offset -0.5 + (0 or 1) * spacing 0.5
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_grid_points_edge_cases() {
+        // Test single point grid
+        let grid = generate_grid_points::<f64, 3>(1, 1.0, [0.0, 0.0, 0.0]).unwrap();
+        assert_eq!(grid.len(), 1);
+        let coords: [f64; 3] = (&grid[0]).into();
+        // Use approx for floating point comparison
+        for (actual, expected) in coords.iter().zip([0.0, 0.0, 0.0].iter()) {
+            assert!((actual - expected).abs() < 1e-15);
+        }
+
+        // Test zero spacing
+        let grid = generate_grid_points::<f64, 2>(2, 0.0, [5.0, 5.0]).unwrap();
+        assert_eq!(grid.len(), 4);
+        for point in &grid {
+            let coords: [f64; 2] = point.into();
+            // Use approx for floating point comparison
+            for (actual, expected) in coords.iter().zip([5.0, 5.0].iter()) {
+                assert!((actual - expected).abs() < 1e-15);
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_grid_points_error_handling() {
+        // Test zero points per dimension
+        let result = generate_grid_points::<f64, 2>(0, 1.0, [0.0, 0.0]);
+        assert!(result.is_err());
+        match result {
+            Err(RandomPointGenerationError::InvalidPointCount { n_points }) => {
+                assert_eq!(n_points, 0);
+            }
+            _ => panic!("Expected InvalidPointCount error"),
+        }
+    }
+
+    #[test]
+    fn test_generate_grid_points_large_coordinates() {
+        // Test with large coordinate values
+        let grid = generate_grid_points::<f64, 2>(2, 1000.0, [1e6, 1e6]).unwrap();
+        assert_eq!(grid.len(), 4);
+
+        for point in &grid {
+            let coords: [f64; 2] = point.into();
+            assert!((1e6..=1e6 + 1000.0).contains(&coords[0]));
+            assert!((1e6..=1e6 + 1000.0).contains(&coords[1]));
+        }
+    }
+
+    #[test]
+    fn test_generate_grid_points_negative_spacing() {
+        // Test with negative spacing
+        let grid = generate_grid_points::<f64, 2>(3, -1.0, [2.0, 2.0]).unwrap();
+        assert_eq!(grid.len(), 9);
+
+        // With negative spacing, coordinates should decrease
+        for point in &grid {
+            let coords: [f64; 2] = point.into();
+            assert!((0.0..=2.0).contains(&coords[0]));
+            assert!((0.0..=2.0).contains(&coords[1]));
+        }
+    }
+
+    // =============================================================================
+    // POISSON POINT GENERATION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_generate_poisson_points_2d() {
+        // Test 2D Poisson disk sampling
+        let points = generate_poisson_points::<f64, 2>(50, (0.0, 10.0), 0.5, 42).unwrap();
+
+        // Should generate some points (exact count depends on spacing constraints)
+        assert!(!points.is_empty());
+        assert!(points.len() <= 50); // May be less than requested due to spacing constraints
+
+        // Check that all points are within bounds
+        for point in &points {
+            let coords: [f64; 2] = point.into();
+            assert!((0.0..10.0).contains(&coords[0]));
+            assert!((0.0..10.0).contains(&coords[1]));
+        }
+
+        // Check minimum distance constraint
+        for (i, p1) in points.iter().enumerate() {
+            for (j, p2) in points.iter().enumerate() {
+                if i != j {
+                    let coords1: [f64; 2] = p1.into();
+                    let coords2: [f64; 2] = p2.into();
+                    let diff = [coords1[0] - coords2[0], coords1[1] - coords2[1]];
+                    let distance = hypot(diff);
+                    assert!(
+                        distance >= 0.5 - 1e-10,
+                        "Distance {distance} violates minimum distance constraint"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_poisson_points_3d() {
+        // Test 3D Poisson disk sampling
+        let points = generate_poisson_points::<f64, 3>(30, (-1.0, 1.0), 0.2, 123).unwrap();
+
+        assert!(!points.is_empty());
+
+        // Check bounds and minimum distance
+        for point in &points {
+            let coords: [f64; 3] = point.into();
+            for &coord in &coords {
+                assert!((-1.0..1.0).contains(&coord));
+            }
+        }
+
+        // Check minimum distance constraint in 3D
+        for (i, p1) in points.iter().enumerate() {
+            for (j, p2) in points.iter().enumerate() {
+                if i != j {
+                    let coords1: [f64; 3] = p1.into();
+                    let coords2: [f64; 3] = p2.into();
+                    let diff = [
+                        coords1[0] - coords2[0],
+                        coords1[1] - coords2[1],
+                        coords1[2] - coords2[2],
+                    ];
+                    let distance = hypot(diff);
+                    assert!(distance >= 0.2 - 1e-10);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_poisson_points_reproducible() {
+        // Test that same seed produces same results
+        let points1 = generate_poisson_points::<f64, 2>(25, (0.0, 5.0), 0.3, 456).unwrap();
+        let points2 = generate_poisson_points::<f64, 2>(25, (0.0, 5.0), 0.3, 456).unwrap();
+
+        assert_eq!(points1.len(), points2.len());
+
+        for (p1, p2) in points1.iter().zip(points2.iter()) {
+            let coords1: [f64; 2] = p1.into();
+            let coords2: [f64; 2] = p2.into();
+
+            for (c1, c2) in coords1.iter().zip(coords2.iter()) {
+                assert_relative_eq!(c1, c2, epsilon = 1e-15);
+            }
+        }
+
+        // Different seeds should produce different results
+        let points3 = generate_poisson_points::<f64, 2>(25, (0.0, 5.0), 0.3, 789).unwrap();
+        assert_ne!(points1, points3);
+    }
+
+    #[test]
+    fn test_generate_poisson_points_error_handling() {
+        // Test invalid range
+        let result = generate_poisson_points::<f64, 2>(50, (10.0, 5.0), 0.1, 42);
+        assert!(result.is_err());
+        match result {
+            Err(RandomPointGenerationError::InvalidRange { min, max }) => {
+                assert_eq!(min, "10.0");
+                assert_eq!(max, "5.0");
+            }
+            _ => panic!("Expected InvalidRange error"),
+        }
+
+        // Test minimum distance too large for bounds (should produce few/no points)
+        let result = generate_poisson_points::<f64, 2>(100, (0.0, 1.0), 10.0, 42);
+        match result {
+            Ok(points) => {
+                // Should produce very few points or fail
+                assert!(points.len() < 5);
+            }
+            Err(RandomPointGenerationError::RandomGenerationFailed { .. }) => {
+                // This is also acceptable - can't fit points with such large spacing
+            }
+            _ => panic!("Unexpected error type"),
+        }
+    }
+
+    #[test]
+    fn test_generate_poisson_points_small_spacing() {
+        // Test with very small minimum distance (should behave more like random sampling)
+        let points = generate_poisson_points::<f64, 2>(20, (0.0, 10.0), 0.01, 999).unwrap();
+
+        // Should be able to generate close to the requested number
+        assert!(points.len() >= 15); // Allow some margin for randomness
+
+        // All points should still respect the minimum distance
+        for (i, p1) in points.iter().enumerate() {
+            for (j, p2) in points.iter().enumerate() {
+                if i != j {
+                    let coords1: [f64; 2] = p1.into();
+                    let coords2: [f64; 2] = p2.into();
+                    let diff = [coords1[0] - coords2[0], coords1[1] - coords2[1]];
+                    let distance = hypot(diff);
+                    assert!(distance >= 0.01 - 1e-12);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_poisson_points_coordinate_types() {
+        // Test with f32 coordinates
+        let points_f32 =
+            generate_poisson_points::<f32, 3>(15, (0.0_f32, 5.0_f32), 0.5_f32, 333).unwrap();
+
+        assert!(!points_f32.is_empty());
+
+        for point in &points_f32 {
+            let coords: [f32; 3] = point.into();
+            for &coord in &coords {
+                assert!((0.0..5.0).contains(&coord));
+            }
+        }
+
+        // Test with f64 coordinates
+        let points_f64 = generate_poisson_points::<f64, 4>(10, (-2.0, 2.0), 0.4, 777).unwrap();
+
+        assert!(!points_f64.is_empty());
+
+        for point in &points_f64 {
+            let coords: [f64; 4] = point.into();
+            for &coord in &coords {
+                assert!((-2.0..2.0).contains(&coord));
             }
         }
     }

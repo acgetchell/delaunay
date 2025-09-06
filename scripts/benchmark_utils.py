@@ -13,9 +13,11 @@ Replaces complex bash parsing logic with maintainable Python code.
 
 import argparse
 import json
+import logging
 import math
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -572,8 +574,422 @@ class PerformanceComparator:
             f.write(f"Throughput Change (mean): {thrpt_change_pct:.1f}%\n")
 
 
-def main():
-    """Command-line interface for benchmark utilities."""
+class WorkflowHelper:
+    """Helper functions for GitHub Actions workflow integration."""
+
+    @staticmethod
+    def determine_tag_name() -> str:
+        """
+        Determine tag name for baseline generation.
+
+        Returns:
+            Tag name based on GITHUB_REF or generated timestamp
+        """
+        github_ref = os.getenv("GITHUB_REF", "")
+
+        if github_ref.startswith("refs/tags/"):
+            tag_name = github_ref[len("refs/tags/") :]
+            print(f"Using push tag: {tag_name}", file=sys.stderr)
+        else:
+            # Generate timestamp-based tag
+            now = datetime.now(UTC)
+            tag_name = f"manual-{now.strftime('%Y%m%d-%H%M%S')}"
+            print(f"Using generated tag name: {tag_name}", file=sys.stderr)
+
+        # Set GitHub Actions output if available
+        github_output = os.getenv("GITHUB_OUTPUT")
+        if github_output:
+            with open(github_output, "a", encoding="utf-8") as f:
+                f.write(f"tag_name={tag_name}\n")
+
+        print(f"Final tag name: {tag_name}", file=sys.stderr)
+        return tag_name
+
+    @staticmethod
+    def create_metadata(tag_name: str, output_dir: Path) -> bool:
+        """
+        Create metadata.json file for baseline artifact.
+
+        Args:
+            tag_name: Tag name for this baseline
+            output_dir: Directory to write metadata.json
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Get required environment variables
+            commit_sha = os.getenv("GITHUB_SHA", os.getenv("SAFE_COMMIT_SHA", "unknown"))
+            run_id = os.getenv("GITHUB_RUN_ID", os.getenv("SAFE_RUN_ID", "unknown"))
+            runner_os = os.getenv("RUNNER_OS", "unknown")
+            runner_arch = os.getenv("RUNNER_ARCH", "unknown")
+
+            # Generate current timestamp
+            now = datetime.now(UTC)
+            generated_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            # Create metadata dictionary
+            metadata = {
+                "tag": tag_name,
+                "commit": commit_sha,
+                "workflow_run_id": run_id,
+                "generated_at": generated_at,
+                "runner_os": runner_os,
+                "runner_arch": runner_arch,
+            }
+
+            # Write metadata file
+            output_dir.mkdir(parents=True, exist_ok=True)
+            metadata_file = output_dir / "metadata.json"
+
+            with metadata_file.open("w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2)
+
+            print(f"📦 Created metadata file: {metadata_file}")
+            return True
+
+        except Exception as e:
+            print(f"❌ Failed to create metadata: {e}", file=sys.stderr)
+            return False
+
+    @staticmethod
+    def display_baseline_summary(baseline_file: Path) -> bool:
+        """
+        Display summary information about a baseline file.
+
+        Args:
+            baseline_file: Path to baseline file
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not baseline_file.exists():
+                print(f"❌ Baseline file not found: {baseline_file}", file=sys.stderr)
+                return False
+
+            # Show first 10 lines
+            print("📊 Baseline summary:")
+            with baseline_file.open("r", encoding="utf-8") as f:
+                lines = f.readlines()
+                for _i, line in enumerate(lines[:10]):
+                    print(line.rstrip())
+
+            if len(lines) > 10:
+                print("...")
+
+            # Count benchmarks
+            benchmark_count = sum(1 for line in lines if line.strip().startswith("==="))
+            print(f"Total benchmarks: {benchmark_count}")
+
+            return True
+
+        except Exception as e:
+            print(f"❌ Failed to display baseline summary: {e}", file=sys.stderr)
+            return False
+
+    @staticmethod
+    def sanitize_artifact_name(tag_name: str) -> str:
+        """
+        Sanitize tag name for GitHub Actions artifact upload.
+
+        Args:
+            tag_name: Original tag name
+
+        Returns:
+            Sanitized artifact name
+        """
+        import re
+
+        # Replace any non-alphanumeric characters (except . _ -) with underscore
+        clean_name = re.sub(r"[^a-zA-Z0-9._-]", "_", tag_name)
+        artifact_name = f"performance-baseline-{clean_name}"
+
+        # Set GitHub Actions output if available
+        github_output = os.getenv("GITHUB_OUTPUT")
+        if github_output:
+            with open(github_output, "a", encoding="utf-8") as f:
+                f.write(f"artifact_name={artifact_name}\n")
+
+        print(f"Using sanitized artifact name: {artifact_name}", file=sys.stderr)
+        return artifact_name
+
+
+class BenchmarkRegressionHelper:
+    """Helper functions for performance regression testing workflow."""
+
+    @staticmethod
+    def prepare_baseline(baseline_dir: Path) -> bool:
+        """
+        Prepare baseline for comparison and set environment variables.
+
+        Args:
+            baseline_dir: Directory containing baseline artifacts
+
+        Returns:
+            True if baseline exists and is valid, False otherwise
+        """
+        baseline_file = baseline_dir / "baseline_results.txt"
+
+        if baseline_file.exists():
+            print("📦 Prepared baseline from artifact")
+
+            # Set GitHub Actions environment variables
+            github_env = os.getenv("GITHUB_ENV")
+            if github_env:
+                with open(github_env, "a", encoding="utf-8") as f:
+                    f.write("BASELINE_EXISTS=true\n")
+                    f.write("BASELINE_SOURCE=artifact\n")
+
+            # Show baseline metadata
+            print("=== Baseline Information (from artifact) ===")
+            with baseline_file.open("r", encoding="utf-8") as f:
+                for _i, line in enumerate(f.readlines()[:3]):
+                    print(line.rstrip())
+
+            return True
+        print("❌ Downloaded artifact but no baseline_results.txt found")
+
+        # Set GitHub Actions environment variables
+        github_env = os.getenv("GITHUB_ENV")
+        if github_env:
+            with open(github_env, "a", encoding="utf-8") as f:
+                f.write("BASELINE_EXISTS=false\n")
+                f.write("BASELINE_SOURCE=missing\n")
+                f.write("BASELINE_ORIGIN=unknown\n")
+
+        return False
+
+    @staticmethod
+    def set_no_baseline_status() -> None:
+        """Set environment variables when no baseline is found."""
+        print("📈 No baseline artifact found for performance comparison")
+
+        # Set GitHub Actions environment variables
+        github_env = os.getenv("GITHUB_ENV")
+        if github_env:
+            with open(github_env, "a", encoding="utf-8") as f:
+                f.write("BASELINE_EXISTS=false\n")
+                f.write("BASELINE_SOURCE=none\n")
+                f.write("BASELINE_ORIGIN=none\n")
+
+    @staticmethod
+    def extract_baseline_commit(baseline_dir: Path) -> str:
+        """
+        Extract the baseline commit SHA from baseline files.
+
+        Args:
+            baseline_dir: Directory containing baseline artifacts
+
+        Returns:
+            Commit SHA string, or "unknown" if not found
+        """
+        baseline_file = baseline_dir / "baseline_results.txt"
+        metadata_file = baseline_dir / "metadata.json"
+
+        commit_sha = "unknown"
+
+        # Try to extract from baseline_results.txt first
+        if baseline_file.exists():
+            try:
+                with baseline_file.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.startswith("Git commit:"):
+                            parts = line.strip().split()
+                            if len(parts) >= 3:
+                                potential_sha = parts[2]
+                                # Validate SHA format (7-40 hex characters)
+                                if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
+                                    commit_sha = potential_sha
+                                    break
+            except (OSError, ValueError) as e:
+                # Failed to read/parse baseline file - continue with metadata fallback
+                logging.debug("Could not extract commit from baseline_results.txt: %s", e)
+
+        # Fallback to metadata.json if needed
+        if commit_sha == "unknown" and metadata_file.exists():
+            try:
+                with metadata_file.open("r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+                    potential_sha = metadata.get("commit", "")
+                    if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
+                        commit_sha = potential_sha
+            except (OSError, json.JSONDecodeError, KeyError) as e:
+                # Failed to read/parse metadata file - will use "unknown" commit
+                logging.debug("Could not extract commit from metadata.json: %s", e)
+
+        # Set GitHub Actions environment variable
+        github_env = os.getenv("GITHUB_ENV")
+        if github_env:
+            with open(github_env, "a", encoding="utf-8") as f:
+                f.write(f"BASELINE_COMMIT={commit_sha}\n")
+
+        return commit_sha
+
+    @staticmethod
+    def determine_benchmark_skip(baseline_commit: str, current_commit: str) -> tuple[bool, str]:
+        """
+        Determine if benchmarks should be skipped based on commits and changes.
+
+        Args:
+            baseline_commit: SHA of the baseline commit
+            current_commit: SHA of the current commit
+
+        Returns:
+            Tuple of (should_skip, reason)
+        """
+        if baseline_commit == "unknown":
+            return False, "unknown_baseline"
+
+        if baseline_commit == current_commit:
+            return True, "same_commit"
+
+        try:
+            # Check if baseline commit exists in git history
+            # Validate baseline_commit is a proper SHA (security: prevent injection)
+            if not re.match(r"^[0-9A-Fa-f]{6,40}$", baseline_commit):
+                return False, "invalid_baseline_sha"
+
+            commit_ref = f"{baseline_commit}^{{commit}}"
+            subprocess.run(["git", "cat-file", "-e", commit_ref], check=True, capture_output=True)  # noqa: S603,S607
+
+            # Check for relevant changes
+            diff_range = f"{baseline_commit}..HEAD"
+            result = subprocess.run(["git", "diff", "--name-only", diff_range], capture_output=True, text=True, check=True)  # noqa: S603,S607
+
+            relevant_patterns = [r"^src/", r"^benches/", r"^Cargo\.toml$", r"^Cargo\.lock$"]
+            changed_files = result.stdout.strip().split("\n") if result.stdout.strip() else []
+
+            has_relevant_changes = any(re.match(pattern, file) for file in changed_files for pattern in relevant_patterns)
+
+            # Return result based on whether changes were detected
+            return (False, "changes_detected") if has_relevant_changes else (True, "no_relevant_changes")
+
+        except subprocess.CalledProcessError:
+            return False, "baseline_commit_not_found"
+        except Exception:
+            return False, "error_checking_changes"
+
+    @staticmethod
+    def display_skip_message(skip_reason: str, baseline_commit: str = "") -> None:
+        """
+        Display appropriate skip message based on reason.
+
+        Args:
+            skip_reason: Reason for skipping benchmarks
+            baseline_commit: Baseline commit SHA (if applicable)
+        """
+        messages = {
+            "same_commit": f"🔍 Current commit matches baseline ({baseline_commit}); skipping benchmarks.",
+            "no_relevant_changes": f"🔍 No relevant code changes since {baseline_commit}; skipping benchmarks.",
+        }
+
+        print(messages.get(skip_reason, "🔍 Benchmarks skipped."))
+
+    @staticmethod
+    def display_no_baseline_message() -> None:
+        """Display message when no baseline is available."""
+        print("⚠️ No performance baseline available for comparison.")
+        print("   - No baseline artifacts found in recent workflow runs")
+        print("   - Performance regression testing requires a baseline")
+        print("")
+        print("💡 To enable performance regression testing:")
+        print("   1. Create a release tag (e.g., v0.4.3), or")
+        print("   2. Manually trigger the 'Generate Performance Baseline' workflow")
+        print("   3. Future PRs and pushes will use that baseline for comparison")
+        print("   4. Baselines use full benchmark settings for accurate comparisons")
+
+    @staticmethod
+    def run_regression_test(baseline_path: Path) -> bool:
+        """
+        Run performance regression test against baseline.
+
+        Args:
+            baseline_path: Path to baseline file
+
+        Returns:
+            True if test completed successfully (regardless of regressions), False on error
+        """
+        try:
+            print("🚀 Running performance regression test...")
+            print(f"   Using CI performance suite against baseline: {baseline_path}")
+
+            # Use existing PerformanceComparator
+            project_root = Path.cwd()
+            comparator = PerformanceComparator(project_root)
+            success, regression_found = comparator.compare_with_baseline(baseline_path)
+
+            if not success:
+                print("❌ Performance regression test failed", file=sys.stderr)
+                return False
+
+            return True
+
+        except Exception as e:
+            print(f"❌ Error running regression test: {e}", file=sys.stderr)
+            return False
+
+    @staticmethod
+    def display_results(results_file: Path) -> None:
+        """
+        Display regression test results.
+
+        Args:
+            results_file: Path to results file
+        """
+        if results_file.exists():
+            print("=== Performance Regression Test Results ===")
+            with results_file.open("r", encoding="utf-8") as f:
+                print(f.read())
+        else:
+            print("⚠️ No comparison results file found")
+
+    @staticmethod
+    def generate_summary() -> None:
+        """
+        Generate final summary of regression testing.
+        """
+        # Get environment variables
+        baseline_source = os.getenv("BASELINE_SOURCE", "none")
+        baseline_origin = os.getenv("BASELINE_ORIGIN", "unknown")
+        baseline_tag = os.getenv("BASELINE_TAG", "n/a")
+        baseline_exists = os.getenv("BASELINE_EXISTS", "false")
+        skip_benchmarks = os.getenv("SKIP_BENCHMARKS", "unknown")
+        skip_reason = os.getenv("SKIP_REASON", "n/a")
+
+        print("📊 Performance Regression Testing Summary")
+        print("===========================================")
+        print(f"Baseline source: {baseline_source}")
+        print(f"Baseline origin: {baseline_origin}")
+        print(f"Baseline tag: {baseline_tag}")
+        print(f"Baseline exists: {baseline_exists}")
+        print(f"Skip benchmarks: {skip_benchmarks}")
+        print(f"Skip reason: {skip_reason}")
+
+        if baseline_exists == "true" and skip_benchmarks == "false":
+            results_file = Path("benches/compare_results.txt")
+            if results_file.exists():
+                with results_file.open("r", encoding="utf-8") as f:
+                    content = f.read()
+                    if "REGRESSION" in content:
+                        print("Result: ⚠️ Performance regressions detected")
+                    else:
+                        print("Result: ✅ No significant performance regressions")
+            else:
+                print("Result: ❓ Benchmark comparison completed but no results file found")
+        elif skip_benchmarks == "true":
+            skip_messages = {
+                "same_commit": "Result: ⏭️ Benchmarks skipped (same commit as baseline)",
+                "no_relevant_changes": "Result: ⏭️ Benchmarks skipped (no relevant code changes)",
+                "baseline_commit_not_found": "Result: ⚠️ Baseline commit not found in history (force-push/shallow clone?)",
+            }
+            print(skip_messages.get(skip_reason, "Result: ⏭️ Benchmarks skipped"))
+        else:
+            print("Result: ⏭️ Benchmarks skipped (no baseline available)")
+
+
+def create_argument_parser() -> argparse.ArgumentParser:
+    """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(description="Benchmark utilities for baseline generation and comparison")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -589,23 +1005,63 @@ def main():
     cmp_parser.add_argument("--dev", action="store_true", help="Use development mode with faster benchmark settings")
     cmp_parser.add_argument("--output", type=Path, help="Output file path")
 
-    args = parser.parse_args()
+    # Workflow helper commands
+    subparsers.add_parser("determine-tag", help="Determine tag name for baseline generation")
 
-    if not args.command:
-        parser.print_help()
-        sys.exit(1)
+    meta_parser = subparsers.add_parser("create-metadata", help="Create metadata.json file for baseline artifact")
+    meta_parser.add_argument("--tag", type=str, required=True, help="Tag name for this baseline")
+    meta_parser.add_argument("--output-dir", type=Path, default=Path("baseline-artifact"), help="Output directory for metadata.json")
 
-    # Find project root
+    summary_parser = subparsers.add_parser("display-summary", help="Display baseline file summary")
+    summary_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
+
+    artifact_parser = subparsers.add_parser("sanitize-artifact-name", help="Sanitize tag name for GitHub Actions artifact")
+    artifact_parser.add_argument("--tag", type=str, required=True, help="Tag name to sanitize")
+
+    # Regression testing helper commands
+    prepare_parser = subparsers.add_parser("prepare-baseline", help="Prepare baseline for regression testing")
+    prepare_parser.add_argument("--baseline-dir", type=Path, default=Path("baseline-artifact"), help="Baseline artifact directory")
+
+    subparsers.add_parser("set-no-baseline", help="Set environment when no baseline found")
+
+    extract_parser = subparsers.add_parser("extract-baseline-commit", help="Extract baseline commit SHA")
+    extract_parser.add_argument("--baseline-dir", type=Path, default=Path("baseline-artifact"), help="Baseline artifact directory")
+
+    skip_parser = subparsers.add_parser("determine-skip", help="Determine if benchmarks should be skipped")
+    skip_parser.add_argument("--baseline-commit", type=str, required=True, help="Baseline commit SHA")
+    skip_parser.add_argument("--current-commit", type=str, required=True, help="Current commit SHA")
+
+    skip_msg_parser = subparsers.add_parser("display-skip-message", help="Display skip message")
+    skip_msg_parser.add_argument("--reason", type=str, required=True, help="Skip reason")
+    skip_msg_parser.add_argument("--baseline-commit", type=str, help="Baseline commit SHA")
+
+    subparsers.add_parser("display-no-baseline", help="Display no baseline message")
+
+    regress_parser = subparsers.add_parser("run-regression-test", help="Run performance regression test")
+    regress_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
+
+    results_parser = subparsers.add_parser("display-results", help="Display regression test results")
+    results_parser.add_argument("--results", type=Path, default=Path("benches/compare_results.txt"), help="Results file path")
+
+    subparsers.add_parser("generate-summary", help="Generate regression testing summary")
+
+    return parser
+
+
+def find_project_root() -> Path:
+    """Find the project root by looking for Cargo.toml."""
     current_dir = Path.cwd()
     project_root = current_dir
     while project_root != project_root.parent:
         if (project_root / "Cargo.toml").exists():
-            break
+            return project_root
         project_root = project_root.parent
-    else:
-        print("error: could not locate Cargo.toml to determine project root", file=sys.stderr)
-        sys.exit(2)
+    print("error: could not locate Cargo.toml to determine project root", file=sys.stderr)
+    sys.exit(2)
 
+
+def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> None:
+    """Execute baseline generation and comparison commands."""
     if args.command == "generate-baseline":
         generator = BaselineGenerator(project_root, tag=args.tag)
         success = generator.generate_baseline(dev_mode=args.dev, output_file=args.output)
@@ -618,10 +1074,119 @@ def main():
         if not success:
             sys.exit(1)
 
-        if regression_found:
-            sys.exit(1)
-        else:
-            sys.exit(0)
+        sys.exit(1 if regression_found else 0)
+
+
+def execute_workflow_commands(args: argparse.Namespace) -> None:
+    """Execute workflow helper commands."""
+    if args.command == "determine-tag":
+        tag_name = WorkflowHelper.determine_tag_name()
+        print(tag_name)  # Output tag name to stdout
+        sys.exit(0)
+
+    elif args.command == "create-metadata":
+        success = WorkflowHelper.create_metadata(args.tag, args.output_dir)
+        sys.exit(0 if success else 1)
+
+    elif args.command == "display-summary":
+        success = WorkflowHelper.display_baseline_summary(args.baseline)
+        sys.exit(0 if success else 1)
+
+    elif args.command == "sanitize-artifact-name":
+        artifact_name = WorkflowHelper.sanitize_artifact_name(args.tag)
+        print(artifact_name)  # Output sanitized name to stdout
+        sys.exit(0)
+
+
+def execute_regression_commands(args: argparse.Namespace) -> None:
+    """Execute regression testing commands."""
+    if args.command == "prepare-baseline":
+        success = BenchmarkRegressionHelper.prepare_baseline(args.baseline_dir)
+        sys.exit(0 if success else 1)
+
+    elif args.command == "set-no-baseline":
+        BenchmarkRegressionHelper.set_no_baseline_status()
+        sys.exit(0)
+
+    elif args.command == "extract-baseline-commit":
+        commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(args.baseline_dir)
+        print(commit_sha)  # Output commit SHA to stdout
+        sys.exit(0)
+
+    elif args.command == "determine-skip":
+        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip(args.baseline_commit, args.current_commit)
+
+        # Set GitHub Actions environment variables
+        github_env = os.getenv("GITHUB_ENV")
+        if github_env:
+            with open(github_env, "a", encoding="utf-8") as f:
+                f.write(f"SKIP_BENCHMARKS={'true' if should_skip else 'false'}\n")
+                f.write(f"SKIP_REASON={reason}\n")
+
+        print(f"skip={should_skip}")
+        print(f"reason={reason}")
+        sys.exit(0)
+
+    elif args.command == "display-skip-message":
+        BenchmarkRegressionHelper.display_skip_message(args.reason, args.baseline_commit or "")
+        sys.exit(0)
+
+    elif args.command == "display-no-baseline":
+        BenchmarkRegressionHelper.display_no_baseline_message()
+        sys.exit(0)
+
+    elif args.command == "run-regression-test":
+        success = BenchmarkRegressionHelper.run_regression_test(args.baseline)
+        sys.exit(0 if success else 1)
+
+    elif args.command == "display-results":
+        BenchmarkRegressionHelper.display_results(args.results)
+        sys.exit(0)
+
+    elif args.command == "generate-summary":
+        BenchmarkRegressionHelper.generate_summary()
+        sys.exit(0)
+
+
+def execute_command(args: argparse.Namespace, project_root: Path) -> None:
+    """Execute the selected command based on parsed arguments."""
+    # Try baseline commands first
+    if args.command in ("generate-baseline", "compare"):
+        execute_baseline_commands(args, project_root)
+        return
+
+    # Try workflow commands
+    if args.command in ("determine-tag", "create-metadata", "display-summary", "sanitize-artifact-name"):
+        execute_workflow_commands(args)
+        return
+
+    # Try regression commands
+    if args.command in (
+        "prepare-baseline",
+        "set-no-baseline",
+        "extract-baseline-commit",
+        "determine-skip",
+        "display-skip-message",
+        "display-no-baseline",
+        "run-regression-test",
+        "display-results",
+        "generate-summary",
+    ):
+        execute_regression_commands(args)
+        return
+
+
+def main():
+    """Command-line interface for benchmark utilities."""
+    parser = create_argument_parser()
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    project_root = find_project_root()
+    execute_command(args, project_root)
 
 
 if __name__ == "__main__":

@@ -192,13 +192,6 @@ These items are incomplete and may require future attention:
 - **Dependencies**: Baseline system is complete and ready for optimization work
 - **Tracking**: Create GitHub issue for performance optimization roadmap
 
-### Python Code Quality Improvements
-
-- **Status**: Partially complete
-- **Remaining**: Replace deprecated `typing.Dict/List/Tuple`, improve error handling patterns, reduce function argument counts
-- **Tools**: Uses ruff for comprehensive linting (replaces pylint)
-- **Tracking**: Create GitHub issue for Python code modernization checklist
-
 ### Benchmark System Validation
 
 - **Status**: Implementation complete, testing in progress
@@ -262,6 +255,19 @@ These items are incomplete and may require future attention:
 - **Verbose Output**: Use `--nocapture` flag for debugging tests that produce detailed analysis output
 - **Test Structure**: Convert CLI-style applications in tests to proper `#[test]` functions for better integration with cargo test framework
 - **Memory Testing**: Use `--features count-allocations` for allocation profiling tests
+
+### Test-Driven Development (TDD) Guidelines
+
+- **PREFERRED**: Use Test-Driven Development (TDD) approach for new feature development
+- **TDD Cycle**: Follow the Red-Green-Refactor cycle:
+  1. **Red**: Write failing tests first that define the desired functionality
+  2. **Green**: Write minimal code to make tests pass
+  3. **Refactor**: Improve code quality while keeping tests passing
+- **Test Types**: Apply TDD to both unit tests (`src/` modules with `#[cfg(test)]`) and integration tests (`tests/` directory)
+- **Benefits**: TDD ensures better test coverage, cleaner APIs, and more maintainable code architecture
+- **Rust-Specific**: Leverage Rust's type system and compiler feedback during the TDD process
+- **Documentation**: Use `cargo test --doc` to validate code examples in documentation as part of TDD
+- **Performance**: Write performance-focused tests early to catch regressions during development
 
 ### Documentation Standards
 
