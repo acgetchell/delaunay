@@ -240,7 +240,7 @@ jobs:
           if [[ -n "${RELEASE_TAG:-}" ]]; then
             echo "BASELINE_TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
           fi
-          
+
           # Prepare baseline using Python utility
           uv run benchmark-utils prepare-baseline
 
@@ -275,9 +275,8 @@ jobs:
       - name: Run performance regression test
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false'
         run: |
-          echo "   Baseline source: ${BASELINE_SOURCE:-unknown}"
           echo "   Baseline origin: ${BASELINE_ORIGIN:-unknown}"
-          
+
           # Run regression test using Python utility
           uv run benchmark-utils run-regression-test \
             --baseline "baseline-artifact/baseline_results.txt"

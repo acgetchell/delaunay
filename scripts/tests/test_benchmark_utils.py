@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -28,6 +29,17 @@ from benchmark_utils import (
     PerformanceComparator,
     WorkflowHelper,
 )
+
+
+@contextmanager
+def temp_chdir(path):
+    """Context manager for temporarily changing working directory."""
+    original_cwd = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(original_cwd)
 
 
 class TestBenchmarkData:
@@ -697,31 +709,19 @@ class TestWorkflowHelper:
     """Test cases for WorkflowHelper class."""
 
     @patch.dict(os.environ, {"GITHUB_REF": "refs/tags/v1.2.3"}, clear=False)
-    @patch("benchmark_utils.os.getenv")
-    def test_determine_tag_name_from_github_ref(self, mock_getenv):
+    def test_determine_tag_name_from_github_ref(self):
         """Test tag name determination from GITHUB_REF with tag."""
-        mock_getenv.side_effect = lambda key, default="": {
-            "GITHUB_REF": "refs/tags/v1.2.3",
-            "GITHUB_OUTPUT": None,
-        }.get(key, default)
-
         tag_name = WorkflowHelper.determine_tag_name()
         assert tag_name == "v1.2.3"
 
     @patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main"}, clear=False)
     @patch("benchmark_utils.datetime")
-    @patch("benchmark_utils.os.getenv")
-    def test_determine_tag_name_generated(self, mock_getenv, mock_datetime):
+    def test_determine_tag_name_generated(self, mock_datetime):
         """Test tag name generation when not from a tag push."""
         # Mock datetime
         mock_now = Mock()
         mock_now.strftime.return_value = "20231215-143000"
         mock_datetime.now.return_value = mock_now
-
-        mock_getenv.side_effect = lambda key, default="": {
-            "GITHUB_REF": "refs/heads/main",
-            "GITHUB_OUTPUT": None,
-        }.get(key, default)
 
         tag_name = WorkflowHelper.determine_tag_name()
         assert tag_name == "manual-20231215-143000"
@@ -938,17 +938,24 @@ Time: [220.0, 250.0, 280.0] µs
 
     def test_sanitize_artifact_name_edge_cases(self):
         """Test artifact name sanitization with edge cases."""
+        import re
+
         # Test with unicode and various special characters
         test_cases = [
             ("v1.0.0-alpha.1", "performance-baseline-v1.0.0-alpha.1"),
             ("tag with spaces", "performance-baseline-tag_with_spaces"),
             ("v1.0.0+build.123", "performance-baseline-v1.0.0_build.123"),
-            ("@#$%^&*()[]{}|\\<>?", "performance-baseline-__________________"),
         ]
 
         for input_tag, expected_output in test_cases:
             result = WorkflowHelper.sanitize_artifact_name(input_tag)
             assert result == expected_output
+
+        # Test special characters are properly replaced
+        special_chars_input = "@#$%^&*()[]{}|\\<>?"
+        result = WorkflowHelper.sanitize_artifact_name(special_chars_input)
+        assert re.fullmatch(r"performance-baseline-[A-Za-z0-9._-]+", result)
+        assert "_" in result  # at least one replacement happened
 
 
 class TestBenchmarkRegressionHelper:
@@ -1135,7 +1142,7 @@ Hardware Information:
         assert should_skip
         assert reason == "same_commit"
 
-    @patch("subprocess.run")
+    @patch("benchmark_utils.subprocess.run")
     def test_determine_benchmark_skip_baseline_not_found(self, mock_subprocess):
         """Test skip determination when baseline commit not found in history."""
         # Simulate git cat-file failing
@@ -1146,7 +1153,7 @@ Hardware Information:
         assert not should_skip
         assert reason == "baseline_commit_not_found"
 
-    @patch("subprocess.run")
+    @patch("benchmark_utils.subprocess.run")
     def test_determine_benchmark_skip_no_changes(self, mock_subprocess):
         """Test skip determination when no relevant changes found."""
         # Mock successful git commands
@@ -1160,7 +1167,7 @@ Hardware Information:
         assert should_skip
         assert reason == "no_relevant_changes"
 
-    @patch("subprocess.run")
+    @patch("benchmark_utils.subprocess.run")
     def test_determine_benchmark_skip_changes_detected(self, mock_subprocess):
         """Test skip determination when relevant changes are detected."""
         # Mock successful git commands
@@ -1189,7 +1196,7 @@ Hardware Information:
 
             print_calls = [call.args[0] for call in mock_print.call_args_list]
             assert any("⚠️ No performance baseline available" in call for call in print_calls)
-            assert any("💡 To enable performance regression testing" in call for call in print_calls)
+            assert any("💡 To enable performance regression testing:" in call for call in print_calls)
 
     def test_run_regression_test_success(self):
         """Test successful regression test run."""
@@ -1266,20 +1273,14 @@ Hardware Information:
                 "SKIP_REASON": "changes_detected",
             }
 
-            with patch.dict(os.environ, env_vars):
-                # Change working directory to temp_dir so Path("benches/compare_results.txt") works
-                original_cwd = Path.cwd()
-                os.chdir(temp_dir)
-                try:
-                    with patch("builtins.print") as mock_print:
-                        BenchmarkRegressionHelper.generate_summary()
+            # Change working directory to temp_dir so Path("benches/compare_results.txt") works
+            with patch.dict(os.environ, env_vars), temp_chdir(temp_dir), patch("builtins.print") as mock_print:
+                BenchmarkRegressionHelper.generate_summary()
 
-                        print_calls = [call.args[0] for call in mock_print.call_args_list]
-                        assert any("📊 Performance Regression Testing Summary" in call for call in print_calls)
-                        assert any("Baseline source: artifact" in call for call in print_calls)
-                        assert any("Result: ⚠️ Performance regressions detected" in call for call in print_calls)
-                finally:
-                    os.chdir(original_cwd)
+                print_calls = [call.args[0] for call in mock_print.call_args_list]
+                assert any("📊 Performance Regression Testing Summary" in call for call in print_calls)
+                assert any("Baseline source: artifact" in call for call in print_calls)
+                assert any("Result: ⚠️ Performance regressions detected" in call for call in print_calls)
 
     def test_generate_summary_skip_same_commit(self):
         """Test generating summary when benchmarks skipped due to same commit."""

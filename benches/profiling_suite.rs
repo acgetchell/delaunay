@@ -40,6 +40,7 @@
 #![allow(missing_docs)]
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::core::collections::SmallBuffer;
 use delaunay::geometry::util::{
     generate_grid_points, generate_poisson_points, generate_random_points_seeded,
 };
@@ -47,6 +48,11 @@ use delaunay::prelude::*;
 use delaunay::vertex;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
+
+// SmallBuffer size constants for different use cases
+const BENCHMARK_ITERATION_BUFFER_SIZE: usize = 8; // For tracking allocation info across benchmark iterations
+const SIMPLEX_VERTICES_BUFFER_SIZE: usize = 8; // For 3D simplex vertices (4) with some headroom
+const QUERY_RESULTS_BUFFER_SIZE: usize = 1024; // For bounded query result collections (max 1000 in code)
 
 // Memory allocation counting support
 #[cfg(feature = "count-allocations")]
@@ -168,7 +174,10 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 
     for &count in counts {
         for &distribution in &distributions {
-            group.throughput(Throughput::Elements(count as u64));
+            // Calculate actual point count for accurate throughput metrics
+            let sample_points = generate_points_by_distribution::<2>(count, distribution, 42);
+            let actual_count = sample_points.len();
+            group.throughput(Throughput::Elements(actual_count as u64));
 
             let bench_id = format!("{}_2d_{}", distribution.name(), count);
             group.bench_with_input(
@@ -203,7 +212,10 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                 continue;
             }
 
-            group.throughput(Throughput::Elements(count as u64));
+            // Calculate actual point count for accurate throughput metrics
+            let sample_points = generate_points_by_distribution::<3>(count, distribution, 42);
+            let actual_count = sample_points.len();
+            group.throughput(Throughput::Elements(actual_count as u64));
 
             let bench_id = format!("{}_3d_{}", distribution.name(), count);
             group.bench_with_input(
@@ -240,7 +252,10 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 
     for &count in high_dim_counts {
         for &distribution in &distributions {
-            group.throughput(Throughput::Elements(count as u64));
+            // Calculate actual point count for accurate throughput metrics
+            let sample_points = generate_points_by_distribution::<4>(count, distribution, 42);
+            let actual_count = sample_points.len();
+            group.throughput(Throughput::Elements(actual_count as u64));
 
             let bench_id = format!("{}_4d_{}", distribution.name(), count);
             group.bench_with_input(
@@ -271,8 +286,8 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 
 /// Print memory allocation summary
 #[allow(clippy::cast_precision_loss)]
-fn print_alloc_summary(info: &AllocationInfo, description: &str, point_count: usize) {
-    println!("\n=== Memory Allocation Summary for {description} ({point_count} points) ===");
+fn print_alloc_summary(info: &AllocationInfo, description: &str, actual_point_count: usize) {
+    println!("\n=== Memory Allocation Summary for {description} ({actual_point_count} points) ===");
     println!("Total allocations: {}", info.count_total);
     println!("Current allocations: {}", info.count_current);
     println!("Max allocations: {}", info.count_max);
@@ -285,7 +300,7 @@ fn print_alloc_summary(info: &AllocationInfo, description: &str, point_count: us
     );
     println!(
         "Bytes per point (peak): {:.1}",
-        info.bytes_max as f64 / point_count as f64
+        info.bytes_max as f64 / actual_point_count as f64
     );
     println!("=====================================\n");
 }
@@ -310,7 +325,15 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
             |b, &count| {
                 b.iter_custom(|iters| {
                     let mut total_time = Duration::new(0, 0);
-                    let mut allocation_infos = Vec::new();
+                    let mut allocation_infos: SmallBuffer<
+                        AllocationInfo,
+                        BENCHMARK_ITERATION_BUFFER_SIZE,
+                    > = SmallBuffer::new();
+
+                    let mut actual_point_counts: SmallBuffer<
+                        usize,
+                        BENCHMARK_ITERATION_BUFFER_SIZE,
+                    > = SmallBuffer::new();
 
                     for _ in 0..iters {
                         let start_time = Instant::now();
@@ -322,6 +345,7 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
                                 42,
                             );
                             let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                            actual_point_counts.push(points.len()); // Track actual count
                             black_box(Tds::<f64, (), (), 2>::new(&vertices).unwrap());
                         });
 
@@ -366,7 +390,9 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
                                 .max()
                                 .unwrap_or(0),
                         };
-                        print_alloc_summary(&avg_info, "2D Triangulation", count);
+                        let avg_actual_count =
+                            actual_point_counts.iter().sum::<usize>() / actual_point_counts.len();
+                        print_alloc_summary(&avg_info, "2D Triangulation", avg_actual_count);
                     }
 
                     total_time
@@ -382,7 +408,15 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
                 |b, &count| {
                     b.iter_custom(|iters| {
                         let mut total_time = Duration::new(0, 0);
-                        let mut allocation_infos = Vec::new();
+                        let mut allocation_infos: SmallBuffer<
+                            AllocationInfo,
+                            BENCHMARK_ITERATION_BUFFER_SIZE,
+                        > = SmallBuffer::new();
+
+                        let mut actual_point_counts: SmallBuffer<
+                            usize,
+                            BENCHMARK_ITERATION_BUFFER_SIZE,
+                        > = SmallBuffer::new();
 
                         for _ in 0..iters {
                             let start_time = Instant::now();
@@ -394,6 +428,7 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
                                     42,
                                 );
                                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                actual_point_counts.push(points.len()); // Track actual count
                                 black_box(Tds::<f64, (), (), 3>::new(&vertices).unwrap());
                             });
 
@@ -438,7 +473,9 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
                                     .max()
                                     .unwrap_or(0),
                             };
-                            print_alloc_summary(&avg_info, "3D Triangulation", count);
+                            let avg_actual_count = actual_point_counts.iter().sum::<usize>()
+                                / actual_point_counts.len();
+                            print_alloc_summary(&avg_info, "3D Triangulation", avg_actual_count);
                         }
 
                         total_time
@@ -484,23 +521,30 @@ fn benchmark_query_latency(c: &mut Criterion) {
 
                 b.iter(|| {
                     // Perform circumsphere containment queries
-                    let mut query_results = Vec::new();
+                    // Using SmallBuffer since we limit to max 1000 results
+                    let mut query_results: SmallBuffer<_, QUERY_RESULTS_BUFFER_SIZE> =
+                        SmallBuffer::new();
 
                     for cell in tds.cells() {
-                        for query_point in &query_points {
-                            let query_coords: [f64; 3] = query_point.into();
-                            let vertex_coords: Vec<[f64; 3]> = cell
-                                .1
+                        // Precompute once per cell to avoid redundant allocations
+                        // Using SmallBuffer since 3D cells have exactly 4 vertices
+                        let vertex_coords: SmallBuffer<[f64; 3], SIMPLEX_VERTICES_BUFFER_SIZE> =
+                            cell.1
                                 .vertices()
                                 .iter()
                                 .map(std::convert::Into::into)
                                 .collect();
 
-                            if vertex_coords.len() == 4 {
-                                // Valid 3D simplex
-                                let points_for_test: Vec<Point<f64, 3>> =
-                                    vertex_coords.into_iter().map(Point::new).collect();
+                        if vertex_coords.len() == 4 {
+                            // Valid 3D simplex - convert coordinates once per cell
+                            // Using SmallBuffer since 3D simplex has exactly 4 vertices
+                            let points_for_test: SmallBuffer<
+                                Point<f64, 3>,
+                                SIMPLEX_VERTICES_BUFFER_SIZE,
+                            > = vertex_coords.iter().copied().map(Point::new).collect();
 
+                            for query_point in &query_points {
+                                let query_coords: [f64; 3] = (*query_point).into();
                                 let query_point_obj = Point::new(query_coords);
 
                                 // Use the fastest circumsphere method (based on benchmark results)
@@ -510,11 +554,11 @@ fn benchmark_query_latency(c: &mut Criterion) {
                                     let result = insphere_lifted(&points_for_test, query_point_obj);
                                     query_results.push(result);
                                 }
-                            }
 
-                            // Limit total queries to prevent extremely long benchmarks
-                            if query_results.len() >= 1000 {
-                                break;
+                                // Limit total queries to prevent extremely long benchmarks
+                                if query_results.len() >= 1000 {
+                                    break;
+                                }
                             }
                         }
 
@@ -564,8 +608,9 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
                         Tds::<f64, (), (), 3>::new(&vertices).unwrap()
                     },
                     |tds| {
-                        let boundary_facets = tds.boundary_facets();
-                        let _ = black_box(boundary_facets);
+                        let boundary_facets =
+                            tds.boundary_facets().expect("boundary_facets failed");
+                        black_box(boundary_facets);
                     },
                     BatchSize::LargeInput,
                 );

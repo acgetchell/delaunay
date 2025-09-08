@@ -63,6 +63,9 @@ cargo bench
 
 # Run all benchmarks with memory tracking
 cargo bench --features count-allocations
+
+# Compile-only check (useful for CI validation without running benchmarks)
+cargo bench --no-run
 ```
 
 ## Methods Compared

@@ -96,6 +96,17 @@ The library includes d-dimensional convex hull functionality, based on these alg
 - Barber, C.B., Dobkin, D.P., and Huhdanpaa, H. "The Quickhull Algorithm for Convex Hulls."
   *ACM Transactions on Mathematical Software* 22, no. 4 (1996): 469-483. DOI: [10.1145/235815.235821](https://doi.org/10.1145/235815.235821)
 
+## Combinatorial Algorithms and Enumeration
+
+These references provide algorithmic foundations for systematic enumeration and combinatorial generation used in the library.
+
+### Grid Generation and Mixed-Radix Counters
+
+- Knuth, D. E. "The Art of Computer Programming, Vol. 4A: Combinatorial Algorithms." Boston: Addison-Wesley, 2011.
+  ISBN: 978-0-201-03804-0
+- Nijenhuis, A., and Wilf, H. S. "Combinatorial Algorithms for Computers and Calculators." 2nd ed. New York: Academic Press, 1978.
+  ISBN: 978-0-12-519260-6
+
 ## Advanced Computational Geometry Topics
 
 These references support specialized features and high-dimensional computations in the library.

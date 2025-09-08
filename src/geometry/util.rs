@@ -113,9 +113,26 @@ pub enum CircumcenterError {
     ValueConversion(#[from] ValueConversionError),
 }
 
-// ============================================================================
-// Safe Coordinate Conversion Functions
-// ============================================================================
+// =============================================================================
+// CONSTANTS AND HELPERS
+// =============================================================================
+
+/// Maximum number of grid points allowed to prevent out-of-memory conditions in CI.
+///
+/// This safety cap prevents excessive memory allocation when generating grid points
+/// with high `points_per_dim` values. The limit of 50 million points provides a
+/// reasonable upper bound while allowing for substantial grid generation.
+///
+/// # Implementation Note
+///
+/// This constant is checked in `generate_grid_points` before allocating memory
+/// for the point vector, ensuring that CI environments and resource-constrained
+/// systems don't encounter OOM errors.
+const MAX_POINTS_SAFETY_CAP: usize = 50_000_000;
+
+// =============================================================================
+// SAFE COORDINATE CONVERSION FUNCTIONS
+// =============================================================================
 
 /// Safely convert a coordinate value from type T to f64.
 ///
@@ -1256,6 +1273,10 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
 /// which provides a structured, predictable point distribution useful for
 /// benchmarking and testing geometric algorithms under best-case scenarios.
 ///
+/// The implementation uses an efficient mixed-radix counter to generate
+/// coordinates on-the-fly without allocating intermediate index vectors,
+/// making it memory-efficient for large grids and high dimensions.
+///
 /// # Arguments
 ///
 /// * `points_per_dim` - Number of points along each dimension
@@ -1269,6 +1290,11 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
 /// # Errors
 ///
 /// * `RandomPointGenerationError::InvalidPointCount` if `points_per_dim` is zero
+///
+/// # References
+///
+/// The mixed-radix counter algorithm is described in:
+/// - D. E. Knuth, *The Art of Computer Programming, Vol. 4A: Combinatorial Algorithms*, Addison-Wesley, 2011.
 ///
 /// # Examples
 ///
@@ -1304,48 +1330,42 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
             details: format!("Dimension {D} is too large to fit in u32"),
         })?;
     let total_points = points_per_dim.pow(d_u32);
+    if total_points > MAX_POINTS_SAFETY_CAP {
+        return Err(RandomPointGenerationError::RandomGenerationFailed {
+            min: "n/a".into(),
+            max: "n/a".into(),
+            details: format!(
+                "Requested {total_points} grid points exceeds safety cap ({MAX_POINTS_SAFETY_CAP})"
+            ),
+        });
+    }
     let mut points = Vec::with_capacity(total_points);
 
-    // Generate all combinations of grid indices
-    #[allow(clippy::items_after_statements)]
-    fn generate_indices(
-        current: &mut Vec<usize>,
-        dim: usize,
-        max_dims: usize,
-        points_per_dim: usize,
-        all_indices: &mut Vec<Vec<usize>>,
-    ) {
-        if dim == max_dims {
-            all_indices.push(current.clone());
-            return;
-        }
-
-        for i in 0..points_per_dim {
-            current.push(i);
-            generate_indices(current, dim + 1, max_dims, points_per_dim, all_indices);
-            current.pop();
-        }
-    }
-
-    let mut all_indices = Vec::new();
-    let mut current = Vec::new();
-    generate_indices(&mut current, 0, D, points_per_dim, &mut all_indices);
-
-    // Convert indices to coordinates
-    for indices in all_indices {
+    // Use mixed-radix counter over D dimensions (see Knuth TAOCP Vol 4A)
+    // This avoids O(N) memory allocation for intermediate index vectors
+    let mut idx = [0usize; D];
+    for _ in 0..total_points {
         let mut coords = [T::zero(); D];
-        for (dim, &index) in indices.iter().enumerate() {
-            // Convert usize index to coordinate scalar safely
-            let index_as_scalar = safe_usize_to_scalar::<T>(index).map_err(|_| {
+        for d in 0..D {
+            let index_as_scalar = safe_usize_to_scalar::<T>(idx[d]).map_err(|_| {
                 RandomPointGenerationError::RandomGenerationFailed {
                     min: "0".to_string(),
                     max: format!("{}", points_per_dim - 1),
-                    details: format!("Failed to convert grid index {index} to coordinate type"),
+                    details: format!("Failed to convert grid index {idx:?} to coordinate type"),
                 }
             })?;
-            coords[dim] = offset[dim] + index_as_scalar * spacing;
+            coords[d] = offset[d] + index_as_scalar * spacing;
         }
         points.push(Point::new(coords));
+
+        // Increment mixed-radix counter
+        for d in (0..D).rev() {
+            idx[d] += 1;
+            if idx[d] < points_per_dim {
+                break;
+            }
+            idx[d] = 0;
+        }
     }
 
     Ok(points)
@@ -1405,6 +1425,17 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
     }
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+
+    // Early validation: if min_distance is non-positive, skip spacing constraints
+    if min_distance <= T::zero() {
+        let mut points = Vec::with_capacity(n_points);
+        for _ in 0..n_points {
+            let coords = [T::zero(); D].map(|_| rng.random_range(bounds.0..bounds.1));
+            points.push(Point::new(coords));
+        }
+        return Ok(points);
+    }
+
     let mut points: Vec<Point<T, D>> = Vec::new();
 
     // Simple Poisson disk sampling: rejection method
@@ -1422,8 +1453,8 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
         // Check distance to all existing points
         let mut valid = true;
         for existing_point in &points {
-            let existing_coords: [T; D] = existing_point.into();
-            let candidate_coords: [T; D] = (&candidate).into();
+            let existing_coords: [T; D] = existing_point.to_array();
+            let candidate_coords: [T; D] = candidate.to_array();
 
             // Calculate distance using hypot for numerical stability
             let mut diff_coords = [T::zero(); D];
@@ -3640,6 +3671,13 @@ mod tests {
             }
             _ => panic!("Expected InvalidPointCount error"),
         }
+
+        // Test safety cap for excessive points (prevents OOM)
+        let result = generate_grid_points::<f64, 3>(1000, 1.0, [0.0, 0.0, 0.0]);
+        assert!(result.is_err());
+        let error_msg = format!("{}", result.unwrap_err());
+        assert!(error_msg.contains("exceeds safety cap"));
+        assert!(error_msg.contains("50000000"));
     }
 
     #[test]
@@ -3786,6 +3824,18 @@ mod tests {
             }
             _ => panic!("Unexpected error type"),
         }
+
+        // Test zero distance optimization (should return exact count without spacing checks)
+        let result = generate_poisson_points::<f64, 2>(100, (0.0, 10.0), 0.0, 42);
+        assert!(result.is_ok());
+        let points = result.unwrap();
+        assert_eq!(points.len(), 100); // Should get exactly the requested number
+
+        // Test negative distance optimization (should return exact count without spacing checks)
+        let result = generate_poisson_points::<f64, 2>(50, (0.0, 10.0), -1.0, 42);
+        assert!(result.is_ok());
+        let points = result.unwrap();
+        assert_eq!(points.len(), 50); // Should get exactly the requested number
     }
 
     #[test]

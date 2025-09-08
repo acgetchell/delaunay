@@ -543,35 +543,35 @@ mod tests {
 
 ### Module-Specific Variations
 
-#### `cell.rs` (2,442 lines)
+#### `cell.rs` (large module; ~2,400 lines)
 
 - Most comprehensive implementation
 - Multiple specialized implementation blocks
 - Extensive geometric predicates integration
 - Detailed Hash/Eq contract documentation
 
-#### `vertex.rs` (1,950 lines)
+#### `vertex.rs` (large module; ~2,000 lines)
 
 - Strong focus on coordinate validation
 - Comprehensive equality testing
 - Multiple numeric type support
 - Detailed serialization testing
 
-#### `facet.rs` (1,420 lines)
+#### `facet.rs` (medium module; ~1,400 lines)
 
 - Geometric relationship focus
 - Key generation utilities
 - Adjacency testing
 - Error handling for geometric constraints
 
-#### `boundary.rs` (415 lines)
+#### `boundary.rs` (small module; ~400 lines)
 
 - Trait implementation focused
 - Algorithm-specific testing
 - Performance benchmarking
 - Integration with TDS
 
-#### `util.rs` (3,806 lines)
+#### `util.rs` (large module; thousands of lines)
 
 - Function-focused (not struct-focused)  
 - Comprehensive test coverage with systematic multi-dimensional testing

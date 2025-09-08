@@ -229,8 +229,11 @@ where
     #[builder(setter(skip), default = "make_uuid()")]
     uuid: Uuid,
     /// The neighboring cells connected to the current cell.
+    /// Each `Some(uuid)` represents a neighbor at that position, while `None`
+    /// indicates no neighbor at that position. The positional semantics ensure
+    /// that `neighbors[i]` is the neighbor opposite `vertices[i]`.
     #[builder(setter(skip), default = "None")]
-    pub neighbors: Option<Vec<Uuid>>,
+    pub neighbors: Option<Vec<Option<Uuid>>>,
     /// The optional data associated with the cell.
     #[builder(setter(into, strip_option), default)]
     pub data: Option<V>,
@@ -504,7 +507,7 @@ where
     /// assert!(cell.neighbors.is_none());
     ///
     /// // Simulate setting some neighbors
-    /// cell.neighbors = Some(vec![Uuid::new_v4(), Uuid::new_v4()]);
+    /// cell.neighbors = Some(vec![Some(Uuid::new_v4()), Some(Uuid::new_v4())]);
     /// assert!(cell.neighbors.is_some());
     ///
     /// // Clear the neighbors
@@ -1356,8 +1359,8 @@ mod tests {
         // Set different neighbors - Hash implementation ignores neighbors for Eq/Hash contract
         let neighbor_id1 = Uuid::new_v4();
         let neighbor_id2 = Uuid::new_v4();
-        cell1.neighbors = Some(vec![neighbor_id1]);
-        cell2.neighbors = Some(vec![neighbor_id2]);
+        cell1.neighbors = Some(vec![Some(neighbor_id1)]);
+        cell2.neighbors = Some(vec![Some(neighbor_id2)]);
 
         let mut hasher1 = DefaultHasher::new();
         let mut hasher2 = DefaultHasher::new();
@@ -1391,8 +1394,8 @@ mod tests {
         // Set different neighbors
         let neighbor_id1 = Uuid::new_v4();
         let neighbor_id2 = Uuid::new_v4();
-        cell1.neighbors = Some(vec![neighbor_id1]);
-        cell2.neighbors = Some(vec![neighbor_id2]);
+        cell1.neighbors = Some(vec![Some(neighbor_id1)]);
+        cell2.neighbors = Some(vec![Some(neighbor_id2)]);
 
         let mut hasher1 = DefaultHasher::new();
         let mut hasher2 = DefaultHasher::new();
@@ -1592,7 +1595,7 @@ mod tests {
         assert!(cell.neighbors.is_none());
 
         // Simulate setting some neighbors
-        cell.neighbors = Some(vec![Uuid::new_v4(), Uuid::new_v4()]);
+        cell.neighbors = Some(vec![Some(Uuid::new_v4()), Some(Uuid::new_v4())]);
         assert!(cell.neighbors.is_some());
 
         // Clear the neighbors using the new method
@@ -2877,8 +2880,8 @@ mod tests {
         let mut cell2: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
 
         // Add different neighbors to the cells
-        cell1.neighbors = Some(vec![uuid::Uuid::new_v4(), uuid::Uuid::new_v4()]);
-        cell2.neighbors = Some(vec![uuid::Uuid::new_v4()]); // Different neighbors
+        cell1.neighbors = Some(vec![Some(uuid::Uuid::new_v4()), Some(uuid::Uuid::new_v4())]);
+        cell2.neighbors = Some(vec![Some(uuid::Uuid::new_v4())]); // Different neighbors
 
         // Cells should still be equal since PartialEq only compares vertices
         assert_eq!(

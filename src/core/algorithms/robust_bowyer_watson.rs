@@ -1413,7 +1413,7 @@ mod tests {
             // Verify neighbor relationships are consistent
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
-                    for neighbor_uuid in neighbors {
+                    for neighbor_uuid in neighbors.iter().filter_map(|n| n.as_ref()) {
                         if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid)
                             && let Some(neighbor) = tds.cells().get(*neighbor_key)
                         {
@@ -1424,7 +1424,9 @@ mod tests {
                                     .get_by_right(&cell_key)
                                     .expect("Cell should have UUID");
                                 assert!(
-                                    neighbor_neighbors.contains(cell_uuid),
+                                    neighbor_neighbors
+                                        .iter()
+                                        .any(|n| n.as_ref() == Some(cell_uuid)),
                                     "Neighbor relationship should be symmetric after insertion {}",
                                     i + 1
                                 );
@@ -1556,7 +1558,7 @@ mod tests {
             // Verify neighbor relationships are consistent
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
-                    for neighbor_uuid in neighbors {
+                    for neighbor_uuid in neighbors.iter().flatten() {
                         if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid)
                             && let Some(neighbor) = tds.cells().get(*neighbor_key)
                         {
@@ -1567,7 +1569,9 @@ mod tests {
                                     .get_by_right(&cell_key)
                                     .expect("Cell should have UUID");
                                 assert!(
-                                    neighbor_neighbors.contains(cell_uuid),
+                                    neighbor_neighbors
+                                        .iter()
+                                        .any(|opt| opt.as_ref() == Some(cell_uuid)),
                                     "Neighbor relationship should be symmetric after hull extension {}",
                                     i + 1
                                 );
@@ -1722,12 +1726,12 @@ mod tests {
                             .get_by_right(&cell1_key)
                             .expect("Cell1 should have UUID");
                         assert!(
-                            neighbors1.contains(cell2_uuid),
+                            neighbors1.iter().any(|n| n.as_ref() == Some(cell2_uuid)),
                             "Cell1 should reference cell2 as neighbor after insertion {}",
                             i + 1
                         );
                         assert!(
-                            neighbors2.contains(cell1_uuid),
+                            neighbors2.iter().any(|n| n.as_ref() == Some(cell1_uuid)),
                             "Cell2 should reference cell1 as neighbor after insertion {}",
                             i + 1
                         );

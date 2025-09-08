@@ -32,6 +32,37 @@ except ModuleNotFoundError:
     from scripts.hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
     from scripts.subprocess_utils import get_git_commit_hash, run_cargo_command  # type: ignore[no-redef]
 
+# Development mode arguments - centralized to keep baseline generation and comparison in sync
+# Reduces samples for faster iteration during development (10x faster than full benchmarks)
+DEV_MODE_BENCH_ARGS = [
+    "--sample-size",
+    "10",
+    "--measurement-time",
+    "2",
+    "--warm-up-time",
+    "1",
+    "--noplot",
+]
+
+
+def run_git_command(args: list[str], timeout: int = 60) -> subprocess.CompletedProcess[str]:
+    """
+    Run git command with timeout and consistent error handling.
+
+    Args:
+        args: Git command arguments (without 'git' prefix)
+        timeout: Timeout in seconds (default: 60)
+
+    Returns:
+        CompletedProcess result
+
+    Raises:
+        subprocess.CalledProcessError: If git command fails
+        subprocess.TimeoutExpired: If command times out
+    """
+    cmd = ["git", *args]
+    return subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)  # noqa: S603
+
 
 @dataclass
 class BenchmarkData:
@@ -118,6 +149,8 @@ class CriterionParser:
 
             return (
                 BenchmarkData(points, dimension)
+                # Baseline timing values are rounded to 2 decimal places for consistency
+                # This standardizes storage format and avoids spurious precision differences
                 .with_timing(round(low_us, 2), round(mean_us, 2), round(high_us, 2), "µs")
                 .with_throughput(round(thrpt_low, 3), round(thrpt_mean, 3), round(thrpt_high, 3), "Kelem/s")
             )
@@ -209,19 +242,7 @@ class BaselineGenerator:
             # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
                 run_cargo_command(
-                    [
-                        "bench",
-                        "--bench",
-                        "ci_performance_suite",
-                        "--",
-                        "--sample-size",
-                        "10",
-                        "--measurement-time",
-                        "2",
-                        "--warm-up-time",
-                        "1",
-                        "--noplot",
-                    ],
+                    ["bench", "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS],
                     cwd=self.project_root,
                 )
             else:
@@ -300,19 +321,7 @@ class PerformanceComparator:
             # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
                 run_cargo_command(
-                    [
-                        "bench",
-                        "--bench",
-                        "ci_performance_suite",
-                        "--",
-                        "--sample-size",
-                        "10",
-                        "--measurement-time",
-                        "2",
-                        "--warm-up-time",
-                        "1",
-                        "--noplot",
-                    ],
+                    ["bench", "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS],
                     cwd=self.project_root,
                 )
             else:
@@ -538,8 +547,9 @@ class PerformanceComparator:
         if baseline.time_mean <= 0:
             f.write("Time Change: N/A (baseline mean is 0)\n")
             return None, False
-        # Normalize to microseconds when units differ (supports ns, µs/us, ms, s)
-        unit_scale = {"ns": 1e-3, "µs": 1.0, "us": 1.0, "ms": 1e3, "s": 1e6}
+        # Normalize to microseconds when units differ (supports ns, µs/μs/us, ms, s)
+        # Note: Both µ (micro sign U+00B5) and μ (Greek mu U+03BC) symbols are supported
+        unit_scale = {"ns": 1e-3, "µs": 1.0, "μs": 1.0, "us": 1.0, "ms": 1e3, "s": 1e6}
         cur_unit = current.time_unit or "µs"
         base_unit = baseline.time_unit or "µs"
         if cur_unit not in unit_scale or base_unit not in unit_scale:
@@ -699,8 +709,6 @@ class WorkflowHelper:
         Returns:
             Sanitized artifact name
         """
-        import re
-
         # Replace any non-alphanumeric characters (except . _ -) with underscore
         clean_name = re.sub(r"[^a-zA-Z0-9._-]", "_", tag_name)
         artifact_name = f"performance-baseline-{clean_name}"
@@ -851,11 +859,11 @@ class BenchmarkRegressionHelper:
                 return False, "invalid_baseline_sha"
 
             commit_ref = f"{baseline_commit}^{{commit}}"
-            subprocess.run(["git", "cat-file", "-e", commit_ref], check=True, capture_output=True)  # noqa: S603,S607
+            run_git_command(["cat-file", "-e", commit_ref], timeout=60)
 
             # Check for relevant changes
             diff_range = f"{baseline_commit}..HEAD"
-            result = subprocess.run(["git", "diff", "--name-only", diff_range], capture_output=True, text=True, check=True)  # noqa: S603,S607
+            result = run_git_command(["diff", "--name-only", diff_range], timeout=60)
 
             relevant_patterns = [r"^src/", r"^benches/", r"^Cargo\.toml$", r"^Cargo\.lock$"]
             changed_files = result.stdout.strip().split("\n") if result.stdout.strip() else []
@@ -863,6 +871,8 @@ class BenchmarkRegressionHelper:
             has_relevant_changes = any(re.match(pattern, file) for file in changed_files for pattern in relevant_patterns)
 
             # Return result based on whether changes were detected
+            # Future improvement: Consider skipping when HEAD is a merge commit of the same baseline
+            # (e.g., when baseline commit is one of the parents of HEAD merge commit)
             return (False, "changes_detected") if has_relevant_changes else (True, "no_relevant_changes")
 
         except subprocess.CalledProcessError:
@@ -923,6 +933,12 @@ class BenchmarkRegressionHelper:
                 print("❌ Performance regression test failed", file=sys.stderr)
                 return False
 
+            # Provide feedback about regression results
+            if regression_found:
+                print("⚠️ Performance regressions detected in benchmark comparison")
+            else:
+                print("✅ No significant performance regressions detected")
+
             return True
 
         except Exception as e:
@@ -973,6 +989,8 @@ class BenchmarkRegressionHelper:
                     content = f.read()
                     if "REGRESSION" in content:
                         print("Result: ⚠️ Performance regressions detected")
+                        # Future improvement: Set environment variable for machine consumption
+                        # os.environ["BENCHMARK_REGRESSION_DETECTED"] = "true"
                     else:
                         print("Result: ✅ No significant performance regressions")
             else:

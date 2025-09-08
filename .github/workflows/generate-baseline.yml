@@ -40,10 +40,6 @@ jobs:
           cache: true
           # Toolchain from rust-toolchain.toml
 
-      - name: Determine tag information
-        id: tag_info
-        run: uv run benchmark-utils determine-tag
-
       - name: Install uv (Python package manager)
         uses: astral-sh/setup-uv@557e51de59eb14aaaba2ed9621916900a91d50c6  # v6.6.1
         with:
@@ -52,19 +48,24 @@ jobs:
       - name: Verify uv installation
         run: uv --version
 
+      - name: Determine tag information
+        id: tag_info
+        run: uv run benchmark-utils determine-tag
+
       - name: Generate performance baseline
         env:
           TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
         run: |
           echo "🚀 Generating performance baseline for tag $TAG_NAME"
-          
+          mkdir -p baseline-artifact
+
           # Generate baseline using Python CLI tool
           uv run benchmark-utils generate-baseline \
             --output "baseline-artifact/baseline-$TAG_NAME.txt" \
             --tag "$TAG_NAME"
-          
-          echo "✅ Baseline generated successfully"
-          
+
+                    echo "✅ Baseline generated successfully"
+
           # Display baseline summary
           uv run benchmark-utils display-summary \
             --baseline "baseline-artifact/baseline-$TAG_NAME.txt"
@@ -77,7 +78,7 @@ jobs:
         run: |
           # Create metadata file using Python utility
           uv run benchmark-utils create-metadata --tag "$TAG_NAME"
-          
+
           echo "📦 Artifact contents:"
           ls -la baseline-artifact/
 
@@ -107,7 +108,7 @@ jobs:
           echo "📋 Summary:"
           echo "  Tag: $TAG_NAME"
           echo "  Commit: $SAFE_COMMIT_SHA"
-          echo "  Artifact: performance-baseline-$TAG_NAME"
+          echo "  Artifact: ${{ steps.safe_name.outputs.artifact_name }}"
           echo ""
           echo "🔄 The benchmark workflow will now use this baseline for:"
           echo "  • Pull request performance testing"

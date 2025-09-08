@@ -1237,7 +1237,7 @@ where
     ///    with proper semantic ordering
     /// 3. Updates each cell's neighbor list maintaining the constraint that `neighbors[i]`
     ///    corresponds to the neighbor opposite `vertices[i]`
-    /// 4. Filters out `None` values to store only actual neighboring cells
+    /// 4. Preserves `None` values to maintain positional semantics for missing neighbors
     ///
     /// # Performance
     ///
@@ -1389,10 +1389,10 @@ where
                 }
             })?;
 
-            // Filter out None values to get only actual neighbors
-            let neighbors: Vec<Uuid> = neighbor_options.into_iter().flatten().collect();
+            // Preserve positional semantics: neighbors[i] corresponds to neighbor opposite vertices[i]
+            let neighbors: Vec<Option<Uuid>> = neighbor_options.into_iter().collect();
 
-            if neighbors.is_empty() {
+            if neighbors.iter().all(Option::is_none) {
                 cell.neighbors = None;
             } else {
                 cell.neighbors = Some(neighbors);
@@ -1477,7 +1477,8 @@ where
     ///
     pub fn assign_incident_cells(&mut self) -> Result<(), TriangulationValidationError> {
         // Build vertex_to_cells mapping using optimized collections
-        let mut vertex_to_cells: VertexToCellsMap = FastHashMap::default();
+        let mut vertex_to_cells: VertexToCellsMap =
+            fast_hash_map_with_capacity(self.vertices.len());
 
         for (cell_key, cell) in &self.cells {
             // For each vertex in cell.vertices(): look up its VertexKey via vertex_uuid_to_key and push cell_key
@@ -1551,7 +1552,7 @@ where
                 .iter()
                 .map(super::vertex::Vertex::uuid)
                 .collect();
-            vertex_uuids.sort();
+            vertex_uuids.sort_unstable();
 
             if let Some(_existing_cell_key) = unique_cells.get(&vertex_uuids) {
                 // This is a duplicate cell - mark for removal
@@ -1574,7 +1575,7 @@ where
         duplicate_count
     }
 
-    /// Builds a `HashMap` mapping facet keys to the cells and facet indices that contain them.
+    /// Builds a `FacetToCellsMap` mapping facet keys to the cells and facet indices that contain them.
     ///
     /// This method iterates over all cells and their facets once, computes the canonical key
     /// for each facet using `facet.key()`, and creates a mapping from facet keys to the cells
@@ -1582,7 +1583,7 @@ where
     ///
     /// # Returns
     ///
-    /// A `HashMap<u64, Vec<(CellKey, usize)>>` where:
+    /// A `FacetToCellsMap` where:
     /// - The key is the canonical facet key (u64) computed by `facet.key()`
     /// - The value is a vector of tuples containing:
     ///   - `CellKey`: The `SlotMap` key of the cell containing this facet
@@ -2140,7 +2141,7 @@ where
     /// - `HashSet` reuse to avoid repeated allocations
     /// - Efficient intersection counting without creating intermediate collections
     fn validate_neighbors_internal(&self) -> Result<(), TriangulationValidationError> {
-        // Pre-compute vertex UUIDs for all cells to avoid repeated computation
+        // Pre-compute vertex keys for all cells to avoid repeated computation
         let mut cell_vertices: CellVerticesMap = fast_hash_map_with_capacity(self.cells.len());
 
         for (cell_key, cell) in &self.cells {
@@ -2171,7 +2172,12 @@ where
             // Get this cell's vertices from pre-computed map
             let this_vertices = &cell_vertices[&cell_key];
 
-            for neighbor_uuid in neighbors {
+            for neighbor_option in neighbors {
+                // Skip None neighbors (missing neighbors)
+                let Some(neighbor_uuid) = neighbor_option else {
+                    continue;
+                };
+
                 // Early termination: check if neighbor exists
                 let Some(&neighbor_key) = self.cell_bimap.get_by_left(neighbor_uuid) else {
                     return Err(TriangulationValidationError::InvalidNeighbors {
@@ -2184,10 +2190,9 @@ where
                     });
                 };
 
-                // Early termination: mutual neighbor check using FastHashSet for O(1) lookup
+                // Early termination: mutual neighbor check using linear search (faster for small neighbor lists)
                 if let Some(neighbor_neighbors) = &neighbor_cell.neighbors {
-                    let neighbor_set: FastHashSet<_> = neighbor_neighbors.iter().collect();
-                    if !neighbor_set.contains(&cell.uuid()) {
+                    if !neighbor_neighbors.iter().any(|u| *u == Some(cell.uuid())) {
                         return Err(TriangulationValidationError::InvalidNeighbors {
                             message: format!(
                                 "Neighbor relationship not mutual: {:?} → {neighbor_uuid:?}",
@@ -3019,7 +3024,7 @@ mod tests {
         }
 
         let mut cell = cell!(vertices);
-        cell.neighbors = Some(vec![Uuid::nil()]); // Invalid neighbor
+        cell.neighbors = Some(vec![Some(Uuid::nil())]); // Invalid neighbor
         let cell_key = tds.cells.insert(cell);
         let cell_uuid = tds.cells[cell_key].uuid();
         tds.cell_bimap.insert(cell_uuid, cell_key);
@@ -3826,14 +3831,24 @@ mod tests {
 
         for cell in &cells {
             if let Some(neighbors) = &cell.neighbors {
+                // With positional semantics, neighbors vector length equals vertex count (4 for tetrahedra)
                 assert_eq!(
                     neighbors.len(),
-                    1,
-                    "Each cell should have exactly 1 neighbor"
+                    4,
+                    "Each cell should have neighbors array with length equal to vertex count"
                 );
 
-                // Get the neighbor cell
-                let neighbor_uuid = neighbors[0];
+                // Count actual neighbors (non-None values) - should be exactly 1
+                let actual_neighbors: Vec<_> =
+                    neighbors.iter().filter_map(|n| n.as_ref()).collect();
+                assert_eq!(
+                    actual_neighbors.len(),
+                    1,
+                    "Each cell should have exactly 1 actual neighbor"
+                );
+
+                // Get the neighbor cell (handle Option<Uuid>)
+                let neighbor_uuid = *actual_neighbors[0];
                 let neighbor_cell_key = tds
                     .cell_bimap
                     .get_by_left(&neighbor_uuid)
@@ -3908,11 +3923,11 @@ mod tests {
         let neighbors2 = cell2.neighbors.as_ref().unwrap();
 
         assert!(
-            neighbors1.contains(&cell2.uuid()),
+            neighbors1.iter().any(|n| n.as_ref() == Some(&cell2.uuid())),
             "Cell1 should have Cell2 as neighbor"
         );
         assert!(
-            neighbors2.contains(&cell1.uuid()),
+            neighbors2.iter().any(|n| n.as_ref() == Some(&cell1.uuid())),
             "Cell2 should have Cell1 as neighbor"
         );
 
@@ -3942,7 +3957,10 @@ mod tests {
 
         // Ensure no neighbors in a single tetrahedron (expected behavior)
         for cell in result.cells.values() {
-            assert!(cell.neighbors.is_none() || cell.neighbors.as_ref().unwrap().is_empty());
+            assert!(
+                cell.neighbors.is_none()
+                    || cell.neighbors.as_ref().unwrap().iter().all(Option::is_none)
+            );
         }
 
         // Edge case: Test with insufficient vertices (should fail with InsufficientVertices)
@@ -4166,11 +4184,11 @@ mod tests {
 
         // Add too many neighbors (5 neighbors for 3D should fail)
         cell.neighbors = Some(vec![
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            Some(Uuid::new_v4()),
+            Some(Uuid::new_v4()),
+            Some(Uuid::new_v4()),
+            Some(Uuid::new_v4()),
+            Some(Uuid::new_v4()),
         ]);
 
         let cell_key = tds.cells.insert(cell);
@@ -4254,7 +4272,7 @@ mod tests {
         let cell2 = cell!(vertices2);
 
         // Make cell1 point to cell2 as neighbor, but not vice versa
-        cell1.neighbors = Some(vec![cell2.uuid()]);
+        cell1.neighbors = Some(vec![Some(cell2.uuid())]);
 
         let cell1_key = tds.cells.insert(cell1);
         let cell1_uuid = tds.cells[cell1_key].uuid();
@@ -4625,7 +4643,11 @@ mod tests {
         let mut cell = cell!(vertices);
 
         // Add exactly D neighbors (3 neighbors for 3D)
-        cell.neighbors = Some(vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()]);
+        cell.neighbors = Some(vec![
+            Some(Uuid::new_v4()),
+            Some(Uuid::new_v4()),
+            Some(Uuid::new_v4()),
+        ]);
 
         let cell_key = tds.cells.insert(cell);
         let cell_uuid = tds.cells[cell_key].uuid();
@@ -4667,8 +4689,8 @@ mod tests {
         let mut cell2 = cell!(vertices2);
 
         // Make them claim to be neighbors
-        cell1.neighbors = Some(vec![cell2.uuid()]);
-        cell2.neighbors = Some(vec![cell1.uuid()]);
+        cell1.neighbors = Some(vec![Some(cell2.uuid())]);
+        cell2.neighbors = Some(vec![Some(cell1.uuid())]);
 
         let cell1_key = tds.cells.insert(cell1);
         let cell1_uuid = tds.cells[cell1_key].uuid();
@@ -5146,15 +5168,24 @@ mod tests {
         let neighbors1 = cell1.neighbors.as_ref().unwrap();
         let neighbors2 = cell2.neighbors.as_ref().unwrap();
 
-        assert_eq!(neighbors1.len(), 1, "Cell 1 should have exactly 1 neighbor");
-        assert_eq!(neighbors2.len(), 1, "Cell 2 should have exactly 1 neighbor");
+        // Count actual neighbors (non-None values)
+        assert_eq!(
+            neighbors1.iter().filter_map(|n| n.as_ref()).count(),
+            1,
+            "Cell 1 should have exactly 1 neighbor"
+        );
+        assert_eq!(
+            neighbors2.iter().filter_map(|n| n.as_ref()).count(),
+            1,
+            "Cell 2 should have exactly 1 neighbor"
+        );
 
         assert!(
-            neighbors1.contains(&cell2.uuid()),
+            neighbors1.iter().any(|n| n.as_ref() == Some(&cell2.uuid())),
             "Cell 1 should have Cell 2 as neighbor"
         );
         assert!(
-            neighbors2.contains(&cell1.uuid()),
+            neighbors2.iter().any(|n| n.as_ref() == Some(&cell1.uuid())),
             "Cell 2 should have Cell 1 as neighbor"
         );
     }
@@ -5526,8 +5557,8 @@ mod tests {
 
         // Now set up invalid neighbor relationships: cell1 and new_cell2 claim to be neighbors
         // but they share 0 vertices (should share exactly 3 for valid 3D neighbors)
-        tds.cells.get_mut(cell1_key).unwrap().neighbors = Some(vec![new_cell2_uuid]);
-        tds.cells.get_mut(new_cell2_key).unwrap().neighbors = Some(vec![cell1_uuid]);
+        tds.cells.get_mut(cell1_key).unwrap().neighbors = Some(vec![Some(new_cell2_uuid)]);
+        tds.cells.get_mut(new_cell2_key).unwrap().neighbors = Some(vec![Some(cell1_uuid)]);
 
         // cell3 will be removed during fix_invalid_facet_sharing, leaving cell1 and new_cell2
         // with invalid neighbor relationships (they share 0 vertices but claim to be neighbors)
@@ -5601,8 +5632,8 @@ mod tests {
                     let cell2_uuid = tds.cells[cell2_key].uuid();
 
                     // Set up invalid neighbor relationships explicitly
-                    tds.cells.get_mut(cell1_key).unwrap().neighbors = Some(vec![cell2_uuid]);
-                    tds.cells.get_mut(cell2_key).unwrap().neighbors = Some(vec![cell1_uuid]);
+                    tds.cells.get_mut(cell1_key).unwrap().neighbors = Some(vec![Some(cell2_uuid)]);
+                    tds.cells.get_mut(cell2_key).unwrap().neighbors = Some(vec![Some(cell1_uuid)]);
 
                     // Now validation should fail
                     let retry_result = tds.is_valid();
