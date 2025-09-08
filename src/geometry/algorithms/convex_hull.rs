@@ -1,7 +1,8 @@
+use crate::core::collections::{FacetToCellsMap, FastHashMap};
 use crate::core::facet::{Facet, FacetError};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::{CellKey, Tds};
+use crate::core::triangulation_data_structure::Tds;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::simplex_orientation;
 use crate::geometry::traits::coordinate::{
@@ -15,7 +16,6 @@ use num_traits::{One, Zero};
 use ordered_float::OrderedFloat;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::collections::HashMap;
 use std::iter::Sum;
 use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
 use std::sync::{
@@ -159,7 +159,7 @@ where
     /// Cache for the facet-to-cells mapping to avoid rebuilding it for each facet check
     /// Uses `ArcSwap` for lock-free atomic updates when cache needs invalidation
     #[allow(clippy::type_complexity)]
-    facet_to_cells_cache: ArcSwap<Option<HashMap<u64, Vec<(CellKey, usize)>>>>,
+    facet_to_cells_cache: ArcSwap<Option<FacetToCellsMap>>,
     /// Generation counter at the time the cache was built.
     /// Used to detect when the TDS has been mutated and cache needs invalidation.
     /// Uses `Arc<AtomicU64>` for consistent tracking across cloned `ConvexHull` instances.
@@ -927,7 +927,7 @@ where
             }
 
             // Check that vertices are distinct - collect all duplicates for this facet
-            let mut uuid_to_positions: HashMap<uuid::Uuid, Vec<usize>> = HashMap::new();
+            let mut uuid_to_positions: FastHashMap<uuid::Uuid, Vec<usize>> = FastHashMap::default();
             for (position, vertex) in vertices.iter().enumerate() {
                 uuid_to_positions
                     .entry(vertex.uuid())

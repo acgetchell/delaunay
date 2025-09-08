@@ -155,7 +155,6 @@
 
 // Standard library imports
 use std::cmp::min;
-use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::iter::Sum;
 use std::ops::{AddAssign, Div, SubAssign};
@@ -172,6 +171,11 @@ use thiserror::Error;
 use uuid::Uuid;
 
 // Crate-internal imports
+use crate::core::collections::{
+    CellNeighborsMap, CellRemovalBuffer, CellVerticesMap, FacetToCellsMap, FastHashMap,
+    FastHashSet, SmallBuffer, ValidCellsBuffer, VertexToCellsMap, VertexUuidSet,
+    fast_hash_map_with_capacity,
+};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
 // num-traits imports
@@ -1284,11 +1288,11 @@ where
     /// }
     /// ```
     pub fn assign_neighbors(&mut self) -> Result<(), TriangulationValidationError> {
-        // Build facet mapping with vertex index information
+        // Build facet mapping with vertex index information using optimized collections
         // facet_key -> [(cell_key, vertex_index_opposite_to_facet)]
         type FacetInfo = (CellKey, usize);
-        let mut facet_map: HashMap<u64, Vec<FacetInfo>> =
-            HashMap::with_capacity(self.cells.len() * (D + 1));
+        let mut facet_map: FastHashMap<u64, SmallBuffer<FacetInfo, 2>> =
+            fast_hash_map_with_capacity(self.cells.len() * (D + 1));
 
         for (cell_key, cell) in &self.cells {
             let vertex_keys = cell.vertex_keys(&self.vertex_bimap).map_err(|err| {
@@ -1312,13 +1316,14 @@ where
         }
 
         // For each cell, build an ordered neighbor array where neighbors[i] is opposite vertices[i]
-        let mut cell_neighbors: HashMap<CellKey, Vec<Option<Uuid>>> =
-            HashMap::with_capacity(self.cells.len());
+        let mut cell_neighbors: CellNeighborsMap = fast_hash_map_with_capacity(self.cells.len());
 
-        // Initialize each cell with a vector of None values (one per vertex)
+        // Initialize each cell with a SmallBuffer of None values (one per vertex)
         for (cell_key, cell) in &self.cells {
             let vertex_count = cell.vertices().len();
-            cell_neighbors.insert(cell_key, vec![None; vertex_count]);
+            let mut neighbors = SmallBuffer::with_capacity(vertex_count);
+            neighbors.resize(vertex_count, None);
+            cell_neighbors.insert(cell_key, neighbors);
         }
 
         // For each facet that is shared by exactly two cells, establish neighbor relationships
@@ -1471,8 +1476,8 @@ where
     /// 3. Update the vertex's `incident_cell` field with the UUID of the selected cell
     ///
     pub fn assign_incident_cells(&mut self) -> Result<(), TriangulationValidationError> {
-        // Build vertex_to_cells: HashMap<VertexKey, Vec<CellKey>> by iterating for (cell_key, cell) in &self.cells
-        let mut vertex_to_cells: HashMap<VertexKey, Vec<CellKey>> = HashMap::new();
+        // Build vertex_to_cells mapping using optimized collections
+        let mut vertex_to_cells: VertexToCellsMap = FastHashMap::default();
 
         for (cell_key, cell) in &self.cells {
             // For each vertex in cell.vertices(): look up its VertexKey via vertex_uuid_to_key and push cell_key
@@ -1535,8 +1540,8 @@ where
     ///
     /// Returns the number of duplicate cells that were removed.
     pub fn remove_duplicate_cells(&mut self) -> usize {
-        let mut unique_cells = HashMap::new();
-        let mut cells_to_remove = Vec::new();
+        let mut unique_cells = FastHashMap::default();
+        let mut cells_to_remove = CellRemovalBuffer::new();
 
         // First pass: identify duplicate cells
         for (cell_key, cell) in &self.cells {
@@ -1621,8 +1626,8 @@ where
     /// number of facets per cell (typically D+1 for D-dimensional cells). The space
     /// complexity is O(T) where T is the total number of facets across all cells.
     #[must_use]
-    pub fn build_facet_to_cells_hashmap(&self) -> HashMap<u64, Vec<(CellKey, usize)>> {
-        let mut facet_to_cells: HashMap<u64, Vec<(CellKey, usize)>> = HashMap::new();
+    pub fn build_facet_to_cells_hashmap(&self) -> FacetToCellsMap {
+        let mut facet_to_cells: FacetToCellsMap = FastHashMap::default();
 
         // Iterate over all cells and their facets
         for (cell_id, cell) in &self.cells {
@@ -1683,7 +1688,7 @@ where
 
         // There are facet sharing issues, proceed with the fix
         let facet_to_cells = self.build_facet_to_cells_hashmap();
-        let mut cells_to_remove: HashSet<CellKey> = HashSet::new();
+        let mut cells_to_remove: FastHashSet<CellKey> = FastHashSet::default();
 
         // Find facets that are shared by more than 2 cells and validate which ones are correct
         for (facet_key, cell_facet_pairs) in facet_to_cells {
@@ -1696,19 +1701,19 @@ where
 
                 // Get the vertices that make up this facet using Facet::vertices()
                 let facet_vertices = reference_facet.vertices();
-                let facet_vertex_uuids: HashSet<uuid::Uuid> = facet_vertices
+                let facet_vertex_uuids: VertexUuidSet = facet_vertices
                     .iter()
                     .map(super::vertex::Vertex::uuid)
                     .collect();
 
-                let mut valid_cells = Vec::new();
+                let mut valid_cells = ValidCellsBuffer::new();
 
                 // Check each cell to see if it truly contains all vertices of this facet
                 for &(cell_key, _facet_index) in &cell_facet_pairs {
                     let cell = &self.cells[cell_key];
 
                     // Get cell vertices using Cell::vertices()
-                    let cell_vertex_uuids: HashSet<uuid::Uuid> = cell
+                    let cell_vertex_uuids: VertexUuidSet = cell
                         .vertices()
                         .iter()
                         .map(super::vertex::Vertex::uuid)
@@ -1922,7 +1927,7 @@ where
     /// This is useful for validation where you want to detect duplicates
     /// without automatically removing them.
     fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError> {
-        let mut unique_cells = HashMap::new();
+        let mut unique_cells = FastHashMap::default();
         let mut duplicates = Vec::new();
 
         for (cell_key, cell) in &self.cells {
@@ -2136,11 +2141,10 @@ where
     /// - Efficient intersection counting without creating intermediate collections
     fn validate_neighbors_internal(&self) -> Result<(), TriangulationValidationError> {
         // Pre-compute vertex UUIDs for all cells to avoid repeated computation
-        let mut cell_vertices: HashMap<CellKey, HashSet<VertexKey>> =
-            HashMap::with_capacity(self.cells.len());
+        let mut cell_vertices: CellVerticesMap = fast_hash_map_with_capacity(self.cells.len());
 
         for (cell_key, cell) in &self.cells {
-            let vertices: HashSet<VertexKey> = cell
+            let vertices: FastHashSet<VertexKey> = cell
                 .vertices()
                 .iter()
                 .filter_map(|v| self.vertex_bimap.get_by_left(&v.uuid()).copied())
@@ -2180,9 +2184,9 @@ where
                     });
                 };
 
-                // Early termination: mutual neighbor check using HashSet for O(1) lookup
+                // Early termination: mutual neighbor check using FastHashSet for O(1) lookup
                 if let Some(neighbor_neighbors) = &neighbor_cell.neighbors {
-                    let neighbor_set: HashSet<_> = neighbor_neighbors.iter().collect();
+                    let neighbor_set: FastHashSet<_> = neighbor_neighbors.iter().collect();
                     if !neighbor_set.contains(&cell.uuid()) {
                         return Err(TriangulationValidationError::InvalidNeighbors {
                             message: format!(
@@ -2523,7 +2527,9 @@ mod tests {
     use super::*;
     use crate::cell;
     use crate::core::{
-        traits::boundary_analysis::BoundaryAnalysis, util::facets_are_adjacent,
+        collections::{FastHashMap, VertexUuidSet},
+        traits::boundary_analysis::BoundaryAnalysis,
+        util::facets_are_adjacent,
         vertex::VertexBuilder,
     };
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
@@ -3843,9 +3849,9 @@ mod tests {
 
                 // Since we only have 1 neighbor stored, we need to find which vertex index
                 // this neighbor corresponds to by checking which vertex is NOT shared
-                let cell_vertices: HashSet<Uuid> =
+                let cell_vertices: VertexUuidSet =
                     cell.vertices().iter().map(Vertex::uuid).collect();
-                let neighbor_vertices: HashSet<Uuid> =
+                let neighbor_vertices: VertexUuidSet =
                     neighbor_cell.vertices().iter().map(Vertex::uuid).collect();
 
                 // Find vertices that are in current cell but not in neighbor (should be exactly 1)
@@ -3872,8 +3878,10 @@ mod tests {
                 // Since we only store actual neighbors (filter out None), we need to map back
                 // For now, we verify that the neighbor relationship is geometrically sound:
                 // The cells should share exactly D=3 vertices (they share a facet)
-                let shared_vertices: HashSet<_> =
-                    cell_vertices.intersection(&neighbor_vertices).collect();
+                let shared_vertices: VertexUuidSet = cell_vertices
+                    .intersection(&neighbor_vertices)
+                    .copied()
+                    .collect();
                 assert_eq!(
                     shared_vertices.len(),
                     3,
@@ -5098,7 +5106,7 @@ mod tests {
         );
 
         // Build a map of facet keys to the cells that contain them
-        let mut facet_map: HashMap<u64, Vec<Uuid>> = HashMap::new();
+        let mut facet_map: FastHashMap<u64, Vec<Uuid>> = FastHashMap::default();
         for cell in tds.cells.values() {
             for facet in cell.facets().expect("Should get cell facets") {
                 facet_map.entry(facet.key()).or_default().push(cell.uuid());

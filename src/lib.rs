@@ -159,6 +159,8 @@ pub mod core {
     }
     pub mod boundary;
     pub mod cell;
+    /// High-performance collection types optimized for computational geometry
+    pub mod collections;
     pub mod facet;
     pub mod triangulation_data_structure;
     pub mod util;

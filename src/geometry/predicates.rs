@@ -109,6 +109,7 @@ impl std::fmt::Display for Orientation {
 /// let oriented = simplex_orientation(&simplex_points).unwrap();
 /// assert_eq!(oriented, Orientation::NEGATIVE);
 /// ```
+#[inline]
 pub fn simplex_orientation<T, const D: usize>(
     simplex_points: &[Point<T, D>],
 ) -> Result<Orientation, CoordinateConversionError>
@@ -441,6 +442,7 @@ where
 /// let result_vertex = insphere(&simplex_points, vertex).unwrap();
 /// assert!(matches!(result_vertex, InSphere::BOUNDARY | InSphere::INSIDE));
 /// ```
+#[inline]
 pub fn insphere<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: Point<T, D>,

@@ -178,7 +178,6 @@ jobs:
     name: Memory Stress Testing
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: []  # Run independently
     
     steps:
     - name: Checkout code

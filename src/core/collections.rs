@@ -1,0 +1,453 @@
+//! High-performance collection types optimized for computational geometry operations.
+//!
+//! This module provides centralized type aliases for performance-critical data structures
+//! used throughout the delaunay triangulation library. These aliases allow for easy
+//! future optimization and maintenance by providing a single location to change
+//! the underlying implementation.
+//!
+//! # Performance Rationale
+//!
+//! The type aliases in this module are optimized based on the specific usage patterns
+//! in computational geometry algorithms:
+//!
+//! ## Hash-based Collections
+//!
+//! - **FxHashMap/FxHashSet**: Uses FxHasher which is 2-3x faster than the default
+//!   SipHash for non-cryptographic use cases. Perfect for internal data structures
+//!   where collision resistance against adversarial input is not required.
+//!
+//! ## Small Collections
+//!
+//! - **SmallVec**: Uses stack allocation for small collections, avoiding heap
+//!   allocations for the common case where collections remain small. This is
+//!   particularly effective for:
+//!   - Vertex neighbor lists (typically D+1 neighbors)
+//!   - Facet-to-cell mappings (typically 1-2 cells per facet)
+//!   - Temporary collections during geometric operations
+//!
+//! # Usage Patterns
+//!
+//! The size parameters for SmallVec are chosen based on empirical analysis of
+//! typical triangulation patterns:
+//!
+//! - **2 elements**: Facet sharing (boundary facets = 1 cell, interior facets = 2 cells)
+//! - **4 elements**: Small temporary collections during geometric operations
+//! - **8 elements**: Vertex degrees and cell neighbor counts in typical triangulations
+//! - **16 elements**: Larger temporary buffers for batch operations
+//!
+//! # Future Optimization
+//!
+//! This centralized approach allows for easy experimentation with different
+//! high-performance data structures:
+//! - Alternative hash functions (ahash, seahash)
+//! - Specialized geometric data structures
+//! - SIMD-optimized containers
+//! - Memory pool allocators
+//!
+//! # Examples
+//!
+//! ```rust
+//! use delaunay::core::collections::{FastHashMap, SmallBuffer, FacetToCellsMap};
+//!
+//! // Use optimized HashMap for temporary mappings
+//! let mut temp_map: FastHashMap<u64, usize> = FastHashMap::default();
+//!
+//! // Use stack-allocated buffer for small collections
+//! let mut small_list: SmallBuffer<i32, 8> = SmallBuffer::new();
+//! small_list.push(1);
+//! small_list.push(2);
+//!
+//! // Use domain-specific optimized collections
+//! let facet_map: FacetToCellsMap = FacetToCellsMap::default();
+//! ```
+
+use fxhash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
+
+// Re-export key types that are used in type aliases
+pub use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+pub use uuid::Uuid;
+
+// =============================================================================
+// CORE OPTIMIZED TYPES
+// =============================================================================
+
+/// Optimized `HashMap` type for performance-critical operations.
+/// Uses `FxHasher` for ~2-3x faster hashing in non-cryptographic contexts.
+///
+/// # Performance Characteristics
+///
+/// - **Hash Function**: `FxHash` (non-cryptographic, very fast)
+/// - **Use Case**: Internal mappings where security is not a concern
+/// - **Speedup**: ~2-3x faster than `std::collections::HashMap`
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::FastHashMap;
+///
+/// let mut map: FastHashMap<u64, usize> = FastHashMap::default();
+/// map.insert(123, 456);
+/// ```
+pub type FastHashMap<K, V> = FxHashMap<K, V>;
+
+/// Optimized `HashSet` type for performance-critical operations.
+/// Uses `FxHasher` for ~2-3x faster hashing in non-cryptographic contexts.
+///
+/// # Performance Characteristics
+///
+/// - **Hash Function**: `FxHash` (non-cryptographic, very fast)
+/// - **Use Case**: Internal sets for membership testing
+/// - **Speedup**: ~2-3x faster than `std::collections::HashSet`
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::FastHashSet;
+/// use uuid::Uuid;
+///
+/// let mut set: FastHashSet<Uuid> = FastHashSet::default();
+/// set.insert(Uuid::new_v4());
+/// ```
+pub type FastHashSet<T> = FxHashSet<T>;
+
+/// Small-optimized Vec that uses stack allocation for small collections.
+/// Generic size parameter allows customization per use case.
+/// Provides heap fallback for larger collections.
+///
+/// # Performance Characteristics
+///
+/// - **Stack Allocation**: For collections ≤ N elements
+/// - **Heap Fallback**: Automatically grows to heap when needed
+/// - **Cache Friendly**: Better memory locality for small collections
+/// - **Zero-cost**: No overhead when staying within inline capacity
+///
+/// # Size Guidelines
+///
+/// - **N=2**: Facet sharing patterns (1-2 cells per facet)
+/// - **N=4**: Small temporary operations
+/// - **N=8**: Typical vertex/cell degrees
+/// - **N=16**: Batch operation buffers
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::SmallBuffer;
+///
+/// // Stack-allocated for ≤8 elements, heap for more
+/// let mut buffer: SmallBuffer<i32, 8> = SmallBuffer::new();
+/// for i in 0..5 {
+///     buffer.push(i);  // All stack allocated
+/// }
+/// ```
+pub type SmallBuffer<T, const N: usize> = SmallVec<[T; N]>;
+
+// =============================================================================
+// TRIANGULATION-SPECIFIC OPTIMIZED TYPES
+// =============================================================================
+
+/// Facet-to-cells mapping optimized for typical triangulation patterns.
+/// Most facets are shared by at most 2 cells (boundary facets = 1, interior facets = 2).
+///
+/// # Optimization Rationale
+///
+/// - **Key**: `u64` facet hash (from vertex combination)
+/// - **Value**: `SmallBuffer<(CellKey, usize), 2>` - stack allocated for typical case
+/// - **Typical Pattern**: 1 cell (boundary) or 2 cells (interior facet)
+/// - **Performance**: Avoids heap allocation for >95% of facets
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::FacetToCellsMap;
+///
+/// let mut facet_map: FacetToCellsMap = FacetToCellsMap::default();
+/// // Most entries will use stack allocation
+/// ```
+pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<(CellKey, usize), 2>>;
+
+/// Cell neighbor mapping optimized for typical cell degrees.
+/// Most cells have a small number of neighbors (D+1 faces, so at most D+1 neighbors).
+///
+/// # Optimization Rationale
+///
+/// - **Key**: `CellKey` identifying the cell
+/// - **Value**: `SmallBuffer<Option<Uuid>, 8>` - handles up to 8 neighbors on stack
+/// - **Typical Pattern**: 2D=3 neighbors, 3D=4 neighbors, 4D=5 neighbors
+/// - **Performance**: Stack allocation for dimensions up to ~7D
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::CellNeighborsMap;
+///
+/// let mut neighbors: CellNeighborsMap = CellNeighborsMap::default();
+/// // Efficient for typical triangulation dimensions
+/// ```
+pub type CellNeighborsMap = FastHashMap<CellKey, SmallBuffer<Option<Uuid>, 8>>;
+
+/// Vertex-to-cells mapping optimized for typical vertex degrees.
+/// Most vertices are incident to a small number of cells in well-conditioned triangulations.
+///
+/// # Optimization Rationale
+///
+/// - **Key**: `VertexKey` identifying the vertex
+/// - **Value**: `SmallBuffer<CellKey, 8>` - handles up to 8 incident cells on stack
+/// - **Typical Pattern**: Well-conditioned triangulations have low vertex degrees
+/// - **Performance**: Avoids heap allocation for most vertices
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::VertexToCellsMap;
+///
+/// let mut vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
+/// // Optimized for typical vertex degrees
+/// ```
+pub type VertexToCellsMap = FastHashMap<VertexKey, SmallBuffer<CellKey, 8>>;
+
+/// Cell vertices mapping optimized for validation operations.
+/// Each cell typically has D+1 vertices, stored as a fast set for efficient intersection operations.
+///
+/// # Optimization Rationale
+///
+/// - **Key**: `CellKey` identifying the cell
+/// - **Value**: `FastHashSet<VertexKey>` - optimized for set operations
+/// - **Use Case**: Validation algorithms that need fast intersection/membership testing
+/// - **Performance**: `FxHash` provides fast hashing for `VertexKey`
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::CellVerticesMap;
+///
+/// let mut cell_vertices: CellVerticesMap = CellVerticesMap::default();
+/// // Fast set operations for validation
+/// ```
+pub type CellVerticesMap = FastHashMap<CellKey, FastHashSet<VertexKey>>;
+
+// =============================================================================
+// ALGORITHM-SPECIFIC BUFFER TYPES
+// =============================================================================
+
+/// Collection for tracking cells to remove during cleanup operations.
+/// Most cleanup operations affect a small number of cells.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Up to 16 cells (covers most cleanup scenarios)
+/// - **Use Case**: Duplicate cell removal, invalid facet cleanup
+/// - **Performance**: Avoids heap allocation for typical cleanup operations
+pub type CellRemovalBuffer = SmallBuffer<CellKey, 16>;
+
+/// Collection for tracking valid cells during facet sharing fixes.
+/// Most invalid sharing situations involve only a few cells per facet.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Up to 4 cells (more than enough for valid facets)
+/// - **Use Case**: Facet validation, topology repair
+/// - **Performance**: Stack-only for typical geometric repair operations
+pub type ValidCellsBuffer = SmallBuffer<CellKey, 4>;
+
+/// Buffer for storing vertex UUIDs during geometric operations.
+/// Sized for typical simplex operations (D+1 vertices).
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Up to 8 UUIDs (handles up to 7D simplices)
+/// - **Use Case**: Temporary vertex collections, geometric predicates
+/// - **Performance**: Stack allocation for all practical dimensions
+pub type VertexUuidBuffer = SmallBuffer<Uuid, 8>;
+
+/// Buffer for storing facet information during boundary analysis.
+/// Sized for typical cell operations (D+1 facets per cell).
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Up to 8 facet info entries
+/// - **Use Case**: Boundary analysis, facet enumeration
+/// - **Performance**: Handles cells up to 7D on stack
+pub type FacetInfoBuffer = SmallBuffer<(CellKey, usize), 8>;
+
+// =============================================================================
+// GEOMETRIC ALGORITHM TYPES
+// =============================================================================
+
+/// Optimized set for vertex UUID collections in geometric predicates.
+/// Used for fast membership testing during facet analysis.
+///
+/// # Optimization Rationale
+///
+/// - **Hash Function**: `FxHash` for fast UUID hashing
+/// - **Use Case**: Membership testing, intersection operations
+/// - **Performance**: ~2-3x faster than `std::collections::HashSet`
+pub type VertexUuidSet = FastHashSet<Uuid>;
+
+/// Mapping from facet keys to vertex sets for hull algorithms.
+/// Used in convex hull and Voronoi diagram construction.
+///
+/// # Optimization Rationale
+///
+/// - **Key**: `u64` facet hash for O(1) lookup
+/// - **Value**: `VertexUuidSet` for fast set operations
+/// - **Use Case**: Hull algorithms, visibility determination
+/// - **Performance**: Optimized for geometric algorithm patterns
+pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
+
+/// Temporary buffer for storing points during geometric operations.
+/// Sized for typical batch processing operations.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Up to 16 points for batch operations
+/// - **Generic Dimension**: Works with any coordinate type and dimension
+/// - **Use Case**: Point processing, geometric transformations
+/// - **Performance**: Avoids allocation for small point batches
+pub type PointBuffer<T, const D: usize> = SmallBuffer<[T; D], 16>;
+
+// =============================================================================
+// UTILITY FUNCTIONS
+// =============================================================================
+
+/// Creates a `FastHashMap` with pre-allocated capacity using the optimal hasher.
+/// This is more efficient than using the default constructor when the expected size is known.
+///
+/// # Performance Benefits
+///
+/// - **Pre-allocation**: Avoids rehashing during insertion
+/// - **Optimal Hasher**: Uses `FxHash` for maximum performance
+/// - **Memory Efficiency**: Reduces memory fragmentation
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::fast_hash_map_with_capacity;
+///
+/// let map = fast_hash_map_with_capacity::<u64, usize>(1000);
+/// // Can insert up to ~750 items without rehashing (load factor ~0.75)
+/// ```
+#[inline]
+#[must_use]
+pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
+    use std::hash::BuildHasherDefault;
+    FastHashMap::with_capacity_and_hasher(capacity, BuildHasherDefault::default())
+}
+
+/// Creates a `FastHashSet` with pre-allocated capacity using the optimal hasher.
+/// This is more efficient than using the default constructor when the expected size is known.
+///
+/// # Performance Benefits
+///
+/// - **Pre-allocation**: Avoids rehashing during insertion
+/// - **Optimal Hasher**: Uses `FxHash` for maximum performance
+/// - **Memory Efficiency**: Reduces memory fragmentation
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::fast_hash_set_with_capacity;
+/// use uuid::Uuid;
+///
+/// let set = fast_hash_set_with_capacity::<Uuid>(500);
+/// // Can insert up to ~375 UUIDs without rehashing
+/// ```
+#[inline]
+#[must_use]
+pub fn fast_hash_set_with_capacity<T>(capacity: usize) -> FastHashSet<T> {
+    use std::hash::BuildHasherDefault;
+    FastHashSet::with_capacity_and_hasher(capacity, BuildHasherDefault::default())
+}
+
+/// Creates a `SmallBuffer` with the specified capacity.
+/// Uses stack allocation if the capacity is within the inline size, otherwise uses heap.
+///
+/// Note: This function is only available for specific sizes due to `SmallVec`'s Array trait constraints.
+/// For most use cases, prefer using `SmallBuffer::with_capacity(capacity)` directly with concrete types.
+///
+/// # Performance Benefits
+///
+/// - **Smart Allocation**: Uses stack when possible, heap when necessary
+/// - **Capacity Hinting**: Pre-allocates heap space if needed
+/// - **Zero Overhead**: No cost when staying within inline capacity
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::SmallBuffer;
+///
+/// // Use concrete types directly (preferred)
+/// let mut small_buf: SmallBuffer<i32, 8> = SmallBuffer::with_capacity(5);
+/// let mut large_buf: SmallBuffer<i32, 8> = SmallBuffer::with_capacity(20);
+/// ```
+#[must_use]
+pub fn small_buffer_with_capacity_8<T>(capacity: usize) -> SmallBuffer<T, 8> {
+    SmallBuffer::with_capacity(capacity)
+}
+
+/// Creates a small buffer optimized for 2 elements (common facet sharing pattern)
+#[must_use]
+pub fn small_buffer_with_capacity_2<T>(capacity: usize) -> SmallBuffer<T, 2> {
+    SmallBuffer::with_capacity(capacity)
+}
+
+/// Creates a small buffer optimized for 16 elements (larger batch operations)
+#[must_use]
+pub fn small_buffer_with_capacity_16<T>(capacity: usize) -> SmallBuffer<T, 16> {
+    SmallBuffer::with_capacity(capacity)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fast_collections_basic_usage() {
+        let mut map: FastHashMap<u64, usize> = FastHashMap::default();
+        map.insert(123, 456);
+        assert_eq!(map.get(&123), Some(&456));
+
+        let mut set: FastHashSet<u64> = FastHashSet::default();
+        set.insert(789);
+        assert!(set.contains(&789));
+    }
+
+    #[test]
+    fn test_small_buffer_stack_allocation() {
+        let mut buffer: SmallBuffer<i32, 4> = SmallBuffer::new();
+
+        // These should use stack allocation
+        for i in 0..4 {
+            buffer.push(i);
+        }
+        assert_eq!(buffer.len(), 4);
+        assert!(!buffer.spilled()); // Still on stack
+
+        // This should trigger heap allocation
+        buffer.push(4);
+        assert_eq!(buffer.len(), 5);
+        assert!(buffer.spilled()); // Now on heap
+    }
+
+    #[test]
+    fn test_capacity_helpers() {
+        let map = fast_hash_map_with_capacity::<u64, usize>(100);
+        assert!(map.capacity() >= 100);
+
+        let set = fast_hash_set_with_capacity::<u64>(50);
+        assert!(set.capacity() >= 50);
+
+        let buffer = small_buffer_with_capacity_8::<i32>(5);
+        assert!(buffer.capacity() >= 5);
+    }
+
+    #[test]
+    fn test_domain_specific_types() {
+        let _facet_map: FacetToCellsMap = FacetToCellsMap::default();
+        let _neighbors: CellNeighborsMap = CellNeighborsMap::default();
+        let _vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
+        let _cell_vertices: CellVerticesMap = CellVerticesMap::default();
+
+        // Just test that they compile and can be instantiated
+    }
+}

@@ -427,13 +427,15 @@ The performance improvement is particularly significant for large triangulations
 The project uses a two-tier benchmarking approach to balance comprehensive analysis with CI efficiency:
 
 #### 1. **CI Performance Suite** (`ci_performance_suite.rs`)
+
 - **Purpose**: Fast performance regression detection for regular CI/CD
-- **Runtime**: ~5-10 minutes 
+- **Runtime**: ~5-10 minutes
 - **Scale**: Small point counts (10, 25, 50 points)
 - **Frequency**: Every PR and push to main
 - **Integration**: `.github/workflows/benchmarks.yml` and `.github/workflows/generate-baseline.yml`
 
 #### 2. **Profiling Suite** (`profiling_suite.rs`)
+
 - **Purpose**: Comprehensive performance analysis for optimization work
 - **Runtime**: 1-2 hours (full production mode)
 - **Scale**: Large point counts (10³ to 10⁶ points)

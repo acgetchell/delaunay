@@ -21,8 +21,10 @@ anyhow = "1.0.99"
 arc-swap = "1.7.1"
 approx = "0.5.1"
 bimap = "0.6.3"
-clap = { version = "4.5.46", features = ["derive"] }
+clap = { version = "4.5.47", features = ["derive"] }
 derive_builder = "0.20.1"
+fxhash = "0.2.1"  # Fast non-cryptographic hashing for performance
+smallvec = { version = "1.13.2", features = ["serde"] }  # Stack allocation for small collections
 nalgebra = "0.34.0"
 num-traits = "0.2.19"
 ordered-float = { version = "5.0.0", features = ["serde"] }
@@ -33,7 +35,7 @@ serde_json = "1.0.143"
 serde_test = "1.0.177"
 slotmap = { version = "1.0.7", features = ["serde"] }
 thiserror = "2.0.16"
-uuid = { version = "1.18.0", features = ["v4", "serde"] }
+uuid = { version = "1.18.1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }

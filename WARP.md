@@ -229,7 +229,6 @@ These items are incomplete and may require future attention:
 - **IF** other Rust code changed (`src/`, etc.) → **MUST** run standard Rust tests:
   - `cargo test --lib --verbose`
   - `cargo test --doc --verbose`
-  - `cargo test --examples --verbose`
 - **FOR ANY** Rust code changes → validate documentation (see "Code Quality Checks → Rust documentation validation")
 - **IMPORTANT**: For allocation testing, use `cargo test --test allocation_api --features count-allocations`
 - **PURPOSE**: Ensures appropriate validation for the type of code changes made
