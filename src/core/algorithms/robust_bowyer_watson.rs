@@ -667,30 +667,29 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
     ) -> Result<HashMap<u64, Vec<CellKey>>, TriangulationValidationError> {
+        // Reuse existing mapping from TDS to avoid recomputation
+        let tds_map = tds.build_facet_to_cells_hashmap();
         let mut facet_to_cells: HashMap<u64, Vec<CellKey>> = HashMap::new();
 
-        for (cell_key, cell) in tds.cells() {
-            if let Ok(facets) = cell.facets() {
-                for facet in facets {
-                    facet_to_cells
-                        .entry(facet.key())
-                        .or_default()
-                        .push(cell_key);
-                }
-            }
-        }
+        for (facet_key, cell_facet_pairs) in tds_map {
+            // Extract just the CellKeys, discarding facet indices
+            let cell_keys: Vec<CellKey> = cell_facet_pairs
+                .iter()
+                .map(|(cell_key, _)| *cell_key)
+                .collect();
 
-        // Validate that no facet is shared by more than 2 cells
-        for (facet_key, cells) in &facet_to_cells {
-            if cells.len() > 2 {
+            // Validate that no facet is shared by more than 2 cells
+            if cell_keys.len() > 2 {
                 return Err(TriangulationValidationError::InconsistentDataStructure {
                     message: format!(
                         "Facet {} is shared by {} cells (should be ≤2)",
                         facet_key,
-                        cells.len()
+                        cell_keys.len()
                     ),
                 });
             }
+
+            facet_to_cells.insert(facet_key, cell_keys);
         }
 
         Ok(facet_to_cells)

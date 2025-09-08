@@ -7,7 +7,7 @@ on:
       mode:
         description: 'Profiling mode'
         required: false
-        default: 'production'
+        default: 'development'
         type: choice
         options:
           - 'development'
@@ -69,8 +69,7 @@ jobs:
       - name: Set profiling mode
         run: |
           INPUT_MODE="${{ github.event.inputs.mode }}"
-          if [[ "$INPUT_MODE" == "development" ]] || \
-            { [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ -z "$INPUT_MODE" ]]; }; then
+          if [[ "$INPUT_MODE" == "development" ]]; then
             echo "PROFILING_DEV_MODE=1" >> $GITHUB_ENV
             echo "Running in development mode (reduced scale)"
           else
@@ -92,10 +91,10 @@ jobs:
             BENCH_FILTER="-- ${{ github.event.inputs.benchmark_filter }}"
           fi
 
-          # Run profiling with memory allocation tracking
+          # Run profiling (timing-focused)
           echo "Starting comprehensive profiling benchmarks..."
           if [[ -z "$BENCH_FILTER" ]] || [[ "$BENCH_FILTER" != *"memory"* ]]; then
-            cargo bench --bench profiling_suite --features count-allocations $BENCH_FILTER \
+            cargo bench --bench profiling_suite $BENCH_FILTER \
               2>&1 | tee profiling-results/profiling_output.log
           else
             # If filter contains memory, run only the filtered benchmarks
@@ -129,8 +128,11 @@ jobs:
           - **Profiling Mode**: ${{ env.PROFILING_DEV_MODE == '1' &&
             'Development (reduced scale for faster iteration)' ||
             'Production (full 10³-10⁶ point scale)' }}
-          - **Memory Tracking**: Enabled (count-allocations feature)
-          - **Benchmark Filter**: ${{ github.event.inputs.benchmark_filter || 'All benchmarks' }}
+          - **Memory Tracking**: ${{ contains(github.event.inputs.benchmark_filter, 'memory') &&
+            'Enabled for memory benchmarks (count-allocations feature)' ||
+            'Enabled only for memory-specific runs' }}
+          - **Benchmark Filter**: ${{ github.event.inputs.benchmark_filter != '' &&
+            github.event.inputs.benchmark_filter || 'All benchmarks' }}
 
           ## Benchmark Categories Run
 

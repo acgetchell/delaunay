@@ -40,18 +40,15 @@ def get_safe_executable(command: str) -> str:
     return full_path
 
 
-def run_git_command(
-    args: list[str], cwd: Path | None = None, capture_output: bool = True, text: bool = True, check: bool = True
-) -> subprocess.CompletedProcess[str]:
+def run_git_command(args: list[str], cwd: Path | None = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
     """
     Run a git command securely using full executable path.
 
     Args:
         args: Git command arguments (without 'git' prefix)
         cwd: Working directory for the command
-        capture_output: Whether to capture stdout/stderr
-        text: Whether to return text output
-        check: Whether to raise CalledProcessError on non-zero exit
+        **kwargs: Additional arguments passed to subprocess.run
+                  (e.g., capture_output=True, text=True, check=True, timeout=60)
 
     Returns:
         CompletedProcess result
@@ -59,10 +56,18 @@ def run_git_command(
     Raises:
         ExecutableNotFoundError: If git is not found
         subprocess.CalledProcessError: If command fails and check=True
+        subprocess.TimeoutExpired: If command times out
     """
     git_path = get_safe_executable("git")
-    return subprocess.run(  # noqa: S603  # Uses validated full executable path, no shell=True
-        [git_path, *args], cwd=cwd, capture_output=capture_output, text=text, check=check
+    # Set secure defaults for subprocess.run
+    run_kwargs = {
+        "capture_output": True,
+        "text": True,
+        "check": True,  # Secure default
+        **kwargs,  # Allow overriding defaults
+    }
+    return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
+        [git_path, *args], cwd=cwd, **run_kwargs
     )
 
 

@@ -139,7 +139,15 @@ fn generate_points_by_distribution<const D: usize>(
                 clippy::cast_sign_loss
             )]
             let points_per_dim = ((count as f64).powf(1.0 / D as f64).ceil() as usize).max(2);
-            generate_grid_points(points_per_dim, 10.0, [0.0; D]).unwrap()
+            match generate_grid_points(points_per_dim, 10.0, [0.0; D]) {
+                Ok(pts) => pts,
+                Err(e) => {
+                    eprintln!(
+                        "Grid generation capped/failed for D={D}: count={count}, points_per_dim={points_per_dim}, err={e:?}. Falling back to random."
+                    );
+                    generate_random_points_seeded(count, (-100.0, 100.0), seed).unwrap()
+                }
+            }
         }
         PointDistribution::PoissonDisk => {
             let min_distance = match D {
@@ -159,7 +167,7 @@ fn generate_points_by_distribution<const D: usize>(
 // ============================================================================
 
 /// Comprehensive triangulation scaling analysis across dimensions and distributions
-#[allow(clippy::significant_drop_tightening)]
+#[allow(clippy::significant_drop_tightening, clippy::too_many_lines)]
 fn benchmark_triangulation_scaling(c: &mut Criterion) {
     let counts = get_profiling_counts();
     let distributions = [
@@ -170,11 +178,16 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 
     // 2D Triangulation Scaling
     let mut group = c.benchmark_group("triangulation_scaling_2d");
-    group.measurement_time(Duration::from_secs(120)); // Allow longer measurement time
+    // Allow benchmark measurement time to be overridden via environment variable
+    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(120);
+    group.measurement_time(Duration::from_secs(measurement_time));
 
     for &count in counts {
         for &distribution in &distributions {
-            // Calculate actual point count for accurate throughput metrics
+            // Pre-generate sample points to calculate actual count and avoid double-generation
             let sample_points = generate_points_by_distribution::<2>(count, distribution, 42);
             let actual_count = sample_points.len();
             group.throughput(Throughput::Elements(actual_count as u64));
@@ -182,10 +195,11 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
             let bench_id = format!("{}_2d_{}", distribution.name(), count);
             group.bench_with_input(
                 BenchmarkId::new("tds_new", bench_id),
-                &(count, distribution),
-                |b, &(count, distribution)| {
+                &(count, distribution, actual_count),
+                |b, &(count, distribution, _actual_count)| {
                     b.iter_batched(
                         || {
+                            // Reuse same generation logic to ensure consistent point count
                             let points =
                                 generate_points_by_distribution::<2>(count, distribution, 42);
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
@@ -203,7 +217,12 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 
     // 3D Triangulation Scaling
     let mut group = c.benchmark_group("triangulation_scaling_3d");
-    group.measurement_time(Duration::from_secs(180)); // Even longer for 3D
+    // Allow benchmark measurement time to be overridden via environment variable
+    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(180);
+    group.measurement_time(Duration::from_secs(measurement_time));
 
     for &count in counts {
         for &distribution in &distributions {
@@ -212,7 +231,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                 continue;
             }
 
-            // Calculate actual point count for accurate throughput metrics
+            // Pre-generate sample points to calculate actual count and avoid double-generation
             let sample_points = generate_points_by_distribution::<3>(count, distribution, 42);
             let actual_count = sample_points.len();
             group.throughput(Throughput::Elements(actual_count as u64));
@@ -220,8 +239,8 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
             let bench_id = format!("{}_3d_{}", distribution.name(), count);
             group.bench_with_input(
                 BenchmarkId::new("tds_new", bench_id),
-                &(count, distribution),
-                |b, &(count, distribution)| {
+                &(count, distribution, actual_count),
+                |b, &(count, distribution, _actual_count)| {
                     b.iter_batched(
                         || {
                             let points =
@@ -248,11 +267,16 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 
     // 4D Triangulation Scaling
     let mut group = c.benchmark_group("triangulation_scaling_4d");
-    group.measurement_time(Duration::from_secs(240));
+    // Allow benchmark measurement time to be overridden via environment variable
+    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(240);
+    group.measurement_time(Duration::from_secs(measurement_time));
 
     for &count in high_dim_counts {
         for &distribution in &distributions {
-            // Calculate actual point count for accurate throughput metrics
+            // Pre-generate sample points to calculate actual count and avoid double-generation
             let sample_points = generate_points_by_distribution::<4>(count, distribution, 42);
             let actual_count = sample_points.len();
             group.throughput(Throughput::Elements(actual_count as u64));
@@ -260,8 +284,8 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
             let bench_id = format!("{}_4d_{}", distribution.name(), count);
             group.bench_with_input(
                 BenchmarkId::new("tds_new", bench_id),
-                &(count, distribution),
-                |b, &(count, distribution)| {
+                &(count, distribution, actual_count),
+                |b, &(count, distribution, _actual_count)| {
                     b.iter_batched(
                         || {
                             let points =
@@ -278,15 +302,79 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
         }
     }
     group.finish();
+
+    // 5D Triangulation Scaling (even smaller counts due to very high complexity)
+    let ultra_high_dim_counts = if std::env::var("PROFILING_DEV_MODE").is_ok() {
+        &[1_000][..]
+    } else {
+        &[1_000, 3_000][..]
+    };
+
+    let mut group = c.benchmark_group("triangulation_scaling_5d");
+    // Allow benchmark measurement time to be overridden via environment variable
+    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(300);
+    group.measurement_time(Duration::from_secs(measurement_time));
+
+    for &count in ultra_high_dim_counts {
+        for &distribution in &distributions {
+            // Pre-generate sample points to calculate actual count and avoid double-generation
+            let sample_points = generate_points_by_distribution::<5>(count, distribution, 42);
+            let actual_count = sample_points.len();
+            group.throughput(Throughput::Elements(actual_count as u64));
+
+            let bench_id = format!("{}_5d_{}", distribution.name(), count);
+            group.bench_with_input(
+                BenchmarkId::new("tds_new", bench_id),
+                &(count, distribution, actual_count),
+                |b, &(count, distribution, _actual_count)| {
+                    b.iter_batched(
+                        || {
+                            let points =
+                                generate_points_by_distribution::<5>(count, distribution, 42);
+                            points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
+                        },
+                        |vertices| {
+                            black_box(Tds::<f64, (), (), 5>::new(&vertices).unwrap());
+                        },
+                        BatchSize::LargeInput,
+                    );
+                },
+            );
+        }
+    }
+    group.finish();
 }
 
 // ============================================================================
 // Memory Usage Profiling
 // ============================================================================
 
+/// Calculate 95th percentile from a slice of values
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn calculate_95th_percentile(values: &mut [u64]) -> u64 {
+    if values.is_empty() {
+        return 0;
+    }
+    values.sort_unstable();
+    let index = ((values.len() as f64 * 0.95) as usize).min(values.len() - 1);
+    values[index]
+}
+
 /// Print memory allocation summary
 #[allow(clippy::cast_precision_loss)]
-fn print_alloc_summary(info: &AllocationInfo, description: &str, actual_point_count: usize) {
+fn print_alloc_summary(
+    info: &AllocationInfo,
+    description: &str,
+    actual_point_count: usize,
+    percentile_95: u64,
+) {
     println!("\n=== Memory Allocation Summary for {description} ({actual_point_count} points) ===");
     println!("Total allocations: {}", info.count_total);
     println!("Current allocations: {}", info.count_current);
@@ -297,6 +385,11 @@ fn print_alloc_summary(info: &AllocationInfo, description: &str, actual_point_co
         "Max bytes allocated: {} ({:.2} MB)",
         info.bytes_max,
         info.bytes_max as f64 / (1024.0 * 1024.0)
+    );
+    println!(
+        "95th percentile bytes: {} ({:.2} MB)",
+        percentile_95,
+        percentile_95 as f64 / (1024.0 * 1024.0)
     );
     println!(
         "Bytes per point (peak): {:.1}",
@@ -315,7 +408,12 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
     };
 
     let mut group = c.benchmark_group("memory_profiling");
-    group.measurement_time(Duration::from_secs(60));
+    // Allow benchmark measurement time to be overridden via environment variable
+    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(30);
+    group.measurement_time(Duration::from_secs(measurement_time));
 
     for &count in counts {
         // 2D Memory Profiling
@@ -392,7 +490,18 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
                         };
                         let avg_actual_count =
                             actual_point_counts.iter().sum::<usize>() / actual_point_counts.len();
-                        print_alloc_summary(&avg_info, "2D Triangulation", avg_actual_count);
+
+                        // Calculate 95th percentile of bytes_max
+                        let mut bytes_max_values: Vec<u64> =
+                            allocation_infos.iter().map(|i| i.bytes_max).collect();
+                        let percentile_95 = calculate_95th_percentile(&mut bytes_max_values);
+
+                        print_alloc_summary(
+                            &avg_info,
+                            "2D Triangulation",
+                            avg_actual_count,
+                            percentile_95,
+                        );
                     }
 
                     total_time
@@ -475,7 +584,208 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
                             };
                             let avg_actual_count = actual_point_counts.iter().sum::<usize>()
                                 / actual_point_counts.len();
-                            print_alloc_summary(&avg_info, "3D Triangulation", avg_actual_count);
+
+                            // Calculate 95th percentile of bytes_max
+                            let mut bytes_max_values: Vec<u64> =
+                                allocation_infos.iter().map(|i| i.bytes_max).collect();
+                            let percentile_95 = calculate_95th_percentile(&mut bytes_max_values);
+
+                            print_alloc_summary(
+                                &avg_info,
+                                "3D Triangulation",
+                                avg_actual_count,
+                                percentile_95,
+                            );
+                        }
+
+                        total_time
+                    });
+                },
+            );
+        }
+
+        // 4D Memory Profiling (even smaller counts due to exponential complexity)
+        if count <= 3_000 {
+            group.bench_with_input(
+                BenchmarkId::new("memory_usage_4d", count),
+                &count,
+                |b, &count| {
+                    b.iter_custom(|iters| {
+                        let mut total_time = Duration::new(0, 0);
+                        let mut allocation_infos: SmallBuffer<
+                            AllocationInfo,
+                            BENCHMARK_ITERATION_BUFFER_SIZE,
+                        > = SmallBuffer::new();
+
+                        let mut actual_point_counts: SmallBuffer<
+                            usize,
+                            BENCHMARK_ITERATION_BUFFER_SIZE,
+                        > = SmallBuffer::new();
+
+                        for _ in 0..iters {
+                            let start_time = Instant::now();
+
+                            let alloc_info = measure(|| {
+                                let points = generate_points_by_distribution::<4>(
+                                    count,
+                                    PointDistribution::Random,
+                                    42,
+                                );
+                                let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                actual_point_counts.push(points.len()); // Track actual count
+                                black_box(Tds::<f64, (), (), 4>::new(&vertices).unwrap());
+                            });
+
+                            total_time += start_time.elapsed();
+                            allocation_infos.push(alloc_info);
+                        }
+
+                        // Report memory usage summary if available
+                        if !allocation_infos.is_empty() {
+                            // Safe cast for division - allocation_infos.len() is guaranteed to be small and non-zero
+                            let divisor_unsigned = allocation_infos.len() as u64;
+                            let divisor_signed = allocation_infos.len() as i64;
+                            let avg_info = AllocationInfo {
+                                count_total: allocation_infos
+                                    .iter()
+                                    .map(|i| i.count_total)
+                                    .sum::<u64>()
+                                    / divisor_unsigned,
+                                count_current: allocation_infos
+                                    .iter()
+                                    .map(|i| i.count_current)
+                                    .sum::<i64>()
+                                    / divisor_signed,
+                                count_max: allocation_infos
+                                    .iter()
+                                    .map(|i| i.count_max)
+                                    .max()
+                                    .unwrap_or(0),
+                                bytes_total: allocation_infos
+                                    .iter()
+                                    .map(|i| i.bytes_total)
+                                    .sum::<u64>()
+                                    / divisor_unsigned,
+                                bytes_current: allocation_infos
+                                    .iter()
+                                    .map(|i| i.bytes_current)
+                                    .sum::<i64>()
+                                    / divisor_signed,
+                                bytes_max: allocation_infos
+                                    .iter()
+                                    .map(|i| i.bytes_max)
+                                    .max()
+                                    .unwrap_or(0),
+                            };
+                            let avg_actual_count = actual_point_counts.iter().sum::<usize>()
+                                / actual_point_counts.len();
+
+                            // Calculate 95th percentile of bytes_max
+                            let mut bytes_max_values: Vec<u64> =
+                                allocation_infos.iter().map(|i| i.bytes_max).collect();
+                            let percentile_95 = calculate_95th_percentile(&mut bytes_max_values);
+
+                            print_alloc_summary(
+                                &avg_info,
+                                "4D Triangulation",
+                                avg_actual_count,
+                                percentile_95,
+                            );
+                        }
+
+                        total_time
+                    });
+                },
+            );
+        }
+
+        // 5D Memory Profiling (very small counts due to very high complexity)
+        if count <= 1_000 {
+            group.bench_with_input(
+                BenchmarkId::new("memory_usage_5d", count),
+                &count,
+                |b, &count| {
+                    b.iter_custom(|iters| {
+                        let mut total_time = Duration::new(0, 0);
+                        let mut allocation_infos: SmallBuffer<
+                            AllocationInfo,
+                            BENCHMARK_ITERATION_BUFFER_SIZE,
+                        > = SmallBuffer::new();
+
+                        let mut actual_point_counts: SmallBuffer<
+                            usize,
+                            BENCHMARK_ITERATION_BUFFER_SIZE,
+                        > = SmallBuffer::new();
+
+                        for _ in 0..iters {
+                            let start_time = Instant::now();
+
+                            let alloc_info = measure(|| {
+                                let points = generate_points_by_distribution::<5>(
+                                    count,
+                                    PointDistribution::Random,
+                                    42,
+                                );
+                                let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                actual_point_counts.push(points.len()); // Track actual count
+                                black_box(Tds::<f64, (), (), 5>::new(&vertices).unwrap());
+                            });
+
+                            total_time += start_time.elapsed();
+                            allocation_infos.push(alloc_info);
+                        }
+
+                        // Report memory usage summary if available
+                        if !allocation_infos.is_empty() {
+                            // Safe cast for division - allocation_infos.len() is guaranteed to be small and non-zero
+                            let divisor_unsigned = allocation_infos.len() as u64;
+                            let divisor_signed = allocation_infos.len() as i64;
+                            let avg_info = AllocationInfo {
+                                count_total: allocation_infos
+                                    .iter()
+                                    .map(|i| i.count_total)
+                                    .sum::<u64>()
+                                    / divisor_unsigned,
+                                count_current: allocation_infos
+                                    .iter()
+                                    .map(|i| i.count_current)
+                                    .sum::<i64>()
+                                    / divisor_signed,
+                                count_max: allocation_infos
+                                    .iter()
+                                    .map(|i| i.count_max)
+                                    .max()
+                                    .unwrap_or(0),
+                                bytes_total: allocation_infos
+                                    .iter()
+                                    .map(|i| i.bytes_total)
+                                    .sum::<u64>()
+                                    / divisor_unsigned,
+                                bytes_current: allocation_infos
+                                    .iter()
+                                    .map(|i| i.bytes_current)
+                                    .sum::<i64>()
+                                    / divisor_signed,
+                                bytes_max: allocation_infos
+                                    .iter()
+                                    .map(|i| i.bytes_max)
+                                    .max()
+                                    .unwrap_or(0),
+                            };
+                            let avg_actual_count = actual_point_counts.iter().sum::<usize>()
+                                / actual_point_counts.len();
+
+                            // Calculate 95th percentile of bytes_max
+                            let mut bytes_max_values: Vec<u64> =
+                                allocation_infos.iter().map(|i| i.bytes_max).collect();
+                            let percentile_95 = calculate_95th_percentile(&mut bytes_max_values);
+
+                            print_alloc_summary(
+                                &avg_info,
+                                "5D Triangulation",
+                                avg_actual_count,
+                                percentile_95,
+                            );
                         }
 
                         total_time
@@ -501,7 +811,12 @@ fn benchmark_query_latency(c: &mut Criterion) {
     };
 
     let mut group = c.benchmark_group("query_latency");
-    group.measurement_time(Duration::from_secs(90));
+    // Allow benchmark measurement time to be overridden via environment variable
+    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(90);
+    group.measurement_time(Duration::from_secs(measurement_time));
 
     for &count in counts {
         // Create triangulation and test circumsphere queries
@@ -519,46 +834,49 @@ fn benchmark_query_latency(c: &mut Criterion) {
                 let query_points =
                     generate_points_by_distribution::<3>(100, PointDistribution::Random, 123);
 
+                // Precompute all valid simplex vertices outside the benchmark loop
+                let mut precomputed_simplices: Vec<
+                    SmallBuffer<Point<f64, 3>, SIMPLEX_VERTICES_BUFFER_SIZE>,
+                > = Vec::new();
+                for cell in tds.cells() {
+                    let vertex_coords: SmallBuffer<[f64; 3], SIMPLEX_VERTICES_BUFFER_SIZE> = cell
+                        .1
+                        .vertices()
+                        .iter()
+                        .map(std::convert::Into::into)
+                        .collect();
+
+                    if vertex_coords.len() == 4 {
+                        // Valid 3D simplex - convert coordinates once and store
+                        let points_for_test: SmallBuffer<
+                            Point<f64, 3>,
+                            SIMPLEX_VERTICES_BUFFER_SIZE,
+                        > = vertex_coords.iter().copied().map(Point::new).collect();
+                        precomputed_simplices.push(points_for_test);
+                    }
+                }
+
                 b.iter(|| {
-                    // Perform circumsphere containment queries
-                    // Using SmallBuffer since we limit to max 1000 results
+                    // Perform circumsphere containment queries using precomputed data
                     let mut query_results: SmallBuffer<_, QUERY_RESULTS_BUFFER_SIZE> =
                         SmallBuffer::new();
 
-                    for cell in tds.cells() {
-                        // Precompute once per cell to avoid redundant allocations
-                        // Using SmallBuffer since 3D cells have exactly 4 vertices
-                        let vertex_coords: SmallBuffer<[f64; 3], SIMPLEX_VERTICES_BUFFER_SIZE> =
-                            cell.1
-                                .vertices()
-                                .iter()
-                                .map(std::convert::Into::into)
-                                .collect();
+                    for points_for_test in &precomputed_simplices {
+                        for query_point in &query_points {
+                            let query_coords: [f64; 3] = (*query_point).into();
+                            let query_point_obj = Point::new(query_coords);
 
-                        if vertex_coords.len() == 4 {
-                            // Valid 3D simplex - convert coordinates once per cell
-                            // Using SmallBuffer since 3D simplex has exactly 4 vertices
-                            let points_for_test: SmallBuffer<
-                                Point<f64, 3>,
-                                SIMPLEX_VERTICES_BUFFER_SIZE,
-                            > = vertex_coords.iter().copied().map(Point::new).collect();
+                            // Use the fastest circumsphere method (based on benchmark results)
+                            #[allow(clippy::items_after_statements)]
+                            {
+                                use delaunay::geometry::predicates::insphere_lifted;
+                                let result = insphere_lifted(points_for_test, query_point_obj);
+                                query_results.push(result);
+                            }
 
-                            for query_point in &query_points {
-                                let query_coords: [f64; 3] = (*query_point).into();
-                                let query_point_obj = Point::new(query_coords);
-
-                                // Use the fastest circumsphere method (based on benchmark results)
-                                #[allow(clippy::items_after_statements)]
-                                {
-                                    use delaunay::geometry::predicates::insphere_lifted;
-                                    let result = insphere_lifted(&points_for_test, query_point_obj);
-                                    query_results.push(result);
-                                }
-
-                                // Limit total queries to prevent extremely long benchmarks
-                                if query_results.len() >= 1000 {
-                                    break;
-                                }
+                            // Limit total queries to prevent extremely long benchmarks
+                            if query_results.len() >= 1000 {
+                                break;
                             }
                         }
 
@@ -589,7 +907,12 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
     };
 
     let mut group = c.benchmark_group("algorithmic_bottlenecks");
-    group.measurement_time(Duration::from_secs(120));
+    // Allow benchmark measurement time to be overridden via environment variable
+    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(15);
+    group.measurement_time(Duration::from_secs(measurement_time));
 
     for &count in counts {
         // Profile boundary facet computation

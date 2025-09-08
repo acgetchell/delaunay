@@ -407,17 +407,11 @@ where
     cells: SlotMap<CellKey, Cell<T, U, V, D>>,
 
     /// `BiMap` to map Vertex UUIDs to their `VertexKeys` in the `SlotMap` and vice versa.
-    #[serde(
-        serialize_with = "serialize_bimap",
-        deserialize_with = "deserialize_bimap"
-    )]
+    #[serde(serialize_with = "serialize_bimap")]
     pub vertex_bimap: BiMap<Uuid, VertexKey>,
 
     /// `BiMap` to map Cell UUIDs to their `CellKeys` in the `SlotMap` and vice versa.
-    #[serde(
-        serialize_with = "serialize_cell_bimap",
-        deserialize_with = "deserialize_cell_bimap"
-    )]
+    #[serde(serialize_with = "serialize_cell_bimap")]
     pub cell_bimap: BiMap<Uuid, CellKey>,
 
     /// The current construction state of the triangulation.
@@ -1395,6 +1389,13 @@ where
             if neighbors.iter().all(Option::is_none) {
                 cell.neighbors = None;
             } else {
+                // Debug assertion: ensure neighbors array maintains positional semantics
+                // neighbors[i] should correspond to the neighbor opposite vertices[i]
+                debug_assert_eq!(
+                    neighbors.len(),
+                    cell.vertices().len(),
+                    "Neighbor array length must match vertex count for positional semantics"
+                );
                 cell.neighbors = Some(neighbors);
             }
         }
@@ -1628,7 +1629,8 @@ where
     /// complexity is O(T) where T is the total number of facets across all cells.
     #[must_use]
     pub fn build_facet_to_cells_hashmap(&self) -> FacetToCellsMap {
-        let mut facet_to_cells: FacetToCellsMap = FastHashMap::default();
+        let mut facet_to_cells: FacetToCellsMap =
+            fast_hash_map_with_capacity(self.cells.len() * (D + 1));
 
         // Iterate over all cells and their facets
         for (cell_id, cell) in &self.cells {
@@ -1934,7 +1936,7 @@ where
         for (cell_key, cell) in &self.cells {
             // Create a sorted vector of vertex UUIDs as a key for uniqueness
             let mut vertex_uuids: Vec<Uuid> = cell.vertices().iter().map(Vertex::uuid).collect();
-            vertex_uuids.sort();
+            vertex_uuids.sort_unstable();
 
             if let Some(existing_cell_key) = unique_cells.get(&vertex_uuids) {
                 // This is a duplicate cell
@@ -2159,20 +2161,26 @@ where
             };
 
             // Early termination: check neighbor count first
-            if neighbors.len() > D + 1 {
+            if neighbors.len() != D + 1 {
                 return Err(TriangulationValidationError::InvalidNeighbors {
                     message: format!(
-                        "Cell {:?} has too many neighbors: {}",
+                        "Cell {:?} has invalid neighbor count: got {}, expected {}",
                         cell_key,
-                        neighbors.len()
+                        neighbors.len(),
+                        D + 1
                     ),
                 });
             }
 
             // Get this cell's vertices from pre-computed map
             let this_vertices = &cell_vertices[&cell_key];
+            let cell_vertex_keys: Vec<VertexKey> = cell
+                .vertices()
+                .iter()
+                .filter_map(|v| self.vertex_bimap.get_by_left(&v.uuid()).copied())
+                .collect();
 
-            for neighbor_option in neighbors {
+            for (i, neighbor_option) in neighbors.iter().enumerate() {
                 // Skip None neighbors (missing neighbors)
                 let Some(neighbor_uuid) = neighbor_option else {
                     continue;
@@ -2189,6 +2197,37 @@ where
                         message: format!("Neighbor cell {neighbor_uuid:?} not found"),
                     });
                 };
+
+                // Validate positional semantics: neighbors[i] should be opposite vertices[i]
+                // This means the neighbor should contain all vertices of current cell EXCEPT vertices[i]
+                if i < cell_vertex_keys.len() {
+                    let opposite_vertex_key = cell_vertex_keys[i];
+                    let expected_shared_vertices: FastHashSet<VertexKey> = cell_vertex_keys
+                        .iter()
+                        .filter(|&&vk| vk != opposite_vertex_key)
+                        .copied()
+                        .collect();
+
+                    let neighbor_vertices = &cell_vertices[&neighbor_key];
+
+                    // Check that neighbor contains exactly the expected vertices (all except the i-th)
+                    if !expected_shared_vertices.is_subset(neighbor_vertices) {
+                        return Err(TriangulationValidationError::InvalidNeighbors {
+                            message: format!(
+                                "Positional semantics violated: neighbor at position {i} should be opposite vertex at position {i}, but neighbor does not contain expected facet vertices"
+                            ),
+                        });
+                    }
+
+                    // Also verify that neighbor doesn't contain the opposite vertex
+                    if neighbor_vertices.contains(&opposite_vertex_key) {
+                        return Err(TriangulationValidationError::InvalidNeighbors {
+                            message: format!(
+                                "Positional semantics violated: neighbor at position {i} should be opposite vertex at position {i}, but neighbor contains the opposite vertex"
+                            ),
+                        });
+                    }
+                }
 
                 // Early termination: mutual neighbor check using linear search (faster for small neighbor lists)
                 if let Some(neighbor_neighbors) = &neighbor_cell.neighbors {
@@ -2300,8 +2339,8 @@ where
                 .iter()
                 .map(super::vertex::Vertex::uuid)
                 .collect();
-            a_vertex_uuids.sort();
-            b_vertex_uuids.sort();
+            a_vertex_uuids.sort_unstable();
+            b_vertex_uuids.sort_unstable();
             a_vertex_uuids.cmp(&b_vertex_uuids)
         });
 
@@ -2316,8 +2355,8 @@ where
                 .iter()
                 .map(super::vertex::Vertex::uuid)
                 .collect();
-            a_vertex_uuids.sort();
-            b_vertex_uuids.sort();
+            a_vertex_uuids.sort_unstable();
+            b_vertex_uuids.sort_unstable();
             a_vertex_uuids.cmp(&b_vertex_uuids)
         });
 
@@ -3032,7 +3071,10 @@ mod tests {
         let result = tds.is_valid();
         assert!(matches!(
             result,
-            Err(TriangulationValidationError::InvalidNeighbors { .. })
+            Err(TriangulationValidationError::InvalidCell {
+                source: CellValidationError::InvalidNeighborsLength { .. },
+                ..
+            })
         ));
     }
 
@@ -4198,7 +4240,10 @@ mod tests {
         let result = tds.is_valid();
         assert!(matches!(
             result,
-            Err(TriangulationValidationError::InvalidNeighbors { .. })
+            Err(TriangulationValidationError::InvalidCell {
+                source: CellValidationError::InvalidNeighborsLength { .. },
+                ..
+            })
         ));
     }
 
@@ -4285,7 +4330,10 @@ mod tests {
         let result = tds.is_valid();
         assert!(matches!(
             result,
-            Err(TriangulationValidationError::InvalidNeighbors { .. })
+            Err(TriangulationValidationError::InvalidCell {
+                source: CellValidationError::InvalidNeighborsLength { .. },
+                ..
+            })
         ));
     }
 
@@ -4655,10 +4703,13 @@ mod tests {
 
         // This should pass validation (exactly D neighbors is valid)
         let result = tds.is_valid();
-        // Should fail because neighbor cells don't exist
+        // Should fail because the neighbors vector has wrong length (3 instead of 4 for 3D)
         assert!(matches!(
             result,
-            Err(TriangulationValidationError::InvalidNeighbors { .. })
+            Err(TriangulationValidationError::InvalidCell {
+                source: CellValidationError::InvalidNeighborsLength { .. },
+                ..
+            })
         ));
     }
 
@@ -4700,12 +4751,15 @@ mod tests {
         let cell2_uuid = tds.cells[cell2_key].uuid();
         tds.cell_bimap.insert(cell2_uuid, cell2_key);
 
-        // Should fail validation because they only share 2 vertices, not 3 (D=3)
+        // Should fail validation because neighbors vector has wrong length (1 instead of 4 for 3D)
         let result = tds.is_valid();
         println!("Actual validation result: {:?}", result);
         assert!(matches!(
             result,
-            Err(TriangulationValidationError::NotNeighbors { .. })
+            Err(TriangulationValidationError::InvalidCell {
+                source: CellValidationError::InvalidNeighborsLength { .. },
+                ..
+            })
         ));
     }
 
@@ -5589,8 +5643,14 @@ mod tests {
                     cell1, cell2
                 );
             }
+            TriangulationValidationError::InvalidCell {
+                source: CellValidationError::InvalidNeighborsLength { .. },
+                ..
+            } => {
+                println!("✓ is_valid() successfully detected invalid neighbor length first");
+            }
             other => panic!(
-                "Expected either InconsistentDataStructure or NotNeighbors, got: {:?}",
+                "Expected InconsistentDataStructure, NotNeighbors, or InvalidCell with InvalidNeighborsLength, got: {:?}",
                 other
             ),
         }
@@ -5609,6 +5669,12 @@ mod tests {
         // since the cells have improper neighbor relationships (they share 0 vertices but claim to be neighbors)
         let result_after_facet_fix = tds.is_valid();
         match result_after_facet_fix {
+            Err(TriangulationValidationError::InvalidCell {
+                source: CellValidationError::InvalidNeighborsLength { .. },
+                ..
+            }) => {
+                println!("✓ Neighbor length validation correctly failed as expected");
+            }
             Err(TriangulationValidationError::InvalidNeighbors { .. }) => {
                 println!("✓ Neighbor validation correctly failed as expected");
             }
@@ -5647,7 +5713,7 @@ mod tests {
                 }
             }
             other => panic!(
-                "Expected InvalidNeighbors or NotNeighbors, got: {:?}",
+                "Expected InvalidCell with InvalidNeighborsLength, InvalidNeighbors or NotNeighbors, got: {:?}",
                 other
             ),
         }

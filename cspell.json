@@ -155,6 +155,7 @@
         "Popen",
         "postconditions",
         "powi",
+        "Precomputes",
         "Preparata",
         "println",
         "profraw",

@@ -87,6 +87,7 @@ delaunay/
 ├── scripts/                                      # Development and CI scripts
 │   ├── tests/                                    # Python utility tests
 │   │   ├── __init__.py                           # Test package initialization
+│   │   ├── test_benchmark_utils.py               # Tests for benchmark_utils.py
 │   │   ├── test_changelog_utils.py               # Comprehensive tests for changelog_utils.py
 │   │   ├── test_hardware_utils.py                # Tests for hardware_utils.py
 │   │   └── test_subprocess_utils.py              # Comprehensive tests for subprocess_utils.py
@@ -571,7 +572,7 @@ mod tests {
 - Performance benchmarking
 - Integration with TDS
 
-#### `util.rs` (large module; thousands of lines)
+#### `util.rs` (large module)
 
 - Function-focused (not struct-focused)  
 - Comprehensive test coverage with systematic multi-dimensional testing

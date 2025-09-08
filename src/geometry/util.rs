@@ -117,18 +117,17 @@ pub enum CircumcenterError {
 // CONSTANTS AND HELPERS
 // =============================================================================
 
-/// Maximum number of grid points allowed to prevent out-of-memory conditions in CI.
+/// Maximum bytes allowed for grid allocation to prevent OOM in CI.
 ///
-/// This safety cap prevents excessive memory allocation when generating grid points
-/// with high `points_per_dim` values. The limit of 50 million points provides a
-/// reasonable upper bound while allowing for substantial grid generation.
+/// This safety cap prevents excessive memory allocation when generating grid points.
+/// The limit of 4 GiB provides reasonable headroom for modern systems (GitHub Actions
+/// runners have 7GB) while still protecting against extreme allocations.
 ///
 /// # Implementation Note
 ///
-/// This constant is checked in `generate_grid_points` before allocating memory
-/// for the point vector, ensuring that CI environments and resource-constrained
-/// systems don't encounter OOM errors.
-const MAX_POINTS_SAFETY_CAP: usize = 50_000_000;
+/// This constant is checked in `generate_grid_points` before allocation,
+/// accounting for dimension D and coordinate type T size.
+const MAX_GRID_BYTES_SAFETY_CAP: usize = 4_294_967_296; // 4 GiB
 
 // =============================================================================
 // SAFE COORDINATE CONVERSION FUNCTIONS
@@ -1269,7 +1268,8 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
 
 /// Generate points arranged in a regular grid pattern.
 ///
-/// This function creates points arranged in a D-dimensional hypercube grid,
+/// This function creates points in D-dimensional space arranged in a regular grid
+/// (Cartesian product of equally spaced coordinates),
 /// which provides a structured, predictable point distribution useful for
 /// benchmarking and testing geometric algorithms under best-case scenarios.
 ///
@@ -1322,20 +1322,27 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
         return Err(RandomPointGenerationError::InvalidPointCount { n_points: 0 });
     }
 
-    // Safely convert dimension to u32 for pow function
-    let d_u32 =
-        u32::try_from(D).map_err(|_| RandomPointGenerationError::RandomGenerationFailed {
-            min: "0".to_string(),
-            max: format!("{}", points_per_dim - 1),
-            details: format!("Dimension {D} is too large to fit in u32"),
+    // Compute total_points with overflow checking (avoids debug panic or release wrap)
+    let mut total_points: usize = 1;
+    for _ in 0..D {
+        total_points = total_points.checked_mul(points_per_dim).ok_or_else(|| {
+            RandomPointGenerationError::RandomGenerationFailed {
+                min: "0".into(),
+                max: format!("{}", points_per_dim.saturating_sub(1)),
+                details: format!("Requested grid size {points_per_dim}^{D} overflows usize"),
+            }
         })?;
-    let total_points = points_per_dim.pow(d_u32);
-    if total_points > MAX_POINTS_SAFETY_CAP {
+    }
+
+    // Dimension/type-aware memory cap: total_points * D * size_of::<T>()
+    let per_point_bytes = D.saturating_mul(core::mem::size_of::<T>());
+    let total_bytes = total_points.saturating_mul(per_point_bytes);
+    if total_bytes > MAX_GRID_BYTES_SAFETY_CAP {
         return Err(RandomPointGenerationError::RandomGenerationFailed {
             min: "n/a".into(),
             max: "n/a".into(),
             details: format!(
-                "Requested {total_points} grid points exceeds safety cap ({MAX_POINTS_SAFETY_CAP})"
+                "Requested grid requires ~{total_bytes} bytes (> cap {MAX_GRID_BYTES_SAFETY_CAP})"
             ),
         });
     }
@@ -1424,6 +1431,10 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
         });
     }
 
+    if n_points == 0 {
+        return Ok(Vec::new());
+    }
+
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
     // Early validation: if min_distance is non-positive, skip spacing constraints
@@ -1452,9 +1463,9 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 
         // Check distance to all existing points
         let mut valid = true;
+        let candidate_coords: [T; D] = candidate.to_array();
         for existing_point in &points {
             let existing_coords: [T; D] = existing_point.to_array();
-            let candidate_coords: [T; D] = candidate.to_array();
 
             // Calculate distance using hypot for numerical stability
             let mut diff_coords = [T::zero(); D];
@@ -3676,8 +3687,36 @@ mod tests {
         let result = generate_grid_points::<f64, 3>(1000, 1.0, [0.0, 0.0, 0.0]);
         assert!(result.is_err());
         let error_msg = format!("{}", result.unwrap_err());
-        assert!(error_msg.contains("exceeds safety cap"));
-        assert!(error_msg.contains("50000000"));
+        assert!(error_msg.contains("bytes"));
+        assert!(error_msg.contains("cap"));
+        assert!(error_msg.contains(&super::MAX_GRID_BYTES_SAFETY_CAP.to_string()));
+    }
+
+    #[test]
+    fn test_generate_grid_points_overflow_detection() {
+        // Test overflow detection when points_per_dim^D would overflow usize
+        // We'll use a dimension that would cause overflow
+        const LARGE_D: usize = 64; // This will definitely cause overflow
+        let offset = [0.0; LARGE_D];
+        let spacing = 0.1; // This would require 10^64 points which overflows usize
+        let points_per_dim = 10;
+
+        let result = generate_grid_points::<f64, LARGE_D>(points_per_dim, spacing, offset);
+        assert!(result.is_err(), "Expected error due to usize overflow");
+
+        if let Err(RandomPointGenerationError::RandomGenerationFailed {
+            min: _,
+            max: _,
+            details,
+        }) = result
+        {
+            assert!(
+                details.contains("overflows usize"),
+                "Expected overflow error, got: {details}"
+            );
+        } else {
+            panic!("Expected RandomGenerationFailed error due to overflow");
+        }
     }
 
     #[test]

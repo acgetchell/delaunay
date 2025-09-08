@@ -38,20 +38,40 @@ cargo bench --bench profiling_suite --features count-allocations
 # Development mode (faster, reduced scale)
 PROFILING_DEV_MODE=1 cargo bench --bench profiling_suite --features count-allocations
 
+# Override measurement times for faster iteration
+BENCH_MEASUREMENT_TIME=10 cargo bench --bench profiling_suite --features count-allocations
+
 # Run specific profiling categories
 cargo bench --bench profiling_suite --features count-allocations -- triangulation_scaling
 cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
 cargo bench --bench profiling_suite --features count-allocations -- query_latency
+cargo bench --bench profiling_suite --features count-allocations -- algorithmic_bottlenecks
 ```
 
 The **Profiling Suite** provides comprehensive performance analysis for optimization work:
 
 - **Large-scale triangulation performance** (10³ to 10⁶ points across multiple decades)
+- **Complete dimensional coverage** (2D through 5D triangulation scaling)
 - **Multiple point distributions** (random, grid, Poisson disk)
-- **Memory allocation tracking** (requires `--features count-allocations`)
-- **Query latency analysis** (circumsphere tests, neighbor queries)
-- **Multi-dimensional scaling** (2D through 5D)
+- **Memory allocation tracking** with 95th percentile statistics (requires `--features count-allocations`)
+- **Query latency analysis** (circumsphere tests, optimized with precomputed simplices)
 - **Algorithmic bottleneck identification** (boundary facets, convex hull operations)
+
+**📊 Key Features & Improvements**:
+
+- **Optimized Query Benchmarks**: Precomputes simplex vertices outside inner loops to reduce per-iteration allocations
+- **Enhanced Memory Profiling**: Reports mean, max, and 95th percentile allocation statistics for better spike detection
+- **Complete Dimensional Coverage**: Memory profiling and triangulation scaling for all dimensions 2D-5D
+- **Environment Variable Control**: Use `BENCH_MEASUREMENT_TIME` to override default measurement times for CI tuning
+- **Eliminated Double Point Generation**: Sample points generated once per benchmark to reduce setup noise
+
+**⚠️ Performance & Hardware Considerations**:
+
+- **Feature Overhead**: The `count-allocations` feature can materially slow benchmark runs (20-50% overhead) and increase memory usage for allocation tracking
+- **Hardware Requirements**: Recommend ≥16GB RAM and ≥4 CPU cores to prevent timeouts during large-scale runs (10⁶ points)
+- **CI/Local Timeouts**: Without adequate resources, runs may exceed typical CI timeouts (30-60 minutes) or cause local system slowdowns
+- **Development Mode**: Use `PROFILING_DEV_MODE=1` for faster iteration during optimization work
+- **Flexible Timing**: Use `BENCH_MEASUREMENT_TIME=N` to set measurement time in seconds for all benchmark groups
 
 **⚠️ Note**: This suite is designed for optimization work and takes significantly longer than CI benchmarks.
 
@@ -67,6 +87,9 @@ cargo bench --features count-allocations
 # Compile-only check (useful for CI validation without running benchmarks)
 cargo bench --no-run
 ```
+
+**💡 Targeted Benchmark Runs**: Use `cargo bench --bench profiling_suite -- --help` to see available filters and Criterion flags for scoping
+long-running benchmarks. This helps target specific test categories or adjust measurement parameters for faster iteration.
 
 ## Methods Compared
 

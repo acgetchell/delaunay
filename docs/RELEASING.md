@@ -83,19 +83,50 @@ git tag -a "$TAG" -m "delaunay $TAG"
 uv run changelog-utils generate
 ```
 
-4. Stage and commit release artifacts
+4. Run performance profiling and update benchmark results
 
 ```bash
-git add Cargo.toml Cargo.lock CHANGELOG.md docs/
+# Run comprehensive performance profiling to generate current results
+# This takes 1-2 hours but provides official performance data for the release
+echo "Running comprehensive performance profiling for release $TAG..."
+echo "This will take 1-2 hours. Consider running overnight or during a break."
+
+# Run full profiling suite with memory allocation tracking
+cargo bench --bench profiling_suite --features count-allocations
+
+# Run circumsphere containment benchmarks for performance comparison data
+cargo bench --bench circumsphere_containment
+
+# Optional: Run CI performance suite for additional validation
+cargo bench --bench ci_performance_suite
+
+echo "Performance profiling complete. Review results and update benches/README.md Performance Results Summary section."
+echo "Update the version number and add new benchmark data comparing to previous versions."
+```
+
+5. Update performance documentation with new results
+
+After the benchmarks complete, manually update:
+
+- `benches/README.md` - Performance Results Summary section
+- Add version $VERSION results with comparison to previous versions
+- Include any notable performance improvements or regressions
+- Update dimensional performance tables if significant changes
+
+6. Stage and commit release artifacts
+
+```bash
+git add Cargo.toml Cargo.lock CHANGELOG.md docs/ benches/README.md
 
 git commit -m "chore(release): release $TAG
 
 - Bump version to $TAG
 - Update changelog with latest changes
-- Update documentation for release"
+- Update documentation for release
+- Add performance profiling results for $TAG"
 ```
 
-5. Push the branch and open a PR
+7. Push the branch and open a PR
 
 ```bash
 git push -u origin "release/$TAG"

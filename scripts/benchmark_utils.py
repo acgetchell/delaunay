@@ -26,11 +26,11 @@ from pathlib import Path
 try:
     # When executed as a script from scripts/
     from hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
-    from subprocess_utils import get_git_commit_hash, run_cargo_command  # type: ignore[no-redef]
+    from subprocess_utils import get_git_commit_hash, run_cargo_command, run_git_command  # type: ignore[no-redef]
 except ModuleNotFoundError:
     # When imported as a module (e.g., scripts.benchmark_utils)
     from scripts.hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
-    from scripts.subprocess_utils import get_git_commit_hash, run_cargo_command  # type: ignore[no-redef]
+    from scripts.subprocess_utils import get_git_commit_hash, run_cargo_command, run_git_command  # type: ignore[no-redef]
 
 # Development mode arguments - centralized to keep baseline generation and comparison in sync
 # Reduces samples for faster iteration during development (10x faster than full benchmarks)
@@ -45,23 +45,7 @@ DEV_MODE_BENCH_ARGS = [
 ]
 
 
-def run_git_command(args: list[str], timeout: int = 60) -> subprocess.CompletedProcess[str]:
-    """
-    Run git command with timeout and consistent error handling.
-
-    Args:
-        args: Git command arguments (without 'git' prefix)
-        timeout: Timeout in seconds (default: 60)
-
-    Returns:
-        CompletedProcess result
-
-    Raises:
-        subprocess.CalledProcessError: If git command fails
-        subprocess.TimeoutExpired: If command times out
-    """
-    cmd = ["git", *args]
-    return subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)  # noqa: S603
+# Use the shared secure wrapper from subprocess_utils
 
 
 @dataclass
@@ -226,7 +210,7 @@ class BaselineGenerator:
 
         Args:
             dev_mode: Use faster benchmark settings
-            output_file: Output file path (default: benches/baseline_results.txt)
+            output_file: Output file path (default: baseline-artifact/baseline_results.txt)
 
         Returns:
             True if successful, False otherwise
