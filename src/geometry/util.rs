@@ -117,24 +117,89 @@ pub enum CircumcenterError {
 // CONSTANTS AND HELPERS
 // =============================================================================
 
-/// Maximum bytes allowed for grid allocation to prevent OOM in CI.
+/// Default maximum bytes allowed for grid allocation to prevent OOM in CI.
 ///
-/// This safety cap prevents excessive memory allocation when generating grid points.
+/// This default safety cap prevents excessive memory allocation when generating grid points.
 /// The limit of 4 GiB provides reasonable headroom for modern systems (GitHub Actions
 /// runners have 7GB) while still protecting against extreme allocations.
 ///
-/// # Implementation Note
+/// The actual cap can be overridden via the `MAX_GRID_BYTES_SAFETY_CAP` environment variable.
+const MAX_GRID_BYTES_SAFETY_CAP_DEFAULT: usize = 4_294_967_296; // 4 GiB
+
+/// Get the maximum bytes allowed for grid allocation.
 ///
-/// This constant is checked in `generate_grid_points` before allocation,
-/// accounting for dimension D and coordinate type T size.
-const MAX_GRID_BYTES_SAFETY_CAP: usize = 4_294_967_296; // 4 GiB
+/// Reads the `MAX_GRID_BYTES_SAFETY_CAP` environment variable if set,
+/// otherwise returns the default value of 4 GiB. This allows CI environments
+/// with different memory limits to tune the safety cap as needed.
+///
+/// # Returns
+///
+/// The maximum number of bytes allowed for grid allocation
+fn max_grid_bytes_safety_cap() -> usize {
+    if let Ok(v) = std::env::var("MAX_GRID_BYTES_SAFETY_CAP")
+        && let Ok(n) = v.parse::<usize>()
+    {
+        return n;
+    }
+    MAX_GRID_BYTES_SAFETY_CAP_DEFAULT
+}
+
+/// Format bytes in human-readable form (e.g., "4.2 GiB", "512 MiB").
+///
+/// This helper function converts byte counts to human-readable strings
+/// using binary prefixes (1024-based) for better UX in error messages.
+fn format_bytes(bytes: usize) -> String {
+    const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
+
+    // Use safe cast to avoid precision loss warnings
+    let Ok(mut size) = safe_usize_to_scalar::<f64>(bytes) else {
+        // Fallback for extremely large values
+        return format!("{bytes} B");
+    };
+
+    let mut unit_index = 0;
+
+    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_index += 1;
+    }
+
+    if unit_index == 0 {
+        format!("{} {}", bytes, UNITS[0])
+    } else {
+        format!("{:.1} {}", size, UNITS[unit_index])
+    }
+}
 
 // =============================================================================
 // SAFE COORDINATE CONVERSION FUNCTIONS
 // =============================================================================
 
-/// Safely convert a coordinate value from type T to f64.
+/// Compute 2D hypot using numerically stable scaled algorithm.
 ///
+/// This is used as a fallback when standard library hypot conversion fails.
+/// It implements the same scaling approach used in the general hypot algorithm.
+///
+/// # Arguments
+///
+/// * `x` - First coordinate
+/// * `y` - Second coordinate
+///
+/// # Returns
+///
+/// The computed hypot value using scaled computation
+fn scaled_hypot_2d<T: CoordinateScalar + num_traits::Zero>(x: T, y: T) -> T {
+    let max_abs = Float::abs(x).max(Float::abs(y));
+    if max_abs == T::zero() {
+        return T::zero();
+    }
+    // Use scaled computation for numerical stability
+    let x_scaled = x / max_abs;
+    let y_scaled = y / max_abs;
+    max_abs * Float::sqrt(x_scaled * x_scaled + y_scaled * y_scaled)
+}
+
+/// Safely convert a coordinate value from type T to f64.
 /// This function provides proper error handling for coordinate type conversions,
 /// replacing the unsafe `cast(x).unwrap_or(fallback)` pattern with explicit
 /// error reporting. It also checks for non-finite values (NaN, infinity).
@@ -541,29 +606,13 @@ where
                 (safe_scalar_to_f64(coords[0]), safe_scalar_to_f64(coords[1]))
             {
                 let result_f64 = a_f64.hypot(b_f64);
-                if let Ok(result) = safe_scalar_from_f64(result_f64) {
-                    result
-                } else {
-                    // Fall back to general algorithm if conversion back fails
-                    let max_abs = Float::abs(coords[0]).max(Float::abs(coords[1]));
-                    if max_abs == T::zero() {
-                        return T::zero();
-                    }
-                    // Use scaled computation for numerical stability
-                    let x_scaled = coords[0] / max_abs;
-                    let y_scaled = coords[1] / max_abs;
-                    max_abs * Float::sqrt(x_scaled * x_scaled + y_scaled * y_scaled)
-                }
+                safe_scalar_from_f64(result_f64).unwrap_or_else(|_| {
+                    // Fall back to scaled algorithm if conversion back fails
+                    scaled_hypot_2d(coords[0], coords[1])
+                })
             } else {
-                // Fall back to general algorithm if conversion fails
-                let max_abs = Float::abs(coords[0]).max(Float::abs(coords[1]));
-                if max_abs == T::zero() {
-                    return T::zero();
-                }
-                // Use scaled computation for numerical stability
-                let x_scaled = coords[0] / max_abs;
-                let y_scaled = coords[1] / max_abs;
-                max_abs * Float::sqrt(x_scaled * x_scaled + y_scaled * y_scaled)
+                // Fall back to scaled algorithm if conversion fails
+                scaled_hypot_2d(coords[0], coords[1])
             }
         }
         _ => {
@@ -1043,16 +1092,16 @@ where
     } else {
         let sqrt_det = det.sqrt();
 
-        // Calculate (D-1)! factorial using peroxide's factorial function
-        let factorial_val = cast::<_, f64>(factorial(D - 1)).ok_or_else(|| {
+        // Calculate (D-1)! factorial - peroxide's factorial function returns usize
+        let factorial_usize = factorial(D - 1);
+        let factorial_val = safe_usize_to_scalar::<f64>(factorial_usize).map_err(|_| {
             CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-                value: format!("{}", factorial(D - 1)),
+                value: factorial_usize.to_string(),
                 from_type: "usize",
                 to_type: "f64",
                 details: "Factorial value too large for f64 precision".to_string(),
             })
         })?;
-
         sqrt_det / factorial_val
     };
 
@@ -1337,12 +1386,15 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
     // Dimension/type-aware memory cap: total_points * D * size_of::<T>()
     let per_point_bytes = D.saturating_mul(core::mem::size_of::<T>());
     let total_bytes = total_points.saturating_mul(per_point_bytes);
-    if total_bytes > MAX_GRID_BYTES_SAFETY_CAP {
+    let cap = max_grid_bytes_safety_cap();
+    if total_bytes > cap {
         return Err(RandomPointGenerationError::RandomGenerationFailed {
             min: "n/a".into(),
             max: "n/a".into(),
             details: format!(
-                "Requested grid requires ~{total_bytes} bytes (> cap {MAX_GRID_BYTES_SAFETY_CAP})"
+                "Requested grid requires {} (> cap {})",
+                format_bytes(total_bytes),
+                format_bytes(cap)
             ),
         });
     }
@@ -1385,6 +1437,11 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
 /// point distribution than pure random sampling, useful for benchmarking
 /// algorithms under realistic scenarios.
 ///
+/// **Important**: The algorithm may terminate early if `min_distance` is too tight
+/// for the given bounds and dimension, resulting in fewer points than requested.
+/// In higher dimensions, tight spacing constraints become exponentially more
+/// difficult to satisfy.
+///
 /// # Arguments
 ///
 /// * `n_points` - Target number of points to generate
@@ -1401,6 +1458,7 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
 ///
 /// * `RandomPointGenerationError::InvalidRange` if min >= max in bounds
 /// * `RandomPointGenerationError::RandomGenerationFailed` if `min_distance` is too large for the bounds
+///   or if no points can be generated within the attempt limit
 ///
 /// # Examples
 ///
@@ -1450,8 +1508,16 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
     let mut points: Vec<Point<T, D>> = Vec::new();
 
     // Simple Poisson disk sampling: rejection method
-    // For efficiency, we limit attempts to avoid infinite loops
-    let max_attempts = n_points * 30; // 30 attempts per desired point
+    // Scale max attempts with dimension since higher dimensions make spacing harder
+    // Base: 30 attempts per point, scaled exponentially with dimension to account
+    // for the curse of dimensionality in Poisson disk sampling
+    let dimension_scaling = match D {
+        0..=2 => 1,
+        3..=4 => 2,
+        5..=6 => 4,
+        _ => 8, // Very high dimensions need much more attempts
+    };
+    let max_attempts = (n_points * 30).saturating_mul(dimension_scaling);
     let mut attempts = 0;
 
     while points.len() < n_points && attempts < max_attempts {
@@ -3687,9 +3753,12 @@ mod tests {
         let result = generate_grid_points::<f64, 3>(1000, 1.0, [0.0, 0.0, 0.0]);
         assert!(result.is_err());
         let error_msg = format!("{}", result.unwrap_err());
-        assert!(error_msg.contains("bytes"));
         assert!(error_msg.contains("cap"));
-        assert!(error_msg.contains(&super::MAX_GRID_BYTES_SAFETY_CAP.to_string()));
+        // Should contain human-readable byte formatting (no longer contains raw "bytes")
+        assert!(
+            error_msg.contains("GiB") || error_msg.contains("MiB") || error_msg.contains("KiB"),
+            "Error message should contain human-readable byte units: {error_msg}"
+        );
     }
 
     #[test]
@@ -3738,12 +3807,30 @@ mod tests {
         let grid = generate_grid_points::<f64, 2>(3, -1.0, [2.0, 2.0]).unwrap();
         assert_eq!(grid.len(), 9);
 
-        // With negative spacing, coordinates should decrease
+        // With negative spacing, coordinates should decrease from offset
+        // Grid indices are 0, 1, 2, so coordinates are:
+        // offset + index * spacing = 2.0 + {0,1,2} * (-1.0) = {2.0, 1.0, 0.0}
+        let mut found_coords = std::collections::HashSet::new();
         for point in &grid {
             let coords: [f64; 2] = point.into();
-            assert!((0.0..=2.0).contains(&coords[0]));
-            assert!((0.0..=2.0).contains(&coords[1]));
+            // Each coordinate should be exactly one of: 2.0, 1.0, 0.0
+            for &coord in &coords {
+                assert!(
+                    (coord - 2.0).abs() < 1e-15
+                        || (coord - 1.0).abs() < 1e-15
+                        || coord.abs() < 1e-15,
+                    "Unexpected coordinate: {coord}"
+                );
+            }
+            found_coords.insert(format!("{:.1}_{:.1}", coords[0], coords[1]));
         }
+
+        // Should find all 9 expected coordinate combinations
+        assert_eq!(
+            found_coords.len(),
+            9,
+            "Should have 9 unique coordinate pairs"
+        );
     }
 
     // =============================================================================
@@ -3925,5 +4012,83 @@ mod tests {
                 assert!((-2.0..2.0).contains(&coord));
             }
         }
+    }
+
+    // =============================================================================
+    // SAFETY CAP AND UTILITY FUNCTION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_max_grid_bytes_safety_cap_default_value() {
+        // Test that the default value is as expected
+        assert_eq!(MAX_GRID_BYTES_SAFETY_CAP_DEFAULT, 4_294_967_296); // 4 GiB
+
+        // Test that the function doesn't crash and returns a reasonable value
+        // (We can't safely test env var manipulation in a crate that forbids unsafe)
+        let cap = max_grid_bytes_safety_cap();
+        assert!(cap > 0, "Safety cap should be positive");
+        // The actual value depends on environment, but function should not crash
+    }
+
+    #[test]
+    fn test_format_bytes() {
+        // Test byte formatting with various sizes
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1024), "1.0 KiB");
+        assert_eq!(format_bytes(1536), "1.5 KiB");
+        assert_eq!(format_bytes(1_048_576), "1.0 MiB");
+        assert_eq!(format_bytes(1_073_741_824), "1.0 GiB");
+        assert_eq!(format_bytes(MAX_GRID_BYTES_SAFETY_CAP_DEFAULT), "4.0 GiB");
+        assert_eq!(format_bytes(5_368_709_120), "5.0 GiB");
+        assert_eq!(format_bytes(1_099_511_627_776), "1.0 TiB");
+    }
+
+    #[test]
+    fn test_generate_grid_points_safety_cap_enforcement() {
+        // Test that very large grids fail with the current safety cap
+        // We can't safely modify environment variables in a crate that forbids unsafe,
+        // so we test with a grid that would exceed the default 4 GiB cap
+        let result = generate_grid_points::<f64, 3>(1000, 1.0, [0.0, 0.0, 0.0]);
+        assert!(result.is_err(), "Should fail with safety cap exceeded");
+
+        if let Err(RandomPointGenerationError::RandomGenerationFailed { details, .. }) = result {
+            assert!(
+                details.contains("cap"),
+                "Error should mention cap: {details}"
+            );
+            // Should contain human-readable formatting
+            assert!(
+                details.contains('B'),
+                "Error should use human-readable bytes: {details}"
+            );
+            // Should contain one of the byte unit suffixes
+            assert!(
+                details.contains("GiB") || details.contains("MiB") || details.contains("KiB"),
+                "Error should use human-readable byte units: {details}"
+            );
+        } else {
+            panic!("Expected RandomGenerationFailed error");
+        }
+    }
+
+    #[test]
+    fn test_scaled_hypot_2d() {
+        // Test our fallback scaled hypot implementation
+        let result = scaled_hypot_2d(3.0, 4.0);
+        assert_relative_eq!(result, 5.0, epsilon = 1e-10);
+
+        // Test with zero values
+        let zero_result = scaled_hypot_2d(0.0, 0.0);
+        assert_relative_eq!(zero_result, 0.0, epsilon = 1e-10);
+
+        // Test with negative values
+        let neg_result = scaled_hypot_2d(-3.0, 4.0);
+        assert_relative_eq!(neg_result, 5.0, epsilon = 1e-10);
+
+        // Test with very large values to check scaling behavior
+        let large_result = scaled_hypot_2d(1e10, 1e10);
+        let expected = (2.0_f64).sqrt() * 1e10;
+        assert_relative_eq!(large_result, expected, epsilon = 1e-5);
     }
 }

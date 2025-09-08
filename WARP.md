@@ -99,7 +99,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::
 
 # Rust documentation validation (required for crates.io publishing)
 # NOTE: Documentation failures will prevent publishing to crates.io
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
 
 # Python code quality (for scripts/ directory)
 # See "Import Organization (AI Assistant Guidance)" section for detailed ruff usage

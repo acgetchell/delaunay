@@ -142,10 +142,13 @@ fn generate_points_by_distribution<const D: usize>(
             match generate_grid_points(points_per_dim, 10.0, [0.0; D]) {
                 Ok(pts) => pts,
                 Err(e) => {
-                    eprintln!(
-                        "Grid generation capped/failed for D={D}: count={count}, points_per_dim={points_per_dim}, err={e:?}. Falling back to random."
+                    // Grid generation failed - this indicates a configuration issue
+                    // Rather than silently falling back and producing misleading benchmarks,
+                    // we should fail fast to alert developers to adjust parameters
+                    panic!(
+                        "Grid generation failed for D={D}: count={count}, points_per_dim={points_per_dim}, err={e:?}. \
+                         Adjust grid parameters or use smaller point counts for high-dimensional grid benchmarks."
                     );
-                    generate_random_points_seeded(count, (-100.0, 100.0), seed).unwrap()
                 }
             }
         }

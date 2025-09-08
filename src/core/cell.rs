@@ -246,6 +246,13 @@ where
     /// `Some(uuid)` represents a neighbor at that position, while `None`
     /// indicates no neighbor at that position. The positional semantics ensure
     /// that `neighbors[i]` is the neighbor opposite `vertices[i]`.
+    ///
+    /// # Example
+    /// For a 3D cell (tetrahedron) with 4 vertices:
+    /// - `neighbors[0]` is the neighbor opposite `vertices[0]` (shares vertices 1, 2, 3)
+    /// - `neighbors[1]` is the neighbor opposite `vertices[1]` (shares vertices 0, 2, 3)
+    /// - `neighbors[2]` is the neighbor opposite `vertices[2]` (shares vertices 0, 1, 3)
+    /// - `neighbors[3]` is the neighbor opposite `vertices[3]` (shares vertices 0, 1, 2)
     #[builder(setter(skip), default = "None")]
     pub neighbors: Option<Vec<Option<Uuid>>>,
     /// The optional data associated with the cell.

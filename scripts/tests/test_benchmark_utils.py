@@ -140,6 +140,43 @@ class TestCriterionParser:
         finally:
             estimates_path.unlink()
 
+    def test_parse_estimates_json_very_fast_benchmark_division_by_zero_protection(self):
+        """Test division by zero protection for very fast benchmarks with near-zero confidence intervals."""
+        estimates_data = {
+            "mean": {
+                "point_estimate": 1000.0,  # 1 microsecond in nanoseconds
+                "confidence_interval": {
+                    "lower_bound": 0.0,  # Could cause division by zero without protection
+                    "upper_bound": 2000.0,
+                },
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(estimates_data, f)
+            f.flush()
+            estimates_path = Path(f.name)
+
+        try:
+            result = CriterionParser.parse_estimates_json(estimates_path, 1000, "2D")
+
+            # Should not crash and should return valid data with protected throughput calculation
+            assert result is not None
+            assert result.points == 1000
+            assert result.dimension == "2D"
+            assert result.time_mean == 1.0  # 1 microsecond
+            assert result.time_low == 0.0  # Lower bound of confidence interval
+            assert result.time_high == 2.0  # Upper bound
+
+            # Throughput should be calculated with epsilon protection
+            # thrpt_high = points * 1000 / max(low_us, eps) = 1000 * 1000 / max(0.0, 1e-9) = 1000 * 1000 / 1e-9
+            assert result.throughput_high is not None
+            assert result.throughput_high > 1e12  # Should be very large due to epsilon protection
+            assert result.throughput_mean is not None
+            assert result.throughput_low is not None
+        finally:
+            estimates_path.unlink()
+
     def test_parse_estimates_json_invalid_file(self):
         """Test parsing non-existent estimates.json file."""
         result = CriterionParser.parse_estimates_json(Path("nonexistent.json"), 1000, "2D")
@@ -1310,3 +1347,179 @@ Hardware Information:
 
             print_calls = [call.args[0] for call in mock_print.call_args_list]
             assert any("Result: ⏭️ Benchmarks skipped (no baseline available)" in call for call in print_calls)
+
+    def test_generate_summary_sets_regression_environment_variable(self):
+        """Test that generate_summary sets BENCHMARK_REGRESSION_DETECTED environment variable when regressions are found."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            results_file = Path(temp_dir) / "benches" / "compare_results.txt"
+            results_file.parent.mkdir(parents=True)
+            results_file.write_text("REGRESSION detected in benchmark xyz")
+
+            env_vars = {
+                "BASELINE_EXISTS": "true",
+                "SKIP_BENCHMARKS": "false",
+            }
+
+            # Ensure BENCHMARK_REGRESSION_DETECTED is not set initially
+            if "BENCHMARK_REGRESSION_DETECTED" in os.environ:
+                del os.environ["BENCHMARK_REGRESSION_DETECTED"]
+
+            with patch.dict(os.environ, env_vars), temp_chdir(temp_dir), patch("builtins.print") as mock_print:
+                BenchmarkRegressionHelper.generate_summary()
+
+                # Check that environment variable was set
+                assert os.environ.get("BENCHMARK_REGRESSION_DETECTED") == "true"
+
+                # Check that appropriate message was printed
+                print_calls = [call.args[0] for call in mock_print.call_args_list]
+                assert any("Exported BENCHMARK_REGRESSION_DETECTED=true for downstream CI steps" in call for call in print_calls)
+
+    def test_generate_summary_github_env_export(self):
+        """Test that BENCHMARK_REGRESSION_DETECTED is also exported to GITHUB_ENV when available."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            results_file = Path(temp_dir) / "benches" / "compare_results.txt"
+            results_file.parent.mkdir(parents=True)
+            results_file.write_text("REGRESSION detected in benchmark xyz")
+
+            github_env_file = Path(temp_dir) / "github_env"
+            env_vars = {
+                "BASELINE_EXISTS": "true",
+                "SKIP_BENCHMARKS": "false",
+                "GITHUB_ENV": str(github_env_file),
+            }
+
+            with patch.dict(os.environ, env_vars), temp_chdir(temp_dir):
+                BenchmarkRegressionHelper.generate_summary()
+
+                # Check that GITHUB_ENV file was written to
+                assert github_env_file.exists()
+                github_env_content = github_env_file.read_text()
+                assert "BENCHMARK_REGRESSION_DETECTED=true" in github_env_content
+
+
+class TestProjectRootHandling:
+    """Test cases for find_project_root functionality."""
+
+    def test_find_project_root_success(self):
+        """Test finding project root when Cargo.toml exists."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            # Create Cargo.toml in temp directory
+            cargo_toml = temp_path / "Cargo.toml"
+            cargo_toml.write_text('[package]\nname = "test"\n')
+
+            # Create subdirectory and change to it
+            sub_dir = temp_path / "subdir"
+            sub_dir.mkdir()
+
+            with temp_chdir(sub_dir):
+                from benchmark_utils import find_project_root
+
+                result = find_project_root()
+                # Resolve both paths to handle symlinks (macOS /var -> /private/var)
+                assert result.resolve() == temp_path.resolve()
+
+    def test_find_project_root_not_found(self):
+        """Test finding project root when Cargo.toml doesn't exist."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            with temp_chdir(temp_path):
+                from benchmark_utils import ProjectRootNotFoundError, find_project_root
+
+                with pytest.raises(ProjectRootNotFoundError, match="Could not locate Cargo.toml"):
+                    find_project_root()
+
+
+class TestTimeoutHandling:
+    """Test cases for benchmark timeout functionality."""
+
+    def test_baseline_generator_timeout_parameter_passed(self):
+        """Test that BaselineGenerator accepts and uses timeout parameter."""
+        from benchmark_utils import BaselineGenerator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = BaselineGenerator(project_root)
+
+            # Test that the method signature accepts bench_timeout
+            with patch("benchmark_utils.run_cargo_command") as mock_cargo:
+                mock_cargo.side_effect = subprocess.TimeoutExpired("cargo", 120)
+
+                with patch("builtins.print"):
+                    success = generator.generate_baseline(bench_timeout=120)
+
+                    assert not success
+                    # Verify timeout was passed to run_cargo_command calls
+                    assert mock_cargo.call_count >= 1
+                    assert any(call.kwargs.get("timeout") == 120 for call in mock_cargo.call_args_list)
+
+    def test_performance_comparator_timeout_parameter_passed(self):
+        """Test that PerformanceComparator accepts and uses timeout parameter."""
+        from benchmark_utils import PerformanceComparator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            baseline_file = Path(temp_dir) / "baseline.txt"
+            baseline_file.write_text("mock baseline")
+
+            comparator = PerformanceComparator(project_root)
+
+            # Test that the method signature accepts bench_timeout
+            with patch("benchmark_utils.run_cargo_command") as mock_cargo:
+                mock_cargo.side_effect = subprocess.TimeoutExpired("cargo", 120)
+
+                with patch("builtins.print"):
+                    success, regression = comparator.compare_with_baseline(baseline_file, bench_timeout=120)
+
+                    assert not success
+                    assert not regression
+                    # Verify timeout was passed to run_cargo_command
+                    assert any(call.kwargs.get("timeout") == 120 for call in mock_cargo.call_args_list)
+
+    def test_timeout_error_handling_baseline_generator(self):
+        """Test proper error handling when benchmark times out in BaselineGenerator."""
+        from benchmark_utils import BaselineGenerator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = BaselineGenerator(project_root)
+
+            with patch("benchmark_utils.run_cargo_command") as mock_cargo:
+                mock_cargo.side_effect = subprocess.TimeoutExpired("cargo bench", 1800)
+
+                with patch("builtins.print") as mock_print:
+                    success = generator.generate_baseline(bench_timeout=1800)
+
+                    assert not success
+
+                    # Check that appropriate timeout message was printed
+                    print_calls = [str(call) for call in mock_print.call_args_list]
+                    assert any("timed out after 1800 seconds" in call for call in print_calls)
+                    assert any("Consider increasing --bench-timeout" in call for call in print_calls)
+
+    def test_timeout_error_handling_performance_comparator(self):
+        """Test proper error handling when benchmark times out in PerformanceComparator."""
+        from benchmark_utils import PerformanceComparator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            baseline_file = Path(temp_dir) / "baseline.txt"
+            baseline_file.write_text("mock baseline")
+
+            comparator = PerformanceComparator(project_root)
+
+            with patch("benchmark_utils.run_cargo_command") as mock_cargo:
+                mock_cargo.side_effect = subprocess.TimeoutExpired("cargo bench", 1800)
+
+                with patch("builtins.print") as mock_print:
+                    success, regression = comparator.compare_with_baseline(baseline_file, bench_timeout=1800)
+
+                    assert not success
+                    assert not regression
+
+                    # Check that appropriate timeout message was printed
+                    print_calls = [str(call) for call in mock_print.call_args_list]
+                    assert any("timed out after 1800 seconds" in call for call in print_calls)
+                    assert any("Consider increasing --bench-timeout" in call for call in print_calls)

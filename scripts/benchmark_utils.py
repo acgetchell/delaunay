@@ -45,6 +45,10 @@ DEV_MODE_BENCH_ARGS = [
 ]
 
 
+class ProjectRootNotFoundError(Exception):
+    """Raised when project root directory cannot be located."""
+
+
 # Use the shared secure wrapper from subprocess_utils
 
 
@@ -127,9 +131,11 @@ class CriterionParser:
             # Throughput = points / time_in_seconds
             # For time in microseconds: throughput = points * 1,000,000 / time_us
             # For Kelem/s: throughput_kelem = (points * 1,000,000 / time_us) / 1000 = points * 1000 / time_us
-            thrpt_mean = points * 1000 / mean_us
-            thrpt_low = points * 1000 / high_us  # Lower time = higher throughput
-            thrpt_high = points * 1000 / low_us  # Higher time = lower throughput
+            # Guard against division by zero for very fast benchmarks
+            eps = 1e-9  # µs - minimum time to prevent division by zero
+            thrpt_mean = points * 1000 / max(mean_us, eps)
+            thrpt_low = points * 1000 / max(high_us, eps)  # Lower time = higher throughput
+            thrpt_high = points * 1000 / max(low_us, eps)  # Higher time = lower throughput
 
             return (
                 BenchmarkData(points, dimension)
@@ -204,13 +210,14 @@ class BaselineGenerator:
         self.hardware = HardwareInfo()
         self.tag = tag
 
-    def generate_baseline(self, dev_mode: bool = False, output_file: Path | None = None) -> bool:
+    def generate_baseline(self, dev_mode: bool = False, output_file: Path | None = None, bench_timeout: int = 1800) -> bool:
         """
         Generate a performance baseline by running benchmarks and parsing results.
 
         Args:
             dev_mode: Use faster benchmark settings
             output_file: Output file path (default: baseline-artifact/baseline_results.txt)
+            bench_timeout: Timeout for cargo bench commands in seconds
 
         Returns:
             True if successful, False otherwise
@@ -221,16 +228,21 @@ class BaselineGenerator:
         try:
             # Clean previous results only for full runs to keep dev mode fast
             if not dev_mode:
-                run_cargo_command(["clean"], cwd=self.project_root)
+                run_cargo_command(["clean"], cwd=self.project_root, timeout=bench_timeout)
 
             # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
                 run_cargo_command(
                     ["bench", "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS],
                     cwd=self.project_root,
+                    timeout=bench_timeout,
                 )
             else:
-                run_cargo_command(["bench", "--bench", "ci_performance_suite"], cwd=self.project_root)
+                run_cargo_command(
+                    ["bench", "--bench", "ci_performance_suite"],
+                    cwd=self.project_root,
+                    timeout=bench_timeout,
+                )
 
             # Parse Criterion results
             target_dir = self.project_root / "target"
@@ -244,6 +256,10 @@ class BaselineGenerator:
 
             return True
 
+        except subprocess.TimeoutExpired:
+            print(f"❌ Benchmark execution timed out after {bench_timeout} seconds", file=sys.stderr)
+            print("   Consider increasing --bench-timeout or using --dev mode for faster benchmarks", file=sys.stderr)
+            return False
         except Exception:
             return False
 
@@ -283,7 +299,13 @@ class PerformanceComparator:
         self.hardware = HardwareInfo()
         self.regression_threshold = 5.0  # 5% regression threshold
 
-    def compare_with_baseline(self, baseline_file: Path, dev_mode: bool = False, output_file: Path | None = None) -> tuple[bool, bool]:
+    def compare_with_baseline(
+        self,
+        baseline_file: Path,
+        dev_mode: bool = False,
+        output_file: Path | None = None,
+        bench_timeout: int = 1800,
+    ) -> tuple[bool, bool]:
         """
         Compare current performance against baseline.
 
@@ -291,6 +313,7 @@ class PerformanceComparator:
             baseline_file: Path to baseline file
             dev_mode: Use faster benchmark settings
             output_file: Output file path (default: benches/compare_results.txt)
+            bench_timeout: Timeout for cargo bench commands in seconds
 
         Returns:
             Tuple of (success, regression_found)
@@ -307,9 +330,14 @@ class PerformanceComparator:
                 run_cargo_command(
                     ["bench", "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS],
                     cwd=self.project_root,
+                    timeout=bench_timeout,
                 )
             else:
-                run_cargo_command(["bench", "--bench", "ci_performance_suite"], cwd=self.project_root)
+                run_cargo_command(
+                    ["bench", "--bench", "ci_performance_suite"],
+                    cwd=self.project_root,
+                    timeout=bench_timeout,
+                )
 
             # Parse current results
             target_dir = self.project_root / "target"
@@ -327,6 +355,10 @@ class PerformanceComparator:
 
             return True, regression_found
 
+        except subprocess.TimeoutExpired:
+            print(f"❌ Benchmark execution timed out after {bench_timeout} seconds", file=sys.stderr)
+            print("   Consider increasing --bench-timeout or using --dev mode for faster benchmarks", file=sys.stderr)
+            return False, False
         except Exception:
             return False, False
 
@@ -973,8 +1005,14 @@ class BenchmarkRegressionHelper:
                     content = f.read()
                     if "REGRESSION" in content:
                         print("Result: ⚠️ Performance regressions detected")
-                        # Future improvement: Set environment variable for machine consumption
-                        # os.environ["BENCHMARK_REGRESSION_DETECTED"] = "true"
+                        # Set environment variable for machine consumption by CI systems
+                        os.environ["BENCHMARK_REGRESSION_DETECTED"] = "true"
+                        # Also export to GITHUB_ENV if available
+                        github_env = os.getenv("GITHUB_ENV")
+                        if github_env:
+                            with open(github_env, "a", encoding="utf-8") as f:
+                                f.write("BENCHMARK_REGRESSION_DETECTED=true\n")
+                        print("   Exported BENCHMARK_REGRESSION_DETECTED=true for downstream CI steps")
                     else:
                         print("Result: ✅ No significant performance regressions")
             else:
@@ -1000,12 +1038,24 @@ def create_argument_parser() -> argparse.ArgumentParser:
     gen_parser.add_argument("--dev", action="store_true", help="Use development mode with faster benchmark settings")
     gen_parser.add_argument("--output", type=Path, help="Output file path")
     gen_parser.add_argument("--tag", type=str, default=os.getenv("TAG_NAME"), help="Tag name for this baseline (from TAG_NAME env or --tag option)")
+    gen_parser.add_argument(
+        "--bench-timeout",
+        type=int,
+        default=int(os.getenv("BENCHMARK_TIMEOUT", "1800")),
+        help="Timeout for cargo bench commands in seconds (default: 1800, from BENCHMARK_TIMEOUT env)",
+    )
 
     # Compare benchmarks command
     cmp_parser = subparsers.add_parser("compare", help="Compare current performance against baseline")
     cmp_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
     cmp_parser.add_argument("--dev", action="store_true", help="Use development mode with faster benchmark settings")
     cmp_parser.add_argument("--output", type=Path, help="Output file path")
+    cmp_parser.add_argument(
+        "--bench-timeout",
+        type=int,
+        default=int(os.getenv("BENCHMARK_TIMEOUT", "1800")),
+        help="Timeout for cargo bench commands in seconds (default: 1800, from BENCHMARK_TIMEOUT env)",
+    )
 
     # Workflow helper commands
     subparsers.add_parser("determine-tag", help="Determine tag name for baseline generation")
@@ -1051,27 +1101,36 @@ def create_argument_parser() -> argparse.ArgumentParser:
 
 
 def find_project_root() -> Path:
-    """Find the project root by looking for Cargo.toml."""
+    """Find the project root by looking for Cargo.toml.
+
+    Returns:
+        Path to project root directory
+
+    Raises:
+        ProjectRootNotFoundError: If Cargo.toml cannot be found in any parent directory
+    """
     current_dir = Path.cwd()
     project_root = current_dir
     while project_root != project_root.parent:
         if (project_root / "Cargo.toml").exists():
             return project_root
         project_root = project_root.parent
-    print("error: could not locate Cargo.toml to determine project root", file=sys.stderr)
-    sys.exit(2)
+    msg = "Could not locate Cargo.toml to determine project root"
+    raise ProjectRootNotFoundError(msg)
 
 
 def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> None:
     """Execute baseline generation and comparison commands."""
     if args.command == "generate-baseline":
         generator = BaselineGenerator(project_root, tag=args.tag)
-        success = generator.generate_baseline(dev_mode=args.dev, output_file=args.output)
+        success = generator.generate_baseline(dev_mode=args.dev, output_file=args.output, bench_timeout=args.bench_timeout)
         sys.exit(0 if success else 1)
 
     elif args.command == "compare":
         comparator = PerformanceComparator(project_root)
-        success, regression_found = comparator.compare_with_baseline(args.baseline, dev_mode=args.dev, output_file=args.output)
+        success, regression_found = comparator.compare_with_baseline(
+            args.baseline, dev_mode=args.dev, output_file=args.output, bench_timeout=args.bench_timeout
+        )
 
         if not success:
             sys.exit(1)
@@ -1187,7 +1246,12 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    project_root = find_project_root()
+    try:
+        project_root = find_project_root()
+    except ProjectRootNotFoundError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(2)
+
     execute_command(args, project_root)
 
 

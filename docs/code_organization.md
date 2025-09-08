@@ -148,6 +148,15 @@ cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
 cargo test --test circumsphere_debug_tools -- --nocapture
 ```
 
+**Note**: Python tests in `scripts/tests/` are executed via pytest (or `uv run pytest`) and discovered through the test configuration in `pyproject.toml`. Run with:
+
+```bash
+# Run all Python utility tests
+uv run pytest
+# Or run specific test files
+uv run pytest scripts/tests/test_benchmark_utils.py
+```
+
 ### Architecture Overview
 
 #### Core Library (`src/`)
@@ -544,28 +553,28 @@ mod tests {
 
 ### Module-Specific Variations
 
-#### `cell.rs` (large module; ~2,400 lines)
+#### `cell.rs` (large module; ~2,400 lines as of v0.4.2)
 
 - Most comprehensive implementation
 - Multiple specialized implementation blocks
 - Extensive geometric predicates integration
 - Detailed Hash/Eq contract documentation
 
-#### `vertex.rs` (large module; ~2,000 lines)
+#### `vertex.rs` (large module; ~2,000 lines as of v0.4.2)
 
 - Strong focus on coordinate validation
 - Comprehensive equality testing
 - Multiple numeric type support
 - Detailed serialization testing
 
-#### `facet.rs` (medium module; ~1,400 lines)
+#### `facet.rs` (medium module; ~1,400 lines as of v0.4.2)
 
 - Geometric relationship focus
 - Key generation utilities
 - Adjacency testing
 - Error handling for geometric constraints
 
-#### `boundary.rs` (small module; ~400 lines)
+#### `boundary.rs` (small module; ~400 lines as of v0.4.2)
 
 - Trait implementation focused
 - Algorithm-specific testing
@@ -580,7 +589,6 @@ mod tests {
 - Function categorization by geometric operations (circumcenter, facet measure, surface measure, etc.)
 - Multi-dimensional testing across 2D-5D with both f32 and f64 coordinate types
 - Extensive edge case testing and error handling validation
-- Generic type coverage
 
 ### Key Conventions
 

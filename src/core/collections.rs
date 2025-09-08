@@ -201,7 +201,7 @@ pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<(CellKey, usize), 2>>;
 /// # Optimization Rationale
 ///
 /// - **Key**: `CellKey` identifying the cell
-/// - **Value**: `SmallBuffer<Option<Uuid>, 8>` - handles up to 8 neighbors on stack
+/// - **Value**: `SmallBuffer<Option<Uuid>, MAX_PRACTICAL_DIMENSION_SIZE>` - handles up to 8 neighbors on stack
 /// - **Typical Pattern**: 2D=3 neighbors, 3D=4 neighbors, 4D=5 neighbors
 /// - **Performance**: Stack allocation for dimensions up to ~7D
 ///
@@ -213,7 +213,8 @@ pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<(CellKey, usize), 2>>;
 /// let mut neighbors: CellNeighborsMap = CellNeighborsMap::default();
 /// // Efficient for typical triangulation dimensions
 /// ```
-pub type CellNeighborsMap = FastHashMap<CellKey, SmallBuffer<Option<Uuid>, 8>>;
+pub type CellNeighborsMap =
+    FastHashMap<CellKey, SmallBuffer<Option<Uuid>, MAX_PRACTICAL_DIMENSION_SIZE>>;
 
 /// Vertex-to-cells mapping optimized for typical vertex degrees.
 /// Most vertices are incident to a small number of cells in well-conditioned triangulations.
@@ -221,7 +222,7 @@ pub type CellNeighborsMap = FastHashMap<CellKey, SmallBuffer<Option<Uuid>, 8>>;
 /// # Optimization Rationale
 ///
 /// - **Key**: `VertexKey` identifying the vertex
-/// - **Value**: `SmallBuffer<CellKey, 8>` - handles up to 8 incident cells on stack
+/// - **Value**: `SmallBuffer<CellKey, MAX_PRACTICAL_DIMENSION_SIZE>` - handles up to 8 incident cells on stack
 /// - **Typical Pattern**: Well-conditioned triangulations have low vertex degrees
 /// - **Performance**: Avoids heap allocation for most vertices
 ///
@@ -233,7 +234,8 @@ pub type CellNeighborsMap = FastHashMap<CellKey, SmallBuffer<Option<Uuid>, 8>>;
 /// let mut vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
 /// // Optimized for typical vertex degrees
 /// ```
-pub type VertexToCellsMap = FastHashMap<VertexKey, SmallBuffer<CellKey, 8>>;
+pub type VertexToCellsMap =
+    FastHashMap<VertexKey, SmallBuffer<CellKey, MAX_PRACTICAL_DIMENSION_SIZE>>;
 
 /// Cell vertices mapping optimized for validation operations.
 /// Each cell typically has D+1 vertices, stored as a fast set for efficient intersection operations.
@@ -255,9 +257,37 @@ pub type VertexToCellsMap = FastHashMap<VertexKey, SmallBuffer<CellKey, 8>>;
 /// ```
 pub type CellVerticesMap = FastHashMap<CellKey, FastHashSet<VertexKey>>;
 
+/// Cell vertex keys mapping optimized for validation operations requiring positional access.
+/// Each cell typically has D+1 vertices, stored as a Vec for efficient positional access.
+///
+/// # Optimization Rationale
+///
+/// - **Key**: `CellKey` identifying the cell
+/// - **Value**: `Vec<VertexKey>` - preserves vertex order for positional semantics
+/// - **Use Case**: Validation algorithms that need positional vertex access (e.g., neighbors\[i\] opposite vertices\[i\])
+/// - **Performance**: Complements `CellVerticesMap` by providing ordered access
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::CellVertexKeysMap;
+///
+/// let mut cell_vertex_keys: CellVertexKeysMap = CellVertexKeysMap::default();
+/// // Efficient positional access during validation
+/// ```
+pub type CellVertexKeysMap = FastHashMap<CellKey, Vec<VertexKey>>;
+
 // =============================================================================
 // ALGORITHM-SPECIFIC BUFFER TYPES
 // =============================================================================
+
+/// Size constant for operations that may affect multiple cells during cleanup.
+/// 16 provides generous headroom for duplicate removal and topology repair operations.
+const CLEANUP_OPERATION_BUFFER_SIZE: usize = 16;
+
+/// Size constant for operations that work with a small number of valid cells.
+/// 4 is sufficient since valid facets are shared by at most 2 cells, with some headroom.
+const SMALL_CELL_OPERATION_BUFFER_SIZE: usize = 4;
 
 /// Collection for tracking cells to remove during cleanup operations.
 /// Most cleanup operations affect a small number of cells.
@@ -267,7 +297,7 @@ pub type CellVerticesMap = FastHashMap<CellKey, FastHashSet<VertexKey>>;
 /// - **Stack Allocation**: Up to 16 cells (covers most cleanup scenarios)
 /// - **Use Case**: Duplicate cell removal, invalid facet cleanup
 /// - **Performance**: Avoids heap allocation for typical cleanup operations
-pub type CellRemovalBuffer = SmallBuffer<CellKey, 16>;
+pub type CellRemovalBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
 
 /// Collection for tracking valid cells during facet sharing fixes.
 /// Most invalid sharing situations involve only a few cells per facet.
@@ -277,27 +307,63 @@ pub type CellRemovalBuffer = SmallBuffer<CellKey, 16>;
 /// - **Stack Allocation**: Up to 4 cells (more than enough for valid facets)
 /// - **Use Case**: Facet validation, topology repair
 /// - **Performance**: Stack-only for typical geometric repair operations
-pub type ValidCellsBuffer = SmallBuffer<CellKey, 4>;
-
-/// Buffer for storing vertex UUIDs during geometric operations.
-/// Sized for typical simplex operations (D+1 vertices).
-///
-/// # Optimization Rationale
-///
-/// - **Stack Allocation**: Up to 8 UUIDs (handles up to 7D simplices)
-/// - **Use Case**: Temporary vertex collections, geometric predicates
-/// - **Performance**: Stack allocation for all practical dimensions
-pub type VertexUuidBuffer = SmallBuffer<Uuid, 8>;
+pub type ValidCellsBuffer = SmallBuffer<CellKey, SMALL_CELL_OPERATION_BUFFER_SIZE>;
 
 /// Buffer for storing facet information during boundary analysis.
 /// Sized for typical cell operations (D+1 facets per cell).
 ///
 /// # Optimization Rationale
 ///
-/// - **Stack Allocation**: Up to 8 facet info entries
+/// - **Stack Allocation**: Up to `MAX_PRACTICAL_DIMENSION_SIZE` facet info entries
 /// - **Use Case**: Boundary analysis, facet enumeration
 /// - **Performance**: Handles cells up to 7D on stack
-pub type FacetInfoBuffer = SmallBuffer<(CellKey, usize), 8>;
+pub type FacetInfoBuffer = SmallBuffer<(CellKey, usize), MAX_PRACTICAL_DIMENSION_SIZE>;
+
+// =============================================================================
+// SEMANTIC SIZE CONSTANTS AND TYPE ALIASES
+// =============================================================================
+
+/// Semantic constant for the maximum practical dimension in computational geometry.
+/// Most applications work with dimensions 2D-5D, so 8 provides comfortable headroom
+/// while keeping stack allocation efficient.
+const MAX_PRACTICAL_DIMENSION_SIZE: usize = 8;
+
+/// Buffer sized for vertex collections in D-dimensional simplices.
+/// A D-dimensional simplex has D+1 vertices, so this handles up to 7D simplices on stack.
+///
+/// # Use Cases
+/// - Cell vertex operations
+/// - Simplex construction
+/// - Geometric predicate vertex lists
+pub type SimplexVertexBuffer<T> = SmallBuffer<T, MAX_PRACTICAL_DIMENSION_SIZE>;
+
+/// Buffer sized for UUID collections in vertex operations.
+/// Optimized for storing vertex UUIDs from a single simplex (D+1 UUIDs).
+///
+/// # Use Cases
+/// - Duplicate cell detection
+/// - Vertex uniqueness checks
+/// - Cell vertex UUID collections
+pub type VertexUuidBuffer = SimplexVertexBuffer<Uuid>;
+
+/// Buffer sized for `VertexKey` collections in validation and internal operations.
+/// Handles vertex keys from a single D-dimensional simplex.
+///
+/// # Use Cases
+/// - Validation algorithms
+/// - Internal vertex key tracking
+/// - Cell vertex key collections
+pub type VertexKeyBuffer = SimplexVertexBuffer<VertexKey>;
+
+/// Buffer sized for Point collections in geometric operations.
+/// Generic over coordinate type T and dimension D, with practical size limit.
+///
+/// # Use Cases
+/// - Geometric predicate operations
+/// - Simplex coordinate collections
+/// - Temporary point storage during algorithms
+pub type GeometricPointBuffer<T, const D: usize> =
+    SmallBuffer<[T; D], MAX_PRACTICAL_DIMENSION_SIZE>;
 
 // =============================================================================
 // GEOMETRIC ALGORITHM TYPES
@@ -324,6 +390,10 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 /// - **Performance**: Optimized for geometric algorithm patterns
 pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
 
+/// Size constant for batch point processing operations.
+/// 16 provides sufficient capacity for typical geometric algorithm batches.
+const BATCH_PROCESSING_BUFFER_SIZE: usize = 16;
+
 /// Temporary buffer for storing points during geometric operations.
 /// Sized for typical batch processing operations.
 ///
@@ -333,7 +403,7 @@ pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
 /// - **Generic Dimension**: Works with any coordinate type and dimension
 /// - **Use Case**: Point processing, geometric transformations
 /// - **Performance**: Avoids allocation for small point batches
-pub type PointBuffer<T, const D: usize> = SmallBuffer<[T; D], 16>;
+pub type PointBuffer<T, const D: usize> = SmallBuffer<[T; D], BATCH_PROCESSING_BUFFER_SIZE>;
 
 // =============================================================================
 // UTILITY FUNCTIONS

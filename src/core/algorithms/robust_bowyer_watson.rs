@@ -669,28 +669,31 @@ where
     ) -> Result<HashMap<u64, Vec<CellKey>>, TriangulationValidationError> {
         // Reuse existing mapping from TDS to avoid recomputation
         let tds_map = tds.build_facet_to_cells_hashmap();
-        let mut facet_to_cells: HashMap<u64, Vec<CellKey>> = HashMap::new();
 
-        for (facet_key, cell_facet_pairs) in tds_map {
-            // Extract just the CellKeys, discarding facet indices
-            let cell_keys: Vec<CellKey> = cell_facet_pairs
-                .iter()
-                .map(|(cell_key, _)| *cell_key)
-                .collect();
+        // Transform the TDS map into the required format with validation
+        let facet_to_cells: HashMap<u64, Vec<CellKey>> = tds_map
+            .into_iter()
+            .map(|(facet_key, cell_facet_pairs)| {
+                // Extract just the CellKeys, discarding facet indices
+                let cell_keys: Vec<CellKey> = cell_facet_pairs
+                    .iter()
+                    .map(|(cell_key, _)| *cell_key)
+                    .collect();
 
-            // Validate that no facet is shared by more than 2 cells
-            if cell_keys.len() > 2 {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Facet {} is shared by {} cells (should be ≤2)",
-                        facet_key,
-                        cell_keys.len()
-                    ),
-                });
-            }
+                // Validate that no facet is shared by more than 2 cells
+                if cell_keys.len() > 2 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Facet {} is shared by {} cells (should be ≤2)",
+                            facet_key,
+                            cell_keys.len()
+                        ),
+                    });
+                }
 
-            facet_to_cells.insert(facet_key, cell_keys);
-        }
+                Ok((facet_key, cell_keys))
+            })
+            .collect::<Result<HashMap<_, _>, _>>()?;
 
         Ok(facet_to_cells)
     }
@@ -1412,7 +1415,7 @@ mod tests {
             // Verify neighbor relationships are consistent
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
-                    for neighbor_uuid in neighbors.iter().filter_map(|n| n.as_ref()) {
+                    for neighbor_uuid in neighbors.iter().flatten() {
                         if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid)
                             && let Some(neighbor) = tds.cells().get(*neighbor_key)
                         {
@@ -1725,12 +1728,12 @@ mod tests {
                             .get_by_right(&cell1_key)
                             .expect("Cell1 should have UUID");
                         assert!(
-                            neighbors1.iter().any(|n| n.as_ref() == Some(cell2_uuid)),
+                            neighbors1.iter().flatten().any(|uuid| uuid == cell2_uuid),
                             "Cell1 should reference cell2 as neighbor after insertion {}",
                             i + 1
                         );
                         assert!(
-                            neighbors2.iter().any(|n| n.as_ref() == Some(cell1_uuid)),
+                            neighbors2.iter().flatten().any(|uuid| uuid == cell1_uuid),
                             "Cell2 should reference cell1 as neighbor after insertion {}",
                             i + 1
                         );

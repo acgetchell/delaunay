@@ -57,6 +57,10 @@ def run_git_command(args: list[str], cwd: Path | None = None, **kwargs: Any) -> 
         ExecutableNotFoundError: If git is not found
         subprocess.CalledProcessError: If command fails and check=True
         subprocess.TimeoutExpired: If command times out
+
+    Note:
+        When text=True (default), output uses locale encoding. For deterministic UTF-8
+        in CI environments, consider passing encoding="utf-8" via kwargs.
     """
     git_path = get_safe_executable("git")
     # Set secure defaults for subprocess.run
@@ -72,7 +76,9 @@ def run_git_command(args: list[str], cwd: Path | None = None, **kwargs: Any) -> 
 
 
 def run_cargo_command(
-    args: list[str], cwd: Path | None = None, capture_output: bool = True, text: bool = True, check: bool = True
+    args: list[str],
+    cwd: Path | None = None,
+    **kwargs: Any,
 ) -> subprocess.CompletedProcess[str]:
     """
     Run a cargo command securely using full executable path.
@@ -80,9 +86,8 @@ def run_cargo_command(
     Args:
         args: Cargo command arguments (without 'cargo' prefix)
         cwd: Working directory for the command
-        capture_output: Whether to capture stdout/stderr
-        text: Whether to return text output
-        check: Whether to raise CalledProcessError on non-zero exit
+        **kwargs: Additional arguments passed to subprocess.run
+                 (e.g., capture_output=True, text=True, check=True, timeout=60)
 
     Returns:
         CompletedProcess result
@@ -90,10 +95,18 @@ def run_cargo_command(
     Raises:
         ExecutableNotFoundError: If cargo is not found
         subprocess.CalledProcessError: If command fails and check=True
+        subprocess.TimeoutExpired: If command times out
     """
     cargo_path = get_safe_executable("cargo")
-    return subprocess.run(  # noqa: S603  # Uses validated full executable path, no shell=True
-        [cargo_path, *args], cwd=cwd, capture_output=capture_output, text=text, check=check
+    # Set secure defaults for subprocess.run
+    run_kwargs = {
+        "capture_output": True,
+        "text": True,
+        "check": True,  # Secure default
+        **kwargs,  # Allow overriding defaults
+    }
+    return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
+        [cargo_path, *args], cwd=cwd, **run_kwargs
     )
 
 
@@ -191,7 +204,10 @@ def check_git_history() -> bool:
 
 
 def run_git_command_with_input(
-    args: list[str], input_data: str, cwd: Path | None = None, text: bool = True, check: bool = True
+    args: list[str],
+    input_data: str,
+    cwd: Path | None = None,
+    **kwargs: Any,
 ) -> subprocess.CompletedProcess[str]:
     """
     Run a git command securely with stdin input using full executable path.
@@ -200,8 +216,8 @@ def run_git_command_with_input(
         args: Git command arguments (without 'git' prefix)
         input_data: Data to send to stdin
         cwd: Working directory for the command
-        text: Whether to handle text input/output
-        check: Whether to raise CalledProcessError on non-zero exit
+        **kwargs: Additional arguments passed to subprocess.run
+                 (e.g., text=True, check=True, timeout=60)
 
     Returns:
         CompletedProcess result
@@ -209,8 +225,20 @@ def run_git_command_with_input(
     Raises:
         ExecutableNotFoundError: If git is not found
         subprocess.CalledProcessError: If command fails and check=True
+        subprocess.TimeoutExpired: If command times out
+
+    Note:
+        When text=True (default), output uses locale encoding. For deterministic UTF-8
+        in CI environments, consider passing encoding="utf-8" via kwargs.
     """
     git_path = get_safe_executable("git")
-    return subprocess.run(  # noqa: S603  # Uses validated full executable path, no shell=True
-        [git_path, *args], cwd=cwd, input=input_data, text=text, check=check, capture_output=True
+    # Set secure defaults for subprocess.run
+    run_kwargs = {
+        "capture_output": True,
+        "text": True,
+        "check": True,  # Secure default
+        **kwargs,  # Allow overriding defaults
+    }
+    return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
+        [git_path, *args], cwd=cwd, input=input_data, **run_kwargs
     )
