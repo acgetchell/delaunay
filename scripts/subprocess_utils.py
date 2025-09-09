@@ -59,17 +59,24 @@ def run_git_command(args: list[str], cwd: Path | None = None, **kwargs: Any) -> 
         subprocess.TimeoutExpired: If command times out
 
     Note:
-        When text=True (default), output uses locale encoding. For deterministic UTF-8
-        in CI environments, consider passing encoding="utf-8" via kwargs.
+        Uses UTF-8 encoding by default for deterministic behavior across environments.
+        Override by passing encoding="<other>" via kwargs if needed.
     """
     git_path = get_safe_executable("git")
-    # Set secure defaults for subprocess.run
+    # Disallow shell=True to preserve security guarantees
+    if kwargs.get("shell"):
+        msg = "shell=True is not allowed in run_git_command"
+        raise ValueError(msg)
+    # Enforce text mode for stable typing (CompletedProcess[str])
+    kwargs.pop("text", None)
     run_kwargs = {
         "capture_output": True,
         "text": True,
         "check": True,  # Secure default
-        **kwargs,  # Allow overriding defaults
+        **kwargs,  # Allow overriding other safe defaults
     }
+    # Prefer deterministic UTF-8 unless caller overrides
+    run_kwargs.setdefault("encoding", "utf-8")
     return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
         [git_path, *args], cwd=cwd, **run_kwargs
     )
@@ -98,13 +105,20 @@ def run_cargo_command(
         subprocess.TimeoutExpired: If command times out
     """
     cargo_path = get_safe_executable("cargo")
-    # Set secure defaults for subprocess.run
+    # Disallow shell=True to preserve security guarantees
+    if kwargs.get("shell"):
+        msg = "shell=True is not allowed in run_cargo_command"
+        raise ValueError(msg)
+    # Enforce text mode for stable typing (CompletedProcess[str])
+    kwargs.pop("text", None)
     run_kwargs = {
         "capture_output": True,
         "text": True,
         "check": True,  # Secure default
-        **kwargs,  # Allow overriding defaults
+        **kwargs,  # Allow overriding other safe defaults
     }
+    # Prefer deterministic UTF-8 unless caller overrides
+    run_kwargs.setdefault("encoding", "utf-8")
     return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
         [cargo_path, *args], cwd=cwd, **run_kwargs
     )
@@ -129,13 +143,20 @@ def run_safe_command(command: str, args: list[str], cwd: Path | None = None, **k
         subprocess.CalledProcessError: If command fails and check=True
     """
     command_path = get_safe_executable(command)
-    # Set secure defaults for subprocess.run
+    # Disallow shell=True to preserve security guarantees
+    if kwargs.get("shell"):
+        msg = f"shell=True is not allowed in run_safe_command for {command}"
+        raise ValueError(msg)
+    # Enforce text mode for stable typing (CompletedProcess[str])
+    kwargs.pop("text", None)
     run_kwargs = {
         "capture_output": True,
         "text": True,
         "check": True,  # Secure default
-        **kwargs,  # Allow overriding defaults
+        **kwargs,  # Allow overriding other safe defaults
     }
+    # Prefer deterministic UTF-8 unless caller overrides
+    run_kwargs.setdefault("encoding", "utf-8")
     return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
         [command_path, *args], cwd=cwd, **run_kwargs
     )
@@ -228,17 +249,24 @@ def run_git_command_with_input(
         subprocess.TimeoutExpired: If command times out
 
     Note:
-        When text=True (default), output uses locale encoding. For deterministic UTF-8
-        in CI environments, consider passing encoding="utf-8" via kwargs.
+        Uses UTF-8 encoding by default for deterministic behavior across environments.
+        Override by passing encoding="<other>" via kwargs if needed.
     """
     git_path = get_safe_executable("git")
-    # Set secure defaults for subprocess.run
+    # Disallow shell=True to preserve security guarantees
+    if kwargs.get("shell"):
+        msg = "shell=True is not allowed in run_git_command_with_input"
+        raise ValueError(msg)
+    # Enforce text mode for stable typing (CompletedProcess[str])
+    kwargs.pop("text", None)
     run_kwargs = {
         "capture_output": True,
         "text": True,
         "check": True,  # Secure default
-        **kwargs,  # Allow overriding defaults
+        **kwargs,  # Allow overriding other safe defaults
     }
+    # Prefer deterministic UTF-8 unless caller overrides
+    run_kwargs.setdefault("encoding", "utf-8")
     return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
         [git_path, *args], cwd=cwd, input=input_data, **run_kwargs
     )

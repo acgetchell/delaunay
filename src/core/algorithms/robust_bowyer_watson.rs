@@ -792,8 +792,8 @@ where
             let (cell_key, facet_index) = cells[0];
             if let Some(cell) = tds.cells().get(cell_key) {
                 if let Ok(facets) = cell.facets() {
-                    if facet_index < facets.len() {
-                        let facet = &facets[facet_index];
+                    if (facet_index as usize) < facets.len() {
+                        let facet = &facets[facet_index as usize];
 
                         // Test visibility using robust orientation predicates with fallback
                         if self.is_facet_visible_from_vertex_robust(tds, facet, vertex, cell_key) {

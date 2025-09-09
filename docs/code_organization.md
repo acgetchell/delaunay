@@ -36,6 +36,7 @@ delaunay/
 │   │   │   └── insertion_algorithm.rs            # Insertion algorithm traits
 │   │   ├── boundary.rs                           # Boundary analysis and facet detection
 │   │   ├── cell.rs                               # Cell (simplex) implementation
+│   │   ├── collections.rs                        # Optimized collection types and utilities
 │   │   ├── facet.rs                              # Facet implementation
 │   │   ├── triangulation_data_structure.rs       # Main Tds struct
 │   │   ├── util.rs                               # Helper functions for triangulation operations
@@ -59,12 +60,14 @@ delaunay/
 │   ├── point_comparison_and_hashing.rs           # Point operations examples
 │   └── triangulation_3d_50_points.rs             # 3D triangulation example
 ├── benches/                                      # Performance benchmarks
-│   ├── README.md                                 # Benchmarking guide and performance results
+│   ├── README.md                                 # Benchmarking guide and usage instructions
+│   ├── PERFORMANCE_RESULTS.md                    # Auto-generated performance results and analysis
 │   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
 │   ├── ci_performance_suite.rs                   # CI-optimized performance suite (2D-5D regression testing)
 │   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
 │   ├── memory_scaling.rs                         # Memory usage scaling benchmarks
 │   ├── microbenchmarks.rs                        # Fine-grained performance tests
+│   ├── profiling_suite.rs                        # Comprehensive profiling suite for large-scale performance analysis
 │   ├── triangulation_creation.rs                 # Triangulation creation benchmarks
 │   └── triangulation_vs_hull_memory.rs           # Memory comparison benchmarks
 ├── tests/                                        # Integration tests
@@ -90,16 +93,16 @@ delaunay/
 │   │   ├── test_benchmark_utils.py               # Tests for benchmark_utils.py
 │   │   ├── test_changelog_utils.py               # Comprehensive tests for changelog_utils.py
 │   │   ├── test_hardware_utils.py                # Tests for hardware_utils.py
+│   │   ├── test_performance_summary_utils.py     # Tests for performance_summary_utils.py
 │   │   └── test_subprocess_utils.py              # Comprehensive tests for subprocess_utils.py
 │   ├── README.md                                 # Scripts documentation
 │   ├── benchmark_utils.py                        # Python utilities for benchmark processing and hardware detection
 │   ├── changelog_utils.py                        # Comprehensive Python utilities for changelog generation, processing, and git tagging
 │   ├── enhance_commits.py                        # Commit enhancement utilities
 │   ├── hardware_utils.py                         # Python utilities for hardware information and system capabilities
+│   ├── performance_summary_utils.py              # Performance results processing and summary generation utilities
 │   ├── run_all_examples.sh                       # Validate all examples
 │   └── subprocess_utils.py                       # Secure subprocess execution utilities for git and system commands
-├── .cargo/                                       # Cargo configuration
-│   └── config.toml                               # Build configuration
 ├── .github/                                      # GitHub configuration
 │   ├── workflows/                                # CI/CD workflows
 │   │   ├── audit.yml                             # Security vulnerability scanning
@@ -108,9 +111,12 @@ delaunay/
 │   │   ├── codacy.yml                            # Code quality analysis
 │   │   ├── codecov.yml                           # Test coverage tracking
 │   │   ├── generate-baseline.yml                 # Automated performance baseline generation on releases
+│   │   ├── profiling-benchmarks.yml              # Profiling suite for large-scale performance analysis
 │   │   └── rust-clippy.yml                       # Additional clippy analysis
 │   ├── CODEOWNERS                                # Code ownership definitions
 │   └── dependabot.yml                            # Dependency update configuration
+├── .cargo/                                       # Cargo configuration
+│   └── config.toml                               # Build configuration
 ├── .auto-changelog                               # Auto-changelog configuration
 ├── .codacy.yml                                   # Codacy code quality configuration
 ├── .codecov.yml                                  # Codecov configuration
@@ -165,6 +171,7 @@ uv run pytest scripts/tests/test_benchmark_utils.py
 
 - `triangulation_data_structure.rs` - Main `Tds` struct
 - `vertex.rs`, `cell.rs`, `facet.rs` - Core geometric primitives
+- `collections.rs` - Optimized collection types and utilities
 - `boundary.rs` - Boundary detection and analysis
 - `algorithms/` - Bowyer-Watson implementations
 - `traits/` - Core trait definitions

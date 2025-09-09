@@ -69,7 +69,12 @@ impl MemoryRecord {
 
     /// Create a placeholder record when allocation counting is disabled
     #[cfg(not(feature = "count-allocations"))]
-    fn new_placeholder(dimension: usize, points: usize, vertices: usize, cells: usize) -> Self {
+    const fn new_placeholder(
+        dimension: usize,
+        points: usize,
+        vertices: usize,
+        cells: usize,
+    ) -> Self {
         Self {
             dimension,
             points,

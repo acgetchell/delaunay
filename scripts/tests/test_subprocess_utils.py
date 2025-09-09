@@ -126,11 +126,12 @@ class TestRunSafeCommand:
         assert isinstance(result.stdout, str)
         assert result.stdout.strip() == "test"
 
-    def test_custom_text_parameter(self):
-        """Test overriding text parameter."""
-        result = run_safe_command("echo", ["binary test"], text=False)
-        assert isinstance(result.stdout, bytes)
-        assert b"binary test" in result.stdout
+    def test_text_parameter_enforced(self):
+        """Test that text parameter is enforced for security/stability."""
+        # run_safe_command enforces text=True for stable CompletedProcess[str] typing
+        result = run_safe_command("echo", ["test output"], text=False)  # text=False is ignored
+        assert isinstance(result.stdout, str)  # Should still be string
+        assert "test output" in result.stdout
 
     def test_custom_check_parameter(self):
         """Test overriding check parameter."""
@@ -146,10 +147,11 @@ class TestRunSafeCommand:
         assert result.stdout is None
 
     def test_multiple_custom_parameters(self):
-        """Test multiple custom parameters at once."""
+        """Test multiple custom parameters at once (text is enforced)."""
         result = run_safe_command("echo", ["multi param test"], text=False, check=False, capture_output=True)
-        assert isinstance(result.stdout, bytes)
+        assert isinstance(result.stdout, str)  # text=False is ignored, still returns string
         assert result.returncode == 0
+        assert "multi param test" in result.stdout
 
     def test_nonexistent_command_raises_error(self):
         """Test that nonexistent commands raise ExecutableNotFoundError."""

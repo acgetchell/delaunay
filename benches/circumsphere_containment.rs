@@ -8,9 +8,8 @@
 //! 3. **`insphere_lifted`**: Matrix determinant method with lifted paraboloid approach
 //!
 //! The benchmarks include:
-//! - Basic performance tests with fixed simplices
 //! - Random query tests with multiple vertices
-//! - Tests across different dimensions (2D, 3D, 4D)
+//! - Tests across different dimensions (2D, 3D, 4D, 5D)
 //! - Edge case tests with boundary and distant vertices
 //! - Numerical consistency validation between all three algorithms
 
@@ -39,33 +38,6 @@ fn generate_random_test_point_3d(rng: &mut impl Rng) -> Point<f64, 3> {
     let y = rng.random::<f64>().mul_add(10.0, -5.0);
     let z = rng.random::<f64>().mul_add(10.0, -5.0);
     Point::new([x, y, z])
-}
-
-/// Benchmark basic circumsphere containment with fixed simplex
-fn benchmark_basic_circumsphere_containment(c: &mut Criterion) {
-    let simplex_points = vec![
-        Point::new([0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0]),
-    ];
-    let test_point = Point::new([0.5, 0.5, 0.5]);
-
-    c.bench_function("basic/insphere", |b| {
-        b.iter(|| black_box(insphere(black_box(&simplex_points), black_box(test_point)).unwrap()));
-    });
-
-    c.bench_function("basic/insphere_distance", |b| {
-        b.iter(|| {
-            black_box(insphere_distance(black_box(&simplex_points), black_box(test_point)).unwrap())
-        });
-    });
-
-    c.bench_function("basic/insphere_lifted", |b| {
-        b.iter(|| {
-            black_box(insphere_lifted(black_box(&simplex_points), black_box(test_point)).unwrap())
-        });
-    });
 }
 
 /// Benchmark with many random queries
@@ -109,11 +81,11 @@ fn benchmark_random_queries(c: &mut Criterion) {
     });
 }
 
-/// Benchmark with different simplex sizes (2D, 3D, 4D)
+/// Benchmark with different simplex sizes (2D, 3D, 4D, 5D)
 fn benchmark_different_dimensions(c: &mut Criterion) {
     let _rng = rand::rng();
 
-    // 2D case
+    // 2D case - triangle in 2D space
     let simplex_2d = vec![
         Point::new([0.0, 0.0]),
         Point::new([1.0, 0.0]),
@@ -137,7 +109,32 @@ fn benchmark_different_dimensions(c: &mut Criterion) {
         });
     });
 
-    // 4D case
+    // 3D case - tetrahedron in 3D space
+    let simplex_3d = vec![
+        Point::new([0.0, 0.0, 0.0]),
+        Point::new([1.0, 0.0, 0.0]),
+        Point::new([0.0, 1.0, 0.0]),
+        Point::new([0.0, 0.0, 1.0]),
+    ];
+    let test_point_3d = Point::new([0.25, 0.25, 0.25]);
+
+    c.bench_function("3d/insphere", |b| {
+        b.iter(|| black_box(insphere(black_box(&simplex_3d), black_box(test_point_3d)).unwrap()));
+    });
+
+    c.bench_function("3d/insphere_distance", |b| {
+        b.iter(|| {
+            black_box(insphere_distance(black_box(&simplex_3d), black_box(test_point_3d)).unwrap())
+        });
+    });
+
+    c.bench_function("3d/insphere_lifted", |b| {
+        b.iter(|| {
+            black_box(insphere_lifted(black_box(&simplex_3d), black_box(test_point_3d)).unwrap())
+        });
+    });
+
+    // 4D case - 4-simplex in 4D space
     let simplex_4d = vec![
         Point::new([0.0, 0.0, 0.0, 0.0]),
         Point::new([1.0, 0.0, 0.0, 0.0]),
@@ -162,48 +159,229 @@ fn benchmark_different_dimensions(c: &mut Criterion) {
             black_box(insphere_lifted(black_box(&simplex_4d), black_box(test_point_4d)).unwrap())
         });
     });
+
+    // 5D case - 5-simplex in 5D space
+    let simplex_5d = vec![
+        Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
+        Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
+        Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
+        Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
+        Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
+        Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
+    ];
+    let test_point_5d = Point::new([0.16, 0.16, 0.16, 0.16, 0.16]);
+
+    c.bench_function("5d/insphere", |b| {
+        b.iter(|| black_box(insphere(black_box(&simplex_5d), black_box(test_point_5d)).unwrap()));
+    });
+
+    c.bench_function("5d/insphere_distance", |b| {
+        b.iter(|| {
+            black_box(insphere_distance(black_box(&simplex_5d), black_box(test_point_5d)).unwrap())
+        });
+    });
+
+    c.bench_function("5d/insphere_lifted", |b| {
+        b.iter(|| {
+            black_box(insphere_lifted(black_box(&simplex_5d), black_box(test_point_5d)).unwrap())
+        });
+    });
 }
 
-/// Benchmark edge cases (points on boundary, far away, etc.)
+/// Benchmark edge cases (points on boundary, far away, etc.) across all dimensions
+#[allow(clippy::too_many_lines)]
 fn benchmark_edge_cases(c: &mut Criterion) {
-    let point1 = Point::new([0.0, 0.0, 0.0]);
-    let point2 = Point::new([1.0, 0.0, 0.0]);
-    let point3 = Point::new([0.0, 1.0, 0.0]);
-    let point4 = Point::new([0.0, 0.0, 1.0]);
-    let simplex_points = vec![point1, point2, point3, point4];
+    // 2D edge cases - triangle
+    let simplex_2d = vec![
+        Point::new([0.0, 0.0]),
+        Point::new([1.0, 0.0]),
+        Point::new([0.0, 1.0]),
+    ];
+    let boundary_point_2d = simplex_2d[0]; // Point on boundary
+    let far_point_2d = Point::new([1000.0, 1000.0]);
 
-    // Test with point on the boundary (one of the simplex points)
-    c.bench_function("edge_cases/boundary_point_insphere", |b| {
-        b.iter(|| black_box(insphere(black_box(&simplex_points), black_box(point1)).unwrap()));
-    });
-
-    c.bench_function("edge_cases/boundary_point_distance", |b| {
+    c.bench_function("edge_cases_2d/boundary_point_insphere", |b| {
         b.iter(|| {
-            black_box(insphere_distance(black_box(&simplex_points), black_box(point1)).unwrap())
+            black_box(insphere(black_box(&simplex_2d), black_box(boundary_point_2d)).unwrap())
         });
     });
 
-    c.bench_function("edge_cases/boundary_point_lifted", |b| {
+    c.bench_function("edge_cases_2d/boundary_point_distance", |b| {
         b.iter(|| {
-            black_box(insphere_lifted(black_box(&simplex_points), black_box(point1)).unwrap())
+            black_box(
+                insphere_distance(black_box(&simplex_2d), black_box(boundary_point_2d)).unwrap(),
+            )
         });
     });
 
-    // Test with far away point
-    let far_point = Point::new([1000.0, 1000.0, 1000.0]);
-    c.bench_function("edge_cases/far_point_insphere", |b| {
-        b.iter(|| black_box(insphere(black_box(&simplex_points), black_box(far_point)).unwrap()));
-    });
-
-    c.bench_function("edge_cases/far_point_distance", |b| {
+    c.bench_function("edge_cases_2d/boundary_point_lifted", |b| {
         b.iter(|| {
-            black_box(insphere_distance(black_box(&simplex_points), black_box(far_point)).unwrap())
+            black_box(
+                insphere_lifted(black_box(&simplex_2d), black_box(boundary_point_2d)).unwrap(),
+            )
         });
     });
 
-    c.bench_function("edge_cases/far_point_lifted", |b| {
+    c.bench_function("edge_cases_2d/far_point_insphere", |b| {
+        b.iter(|| black_box(insphere(black_box(&simplex_2d), black_box(far_point_2d)).unwrap()));
+    });
+
+    c.bench_function("edge_cases_2d/far_point_distance", |b| {
         b.iter(|| {
-            black_box(insphere_lifted(black_box(&simplex_points), black_box(far_point)).unwrap())
+            black_box(insphere_distance(black_box(&simplex_2d), black_box(far_point_2d)).unwrap())
+        });
+    });
+
+    c.bench_function("edge_cases_2d/far_point_lifted", |b| {
+        b.iter(|| {
+            black_box(insphere_lifted(black_box(&simplex_2d), black_box(far_point_2d)).unwrap())
+        });
+    });
+
+    // 3D edge cases - tetrahedron
+    let simplex_3d = vec![
+        Point::new([0.0, 0.0, 0.0]),
+        Point::new([1.0, 0.0, 0.0]),
+        Point::new([0.0, 1.0, 0.0]),
+        Point::new([0.0, 0.0, 1.0]),
+    ];
+    let boundary_point_3d = simplex_3d[0]; // Point on boundary
+    let far_point_3d = Point::new([1000.0, 1000.0, 1000.0]);
+
+    c.bench_function("edge_cases_3d/boundary_point_insphere", |b| {
+        b.iter(|| {
+            black_box(insphere(black_box(&simplex_3d), black_box(boundary_point_3d)).unwrap())
+        });
+    });
+
+    c.bench_function("edge_cases_3d/boundary_point_distance", |b| {
+        b.iter(|| {
+            black_box(
+                insphere_distance(black_box(&simplex_3d), black_box(boundary_point_3d)).unwrap(),
+            )
+        });
+    });
+
+    c.bench_function("edge_cases_3d/boundary_point_lifted", |b| {
+        b.iter(|| {
+            black_box(
+                insphere_lifted(black_box(&simplex_3d), black_box(boundary_point_3d)).unwrap(),
+            )
+        });
+    });
+
+    c.bench_function("edge_cases_3d/far_point_insphere", |b| {
+        b.iter(|| black_box(insphere(black_box(&simplex_3d), black_box(far_point_3d)).unwrap()));
+    });
+
+    c.bench_function("edge_cases_3d/far_point_distance", |b| {
+        b.iter(|| {
+            black_box(insphere_distance(black_box(&simplex_3d), black_box(far_point_3d)).unwrap())
+        });
+    });
+
+    c.bench_function("edge_cases_3d/far_point_lifted", |b| {
+        b.iter(|| {
+            black_box(insphere_lifted(black_box(&simplex_3d), black_box(far_point_3d)).unwrap())
+        });
+    });
+
+    // 4D edge cases - 4-simplex
+    let simplex_4d = vec![
+        Point::new([0.0, 0.0, 0.0, 0.0]),
+        Point::new([1.0, 0.0, 0.0, 0.0]),
+        Point::new([0.0, 1.0, 0.0, 0.0]),
+        Point::new([0.0, 0.0, 1.0, 0.0]),
+        Point::new([0.0, 0.0, 0.0, 1.0]),
+    ];
+    let boundary_point_4d = simplex_4d[0]; // Point on boundary
+    let far_point_4d = Point::new([1000.0, 1000.0, 1000.0, 1000.0]);
+
+    c.bench_function("edge_cases_4d/boundary_point_insphere", |b| {
+        b.iter(|| {
+            black_box(insphere(black_box(&simplex_4d), black_box(boundary_point_4d)).unwrap())
+        });
+    });
+
+    c.bench_function("edge_cases_4d/boundary_point_distance", |b| {
+        b.iter(|| {
+            black_box(
+                insphere_distance(black_box(&simplex_4d), black_box(boundary_point_4d)).unwrap(),
+            )
+        });
+    });
+
+    c.bench_function("edge_cases_4d/boundary_point_lifted", |b| {
+        b.iter(|| {
+            black_box(
+                insphere_lifted(black_box(&simplex_4d), black_box(boundary_point_4d)).unwrap(),
+            )
+        });
+    });
+
+    c.bench_function("edge_cases_4d/far_point_insphere", |b| {
+        b.iter(|| black_box(insphere(black_box(&simplex_4d), black_box(far_point_4d)).unwrap()));
+    });
+
+    c.bench_function("edge_cases_4d/far_point_distance", |b| {
+        b.iter(|| {
+            black_box(insphere_distance(black_box(&simplex_4d), black_box(far_point_4d)).unwrap())
+        });
+    });
+
+    c.bench_function("edge_cases_4d/far_point_lifted", |b| {
+        b.iter(|| {
+            black_box(insphere_lifted(black_box(&simplex_4d), black_box(far_point_4d)).unwrap())
+        });
+    });
+
+    // 5D edge cases - 5-simplex
+    let simplex_5d = vec![
+        Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
+        Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
+        Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
+        Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
+        Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
+        Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
+    ];
+    let boundary_point_5d = simplex_5d[0]; // Point on boundary
+    let far_point_5d = Point::new([1000.0, 1000.0, 1000.0, 1000.0, 1000.0]);
+
+    c.bench_function("edge_cases_5d/boundary_point_insphere", |b| {
+        b.iter(|| {
+            black_box(insphere(black_box(&simplex_5d), black_box(boundary_point_5d)).unwrap())
+        });
+    });
+
+    c.bench_function("edge_cases_5d/boundary_point_distance", |b| {
+        b.iter(|| {
+            black_box(
+                insphere_distance(black_box(&simplex_5d), black_box(boundary_point_5d)).unwrap(),
+            )
+        });
+    });
+
+    c.bench_function("edge_cases_5d/boundary_point_lifted", |b| {
+        b.iter(|| {
+            black_box(
+                insphere_lifted(black_box(&simplex_5d), black_box(boundary_point_5d)).unwrap(),
+            )
+        });
+    });
+
+    c.bench_function("edge_cases_5d/far_point_insphere", |b| {
+        b.iter(|| black_box(insphere(black_box(&simplex_5d), black_box(far_point_5d)).unwrap()));
+    });
+
+    c.bench_function("edge_cases_5d/far_point_distance", |b| {
+        b.iter(|| {
+            black_box(insphere_distance(black_box(&simplex_5d), black_box(far_point_5d)).unwrap())
+        });
+    });
+
+    c.bench_function("edge_cases_5d/far_point_lifted", |b| {
+        b.iter(|| {
+            black_box(insphere_lifted(black_box(&simplex_5d), black_box(far_point_5d)).unwrap())
         });
     });
 }
@@ -304,7 +482,6 @@ fn benchmark_with_consistency_check(c: &mut Criterion) {
     numerical_consistency_test();
 
     // Then run benchmarks
-    benchmark_basic_circumsphere_containment(c);
     benchmark_random_queries(c);
     benchmark_different_dimensions(c);
     benchmark_edge_cases(c);

@@ -84,6 +84,33 @@ use smallvec::SmallVec;
 // Import key types for use in type aliases
 use crate::core::triangulation_data_structure::{CellKey, VertexKey};
 
+/// Compact index type for facet positions within a cell.
+///
+/// Since a D-dimensional cell has D+1 facets, and practical triangulations work with D ≤ 255,
+/// a `u8` provides sufficient range while minimizing memory usage.
+///
+/// # Range
+///
+/// - **Valid range**: 0..=D for a D-dimensional triangulation
+/// - **Maximum supported**: D ≤ 255 (which covers all practical applications)
+///
+/// # Performance Benefits
+///
+/// - **Smaller tuples**: `(CellKey, FacetIndex)` uses less memory than `(CellKey, usize)`
+/// - **Better cache density**: More facet mappings fit in cache lines
+/// - **Reduced memory bandwidth**: Faster iteration over facet collections
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::FacetIndex;
+///
+/// // 3D triangulation: facets 0, 1, 2, 3 (fits comfortably in u8)
+/// let facet: FacetIndex = 2;
+/// assert_eq!(facet as usize, 2);
+/// ```
+pub type FacetIndex = u8;
+
 // Re-export UUID for convenience in type aliases
 pub use uuid::Uuid;
 
@@ -181,9 +208,10 @@ pub type SmallBuffer<T, const N: usize> = SmallVec<[T; N]>;
 /// # Optimization Rationale
 ///
 /// - **Key**: `u64` facet hash (from vertex combination)
-/// - **Value**: `SmallBuffer<(CellKey, usize), 2>` - stack allocated for typical case
+/// - **Value**: `SmallBuffer<(CellKey, FacetIndex), 2>` - stack allocated for typical case
 /// - **Typical Pattern**: 1 cell (boundary) or 2 cells (interior facet)
 /// - **Performance**: Avoids heap allocation for >95% of facets
+/// - **Memory Efficiency**: `FacetIndex` (u8) reduces tuple size compared to `usize`
 ///
 /// # Examples
 ///
@@ -193,7 +221,7 @@ pub type SmallBuffer<T, const N: usize> = SmallVec<[T; N]>;
 /// let mut facet_map: FacetToCellsMap = FacetToCellsMap::default();
 /// // Most entries will use stack allocation
 /// ```
-pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<(CellKey, usize), 2>>;
+pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<(CellKey, FacetIndex), 2>>;
 
 /// Cell neighbor mapping optimized for typical cell degrees.
 /// Most cells have a small number of neighbors (D+1 faces, so at most D+1 neighbors).
@@ -317,7 +345,8 @@ pub type ValidCellsBuffer = SmallBuffer<CellKey, SMALL_CELL_OPERATION_BUFFER_SIZ
 /// - **Stack Allocation**: Up to `MAX_PRACTICAL_DIMENSION_SIZE` facet info entries
 /// - **Use Case**: Boundary analysis, facet enumeration
 /// - **Performance**: Handles cells up to 7D on stack
-pub type FacetInfoBuffer = SmallBuffer<(CellKey, usize), MAX_PRACTICAL_DIMENSION_SIZE>;
+/// - **Memory Efficiency**: `FacetIndex` (u8) reduces memory usage compared to `usize`
+pub type FacetInfoBuffer = SmallBuffer<(CellKey, FacetIndex), MAX_PRACTICAL_DIMENSION_SIZE>;
 
 // =============================================================================
 // SEMANTIC SIZE CONSTANTS AND TYPE ALIASES

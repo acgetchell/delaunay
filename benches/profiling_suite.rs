@@ -43,15 +43,17 @@ use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, 
 use delaunay::core::collections::SmallBuffer;
 use delaunay::geometry::util::{
     generate_grid_points, generate_poisson_points, generate_random_points_seeded,
+    safe_usize_to_scalar,
 };
 use delaunay::prelude::*;
 use delaunay::vertex;
+use num_traits::cast;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 // SmallBuffer size constants for different use cases
 const BENCHMARK_ITERATION_BUFFER_SIZE: usize = 8; // For tracking allocation info across benchmark iterations
-const SIMPLEX_VERTICES_BUFFER_SIZE: usize = 8; // For 3D simplex vertices (4) with some headroom
+const SIMPLEX_VERTICES_BUFFER_SIZE: usize = 4; // 3D simplex = 4 vertices
 const QUERY_RESULTS_BUFFER_SIZE: usize = 1024; // For bounded query result collections (max 1000 in code)
 
 // Memory allocation counting support
@@ -73,6 +75,15 @@ struct AllocationInfo {
 fn measure<F: FnOnce()>(f: F) -> AllocationInfo {
     f();
     AllocationInfo::default()
+}
+
+#[cfg(not(feature = "count-allocations"))]
+fn print_count_allocations_banner_once() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        eprintln!("count-allocations feature not enabled; memory stats are placeholders.")
+    });
 }
 
 /// Large-scale point counts for comprehensive profiling
@@ -101,6 +112,14 @@ fn get_profiling_counts() -> &'static [usize] {
     } else {
         PROFILING_COUNTS_PRODUCTION
     }
+}
+
+/// Helper function to parse benchmark measurement time from environment
+fn bench_time(default_secs: u64) -> Duration {
+    std::env::var("BENCH_MEASUREMENT_TIME")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map_or_else(|| Duration::from_secs(default_secs), Duration::from_secs)
 }
 
 /// Point distribution types for comprehensive testing
@@ -133,12 +152,16 @@ fn generate_points_by_distribution<const D: usize>(
         }
         PointDistribution::Grid => {
             // Calculate points per dimension to get approximately `count` points total
-            #[allow(
-                clippy::cast_precision_loss,
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss
-            )]
-            let points_per_dim = ((count as f64).powf(1.0 / D as f64).ceil() as usize).max(2);
+            let count_f64 = safe_usize_to_scalar::<f64>(count).unwrap_or(2.0);
+            let d_f64 = safe_usize_to_scalar::<f64>(D).unwrap_or(1.0);
+            let raw = count_f64.powf(1.0 / d_f64).ceil();
+
+            let points_per_dim = if raw.is_finite() && raw >= 2.0 {
+                // Use safe conversion from f64 to usize
+                cast::<f64, usize>(raw).unwrap_or(2)
+            } else {
+                2
+            };
             match generate_grid_points(points_per_dim, 10.0, [0.0; D]) {
                 Ok(pts) => pts,
                 Err(e) => {
@@ -181,12 +204,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 
     // 2D Triangulation Scaling
     let mut group = c.benchmark_group("triangulation_scaling_2d");
-    // Allow benchmark measurement time to be overridden via environment variable
-    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(120);
-    group.measurement_time(Duration::from_secs(measurement_time));
+    group.measurement_time(bench_time(120));
 
     for &count in counts {
         for &distribution in &distributions {
@@ -220,12 +238,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 
     // 3D Triangulation Scaling
     let mut group = c.benchmark_group("triangulation_scaling_3d");
-    // Allow benchmark measurement time to be overridden via environment variable
-    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(180);
-    group.measurement_time(Duration::from_secs(measurement_time));
+    group.measurement_time(bench_time(180));
 
     for &count in counts {
         for &distribution in &distributions {
@@ -270,12 +283,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 
     // 4D Triangulation Scaling
     let mut group = c.benchmark_group("triangulation_scaling_4d");
-    // Allow benchmark measurement time to be overridden via environment variable
-    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(240);
-    group.measurement_time(Duration::from_secs(measurement_time));
+    group.measurement_time(bench_time(240));
 
     for &count in high_dim_counts {
         for &distribution in &distributions {
@@ -314,12 +322,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     };
 
     let mut group = c.benchmark_group("triangulation_scaling_5d");
-    // Allow benchmark measurement time to be overridden via environment variable
-    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(300);
-    group.measurement_time(Duration::from_secs(measurement_time));
+    group.measurement_time(bench_time(300));
 
     for &count in ultra_high_dim_counts {
         for &distribution in &distributions {
@@ -355,7 +358,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 // Memory Usage Profiling
 // ============================================================================
 
-/// Calculate 95th percentile from a slice of values
+/// Calculate 95th percentile from a slice of values using nearest-rank method
 #[allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
@@ -366,7 +369,9 @@ fn calculate_95th_percentile(values: &mut [u64]) -> u64 {
         return 0;
     }
     values.sort_unstable();
-    let index = ((values.len() as f64 * 0.95) as usize).min(values.len() - 1);
+    let n = values.len();
+    let rank = (95 * (n.saturating_sub(1))).div_ceil(100); // nearest-rank, clamps at n-1
+    let index = rank.min(n - 1);
     values[index]
 }
 
@@ -404,6 +409,9 @@ fn print_alloc_summary(
 /// Memory usage profiling across different scales and dimensions using allocation counter
 #[allow(clippy::too_many_lines, clippy::cast_possible_wrap)]
 fn benchmark_memory_profiling(c: &mut Criterion) {
+    #[cfg(not(feature = "count-allocations"))]
+    print_count_allocations_banner_once();
+
     let counts = if std::env::var("PROFILING_DEV_MODE").is_ok() {
         &[1_000, 10_000][..]
     } else {
@@ -411,12 +419,7 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
     };
 
     let mut group = c.benchmark_group("memory_profiling");
-    // Allow benchmark measurement time to be overridden via environment variable
-    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(30);
-    group.measurement_time(Duration::from_secs(measurement_time));
+    group.measurement_time(bench_time(30));
 
     for &count in counts {
         // 2D Memory Profiling
@@ -807,6 +810,7 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
 
 /// Query latency profiling for circumsphere containment tests
 fn benchmark_query_latency(c: &mut Criterion) {
+    const MAX_PRECOMPUTED_SIMPLICES: usize = 1000;
     let counts = if std::env::var("PROFILING_DEV_MODE").is_ok() {
         &[1_000, 3_000][..]
     } else {
@@ -814,12 +818,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
     };
 
     let mut group = c.benchmark_group("query_latency");
-    // Allow benchmark measurement time to be overridden via environment variable
-    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(90);
-    group.measurement_time(Duration::from_secs(measurement_time));
+    group.measurement_time(bench_time(90));
 
     for &count in counts {
         // Create triangulation and test circumsphere queries
@@ -841,7 +840,12 @@ fn benchmark_query_latency(c: &mut Criterion) {
                 let mut precomputed_simplices: Vec<
                     SmallBuffer<Point<f64, 3>, SIMPLEX_VERTICES_BUFFER_SIZE>,
                 > = Vec::new();
+                let mut sampled_count = 0;
                 for cell in tds.cells() {
+                    if sampled_count >= MAX_PRECOMPUTED_SIMPLICES {
+                        break;
+                    }
+
                     let vertex_coords: SmallBuffer<[f64; 3], SIMPLEX_VERTICES_BUFFER_SIZE> = cell
                         .1
                         .vertices()
@@ -856,6 +860,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
                             SIMPLEX_VERTICES_BUFFER_SIZE,
                         > = vertex_coords.iter().copied().map(Point::new).collect();
                         precomputed_simplices.push(points_for_test);
+                        sampled_count += 1;
                     }
                 }
 
@@ -910,12 +915,7 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
     };
 
     let mut group = c.benchmark_group("algorithmic_bottlenecks");
-    // Allow benchmark measurement time to be overridden via environment variable
-    let measurement_time = std::env::var("BENCH_MEASUREMENT_TIME")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(15);
-    group.measurement_time(Duration::from_secs(measurement_time));
+    group.measurement_time(bench_time(15));
 
     for &count in counts {
         // Profile boundary facet computation

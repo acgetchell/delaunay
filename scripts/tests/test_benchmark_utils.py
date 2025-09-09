@@ -1457,7 +1457,6 @@ class TestTimeoutHandling:
 
     def test_performance_comparator_timeout_parameter_passed(self):
         """Test that PerformanceComparator accepts and uses timeout parameter."""
-        from benchmark_utils import PerformanceComparator
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)

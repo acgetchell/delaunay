@@ -85,7 +85,7 @@ impl HullMemoryRecord {
 
     /// Create a placeholder record when allocation counting is disabled
     #[cfg(not(feature = "count-allocations"))]
-    fn new_placeholder(
+    const fn new_placeholder(
         dimension: usize,
         points: usize,
         vertices: usize,

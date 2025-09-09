@@ -92,7 +92,7 @@ where
                 let facet_index = cells[0].1;
                 if let Some(cell) = self.cells().get(cell_id) {
                     let facets = cell.facets()?;
-                    boundary_facets.push(facets[facet_index].clone());
+                    boundary_facets.push(facets[facet_index as usize].clone());
                 }
             }
         }

@@ -1090,7 +1090,8 @@ where
             // Assign incident cells to vertices
             self.assign_incident_cells()
                 .map_err(|_| "Failed to assign incident cells")?;
-
+            // Topology changed; invalidate caches.
+            self.generation.fetch_add(1, Ordering::Relaxed);
             return Ok(());
         }
 
@@ -1301,17 +1302,15 @@ where
                 }
             })?;
 
+            let mut facet_vertices = Vec::with_capacity(vertex_keys.len().saturating_sub(1));
             for i in 0..vertex_keys.len() {
-                // Compute facet key by creating a slice that excludes the i-th vertex
-                // More efficient than clone+remove: directly iterate without creating intermediate collection
-                let facet_vertices: Vec<_> = vertex_keys
-                    .iter()
-                    .enumerate()
-                    .filter(|(j, _)| *j != i)
-                    .map(|(_, &key)| key)
-                    .collect();
+                facet_vertices.clear();
+                for (j, &key) in vertex_keys.iter().enumerate() {
+                    if j != i {
+                        facet_vertices.push(key);
+                    }
+                }
                 let facet_key = facet_key_from_vertex_keys(&facet_vertices);
-                // Store both the cell and the vertex index that is opposite to this facet
                 facet_map.entry(facet_key).or_default().push((cell_key, i));
             }
         }
@@ -1484,6 +1483,9 @@ where
     /// 3. Update the vertex's `incident_cell` field with the UUID of the selected cell
     ///
     pub fn assign_incident_cells(&mut self) -> Result<(), TriangulationValidationError> {
+        if self.cells.is_empty() {
+            return Ok(());
+        }
         // Build vertex_to_cells mapping using optimized collections
         let mut vertex_to_cells: VertexToCellsMap =
             fast_hash_map_with_capacity(self.vertices.len());
@@ -1580,6 +1582,9 @@ where
             }
         }
 
+        if duplicate_count > 0 {
+            self.generation.fetch_add(1, Ordering::Relaxed);
+        }
         duplicate_count
     }
 
@@ -1595,7 +1600,7 @@ where
     /// - The key is the canonical facet key (u64) computed by `facet.key()`
     /// - The value is a vector of tuples containing:
     ///   - `CellKey`: The `SlotMap` key of the cell containing this facet
-    ///   - `usize`: The index of this facet within the cell (0-based)
+    ///   - `FacetIndex`: The index of this facet within the cell (0-based)
     ///
     /// # Examples
     ///
@@ -1634,6 +1639,11 @@ where
     /// This method has O(N×F) time complexity where N is the number of cells and F is the
     /// number of facets per cell (typically D+1 for D-dimensional cells). The space
     /// complexity is O(T) where T is the total number of facets across all cells.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any facet index exceeds the maximum value for `FacetIndex` (255).
+    /// This should not occur in practice since D is typically small (≤ 7).
     #[must_use]
     pub fn build_facet_to_cells_hashmap(&self) -> FacetToCellsMap {
         let mut facet_to_cells: FacetToCellsMap =
@@ -1649,10 +1659,12 @@ where
                     let facet_key = facet.key();
 
                     // Insert the (cell_id, facet_index) pair into the HashMap
-                    facet_to_cells
-                        .entry(facet_key)
-                        .or_default()
-                        .push((cell_id, facet_index));
+                    facet_to_cells.entry(facet_key).or_default().push((
+                        cell_id,
+                        u8::try_from(facet_index).unwrap_or_else(|_| {
+                            panic!("facet_index {facet_index} too large for FacetIndex (u8)")
+                        }),
+                    ));
                 }
             }
         }
@@ -1709,7 +1721,7 @@ where
                 let (first_cell_key, first_facet_index) = cell_facet_pairs[0];
                 let first_cell = &self.cells[first_cell_key];
                 let facets = first_cell.facets()?;
-                let reference_facet = &facets[first_facet_index];
+                let reference_facet = &facets[first_facet_index as usize];
 
                 // Get the vertices that make up this facet using Facet::vertices()
                 let facet_vertices = reference_facet.vertices();
@@ -1781,6 +1793,7 @@ where
         if actually_removed > 0 || duplicate_cells_removed > 0 {
             self.assign_neighbors()?;
             self.assign_incident_cells()?;
+            self.generation.fetch_add(1, Ordering::Relaxed);
         }
 
         Ok(actually_removed + duplicate_cells_removed)
@@ -4692,9 +4705,8 @@ mod tests {
         let cell_uuid = tds.cells[cell_key].uuid();
         tds.cell_bimap.insert(cell_uuid, cell_key);
 
-        // This should pass validation (exactly D neighbors is valid)
+        // Intentionally invalid: neighbors length is 3 (< D+1 = 4). Expect failure.
         let result = tds.is_valid();
-        // Should fail because the neighbors vector has wrong length (3 instead of 4 for 3D)
         assert!(matches!(
             result,
             Err(TriangulationValidationError::InvalidCell {
