@@ -150,77 +150,34 @@ fn store_memory_record(record: MemoryRecord) {
     records.push(record);
 }
 
-/// Measure memory for 2D triangulations
-#[allow(unused_variables)] // info is used conditionally based on count-allocations feature
-fn measure_2d_memory(points: &[Point<f64, 2>], n_points: usize) -> MemoryRecord {
-    let (tds, info) = measure_with_result(|| {
-        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-        Tds::<f64, (), (), 2>::new(&vertices).unwrap()
-    });
+/// Macro to reduce duplication in memory measurement functions
+macro_rules! measure_memory {
+    ($dim:literal, $func_name:ident) => {
+        /// Measure memory for D-dimensional triangulations
+        #[allow(unused_variables)] // info is used conditionally based on count-allocations feature
+        fn $func_name(points: &[Point<f64, $dim>], n_points: usize) -> MemoryRecord {
+            let (tds, info) = measure_with_result(|| {
+                let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                Tds::<f64, (), (), $dim>::new(&vertices).unwrap()
+            });
 
-    let vertex_count = tds.number_of_vertices();
-    let cells = tds.number_of_cells();
+            let vertex_count = tds.number_of_vertices();
+            let cells = tds.number_of_cells();
 
-    #[cfg(feature = "count-allocations")]
-    return MemoryRecord::new(2, n_points, vertex_count, cells, &info);
+            #[cfg(feature = "count-allocations")]
+            return MemoryRecord::new($dim, n_points, vertex_count, cells, &info);
 
-    #[cfg(not(feature = "count-allocations"))]
-    return MemoryRecord::new_placeholder(2, n_points, vertex_count, cells);
+            #[cfg(not(feature = "count-allocations"))]
+            return MemoryRecord::new_placeholder($dim, n_points, vertex_count, cells);
+        }
+    };
 }
 
-/// Measure memory for 3D triangulations
-#[allow(unused_variables)] // info is used conditionally based on count-allocations feature
-fn measure_3d_memory(points: &[Point<f64, 3>], n_points: usize) -> MemoryRecord {
-    let (tds, info) = measure_with_result(|| {
-        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-        Tds::<f64, (), (), 3>::new(&vertices).unwrap()
-    });
-
-    let vertex_count = tds.number_of_vertices();
-    let cells = tds.number_of_cells();
-
-    #[cfg(feature = "count-allocations")]
-    return MemoryRecord::new(3, n_points, vertex_count, cells, &info);
-
-    #[cfg(not(feature = "count-allocations"))]
-    return MemoryRecord::new_placeholder(3, n_points, vertex_count, cells);
-}
-
-/// Measure memory for 4D triangulations
-#[allow(unused_variables)] // info is used conditionally based on count-allocations feature
-fn measure_4d_memory(points: &[Point<f64, 4>], n_points: usize) -> MemoryRecord {
-    let (tds, info) = measure_with_result(|| {
-        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-        Tds::<f64, (), (), 4>::new(&vertices).unwrap()
-    });
-
-    let vertex_count = tds.number_of_vertices();
-    let cells = tds.number_of_cells();
-
-    #[cfg(feature = "count-allocations")]
-    return MemoryRecord::new(4, n_points, vertex_count, cells, &info);
-
-    #[cfg(not(feature = "count-allocations"))]
-    return MemoryRecord::new_placeholder(4, n_points, vertex_count, cells);
-}
-
-/// Measure memory for 5D triangulations
-#[allow(unused_variables)] // info is used conditionally based on count-allocations feature
-fn measure_5d_memory(points: &[Point<f64, 5>], n_points: usize) -> MemoryRecord {
-    let (tds, info) = measure_with_result(|| {
-        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-        Tds::<f64, (), (), 5>::new(&vertices).unwrap()
-    });
-
-    let vertex_count = tds.number_of_vertices();
-    let cells = tds.number_of_cells();
-
-    #[cfg(feature = "count-allocations")]
-    return MemoryRecord::new(5, n_points, vertex_count, cells, &info);
-
-    #[cfg(not(feature = "count-allocations"))]
-    return MemoryRecord::new_placeholder(5, n_points, vertex_count, cells);
-}
+// Generate memory measurement functions using the macro
+measure_memory!(2, measure_2d_memory);
+measure_memory!(3, measure_3d_memory);
+measure_memory!(4, measure_4d_memory);
+measure_memory!(5, measure_5d_memory);
 
 /// Benchmark memory scaling for 2D triangulations
 fn benchmark_memory_scaling_2d(c: &mut Criterion) {

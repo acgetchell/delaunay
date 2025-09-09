@@ -1640,10 +1640,10 @@ where
     /// number of facets per cell (typically D+1 for D-dimensional cells). The space
     /// complexity is O(T) where T is the total number of facets across all cells.
     ///
-    /// # Panics
+    /// # Requirements
     ///
-    /// Panics if any facet index exceeds the maximum value for `FacetIndex` (255).
-    /// This should not occur in practice since D is typically small (≤ 7).
+    /// This function requires that D ≤ 254, ensuring that facet indices (0..=D) fit within
+    /// `FacetIndex` (u8) range. This constraint is enforced by debug assertions.
     #[must_use]
     pub fn build_facet_to_cells_hashmap(&self) -> FacetToCellsMap {
         let mut facet_to_cells: FacetToCellsMap =
@@ -1659,12 +1659,22 @@ where
                     let facet_key = facet.key();
 
                     // Insert the (cell_id, facet_index) pair into the HashMap
-                    facet_to_cells.entry(facet_key).or_default().push((
-                        cell_id,
-                        u8::try_from(facet_index).unwrap_or_else(|_| {
-                            panic!("facet_index {facet_index} too large for FacetIndex (u8)")
-                        }),
-                    ));
+                    // Ensure the facet index fits within FacetIndex (u8). This should always hold
+                    // under the crate's dimensional constraints (D ≤ 254). In release builds,
+                    // gracefully skip impossible cases instead of panicking.
+                    debug_assert!(
+                        u8::try_from(facet_index).is_ok(),
+                        "facet_index too large for u8"
+                    );
+                    let Ok(facet_index_u8) = u8::try_from(facet_index) else {
+                        // Pathological dimension; skip this facet mapping without panicking.
+                        continue;
+                    };
+
+                    facet_to_cells
+                        .entry(facet_key)
+                        .or_default()
+                        .push((cell_id, facet_index_u8));
                 }
             }
         }

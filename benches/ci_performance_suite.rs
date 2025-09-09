@@ -48,101 +48,40 @@ fn generate_points_5d(count: usize) -> Vec<Point<f64, 5>> {
     generate_random_points(count, (-100.0, 100.0)).unwrap()
 }
 
-/// Benchmark `Tds::new` for 2D triangulations
-fn benchmark_tds_new_2d(c: &mut Criterion) {
-    let counts = COUNTS;
-    let mut group = c.benchmark_group("tds_new_2d");
+/// Macro to reduce duplication in dimensional benchmark functions
+macro_rules! benchmark_tds_new_dimension {
+    ($dim:literal, $func_name:ident, $points_fn:ident) => {
+        /// Benchmark `Tds::new` for D-dimensional triangulations
+        fn $func_name(c: &mut Criterion) {
+            let counts = COUNTS;
+            let mut group = c.benchmark_group(concat!("tds_new_", stringify!($dim), "d"));
 
-    for &count in counts {
-        group.throughput(Throughput::Elements(count as u64));
+            for &count in counts {
+                group.throughput(Throughput::Elements(count as u64));
 
-        group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
-            b.iter_with_setup(
-                || {
-                    let points = generate_points_2d(count);
-                    points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
-                },
-                |vertices| {
-                    black_box(Tds::<f64, (), (), 2>::new(&vertices).unwrap());
-                },
-            );
-        });
-    }
+                group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
+                    b.iter_with_setup(
+                        || {
+                            let points = $points_fn(count);
+                            points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
+                        },
+                        |vertices| {
+                            black_box(Tds::<f64, (), (), $dim>::new(&vertices).unwrap());
+                        },
+                    );
+                });
+            }
 
-    group.finish();
+            group.finish();
+        }
+    };
 }
 
-/// Benchmark `Tds::new` for 3D triangulations
-fn benchmark_tds_new_3d(c: &mut Criterion) {
-    let counts = COUNTS;
-    let mut group = c.benchmark_group("tds_new_3d");
-
-    for &count in counts {
-        group.throughput(Throughput::Elements(count as u64));
-
-        group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
-            b.iter_with_setup(
-                || {
-                    let points = generate_points_3d(count);
-                    points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
-                },
-                |vertices| {
-                    black_box(Tds::<f64, (), (), 3>::new(&vertices).unwrap());
-                },
-            );
-        });
-    }
-
-    group.finish();
-}
-
-/// Benchmark `Tds::new` for 4D triangulations
-fn benchmark_tds_new_4d(c: &mut Criterion) {
-    let counts = COUNTS;
-    let mut group = c.benchmark_group("tds_new_4d");
-
-    for &count in counts {
-        group.throughput(Throughput::Elements(count as u64));
-
-        group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
-            b.iter_with_setup(
-                || {
-                    let points = generate_points_4d(count);
-                    points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
-                },
-                |vertices| {
-                    black_box(Tds::<f64, (), (), 4>::new(&vertices).unwrap());
-                },
-            );
-        });
-    }
-
-    group.finish();
-}
-
-/// Benchmark `Tds::new` for 5D triangulations
-fn benchmark_tds_new_5d(c: &mut Criterion) {
-    let counts = COUNTS;
-    let mut group = c.benchmark_group("tds_new_5d");
-
-    for &count in counts {
-        group.throughput(Throughput::Elements(count as u64));
-
-        group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
-            b.iter_with_setup(
-                || {
-                    let points = generate_points_5d(count);
-                    points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
-                },
-                |vertices| {
-                    black_box(Tds::<f64, (), (), 5>::new(&vertices).unwrap());
-                },
-            );
-        });
-    }
-
-    group.finish();
-}
+// Generate benchmark functions using the macro
+benchmark_tds_new_dimension!(2, benchmark_tds_new_2d, generate_points_2d);
+benchmark_tds_new_dimension!(3, benchmark_tds_new_3d, generate_points_3d);
+benchmark_tds_new_dimension!(4, benchmark_tds_new_4d, generate_points_4d);
+benchmark_tds_new_dimension!(5, benchmark_tds_new_5d, generate_points_5d);
 
 criterion_group!(
     name = benches;

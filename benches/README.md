@@ -114,6 +114,8 @@ Comprehensive performance benchmarks, analysis, and recommendations have been mo
 Performance results are automatically updated using the benchmark infrastructure:
 
 ```bash
+# Prerequisite: install uv (e.g., `pipx install uv` or `brew install uv`)
+
 # Generate updated performance summary
 uv run performance-summary-utils generate
 

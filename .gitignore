@@ -23,4 +23,5 @@
 uv.lock
 .pytest_cache/
 .venv/
+.mypy_cache/
 /benches/baseline_results.txt

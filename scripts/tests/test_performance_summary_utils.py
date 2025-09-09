@@ -12,7 +12,6 @@ and necessary for comprehensive unit testing of internal functionality.
 
 import json
 import tempfile
-from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,19 +25,6 @@ from performance_summary_utils import (
     VersionComparisonData,
     find_project_root,
 )
-
-
-@contextmanager
-def temp_chdir(path):
-    """Context manager for temporarily changing working directory."""
-    import os
-
-    original_cwd = Path.cwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(original_cwd)
 
 
 class TestCircumspherePerformanceData:
@@ -113,7 +99,7 @@ class TestVersionComparisonData:
 class TestProjectRootHandling:
     """Test cases for find_project_root functionality."""
 
-    def test_find_project_root_success(self):
+    def test_find_project_root_success(self, temp_chdir):
         """Test finding project root when Cargo.toml exists."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -131,7 +117,7 @@ class TestProjectRootHandling:
                 # Resolve both paths to handle symlinks (macOS /var -> /private/var)
                 assert result.resolve() == temp_path.resolve()
 
-    def test_find_project_root_not_found(self):
+    def test_find_project_root_not_found(self, temp_chdir):
         """Test finding project root when Cargo.toml doesn't exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -143,13 +129,13 @@ class TestProjectRootHandling:
 class TestPerformanceSummaryGenerator:
     """Test cases for PerformanceSummaryGenerator class."""
 
-    def test_init(self):
+    def test_init(self, mock_git_command_result):
         """Test PerformanceSummaryGenerator initialization."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
             with patch("performance_summary_utils.run_git_command") as mock_git:
-                mock_git.return_value = "v0.4.2"
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
 
                 generator = PerformanceSummaryGenerator(project_root)
 
@@ -158,13 +144,13 @@ class TestPerformanceSummaryGenerator:
                 assert generator.comparison_file == project_root / "benches" / "compare_results.txt"
                 assert generator.circumsphere_results_dir == project_root / "target" / "criterion"
 
-    def test_get_current_version_with_tag(self):
+    def test_get_current_version_with_tag(self, mock_git_command_result):
         """Test version extraction from git tags."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
             with patch("performance_summary_utils.run_git_command") as mock_git:
-                mock_git.return_value = "v0.4.2"
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
 
                 generator = PerformanceSummaryGenerator(project_root)
 
@@ -182,25 +168,25 @@ class TestPerformanceSummaryGenerator:
 
                 assert generator.current_version == "unknown"
 
-    def test_get_version_date_with_tag(self):
+    def test_get_version_date_with_tag(self, mock_git_command_result):
         """Test date extraction from git tag."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
             with patch("performance_summary_utils.run_git_command") as mock_git:
-                # Mock version and date calls
-                mock_git.side_effect = ["v0.4.2", "2025-01-15"]
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-15")]
 
                 generator = PerformanceSummaryGenerator(project_root)
 
                 assert generator.current_date == "2025-01-15"
 
-    def test_get_fallback_circumsphere_data(self):
+    def test_get_fallback_circumsphere_data(self, mock_git_command_result):
         """Test fallback circumsphere data generation."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
-            with patch("performance_summary_utils.run_git_command"):
+            with patch("performance_summary_utils.run_git_command") as mock_git:
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
                 generator = PerformanceSummaryGenerator(project_root)
 
                 fallback_data = generator._get_fallback_circumsphere_data()
@@ -215,12 +201,13 @@ class TestPerformanceSummaryGenerator:
                     assert "insphere_distance" in case.methods
                     assert "insphere_lifted" in case.methods
 
-    def test_parse_circumsphere_benchmark_results_no_criterion_dir(self):
+    def test_parse_circumsphere_benchmark_results_no_criterion_dir(self, mock_git_command_result):
         """Test parsing when criterion directory doesn't exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
-            with patch("performance_summary_utils.run_git_command"):
+            with patch("performance_summary_utils.run_git_command") as mock_git:
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
                 generator = PerformanceSummaryGenerator(project_root)
 
                 # Should fallback to hardcoded data
@@ -229,7 +216,7 @@ class TestPerformanceSummaryGenerator:
                 assert len(results) >= 3  # Should have fallback data
                 assert all(isinstance(case, CircumsphereTestCase) for case in results)
 
-    def test_parse_circumsphere_benchmark_results_with_data(self):
+    def test_parse_circumsphere_benchmark_results_with_data(self, mock_git_command_result):
         """Test parsing with actual criterion benchmark data."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -246,7 +233,8 @@ class TestPerformanceSummaryGenerator:
             with estimates_file.open("w") as f:
                 json.dump(estimates_data, f)
 
-            with patch("performance_summary_utils.run_git_command"):
+            with patch("performance_summary_utils.run_git_command") as mock_git:
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
                 generator = PerformanceSummaryGenerator(project_root)
 
                 results = generator._parse_circumsphere_benchmark_results()
@@ -258,12 +246,13 @@ class TestPerformanceSummaryGenerator:
                     assert "insphere" in basic_result.methods
                     assert basic_result.methods["insphere"].time_ns == 805.0
 
-    def test_analyze_performance_ranking(self):
+    def test_analyze_performance_ranking(self, mock_git_command_result):
         """Test performance ranking analysis."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
-            with patch("performance_summary_utils.run_git_command"):
+            with patch("performance_summary_utils.run_git_command") as mock_git:
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
                 generator = PerformanceSummaryGenerator(project_root)
 
                 # Create test data
@@ -288,12 +277,13 @@ class TestPerformanceSummaryGenerator:
                 assert methods_in_order[0] == "insphere_lifted"  # Fastest
                 assert "fastest" in rankings[0][2]  # Description should mention fastest
 
-    def test_generate_dynamic_recommendations(self):
+    def test_generate_dynamic_recommendations(self, mock_git_command_result):
         """Test dynamic recommendation generation."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
-            with patch("performance_summary_utils.run_git_command"):
+            with patch("performance_summary_utils.run_git_command") as mock_git:
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
                 generator = PerformanceSummaryGenerator(project_root)
 
                 # Mock performance ranking with insphere_lifted as fastest
@@ -312,7 +302,7 @@ class TestPerformanceSummaryGenerator:
                 assert "insphere_lifted" in performance_section
                 assert "maximum performance" in performance_section
 
-    def test_generate_summary_success(self):
+    def test_generate_summary_success(self, mock_git_command_result):
         """Test successful summary generation."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -322,7 +312,7 @@ class TestPerformanceSummaryGenerator:
                 patch("performance_summary_utils.run_git_command") as mock_git,
                 patch("performance_summary_utils.get_git_commit_hash") as mock_commit,
             ):
-                mock_git.return_value = "v0.4.2"
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
                 mock_commit.return_value = "abc123def456"
 
                 generator = PerformanceSummaryGenerator(project_root)
@@ -338,7 +328,7 @@ class TestPerformanceSummaryGenerator:
                 assert "Version 0.4.2" in content
                 assert "abc123def456" in content
 
-    def test_generate_summary_with_baseline_data(self):
+    def test_generate_summary_with_baseline_data(self, mock_git_command_result):
         """Test summary generation with baseline data."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -359,7 +349,7 @@ class TestPerformanceSummaryGenerator:
             )
 
             with patch("performance_summary_utils.run_git_command") as mock_git:
-                mock_git.return_value = "v0.4.2"
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
 
                 generator = PerformanceSummaryGenerator(project_root)
                 success = generator.generate_summary(output_file)
@@ -370,7 +360,7 @@ class TestPerformanceSummaryGenerator:
                 assert "Triangulation Data Structure Performance" in content
                 assert "Current Baseline Information" in content
 
-    def test_generate_summary_with_comparison_data(self):
+    def test_generate_summary_with_comparison_data(self, mock_git_command_result):
         """Test summary generation with comparison data."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -385,7 +375,7 @@ class TestPerformanceSummaryGenerator:
             )
 
             with patch("performance_summary_utils.run_git_command") as mock_git:
-                mock_git.return_value = "v0.4.2"
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
 
                 generator = PerformanceSummaryGenerator(project_root)
                 success = generator.generate_summary(output_file)
@@ -395,13 +385,13 @@ class TestPerformanceSummaryGenerator:
                 content = output_file.read_text()
                 assert "Performance Regression Detected" in content
 
-    def test_run_circumsphere_benchmarks_success(self):
+    def test_run_circumsphere_benchmarks_success(self, mock_git_command_result):
         """Test successful circumsphere benchmark execution."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
             with patch("performance_summary_utils.run_git_command") as mock_git, patch("performance_summary_utils.run_cargo_command") as mock_cargo:
-                mock_git.return_value = "v0.4.2"
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
                 mock_cargo.return_value = "benchmark output"
 
                 generator = PerformanceSummaryGenerator(project_root)
@@ -411,14 +401,14 @@ class TestPerformanceSummaryGenerator:
                 assert success
                 mock_cargo.assert_called_once()
 
-    def test_run_circumsphere_benchmarks_failure(self):
+    def test_run_circumsphere_benchmarks_failure(self, mock_git_command_result):
         """Test failed circumsphere benchmark execution."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
             with patch("performance_summary_utils.run_git_command") as mock_git, patch("performance_summary_utils.run_cargo_command") as mock_cargo:
-                mock_git.return_value = "v0.4.2"
-                mock_cargo.return_value = None  # Simulate failure
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
+                mock_cargo.side_effect = Exception("Benchmark failed")  # Simulate failure
 
                 generator = PerformanceSummaryGenerator(project_root)
 
@@ -426,13 +416,13 @@ class TestPerformanceSummaryGenerator:
 
                 assert not success
 
-    def test_get_circumsphere_performance_results_format(self):
+    def test_get_circumsphere_performance_results_format(self, mock_git_command_result):
         """Test circumsphere performance results formatting."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
             with patch("performance_summary_utils.run_git_command") as mock_git:
-                mock_git.return_value = "v0.4.2"
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
 
                 generator = PerformanceSummaryGenerator(project_root)
 
@@ -447,13 +437,13 @@ class TestPerformanceSummaryGenerator:
                 assert "Historical Version Comparison" in results_text
                 assert "insphere_lifted" in results_text  # Should be marked as winner
 
-    def test_get_update_instructions(self):
+    def test_get_update_instructions(self, mock_git_command_result):
         """Test update instructions generation."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
             with patch("performance_summary_utils.run_git_command") as mock_git:
-                mock_git.return_value = "v0.4.2"
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
 
                 generator = PerformanceSummaryGenerator(project_root)
 
@@ -470,13 +460,13 @@ class TestPerformanceSummaryGenerator:
 class TestEdgeCases:
     """Test edge cases and error conditions."""
 
-    def test_empty_benchmark_results(self):
+    def test_empty_benchmark_results(self, mock_git_command_result):
         """Test handling of empty benchmark results."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
             with patch("performance_summary_utils.run_git_command") as mock_git:
-                mock_git.return_value = "v0.4.2"
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
 
                 generator = PerformanceSummaryGenerator(project_root)
 
@@ -484,7 +474,7 @@ class TestEdgeCases:
                 results = generator._parse_circumsphere_benchmark_results()
                 assert len(results) > 0
 
-    def test_malformed_estimates_json(self):
+    def test_malformed_estimates_json(self, mock_git_command_result):
         """Test handling of malformed estimates.json files."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -497,7 +487,7 @@ class TestEdgeCases:
             estimates_file.write_text("{ invalid json")
 
             with patch("performance_summary_utils.run_git_command") as mock_git:
-                mock_git.return_value = "v0.4.2"
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-01")]
 
                 generator = PerformanceSummaryGenerator(project_root)
 
@@ -531,7 +521,7 @@ class TestEdgeCases:
 class TestIntegrationScenarios:
     """Integration test scenarios."""
 
-    def test_full_generation_workflow(self):
+    def test_full_generation_workflow(self, mock_git_command_result):
         """Test complete summary generation workflow."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -559,7 +549,8 @@ class TestIntegrationScenarios:
                 patch("performance_summary_utils.run_git_command") as mock_git,
                 patch("performance_summary_utils.get_git_commit_hash") as mock_commit,
             ):
-                mock_git.side_effect = ["v0.4.2", "2025-01-15"]
+                # Mock CompletedProcess objects for version and date calls
+                mock_git.side_effect = [mock_git_command_result("v0.4.2"), mock_git_command_result("2025-01-15")]
                 mock_commit.return_value = "abc123def456"
 
                 generator = PerformanceSummaryGenerator(project_root)

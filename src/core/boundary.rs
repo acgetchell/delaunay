@@ -92,7 +92,9 @@ where
                 let facet_index = cells[0].1;
                 if let Some(cell) = self.cells().get(cell_id) {
                     let facets = cell.facets()?;
-                    boundary_facets.push(facets[facet_index as usize].clone());
+                    let idx = usize::from(facet_index);
+                    debug_assert!(idx < facets.len(), "facet_index out of bounds");
+                    boundary_facets.push(facets[idx].clone());
                 }
             }
         }

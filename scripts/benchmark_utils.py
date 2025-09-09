@@ -26,11 +26,23 @@ from pathlib import Path
 try:
     # When executed as a script from scripts/
     from hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
-    from subprocess_utils import get_git_commit_hash, run_cargo_command, run_git_command  # type: ignore[no-redef]
+    from subprocess_utils import (  # type: ignore[no-redef]
+        ProjectRootNotFoundError,
+        find_project_root,
+        get_git_commit_hash,
+        run_cargo_command,
+        run_git_command,
+    )
 except ModuleNotFoundError:
     # When imported as a module (e.g., scripts.benchmark_utils)
     from scripts.hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
-    from scripts.subprocess_utils import get_git_commit_hash, run_cargo_command, run_git_command  # type: ignore[no-redef]
+    from scripts.subprocess_utils import (  # type: ignore[no-redef]
+        ProjectRootNotFoundError,
+        find_project_root,
+        get_git_commit_hash,
+        run_cargo_command,
+        run_git_command,
+    )
 
 # Development mode arguments - centralized to keep baseline generation and comparison in sync
 # Reduces samples for faster iteration during development (10x faster than full benchmarks)
@@ -45,11 +57,8 @@ DEV_MODE_BENCH_ARGS = [
 ]
 
 
-class ProjectRootNotFoundError(Exception):
-    """Raised when project root directory cannot be located."""
-
-
 # Use the shared secure wrapper from subprocess_utils
+# ProjectRootNotFoundError and find_project_root are imported from subprocess_utils
 
 
 @dataclass
@@ -174,32 +183,29 @@ class CriterionParser:
                 if not m:
                     continue
                 dim = m.group(1)
-            # Criterion nests one directory per benchmark target under each *d group
-            benchmark_dir = next((p for p in dim_dir.iterdir() if p.is_dir()), None)
-            if not benchmark_dir or not benchmark_dir.exists():
-                continue
+            # Iterate all nested benchmark targets under the <Nd> group
+            for benchmark_dir in (p for p in dim_dir.iterdir() if p.is_dir()):
+                # Find point count directories
+                for point_dir in benchmark_dir.iterdir():
+                    if not point_dir.is_dir():
+                        continue
 
-            # Find point count directories
-            for point_dir in benchmark_dir.iterdir():
-                if not point_dir.is_dir():
-                    continue
+                    try:
+                        point_count = int(point_dir.name)
+                    except ValueError:
+                        continue
 
-                try:
-                    point_count = int(point_dir.name)
-                except ValueError:
-                    continue
+                    # Look for estimates.json (prefer new/ over base/)
+                    estimates_file = None
+                    if (point_dir / "new" / "estimates.json").exists():
+                        estimates_file = point_dir / "new" / "estimates.json"
+                    elif (point_dir / "base" / "estimates.json").exists():
+                        estimates_file = point_dir / "base" / "estimates.json"
 
-                # Look for estimates.json (prefer new/ over base/)
-                estimates_file = None
-                if (point_dir / "new" / "estimates.json").exists():
-                    estimates_file = point_dir / "new" / "estimates.json"
-                elif (point_dir / "base" / "estimates.json").exists():
-                    estimates_file = point_dir / "base" / "estimates.json"
-
-                if estimates_file:
-                    benchmark_data = CriterionParser.parse_estimates_json(estimates_file, point_count, f"{dim}D")
-                    if benchmark_data:
-                        results.append(benchmark_data)
+                    if estimates_file:
+                        benchmark_data = CriterionParser.parse_estimates_json(estimates_file, point_count, f"{dim}D")
+                        if benchmark_data:
+                            results.append(benchmark_data)
 
         # Sort by dimension, then by point count
         results.sort(key=lambda x: (int(x.dimension.rstrip("D")), x.points))
@@ -260,9 +266,10 @@ class BaselineGenerator:
 
             return True
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             print(f"❌ Benchmark execution timed out after {bench_timeout} seconds", file=sys.stderr)
             print("   Consider increasing --bench-timeout or using --dev mode for faster benchmarks", file=sys.stderr)
+            logging.debug("TimeoutExpired: %s", e)
             return False
         except Exception:
             return False
@@ -359,9 +366,10 @@ class PerformanceComparator:
 
             return True, regression_found
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             print(f"❌ Benchmark execution timed out after {bench_timeout} seconds", file=sys.stderr)
             print("   Consider increasing --bench-timeout or using --dev mode for faster benchmarks", file=sys.stderr)
+            logging.debug("TimeoutExpired: %s", e)
             return False, False
         except Exception:
             return False, False
@@ -742,6 +750,17 @@ class WorkflowHelper:
         print(f"Using sanitized artifact name: {artifact_name}", file=sys.stderr)
         return artifact_name
 
+
+class PerformanceSummaryGenerator:
+    """Generate performance summary markdown files from benchmark data."""
+
+    def __init__(self, project_root: Path):
+        """Initialize the performance summary generator."""
+        self.project_root = project_root
+        self.baseline_file = project_root / "baseline-artifact" / "baseline_results.txt"
+        self.comparison_file = project_root / "benches" / "compare_results.txt"
+        self.current_version = self._get_current_version()
+
     def generate_summary(self, output_path: Path | None = None, run_benchmarks: bool = False) -> bool:
         """
         Generate performance summary markdown file.
@@ -827,8 +846,6 @@ class WorkflowHelper:
 
         # Add performance data update instructions
         lines.extend(self._get_update_instructions())
-
-        return "\n".join(lines)
 
         return "\n".join(lines)
 
@@ -997,15 +1014,17 @@ class WorkflowHelper:
         try:
             # Get the latest tag that matches version pattern
             result = run_git_command(["describe", "--tags", "--abbrev=0", "--match=v*"], cwd=self.project_root)
-            if result and result.startswith("v"):
-                return result[1:]  # Remove 'v' prefix
+            desc = result.stdout.strip()
+            if desc.startswith("v"):
+                return desc[1:]  # Remove 'v' prefix
             return "unknown"
         except Exception:
             # Fallback: try to get any recent tag
             try:
                 result = run_git_command(["tag", "-l", "--sort=-version:refname"], cwd=self.project_root)
-                if result:
-                    tags = result.strip().split("\n")
+                tags_output = result.stdout.strip()
+                if tags_output:
+                    tags = tags_output.split("\n")
                     for tag in tags:
                         if tag.startswith("v") and len(tag) > 1:
                             return tag[1:]
@@ -1025,8 +1044,9 @@ class WorkflowHelper:
             tag_name = f"v{self.current_version}" if self.current_version != "unknown" else None
             if tag_name:
                 result = run_git_command(["log", "-1", "--format=%cd", "--date=format:%Y-%m-%d", tag_name], cwd=self.project_root)
-                if result:
-                    return result.strip()
+                log_output = result.stdout.strip()
+                if log_output:
+                    return log_output
 
             # Fallback to current date
             return datetime.now(UTC).strftime("%Y-%m-%d")
@@ -1147,6 +1167,76 @@ class WorkflowHelper:
             return f"{value:.2f} {unit}"
         return f"{value:.3f} {unit}"
 
+    def _get_circumsphere_performance_results(self) -> list[str]:
+        """
+        Get circumsphere performance results from benchmark data.
+
+        Returns:
+            List of markdown lines with circumsphere performance results
+        """
+        # This is a placeholder - actual implementation would depend on
+        # how circumsphere benchmarks are structured and what data is available
+        return [
+            "### Circumsphere Performance Results",
+            "",
+            "*Circumsphere performance analysis not yet implemented.*",
+            "",
+        ]
+
+    def _get_dynamic_analysis_sections(self) -> list[str]:
+        """
+        Get dynamic analysis sections based on performance data.
+
+        Returns:
+            List of markdown lines with dynamic analysis
+        """
+        # Add static content for now - could be enhanced with actual analysis
+        return self._get_static_content()
+
+    def _get_update_instructions(self) -> list[str]:
+        """
+        Get performance data update instructions.
+
+        Returns:
+            List of markdown lines with update instructions
+        """
+        return [
+            "## Performance Data Updates",
+            "",
+            "This file is automatically generated from benchmark results. To update:",
+            "",
+            "```bash",
+            "# Generate new baseline results",
+            "uv run benchmark-utils generate-baseline",
+            "",
+            "# Update performance summary",
+            "uv run benchmark-utils generate-summary",
+            "```",
+            "",
+            "For manual updates or custom analysis, modify the `PerformanceSummaryGenerator`",
+            "class in `scripts/benchmark_utils.py`.",
+            "",
+        ]
+
+    def _run_circumsphere_benchmarks(self) -> bool:
+        """
+        Run circumsphere benchmarks to get fresh data.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Run circumsphere benchmarks - this is a placeholder implementation
+            run_cargo_command(
+                ["bench", "--bench", "circumsphere_containment"],
+                cwd=self.project_root,
+                timeout=1800,
+            )
+            return True
+        except Exception as e:
+            print(f"Failed to run circumsphere benchmarks: {e}", file=sys.stderr)
+            return False
+
     def _get_static_content(self) -> list[str]:
         """
         Get static content sections for the performance results.
@@ -1182,21 +1272,6 @@ class WorkflowHelper:
             "- **Use `insphere_distance`** to understand geometric intuition",
             "- Explicit circumcenter calculation makes algorithm transparent",
             "- Useful for debugging and validation despite slower performance",
-            "",
-            "## Performance Data Updates",
-            "",
-            "This file is automatically generated from benchmark results. To update:",
-            "",
-            "```bash",
-            "# Generate new baseline results",
-            "uv run benchmark-utils generate-baseline",
-            "",
-            "# Update performance summary",
-            "uv run benchmark-utils generate-summary",
-            "```",
-            "",
-            "For manual updates or custom analysis, modify the `PerformanceSummaryGenerator`",
-            "class in `scripts/benchmark_utils.py`.",
             "",
         ]
 
@@ -1559,26 +1634,12 @@ def create_argument_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("regression-summary", help="Generate regression testing summary")
 
+    # Performance summary command
+    perf_summary_parser = subparsers.add_parser("generate-summary", help="Generate performance summary markdown")
+    perf_summary_parser.add_argument("--output", type=Path, help="Output file path (defaults to benches/PERFORMANCE_RESULTS.md)")
+    perf_summary_parser.add_argument("--run-benchmarks", action="store_true", help="Run fresh circumsphere benchmarks before generating summary")
+
     return parser
-
-
-def find_project_root() -> Path:
-    """Find the project root by looking for Cargo.toml.
-
-    Returns:
-        Path to project root directory
-
-    Raises:
-        ProjectRootNotFoundError: If Cargo.toml cannot be found in any parent directory
-    """
-    current_dir = Path.cwd()
-    project_root = current_dir
-    while project_root != project_root.parent:
-        if (project_root / "Cargo.toml").exists():
-            return project_root
-        project_root = project_root.parent
-    msg = "Could not locate Cargo.toml to determine project root"
-    raise ProjectRootNotFoundError(msg)
 
 
 def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> None:
@@ -1682,6 +1743,12 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
     if args.command in ("determine-tag", "create-metadata", "display-summary", "sanitize-artifact-name"):
         execute_workflow_commands(args)
         return
+
+    # Try performance summary commands
+    if args.command == "generate-summary":
+        generator = PerformanceSummaryGenerator(project_root)
+        success = generator.generate_summary(output_path=args.output, run_benchmarks=args.run_benchmarks)
+        sys.exit(0 if success else 1)
 
     # Try regression commands
     if args.command in (

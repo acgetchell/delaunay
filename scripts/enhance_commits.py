@@ -168,12 +168,19 @@ def _get_regex_patterns():
 
 def _extract_title_text(entry):
     """Extract commit title from entry for pattern matching."""
+    if not entry or not entry.strip():
+        return ""
+
     # Extract just the commit title (between first ** and second **)
     if title_match := re.search(r"\*\*(.*?)\*\*", entry):
         return title_match[1].lower().strip()
 
     # Fallback: parse from the first line
-    first = entry.splitlines()[0]
+    lines = entry.splitlines()
+    if not lines:
+        return ""
+
+    first = lines[0]
     pattern = r"-\s+([^[(]+?)(?:\s+\(#\d+\))?\s*(?:\[`[a-f0-9]{7,40}`\].*)?$"
     match = re.match(pattern, first, re.I)
     return match[1].lower().strip() if match else ""
@@ -320,13 +327,20 @@ def _process_changelog_lines(lines):
             line_index += 1
             continue
 
-        # Check if we're at a release end or file end
+        # Process commit lines in Changes or Fixed Issues sections FIRST
+        if (section_state["in_changes_section"] or section_state["in_fixed_issues"]) and re.match(r"^- \*\*", line):
+            entry, next_index = _collect_commit_entry(lines, line_index)
+            categorize_entries_list.append(entry)
+            line_index = next_index
+            continue
+
+        # Check if we're at a release end or file end AFTER processing entries
         in_section = any(section_state.values())
         is_release_end = re.match(r"^## ", line) and in_section
         is_file_end = line_index == len(lines) - 1
 
-        if is_release_end or is_file_end:
-            # Process any pending entries
+        if is_release_end or (is_file_end and categorize_entries_list):
+            # Process any pending entries only if we have them
             if categorize_entries_list:
                 process_and_output_categorized_entries(categorize_entries_list, output_lines)
                 categorize_entries_list.clear()
@@ -344,18 +358,13 @@ def _process_changelog_lines(lines):
             if re.match(r"^## ", line):
                 output_lines.append("")  # Add blank line before new release
                 output_lines.append(line)
-            else:
-                # Not a release header, add normally
+                line_index += 1
+                continue
+            if is_release_end:
+                # Not a release header but is release end, add normally
                 output_lines.append(line)
-            line_index += 1
-            continue
-
-        # Process commit lines in Changes or Fixed Issues sections
-        if (section_state["in_changes_section"] or section_state["in_fixed_issues"]) and re.match(r"^- \*\*", line):
-            entry, next_index = _collect_commit_entry(lines, line_index)
-            categorize_entries_list.append(entry)
-            line_index = next_index
-            continue
+                line_index += 1
+                continue
 
         # Skip PR description content in Merged Pull Requests section
         if section_state["in_merged_prs_section"] and re.match(r"^  ", line):
@@ -365,6 +374,11 @@ def _process_changelog_lines(lines):
         # Print all other lines normally
         output_lines.append(line)
         line_index += 1
+
+    # Process any remaining entries at the end of the file
+    if categorize_entries_list:
+        process_and_output_categorized_entries(categorize_entries_list, output_lines)
+        categorize_entries_list.clear()
 
     return output_lines
 

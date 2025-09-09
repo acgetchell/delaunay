@@ -92,17 +92,18 @@ delaunay/
 │   │   ├── __init__.py                           # Test package initialization
 │   │   ├── test_benchmark_utils.py               # Tests for benchmark_utils.py
 │   │   ├── test_changelog_utils.py               # Comprehensive tests for changelog_utils.py
+│   │   ├── test_enhance_commits.py               # Tests for enhance_commits.py
 │   │   ├── test_hardware_utils.py                # Tests for hardware_utils.py
 │   │   ├── test_performance_summary_utils.py     # Tests for performance_summary_utils.py
 │   │   └── test_subprocess_utils.py              # Comprehensive tests for subprocess_utils.py
 │   ├── README.md                                 # Scripts documentation
-│   ├── benchmark_utils.py                        # Python utilities for benchmark processing and hardware detection
+│   ├── benchmark_utils.py                        # Benchmark processing, baseline generation, and performance comparison utilities
 │   ├── changelog_utils.py                        # Comprehensive Python utilities for changelog generation, processing, and git tagging
-│   ├── enhance_commits.py                        # Commit enhancement utilities
-│   ├── hardware_utils.py                         # Python utilities for hardware information and system capabilities
+│   ├── enhance_commits.py                        # Commit enhancement and categorization utilities
+│   ├── hardware_utils.py                         # Hardware information detection and system capabilities analysis
 │   ├── performance_summary_utils.py              # Performance results processing and summary generation utilities
 │   ├── run_all_examples.sh                       # Validate all examples
-│   └── subprocess_utils.py                       # Secure subprocess execution utilities for git and system commands
+│   └── subprocess_utils.py                       # Secure subprocess execution utilities and shared project navigation functions
 ├── .github/                                      # GitHub configuration
 │   ├── workflows/                                # CI/CD workflows
 │   │   ├── audit.yml                             # Security vulnerability scanning
@@ -560,28 +561,28 @@ mod tests {
 
 ### Module-Specific Variations
 
-#### `cell.rs` (large module; ~2,400 lines as of v0.4.2)
+#### `cell.rs` (large module)
 
 - Most comprehensive implementation
 - Multiple specialized implementation blocks
 - Extensive geometric predicates integration
 - Detailed Hash/Eq contract documentation
 
-#### `vertex.rs` (large module; ~2,000 lines as of v0.4.2)
+#### `vertex.rs` (large module)
 
 - Strong focus on coordinate validation
 - Comprehensive equality testing
 - Multiple numeric type support
 - Detailed serialization testing
 
-#### `facet.rs` (medium module; ~1,400 lines as of v0.4.2)
+#### `facet.rs` (medium module)
 
 - Geometric relationship focus
 - Key generation utilities
 - Adjacency testing
 - Error handling for geometric constraints
 
-#### `boundary.rs` (small module; ~400 lines as of v0.4.2)
+#### `boundary.rs` (small module)
 
 - Trait implementation focused
 - Algorithm-specific testing

@@ -84,10 +84,20 @@ missing_docs = "warn"
 
 [tool.tarpaulin]
 # Exclude benchmarks and examples from coverage analysis
-exclude = [
+exclude-files = [
     "benches/*",
     "examples/*",
 ]
+# Output configuration
+out = ["Xml"]
+output-dir = "coverage/"
+# Test configuration
+all-features = true
+workspace = true
+timeout = 120
+verbose = true
+# Test execution
+test-threads = 1
 
 [lints.clippy]
 extra_unused_type_parameters = "warn"

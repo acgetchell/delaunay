@@ -23,11 +23,23 @@ from pathlib import Path
 try:
     # When executed as a script from scripts/
     from hardware_utils import HardwareInfo  # type: ignore[no-redef]
-    from subprocess_utils import get_git_commit_hash, run_cargo_command, run_git_command  # type: ignore[no-redef]
+    from subprocess_utils import (  # type: ignore[no-redef]
+        ProjectRootNotFoundError,
+        find_project_root,
+        get_git_commit_hash,
+        run_cargo_command,
+        run_git_command,
+    )
 except ModuleNotFoundError:
     # When imported as a module (e.g., scripts.performance_summary_utils)
     from scripts.hardware_utils import HardwareInfo  # type: ignore[no-redef]
-    from scripts.subprocess_utils import get_git_commit_hash, run_cargo_command, run_git_command  # type: ignore[no-redef]
+    from scripts.subprocess_utils import (  # type: ignore[no-redef]
+        ProjectRootNotFoundError,
+        find_project_root,
+        get_git_commit_hash,
+        run_cargo_command,
+        run_git_command,
+    )
 
 
 @dataclass
@@ -95,27 +107,7 @@ class VersionComparisonData:
             self.improvement_pct = 0.0
 
 
-class ProjectRootNotFoundError(Exception):
-    """Raised when project root directory cannot be located."""
-
-
-def find_project_root() -> Path:
-    """Find the project root by looking for Cargo.toml.
-
-    Returns:
-        Path to project root directory
-
-    Raises:
-        ProjectRootNotFoundError: If Cargo.toml cannot be found in any parent directory
-    """
-    current_dir = Path.cwd()
-    project_root = current_dir
-    while project_root != project_root.parent:
-        if (project_root / "Cargo.toml").exists():
-            return project_root
-        project_root = project_root.parent
-    msg = "Could not locate Cargo.toml to determine project root"
-    raise ProjectRootNotFoundError(msg)
+# ProjectRootNotFoundError and find_project_root are now imported from subprocess_utils
 
 
 class PerformanceSummaryGenerator:
@@ -247,16 +239,18 @@ class PerformanceSummaryGenerator:
         """
         try:
             # Get the latest tag that matches version pattern
-            result = run_git_command(["describe", "--tags", "--abbrev=0", "--match=v*"], cwd=self.project_root)
-            if result and result.startswith("v"):
+            cp = run_git_command(["describe", "--tags", "--abbrev=0", "--match=v*"], cwd=self.project_root)
+            result = cp.stdout.strip()
+            if result.startswith("v"):
                 return result[1:]  # Remove 'v' prefix
             return "unknown"
         except Exception:
             # Fallback: try to get any recent tag
             try:
-                result = run_git_command(["tag", "-l", "--sort=-version:refname"], cwd=self.project_root)
-                if result:
-                    tags = result.strip().split("\n")
+                cp = run_git_command(["tag", "-l", "--sort=-version:refname"], cwd=self.project_root)
+                out = cp.stdout.strip()
+                if out:
+                    tags = out.split("\n")
                     for tag in tags:
                         if tag.startswith("v") and len(tag) > 1:
                             return tag[1:]
@@ -275,9 +269,10 @@ class PerformanceSummaryGenerator:
             # Get the date of the latest version tag
             tag_name = f"v{self.current_version}" if self.current_version != "unknown" else None
             if tag_name:
-                result = run_git_command(["log", "-1", "--format=%cd", "--date=format:%Y-%m-%d", tag_name], cwd=self.project_root)
-                if result:
-                    return result.strip()
+                cp = run_git_command(["log", "-1", "--format=%cd", "--date=format:%Y-%m-%d", tag_name], cwd=self.project_root)
+                log_output = cp.stdout.strip()
+                if log_output:
+                    return log_output
 
             # Fallback to current date
             return datetime.now(UTC).strftime("%Y-%m-%d")
@@ -295,17 +290,14 @@ class PerformanceSummaryGenerator:
             print("🔄 Running circumsphere containment benchmarks...")
 
             # Run the circumsphere benchmark with reduced sample size for speed
-            result = run_cargo_command(
+            run_cargo_command(
                 ["bench", "--bench", "circumsphere_containment", "--", "--sample-size", "10"],
                 cwd=self.project_root,
                 timeout=300,  # 5 minute timeout for quick benchmarks
             )
 
-            if result:
-                print("✅ Circumsphere benchmarks completed successfully")
-                return True
-            print("❌ Circumsphere benchmarks failed")
-            return False
+            print("✅ Circumsphere benchmarks completed successfully")
+            return True
 
         except Exception as e:
             print(f"❌ Error running circumsphere benchmarks: {e}")

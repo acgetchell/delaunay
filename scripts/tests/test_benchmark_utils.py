@@ -13,9 +13,7 @@ and necessary for comprehensive unit testing of internal functionality.
 import json
 import os
 import subprocess
-import sys
 import tempfile
-from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -27,19 +25,9 @@ from benchmark_utils import (
     BenchmarkRegressionHelper,
     CriterionParser,
     PerformanceComparator,
+    PerformanceSummaryGenerator,
     WorkflowHelper,
 )
-
-
-@contextmanager
-def temp_chdir(path):
-    """Context manager for temporarily changing working directory."""
-    original_cwd = Path.cwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(original_cwd)
 
 
 class TestBenchmarkData:
@@ -875,7 +863,7 @@ class TestWorkflowHelper:
             assert output_dir.exists()
             assert (output_dir / "metadata.json").exists()
 
-    def test_display_baseline_summary_success(self):
+    def test_display_baseline_summary_success(self, capsys):
         """Test successful baseline summary display."""
         baseline_content = """Date: 2023-12-15 14:30:00 UTC
 Git commit: abc123def456
@@ -901,32 +889,29 @@ Time: [220.0, 250.0, 280.0] µs
             baseline_file = Path(f.name)
 
         try:
-            with patch("builtins.print") as mock_print:
-                success = WorkflowHelper.display_baseline_summary(baseline_file)
-                assert success
+            success = WorkflowHelper.display_baseline_summary(baseline_file)
+            assert success
 
-                # Check that summary was printed
-                print_calls = [call.args[0] for call in mock_print.call_args_list]
-                assert any("📊 Baseline summary:" in call for call in print_calls)
-                assert any("Total benchmarks: 3" in call for call in print_calls)
-                assert any("Date: 2023-12-15 14:30:00 UTC" in call for call in print_calls)
+            # Check that summary was printed
+            captured = capsys.readouterr()
+            assert "📊 Baseline summary:" in captured.out
+            assert "Total benchmarks: 3" in captured.out
+            assert "Date: 2023-12-15 14:30:00 UTC" in captured.out
         finally:
             baseline_file.unlink()
 
-    def test_display_baseline_summary_nonexistent_file(self):
+    def test_display_baseline_summary_nonexistent_file(self, capsys):
         """Test baseline summary with non-existent file."""
         baseline_file = Path("/nonexistent/file.txt")
 
-        with patch("builtins.print") as mock_print:
-            success = WorkflowHelper.display_baseline_summary(baseline_file)
-            assert not success
+        success = WorkflowHelper.display_baseline_summary(baseline_file)
+        assert not success
 
-            # Check error message was printed to stderr
-            stderr_calls = [call for call in mock_print.call_args_list if call.kwargs.get("file") == sys.stderr]
-            assert len(stderr_calls) > 0
-            assert "❌ Baseline file not found" in stderr_calls[0].args[0]
+        # Check error message was printed to stderr
+        captured = capsys.readouterr()
+        assert "❌ Baseline file not found" in captured.err
 
-    def test_display_baseline_summary_long_file(self):
+    def test_display_baseline_summary_long_file(self, capsys):
         """Test baseline summary with file longer than 10 lines."""
         baseline_content = "\n".join([f"Line {i}" for i in range(20)])
 
@@ -936,13 +921,12 @@ Time: [220.0, 250.0, 280.0] µs
             baseline_file = Path(f.name)
 
         try:
-            with patch("builtins.print") as mock_print:
-                success = WorkflowHelper.display_baseline_summary(baseline_file)
-                assert success
+            success = WorkflowHelper.display_baseline_summary(baseline_file)
+            assert success
 
-                # Check that "..." was printed (indicates truncation)
-                print_calls = [call.args[0] for call in mock_print.call_args_list]
-                assert "..." in print_calls
+            # Check that "..." was printed (indicates truncation)
+            captured = capsys.readouterr()
+            assert "..." in captured.out
         finally:
             baseline_file.unlink()
 
@@ -998,7 +982,7 @@ Time: [220.0, 250.0, 280.0] µs
 class TestBenchmarkRegressionHelper:
     """Test cases for BenchmarkRegressionHelper class."""
 
-    def test_prepare_baseline_success(self):
+    def test_prepare_baseline_success(self, capsys):
         """Test successful baseline preparation."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -1020,7 +1004,7 @@ Time: [95.0, 100.0, 105.0] µs
                 env_path = env_file.name
 
             try:
-                with patch.dict(os.environ, {"GITHUB_ENV": env_path}), patch("builtins.print") as mock_print:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
                     success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
 
                     assert success
@@ -1032,13 +1016,13 @@ Time: [95.0, 100.0, 105.0] µs
                         assert "BASELINE_SOURCE=artifact" in env_content
 
                     # Check that baseline info was printed
-                    print_calls = [call.args[0] for call in mock_print.call_args_list]
-                    assert any("📦 Prepared baseline from artifact" in call for call in print_calls)
-                    assert any("=== Baseline Information" in call for call in print_calls)
+                    captured = capsys.readouterr()
+                    assert "📦 Prepared baseline from artifact" in captured.out
+                    assert "=== Baseline Information" in captured.out
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_missing_file(self):
+    def test_prepare_baseline_missing_file(self, capsys):
         """Test baseline preparation when baseline file is missing."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -1048,7 +1032,7 @@ Time: [95.0, 100.0, 105.0] µs
                 env_path = env_file.name
 
             try:
-                with patch.dict(os.environ, {"GITHUB_ENV": env_path}), patch("builtins.print") as mock_print:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
                     success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
 
                     assert not success
@@ -1060,18 +1044,18 @@ Time: [95.0, 100.0, 105.0] µs
                         assert "BASELINE_SOURCE=missing" in env_content
 
                     # Check error message was printed
-                    print_calls = [call.args[0] for call in mock_print.call_args_list]
-                    assert any("❌ Downloaded artifact but no baseline_results.txt found" in call for call in print_calls)
+                    captured = capsys.readouterr()
+                    assert "❌ Downloaded artifact but no baseline_results.txt found" in captured.out
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_set_no_baseline_status(self):
+    def test_set_no_baseline_status(self, capsys):
         """Test setting no baseline status."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
             env_path = env_file.name
 
         try:
-            with patch.dict(os.environ, {"GITHUB_ENV": env_path}), patch("builtins.print") as mock_print:
+            with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
                 BenchmarkRegressionHelper.set_no_baseline_status()
 
                 # Check that environment variables were set
@@ -1082,8 +1066,8 @@ Time: [95.0, 100.0, 105.0] µs
                     assert "BASELINE_ORIGIN=none" in env_content
 
                 # Check message was printed
-                print_calls = [call.args[0] for call in mock_print.call_args_list]
-                assert any("📈 No baseline artifact found" in call for call in print_calls)
+                captured = capsys.readouterr()
+                assert "📈 No baseline artifact found" in captured.out
         finally:
             Path(env_path).unlink(missing_ok=True)
 
@@ -1218,24 +1202,22 @@ Hardware Information:
         assert not should_skip
         assert reason == "changes_detected"
 
-    def test_display_skip_message(self):
+    def test_display_skip_message(self, capsys):
         """Test displaying skip messages."""
-        with patch("builtins.print") as mock_print:
-            BenchmarkRegressionHelper.display_skip_message("same_commit", "abc123")
+        BenchmarkRegressionHelper.display_skip_message("same_commit", "abc123")
 
-            print_calls = [call.args[0] for call in mock_print.call_args_list]
-            assert any("🔍 Current commit matches baseline (abc123)" in call for call in print_calls)
+        captured = capsys.readouterr()
+        assert "🔍 Current commit matches baseline (abc123)" in captured.out
 
-    def test_display_no_baseline_message(self):
+    def test_display_no_baseline_message(self, capsys):
         """Test displaying no baseline message."""
-        with patch("builtins.print") as mock_print:
-            BenchmarkRegressionHelper.display_no_baseline_message()
+        BenchmarkRegressionHelper.display_no_baseline_message()
 
-            print_calls = [call.args[0] for call in mock_print.call_args_list]
-            assert any("⚠️ No performance baseline available" in call for call in print_calls)
-            assert any("💡 To enable performance regression testing:" in call for call in print_calls)
+        captured = capsys.readouterr()
+        assert "⚠️ No performance baseline available" in captured.out
+        assert "💡 To enable performance regression testing:" in captured.out
 
-    def test_run_regression_test_success(self):
+    def test_run_regression_test_success(self, capsys):
         """Test successful regression test run."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_file = Path(temp_dir) / "baseline.txt"
@@ -1246,14 +1228,13 @@ Hardware Information:
                 mock_comparator.compare_with_baseline.return_value = (True, False)  # success, no regression
                 mock_comparator_class.return_value = mock_comparator
 
-                with patch("builtins.print") as mock_print:
-                    success = BenchmarkRegressionHelper.run_regression_test(baseline_file)
+                success = BenchmarkRegressionHelper.run_regression_test(baseline_file)
 
-                    assert success
-                    mock_comparator.compare_with_baseline.assert_called_once_with(baseline_file)
+                assert success
+                mock_comparator.compare_with_baseline.assert_called_once_with(baseline_file)
 
-                    print_calls = [call.args[0] for call in mock_print.call_args_list]
-                    assert any("🚀 Running performance regression test" in call for call in print_calls)
+                captured = capsys.readouterr()
+                assert "🚀 Running performance regression test" in captured.out
 
     def test_run_regression_test_failure(self):
         """Test regression test run failure."""
@@ -1270,31 +1251,29 @@ Hardware Information:
 
                 assert not success
 
-    def test_display_results_file_exists(self):
+    def test_display_results_file_exists(self, capsys):
         """Test displaying results when file exists."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "results.txt"
             results_content = "=== Performance Test Results ===\nAll tests passed\n"
             results_file.write_text(results_content)
 
-            with patch("builtins.print") as mock_print:
-                BenchmarkRegressionHelper.display_results(results_file)
+            BenchmarkRegressionHelper.display_results(results_file)
 
-                print_calls = [call.args[0] for call in mock_print.call_args_list]
-                assert any("=== Performance Regression Test Results ===" in call for call in print_calls)
-                assert any("All tests passed" in call for call in print_calls)
+            captured = capsys.readouterr()
+            assert "=== Performance Regression Test Results ===" in captured.out
+            assert "All tests passed" in captured.out
 
-    def test_display_results_file_missing(self):
+    def test_display_results_file_missing(self, capsys):
         """Test displaying results when file is missing."""
         missing_file = Path("/nonexistent/results.txt")
 
-        with patch("builtins.print") as mock_print:
-            BenchmarkRegressionHelper.display_results(missing_file)
+        BenchmarkRegressionHelper.display_results(missing_file)
 
-            print_calls = [call.args[0] for call in mock_print.call_args_list]
-            assert any("⚠️ No comparison results file found" in call for call in print_calls)
+        captured = capsys.readouterr()
+        assert "⚠️ No comparison results file found" in captured.out
 
-    def test_generate_summary_with_regression(self):
+    def test_generate_summary_with_regression(self, temp_chdir, capsys):
         """Test generating summary when regression is detected."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / "compare_results.txt"
@@ -1311,15 +1290,15 @@ Hardware Information:
             }
 
             # Change working directory to temp_dir so Path("benches/compare_results.txt") works
-            with patch.dict(os.environ, env_vars), temp_chdir(temp_dir), patch("builtins.print") as mock_print:
+            with patch.dict(os.environ, env_vars), temp_chdir(temp_dir):
                 BenchmarkRegressionHelper.generate_summary()
 
-                print_calls = [call.args[0] for call in mock_print.call_args_list]
-                assert any("📊 Performance Regression Testing Summary" in call for call in print_calls)
-                assert any("Baseline source: artifact" in call for call in print_calls)
-                assert any("Result: ⚠️ Performance regressions detected" in call for call in print_calls)
+                captured = capsys.readouterr()
+                assert "📊 Performance Regression Testing Summary" in captured.out
+                assert "Baseline source: artifact" in captured.out
+                assert "Result: ⚠️ Performance regressions detected" in captured.out
 
-    def test_generate_summary_skip_same_commit(self):
+    def test_generate_summary_skip_same_commit(self, capsys):
         """Test generating summary when benchmarks skipped due to same commit."""
         env_vars = {
             "BASELINE_SOURCE": "artifact",
@@ -1329,26 +1308,26 @@ Hardware Information:
             "SKIP_REASON": "same_commit",
         }
 
-        with patch.dict(os.environ, env_vars), patch("builtins.print") as mock_print:
+        with patch.dict(os.environ, env_vars):
             BenchmarkRegressionHelper.generate_summary()
 
-            print_calls = [call.args[0] for call in mock_print.call_args_list]
-            assert any("Result: ⏭️ Benchmarks skipped (same commit as baseline)" in call for call in print_calls)
+            captured = capsys.readouterr()
+            assert "Result: ⏭️ Benchmarks skipped (same commit as baseline)" in captured.out
 
-    def test_generate_summary_no_baseline(self):
+    def test_generate_summary_no_baseline(self, capsys):
         """Test generating summary when no baseline available."""
         env_vars = {
             "BASELINE_EXISTS": "false",
             "SKIP_BENCHMARKS": "unknown",
         }
 
-        with patch.dict(os.environ, env_vars, clear=True), patch("builtins.print") as mock_print:
+        with patch.dict(os.environ, env_vars, clear=True):
             BenchmarkRegressionHelper.generate_summary()
 
-            print_calls = [call.args[0] for call in mock_print.call_args_list]
-            assert any("Result: ⏭️ Benchmarks skipped (no baseline available)" in call for call in print_calls)
+            captured = capsys.readouterr()
+            assert "Result: ⏭️ Benchmarks skipped (no baseline available)" in captured.out
 
-    def test_generate_summary_sets_regression_environment_variable(self):
+    def test_generate_summary_sets_regression_environment_variable(self, temp_chdir, capsys):
         """Test that generate_summary sets BENCHMARK_REGRESSION_DETECTED environment variable when regressions are found."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / "compare_results.txt"
@@ -1364,17 +1343,17 @@ Hardware Information:
             if "BENCHMARK_REGRESSION_DETECTED" in os.environ:
                 del os.environ["BENCHMARK_REGRESSION_DETECTED"]
 
-            with patch.dict(os.environ, env_vars), temp_chdir(temp_dir), patch("builtins.print") as mock_print:
+            with patch.dict(os.environ, env_vars), temp_chdir(temp_dir):
                 BenchmarkRegressionHelper.generate_summary()
 
                 # Check that environment variable was set
                 assert os.environ.get("BENCHMARK_REGRESSION_DETECTED") == "true"
 
                 # Check that appropriate message was printed
-                print_calls = [call.args[0] for call in mock_print.call_args_list]
-                assert any("Exported BENCHMARK_REGRESSION_DETECTED=true for downstream CI steps" in call for call in print_calls)
+                captured = capsys.readouterr()
+                assert "Exported BENCHMARK_REGRESSION_DETECTED=true for downstream CI steps" in captured.out
 
-    def test_generate_summary_github_env_export(self):
+    def test_generate_summary_github_env_export(self, temp_chdir):
         """Test that BENCHMARK_REGRESSION_DETECTED is also exported to GITHUB_ENV when available."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / "compare_results.txt"
@@ -1400,7 +1379,7 @@ Hardware Information:
 class TestProjectRootHandling:
     """Test cases for find_project_root functionality."""
 
-    def test_find_project_root_success(self):
+    def test_find_project_root_success(self, temp_chdir):
         """Test finding project root when Cargo.toml exists."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -1420,7 +1399,7 @@ class TestProjectRootHandling:
                 # Resolve both paths to handle symlinks (macOS /var -> /private/var)
                 assert result.resolve() == temp_path.resolve()
 
-    def test_find_project_root_not_found(self):
+    def test_find_project_root_not_found(self, temp_chdir):
         """Test finding project root when Cargo.toml doesn't exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -1447,13 +1426,12 @@ class TestTimeoutHandling:
             with patch("benchmark_utils.run_cargo_command") as mock_cargo:
                 mock_cargo.side_effect = subprocess.TimeoutExpired("cargo", 120)
 
-                with patch("builtins.print"):
-                    success = generator.generate_baseline(bench_timeout=120)
+                success = generator.generate_baseline(bench_timeout=120)
 
-                    assert not success
-                    # Verify timeout was passed to run_cargo_command calls
-                    assert mock_cargo.call_count >= 1
-                    assert any(call.kwargs.get("timeout") == 120 for call in mock_cargo.call_args_list)
+                assert not success
+                # Verify timeout was passed to run_cargo_command calls
+                assert mock_cargo.call_count >= 1
+                assert any(call.kwargs.get("timeout") == 120 for call in mock_cargo.call_args_list)
 
     def test_performance_comparator_timeout_parameter_passed(self):
         """Test that PerformanceComparator accepts and uses timeout parameter."""
@@ -1469,15 +1447,14 @@ class TestTimeoutHandling:
             with patch("benchmark_utils.run_cargo_command") as mock_cargo:
                 mock_cargo.side_effect = subprocess.TimeoutExpired("cargo", 120)
 
-                with patch("builtins.print"):
-                    success, regression = comparator.compare_with_baseline(baseline_file, bench_timeout=120)
+                success, regression = comparator.compare_with_baseline(baseline_file, bench_timeout=120)
 
-                    assert not success
-                    assert not regression
-                    # Verify timeout was passed to run_cargo_command
-                    assert any(call.kwargs.get("timeout") == 120 for call in mock_cargo.call_args_list)
+                assert not success
+                assert not regression
+                # Verify timeout was passed to run_cargo_command
+                assert any(call.kwargs.get("timeout") == 120 for call in mock_cargo.call_args_list)
 
-    def test_timeout_error_handling_baseline_generator(self):
+    def test_timeout_error_handling_baseline_generator(self, capsys):
         """Test proper error handling when benchmark times out in BaselineGenerator."""
         from benchmark_utils import BaselineGenerator
 
@@ -1488,17 +1465,16 @@ class TestTimeoutHandling:
             with patch("benchmark_utils.run_cargo_command") as mock_cargo:
                 mock_cargo.side_effect = subprocess.TimeoutExpired("cargo bench", 1800)
 
-                with patch("builtins.print") as mock_print:
-                    success = generator.generate_baseline(bench_timeout=1800)
+                success = generator.generate_baseline(bench_timeout=1800)
 
-                    assert not success
+                assert not success
 
-                    # Check that appropriate timeout message was printed
-                    print_calls = [str(call) for call in mock_print.call_args_list]
-                    assert any("timed out after 1800 seconds" in call for call in print_calls)
-                    assert any("Consider increasing --bench-timeout" in call for call in print_calls)
+                # Check that appropriate timeout message was printed
+                captured = capsys.readouterr()
+                assert "timed out after 1800 seconds" in captured.err
+                assert "Consider increasing --bench-timeout" in captured.err
 
-    def test_timeout_error_handling_performance_comparator(self):
+    def test_timeout_error_handling_performance_comparator(self, capsys):
         """Test proper error handling when benchmark times out in PerformanceComparator."""
         from benchmark_utils import PerformanceComparator
 
@@ -1512,13 +1488,536 @@ class TestTimeoutHandling:
             with patch("benchmark_utils.run_cargo_command") as mock_cargo:
                 mock_cargo.side_effect = subprocess.TimeoutExpired("cargo bench", 1800)
 
-                with patch("builtins.print") as mock_print:
-                    success, regression = comparator.compare_with_baseline(baseline_file, bench_timeout=1800)
+                success, regression = comparator.compare_with_baseline(baseline_file, bench_timeout=1800)
 
-                    assert not success
-                    assert not regression
+                assert not success
+                assert not regression
 
-                    # Check that appropriate timeout message was printed
-                    print_calls = [str(call) for call in mock_print.call_args_list]
-                    assert any("timed out after 1800 seconds" in call for call in print_calls)
-                    assert any("Consider increasing --bench-timeout" in call for call in print_calls)
+                # Check that appropriate timeout message was printed
+                captured = capsys.readouterr()
+                assert "timed out after 1800 seconds" in captured.err
+                assert "Consider increasing --bench-timeout" in captured.err
+
+
+class TestPerformanceSummaryGenerator:
+    """Test cases for PerformanceSummaryGenerator class."""
+
+    def test_init(self):
+        """Test PerformanceSummaryGenerator initialization."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            assert generator.project_root == project_root
+            assert generator.baseline_file == project_root / "baseline-artifact" / "baseline_results.txt"
+            assert generator.comparison_file == project_root / "benches" / "compare_results.txt"
+            assert isinstance(generator.current_version, str)
+
+    @patch("benchmark_utils.run_git_command")
+    def test_get_current_version_with_tag(self, mock_git_command):
+        """Test getting current version from git tags."""
+        mock_result = Mock()
+        mock_result.stdout.strip.return_value = "v1.2.3"
+        mock_git_command.return_value = mock_result
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            version = generator._get_current_version()
+            assert version == "1.2.3"  # v prefix should be removed
+            mock_git_command.assert_called_with(["describe", "--tags", "--abbrev=0", "--match=v*"], cwd=project_root)
+
+    @patch("benchmark_utils.run_git_command")
+    def test_get_current_version_fallback(self, mock_git_command):
+        """Test fallback version detection when describe fails."""
+        # First call (describe) fails, second call (tag -l) succeeds
+        mock_result = Mock()
+        mock_result.stdout.strip.return_value = "v0.1.0\nv0.2.0"
+
+        # The second call is made within the exception handler
+        def side_effect(*args, **kwargs):
+            if "describe" in args[0]:
+                raise subprocess.CalledProcessError(1, "git describe", "describe failed")
+            return mock_result
+
+        mock_git_command.side_effect = side_effect
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            version = generator._get_current_version()
+            assert version == "0.1.0"
+
+    @patch("benchmark_utils.run_git_command")
+    def test_get_current_version_no_tags(self, mock_git_command):
+        """Test version detection when no tags are found."""
+        mock_git_command.side_effect = Exception("No tags found")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            version = generator._get_current_version()
+            assert version == "unknown"
+
+    @patch("benchmark_utils.run_git_command")
+    @patch("benchmark_utils.datetime")
+    def test_get_version_date_with_tag(self, mock_datetime, mock_git_command):  # noqa: ARG002
+        """Test getting version date from git tag."""
+        mock_result = Mock()
+        mock_result.stdout.strip.return_value = "2024-01-15"
+        mock_git_command.return_value = mock_result
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+            generator.current_version = "1.2.3"
+
+            date = generator._get_version_date()
+            assert date == "2024-01-15"
+            mock_git_command.assert_called_with(["log", "-1", "--format=%cd", "--date=format:%Y-%m-%d", "v1.2.3"], cwd=project_root)
+
+    @patch("benchmark_utils.run_git_command")
+    @patch("benchmark_utils.datetime")
+    def test_get_version_date_fallback(self, mock_datetime, mock_git_command):
+        """Test version date fallback to current date."""
+        mock_git_command.side_effect = Exception("Git command failed")
+        mock_now = Mock()
+        mock_now.strftime.return_value = "2024-01-15"
+        mock_datetime.now.return_value = mock_now
+        mock_datetime.UTC = Mock()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            date = generator._get_version_date()
+            assert date == "2024-01-15"
+            mock_now.strftime.assert_called_with("%Y-%m-%d")
+
+    def test_parse_baseline_results_nonexistent_file(self):
+        """Test parsing baseline results when file doesn't exist."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            lines = generator._parse_baseline_results()
+            # Should return error message when file doesn't exist
+            content = "\n".join(lines)
+            assert "### Baseline Results" in content
+            assert "Error parsing baseline results" in content
+
+    def test_parse_baseline_results_with_data(self):
+        """Test parsing baseline results with actual data."""
+        baseline_content = """Date: 2024-01-15 10:30:00 UTC
+Git commit: abc123def456
+Hardware: Apple M2 Pro (10 cores)
+Memory: 32 GB
+
+=== 1000 Points (2D) ===
+Time: [100.0, 110.0, 120.0] µs
+Throughput: [8000.0, 9090.9, 10000.0] Kelem/s
+
+=== 5000 Points (3D) ===
+Time: [500.0, 550.0, 600.0] µs
+Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
+"""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            baseline_dir = project_root / "baseline-artifact"
+            baseline_dir.mkdir(parents=True)
+            baseline_file = baseline_dir / "baseline_results.txt"
+            baseline_file.write_text(baseline_content)
+
+            generator = PerformanceSummaryGenerator(project_root)
+            lines = generator._parse_baseline_results()
+
+            # Should contain metadata section
+            markdown_content = "\n".join(lines)
+            assert "### Current Baseline Information" in markdown_content
+            assert "Git commit: abc123def456" in markdown_content
+            assert "Hardware: Apple M2 Pro" in markdown_content
+
+            # Should contain performance tables
+            assert "### 2D Triangulation Performance" in markdown_content
+            assert "### 3D Triangulation Performance" in markdown_content
+            assert "| Points | Time (mean) | Throughput (mean) | Scaling |" in markdown_content
+
+    def test_parse_comparison_results_with_regression(self):
+        """Test parsing comparison results that show regression."""
+        comparison_content = """Performance Comparison Results
+⚠️  REGRESSION: Time increased by 15.2% (slower performance)
+✅ OK: Time change +2.1% within acceptable range
+✅ IMPROVEMENT: Time decreased by 8.5% (faster performance)
+"""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            benches_dir = project_root / "benches"
+            benches_dir.mkdir(parents=True)
+            comparison_file = benches_dir / "compare_results.txt"
+            comparison_file.write_text(comparison_content)
+
+            generator = PerformanceSummaryGenerator(project_root)
+            lines = generator._parse_comparison_results()
+
+            markdown_content = "\n".join(lines)
+            assert "### ⚠️ Performance Regression Detected" in markdown_content
+            assert "REGRESSION: Time increased by 15.2%" in markdown_content
+            assert "IMPROVEMENT: Time decreased by 8.5%" in markdown_content
+
+    def test_parse_comparison_results_no_regression(self):
+        """Test parsing comparison results with no regression."""
+        comparison_content = """Performance Comparison Results
+✅ OK: Time change +2.1% within acceptable range
+✅ IMPROVEMENT: Time decreased by 3.2% (faster performance)
+✅ OK: Time change -1.8% within acceptable range
+"""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            benches_dir = project_root / "benches"
+            benches_dir.mkdir(parents=True)
+            comparison_file = benches_dir / "compare_results.txt"
+            comparison_file.write_text(comparison_content)
+
+            generator = PerformanceSummaryGenerator(project_root)
+            lines = generator._parse_comparison_results()
+
+            markdown_content = "\n".join(lines)
+            assert "### ✅ Performance Status: Good" in markdown_content
+            assert "no significant performance regressions" in markdown_content
+
+    def test_extract_benchmark_data(self):
+        """Test extracting benchmark data from baseline content."""
+        baseline_content = """Date: 2024-01-15 10:30:00 UTC
+Git commit: abc123def456
+
+=== 1000 Points (2D) ===
+Time: [100.0, 110.0, 120.0] µs
+Throughput: [8000.0, 9090.9, 10000.0] Kelem/s
+
+=== 5000 Points (3D) ===
+Time: [500.0, 550.0, 600.0] µs
+Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
+"""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            benchmarks = generator._extract_benchmark_data(baseline_content)
+
+            assert len(benchmarks) == 2
+
+            # Check first benchmark
+            first = benchmarks[0]
+            assert first.points == 1000
+            assert first.dimension == "2D"
+            assert first.time_mean == 110.0
+            assert first.time_unit == "µs"
+            assert first.throughput_mean == 9090.9
+
+            # Check second benchmark
+            second = benchmarks[1]
+            assert second.points == 5000
+            assert second.dimension == "3D"
+            assert second.time_mean == 550.0
+
+    def test_parse_benchmark_header(self):
+        """Test parsing benchmark header lines."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            # Valid header
+            result = generator._parse_benchmark_header("=== 1000 Points (2D) ===")
+            assert result is not None
+            assert result.points == 1000
+            assert result.dimension == "2D"
+
+            # Invalid header
+            result = generator._parse_benchmark_header("Invalid header")
+            assert result is None
+
+    def test_parse_time_data(self):
+        """Test parsing time data lines."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            benchmark = BenchmarkData(1000, "2D")
+
+            # Valid time data
+            success = generator._parse_time_data(benchmark, "Time: [100.0, 110.0, 120.0] µs")
+            assert success is True
+            assert benchmark.time_mean == 110.0
+            assert benchmark.time_unit == "µs"
+
+            # Invalid time data
+            benchmark2 = BenchmarkData(1000, "2D")
+            success = generator._parse_time_data(benchmark2, "Invalid time data")
+            assert success is False
+
+    def test_parse_throughput_data(self):
+        """Test parsing throughput data lines."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            benchmark = BenchmarkData(1000, "2D")
+
+            # Valid throughput data
+            success = generator._parse_throughput_data(benchmark, "Throughput: [8000.0, 9090.9, 10000.0] Kelem/s")
+            assert success is True
+            assert benchmark.throughput_mean == 9090.9
+            assert benchmark.throughput_unit == "Kelem/s"
+
+            # Invalid throughput data
+            benchmark2 = BenchmarkData(1000, "2D")
+            success = generator._parse_throughput_data(benchmark2, "Invalid throughput data")
+            assert success is False
+
+    def test_format_benchmark_tables(self):
+        """Test formatting benchmark data as markdown tables."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            # Create test benchmarks
+            benchmarks = [
+                BenchmarkData(1000, "2D").with_timing(100.0, 110.0, 120.0, "µs").with_throughput(8000.0, 9090.9, 10000.0, "Kelem/s"),
+                BenchmarkData(5000, "2D").with_timing(450.0, 500.0, 550.0, "µs").with_throughput(9000.0, 10000.0, 11000.0, "Kelem/s"),
+                BenchmarkData(2000, "3D").with_timing(200.0, 220.0, 240.0, "µs").with_throughput(8000.0, 9090.9, 10000.0, "Kelem/s"),
+            ]
+
+            lines = generator._format_benchmark_tables(benchmarks)
+            markdown_content = "\n".join(lines)
+
+            # Should have sections for both dimensions
+            assert "### 2D Triangulation Performance" in markdown_content
+            assert "### 3D Triangulation Performance" in markdown_content
+
+            # Should have table headers
+            assert "| Points | Time (mean) | Throughput (mean) | Scaling |" in markdown_content
+            assert "|--------|-------------|-------------------|----------|" in markdown_content
+
+            # Should have data rows with scaling calculations
+            assert "| 1000 | 110.00 µs | 9090.900 Kelem/s | 1.0x |" in markdown_content
+            assert "| 5000 |" in markdown_content  # Should contain the 5000 point row
+            assert "4.5x" in markdown_content  # Scaling: 500/110 ≈ 4.5
+
+    def test_format_time_value(self):
+        """Test formatting time values with appropriate precision."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            # Test different value ranges
+            assert generator._format_time_value(0.5, "µs") == "0.500 µs"
+            assert generator._format_time_value(110.0, "µs") == "110.00 µs"
+            assert generator._format_time_value(1500.0, "µs") == "1.500 ms"  # Converts to ms
+            assert generator._format_time_value(2500.0, "ms") == "2.5000 s"  # Converts to s
+            assert generator._format_time_value(50000.0, "ms") == "50.0000 s"  # Large values convert to s
+
+    def test_format_throughput_value(self):
+        """Test formatting throughput values with appropriate precision."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            # Test different value ranges
+            assert generator._format_throughput_value(0.5, "Kelem/s") == "0.500 Kelem/s"
+            assert generator._format_throughput_value(110.0, "Kelem/s") == "110.00 Kelem/s"
+            assert generator._format_throughput_value(9090.909, "Kelem/s") == "9090.909 Kelem/s"
+
+            # Test None values
+            assert generator._format_throughput_value(None, "Kelem/s") == "N/A"
+            assert generator._format_throughput_value(110.0, None) == "N/A"
+
+    @patch("benchmark_utils.get_git_commit_hash")
+    @patch("benchmark_utils.datetime")
+    def test_generate_markdown_content(self, mock_datetime, mock_git_commit):
+        """Test generating complete markdown content."""
+        mock_git_commit.return_value = "abc123def456"
+        mock_now = Mock()
+        mock_now.strftime.return_value = "2024-01-15 10:30:00 UTC"
+        mock_datetime.now.return_value = mock_now
+        mock_datetime.UTC = Mock()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            content = generator._generate_markdown_content()
+
+            # Check basic structure
+            assert "# Delaunay Library Performance Results" in content
+            assert "**Last Updated**: 2024-01-15 10:30:00 UTC" in content
+            assert "**Generated By**: benchmark_utils.py" in content
+            assert "**Git Commit**: abc123def456" in content
+            assert "## Performance Results Summary" in content
+
+            # Check static content sections
+            assert "## Key Findings" in content
+            assert "### Performance Ranking" in content
+            assert "## Recommendations" in content
+            assert "## Performance Data Updates" in content
+
+    def test_get_circumsphere_performance_results(self):
+        """Test getting circumsphere performance results placeholder."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            lines = generator._get_circumsphere_performance_results()
+            content = "\n".join(lines)
+
+            assert "### Circumsphere Performance Results" in content
+            assert "not yet implemented" in content
+
+    def test_get_update_instructions(self):
+        """Test getting performance data update instructions."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            lines = generator._get_update_instructions()
+            content = "\n".join(lines)
+
+            assert "## Performance Data Updates" in content
+            assert "uv run benchmark-utils generate-baseline" in content
+            assert "uv run benchmark-utils generate-summary" in content
+            assert "PerformanceSummaryGenerator" in content
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_circumsphere_benchmarks_success(self, mock_cargo):
+        """Test running circumsphere benchmarks successfully."""
+        mock_cargo.return_value = Mock()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            success = generator._run_circumsphere_benchmarks()
+
+            assert success is True
+            mock_cargo.assert_called_once_with(
+                ["bench", "--bench", "circumsphere_containment"],
+                cwd=project_root,
+                timeout=1800,
+            )
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_circumsphere_benchmarks_failure(self, mock_cargo, capsys):
+        """Test handling circumsphere benchmark failures."""
+        mock_cargo.side_effect = Exception("Benchmark failed")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            success = generator._run_circumsphere_benchmarks()
+
+            assert success is False
+            # Check error was printed
+            captured = capsys.readouterr()
+            assert "Failed to run circumsphere benchmarks" in captured.err
+
+    def test_generate_summary_success(self, capsys):
+        """Test successful generation of performance summary."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            output_file = Path(temp_dir) / "test_summary.md"
+
+            success = generator.generate_summary(output_path=output_file)
+
+            assert success is True
+            assert output_file.exists()
+
+            # Check file contains expected content
+            content = output_file.read_text()
+            assert "# Delaunay Library Performance Results" in content
+            assert "## Performance Results Summary" in content
+
+            # Check success message was printed
+            captured = capsys.readouterr()
+            assert "Generated performance summary" in captured.out
+
+    @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
+    def test_generate_summary_with_benchmarks(self, mock_run_benchmarks):
+        """Test generating summary with fresh benchmark run."""
+        mock_run_benchmarks.return_value = True
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            output_file = Path(temp_dir) / "test_summary.md"
+
+            success = generator.generate_summary(output_path=output_file, run_benchmarks=True)
+
+            assert success is True
+            mock_run_benchmarks.assert_called_once()
+            assert output_file.exists()
+
+    @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
+    def test_generate_summary_benchmark_failure_continues(self, mock_run_benchmarks, capsys):
+        """Test that summary generation continues even if benchmark run fails."""
+        mock_run_benchmarks.return_value = False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            output_file = Path(temp_dir) / "test_summary.md"
+
+            success = generator.generate_summary(output_path=output_file, run_benchmarks=True)
+
+            assert success is True  # Should still succeed
+            assert output_file.exists()
+
+            # Check warning was printed
+            captured = capsys.readouterr()
+            assert "Benchmark run failed" in captured.out
+
+    def test_generate_summary_exception_handling(self, capsys):
+        """Test exception handling in generate_summary."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            # Use a read-only directory to cause write failure
+            readonly_dir = Path(temp_dir) / "readonly"
+            readonly_dir.mkdir()
+            readonly_dir.chmod(0o444)  # Read-only
+            output_file = readonly_dir / "summary.md"
+
+            success = generator.generate_summary(output_path=output_file)
+
+            assert success is False
+
+            # Check error was printed (looking for the error message)
+            captured = capsys.readouterr()
+            assert "Failed to generate performance summary" in captured.err
+
+    def test_get_static_content(self):
+        """Test getting static content sections."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            lines = generator._get_static_content()
+            content = "\n".join(lines)
+
+            assert "## Key Findings" in content
+            assert "### Performance Ranking" in content
+            assert "## Recommendations" in content
+            assert "insphere_lifted" in content
+            assert "insphere_distance" in content
+            assert "Performance-Critical Applications" in content

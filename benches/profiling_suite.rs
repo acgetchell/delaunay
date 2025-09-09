@@ -82,7 +82,7 @@ fn print_count_allocations_banner_once() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        eprintln!("count-allocations feature not enabled; memory stats are placeholders.")
+        eprintln!("count-allocations feature not enabled; memory stats are placeholders.");
     });
 }
 

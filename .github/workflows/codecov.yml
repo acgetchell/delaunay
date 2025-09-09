@@ -50,14 +50,7 @@ jobs:
 
       - name: Run coverage
         run: |
-          cargo tarpaulin \
-            --verbose \
-            --all-features \
-            --workspace \
-            --timeout 120 \
-            --out xml \
-            --output-dir coverage/ \
-            -- --test-threads=1
+          cargo tarpaulin --config Cargo.toml
         env:
           RUST_BACKTRACE: 1
 

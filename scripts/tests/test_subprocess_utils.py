@@ -254,6 +254,28 @@ class TestSecurityFeatures:
         with pytest.raises(subprocess.CalledProcessError):
             run_safe_command("ls", ["/definitely-nonexistent-directory"])
 
+    def test_run_git_command_rejects_executable_override(self):
+        """Test that run_git_command raises ValueError when executable is overridden."""
+        with pytest.raises(ValueError, match="Overriding 'executable' is not allowed"):
+            run_git_command(["status"], executable="/malicious/fake/git")
+
+    def test_run_cargo_command_rejects_executable_override(self):
+        """Test that run_cargo_command raises ValueError when executable is overridden."""
+        with pytest.raises(ValueError, match="Overriding 'executable' is not allowed"):
+            run_cargo_command(["--version"], executable="/malicious/fake/cargo")
+
+    def test_run_safe_command_rejects_executable_override(self):
+        """Test that run_safe_command raises ValueError when executable is overridden."""
+        with pytest.raises(ValueError, match="Overriding 'executable' is not allowed"):
+            run_safe_command("echo", ["test"], executable="/malicious/fake/command")
+
+    def test_run_git_command_with_input_rejects_executable_override(self):
+        """Test that run_git_command_with_input raises ValueError when executable is overridden."""
+        from subprocess_utils import run_git_command_with_input
+
+        with pytest.raises(ValueError, match="Overriding 'executable' is not allowed"):
+            run_git_command_with_input(["hash-object", "--stdin"], "test content", executable="/malicious/fake/git")
+
 
 if __name__ == "__main__":
     # Allow running tests directly
