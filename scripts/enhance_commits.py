@@ -17,6 +17,9 @@ sys.path.insert(0, str(SCRIPT_DIR))
 # Shared utilities available but not yet used in this script
 # Can be imported when needed: from changelog_utils import ChangelogUtils
 
+# Precompiled regex patterns for performance
+COMMIT_BULLET_RE = re.compile(r"^- \*\*")
+
 
 def _get_regex_patterns():
     """Get categorization regex patterns."""
@@ -328,7 +331,7 @@ def _process_changelog_lines(lines):
             continue
 
         # Process commit lines in Changes or Fixed Issues sections FIRST
-        if (section_state["in_changes_section"] or section_state["in_fixed_issues"]) and re.match(r"^- \*\*", line):
+        if (section_state["in_changes_section"] or section_state["in_fixed_issues"]) and COMMIT_BULLET_RE.match(line):
             entry, next_index = _collect_commit_entry(lines, line_index)
             categorize_entries_list.append(entry)
             line_index = next_index
@@ -357,11 +360,6 @@ def _process_changelog_lines(lines):
             # Add the release header to output if it's a new release
             if re.match(r"^## ", line):
                 output_lines.append("")  # Add blank line before new release
-                output_lines.append(line)
-                line_index += 1
-                continue
-            if is_release_end:
-                # Not a release header but is release end, add normally
                 output_lines.append(line)
                 line_index += 1
                 continue

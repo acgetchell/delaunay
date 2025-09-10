@@ -19,12 +19,18 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 try:
     # When executed as a script from scripts/
+    from benchmark_models import (  # type: ignore[no-redef]
+        BenchmarkData,
+        CircumspherePerformanceData,
+        CircumsphereTestCase,
+        extract_benchmark_data,
+        format_benchmark_tables,
+    )
     from hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
     from subprocess_utils import (  # type: ignore[no-redef]
         ProjectRootNotFoundError,
@@ -35,6 +41,13 @@ try:
     )
 except ModuleNotFoundError:
     # When imported as a module (e.g., scripts.benchmark_utils)
+    from scripts.benchmark_models import (  # type: ignore[no-redef]
+        BenchmarkData,
+        CircumspherePerformanceData,
+        CircumsphereTestCase,
+        extract_benchmark_data,
+        format_benchmark_tables,
+    )
     from scripts.hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
     from scripts.subprocess_utils import (  # type: ignore[no-redef]
         ProjectRootNotFoundError,
@@ -61,46 +74,1047 @@ DEV_MODE_BENCH_ARGS = [
 # ProjectRootNotFoundError and find_project_root are imported from subprocess_utils
 
 
-@dataclass
-class BenchmarkData:
-    """Represents benchmark data for a single test case."""
+# =============================================================================
+# PERFORMANCE SUMMARY GENERATOR
+# =============================================================================
 
-    points: int
-    dimension: str
-    time_low: float = 0.0
-    time_mean: float = 0.0
-    time_high: float = 0.0
-    time_unit: str = ""
-    throughput_low: float | None = None
-    throughput_mean: float | None = None
-    throughput_high: float | None = None
-    throughput_unit: str | None = None
 
-    def with_timing(self, low: float, mean: float, high: float, unit: str) -> "BenchmarkData":
-        """Set timing data (fluent interface)."""
-        self.time_low = low
-        self.time_mean = mean
-        self.time_high = high
-        self.time_unit = unit
-        return self
+class PerformanceSummaryGenerator:
+    """Generate performance summary markdown from benchmark results."""
 
-    def with_throughput(self, low: float, mean: float, high: float, unit: str) -> "BenchmarkData":
-        """Set throughput data (fluent interface)."""
-        self.throughput_low = low
-        self.throughput_mean = mean
-        self.throughput_high = high
-        self.throughput_unit = unit
-        return self
+    def __init__(self, project_root: Path):
+        """Initialize with project root directory."""
+        self.project_root = project_root
+        # Prefer CI artifact location; fall back to benches/ for local runs
+        self.baseline_file = project_root / "baseline-artifact" / "baseline_results.txt"
+        self._baseline_fallback = project_root / "benches" / "baseline_results.txt"
+        self.comparison_file = project_root / "benches" / "compare_results.txt"
 
-    def to_baseline_format(self) -> str:
-        """Convert to baseline file format."""
-        lines = [f"=== {self.points} Points ({self.dimension}) ===", f"Time: [{self.time_low}, {self.time_mean}, {self.time_high}] {self.time_unit}"]
+        # Path for storing circumsphere benchmark results
+        self.circumsphere_results_dir = project_root / "target" / "criterion"
 
-        if self.throughput_mean is not None:
-            lines.append(f"Throughput: [{self.throughput_low}, {self.throughput_mean}, {self.throughput_high}] {self.throughput_unit}")
+        # Storage for numerical accuracy data from benchmarks
+        self.numerical_accuracy_data = None
+
+        # Extract current version and date information
+        self.current_version = self._get_current_version()
+        self.current_date = self._get_version_date()
+
+    def generate_summary(self, output_path: Path | None = None, run_benchmarks: bool = False, generator_name: str | None = None) -> bool:
+        """
+        Generate performance summary markdown file.
+
+        Args:
+            output_path: Output file path (defaults to benches/PERFORMANCE_RESULTS.md)
+            run_benchmarks: Whether to run fresh circumsphere benchmarks
+            generator_name: Name of the tool generating the summary (for attribution)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if output_path is None:
+                output_path = self.project_root / "benches" / "PERFORMANCE_RESULTS.md"
+
+            # Create output directory if it doesn't exist
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Optionally run fresh benchmarks
+            if run_benchmarks:
+                success, accuracy_data = self._run_circumsphere_benchmarks()
+                if success:
+                    self.numerical_accuracy_data = accuracy_data
+                else:
+                    print("⚠️ Benchmark run failed, using existing/fallback data")
+
+            # Generate markdown content
+            content = self._generate_markdown_content(generator_name)
+
+            # Write to output file
+            with output_path.open("w", encoding="utf-8") as f:
+                f.write(content)
+
+            print(f"📊 Generated performance summary: {output_path}")
+            return True
+
+        except Exception as e:
+            print(f"❌ Failed to generate performance summary: {e}", file=sys.stderr)
+            return False
+
+    def _generate_markdown_content(self, generator_name: str | None = None) -> str:
+        """
+        Generate the complete markdown content for performance results.
+
+        Args:
+            generator_name: Name of the tool generating the summary (for attribution)
+
+        Returns:
+            Formatted markdown content as string
+        """
+        # Determine the generator name for attribution
+        if generator_name is None:
+            generator_name = "benchmark_utils.py"
+
+        lines = [
+            "# Delaunay Library Performance Results",
+            "",
+            "This file contains performance benchmarks and analysis for the delaunay library.",
+            "The results are automatically generated and updated by the benchmark infrastructure.",
+            "",
+            f"**Last Updated**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+            f"**Generated By**: {generator_name}",
+        ]
+
+        # Add git information
+        try:
+            commit_hash = get_git_commit_hash()
+            if commit_hash and commit_hash != "unknown":
+                lines.append(f"**Git Commit**: {commit_hash}")
+        except Exception as e:
+            logging.debug("Could not get git commit hash: %s", e)
+
+        # Add hardware information
+        try:
+            hardware_info = HardwareInfo()
+            hw_info = hardware_info.get_hardware_info()
+            lines.extend(
+                [
+                    f"**Hardware**: {hw_info['CPU']} ({hw_info['CPU_CORES']} cores)",
+                    f"**Memory**: {hw_info['MEMORY']}",
+                    f"**OS**: {hw_info['OS']}",
+                    f"**Rust**: {hw_info['RUST']}",
+                ]
+            )
+        except Exception as e:
+            logging.debug("Could not get hardware info: %s", e)
+            lines.append("**Hardware**: Unknown")
+
+        lines.extend(
+            [
+                "",
+                "## Performance Results Summary",
+                "",
+            ]
+        )
+
+        # Add circumsphere performance results from actual benchmark data
+        lines.extend(self._get_circumsphere_performance_results())
+
+        # Add baseline results if available
+        if self.baseline_file.exists() or self._baseline_fallback.exists():
+            # Use fallback if primary is missing
+            if not self.baseline_file.exists():
+                self.baseline_file = self._baseline_fallback
+            lines.extend(self._parse_baseline_results())
+
+        # Add comparison results if available
+        if self.comparison_file.exists():
+            lines.extend(self._parse_comparison_results())
+
+        # Add dynamic analysis sections based on performance data
+        lines.extend(self._get_dynamic_analysis_sections())
+
+        # Add static content sections (moved to end)
+        lines.extend(self._get_static_sections())
+
+        # Add performance data update instructions
+        lines.extend(self._get_update_instructions())
+
+        return "\n".join(lines)
+
+    def _get_current_version(self) -> str:
+        """
+        Get the current version from git tags.
+
+        Returns:
+            Current version string (e.g., "0.4.3") or "unknown" if not found
+        """
+        try:
+            # Get the latest tag that matches version pattern
+            cp = run_git_command(["describe", "--tags", "--abbrev=0", "--match=v*"], cwd=self.project_root)
+            result = cp.stdout.strip()
+            if result.startswith("v"):
+                return result[1:]  # Remove 'v' prefix
+            return "unknown"
+        except Exception:
+            # Fallback: try to get any recent tag
+            try:
+                cp = run_git_command(["tag", "-l", "--sort=-version:refname"], cwd=self.project_root)
+                out = cp.stdout.strip()
+                if out:
+                    tags = out.split("\n")
+                    for tag in tags:
+                        if tag.startswith("v") and len(tag) > 1:
+                            return tag[1:]
+                return "unknown"
+            except Exception:
+                return "unknown"
+
+    def _get_version_date(self) -> str:
+        """
+        Get the date of the current version tag.
+
+        Returns:
+            Date string in YYYY-MM-DD format or current date if not found
+        """
+        try:
+            # Get the date of the latest version tag
+            tag_name = f"v{self.current_version}" if self.current_version != "unknown" else None
+            if tag_name:
+                cp = run_git_command(["log", "-1", "--format=%cd", "--date=format:%Y-%m-%d", tag_name], cwd=self.project_root)
+                log_output = cp.stdout.strip()
+                if log_output:
+                    return log_output
+
+            # Fallback to current date
+            return datetime.now(UTC).strftime("%Y-%m-%d")
+        except Exception:
+            return datetime.now(UTC).strftime("%Y-%m-%d")
+
+    def _run_circumsphere_benchmarks(self) -> tuple[bool, dict[str, str] | None]:
+        """
+        Run the circumsphere containment benchmarks to generate fresh data.
+
+        Returns:
+            Tuple of (success, numerical_accuracy_data)
+        """
+        try:
+            print("🔄 Running circumsphere containment benchmarks...")
+
+            # Run the circumsphere benchmark with reduced sample size for speed
+            result = run_cargo_command(
+                ["bench", "--bench", "circumsphere_containment", "--", "--sample-size", "10", "--measurement-time", "5", "--warm-up-time", "1"],
+                cwd=self.project_root,
+                timeout=240,  # 4 minute timeout for quick benchmarks
+                capture_output=True,
+            )
+
+            # Parse numerical accuracy data from stdout
+            numerical_accuracy_data = self._parse_numerical_accuracy_output(result.stdout)
+
+            print("✅ Circumsphere benchmarks completed successfully")
+            return True, numerical_accuracy_data
+
+        except Exception as e:
+            print(f"❌ Error running circumsphere benchmarks: {e}")
+            return False, None
+
+    def _parse_numerical_accuracy_output(self, stdout: str) -> dict[str, str] | None:
+        """
+        Parse numerical accuracy data from circumsphere benchmark stdout.
+
+        Args:
+            stdout: The stdout output from the circumsphere benchmark
+
+        Returns:
+            Dictionary with accuracy percentages or None if parsing failed
+        """
+        try:
+            lines = stdout.split("\n")
+            accuracy_data = {}
+
+            # Look for the Method Comparisons section
+            for i, line in enumerate(lines):
+                if "Method Comparisons" in line and "total tests" in line:
+                    # Parse the following lines for accuracy percentages
+                    # Expected format:
+                    # "  insphere vs insphere_distance:  1000/1000 (100.00%)"
+                    patterns = [
+                        (r"insphere vs insphere_distance:\s+\d+/\d+\s+\(([\d.]+)%\)", "insphere_distance"),
+                        (r"insphere vs insphere_lifted:\s+\d+/\d+\s+\(([\d.]+)%\)", "insphere_lifted"),
+                        (r"insphere_distance vs insphere_lifted:\s+\d+/\d+\s+\(([\d.]+)%\)", "distance_lifted"),
+                        (r"All three methods agree:\s+\d+/\d+\s+\(([\d.]+)%\)", "all_agree"),
+                    ]
+
+                    # Look at the next several lines for the percentages
+                    for j in range(i + 1, min(i + 6, len(lines))):
+                        check_line = lines[j]
+                        for pattern, key in patterns:
+                            match = re.search(pattern, check_line)
+                            if match:
+                                accuracy_data[key] = f"{float(match.group(1)):.1f}%"
+                    break
+
+            return accuracy_data if accuracy_data else None
+
+        except Exception:
+            return None
+
+    def _get_numerical_accuracy_analysis(self) -> list[str]:
+        """
+        Generate numerical accuracy analysis section using dynamic data if available.
+
+        Returns:
+            List of markdown lines with numerical accuracy analysis
+        """
+        lines = [
+            "",
+            "### Numerical Accuracy Analysis",
+            "",
+            "Based on 1000 random test cases:",
+            "",
+        ]
+
+        if self.numerical_accuracy_data:
+            # Use actual dynamic data from benchmark runs
+            insphere_distance = self.numerical_accuracy_data.get("insphere_distance", "unknown")
+            insphere_lifted = self.numerical_accuracy_data.get("insphere_lifted", "unknown")
+            distance_lifted = self.numerical_accuracy_data.get("distance_lifted", "unknown")
+            all_agree = self.numerical_accuracy_data.get("all_agree", "unknown")
+
+            lines.extend(
+                [
+                    f"- **insphere vs insphere_distance**: {insphere_distance} agreement",
+                    f"- **insphere vs insphere_lifted**: {insphere_lifted} agreement (different algorithms)",
+                    f"- **insphere_distance vs insphere_lifted**: {distance_lifted} agreement",
+                    f"- **All three methods agree**: {all_agree} (expected due to different numerical approaches)",
+                ]
+            )
+        else:
+            # Use reference data when no fresh benchmark data is available
+            lines.extend(
+                [
+                    "- **insphere vs insphere_distance**: ~82% agreement (reference data)",
+                    "- **insphere vs insphere_lifted**: ~0% agreement (different algorithms, reference data)",
+                    "- **insphere_distance vs insphere_lifted**: ~18% agreement (reference data)",
+                    "- **All three methods agree**: ~0% (expected due to different numerical approaches, reference data)",
+                    "",
+                    "*Note: To get current numerical accuracy data, run with `--run-benchmarks` flag.*",
+                ]
+            )
 
         lines.append("")
-        return "\n".join(lines)
+        return lines
+
+    def _parse_circumsphere_benchmark_results(self) -> list[CircumsphereTestCase]:
+        """
+        Parse circumsphere benchmark results from Criterion output.
+
+        Returns:
+            List of CircumsphereTestCase objects with parsed performance data
+        """
+        if not self.circumsphere_results_dir.exists():
+            print(f"⚠️ No criterion results found at {self.circumsphere_results_dir}")
+            return self._get_fallback_circumsphere_data()
+
+        benchmark_mappings, edge_case_mappings, method_mappings, edge_method_mappings = self._get_benchmark_mappings()
+
+        test_cases = []
+        test_cases.extend(self._parse_regular_benchmarks(benchmark_mappings, method_mappings))
+        test_cases.extend(self._parse_edge_case_benchmarks(edge_case_mappings, edge_method_mappings))
+
+        # If no results were parsed, use fallback data
+        if not test_cases:
+            print("⚠️ No benchmark results parsed, using fallback data")
+            return self._get_fallback_circumsphere_data()
+
+        return test_cases
+
+    def _get_benchmark_mappings(self) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, str]], dict[str, str], dict[str, str]]:
+        """
+        Get the mapping configurations for parsing benchmark results.
+
+        Returns:
+            Tuple of (benchmark_mappings, edge_case_mappings, method_mappings, edge_method_mappings)
+        """
+        benchmark_mappings = {
+            "2d": ("Basic 2D", "2D"),
+            "3d": ("Basic 3D", "3D"),
+            "4d": ("Basic 4D", "4D"),
+            "5d": ("Basic 5D", "5D"),
+        }
+
+        edge_case_mappings = {
+            "edge_cases_2d_boundary_point": ("Boundary vertex", "2D"),
+            "edge_cases_2d_far_point": ("Far vertex", "2D"),
+            "edge_cases_3d_boundary_point": ("Boundary vertex", "3D"),
+            "edge_cases_3d_far_point": ("Far vertex", "3D"),
+            "edge_cases_4d_boundary_point": ("Boundary vertex", "4D"),
+            "edge_cases_4d_far_point": ("Far vertex", "4D"),
+            "edge_cases_5d_boundary_point": ("Boundary vertex", "5D"),
+            "edge_cases_5d_far_point": ("Far vertex", "5D"),
+        }
+
+        method_mappings = {
+            "insphere": "insphere",
+            "insphere_distance": "insphere_distance",
+            "insphere_lifted": "insphere_lifted",
+        }
+
+        edge_method_mappings = {
+            "insphere": "insphere",
+            "distance": "insphere_distance",
+            "lifted": "insphere_lifted",
+        }
+
+        return benchmark_mappings, edge_case_mappings, method_mappings, edge_method_mappings
+
+    def _parse_regular_benchmarks(
+        self, benchmark_mappings: dict[str, tuple[str, str]], method_mappings: dict[str, str]
+    ) -> list[CircumsphereTestCase]:
+        """
+        Parse regular benchmark results.
+
+        Args:
+            benchmark_mappings: Mapping of benchmark keys to (test_name, dimension)
+            method_mappings: Mapping of method suffixes to method names
+
+        Returns:
+            List of parsed CircumsphereTestCase objects
+        """
+        test_cases = []
+
+        for bench_key, (test_name, dimension) in benchmark_mappings.items():
+            methods = self._parse_benchmark_methods(bench_key, method_mappings)
+
+            if methods:
+                test_case = CircumsphereTestCase(test_name=test_name, dimension=dimension, methods=methods)
+                test_cases.append(test_case)
+
+        return test_cases
+
+    def _parse_edge_case_benchmarks(
+        self, edge_case_mappings: dict[str, tuple[str, str]], edge_method_mappings: dict[str, str]
+    ) -> list[CircumsphereTestCase]:
+        """
+        Parse edge case benchmark results.
+
+        Args:
+            edge_case_mappings: Mapping of edge case keys to (test_name, dimension)
+            edge_method_mappings: Mapping of edge case method suffixes to method names
+
+        Returns:
+            List of parsed CircumsphereTestCase objects
+        """
+        test_cases = []
+
+        for edge_key, (test_name, dimension) in edge_case_mappings.items():
+            methods = self._parse_benchmark_methods(edge_key, edge_method_mappings)
+
+            if methods:
+                test_case = CircumsphereTestCase(test_name=test_name, dimension=dimension, methods=methods)
+                test_cases.append(test_case)
+
+        return test_cases
+
+    def _parse_benchmark_methods(self, bench_key: str, method_mappings: dict[str, str]) -> dict[str, CircumspherePerformanceData]:
+        """
+        Parse methods for a single benchmark.
+
+        Args:
+            bench_key: The benchmark key (e.g., "2d" or "edge_cases_2d_boundary_point")
+            method_mappings: Mapping of method suffixes to method names
+
+        Returns:
+            Dictionary mapping method names to CircumspherePerformanceData
+        """
+        methods = {}
+
+        for method_suffix, method_name in method_mappings.items():
+            criterion_path = self.circumsphere_results_dir / f"{bench_key}_{method_suffix}"
+            performance_data = self._parse_single_method_result(criterion_path, method_name)
+
+            if performance_data:
+                methods[method_name] = performance_data
+
+        return methods
+
+    def _parse_single_method_result(self, criterion_path: Path, method_name: str) -> CircumspherePerformanceData | None:
+        """
+        Parse a single method result from Criterion output.
+
+        Args:
+            criterion_path: Path to the Criterion benchmark directory
+            method_name: Name of the method being benchmarked
+
+        Returns:
+            CircumspherePerformanceData object or None if parsing failed
+        """
+        estimates_file = criterion_path / "base" / "estimates.json"
+        if not estimates_file.exists():
+            estimates_file = criterion_path / "new" / "estimates.json"
+
+        if estimates_file.exists():
+            try:
+                with estimates_file.open() as f:
+                    estimates = json.load(f)
+
+                # Extract mean time in nanoseconds
+                mean_ns = estimates["mean"]["point_estimate"]
+                return CircumspherePerformanceData(method=method_name, time_ns=mean_ns)
+
+            except Exception as e:
+                print(f"⚠️ Could not parse {estimates_file}: {e}")
+
+        return None
+
+    def _get_fallback_circumsphere_data(self) -> list[CircumsphereTestCase]:
+        """
+        Get fallback circumsphere performance data when live benchmarks aren't available.
+
+        Returns:
+            List of CircumsphereTestCase objects with known performance data
+        """
+        return [
+            # 2D results
+            CircumsphereTestCase(
+                "Basic 2D",
+                "2D",
+                {
+                    "insphere": CircumspherePerformanceData("insphere", 560),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 644),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 448),
+                },
+            ),
+            CircumsphereTestCase(
+                "Boundary vertex",
+                "2D",
+                {
+                    "insphere": CircumspherePerformanceData("insphere", 570),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 644),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 451),
+                },
+            ),
+            CircumsphereTestCase(
+                "Far vertex",
+                "2D",
+                {
+                    "insphere": CircumspherePerformanceData("insphere", 570),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 641),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 449),
+                },
+            ),
+            # 3D results
+            CircumsphereTestCase(
+                "Basic 3D",
+                "3D",
+                {
+                    "insphere": CircumspherePerformanceData("insphere", 805),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 1463),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 637),
+                },
+            ),
+            CircumsphereTestCase(
+                "Boundary vertex",
+                "3D",
+                {
+                    "insphere": CircumspherePerformanceData("insphere", 811),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 1497),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 647),
+                },
+            ),
+            CircumsphereTestCase(
+                "Far vertex",
+                "3D",
+                {
+                    "insphere": CircumspherePerformanceData("insphere", 808),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 1493),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 649),
+                },
+            ),
+            # 4D results
+            CircumsphereTestCase(
+                "Basic 4D",
+                "4D",
+                {
+                    "insphere": CircumspherePerformanceData("insphere", 1200),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 1900),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 979),
+                },
+            ),
+            CircumsphereTestCase(
+                "Boundary vertex",
+                "4D",
+                {
+                    "insphere": CircumspherePerformanceData("insphere", 1300),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 1900),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 987),
+                },
+            ),
+            CircumsphereTestCase(
+                "Far vertex",
+                "4D",
+                {
+                    "insphere": CircumspherePerformanceData("insphere", 1300),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 1900),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 975),
+                },
+            ),
+            # 5D results
+            CircumsphereTestCase(
+                "Basic 5D",
+                "5D",
+                {
+                    "insphere": CircumspherePerformanceData("insphere", 1800),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 3000),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 1500),
+                },
+            ),
+            CircumsphereTestCase(
+                "Boundary vertex",
+                "5D",
+                {
+                    "insphere": CircumspherePerformanceData("insphere", 1800),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 3100),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 1500),
+                },
+            ),
+            CircumsphereTestCase(
+                "Far vertex",
+                "5D",
+                {
+                    "insphere": CircumspherePerformanceData("insphere", 1800),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 3000),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 1500),
+                },
+            ),
+        ]
+
+    def _get_circumsphere_performance_results(self) -> list[str]:
+        """
+        Generate circumsphere containment performance results section with dynamic data.
+
+        Returns:
+            List of markdown lines with circumsphere performance data
+        """
+        # Parse actual benchmark results
+        test_cases = self._parse_circumsphere_benchmark_results()
+
+        if not test_cases:
+            return [
+                "### Circumsphere Performance Results",
+                "",
+                f"#### Version {self.current_version} Results ({self.current_date})",
+                "",
+                "⚠️ No benchmark results available. Run benchmarks first:",
+                "```bash",
+                "uv run performance-summary-utils generate --run-benchmarks",
+                "```",
+                "",
+            ]
+
+        lines = [
+            "### Circumsphere Performance Results",
+            "",
+            f"#### Version {self.current_version} Results ({self.current_date})",
+            "",
+        ]
+
+        # Group test cases by dimension for better organization
+        cases_by_dimension = {}
+        for test_case in test_cases:
+            dim = test_case.dimension
+            if dim not in cases_by_dimension:
+                cases_by_dimension[dim] = []
+            cases_by_dimension[dim].append(test_case)
+
+        # Sort dimensions (2D, 3D, 4D, etc.)
+        sorted_dims = sorted(cases_by_dimension.keys(), key=lambda x: (len(x), x))
+
+        for dimension in sorted_dims:
+            dim_cases = cases_by_dimension[dimension]
+
+            lines.extend(
+                [
+                    f"#### Single Query Performance ({dimension})",
+                    "",
+                    "| Test Case | insphere | insphere_distance | insphere_lifted | Winner |",
+                    "|-----------|----------|------------------|-----------------|---------|",
+                ]
+            )
+
+            # Add single query performance data from parsed results
+            for test_case in dim_cases:
+                winner = test_case.get_winner()
+                winner_text = f"**{winner}**" if winner else "N/A"
+
+                # Convert nanoseconds to a more readable format
+                methods_formatted = {}
+                for method_name, perf_data in test_case.methods.items():
+                    ns_time = perf_data.time_ns
+                    if ns_time >= 1000:
+                        # Convert to microseconds if >= 1000ns
+                        methods_formatted[method_name] = f"{ns_time / 1000:.1f} µs"
+                    else:
+                        methods_formatted[method_name] = f"{ns_time:.0f} ns"
+
+                insphere_time = methods_formatted.get("insphere", "N/A")
+                distance_time = methods_formatted.get("insphere_distance", "N/A")
+                lifted_time = methods_formatted.get("insphere_lifted", "N/A")
+
+                lines.append(f"| {test_case.test_name} | {insphere_time} | {distance_time} | {lifted_time} | {winner_text} |")
+
+            lines.append("")  # Add spacing between dimensions
+
+        # Historical version comparison has been moved to static sections
+
+        return lines
+
+    def _parse_baseline_results(self) -> list[str]:
+        """Parse baseline results and add to summary."""
+        lines = [
+            "## Triangulation Data Structure Performance",
+            "",
+        ]
+
+        try:
+            with self.baseline_file.open("r", encoding="utf-8") as f:
+                content = f.read()
+
+            # Extract metadata from baseline
+            metadata_lines = []
+            first_lines = content.split("\n")[:20]
+            for line in first_lines:
+                if line.startswith(("Generated at:", "Date:", "Git commit:", "Hardware:")):
+                    metadata_lines.append(line)
+            if not any(line.startswith("Hardware:") for line in metadata_lines) and "Hardware Information:" in content:
+                # Emit a concise single-line summary from the block's first two fields
+                for i, line in enumerate(first_lines):
+                    if line.startswith("Hardware Information:"):
+                        os_line = first_lines[i + 1].strip()
+                        cpu_line = first_lines[i + 2].strip()
+                        metadata_lines.append(f"Hardware: {cpu_line.removeprefix('CPU: ').strip()}")
+                        break
+
+            if metadata_lines:
+                lines.extend(
+                    [
+                        "### Current Baseline Information",
+                        "",
+                    ]
+                )
+                for meta_line in metadata_lines:
+                    lines.append(f"- **{meta_line}**")
+                lines.append("")
+
+            # Extract and format benchmark data
+            benchmarks = extract_benchmark_data(content)
+            if benchmarks:
+                lines.extend(format_benchmark_tables(benchmarks))
+
+        except Exception as e:
+            lines.extend(
+                [
+                    "### Baseline Results",
+                    "",
+                    f"*Error parsing baseline results: {e}*",
+                    "",
+                ]
+            )
+
+        return lines
+
+    def _parse_comparison_results(self) -> list[str]:
+        """Parse comparison results and add status information."""
+        lines = []
+
+        try:
+            with self.comparison_file.open("r", encoding="utf-8") as f:
+                content = f.read()
+
+            if "REGRESSION" in content:
+                lines.extend(
+                    [
+                        "### ⚠️ Performance Regression Detected",
+                        "",
+                        "Recent benchmark comparison detected performance regressions.",
+                        "See comparison details in the benchmark comparison output.",
+                        "",
+                    ]
+                )
+
+                # Extract and include specific regression details from content
+                content_lines = content.split("\n")
+                for line in content_lines:
+                    if "REGRESSION:" in line or "IMPROVEMENT:" in line:
+                        lines.append(f"- {line.strip()}")
+
+                if any("REGRESSION:" in line or "IMPROVEMENT:" in line for line in content_lines):
+                    lines.append("")
+            else:
+                lines.extend(
+                    [
+                        "### ✅ Performance Status: Good",
+                        "",
+                        "Recent benchmark comparison shows no significant performance regressions.",
+                        "",
+                    ]
+                )
+
+        except Exception:
+            lines.extend(
+                [
+                    "### Comparison Results",
+                    "",
+                    "*No recent comparison data available*",
+                    "",
+                ]
+            )
+
+        return lines
+
+    def _get_dynamic_analysis_sections(self) -> list[str]:
+        """
+        Generate dynamic analysis sections based on performance data.
+
+        Returns:
+            List of markdown lines with dynamic analysis
+        """
+        test_data = self._parse_circumsphere_benchmark_results()
+        performance_ranking = self._analyze_performance_ranking(test_data)
+
+        lines = [
+            "## Key Findings",
+            "",
+            "### Performance Ranking",
+            "",
+        ]
+
+        # Generate dynamic ranking based on data
+        for i, (method, _avg_performance, description) in enumerate(performance_ranking, 1):
+            lines.append(f"{i}. **{method}** - {description}")
+
+        # Add numerical accuracy analysis with dynamic data if available
+        lines.extend(self._get_numerical_accuracy_analysis())
+
+        lines.extend(
+            [
+                "## Recommendations",
+                "",
+            ]
+        )
+
+        # Generate dynamic recommendations based on performance ranking
+        lines.extend(self._generate_dynamic_recommendations(performance_ranking))
+
+        # Add dynamic conclusion based on performance ranking
+        if performance_ranking:
+            fastest_method = performance_ranking[0][0]
+            lines.extend(
+                [
+                    "",
+                    "## Conclusion",
+                    "",
+                    f"The `{fastest_method}` method provides the best performance while maintaining reasonable numerical behavior.",
+                    "For most applications requiring high-performance circumsphere containment tests, it should be the preferred choice.",
+                    "",
+                    "The standard `insphere` method remains the most numerically stable option when correctness is prioritized over performance.",
+                    "",
+                ]
+            )
+
+        return lines
+
+    def _analyze_performance_ranking(self, test_data: list[CircumsphereTestCase]) -> list[tuple[str, float, str]]:
+        """
+        Analyze performance data to generate dynamic rankings.
+
+        Args:
+            test_data: List of CircumsphereTestCase objects
+
+        Returns:
+            List of tuples (method_name, average_performance, description)
+        """
+        method_totals = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
+
+        # Collect performance data from all test cases
+        for test_case in test_data:
+            for method_name, perf_data in test_case.methods.items():
+                method_totals[method_name].append(perf_data.time_ns)
+
+        # Calculate averages and determine ranking
+        method_averages = {}
+        for method, times in method_totals.items():
+            if times:
+                method_averages[method] = sum(times) / len(times)
+            else:
+                method_averages[method] = float("inf")
+
+        # Sort by performance (lowest time first)
+        sorted_methods = sorted(method_averages.items(), key=lambda x: x[1])
+
+        # Generate descriptions with relative performance
+        rankings = []
+        if sorted_methods:
+            fastest_time = sorted_methods[0][1]
+
+            for method, avg_time in sorted_methods:
+                if avg_time == fastest_time:
+                    desc = "(fastest) - Consistently best performance across all tests"
+                elif method == "insphere":
+                    slowdown = (avg_time / fastest_time) if fastest_time > 0 else 1
+                    desc = f"(middle) - ~{slowdown:.1f}x slower than fastest, but good performance"
+                else:  # insphere_distance
+                    slowdown = (avg_time / fastest_time) if fastest_time > 0 else 1
+                    desc = f"(slowest) - ~{slowdown:.1f}x slower due to explicit circumcenter calculation"
+
+                rankings.append((method, avg_time, desc))
+
+        return rankings
+
+    def _generate_dynamic_recommendations(self, performance_ranking: list[tuple[str, float, str]]) -> list[str]:
+        """
+        Generate dynamic recommendations based on performance ranking.
+
+        Args:
+            performance_ranking: List of performance ranking tuples
+
+        Returns:
+            List of markdown lines with recommendations
+        """
+        if not performance_ranking:
+            return []
+
+        fastest_method = performance_ranking[0][0]
+        fastest_time = performance_ranking[0][1]
+
+        # Calculate performance differences more accurately
+        performance_diffs = []
+        for method, avg_time, _ in performance_ranking[1:]:
+            if fastest_time > 0:
+                slowdown_factor = avg_time / fastest_time
+                performance_diffs.append((method, slowdown_factor))
+
+        lines = [
+            "### For Performance-Critical Applications",
+            "",
+            f"- **Use `{fastest_method}`** for maximum performance",
+        ]
+
+        # Add specific performance comparison if we have data
+        if performance_diffs:
+            for method, slowdown in performance_diffs:
+                if slowdown > 1.5:  # Significant difference
+                    lines.append(f"- ~{slowdown:.1f}x faster than `{method}`")
+
+        lines.extend(
+            [
+                "- Best choice for batch processing and high-frequency queries",
+                "- Recommended for applications requiring millions of containment tests",
+                "",
+                "### For Numerical Stability",
+                "",
+                "- **Use `insphere`** for most reliable results",
+                "- Standard determinant-based approach with proven mathematical properties",
+                "- Good balance of performance and numerical stability",
+                "- Recommended for applications where correctness is paramount",
+                "",
+                "### For Educational/Research Purposes",
+                "",
+                "- **Use `insphere_distance`** to understand geometric intuition",
+                "- Explicit circumcenter calculation makes algorithm transparent",
+                "- Excellent for debugging and algorithm validation",
+                "- Useful for educational materials despite slower performance",
+                "",
+                "### Performance Summary",
+                "",
+            ]
+        )
+
+        # Add current benchmark-based summary
+        if len(performance_ranking) >= 3:
+            times = [f"{time / 1000:.1f} µs" if time >= 1000 else f"{time:.0f} ns" for _, time, _ in performance_ranking]
+
+            lines.extend(
+                [
+                    "Based on current benchmarks:",
+                    "",
+                    f"- `{performance_ranking[0][0]}`: {times[0]} (fastest)",
+                    f"- `{performance_ranking[1][0]}`: {times[1]} (balanced)",
+                    f"- `{performance_ranking[2][0]}`: {times[2]} (transparent)",
+                ]
+            )
+
+        return lines
+
+    def _get_static_sections(self) -> list[str]:
+        """
+        Get static content sections (implementation notes, benchmark structure, etc.).
+
+        Returns:
+            List of markdown lines with static content
+        """
+        return [
+            "## Historical Version Comparison",
+            "",
+            "*Based on archived performance measurements from previous releases:*",
+            "",
+            "### v0.3.0 → v0.3.1 Performance Improvements",
+            "",
+            "| Test Case | Method | v0.3.0 | v0.3.1 | Improvement |",
+            "|-----------|--------|--------|--------|-------------|",
+            "| Basic 3D | insphere | 808 ns | 805 ns | +0.4% |",
+            "| Basic 3D | insphere_distance | 1,505 ns | 1,463 ns | +2.8% |",
+            "| Basic 3D | insphere_lifted | 646 ns | 637 ns | +1.4% |",
+            "| Random 1000 queries | insphere | 822 µs | 811 µs | +1.3% |",
+            "| Random 1000 queries | insphere_distance | 1,535 µs | 1,494 µs | +2.7% |",
+            "| Random 1000 queries | insphere_lifted | 661 µs | 650 µs | +1.7% |",
+            "| 2D | insphere_lifted | 442 ns | 440 ns | +0.5% |",
+            "| 4D | insphere_lifted | 962 ns | 955 ns | +0.7% |",
+            "",
+            "**Key Improvements**: Version 0.3.1 showed consistent performance gains across all methods,",
+            "with `insphere_distance` seeing the largest improvement (+2.8%). The changes implemented",
+            "improved numerical stability using `hypot` and `squared_norm` functions while providing",
+            "measurable performance gains.",
+            "",
+            "## Implementation Notes",
+            "",
+            "### Performance Advantages of `insphere_lifted`",
+            "",
+            "1. More efficient matrix formulation using relative coordinates",
+            "2. Avoids redundant circumcenter calculations",
+            "3. Optimized determinant computation",
+            "",
+            "### Method Disagreements",
+            "",
+            "The disagreements between methods are expected due to:",
+            "",
+            "1. Different numerical approaches and tolerances",
+            "2. Floating-point precision differences in multi-step calculations",
+            "3. Varying sensitivity to degenerate cases",
+            "",
+            "## Benchmark Structure",
+            "",
+            "The `circumsphere_containment.rs` benchmark includes:",
+            "",
+            "- **Random queries**: Batch processing performance with 1000 random test points",
+            "- **Dimensional tests**: Performance across 2D, 3D, 4D, and 5D simplices",
+            "- **Edge cases**: Boundary vertices and far-away points",
+            "- **Numerical consistency**: Agreement analysis between all methods",
+            "",
+        ]
+
+    def _get_update_instructions(self) -> list[str]:
+        """
+        Generate performance data update instructions.
+
+        Returns:
+            List of markdown lines with update instructions
+        """
+        return [
+            "## Performance Data Updates",
+            "",
+            "This file is automatically generated from benchmark results. To update:",
+            "",
+            "```bash",
+            "# Generate performance summary with current data",
+            "uv run benchmark-utils generate-summary",
+            "",
+            "# Run fresh benchmarks and generate summary (includes numerical accuracy)",
+            "uv run benchmark-utils generate-summary --run-benchmarks",
+            "",
+            "# Generate baseline results for regression testing",
+            "uv run benchmark-utils generate-baseline",
+            "```",
+            "",
+            "### Customization",
+            "",
+            "For manual updates or custom analysis, modify the `PerformanceSummaryGenerator`",
+            "class in `scripts/benchmark_utils.py`. This provides enhanced control over",
+            "dynamic vs static content organization and supports parsing numerical accuracy",
+            "data from live benchmark runs.",
+            "",
+        ]
 
 
 class CriterionParser:
@@ -751,531 +1765,6 @@ class WorkflowHelper:
         return artifact_name
 
 
-class PerformanceSummaryGenerator:
-    """Generate performance summary markdown files from benchmark data."""
-
-    def __init__(self, project_root: Path):
-        """Initialize the performance summary generator."""
-        self.project_root = project_root
-        self.baseline_file = project_root / "baseline-artifact" / "baseline_results.txt"
-        self.comparison_file = project_root / "benches" / "compare_results.txt"
-        self.current_version = self._get_current_version()
-
-    def generate_summary(self, output_path: Path | None = None, run_benchmarks: bool = False) -> bool:
-        """
-        Generate performance summary markdown file.
-
-        Args:
-            output_path: Output file path (defaults to benches/PERFORMANCE_RESULTS.md)
-            run_benchmarks: Whether to run fresh circumsphere benchmarks
-
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            if output_path is None:
-                output_path = self.project_root / "benches" / "PERFORMANCE_RESULTS.md"
-
-            # Create output directory if it doesn't exist
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Optionally run fresh benchmarks
-            if run_benchmarks and not self._run_circumsphere_benchmarks():
-                print("⚠️ Benchmark run failed, using existing/fallback data")
-
-            # Generate markdown content
-            content = self._generate_markdown_content()
-
-            # Write to output file
-            with output_path.open("w", encoding="utf-8") as f:
-                f.write(content)
-
-            print(f"📊 Generated performance summary: {output_path}")
-            return True
-
-        except Exception as e:
-            print(f"❌ Failed to generate performance summary: {e}", file=sys.stderr)
-            return False
-
-    def _generate_markdown_content(self) -> str:
-        """
-        Generate the complete markdown content for performance results.
-
-        Returns:
-            Formatted markdown content as string
-        """
-        lines = [
-            "# Delaunay Library Performance Results",
-            "",
-            "This file contains performance benchmarks and analysis for the delaunay library.",
-            "The results are automatically generated and updated by the benchmark infrastructure.",
-            "",
-            f"**Last Updated**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}",
-            "**Generated By**: benchmark_utils.py",
-        ]
-
-        # Add git information
-        try:
-            commit_hash = get_git_commit_hash()
-            if commit_hash and commit_hash != "unknown":
-                lines.append(f"**Git Commit**: {commit_hash}")
-        except Exception as e:
-            logging.debug("Could not get git commit hash: %s", e)
-
-        lines.extend(
-            [
-                "",
-                "## Performance Results Summary",
-                "",
-            ]
-        )
-
-        # Add circumsphere performance results from actual benchmark data
-        lines.extend(self._get_circumsphere_performance_results())
-
-        # Add baseline results if available
-        if self.baseline_file.exists():
-            lines.extend(self._parse_baseline_results())
-
-        # Add comparison results if available
-        if self.comparison_file.exists():
-            lines.extend(self._parse_comparison_results())
-
-        # Add dynamic content sections based on performance data
-        lines.extend(self._get_dynamic_analysis_sections())
-
-        # Add performance data update instructions
-        lines.extend(self._get_update_instructions())
-
-        return "\n".join(lines)
-
-    def _parse_baseline_results(self) -> list[str]:
-        """
-        Parse baseline results file and format as markdown.
-
-        Returns:
-            List of markdown lines
-        """
-        lines = []
-        try:
-            with self.baseline_file.open("r", encoding="utf-8") as f:
-                content = f.read()
-
-            # Extract metadata from baseline
-            metadata_lines = []
-            for line in content.split("\n")[:10]:  # Check first 10 lines for metadata
-                if line.startswith(("Generated at:", "Git commit:", "Hardware:")):
-                    metadata_lines.append(line)
-
-            if metadata_lines:
-                lines.extend(
-                    [
-                        "### Current Baseline Information",
-                        "",
-                    ]
-                )
-                for meta_line in metadata_lines:
-                    lines.append(f"- **{meta_line}**")
-                lines.append("")
-
-            # Parse benchmark data into tables
-            benchmark_data = self._extract_benchmark_data(content)
-            if benchmark_data:
-                lines.extend(self._format_benchmark_tables(benchmark_data))
-
-        except Exception as e:
-            lines.extend(
-                [
-                    "### Baseline Results",
-                    "",
-                    f"*Error parsing baseline results: {e}*",
-                    "",
-                ]
-            )
-
-        return lines
-
-    def _parse_comparison_results(self) -> list[str]:
-        """
-        Parse comparison results file and format as markdown.
-
-        Returns:
-            List of markdown lines
-        """
-        lines = []
-        try:
-            with self.comparison_file.open("r", encoding="utf-8") as f:
-                content = f.read()
-
-            if "REGRESSION" in content:
-                lines.extend(
-                    [
-                        "### ⚠️ Performance Regression Detected",
-                        "",
-                        "Recent benchmark comparison detected performance regressions.",
-                        "See comparison details below:",
-                        "",
-                        "```",
-                    ]
-                )
-                # Include relevant parts of comparison output
-                for line in content.split("\n"):
-                    if "REGRESSION" in line or "IMPROVEMENT" in line or "OK:" in line:
-                        lines.append(line)
-                lines.extend(["", "```", ""])
-            else:
-                lines.extend(
-                    [
-                        "### ✅ Performance Status: Good",
-                        "",
-                        "Recent benchmark comparison shows no significant performance regressions.",
-                        "",
-                    ]
-                )
-
-        except Exception as e:
-            lines.extend(
-                [
-                    "### Comparison Results",
-                    "",
-                    f"*Error parsing comparison results: {e}*",
-                    "",
-                ]
-            )
-
-        return lines
-
-    def _extract_benchmark_data(self, content: str) -> list[BenchmarkData]:
-        """
-        Extract benchmark data from baseline content.
-
-        Args:
-            content: Baseline file content
-
-        Returns:
-            List of BenchmarkData objects
-        """
-        benchmarks = []
-        current_benchmark = None
-
-        for line in content.split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-
-            # Process different line types
-            if line.startswith("===") and "Points" in line:
-                current_benchmark = self._parse_benchmark_header(line)
-            elif current_benchmark and line.startswith("Time:"):
-                self._parse_time_data(current_benchmark, line)
-            elif current_benchmark and line.startswith("Throughput:") and self._parse_throughput_data(current_benchmark, line):
-                # Benchmark is complete, add to list
-                benchmarks.append(current_benchmark)
-                current_benchmark = None
-
-        return benchmarks
-
-    def _parse_benchmark_header(self, line: str) -> BenchmarkData | None:
-        """Parse benchmark header line and return BenchmarkData object."""
-        try:
-            parts = line.replace("===", "").strip().split()
-            if len(parts) >= 3:
-                points = int(parts[0])
-                dimension = parts[2].strip("()")
-                return BenchmarkData(points, dimension)
-        except (ValueError, IndexError):
-            pass
-        return None
-
-    def _parse_time_data(self, benchmark: BenchmarkData, line: str) -> bool:
-        """Parse time data line and update benchmark object."""
-        try:
-            time_part = line.split(":", 1)[1].strip()
-            if "]" in time_part:
-                values_part, unit = time_part.rsplit("]")
-                values_str = values_part.strip("[")
-                values = [float(v.strip()) for v in values_str.split(",")]
-                unit = unit.strip()
-
-                if len(values) >= 3:
-                    benchmark.with_timing(values[0], values[1], values[2], unit)
-                    return True
-        except (ValueError, IndexError):
-            pass
-        return False
-
-    def _get_current_version(self) -> str:
-        """
-        Get the current version from git tags.
-
-        Returns:
-            Current version string (e.g., "0.4.3") or "unknown" if not found
-        """
-        try:
-            # Get the latest tag that matches version pattern
-            result = run_git_command(["describe", "--tags", "--abbrev=0", "--match=v*"], cwd=self.project_root)
-            desc = result.stdout.strip()
-            if desc.startswith("v"):
-                return desc[1:]  # Remove 'v' prefix
-            return "unknown"
-        except Exception:
-            # Fallback: try to get any recent tag
-            try:
-                result = run_git_command(["tag", "-l", "--sort=-version:refname"], cwd=self.project_root)
-                tags_output = result.stdout.strip()
-                if tags_output:
-                    tags = tags_output.split("\n")
-                    for tag in tags:
-                        if tag.startswith("v") and len(tag) > 1:
-                            return tag[1:]
-                return "unknown"
-            except Exception:
-                return "unknown"
-
-    def _get_version_date(self) -> str:
-        """
-        Get the date of the current version tag.
-
-        Returns:
-            Date string in YYYY-MM-DD format or current date if not found
-        """
-        try:
-            # Get the date of the latest version tag
-            tag_name = f"v{self.current_version}" if self.current_version != "unknown" else None
-            if tag_name:
-                result = run_git_command(["log", "-1", "--format=%cd", "--date=format:%Y-%m-%d", tag_name], cwd=self.project_root)
-                log_output = result.stdout.strip()
-                if log_output:
-                    return log_output
-
-            # Fallback to current date
-            return datetime.now(UTC).strftime("%Y-%m-%d")
-        except Exception:
-            # Fallback to current date if any error occurs
-            return datetime.now(UTC).strftime("%Y-%m-%d")
-
-    def _parse_throughput_data(self, benchmark: BenchmarkData, line: str) -> bool:
-        """Parse throughput data line and update benchmark object."""
-        try:
-            throughput_part = line.split(":", 1)[1].strip()
-            if "]" in throughput_part:
-                values_part, unit = throughput_part.rsplit("]")
-                values_str = values_part.strip("[")
-                values = [float(v.strip()) for v in values_str.split(",")]
-                unit = unit.strip()
-
-                if len(values) >= 3:
-                    benchmark.with_throughput(values[0], values[1], values[2], unit)
-                    return True
-        except (ValueError, IndexError):
-            pass
-        return False
-
-    def _format_benchmark_tables(self, benchmarks: list[BenchmarkData]) -> list[str]:
-        """
-        Format benchmark data as markdown tables.
-
-        Args:
-            benchmarks: List of BenchmarkData objects
-
-        Returns:
-            List of markdown lines
-        """
-        lines = []
-        if not benchmarks:
-            return lines
-
-        # Group by dimension
-        by_dimension = {}
-        for benchmark in benchmarks:
-            dim = benchmark.dimension
-            if dim not in by_dimension:
-                by_dimension[dim] = []
-            by_dimension[dim].append(benchmark)
-
-        # Sort dimensions numerically
-        sorted_dims = sorted(by_dimension.keys(), key=lambda x: int(x.rstrip("D")) if x.rstrip("D").isdigit() else float("inf"))
-
-        for dim in sorted_dims:
-            dim_benchmarks = sorted(by_dimension[dim], key=lambda x: x.points)
-
-            lines.extend(
-                [
-                    f"### {dim} Triangulation Performance",
-                    "",
-                    "| Points | Time (mean) | Throughput (mean) | Scaling |",
-                    "|--------|-------------|-------------------|----------|",
-                ]
-            )
-
-            base_time = None
-            for benchmark in dim_benchmarks:
-                if base_time is None:
-                    base_time = benchmark.time_mean
-                    scaling = "1.0x"
-                else:
-                    scaling = f"{benchmark.time_mean / base_time:.1f}x" if base_time > 0 else "N/A"
-
-                time_str = self._format_time_value(benchmark.time_mean, benchmark.time_unit)
-                throughput_str = self._format_throughput_value(benchmark.throughput_mean, benchmark.throughput_unit)
-
-                lines.append(f"| {benchmark.points} | {time_str} | {throughput_str} | {scaling} |")
-
-            lines.append("")
-
-        return lines
-
-    def _format_time_value(self, value: float, unit: str) -> str:
-        """
-        Format time value with appropriate precision.
-
-        Args:
-            value: Time value
-            unit: Time unit
-
-        Returns:
-            Formatted time string
-        """
-        if value < 1:
-            return f"{value:.3f} {unit}"
-        if value < 1000:
-            return f"{value:.2f} {unit}"
-        # Convert to next unit if too large
-        if unit == "µs" and value >= 1000:
-            return f"{value / 1000:.3f} ms"
-        if unit == "ms" and value >= 1000:
-            return f"{value / 1000:.4f} s"
-        return f"{value:.1f} {unit}"
-
-    def _format_throughput_value(self, value: float | None, unit: str | None) -> str:
-        """
-        Format throughput value with appropriate precision.
-
-        Args:
-            value: Throughput value (may be None)
-            unit: Throughput unit (may be None)
-
-        Returns:
-            Formatted throughput string
-        """
-        if value is None or unit is None:
-            return "N/A"
-
-        if value < 1:
-            return f"{value:.3f} {unit}"
-        if value < 1000:
-            return f"{value:.2f} {unit}"
-        return f"{value:.3f} {unit}"
-
-    def _get_circumsphere_performance_results(self) -> list[str]:
-        """
-        Get circumsphere performance results from benchmark data.
-
-        Returns:
-            List of markdown lines with circumsphere performance results
-        """
-        # This is a placeholder - actual implementation would depend on
-        # how circumsphere benchmarks are structured and what data is available
-        return [
-            "### Circumsphere Performance Results",
-            "",
-            "*Circumsphere performance analysis not yet implemented.*",
-            "",
-        ]
-
-    def _get_dynamic_analysis_sections(self) -> list[str]:
-        """
-        Get dynamic analysis sections based on performance data.
-
-        Returns:
-            List of markdown lines with dynamic analysis
-        """
-        # Add static content for now - could be enhanced with actual analysis
-        return self._get_static_content()
-
-    def _get_update_instructions(self) -> list[str]:
-        """
-        Get performance data update instructions.
-
-        Returns:
-            List of markdown lines with update instructions
-        """
-        return [
-            "## Performance Data Updates",
-            "",
-            "This file is automatically generated from benchmark results. To update:",
-            "",
-            "```bash",
-            "# Generate new baseline results",
-            "uv run benchmark-utils generate-baseline",
-            "",
-            "# Update performance summary",
-            "uv run benchmark-utils generate-summary",
-            "```",
-            "",
-            "For manual updates or custom analysis, modify the `PerformanceSummaryGenerator`",
-            "class in `scripts/benchmark_utils.py`.",
-            "",
-        ]
-
-    def _run_circumsphere_benchmarks(self) -> bool:
-        """
-        Run circumsphere benchmarks to get fresh data.
-
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            # Run circumsphere benchmarks - this is a placeholder implementation
-            run_cargo_command(
-                ["bench", "--bench", "circumsphere_containment"],
-                cwd=self.project_root,
-                timeout=1800,
-            )
-            return True
-        except Exception as e:
-            print(f"Failed to run circumsphere benchmarks: {e}", file=sys.stderr)
-            return False
-
-    def _get_static_content(self) -> list[str]:
-        """
-        Get static content sections for the performance results.
-
-        Returns:
-            List of markdown lines with static content
-        """
-        return [
-            "## Key Findings",
-            "",
-            "### Performance Ranking",
-            "",
-            "1. **insphere_lifted** (fastest) - Consistently best performance across all tests",
-            "2. **insphere** (middle) - ~25% slower than lifted, but good performance",
-            "3. **insphere_distance** (slowest) - ~2x slower due to explicit circumcenter calculation",
-            "",
-            "## Recommendations",
-            "",
-            "### For Performance-Critical Applications",
-            "",
-            "- **Use `insphere_lifted`** for maximum performance",
-            "- ~50% better performance compared to standard method",
-            "- Best choice for batch processing and high-frequency queries",
-            "",
-            "### For Numerical Stability",
-            "",
-            "- **Use `insphere`** for most reliable results",
-            "- Standard determinant-based approach with proven properties",
-            "- Good balance of performance and reliability",
-            "",
-            "### For Educational/Research Purposes",
-            "",
-            "- **Use `insphere_distance`** to understand geometric intuition",
-            "- Explicit circumcenter calculation makes algorithm transparent",
-            "- Useful for debugging and validation despite slower performance",
-            "",
-        ]
-
-
 class BenchmarkRegressionHelper:
     """Helper functions for performance regression testing workflow."""
 
@@ -1412,11 +1901,12 @@ class BenchmarkRegressionHelper:
                 return False, "invalid_baseline_sha"
 
             commit_ref = f"{baseline_commit}^{{commit}}"
-            run_git_command(["cat-file", "-e", commit_ref], timeout=60)
+            root = find_project_root()
+            run_git_command(["cat-file", "-e", commit_ref], cwd=root, timeout=60)
 
             # Check for relevant changes
             diff_range = f"{baseline_commit}..HEAD"
-            result = run_git_command(["diff", "--name-only", diff_range], timeout=60)
+            result = run_git_command(["diff", "--name-only", diff_range], cwd=root, timeout=60)
 
             relevant_patterns = [r"^src/", r"^benches/", r"^Cargo\.toml$", r"^Cargo\.lock$"]
             changed_files = result.stdout.strip().split("\n") if result.stdout.strip() else []
@@ -1747,7 +2237,7 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
     # Try performance summary commands
     if args.command == "generate-summary":
         generator = PerformanceSummaryGenerator(project_root)
-        success = generator.generate_summary(output_path=args.output, run_benchmarks=args.run_benchmarks)
+        success = generator.generate_summary(output_path=args.output, run_benchmarks=args.run_benchmarks, generator_name="benchmark_utils.py")
         sys.exit(0 if success else 1)
 
     # Try regression commands

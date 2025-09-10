@@ -165,10 +165,14 @@ macro_rules! measure_memory {
             let cells = tds.number_of_cells();
 
             #[cfg(feature = "count-allocations")]
-            return MemoryRecord::new($dim, n_points, vertex_count, cells, &info);
+            {
+                MemoryRecord::new($dim, n_points, vertex_count, cells, &info)
+            }
 
             #[cfg(not(feature = "count-allocations"))]
-            return MemoryRecord::new_placeholder($dim, n_points, vertex_count, cells);
+            {
+                MemoryRecord::new_placeholder($dim, n_points, vertex_count, cells)
+            }
         }
     };
 }
@@ -300,18 +304,25 @@ fn write_memory_records_to_csv() {
     let csv_path = target_dir.join("memory_scaling.csv");
 
     if let Ok(mut file) = File::create(&csv_path) {
-        let _ = MemoryRecord::write_csv_header(&mut file);
+        if let Err(e) = MemoryRecord::write_csv_header(&mut file) {
+            eprintln!("failed writing CSV header: {e}");
+            return;
+        }
 
         {
             let records = MEMORY_RECORDS
                 .lock()
                 .expect("MEMORY_RECORDS mutex poisoned");
             for record in records.iter() {
-                let _ = record.write_csv_row(&mut file);
+                if let Err(e) = record.write_csv_row(&mut file) {
+                    eprintln!("failed writing CSV row: {e}");
+                }
             }
         } // Drop the lock here
 
         println!("Memory scaling results written to: {}", csv_path.display());
+    } else {
+        eprintln!("failed to create {}", csv_path.display());
     }
 }
 

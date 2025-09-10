@@ -48,6 +48,7 @@ use delaunay::geometry::util::{
 use delaunay::prelude::*;
 use delaunay::vertex;
 use num_traits::cast;
+use serde::{Deserialize, Serialize};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -105,9 +106,17 @@ const PROFILING_COUNTS_DEVELOPMENT: &[usize] = &[
     10_000, // 10⁴
 ];
 
+/// Parse `PROFILING_DEV_MODE` environment variable as boolean-like value
+/// Returns true for: "1", "true", "TRUE", "yes", "on"
+/// Returns false for anything else (including "0", "false", empty, or unset)
+fn is_dev_mode() -> bool {
+    let dev = std::env::var("PROFILING_DEV_MODE").ok();
+    matches!(dev.as_deref(), Some("1" | "true" | "TRUE" | "yes" | "on"))
+}
+
 /// Get appropriate point counts based on environment
 fn get_profiling_counts() -> &'static [usize] {
-    if std::env::var("PROFILING_DEV_MODE").is_ok() {
+    if is_dev_mode() {
         PROFILING_COUNTS_DEVELOPMENT
     } else {
         PROFILING_COUNTS_PRODUCTION
@@ -243,7 +252,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     for &count in counts {
         for &distribution in &distributions {
             // Skip very large counts for 3D in development mode to prevent timeouts
-            if std::env::var("PROFILING_DEV_MODE").is_ok() && count > 10_000 {
+            if is_dev_mode() && count > 10_000 {
                 continue;
             }
 
@@ -275,7 +284,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     group.finish();
 
     // 4D and 5D Triangulation Scaling (smaller counts due to exponential complexity)
-    let high_dim_counts = if std::env::var("PROFILING_DEV_MODE").is_ok() {
+    let high_dim_counts = if is_dev_mode() {
         &[1_000, 3_000][..]
     } else {
         &[1_000, 3_000, 10_000][..]
@@ -315,7 +324,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     group.finish();
 
     // 5D Triangulation Scaling (even smaller counts due to very high complexity)
-    let ultra_high_dim_counts = if std::env::var("PROFILING_DEV_MODE").is_ok() {
+    let ultra_high_dim_counts = if is_dev_mode() {
         &[1_000][..]
     } else {
         &[1_000, 3_000][..]
@@ -406,13 +415,107 @@ fn print_alloc_summary(
     println!("=====================================\n");
 }
 
+/// Generic helper to benchmark memory usage for a specific dimension D
+#[allow(clippy::cast_possible_wrap)]
+fn bench_memory_usage<const D: usize>(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    bench_id_prefix: &str,
+    count: usize,
+) where
+    [f64; D]: Copy + Default + for<'de> Deserialize<'de> + Serialize + Sized,
+{
+    group.bench_with_input(
+        BenchmarkId::new(bench_id_prefix, count),
+        &count,
+        |b, &count| {
+            b.iter_custom(|iters| {
+                let mut total_time = Duration::new(0, 0);
+                let mut allocation_infos: SmallBuffer<
+                    AllocationInfo,
+                    BENCHMARK_ITERATION_BUFFER_SIZE,
+                > = SmallBuffer::new();
+
+                let mut actual_point_counts: SmallBuffer<usize, BENCHMARK_ITERATION_BUFFER_SIZE> =
+                    SmallBuffer::new();
+
+                for _ in 0..iters {
+                    let start_time = Instant::now();
+
+                    let alloc_info = measure(|| {
+                        let points = generate_points_by_distribution::<D>(
+                            count,
+                            PointDistribution::Random,
+                            42,
+                        );
+                        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                        actual_point_counts.push(points.len()); // Track actual count
+                        black_box(Tds::<f64, (), (), D>::new(&vertices).unwrap());
+                    });
+
+                    total_time += start_time.elapsed();
+                    allocation_infos.push(alloc_info);
+                }
+
+                // Report memory usage summary if available
+                if !allocation_infos.is_empty() {
+                    // Safe cast for division - allocation_infos.len() is guaranteed to be small and non-zero
+                    let divisor_unsigned = allocation_infos.len() as u64;
+                    let divisor_signed = allocation_infos.len() as i64;
+                    let avg_info = AllocationInfo {
+                        count_total: allocation_infos.iter().map(|i| i.count_total).sum::<u64>()
+                            / divisor_unsigned,
+                        count_current: allocation_infos
+                            .iter()
+                            .map(|i| i.count_current)
+                            .sum::<i64>()
+                            / divisor_signed,
+                        count_max: allocation_infos
+                            .iter()
+                            .map(|i| i.count_max)
+                            .max()
+                            .unwrap_or(0),
+                        bytes_total: allocation_infos.iter().map(|i| i.bytes_total).sum::<u64>()
+                            / divisor_unsigned,
+                        bytes_current: allocation_infos
+                            .iter()
+                            .map(|i| i.bytes_current)
+                            .sum::<i64>()
+                            / divisor_signed,
+                        bytes_max: allocation_infos
+                            .iter()
+                            .map(|i| i.bytes_max)
+                            .max()
+                            .unwrap_or(0),
+                    };
+                    let avg_actual_count =
+                        actual_point_counts.iter().sum::<usize>() / actual_point_counts.len();
+
+                    // Calculate 95th percentile of bytes_max
+                    let mut bytes_max_values: Vec<u64> =
+                        allocation_infos.iter().map(|i| i.bytes_max).collect();
+                    let percentile_95 = calculate_95th_percentile(&mut bytes_max_values);
+
+                    print_alloc_summary(
+                        &avg_info,
+                        &format!("{D}D Triangulation"),
+                        avg_actual_count,
+                        percentile_95,
+                    );
+                }
+
+                total_time
+            });
+        },
+    );
+}
+
 /// Memory usage profiling across different scales and dimensions using allocation counter
 #[allow(clippy::too_many_lines, clippy::cast_possible_wrap)]
 fn benchmark_memory_profiling(c: &mut Criterion) {
     #[cfg(not(feature = "count-allocations"))]
     print_count_allocations_banner_once();
 
-    let counts = if std::env::var("PROFILING_DEV_MODE").is_ok() {
+    let counts = if is_dev_mode() {
         &[1_000, 10_000][..]
     } else {
         &[1_000, 10_000, 100_000][..]
@@ -423,381 +526,21 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
 
     for &count in counts {
         // 2D Memory Profiling
-        group.bench_with_input(
-            BenchmarkId::new("memory_usage_2d", count),
-            &count,
-            |b, &count| {
-                b.iter_custom(|iters| {
-                    let mut total_time = Duration::new(0, 0);
-                    let mut allocation_infos: SmallBuffer<
-                        AllocationInfo,
-                        BENCHMARK_ITERATION_BUFFER_SIZE,
-                    > = SmallBuffer::new();
-
-                    let mut actual_point_counts: SmallBuffer<
-                        usize,
-                        BENCHMARK_ITERATION_BUFFER_SIZE,
-                    > = SmallBuffer::new();
-
-                    for _ in 0..iters {
-                        let start_time = Instant::now();
-
-                        let alloc_info = measure(|| {
-                            let points = generate_points_by_distribution::<2>(
-                                count,
-                                PointDistribution::Random,
-                                42,
-                            );
-                            let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                            actual_point_counts.push(points.len()); // Track actual count
-                            black_box(Tds::<f64, (), (), 2>::new(&vertices).unwrap());
-                        });
-
-                        total_time += start_time.elapsed();
-                        allocation_infos.push(alloc_info);
-                    }
-
-                    // Report memory usage summary if available
-                    if !allocation_infos.is_empty() {
-                        // Safe cast for division - allocation_infos.len() is guaranteed to be small and non-zero
-                        let divisor_unsigned = allocation_infos.len() as u64;
-                        let divisor_signed = allocation_infos.len() as i64;
-                        let avg_info = AllocationInfo {
-                            count_total: allocation_infos
-                                .iter()
-                                .map(|i| i.count_total)
-                                .sum::<u64>()
-                                / divisor_unsigned,
-                            count_current: allocation_infos
-                                .iter()
-                                .map(|i| i.count_current)
-                                .sum::<i64>()
-                                / divisor_signed,
-                            count_max: allocation_infos
-                                .iter()
-                                .map(|i| i.count_max)
-                                .max()
-                                .unwrap_or(0),
-                            bytes_total: allocation_infos
-                                .iter()
-                                .map(|i| i.bytes_total)
-                                .sum::<u64>()
-                                / divisor_unsigned,
-                            bytes_current: allocation_infos
-                                .iter()
-                                .map(|i| i.bytes_current)
-                                .sum::<i64>()
-                                / divisor_signed,
-                            bytes_max: allocation_infos
-                                .iter()
-                                .map(|i| i.bytes_max)
-                                .max()
-                                .unwrap_or(0),
-                        };
-                        let avg_actual_count =
-                            actual_point_counts.iter().sum::<usize>() / actual_point_counts.len();
-
-                        // Calculate 95th percentile of bytes_max
-                        let mut bytes_max_values: Vec<u64> =
-                            allocation_infos.iter().map(|i| i.bytes_max).collect();
-                        let percentile_95 = calculate_95th_percentile(&mut bytes_max_values);
-
-                        print_alloc_summary(
-                            &avg_info,
-                            "2D Triangulation",
-                            avg_actual_count,
-                            percentile_95,
-                        );
-                    }
-
-                    total_time
-                });
-            },
-        );
+        bench_memory_usage::<2>(&mut group, "memory_usage_2d", count);
 
         // 3D Memory Profiling (smaller counts due to complexity)
         if count <= 10_000 {
-            group.bench_with_input(
-                BenchmarkId::new("memory_usage_3d", count),
-                &count,
-                |b, &count| {
-                    b.iter_custom(|iters| {
-                        let mut total_time = Duration::new(0, 0);
-                        let mut allocation_infos: SmallBuffer<
-                            AllocationInfo,
-                            BENCHMARK_ITERATION_BUFFER_SIZE,
-                        > = SmallBuffer::new();
-
-                        let mut actual_point_counts: SmallBuffer<
-                            usize,
-                            BENCHMARK_ITERATION_BUFFER_SIZE,
-                        > = SmallBuffer::new();
-
-                        for _ in 0..iters {
-                            let start_time = Instant::now();
-
-                            let alloc_info = measure(|| {
-                                let points = generate_points_by_distribution::<3>(
-                                    count,
-                                    PointDistribution::Random,
-                                    42,
-                                );
-                                let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                actual_point_counts.push(points.len()); // Track actual count
-                                black_box(Tds::<f64, (), (), 3>::new(&vertices).unwrap());
-                            });
-
-                            total_time += start_time.elapsed();
-                            allocation_infos.push(alloc_info);
-                        }
-
-                        // Report memory usage summary if available
-                        if !allocation_infos.is_empty() {
-                            // Safe cast for division - allocation_infos.len() is guaranteed to be small and non-zero
-                            let divisor_unsigned = allocation_infos.len() as u64;
-                            let divisor_signed = allocation_infos.len() as i64;
-                            let avg_info = AllocationInfo {
-                                count_total: allocation_infos
-                                    .iter()
-                                    .map(|i| i.count_total)
-                                    .sum::<u64>()
-                                    / divisor_unsigned,
-                                count_current: allocation_infos
-                                    .iter()
-                                    .map(|i| i.count_current)
-                                    .sum::<i64>()
-                                    / divisor_signed,
-                                count_max: allocation_infos
-                                    .iter()
-                                    .map(|i| i.count_max)
-                                    .max()
-                                    .unwrap_or(0),
-                                bytes_total: allocation_infos
-                                    .iter()
-                                    .map(|i| i.bytes_total)
-                                    .sum::<u64>()
-                                    / divisor_unsigned,
-                                bytes_current: allocation_infos
-                                    .iter()
-                                    .map(|i| i.bytes_current)
-                                    .sum::<i64>()
-                                    / divisor_signed,
-                                bytes_max: allocation_infos
-                                    .iter()
-                                    .map(|i| i.bytes_max)
-                                    .max()
-                                    .unwrap_or(0),
-                            };
-                            let avg_actual_count = actual_point_counts.iter().sum::<usize>()
-                                / actual_point_counts.len();
-
-                            // Calculate 95th percentile of bytes_max
-                            let mut bytes_max_values: Vec<u64> =
-                                allocation_infos.iter().map(|i| i.bytes_max).collect();
-                            let percentile_95 = calculate_95th_percentile(&mut bytes_max_values);
-
-                            print_alloc_summary(
-                                &avg_info,
-                                "3D Triangulation",
-                                avg_actual_count,
-                                percentile_95,
-                            );
-                        }
-
-                        total_time
-                    });
-                },
-            );
+            bench_memory_usage::<3>(&mut group, "memory_usage_3d", count);
         }
 
         // 4D Memory Profiling (even smaller counts due to exponential complexity)
         if count <= 3_000 {
-            group.bench_with_input(
-                BenchmarkId::new("memory_usage_4d", count),
-                &count,
-                |b, &count| {
-                    b.iter_custom(|iters| {
-                        let mut total_time = Duration::new(0, 0);
-                        let mut allocation_infos: SmallBuffer<
-                            AllocationInfo,
-                            BENCHMARK_ITERATION_BUFFER_SIZE,
-                        > = SmallBuffer::new();
-
-                        let mut actual_point_counts: SmallBuffer<
-                            usize,
-                            BENCHMARK_ITERATION_BUFFER_SIZE,
-                        > = SmallBuffer::new();
-
-                        for _ in 0..iters {
-                            let start_time = Instant::now();
-
-                            let alloc_info = measure(|| {
-                                let points = generate_points_by_distribution::<4>(
-                                    count,
-                                    PointDistribution::Random,
-                                    42,
-                                );
-                                let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                actual_point_counts.push(points.len()); // Track actual count
-                                black_box(Tds::<f64, (), (), 4>::new(&vertices).unwrap());
-                            });
-
-                            total_time += start_time.elapsed();
-                            allocation_infos.push(alloc_info);
-                        }
-
-                        // Report memory usage summary if available
-                        if !allocation_infos.is_empty() {
-                            // Safe cast for division - allocation_infos.len() is guaranteed to be small and non-zero
-                            let divisor_unsigned = allocation_infos.len() as u64;
-                            let divisor_signed = allocation_infos.len() as i64;
-                            let avg_info = AllocationInfo {
-                                count_total: allocation_infos
-                                    .iter()
-                                    .map(|i| i.count_total)
-                                    .sum::<u64>()
-                                    / divisor_unsigned,
-                                count_current: allocation_infos
-                                    .iter()
-                                    .map(|i| i.count_current)
-                                    .sum::<i64>()
-                                    / divisor_signed,
-                                count_max: allocation_infos
-                                    .iter()
-                                    .map(|i| i.count_max)
-                                    .max()
-                                    .unwrap_or(0),
-                                bytes_total: allocation_infos
-                                    .iter()
-                                    .map(|i| i.bytes_total)
-                                    .sum::<u64>()
-                                    / divisor_unsigned,
-                                bytes_current: allocation_infos
-                                    .iter()
-                                    .map(|i| i.bytes_current)
-                                    .sum::<i64>()
-                                    / divisor_signed,
-                                bytes_max: allocation_infos
-                                    .iter()
-                                    .map(|i| i.bytes_max)
-                                    .max()
-                                    .unwrap_or(0),
-                            };
-                            let avg_actual_count = actual_point_counts.iter().sum::<usize>()
-                                / actual_point_counts.len();
-
-                            // Calculate 95th percentile of bytes_max
-                            let mut bytes_max_values: Vec<u64> =
-                                allocation_infos.iter().map(|i| i.bytes_max).collect();
-                            let percentile_95 = calculate_95th_percentile(&mut bytes_max_values);
-
-                            print_alloc_summary(
-                                &avg_info,
-                                "4D Triangulation",
-                                avg_actual_count,
-                                percentile_95,
-                            );
-                        }
-
-                        total_time
-                    });
-                },
-            );
+            bench_memory_usage::<4>(&mut group, "memory_usage_4d", count);
         }
 
         // 5D Memory Profiling (very small counts due to very high complexity)
         if count <= 1_000 {
-            group.bench_with_input(
-                BenchmarkId::new("memory_usage_5d", count),
-                &count,
-                |b, &count| {
-                    b.iter_custom(|iters| {
-                        let mut total_time = Duration::new(0, 0);
-                        let mut allocation_infos: SmallBuffer<
-                            AllocationInfo,
-                            BENCHMARK_ITERATION_BUFFER_SIZE,
-                        > = SmallBuffer::new();
-
-                        let mut actual_point_counts: SmallBuffer<
-                            usize,
-                            BENCHMARK_ITERATION_BUFFER_SIZE,
-                        > = SmallBuffer::new();
-
-                        for _ in 0..iters {
-                            let start_time = Instant::now();
-
-                            let alloc_info = measure(|| {
-                                let points = generate_points_by_distribution::<5>(
-                                    count,
-                                    PointDistribution::Random,
-                                    42,
-                                );
-                                let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                actual_point_counts.push(points.len()); // Track actual count
-                                black_box(Tds::<f64, (), (), 5>::new(&vertices).unwrap());
-                            });
-
-                            total_time += start_time.elapsed();
-                            allocation_infos.push(alloc_info);
-                        }
-
-                        // Report memory usage summary if available
-                        if !allocation_infos.is_empty() {
-                            // Safe cast for division - allocation_infos.len() is guaranteed to be small and non-zero
-                            let divisor_unsigned = allocation_infos.len() as u64;
-                            let divisor_signed = allocation_infos.len() as i64;
-                            let avg_info = AllocationInfo {
-                                count_total: allocation_infos
-                                    .iter()
-                                    .map(|i| i.count_total)
-                                    .sum::<u64>()
-                                    / divisor_unsigned,
-                                count_current: allocation_infos
-                                    .iter()
-                                    .map(|i| i.count_current)
-                                    .sum::<i64>()
-                                    / divisor_signed,
-                                count_max: allocation_infos
-                                    .iter()
-                                    .map(|i| i.count_max)
-                                    .max()
-                                    .unwrap_or(0),
-                                bytes_total: allocation_infos
-                                    .iter()
-                                    .map(|i| i.bytes_total)
-                                    .sum::<u64>()
-                                    / divisor_unsigned,
-                                bytes_current: allocation_infos
-                                    .iter()
-                                    .map(|i| i.bytes_current)
-                                    .sum::<i64>()
-                                    / divisor_signed,
-                                bytes_max: allocation_infos
-                                    .iter()
-                                    .map(|i| i.bytes_max)
-                                    .max()
-                                    .unwrap_or(0),
-                            };
-                            let avg_actual_count = actual_point_counts.iter().sum::<usize>()
-                                / actual_point_counts.len();
-
-                            // Calculate 95th percentile of bytes_max
-                            let mut bytes_max_values: Vec<u64> =
-                                allocation_infos.iter().map(|i| i.bytes_max).collect();
-                            let percentile_95 = calculate_95th_percentile(&mut bytes_max_values);
-
-                            print_alloc_summary(
-                                &avg_info,
-                                "5D Triangulation",
-                                avg_actual_count,
-                                percentile_95,
-                            );
-                        }
-
-                        total_time
-                    });
-                },
-            );
+            bench_memory_usage::<5>(&mut group, "memory_usage_5d", count);
         }
     }
 
@@ -811,7 +554,7 @@ fn benchmark_memory_profiling(c: &mut Criterion) {
 /// Query latency profiling for circumsphere containment tests
 fn benchmark_query_latency(c: &mut Criterion) {
     const MAX_PRECOMPUTED_SIMPLICES: usize = 1000;
-    let counts = if std::env::var("PROFILING_DEV_MODE").is_ok() {
+    let counts = if is_dev_mode() {
         &[1_000, 3_000][..]
     } else {
         &[1_000, 10_000, 30_000][..]
@@ -871,8 +614,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
 
                     for points_for_test in &precomputed_simplices {
                         for query_point in &query_points {
-                            let query_coords: [f64; 3] = (*query_point).into();
-                            let query_point_obj = Point::new(query_coords);
+                            let query_point_obj = *query_point;
 
                             // Use the fastest circumsphere method (based on benchmark results)
                             #[allow(clippy::items_after_statements)]
@@ -908,7 +650,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
 
 /// Profile specific algorithmic components to identify bottlenecks
 fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
-    let counts = if std::env::var("PROFILING_DEV_MODE").is_ok() {
+    let counts = if is_dev_mode() {
         &[3_000][..]
     } else {
         &[10_000][..]

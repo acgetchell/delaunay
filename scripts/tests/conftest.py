@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Shared pytest fixtures and utilities for test modules.
 
@@ -30,10 +29,13 @@ def temp_chdir():
     """
 
     @contextmanager
-    def _temp_chdir_context(path):
+    def _temp_chdir_context(path: os.PathLike | str):
         """Context manager for temporarily changing working directory."""
         original_cwd = Path.cwd()
-        os.chdir(path)
+        target = Path(path)
+        if not target.exists():
+            raise FileNotFoundError(target)
+        os.chdir(target)
         try:
             yield
         finally:
@@ -59,7 +61,9 @@ def mock_git_command_result():
     def _create_mock_result(output: str) -> Mock:
         """Create a mock CompletedProcess object for git commands."""
         mock_result = Mock()
-        mock_result.stdout.strip.return_value = output
+        mock_result.stdout = output  # mimic CompletedProcess.stdout (str)
+        mock_result.returncode = 0
+        mock_result.args = ["git"]
         return mock_result
 
     return _create_mock_result

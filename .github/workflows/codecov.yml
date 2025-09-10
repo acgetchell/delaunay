@@ -50,7 +50,12 @@ jobs:
 
       - name: Run coverage
         run: |
-          cargo tarpaulin --config Cargo.toml
+          # All configuration is in tarpaulin.toml [tool.tarpaulin] section
+          # - XML output: out = ["Xml"]
+          # - Output directory: output-dir = "coverage/"
+          # - Exclusions: exclude-files = ["benches/*", "examples/*"]
+          # - Test threads: test-threads = 1
+          cargo tarpaulin --config tarpaulin.toml
         env:
           RUST_BACKTRACE: 1
 

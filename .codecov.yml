@@ -13,3 +13,4 @@ coverage:
 ignore:
   - "src/lib.rs"
   - "benches/**"
+  - "examples/**"

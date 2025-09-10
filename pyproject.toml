@@ -38,12 +38,11 @@ benchmark-utils = "benchmark_utils:main"
 changelog-utils = "changelog_utils:main"
 enhance-commits = "enhance_commits:main"
 hardware-utils = "hardware_utils:main"
-performance-summary-utils = "performance_summary_utils:main"
 
 # Configure setuptools to find packages in scripts/ directory
 [tool.setuptools]
 package-dir = {"" = "scripts"}
-py-modules = ["benchmark_utils", "changelog_utils", "enhance_commits", "hardware_utils", "performance_summary_utils"]
+py-modules = ["benchmark_utils", "changelog_utils", "enhance_commits", "hardware_utils"]
 
 [tool.ruff]
 line-length = 150
@@ -90,7 +89,7 @@ ignore = [
 
 # Import sorting and organization configuration
 [tool.ruff.lint.isort]
-known-first-party = ["benchmark_utils", "changelog_utils", "enhance_commits", "hardware_utils", "performance_summary_utils", "subprocess_utils"]
+known-first-party = ["benchmark_utils", "changelog_utils", "enhance_commits", "hardware_utils", "subprocess_utils"]
 force-single-line = false
 split-on-trailing-comma = true
 # Organize imports: standard library, third-party, first-party, local

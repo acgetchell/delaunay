@@ -20,6 +20,27 @@ use delaunay::prelude::*;
 use rand::Rng;
 use std::hint::black_box;
 
+/// Generate a standard D-dimensional simplex (D+1 vertices)
+///
+/// Creates a simplex with vertices at:
+/// - Origin: [0, 0, ..., 0]
+/// - Unit basis vectors: [1, 0, ..., 0], [0, 1, 0, ..., 0], ..., [0, 0, ..., 1]
+fn standard_simplex<const D: usize>() -> Vec<Point<f64, D>> {
+    let mut pts = Vec::with_capacity(D + 1);
+
+    // Add origin
+    pts.push(Point::new([0.0; D]));
+
+    // Add unit basis vectors
+    for i in 0..D {
+        let mut coords = [0.0; D];
+        coords[i] = 1.0;
+        pts.push(Point::new(coords));
+    }
+
+    pts
+}
+
 /// Generate a random simplex for benchmarking
 fn generate_random_simplex_3d(rng: &mut impl Rng) -> Vec<Point<f64, 3>> {
     (0..4)
@@ -120,99 +141,68 @@ macro_rules! bench_edge_case {
 /// Benchmark with different simplex sizes (2D, 3D, 4D, 5D)
 fn benchmark_different_dimensions(c: &mut Criterion) {
     // 2D case - triangle in 2D space
-    let simplex_2d = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([0.0, 1.0]),
-    ];
+    let simplex_2d = standard_simplex::<2>();
     let test_point_2d = Point::new([0.3, 0.3]);
     bench_simplex!(c, 2, simplex_2d, test_point_2d);
 
     // 3D case - tetrahedron in 3D space
-    let simplex_3d = vec![
-        Point::new([0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0]),
-    ];
+    let simplex_3d = standard_simplex::<3>();
     let test_point_3d = Point::new([0.25, 0.25, 0.25]);
     bench_simplex!(c, 3, simplex_3d, test_point_3d);
 
     // 4D case - 4-simplex in 4D space
-    let simplex_4d = vec![
-        Point::new([0.0, 0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 0.0, 1.0]),
-    ];
+    let simplex_4d = standard_simplex::<4>();
     let test_point_4d = Point::new([0.2, 0.2, 0.2, 0.2]);
     bench_simplex!(c, 4, simplex_4d, test_point_4d);
 
     // 5D case - 5-simplex in 5D space
-    let simplex_5d = vec![
-        Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
-        Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
-    ];
+    let simplex_5d = standard_simplex::<5>();
     let test_point_5d = Point::new([0.16, 0.16, 0.16, 0.16, 0.16]);
     bench_simplex!(c, 5, simplex_5d, test_point_5d);
 }
 
-/// Benchmark edge cases (points on boundary, far away, etc.) across all dimensions
+/// Benchmark edge cases (points on boundary, far away, near-boundary, etc.) across all dimensions
 fn benchmark_edge_cases(c: &mut Criterion) {
     // 2D edge cases - triangle
-    let simplex_2d = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([0.0, 1.0]),
-    ];
+    let simplex_2d = standard_simplex::<2>();
     let boundary_point_2d = simplex_2d[0]; // Point on boundary
     let far_point_2d = Point::new([1000.0, 1000.0]);
+    // Near-boundary point (epsilon away from circumsphere)
+    let eps = 1e-9;
+    let near_boundary_2d = Point::new([eps, 0.0]);
     bench_edge_case!(c, 2, "boundary_point", simplex_2d, boundary_point_2d);
     bench_edge_case!(c, 2, "far_point", simplex_2d, far_point_2d);
+    bench_edge_case!(c, 2, "near_boundary", simplex_2d, near_boundary_2d);
 
     // 3D edge cases - tetrahedron
-    let simplex_3d = vec![
-        Point::new([0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0]),
-    ];
+    let simplex_3d = standard_simplex::<3>();
     let boundary_point_3d = simplex_3d[0]; // Point on boundary
     let far_point_3d = Point::new([1000.0, 1000.0, 1000.0]);
+    // Near-boundary point (epsilon away from circumsphere)
+    let near_boundary_3d = Point::new([eps, 0.0, 0.0]);
     bench_edge_case!(c, 3, "boundary_point", simplex_3d, boundary_point_3d);
     bench_edge_case!(c, 3, "far_point", simplex_3d, far_point_3d);
+    bench_edge_case!(c, 3, "near_boundary", simplex_3d, near_boundary_3d);
 
     // 4D edge cases - 4-simplex
-    let simplex_4d = vec![
-        Point::new([0.0, 0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 0.0, 1.0]),
-    ];
+    let simplex_4d = standard_simplex::<4>();
     let boundary_point_4d = simplex_4d[0]; // Point on boundary
     let far_point_4d = Point::new([1000.0, 1000.0, 1000.0, 1000.0]);
+    // Near-boundary point (epsilon away from circumsphere)
+    let near_boundary_4d = Point::new([eps, 0.0, 0.0, 0.0]);
     bench_edge_case!(c, 4, "boundary_point", simplex_4d, boundary_point_4d);
     bench_edge_case!(c, 4, "far_point", simplex_4d, far_point_4d);
+    bench_edge_case!(c, 4, "near_boundary", simplex_4d, near_boundary_4d);
 
     // 5D edge cases - 5-simplex
-    let simplex_5d = vec![
-        Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
-        Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
-    ];
+    let simplex_5d = standard_simplex::<5>();
     let boundary_point_5d = simplex_5d[0]; // Point on boundary
     let far_point_5d = Point::new([1000.0, 1000.0, 1000.0, 1000.0, 1000.0]);
+    // Near-boundary point (epsilon away from circumsphere)
+    let near_boundary_5d = Point::new([eps, 0.0, 0.0, 0.0, 0.0]);
     bench_edge_case!(c, 5, "boundary_point", simplex_5d, boundary_point_5d);
     bench_edge_case!(c, 5, "far_point", simplex_5d, far_point_5d);
+    bench_edge_case!(c, 5, "near_boundary", simplex_5d, near_boundary_5d);
 }
 
 /// Numerical consistency test - compare results of all three methods

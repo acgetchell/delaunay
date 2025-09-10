@@ -20,7 +20,7 @@
 #![allow(missing_docs)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::geometry::util::generate_random_points;
+use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::*;
 use delaunay::vertex;
 use std::hint::black_box;
@@ -28,24 +28,32 @@ use std::hint::black_box;
 /// Common sample sizes used across all CI performance benchmarks
 const COUNTS: &[usize] = &[10, 25, 50];
 
+/// Fixed seeds for deterministic point generation across benchmark runs.
+/// Using seeded random number generation reduces variance in performance measurements
+/// and improves regression detection accuracy in CI environments.
+/// Different seeds per dimension ensure point sets are uncorrelated.
 /// Generate random 2D points for benchmarking
 fn generate_points_2d(count: usize) -> Vec<Point<f64, 2>> {
-    generate_random_points(count, (-100.0, 100.0)).unwrap()
+    generate_random_points_seeded(count, (-100.0, 100.0), 42)
+        .expect("Failed to generate random 2D points")
 }
 
 /// Generate random 3D points for benchmarking
 fn generate_points_3d(count: usize) -> Vec<Point<f64, 3>> {
-    generate_random_points(count, (-100.0, 100.0)).unwrap()
+    generate_random_points_seeded(count, (-100.0, 100.0), 123)
+        .expect("Failed to generate random 3D points")
 }
 
 /// Generate random 4D points for benchmarking
 fn generate_points_4d(count: usize) -> Vec<Point<f64, 4>> {
-    generate_random_points(count, (-100.0, 100.0)).unwrap()
+    generate_random_points_seeded(count, (-100.0, 100.0), 456)
+        .expect("Failed to generate random 4D points")
 }
 
 /// Generate random 5D points for benchmarking
 fn generate_points_5d(count: usize) -> Vec<Point<f64, 5>> {
-    generate_random_points(count, (-100.0, 100.0)).unwrap()
+    generate_random_points_seeded(count, (-100.0, 100.0), 789)
+        .expect("Failed to generate random 5D points")
 }
 
 /// Macro to reduce duplication in dimensional benchmark functions
@@ -66,7 +74,11 @@ macro_rules! benchmark_tds_new_dimension {
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
-                            black_box(Tds::<f64, (), (), $dim>::new(&vertices).unwrap());
+                            black_box(Tds::<f64, (), (), $dim>::new(&vertices).expect(concat!(
+                                "Tds::new failed for ",
+                                stringify!($dim),
+                                "D"
+                            )));
                         },
                     );
                 });

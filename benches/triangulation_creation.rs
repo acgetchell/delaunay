@@ -1,7 +1,7 @@
 //! Benchmarks for d-dimensional Delaunay triangulation creation.
 #![allow(missing_docs)]
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::geometry::util::generate_random_points;
 use delaunay::prelude::*;
 use delaunay::vertex;
@@ -18,13 +18,18 @@ macro_rules! bench_triangulation_creation {
         fn $func_name(c: &mut Criterion) {
             let points: Vec<Point<f64, $dim>> =
                 generate_random_points(1_000, (-100.0, 100.0)).unwrap();
-            let vertices: Vec<Vertex<f64, (), $dim>> = points.iter().map(|p| vertex!(*p)).collect();
+            let mut vertices: Vec<Vertex<f64, (), $dim>> = Vec::with_capacity(points.len());
+            vertices.extend(points.iter().map(|p| vertex!(*p)));
 
-            c.bench_function(concat!(stringify!($dim), "d_triangulation_creation"), |b| {
+            let mut group =
+                c.benchmark_group(concat!(stringify!($dim), "d_triangulation_creation"));
+            group.throughput(Throughput::Elements(points.len() as u64));
+            group.bench_function("triangulation", |b| {
                 b.iter(|| {
                     Tds::<f64, (), (), $dim>::new(black_box(&vertices)).unwrap();
                 });
             });
+            group.finish();
         }
     };
 }

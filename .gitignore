@@ -7,7 +7,9 @@
 /coverage
 /*.profraw
 /cobertura.xml
-/tarpaulin*
+# Keep tarpaulin.toml but ignore generated files
+!/tarpaulin.toml
+/tarpaulin-report.*
 /benches/results
 /node_modules/
 /.package-lock.json

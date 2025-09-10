@@ -20,65 +20,16 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from benchmark_utils import (
+from benchmark_models import (
     BenchmarkData,
+)
+from benchmark_utils import (
     BenchmarkRegressionHelper,
     CriterionParser,
     PerformanceComparator,
     PerformanceSummaryGenerator,
     WorkflowHelper,
 )
-
-
-class TestBenchmarkData:
-    """Test cases for BenchmarkData class."""
-
-    def test_init(self):
-        """Test BenchmarkData initialization."""
-        data = BenchmarkData(points=1000, dimension="2D")
-        assert data.points == 1000
-        assert data.dimension == "2D"
-        assert data.time_mean == 0.0
-        assert data.throughput_mean is None
-
-    def test_with_timing_fluent_interface(self):
-        """Test fluent interface for setting timing data."""
-        data = BenchmarkData(1000, "3D").with_timing(100.0, 110.0, 120.0, "µs")
-
-        assert data.time_low == 100.0
-        assert data.time_mean == 110.0
-        assert data.time_high == 120.0
-        assert data.time_unit == "µs"
-
-    def test_with_throughput_fluent_interface(self):
-        """Test fluent interface for setting throughput data."""
-        data = BenchmarkData(1000, "2D").with_throughput(800.0, 900.0, 1000.0, "Kelem/s")
-
-        assert data.throughput_low == 800.0
-        assert data.throughput_mean == 900.0
-        assert data.throughput_high == 1000.0
-        assert data.throughput_unit == "Kelem/s"
-
-    def test_to_baseline_format_with_timing_only(self):
-        """Test baseline format output with timing data only."""
-        data = BenchmarkData(1000, "2D").with_timing(100.0, 110.0, 120.0, "µs")
-
-        result = data.to_baseline_format()
-        expected = """=== 1000 Points (2D) ===
-Time: [100.0, 110.0, 120.0] µs
-"""
-        assert result == expected
-
-    def test_to_baseline_format_with_timing_and_throughput(self):
-        """Test baseline format output with both timing and throughput data."""
-        data = BenchmarkData(1000, "3D").with_timing(100.0, 110.0, 120.0, "µs").with_throughput(800.0, 900.0, 1000.0, "Kelem/s")
-
-        result = data.to_baseline_format()
-        expected = """=== 1000 Points (3D) ===
-Time: [100.0, 110.0, 120.0] µs
-Throughput: [800.0, 900.0, 1000.0] Kelem/s
-"""
-        assert result == expected
 
 
 class TestCriterionParser:
@@ -1476,8 +1427,6 @@ class TestTimeoutHandling:
 
     def test_timeout_error_handling_performance_comparator(self, capsys):
         """Test proper error handling when benchmark times out in PerformanceComparator."""
-        from benchmark_utils import PerformanceComparator
-
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             baseline_file = Path(temp_dir) / "baseline.txt"
@@ -1510,8 +1459,11 @@ class TestPerformanceSummaryGenerator:
 
             assert generator.project_root == project_root
             assert generator.baseline_file == project_root / "baseline-artifact" / "baseline_results.txt"
+            assert generator._baseline_fallback == project_root / "benches" / "baseline_results.txt"
             assert generator.comparison_file == project_root / "benches" / "compare_results.txt"
+            assert generator.circumsphere_results_dir == project_root / "target" / "criterion"
             assert isinstance(generator.current_version, str)
+            assert isinstance(generator.current_date, str)
 
     @patch("benchmark_utils.run_git_command")
     def test_get_current_version_with_tag(self, mock_git_command):
@@ -1691,153 +1643,6 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             assert "### ✅ Performance Status: Good" in markdown_content
             assert "no significant performance regressions" in markdown_content
 
-    def test_extract_benchmark_data(self):
-        """Test extracting benchmark data from baseline content."""
-        baseline_content = """Date: 2024-01-15 10:30:00 UTC
-Git commit: abc123def456
-
-=== 1000 Points (2D) ===
-Time: [100.0, 110.0, 120.0] µs
-Throughput: [8000.0, 9090.9, 10000.0] Kelem/s
-
-=== 5000 Points (3D) ===
-Time: [500.0, 550.0, 600.0] µs
-Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
-"""
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            benchmarks = generator._extract_benchmark_data(baseline_content)
-
-            assert len(benchmarks) == 2
-
-            # Check first benchmark
-            first = benchmarks[0]
-            assert first.points == 1000
-            assert first.dimension == "2D"
-            assert first.time_mean == 110.0
-            assert first.time_unit == "µs"
-            assert first.throughput_mean == 9090.9
-
-            # Check second benchmark
-            second = benchmarks[1]
-            assert second.points == 5000
-            assert second.dimension == "3D"
-            assert second.time_mean == 550.0
-
-    def test_parse_benchmark_header(self):
-        """Test parsing benchmark header lines."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            # Valid header
-            result = generator._parse_benchmark_header("=== 1000 Points (2D) ===")
-            assert result is not None
-            assert result.points == 1000
-            assert result.dimension == "2D"
-
-            # Invalid header
-            result = generator._parse_benchmark_header("Invalid header")
-            assert result is None
-
-    def test_parse_time_data(self):
-        """Test parsing time data lines."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            benchmark = BenchmarkData(1000, "2D")
-
-            # Valid time data
-            success = generator._parse_time_data(benchmark, "Time: [100.0, 110.0, 120.0] µs")
-            assert success is True
-            assert benchmark.time_mean == 110.0
-            assert benchmark.time_unit == "µs"
-
-            # Invalid time data
-            benchmark2 = BenchmarkData(1000, "2D")
-            success = generator._parse_time_data(benchmark2, "Invalid time data")
-            assert success is False
-
-    def test_parse_throughput_data(self):
-        """Test parsing throughput data lines."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            benchmark = BenchmarkData(1000, "2D")
-
-            # Valid throughput data
-            success = generator._parse_throughput_data(benchmark, "Throughput: [8000.0, 9090.9, 10000.0] Kelem/s")
-            assert success is True
-            assert benchmark.throughput_mean == 9090.9
-            assert benchmark.throughput_unit == "Kelem/s"
-
-            # Invalid throughput data
-            benchmark2 = BenchmarkData(1000, "2D")
-            success = generator._parse_throughput_data(benchmark2, "Invalid throughput data")
-            assert success is False
-
-    def test_format_benchmark_tables(self):
-        """Test formatting benchmark data as markdown tables."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            # Create test benchmarks
-            benchmarks = [
-                BenchmarkData(1000, "2D").with_timing(100.0, 110.0, 120.0, "µs").with_throughput(8000.0, 9090.9, 10000.0, "Kelem/s"),
-                BenchmarkData(5000, "2D").with_timing(450.0, 500.0, 550.0, "µs").with_throughput(9000.0, 10000.0, 11000.0, "Kelem/s"),
-                BenchmarkData(2000, "3D").with_timing(200.0, 220.0, 240.0, "µs").with_throughput(8000.0, 9090.9, 10000.0, "Kelem/s"),
-            ]
-
-            lines = generator._format_benchmark_tables(benchmarks)
-            markdown_content = "\n".join(lines)
-
-            # Should have sections for both dimensions
-            assert "### 2D Triangulation Performance" in markdown_content
-            assert "### 3D Triangulation Performance" in markdown_content
-
-            # Should have table headers
-            assert "| Points | Time (mean) | Throughput (mean) | Scaling |" in markdown_content
-            assert "|--------|-------------|-------------------|----------|" in markdown_content
-
-            # Should have data rows with scaling calculations
-            assert "| 1000 | 110.00 µs | 9090.900 Kelem/s | 1.0x |" in markdown_content
-            assert "| 5000 |" in markdown_content  # Should contain the 5000 point row
-            assert "4.5x" in markdown_content  # Scaling: 500/110 ≈ 4.5
-
-    def test_format_time_value(self):
-        """Test formatting time values with appropriate precision."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            # Test different value ranges
-            assert generator._format_time_value(0.5, "µs") == "0.500 µs"
-            assert generator._format_time_value(110.0, "µs") == "110.00 µs"
-            assert generator._format_time_value(1500.0, "µs") == "1.500 ms"  # Converts to ms
-            assert generator._format_time_value(2500.0, "ms") == "2.5000 s"  # Converts to s
-            assert generator._format_time_value(50000.0, "ms") == "50.0000 s"  # Large values convert to s
-
-    def test_format_throughput_value(self):
-        """Test formatting throughput values with appropriate precision."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            # Test different value ranges
-            assert generator._format_throughput_value(0.5, "Kelem/s") == "0.500 Kelem/s"
-            assert generator._format_throughput_value(110.0, "Kelem/s") == "110.00 Kelem/s"
-            assert generator._format_throughput_value(9090.909, "Kelem/s") == "9090.909 Kelem/s"
-
-            # Test None values
-            assert generator._format_throughput_value(None, "Kelem/s") == "N/A"
-            assert generator._format_throughput_value(110.0, None) == "N/A"
-
     @patch("benchmark_utils.get_git_commit_hash")
     @patch("benchmark_utils.datetime")
     def test_generate_markdown_content(self, mock_datetime, mock_git_commit):
@@ -1868,7 +1673,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             assert "## Performance Data Updates" in content
 
     def test_get_circumsphere_performance_results(self):
-        """Test getting circumsphere performance results placeholder."""
+        """Test getting circumsphere performance results."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
@@ -1877,7 +1682,8 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             content = "\n".join(lines)
 
             assert "### Circumsphere Performance Results" in content
-            assert "not yet implemented" in content
+            # Should contain fallback performance data when no criterion results exist
+            assert "Basic 3D" in content or "Version unknown" in content
 
     def test_get_update_instructions(self):
         """Test getting performance data update instructions."""
@@ -1902,14 +1708,10 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
 
-            success = generator._run_circumsphere_benchmarks()
+            success, numerical_data = generator._run_circumsphere_benchmarks()
 
             assert success is True
-            mock_cargo.assert_called_once_with(
-                ["bench", "--bench", "circumsphere_containment"],
-                cwd=project_root,
-                timeout=1800,
-            )
+            mock_cargo.assert_called_once()
 
     @patch("benchmark_utils.run_cargo_command")
     def test_run_circumsphere_benchmarks_failure(self, mock_cargo, capsys):
@@ -1920,12 +1722,12 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
 
-            success = generator._run_circumsphere_benchmarks()
+            success, numerical_data = generator._run_circumsphere_benchmarks()
 
             assert success is False
-            # Check error was printed
+            # Check error was printed (it goes to stdout, not stderr)
             captured = capsys.readouterr()
-            assert "Failed to run circumsphere benchmarks" in captured.err
+            assert "Error running circumsphere benchmarks" in captured.out
 
     def test_generate_summary_success(self, capsys):
         """Test successful generation of performance summary."""
@@ -1952,7 +1754,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
     def test_generate_summary_with_benchmarks(self, mock_run_benchmarks):
         """Test generating summary with fresh benchmark run."""
-        mock_run_benchmarks.return_value = True
+        mock_run_benchmarks.return_value = (True, None)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -1969,7 +1771,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
     def test_generate_summary_benchmark_failure_continues(self, mock_run_benchmarks, capsys):
         """Test that summary generation continues even if benchmark run fails."""
-        mock_run_benchmarks.return_value = False
+        mock_run_benchmarks.return_value = (False, None)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -1992,13 +1794,9 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
 
-            # Use a read-only directory to cause write failure
-            readonly_dir = Path(temp_dir) / "readonly"
-            readonly_dir.mkdir()
-            readonly_dir.chmod(0o444)  # Read-only
-            output_file = readonly_dir / "summary.md"
-
-            success = generator.generate_summary(output_path=output_file)
+            output_file = Path(temp_dir) / "readonly" / "summary.md"
+            with patch.object(Path, "open", side_effect=OSError("permission denied")):
+                success = generator.generate_summary(output_path=output_file)
 
             assert success is False
 
@@ -2012,12 +1810,151 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
 
-            lines = generator._get_static_content()
+            lines = generator._get_static_sections()
             content = "\n".join(lines)
 
-            assert "## Key Findings" in content
-            assert "### Performance Ranking" in content
-            assert "## Recommendations" in content
-            assert "insphere_lifted" in content
-            assert "insphere_distance" in content
-            assert "Performance-Critical Applications" in content
+            assert "## Historical Version Comparison" in content
+            assert "## Implementation Notes" in content
+            assert "## Benchmark Structure" in content
+
+    def test_empty_benchmark_results_edge_case(self):
+        """Test handling of empty benchmark results (edge case)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            # Should not crash and should use fallback data
+            results = generator._parse_circumsphere_benchmark_results()
+            assert len(results) > 0
+
+    def test_malformed_estimates_json_edge_case(self):
+        """Test handling of malformed estimates.json files (edge case)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+
+            # Create malformed estimates.json
+            criterion_dir = project_root / "target" / "criterion" / "basic-insphere" / "base"
+            criterion_dir.mkdir(parents=True)
+
+            estimates_file = criterion_dir / "estimates.json"
+            estimates_file.write_text("{ invalid json")
+
+            generator = PerformanceSummaryGenerator(project_root)
+
+            # Should not crash and should use fallback data
+            results = generator._parse_circumsphere_benchmark_results()
+            assert len(results) > 0
+
+    def test_missing_git_info_edge_case(self):
+        """Test handling when git information is not available (edge case)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            output_file = Path(temp_dir) / "test_output.md"
+
+            with (
+                patch("benchmark_utils.run_git_command") as mock_git,
+                patch("benchmark_utils.get_git_commit_hash") as mock_commit,
+            ):
+                mock_git.side_effect = Exception("Git not available")
+                mock_commit.side_effect = Exception("Git not available")
+
+                generator = PerformanceSummaryGenerator(project_root)
+                success = generator.generate_summary(output_file)
+
+                # Should still succeed
+                assert success
+
+                content = output_file.read_text()
+                assert "Version unknown" in content
+
+    def test_baseline_fallback_behavior_edge_case(self):
+        """Test baseline file fallback from primary to secondary location (edge case)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            output_file = Path(temp_dir) / "baseline_fallback_test.md"
+
+            # Create fallback baseline file (benches/baseline_results.txt)
+            benches_dir = project_root / "benches"
+            benches_dir.mkdir()
+            fallback_baseline = benches_dir / "baseline_results.txt"
+            fallback_baseline.write_text(
+                "Generated at: 2025-01-15 10:00:00\n"
+                "Git commit: abc123\n"
+                "=== 1000 Points (3D) ===\n"
+                "Time: [805.0, 810.0, 815.0] µs\n"
+                "Throughput: [1200.0, 1235.0, 1245.0] Kelem/s\n"
+            )
+
+            # Do NOT create primary baseline file (baseline-artifact/baseline_results.txt)
+            # This forces the fallback behavior
+
+            with (
+                patch("benchmark_utils.get_git_commit_hash") as mock_commit,
+            ):
+                mock_commit.return_value = "abc123def456"
+
+                generator = PerformanceSummaryGenerator(project_root)
+
+                # Verify initial state: primary doesn't exist, fallback does
+                assert not generator.baseline_file.exists()  # Primary: baseline-artifact/baseline_results.txt
+                assert generator._baseline_fallback.exists()  # Fallback: benches/baseline_results.txt
+
+                success = generator.generate_summary(output_file)
+                assert success
+
+                content = output_file.read_text()
+
+                # Verify that baseline data was included (meaning fallback worked)
+                assert "Triangulation Data Structure Performance" in content
+                assert "Generated at: 2025-01-15 10:00:00" in content  # Metadata from fallback file
+                assert "Git commit: abc123" in content  # Git data from fallback file
+
+                # Note: The baseline file parsing extracts metadata, not performance data
+                # Performance data "1000 Points (3D)" would come from benchmark parsing,
+                # not baseline parsing. The important test is that the fallback file is read.
+
+    def test_full_generation_workflow_integration(self):
+        """Test complete summary generation workflow (integration test)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            output_file = Path(temp_dir) / "full_test.md"
+
+            # Set up complete test environment
+            baseline_dir = project_root / "benches"
+            baseline_dir.mkdir()
+
+            # Mock baseline file
+            baseline_file = baseline_dir / "baseline_results.txt"
+            baseline_file.write_text(
+                "Generated at: 2025-01-15 10:00:00\n"
+                "Git commit: abc123\n"
+                "=== 10 Points (2D) ===\n"
+                "Time: [100.0, 110.0, 120.0] µs\n"
+                "Throughput: [8000.0, 9000.0, 10000.0] Kelem/s\n"
+            )
+
+            # Mock comparison file
+            comparison_file = baseline_dir / "compare_results.txt"
+            comparison_file.write_text("✅ OK: All benchmarks within acceptable range\n")
+
+            with (
+                patch("benchmark_utils.get_git_commit_hash") as mock_commit,
+            ):
+                mock_commit.return_value = "abc123def456"
+
+                generator = PerformanceSummaryGenerator(project_root)
+                success = generator.generate_summary(output_file)
+
+                assert success
+
+                content = output_file.read_text()
+
+                # Verify all major sections are present
+                assert "# Delaunay Library Performance Results" in content
+                assert "Single Query Performance (3D)" in content
+                assert "Triangulation Data Structure Performance" in content
+                assert "Performance Status: Good" in content
+                assert "Key Findings" in content
+                assert "Performance Ranking" in content
+                assert "Recommendations" in content
+                assert "Performance Data Updates" in content

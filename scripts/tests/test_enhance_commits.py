@@ -44,11 +44,9 @@ class TestRegexPatterns:
                 assert isinstance(pattern, str)
                 assert len(pattern) > 0
 
-    def test_added_patterns(self):
-        """Test patterns for 'Added' category."""
-        patterns = _get_regex_patterns()["added"]
-
-        test_cases = [
+    @pytest.mark.parametrize(
+        "text",
+        [
             "add new feature",
             "adds support for",
             "added functionality",
@@ -59,25 +57,30 @@ class TestRegexPatterns:
             "new feature for users",
             "feat: add benchmarking",
             "feat: implement caching",
-        ]
+        ],
+    )
+    def test_added_patterns(self, text):
+        """Test patterns for 'Added' category."""
+        patterns = _get_regex_patterns()["added"]
+        assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'added' patterns"
 
-        for text in test_cases:
-            assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'added' patterns"
-
-    def test_removed_patterns(self):
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "remove deprecated function",
+            "delete unused code",
+            "drop legacy support",
+            "eliminate dead code",
+        ],
+    )
+    def test_removed_patterns(self, text):
         """Test patterns for 'Removed' category."""
         patterns = _get_regex_patterns()["removed"]
+        assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'removed' patterns"
 
-        test_cases = ["remove deprecated function", "delete unused code", "drop legacy support", "eliminate dead code"]
-
-        for text in test_cases:
-            assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'removed' patterns"
-
-    def test_fixed_patterns(self):
-        """Test patterns for 'Fixed' category."""
-        patterns = _get_regex_patterns()["fixed"]
-
-        test_cases = [
+    @pytest.mark.parametrize(
+        "text",
+        [
             "fix memory leak",
             "resolve compilation error",
             "patch security vulnerability",
@@ -88,16 +91,16 @@ class TestRegexPatterns:
             "fix degenerate case",
             "improve numerical precision",
             "add fallback mechanism",
-        ]
+        ],
+    )
+    def test_fixed_patterns(self, text):
+        """Test patterns for 'Fixed' category."""
+        patterns = _get_regex_patterns()["fixed"]
+        assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'fixed' patterns"
 
-        for text in test_cases:
-            assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'fixed' patterns"
-
-    def test_changed_patterns(self):
-        """Test patterns for 'Changed' category."""
-        patterns = _get_regex_patterns()["changed"]
-
-        test_cases = [
+    @pytest.mark.parametrize(
+        "text",
+        [
             "update dependencies",
             "refactor module structure",
             "improve performance",
@@ -106,28 +109,38 @@ class TestRegexPatterns:
             "perf: speed up processing",
             "update msrv to 1.70",
             "bump version",
-        ]
+        ],
+    )
+    def test_changed_patterns(self, text):
+        """Test patterns for 'Changed' category."""
+        patterns = _get_regex_patterns()["changed"]
+        assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'changed' patterns"
 
-        for text in test_cases:
-            assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'changed' patterns"
-
-    def test_deprecated_patterns(self):
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "deprecate old api",
+            "mark function as deprecated",
+        ],
+    )
+    def test_deprecated_patterns(self, text):
         """Test patterns for 'Deprecated' category."""
         patterns = _get_regex_patterns()["deprecated"]
+        assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'deprecated' patterns"
 
-        test_cases = ["deprecate old api", "mark function as deprecated"]
-
-        for text in test_cases:
-            assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'deprecated' patterns"
-
-    def test_security_patterns(self):
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "fix security vulnerability",
+            "patch cve-2023-12345",
+            "dependabot update",
+            "address security exploit",
+        ],
+    )
+    def test_security_patterns(self, text):
         """Test patterns for 'Security' category."""
         patterns = _get_regex_patterns()["security"]
-
-        test_cases = ["fix security vulnerability", "patch cve-2023-12345", "dependabot update", "address security exploit"]
-
-        for text in test_cases:
-            assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'security' patterns"
+        assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'security' patterns"
 
 
 def _match_pattern(pattern, text):
@@ -516,7 +529,7 @@ class TestMainFunction:
 - **Fix memory allocation bug** (#456)
 - **Update performance benchmarks** (#789)
 """
-            input_file.write_text(input_content)
+            input_file.write_text(input_content, encoding="utf-8")
 
             output_file = temp_path / "output.md"
 
@@ -528,7 +541,7 @@ class TestMainFunction:
                 # Verify output file was created
                 assert output_file.exists()
 
-                output_content = output_file.read_text()
+                output_content = output_file.read_text(encoding="utf-8")
                 assert "### Added" in output_content
                 assert "### Fixed" in output_content
                 assert "### Changed" in output_content

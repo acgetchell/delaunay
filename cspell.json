@@ -64,6 +64,7 @@
         "codecov",
         "CODEOWNERS",
         "coderabbit",
+        "conftest",
         "coderabbitai",
         "collinearity",
         "comjnl",

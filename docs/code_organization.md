@@ -90,18 +90,19 @@ delaunay/
 ├── scripts/                                      # Development and CI scripts
 │   ├── tests/                                    # Python utility tests
 │   │   ├── __init__.py                           # Test package initialization
-│   │   ├── test_benchmark_utils.py               # Tests for benchmark_utils.py
+│   │   ├── conftest.py                           # Shared test fixtures and configuration
+│   │   ├── test_benchmark_models.py              # Tests for benchmark_models.py data models and parsing/formatting functions
+│   │   ├── test_benchmark_utils.py               # Tests for benchmark_utils.py business logic and utilities
 │   │   ├── test_changelog_utils.py               # Comprehensive tests for changelog_utils.py
 │   │   ├── test_enhance_commits.py               # Tests for enhance_commits.py
 │   │   ├── test_hardware_utils.py                # Tests for hardware_utils.py
-│   │   ├── test_performance_summary_utils.py     # Tests for performance_summary_utils.py
 │   │   └── test_subprocess_utils.py              # Comprehensive tests for subprocess_utils.py
 │   ├── README.md                                 # Scripts documentation
+│   ├── benchmark_models.py                       # Data models for benchmark parsing and formatting
 │   ├── benchmark_utils.py                        # Benchmark processing, baseline generation, and performance comparison utilities
 │   ├── changelog_utils.py                        # Comprehensive Python utilities for changelog generation, processing, and git tagging
 │   ├── enhance_commits.py                        # Commit enhancement and categorization utilities
 │   ├── hardware_utils.py                         # Hardware information detection and system capabilities analysis
-│   ├── performance_summary_utils.py              # Performance results processing and summary generation utilities
 │   ├── run_all_examples.sh                       # Validate all examples
 │   └── subprocess_utils.py                       # Secure subprocess execution utilities and shared project navigation functions
 ├── .github/                                      # GitHub configuration
@@ -163,6 +164,15 @@ uv run pytest
 # Or run specific test files
 uv run pytest scripts/tests/test_benchmark_utils.py
 ```
+
+**Note**: Performance summary generation is available through the benchmark utilities CLI:
+
+```bash
+# Generate performance summary in benches/PERFORMANCE_RESULTS.md
+uv run benchmark-utils generate-summary
+```
+
+The `benchmark-utils` CLI provides integrated benchmark workflow functionality including performance summary generation.
 
 ### Architecture Overview
 
