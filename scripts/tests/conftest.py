@@ -5,11 +5,18 @@ Provides common testing utilities that can be reused across multiple test files.
 """
 
 import os
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+
+# Ensure `scripts/` is on sys.path for test imports
+# This must be done before importing any local modules
+_scripts = Path(__file__).resolve().parents[1]
+if str(_scripts) not in sys.path:
+    sys.path.insert(0, str(_scripts))
 
 
 @pytest.fixture

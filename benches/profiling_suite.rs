@@ -48,7 +48,7 @@ use delaunay::geometry::util::{
 use delaunay::prelude::*;
 use delaunay::vertex;
 use num_traits::cast;
-use serde::{Deserialize, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -56,6 +56,11 @@ use std::time::{Duration, Instant};
 const BENCHMARK_ITERATION_BUFFER_SIZE: usize = 8; // For tracking allocation info across benchmark iterations
 const SIMPLEX_VERTICES_BUFFER_SIZE: usize = 4; // 3D simplex = 4 vertices
 const QUERY_RESULTS_BUFFER_SIZE: usize = 1024; // For bounded query result collections (max 1000 in code)
+
+// Reusable seeds and caps
+const DEFAULT_SEED: u64 = 42;
+const QUERY_SEED: u64 = 123;
+const MAX_QUERY_RESULTS: usize = 1_000;
 
 // Memory allocation counting support
 #[cfg(feature = "count-allocations")]
@@ -107,11 +112,16 @@ const PROFILING_COUNTS_DEVELOPMENT: &[usize] = &[
 ];
 
 /// Parse `PROFILING_DEV_MODE` environment variable as boolean-like value
-/// Returns true for: "1", "true", "TRUE", "yes", "on"
+/// Returns true for: "1", "true", "TRUE", "yes", "on" (case-insensitive)
 /// Returns false for anything else (including "0", "false", empty, or unset)
 fn is_dev_mode() -> bool {
     let dev = std::env::var("PROFILING_DEV_MODE").ok();
-    matches!(dev.as_deref(), Some("1" | "true" | "TRUE" | "yes" | "on"))
+    dev.as_deref().is_some_and(|s| {
+        s == "1"
+            || s.eq_ignore_ascii_case("true")
+            || s.eq_ignore_ascii_case("yes")
+            || s.eq_ignore_ascii_case("on")
+    })
 }
 
 /// Get appropriate point counts based on environment
@@ -156,9 +166,8 @@ fn generate_points_by_distribution<const D: usize>(
     seed: u64,
 ) -> Vec<Point<f64, D>> {
     match distribution {
-        PointDistribution::Random => {
-            generate_random_points_seeded(count, (-100.0, 100.0), seed).unwrap()
-        }
+        PointDistribution::Random => generate_random_points_seeded(count, (-100.0, 100.0), seed)
+            .expect("random point generation failed"),
         PointDistribution::Grid => {
             // Calculate points per dimension to get approximately `count` points total
             let count_f64 = safe_usize_to_scalar::<f64>(count).unwrap_or(2.0);
@@ -192,7 +201,8 @@ fn generate_points_by_distribution<const D: usize>(
                 5 => 15.0, // 5D: even larger spacing
                 _ => 20.0, // Higher dimensions: very large spacing
             };
-            generate_poisson_points(count, (-100.0, 100.0), min_distance, seed).unwrap()
+            generate_poisson_points(count, (-100.0, 100.0), min_distance, seed)
+                .expect("poisson point generation failed")
         }
     }
 }
@@ -218,7 +228,8 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     for &count in counts {
         for &distribution in &distributions {
             // Pre-generate sample points to calculate actual count and avoid double-generation
-            let sample_points = generate_points_by_distribution::<2>(count, distribution, 42);
+            let sample_points =
+                generate_points_by_distribution::<2>(count, distribution, DEFAULT_SEED);
             let actual_count = sample_points.len();
             group.throughput(Throughput::Elements(actual_count as u64));
 
@@ -230,8 +241,11 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                     b.iter_batched(
                         || {
                             // Reuse same generation logic to ensure consistent point count
-                            let points =
-                                generate_points_by_distribution::<2>(count, distribution, 42);
+                            let points = generate_points_by_distribution::<2>(
+                                count,
+                                distribution,
+                                DEFAULT_SEED,
+                            );
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
@@ -257,7 +271,8 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
             }
 
             // Pre-generate sample points to calculate actual count and avoid double-generation
-            let sample_points = generate_points_by_distribution::<3>(count, distribution, 42);
+            let sample_points =
+                generate_points_by_distribution::<3>(count, distribution, DEFAULT_SEED);
             let actual_count = sample_points.len();
             group.throughput(Throughput::Elements(actual_count as u64));
 
@@ -268,8 +283,11 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                 |b, &(count, distribution, _actual_count)| {
                     b.iter_batched(
                         || {
-                            let points =
-                                generate_points_by_distribution::<3>(count, distribution, 42);
+                            let points = generate_points_by_distribution::<3>(
+                                count,
+                                distribution,
+                                DEFAULT_SEED,
+                            );
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
@@ -297,7 +315,8 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     for &count in high_dim_counts {
         for &distribution in &distributions {
             // Pre-generate sample points to calculate actual count and avoid double-generation
-            let sample_points = generate_points_by_distribution::<4>(count, distribution, 42);
+            let sample_points =
+                generate_points_by_distribution::<4>(count, distribution, DEFAULT_SEED);
             let actual_count = sample_points.len();
             group.throughput(Throughput::Elements(actual_count as u64));
 
@@ -308,8 +327,11 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                 |b, &(count, distribution, _actual_count)| {
                     b.iter_batched(
                         || {
-                            let points =
-                                generate_points_by_distribution::<4>(count, distribution, 42);
+                            let points = generate_points_by_distribution::<4>(
+                                count,
+                                distribution,
+                                DEFAULT_SEED,
+                            );
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
@@ -336,7 +358,8 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     for &count in ultra_high_dim_counts {
         for &distribution in &distributions {
             // Pre-generate sample points to calculate actual count and avoid double-generation
-            let sample_points = generate_points_by_distribution::<5>(count, distribution, 42);
+            let sample_points =
+                generate_points_by_distribution::<5>(count, distribution, DEFAULT_SEED);
             let actual_count = sample_points.len();
             group.throughput(Throughput::Elements(actual_count as u64));
 
@@ -347,8 +370,11 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                 |b, &(count, distribution, _actual_count)| {
                     b.iter_batched(
                         || {
-                            let points =
-                                generate_points_by_distribution::<5>(count, distribution, 42);
+                            let points = generate_points_by_distribution::<5>(
+                                count,
+                                distribution,
+                                DEFAULT_SEED,
+                            );
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
@@ -379,8 +405,8 @@ fn calculate_95th_percentile(values: &mut [u64]) -> u64 {
     }
     values.sort_unstable();
     let n = values.len();
-    let rank = (95 * (n.saturating_sub(1))).div_ceil(100); // nearest-rank, clamps at n-1
-    let index = rank.min(n - 1);
+    let rank = (95 * n).div_ceil(100); // 1-based nearest-rank
+    let index = rank.saturating_sub(1).min(n - 1); // 0-based index
     values[index]
 }
 
@@ -408,10 +434,14 @@ fn print_alloc_summary(
         percentile_95,
         percentile_95 as f64 / (1024.0 * 1024.0)
     );
-    println!(
-        "Bytes per point (peak): {:.1}",
-        info.bytes_max as f64 / actual_point_count as f64
-    );
+    if actual_point_count > 0 {
+        println!(
+            "Bytes per point (peak): {:.1}",
+            info.bytes_max as f64 / actual_point_count as f64
+        );
+    } else {
+        println!("Bytes per point (peak): n/a (0 points)");
+    }
     println!("=====================================\n");
 }
 
@@ -422,7 +452,7 @@ fn bench_memory_usage<const D: usize>(
     bench_id_prefix: &str,
     count: usize,
 ) where
-    [f64; D]: Copy + Default + for<'de> Deserialize<'de> + Serialize + Sized,
+    [f64; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     group.bench_with_input(
         BenchmarkId::new(bench_id_prefix, count),
@@ -445,7 +475,7 @@ fn bench_memory_usage<const D: usize>(
                         let points = generate_points_by_distribution::<D>(
                             count,
                             PointDistribution::Random,
-                            42,
+                            DEFAULT_SEED,
                         );
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                         actual_point_counts.push(points.len()); // Track actual count
@@ -570,14 +600,20 @@ fn benchmark_query_latency(c: &mut Criterion) {
             &count,
             |b, &count| {
                 // Setup: Create triangulation and query points
-                let points =
-                    generate_points_by_distribution::<3>(count, PointDistribution::Random, 42);
+                let points = generate_points_by_distribution::<3>(
+                    count,
+                    PointDistribution::Random,
+                    DEFAULT_SEED,
+                );
                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                 let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
                 // Generate query points
-                let query_points =
-                    generate_points_by_distribution::<3>(100, PointDistribution::Random, 123);
+                let query_points = generate_points_by_distribution::<3>(
+                    100,
+                    PointDistribution::Random,
+                    QUERY_SEED,
+                );
 
                 // Precompute all valid simplex vertices outside the benchmark loop
                 let mut precomputed_simplices: Vec<
@@ -625,12 +661,12 @@ fn benchmark_query_latency(c: &mut Criterion) {
                             }
 
                             // Limit total queries to prevent extremely long benchmarks
-                            if query_results.len() >= 1000 {
+                            if query_results.len() >= MAX_QUERY_RESULTS {
                                 break;
                             }
                         }
 
-                        if query_results.len() >= 1000 {
+                        if query_results.len() >= MAX_QUERY_RESULTS {
                             break;
                         }
                     }
@@ -670,7 +706,7 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
                         let points = generate_points_by_distribution::<3>(
                             count,
                             PointDistribution::Random,
-                            42,
+                            DEFAULT_SEED,
                         );
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                         Tds::<f64, (), (), 3>::new(&vertices).unwrap()
@@ -695,7 +731,7 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
                         let points = generate_points_by_distribution::<3>(
                             count,
                             PointDistribution::Random,
-                            42,
+                            DEFAULT_SEED,
                         );
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                         Tds::<f64, (), (), 3>::new(&vertices).unwrap()
@@ -722,7 +758,7 @@ criterion_group!(
     config = Criterion::default()
         .sample_size(10)  // Fewer samples due to long-running nature
         .warm_up_time(Duration::from_secs(10))
-        .measurement_time(Duration::from_secs(60));
+        .measurement_time(bench_time(60));
     targets =
         benchmark_triangulation_scaling,
         benchmark_memory_profiling,

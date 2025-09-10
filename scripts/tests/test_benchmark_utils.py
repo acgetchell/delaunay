@@ -12,6 +12,7 @@ and necessary for comprehensive unit testing of internal functionality.
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from io import StringIO
@@ -41,7 +42,7 @@ class TestCriterionParser:
             "mean": {
                 "point_estimate": 110000.0,  # 110 microseconds in nanoseconds
                 "confidence_interval": {"lower_bound": 100000.0, "upper_bound": 120000.0},
-            }
+            },
         }
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -88,7 +89,7 @@ class TestCriterionParser:
                     "lower_bound": 0.0,  # Could cause division by zero without protection
                     "upper_bound": 2000.0,
                 },
-            }
+            },
         }
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -834,7 +835,7 @@ Time: [190.0, 200.0, 210.0] µs
 Time: [220.0, 250.0, 280.0] µs
 """
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
             f.write(baseline_content)
             f.flush()
             baseline_file = Path(f.name)
@@ -866,7 +867,7 @@ Time: [220.0, 250.0, 280.0] µs
         """Test baseline summary with file longer than 10 lines."""
         baseline_content = "\n".join([f"Line {i}" for i in range(20)])
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
             f.write(baseline_content)
             f.flush()
             baseline_file = Path(f.name)
@@ -910,7 +911,6 @@ Time: [220.0, 250.0, 280.0] µs
 
     def test_sanitize_artifact_name_edge_cases(self):
         """Test artifact name sanitization with edge cases."""
-        import re
 
         # Test with unicode and various special characters
         test_cases = [
@@ -1294,7 +1294,7 @@ Hardware Information:
             if "BENCHMARK_REGRESSION_DETECTED" in os.environ:
                 del os.environ["BENCHMARK_REGRESSION_DETECTED"]
 
-            with patch.dict(os.environ, env_vars), temp_chdir(temp_dir):
+            with patch.dict(os.environ, env_vars, clear=True), temp_chdir(temp_dir):
                 BenchmarkRegressionHelper.generate_summary()
 
                 # Check that environment variable was set
@@ -1318,7 +1318,7 @@ Hardware Information:
                 "GITHUB_ENV": str(github_env_file),
             }
 
-            with patch.dict(os.environ, env_vars), temp_chdir(temp_dir):
+            with patch.dict(os.environ, env_vars, clear=True), temp_chdir(temp_dir):
                 BenchmarkRegressionHelper.generate_summary()
 
                 # Check that GITHUB_ENV file was written to
@@ -1358,7 +1358,7 @@ class TestProjectRootHandling:
             with temp_chdir(temp_path):
                 from benchmark_utils import ProjectRootNotFoundError, find_project_root
 
-                with pytest.raises(ProjectRootNotFoundError, match="Could not locate Cargo.toml"):
+                with pytest.raises(ProjectRootNotFoundError, match=r"Could not locate Cargo\.toml"):
                     find_project_root()
 
 
@@ -1699,6 +1699,57 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             assert "uv run benchmark-utils generate-summary" in content
             assert "PerformanceSummaryGenerator" in content
 
+    def test_parse_numerical_accuracy_output_success(self):
+        """Test parsing numerical accuracy output successfully."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            stdout_content = """Running benchmarks...
+Method Comparisons (1000 total tests):
+  insphere vs insphere_distance:  845/1000 (84.5%)
+  insphere vs insphere_lifted:  12/1000 (1.2%)
+  insphere_distance vs insphere_lifted:  203/1000 (20.3%)
+  All three methods agree:  8/1000 (0.8%)
+Benchmark completed."""
+
+            result = generator._parse_numerical_accuracy_output(stdout_content)
+
+            assert result is not None
+            assert isinstance(result, dict)
+            assert result["insphere_distance"] == "84.5%"
+            assert result["insphere_lifted"] == "1.2%"
+            assert result["distance_lifted"] == "20.3%"
+            assert result["all_agree"] == "0.8%"
+
+    def test_parse_numerical_accuracy_output_no_data(self):
+        """Test parsing numerical accuracy output with no relevant data."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            stdout_content = """Running benchmarks...
+No method comparisons found.
+Benchmark completed."""
+
+            result = generator._parse_numerical_accuracy_output(stdout_content)
+
+            assert result is None
+
+    def test_parse_numerical_accuracy_output_malformed(self):
+        """Test parsing numerical accuracy output with malformed data."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            stdout_content = """Running benchmarks...
+Method Comparisons (invalid format):
+Benchmark completed."""
+
+            result = generator._parse_numerical_accuracy_output(stdout_content)
+
+            assert result is None
+
     @patch("benchmark_utils.run_cargo_command")
     def test_run_circumsphere_benchmarks_success(self, mock_cargo):
         """Test running circumsphere benchmarks successfully."""
@@ -1711,6 +1762,38 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             success, numerical_data = generator._run_circumsphere_benchmarks()
 
             assert success is True
+            # numerical_data should be a dict or None when successful
+            assert numerical_data is None or isinstance(numerical_data, dict)
+            mock_cargo.assert_called_once()
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_circumsphere_benchmarks_with_numerical_data(self, mock_cargo):
+        """Test running circumsphere benchmarks with numerical accuracy data."""
+        # Mock cargo command to return output with numerical accuracy data
+        mock_result = Mock()
+        mock_result.stdout = """Running benchmarks...
+Method Comparisons (1000 total tests):
+  insphere vs insphere_distance:  820/1000 (82.0%)
+  insphere vs insphere_lifted:  5/1000 (0.5%)
+  insphere_distance vs insphere_lifted:  180/1000 (18.0%)
+  All three methods agree:  2/1000 (0.2%)
+Benchmark completed."""
+        mock_cargo.return_value = mock_result
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            success, numerical_data = generator._run_circumsphere_benchmarks()
+
+            assert success is True
+            assert numerical_data is not None
+            assert isinstance(numerical_data, dict)
+            # Check specific accuracy values were parsed correctly
+            assert numerical_data["insphere_distance"] == "82.0%"
+            assert numerical_data["insphere_lifted"] == "0.5%"
+            assert numerical_data["distance_lifted"] == "18.0%"
+            assert numerical_data["all_agree"] == "0.2%"
             mock_cargo.assert_called_once()
 
     @patch("benchmark_utils.run_cargo_command")
@@ -1725,6 +1808,8 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             success, numerical_data = generator._run_circumsphere_benchmarks()
 
             assert success is False
+            # numerical_data should be None when there's a failure
+            assert numerical_data is None
             # Check error was printed (it goes to stdout, not stderr)
             captured = capsys.readouterr()
             assert "Error running circumsphere benchmarks" in captured.out
@@ -1882,7 +1967,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
                 "Git commit: abc123\n"
                 "=== 1000 Points (3D) ===\n"
                 "Time: [805.0, 810.0, 815.0] µs\n"
-                "Throughput: [1200.0, 1235.0, 1245.0] Kelem/s\n"
+                "Throughput: [1200.0, 1235.0, 1245.0] Kelem/s\n",
             )
 
             # Do NOT create primary baseline file (baseline-artifact/baseline_results.txt)
@@ -1930,7 +2015,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
                 "Git commit: abc123\n"
                 "=== 10 Points (2D) ===\n"
                 "Time: [100.0, 110.0, 120.0] µs\n"
-                "Throughput: [8000.0, 9000.0, 10000.0] Kelem/s\n"
+                "Throughput: [8000.0, 9000.0, 10000.0] Kelem/s\n",
             )
 
             # Mock comparison file
@@ -1958,3 +2043,117 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
                 assert "Performance Ranking" in content
                 assert "Recommendations" in content
                 assert "Performance Data Updates" in content
+
+    def test_dimension_sorting_numeric_order(self):
+        """Test that dimensions are sorted numerically, not lexically."""
+        from benchmark_models import CircumspherePerformanceData, CircumsphereTestCase
+        from benchmark_utils import PerformanceSummaryGenerator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            # Create test cases with dimensions that would sort wrong lexically
+            test_cases = [
+                CircumsphereTestCase("Test10", "10D", {"insphere": CircumspherePerformanceData("insphere", 1000)}),
+                CircumsphereTestCase("Test2", "2D", {"insphere": CircumspherePerformanceData("insphere", 1000)}),
+                CircumsphereTestCase("Test3", "3D", {"insphere": CircumspherePerformanceData("insphere", 1000)}),
+                CircumsphereTestCase("Test1", "1D", {"insphere": CircumspherePerformanceData("insphere", 1000)}),
+                CircumsphereTestCase("Test9", "9D", {"insphere": CircumspherePerformanceData("insphere", 1000)}),
+            ]
+
+            # Patch the generator to use our test cases instead of parsing from files
+            with patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=test_cases):
+                # Generate the circumsphere performance results section
+                result_lines = generator._get_circumsphere_performance_results()
+                content = "\n".join(result_lines)
+
+                # Find the order of dimension headers in the generated content
+
+                dimension_headers = re.findall(r"#### Single Query Performance \((\d+D)\)", content)
+
+                # Verify that dimensions appear in numeric order: 1D, 2D, 3D, 9D, 10D
+                expected_order = ["1D", "2D", "3D", "9D", "10D"]
+                assert dimension_headers == expected_order, f"Expected {expected_order}, got {dimension_headers}"
+
+                # Also verify that each dimension's test case appears in the content
+                assert "Test1" in content  # 1D test case
+                assert "Test2" in content  # 2D test case
+                assert "Test3" in content  # 3D test case
+                assert "Test9" in content  # 9D test case
+                assert "Test10" in content  # 10D test case
+
+    def test_hardware_metadata_parsing_with_cores(self):
+        """Test that hardware metadata parsing includes cores and guards against IndexError."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+
+            # Create baseline with proper hardware section
+            baseline_dir = project_root / "baseline-artifact"
+            baseline_dir.mkdir()
+            baseline_file = baseline_dir / "baseline_results.txt"
+
+            # Test with complete hardware info
+            baseline_content = """Date: 2023-12-15 10:30:00 UTC
+Git commit: abc123def456
+Hardware Information:
+  OS: macOS
+  CPU: Apple M4 Max
+  CPU Cores: 14
+  Memory: 64.0 GB
+
+=== 1000 Points (2D) ===
+Time: [95.0, 100.0, 105.0] µs
+"""
+            baseline_file.write_text(baseline_content)
+
+            generator = PerformanceSummaryGenerator(project_root)
+            lines = generator._parse_baseline_results()
+            content = "\n".join(lines)
+
+            # Should include cores in the hardware summary
+            assert "Apple M4 Max (14 cores)" in content
+
+            # Test with missing cores info (edge case protection)
+            baseline_content_short = """Date: 2023-12-15 10:30:00 UTC
+Git commit: abc123def456
+Hardware Information:
+  OS: macOS
+  CPU: Apple M4 Max
+"""
+            baseline_file.write_text(baseline_content_short)
+
+            lines = generator._parse_baseline_results()
+            content = "\n".join(lines)
+
+            # Should handle missing cores gracefully
+            assert "Apple M4 Max" in content
+            assert "(" not in content.split("Apple M4 Max")[1].split("\n")[0] if "Apple M4 Max" in content else True
+
+    def test_dev_mode_args_consistency(self):
+        """Test that DEV_MODE_BENCH_ARGS is used consistently."""
+        from benchmark_utils import DEV_MODE_BENCH_ARGS
+
+        # Verify the constant exists and has expected structure
+        assert isinstance(DEV_MODE_BENCH_ARGS, list)
+        assert "--sample-size" in DEV_MODE_BENCH_ARGS
+        assert "--measurement-time" in DEV_MODE_BENCH_ARGS
+        assert "--warm-up-time" in DEV_MODE_BENCH_ARGS
+
+        # The specific values may change, but the structure should be consistent
+        # with pairs of argument name and value
+        assert len(DEV_MODE_BENCH_ARGS) >= 6  # At least 3 arg-value pairs
+
+    def test_numerical_accuracy_phrasing_flexibility(self):
+        """Test that numerical accuracy section doesn't hardcode sample size."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            # Get the numerical accuracy analysis without specific data
+            lines = generator._get_numerical_accuracy_analysis()
+            content = "\n".join(lines)
+
+            # Should use flexible phrasing instead of hardcoded "1000 random test cases"
+            assert "Based on random test cases:" in content
+            assert "Based on 1000 random test cases:" not in content

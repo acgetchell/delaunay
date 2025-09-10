@@ -11,6 +11,13 @@
 //! Designed for ~5-10 minute CI runtime while maintaining comprehensive
 //! regression detection across all performance-critical code paths.
 //!
+//! ## Sample Size Strategy
+//!
+//! Uses dimension-dependent sample sizes to balance accuracy with CI time constraints:
+//! - 2D: Default Criterion sample size (100)
+//! - 3D: Reduced to 25 samples
+//! - 4D/5D: Further reduced to 15 samples for longer-running high-dimensional cases
+//!
 //! ## Dimensional Focus
 //!
 //! Tests 2D, 3D, 4D, and 5D triangulations for comprehensive coverage:
@@ -20,67 +27,51 @@
 #![allow(missing_docs)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::geometry::util::generate_random_points_seeded;
-use delaunay::prelude::*;
-use delaunay::vertex;
+use delaunay::geometry::util::generate_random_triangulation;
 use std::hint::black_box;
 
 /// Common sample sizes used across all CI performance benchmarks
 const COUNTS: &[usize] = &[10, 25, 50];
 
-/// Fixed seeds for deterministic point generation across benchmark runs.
+/// Fixed seeds for deterministic triangulation generation across benchmark runs.
 /// Using seeded random number generation reduces variance in performance measurements
 /// and improves regression detection accuracy in CI environments.
-/// Different seeds per dimension ensure point sets are uncorrelated.
-/// Generate random 2D points for benchmarking
-fn generate_points_2d(count: usize) -> Vec<Point<f64, 2>> {
-    generate_random_points_seeded(count, (-100.0, 100.0), 42)
-        .expect("Failed to generate random 2D points")
-}
-
-/// Generate random 3D points for benchmarking
-fn generate_points_3d(count: usize) -> Vec<Point<f64, 3>> {
-    generate_random_points_seeded(count, (-100.0, 100.0), 123)
-        .expect("Failed to generate random 3D points")
-}
-
-/// Generate random 4D points for benchmarking
-fn generate_points_4d(count: usize) -> Vec<Point<f64, 4>> {
-    generate_random_points_seeded(count, (-100.0, 100.0), 456)
-        .expect("Failed to generate random 4D points")
-}
-
-/// Generate random 5D points for benchmarking
-fn generate_points_5d(count: usize) -> Vec<Point<f64, 5>> {
-    generate_random_points_seeded(count, (-100.0, 100.0), 789)
-        .expect("Failed to generate random 5D points")
-}
-
+/// Different seeds per dimension ensure triangulations are uncorrelated.
+///
 /// Macro to reduce duplication in dimensional benchmark functions
 macro_rules! benchmark_tds_new_dimension {
-    ($dim:literal, $func_name:ident, $points_fn:ident) => {
-        /// Benchmark `Tds::new` for D-dimensional triangulations
+    ($dim:literal, $func_name:ident, $seed:literal) => {
+        /// Benchmark triangulation creation for D-dimensional triangulations
         fn $func_name(c: &mut Criterion) {
             let counts = COUNTS;
             let mut group = c.benchmark_group(concat!("tds_new_", stringify!($dim), "d"));
+
+            // Set smaller sample sizes for higher dimensions to keep CI times reasonable
+            if $dim >= 4 {
+                group.sample_size(15); // Fewer samples for 4D and 5D
+            } else if $dim == 3 {
+                group.sample_size(25); // Medium sample size for 3D
+            }
 
             for &count in counts {
                 group.throughput(Throughput::Elements(count as u64));
 
                 group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
-                    b.iter_with_setup(
-                        || {
-                            let points = $points_fn(count);
-                            points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
-                        },
-                        |vertices| {
-                            black_box(Tds::<f64, (), (), $dim>::new(&vertices).expect(concat!(
-                                "Tds::new failed for ",
+                    b.iter(|| {
+                        black_box(
+                            generate_random_triangulation::<f64, (), (), $dim>(
+                                count,
+                                (-100.0, 100.0),
+                                None,
+                                Some($seed),
+                            )
+                            .expect(concat!(
+                                "generate_random_triangulation failed for ",
                                 stringify!($dim),
                                 "D"
-                            )));
-                        },
-                    );
+                            )),
+                        );
+                    });
                 });
             }
 
@@ -90,10 +81,10 @@ macro_rules! benchmark_tds_new_dimension {
 }
 
 // Generate benchmark functions using the macro
-benchmark_tds_new_dimension!(2, benchmark_tds_new_2d, generate_points_2d);
-benchmark_tds_new_dimension!(3, benchmark_tds_new_3d, generate_points_3d);
-benchmark_tds_new_dimension!(4, benchmark_tds_new_4d, generate_points_4d);
-benchmark_tds_new_dimension!(5, benchmark_tds_new_5d, generate_points_5d);
+benchmark_tds_new_dimension!(2, benchmark_tds_new_2d, 42);
+benchmark_tds_new_dimension!(3, benchmark_tds_new_3d, 123);
+benchmark_tds_new_dimension!(4, benchmark_tds_new_4d, 456);
+benchmark_tds_new_dimension!(5, benchmark_tds_new_5d, 789);
 
 criterion_group!(
     name = benches;

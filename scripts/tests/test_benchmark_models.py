@@ -125,7 +125,13 @@ class TestVersionComparisonData:
     def test_improvement_calculation(self):
         """Test improvement percentage calculation."""
         comparison = VersionComparisonData(
-            test_case="Basic 3D", method="insphere", old_version="v0.3.0", new_version="v0.3.1", old_value=808.0, new_value=805.0, unit="ns"
+            test_case="Basic 3D",
+            method="insphere",
+            old_version="v0.3.0",
+            new_version="v0.3.1",
+            old_value=808.0,
+            new_value=805.0,
+            unit="ns",
         )
 
         expected_improvement = ((808.0 - 805.0) / 808.0) * 100
@@ -134,7 +140,13 @@ class TestVersionComparisonData:
     def test_zero_old_value(self):
         """Test improvement calculation with zero old value."""
         comparison = VersionComparisonData(
-            test_case="Basic 3D", method="insphere", old_version="v0.3.0", new_version="v0.3.1", old_value=0.0, new_value=805.0, unit="ns"
+            test_case="Basic 3D",
+            method="insphere",
+            old_version="v0.3.0",
+            new_version="v0.3.1",
+            old_value=0.0,
+            new_value=805.0,
+            unit="ns",
         )
 
         assert comparison.improvement_pct == 0.0
@@ -265,3 +277,97 @@ class TestFormattingFunctions:
         # Test None values
         assert format_throughput_value(None, "Kelem/s") == "N/A"
         assert format_throughput_value(110.0, None) == "N/A"
+
+    def test_format_time_value_with_unit_aliases(self):
+        """Test time value formatting with microsecond unit aliases."""
+        # Test microsecond alias normalization
+        assert format_time_value(500.0, "us") == "500.00 µs"  # us -> µs
+        assert format_time_value(500.0, "μs") == "500.00 µs"  # μs -> µs
+        assert format_time_value(500.0, "µs") == "500.00 µs"  # already µs
+
+        # Test unit conversion with aliases
+        assert format_time_value(1500.0, "us") == "1.500 ms"  # us -> µs -> ms conversion
+        assert format_time_value(2500.0, "μs") == "2.500 ms"  # μs -> µs -> ms conversion
+
+    def test_parse_time_data_with_scientific_notation(self):
+        """Test parsing time data with scientific notation and flexible formatting."""
+        benchmark = BenchmarkData(1000, "3D")
+
+        # Test scientific notation parsing
+        success = parse_time_data(benchmark, "Time: [1.0e2, 1.1e2, 1.2e2] µs")
+        assert success is True
+        assert benchmark.time_mean == 110.0
+        assert benchmark.time_unit == "µs"
+
+        # Test negative values
+        benchmark2 = BenchmarkData(1000, "3D")
+        success = parse_time_data(benchmark2, "Time: [-1.0, 0.0, 1.0] µs")
+        assert success is True
+        assert benchmark2.time_mean == 0.0
+
+        # Test flexible whitespace
+        benchmark3 = BenchmarkData(1000, "3D")
+        success = parse_time_data(benchmark3, "Time:   [ 100.0 ,  110.0,   120.0 ]   µs")
+        assert success is True
+        assert benchmark3.time_mean == 110.0
+        assert benchmark3.time_unit == "µs"
+
+    def test_parse_throughput_data_with_scientific_notation(self):
+        """Test parsing throughput data with scientific notation and flexible formatting."""
+        benchmark = BenchmarkData(1000, "2D")
+
+        # Test scientific notation parsing
+        success = parse_throughput_data(benchmark, "Throughput: [8.0e3, 9.09e3, 1.0e4] Kelem/s")
+        assert success is True
+        assert benchmark.throughput_mean == 9090.0
+        assert benchmark.throughput_unit == "Kelem/s"
+
+        # Test flexible whitespace
+        benchmark2 = BenchmarkData(1000, "2D")
+        success = parse_throughput_data(benchmark2, "Throughput:   [ 8000.0 ,  9090.9,   10000.0 ]   Kelem/s")
+        assert success is True
+        assert benchmark2.throughput_mean == 9090.9
+        assert benchmark2.throughput_unit == "Kelem/s"
+
+    def test_format_benchmark_tables_dimension_sorting(self):
+        """Test that dimensions are sorted numerically rather than lexically."""
+        # Create benchmarks with dimensions that would sort incorrectly lexically
+        benchmarks = [
+            BenchmarkData(1000, "10D").with_timing(100.0, 110.0, 120.0, "µs"),
+            BenchmarkData(1000, "2D").with_timing(50.0, 55.0, 60.0, "µs"),
+            BenchmarkData(1000, "3D").with_timing(70.0, 75.0, 80.0, "µs"),
+            BenchmarkData(1000, "1D").with_timing(30.0, 35.0, 40.0, "µs"),
+        ]
+
+        lines = format_benchmark_tables(benchmarks)
+        markdown_content = "\n".join(lines)
+
+        # Find positions of dimension headers
+        pos_1d = markdown_content.find("### 1D Triangulation Performance")
+        pos_2d = markdown_content.find("### 2D Triangulation Performance")
+        pos_3d = markdown_content.find("### 3D Triangulation Performance")
+        pos_10d = markdown_content.find("### 10D Triangulation Performance")
+
+        # Verify they appear in numeric order: 1D < 2D < 3D < 10D
+        assert pos_1d < pos_2d < pos_3d < pos_10d
+
+    def test_format_benchmark_tables_mixed_dimension_formats(self):
+        """Test dimension sorting with mixed formats and edge cases."""
+        benchmarks = [
+            BenchmarkData(1000, "2D").with_timing(50.0, 55.0, 60.0, "µs"),
+            BenchmarkData(1000, "custom_format").with_timing(90.0, 95.0, 100.0, "µs"),  # No numeric prefix
+            BenchmarkData(1000, "  3D  ").with_timing(70.0, 75.0, 80.0, "µs"),  # Whitespace
+            BenchmarkData(1000, "1d").with_timing(30.0, 35.0, 40.0, "µs"),  # Lowercase 'd'
+        ]
+
+        lines = format_benchmark_tables(benchmarks)
+        markdown_content = "\n".join(lines)
+
+        # Find positions (note: whitespace in dimension names is preserved)
+        pos_1d = markdown_content.find("### 1d Triangulation Performance")
+        pos_2d = markdown_content.find("### 2D Triangulation Performance")
+        pos_3d = markdown_content.find("###   3D   Triangulation Performance")  # Whitespace preserved
+        pos_custom = markdown_content.find("### custom_format Triangulation Performance")
+
+        # Numeric dimensions should come first (1d, 2D, 3D), then non-numeric (custom_format)
+        assert pos_1d < pos_2d < pos_3d < pos_custom

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-benchmark_models.py - Data models and utilities for benchmark processing
+"""benchmark_models.py - Data models and utilities for benchmark processing.
 
 This module contains data models, parsing functions, and formatting utilities
 for benchmark data processing. It provides the core data structures used
@@ -113,7 +112,7 @@ class VersionComparisonData:
     unit: str
     improvement_pct: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Calculate improvement percentage."""
         if self.old_value > 0:
             self.improvement_pct = ((self.old_value - self.new_value) / self.old_value) * 100
@@ -155,7 +154,8 @@ def parse_time_data(benchmark: BenchmarkData, line: str) -> bool:
         True if data was parsed successfully, False otherwise
     """
     # Match pattern like "Time: [100.0, 110.0, 120.0] µs"
-    match = re.match(r"^Time: \[([0-9., ]+)\] (.+)$", line.strip())
+    # Support scientific notation (1.2e3), negative values, and flexible whitespace
+    match = re.match(r"^Time:\s*\[([0-9eE+.\-,\s]+)\]\s+(.+)$", line.strip())
     if match:
         try:
             # Parse the list of numbers
@@ -186,7 +186,8 @@ def parse_throughput_data(benchmark: BenchmarkData, line: str) -> bool:
         True if data was parsed successfully, False otherwise
     """
     # Match pattern like "Throughput: [8000.0, 9090.9, 10000.0] Kelem/s"
-    match = re.match(r"^Throughput: \[([0-9., ]+)\] (.+)$", line.strip())
+    # Support scientific notation (1.2e3), negative values, and flexible whitespace
+    match = re.match(r"^Throughput:\s*\[([0-9eE+.\-,\s]+)\]\s+(.+)$", line.strip())
     if match:
         try:
             # Parse the list of numbers
@@ -258,6 +259,8 @@ def format_time_value(value: float, unit: str) -> str:
     Returns:
         Formatted time string with appropriate unit
     """
+    # Normalize microsecond aliases to standard µs
+    unit = {"us": "µs", "μs": "µs"}.get(unit, unit)
     # Convert µs to ms if >= 1000 µs
     if unit == "µs" and value >= 1000:
         return f"{value / 1000:.3f} ms"
@@ -312,8 +315,13 @@ def format_benchmark_tables(benchmarks: list[BenchmarkData]) -> list[str]:
             by_dimension[dim] = []
         by_dimension[dim].append(bench)
 
-    # Sort dimensions (2D, 3D, etc.)
-    for dimension in sorted(by_dimension.keys()):
+    # Sort dimensions numerically (2D, 3D, etc.) rather than lexically
+    def _dim_key(d: str) -> tuple[int, str]:
+        """Sort key for dimensions: numeric prefix first, then string fallback."""
+        m = re.match(r"^\s*(\d+)\s*[dD]\b", d)
+        return (int(m.group(1)) if m else 1_000_000, d)
+
+    for dimension in sorted(by_dimension.keys(), key=_dim_key):
         dim_benchmarks = sorted(by_dimension[dimension], key=lambda b: b.points)
 
         lines.extend(
@@ -322,7 +330,7 @@ def format_benchmark_tables(benchmarks: list[BenchmarkData]) -> list[str]:
                 "",
                 "| Points | Time (mean) | Throughput (mean) | Scaling |",
                 "|--------|-------------|-------------------|----------|",
-            ]
+            ],
         )
 
         # Calculate scaling relative to smallest benchmark

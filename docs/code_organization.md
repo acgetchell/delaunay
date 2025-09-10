@@ -36,7 +36,7 @@ delaunay/
 │   │   │   └── insertion_algorithm.rs            # Insertion algorithm traits
 │   │   ├── boundary.rs                           # Boundary analysis and facet detection
 │   │   ├── cell.rs                               # Cell (simplex) implementation
-│   │   ├── collections.rs                        # Optimized collection types and utilities
+│   │   ├── collections.rs                        # Optimized collection types (re-exported via prelude)
 │   │   ├── facet.rs                              # Facet implementation
 │   │   ├── triangulation_data_structure.rs       # Main Tds struct
 │   │   ├── util.rs                               # Helper functions for triangulation operations
@@ -67,7 +67,7 @@ delaunay/
 │   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
 │   ├── memory_scaling.rs                         # Memory usage scaling benchmarks
 │   ├── microbenchmarks.rs                        # Fine-grained performance tests
-│   ├── profiling_suite.rs                        # Comprehensive profiling suite for large-scale performance analysis
+│   ├── profiling_suite.rs                        # Comprehensive profiling suite (see .github/workflows/profiling-benchmarks.yml)
 │   ├── triangulation_creation.rs                 # Triangulation creation benchmarks
 │   └── triangulation_vs_hull_memory.rs           # Memory comparison benchmarks
 ├── tests/                                        # Integration tests
@@ -156,13 +156,19 @@ cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
 cargo test --test circumsphere_debug_tools -- --nocapture
 ```
 
-**Note**: Python tests in `scripts/tests/` are executed via pytest (or `uv run pytest`) and discovered through the test configuration in `pyproject.toml`. Run with:
+**Note**: Python tests in `scripts/tests/` are executed via pytest (use `uv run pytest` for reproducible envs) and discovered via `pyproject.toml`. Run with:
 
 ```bash
+# Pre-req for uv users (optional): pipx install uv
+
 # Run all Python utility tests
-uv run pytest
+uv run pytest -q
 # Or run specific test files
 uv run pytest scripts/tests/test_benchmark_utils.py
+
+# Without uv:
+pytest -q
+pytest scripts/tests/test_benchmark_utils.py
 ```
 
 **Note**: Performance summary generation is available through the benchmark utilities CLI:
@@ -601,12 +607,15 @@ mod tests {
 
 #### `util.rs` (large module)
 
-- Function-focused (not struct-focused)  
-- Comprehensive test coverage with systematic multi-dimensional testing
-- Point generation utilities (random, grid, and Poisson disk sampling)
-- Function categorization by geometric operations (circumcenter, facet measure, surface measure, etc.)
-- Multi-dimensional testing across 2D-5D with both f32 and f64 coordinate types
-- Extensive edge case testing and error handling validation
+- Function-focused (not struct-focused)
+- UUID generation and validation utilities with comprehensive error handling
+- Extreme coordinate finding functions for SlotMap-based vertex collections
+- Supercell simplex creation for triangulation initialization
+- Hash utilities for stable, deterministic hash computation
+- Facet adjacency checking and geometric utilities
+- Combination generation for k-simplex vertex combinations
+- Multi-dimensional testing across 1D-5D with both f32 and f64 coordinate types
+- Extensive edge case testing and error handling validation with systematic test organization
 
 ### Key Conventions
 

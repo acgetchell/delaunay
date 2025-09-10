@@ -100,7 +100,9 @@ def run_git_command(args: list[str], cwd: Path | None = None, **kwargs: Any) -> 
     git_path = get_safe_executable("git")
     run_kwargs = _build_run_kwargs("run_git_command", **kwargs)
     return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
-        [git_path, *args], cwd=cwd, **run_kwargs
+        [git_path, *args],
+        cwd=cwd,
+        **run_kwargs,
     )
 
 
@@ -129,7 +131,9 @@ def run_cargo_command(
     cargo_path = get_safe_executable("cargo")
     run_kwargs = _build_run_kwargs("run_cargo_command", **kwargs)
     return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
-        [cargo_path, *args], cwd=cwd, **run_kwargs
+        [cargo_path, *args],
+        cwd=cwd,
+        **run_kwargs,
     )
 
 
@@ -154,7 +158,9 @@ def run_safe_command(command: str, args: list[str], cwd: Path | None = None, **k
     command_path = get_safe_executable(command)
     run_kwargs = _build_run_kwargs(f"run_safe_command for {command}", **kwargs)
     return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
-        [command_path, *args], cwd=cwd, **run_kwargs
+        [command_path, *args],
+        cwd=cwd,
+        **run_kwargs,
     )
 
 
@@ -251,7 +257,10 @@ def run_git_command_with_input(
     git_path = get_safe_executable("git")
     run_kwargs = _build_run_kwargs("run_git_command_with_input", **kwargs)
     return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
-        [git_path, *args], cwd=cwd, input=input_data, **run_kwargs
+        [git_path, *args],
+        cwd=cwd,
+        input=input_data,
+        **run_kwargs,
     )
 
 

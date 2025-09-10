@@ -616,3 +616,93 @@ class TestEdgeCases:
         content = "\n".join(result)
         assert "### Added" in content
         assert "feature 099" in content
+
+    def test_compiled_regex_performance(self):
+        """Test that the compiled fallback regex works correctly and efficiently."""
+        from enhance_commits import TITLE_FALLBACK_RE, _extract_title_text
+
+        # Test the compiled regex directly
+        test_line = "- fix: improve performance (#123) [`abc1234`](https://example.com)"
+        match = TITLE_FALLBACK_RE.match(test_line)
+        assert match is not None
+        assert match.group(1).strip() == "fix: improve performance"
+
+        # Test through the extraction function (prefers markdown extraction)
+        entry = "- **fix: improve performance** (#123) [`abc1234`](https://example.com)"
+        title = _extract_title_text(entry)
+        assert title == "fix: improve performance"
+
+        # Test edge cases that go through fallback regex
+        edge_cases = [
+            ("- Simple commit (#456)", "simple commit"),
+            ("- Another fix [`def5678`](https://example.com/commit/def5678)", "another fix"),
+            ("- Fix bug in parser", "fix bug in parser"),  # No PR number or commit hash
+        ]
+
+        for case, expected in edge_cases:
+            title = _extract_title_text(case)
+            assert title == expected, f"Expected '{expected}', got '{title}' for input '{case}'"
+
+        # Verify the compiled regex is faster than recompiling each time
+        # (This mainly tests that TITLE_FALLBACK_RE is available and compiled)
+        assert TITLE_FALLBACK_RE.pattern is not None
+        assert hasattr(TITLE_FALLBACK_RE, "match")
+
+    def test_blank_line_guard_prevents_double_blanks(self):
+        """Test that blank line guard prevents adding extra blank lines before releases."""
+        input_lines = [
+            "# Changelog",
+            "",
+            "## [1.0.0] - 2023-12-01",
+            "",
+            "### Changed",
+            "",
+            "- **Update something** [`abc123`](https://example.com)",
+            "",  # Already has a blank line
+            "## [0.9.0] - 2023-11-01",  # This should not get additional blanks
+        ]
+
+        output_lines = _process_changelog_lines(input_lines)
+
+        # Find the second release header and verify correct blank line handling
+        for i, line in enumerate(output_lines):
+            if line.startswith("## [0.9.0]"):
+                # There should be exactly one blank line before this release
+                # (from the input), not two (which would happen without the guard)
+                assert i >= 1, "Release header should not be at the very beginning"
+                prev_line = output_lines[i - 1]
+                assert prev_line == "", f"Expected blank line before release header, got: {prev_line!r}"
+
+                # Check that line before the blank line is not blank (no double blanks)
+                if i >= 2:
+                    prev_prev_line = output_lines[i - 2]
+                    assert prev_prev_line != "", f"Found double blank lines before release header: {prev_prev_line!r} + {prev_line!r} + {line!r}"
+
+                # Success - found the pattern we expected
+                break
+        else:
+            pytest.fail("Could not find the ## [0.9.0] release header in output")
+
+    def test_no_redundant_clear_at_end(self):
+        """Test that the function works correctly without redundant clear() call."""
+        input_lines = [
+            "# Changelog",
+            "",
+            "## [1.0.0] - 2023-12-01",
+            "",
+            "### Changed",
+            "",
+            "- **Update something** [`abc123`](https://example.com)",
+        ]
+
+        # This should work without issues despite removing the redundant clear()
+        output_lines = _process_changelog_lines(input_lines)
+
+        # Verify basic functionality still works
+        assert len(output_lines) > 0
+        output_text = "\n".join(output_lines)
+        assert "### Changed" in output_text
+
+        # Check that entries are still properly categorized
+        # The "Update something" should be categorized as "Changed"
+        assert "Update something" in output_text

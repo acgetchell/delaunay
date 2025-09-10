@@ -3,7 +3,7 @@
 //! This example demonstrates creating a 3D Delaunay triangulation using 50 randomly
 //! generated points. It showcases:
 //!
-//! - Creating random 3D vertices
+//! - Using the `generate_random_triangulation` utility function for convenience
 //! - Building a Delaunay triangulation using the Bowyer-Watson algorithm
 //! - Analyzing triangulation properties (vertices, cells, dimension)
 //! - Validating the triangulation's geometric properties
@@ -25,10 +25,9 @@
 //! - Boundary analysis
 //! - Performance metrics
 
+use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::*;
 use num_traits::cast::cast;
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 use std::time::Instant;
 
 fn main() {
@@ -36,21 +35,16 @@ fn main() {
     println!("3D Delaunay Triangulation Example - 50 Random Points");
     println!("=================================================================\n");
 
-    // Generate 50 random 3D points with a fixed seed for reproducibility
-    let vertices = generate_random_vertices_3d(50, 42);
-
-    println!("Generated {} vertices:", vertices.len());
-    display_vertices(&vertices[..10]); // Show first 10 vertices
-    if vertices.len() > 10 {
-        println!("  ... and {} more vertices", vertices.len() - 10);
-    }
-    println!();
-
-    // Create Delaunay triangulation with timing
-    println!("Creating Delaunay triangulation...");
+    // Create Delaunay triangulation with timing using the utility function
+    println!("Creating 3D Delaunay triangulation with 50 random points...");
     let start = Instant::now();
 
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = match Tds::new(&vertices) {
+    let tds: Tds<f64, (), (), 3> = match generate_random_triangulation(
+        50,            // Number of points
+        (-10.0, 10.0), // Coordinate bounds
+        None,          // No vertex data
+        Some(42),      // Fixed seed for reproducibility
+    ) {
         Ok(triangulation) => {
             let construction_time = start.elapsed();
             println!("✓ Triangulation created successfully in {construction_time:?}");
@@ -61,6 +55,24 @@ fn main() {
             return;
         }
     };
+
+    // Display some vertex information by accessing the triangulation's vertices
+    let vertex_count = tds.number_of_vertices();
+    println!("Generated {vertex_count} vertices");
+    println!("First few vertices:");
+    for (displayed, (_key, vertex)) in (&tds.vertices).into_iter().enumerate() {
+        if displayed >= 10 {
+            break;
+        }
+        let coords: [f64; 3] = vertex.into();
+        println!(
+            "  v{:2}: [{:8.3}, {:8.3}, {:8.3}]",
+            displayed, coords[0], coords[1], coords[2]
+        );
+    }
+    if vertex_count > 10 {
+        println!("  ... and {} more vertices", vertex_count - 10);
+    }
 
     println!();
 
@@ -81,34 +93,8 @@ fn main() {
     println!("=================================================================");
 }
 
-/// Generate random 3D vertices with a specified seed for reproducibility
-fn generate_random_vertices_3d(count: usize, seed: u64) -> Vec<Vertex<f64, Option<()>, 3>> {
-    let mut rng = StdRng::seed_from_u64(seed);
-
-    (0..count)
-        .map(|_| {
-            vertex!([
-                rng.random_range(-10.0..10.0),
-                rng.random_range(-10.0..10.0),
-                rng.random_range(-10.0..10.0)
-            ])
-        })
-        .collect()
-}
-
-/// Display a subset of vertices with their coordinates
-fn display_vertices(vertices: &[Vertex<f64, Option<()>, 3>]) {
-    for (i, vertex) in vertices.iter().enumerate() {
-        let coords: [f64; 3] = vertex.into();
-        println!(
-            "  v{:2}: [{:8.3}, {:8.3}, {:8.3}]",
-            i, coords[0], coords[1], coords[2]
-        );
-    }
-}
-
 /// Analyze and display triangulation properties
-fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
+fn analyze_triangulation(tds: &Tds<f64, (), (), 3>) {
     println!("Triangulation Analysis:");
     println!("======================");
     println!("  Number of vertices: {}", tds.number_of_vertices());
@@ -164,7 +150,7 @@ fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
 }
 
 /// Validate the triangulation and report results
-fn validate_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
+fn validate_triangulation(tds: &Tds<f64, (), (), 3>) {
     println!("Triangulation Validation:");
     println!("========================");
 
@@ -211,7 +197,7 @@ fn validate_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
 }
 
 /// Analyze boundary properties of the triangulation
-fn analyze_boundary_properties(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
+fn analyze_boundary_properties(tds: &Tds<f64, (), (), 3>) {
     println!("Boundary Analysis:");
     println!("=================");
 
@@ -260,7 +246,7 @@ fn analyze_boundary_properties(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
 }
 
 /// Perform performance analysis and benchmarking
-fn performance_analysis(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
+fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
     println!("Performance Analysis:");
     println!("====================");
 
@@ -304,8 +290,8 @@ fn performance_analysis(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
     println!("    • Average time: {avg_boundary_time:?}");
 
     // Memory usage estimation
-    let vertex_size = std::mem::size_of::<Vertex<f64, Option<()>, 3>>();
-    let cell_size = std::mem::size_of::<Cell<f64, Option<()>, Option<()>, 3>>();
+    let vertex_size = std::mem::size_of::<Vertex<f64, (), 3>>();
+    let cell_size = std::mem::size_of::<Cell<f64, (), (), 3>>();
     let estimated_memory = (vertex_count * vertex_size) + (cell_count * cell_size);
 
     println!("\n  Memory Usage Estimation:");

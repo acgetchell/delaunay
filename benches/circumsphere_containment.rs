@@ -16,8 +16,8 @@
 #![allow(missing_docs)]
 
 use criterion::{Criterion, criterion_group, criterion_main};
+use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::*;
-use rand::Rng;
 use std::hint::black_box;
 
 /// Generate a standard D-dimensional simplex (D+1 vertices)
@@ -41,37 +41,29 @@ fn standard_simplex<const D: usize>() -> Vec<Point<f64, D>> {
     pts
 }
 
-/// Generate a random simplex for benchmarking
-fn generate_random_simplex_3d(rng: &mut impl Rng) -> Vec<Point<f64, 3>> {
-    (0..4)
-        .map(|_| {
-            let x = rng.random::<f64>().mul_add(20.0, -10.0); // Range -10.0..10.0
-            let y = rng.random::<f64>().mul_add(20.0, -10.0);
-            let z = rng.random::<f64>().mul_add(20.0, -10.0);
-            Point::new([x, y, z])
-        })
-        .collect()
+/// Generate a random 3D simplex (tetrahedron) for benchmarking using seeded generation
+fn generate_random_simplex_3d(seed: u64) -> Vec<Point<f64, 3>> {
+    generate_random_points_seeded(4, (-10.0, 10.0), seed)
+        .expect("Failed to generate random simplex points")
 }
 
-/// Generate a random test point
-fn generate_random_test_point_3d(rng: &mut impl Rng) -> Point<f64, 3> {
-    let x = rng.random::<f64>().mul_add(10.0, -5.0); // Range -5.0..5.0
-    let y = rng.random::<f64>().mul_add(10.0, -5.0);
-    let z = rng.random::<f64>().mul_add(10.0, -5.0);
-    Point::new([x, y, z])
+/// Generate a random 3D test point using seeded generation
+fn generate_random_test_point_3d(seed: u64) -> Point<f64, 3> {
+    generate_random_points_seeded(1, (-5.0, 5.0), seed)
+        .expect("Failed to generate random test point")
+        .into_iter()
+        .next()
+        .expect("Expected exactly one test point")
 }
 
 /// Benchmark with many random queries
 fn benchmark_random_queries(c: &mut Criterion) {
-    let mut rng = rand::rng();
+    // Generate a fixed simplex for consistent benchmarking using seeded generation
+    let simplex_points = generate_random_simplex_3d(42);
 
-    // Generate a fixed simplex for consistent benchmarking
-    let simplex_points = generate_random_simplex_3d(&mut rng);
-
-    // Generate many test points
-    let test_points: Vec<_> = (0..1000)
-        .map(|_| generate_random_test_point_3d(&mut rng))
-        .collect();
+    // Generate many test points using seeded generation for reproducible results
+    let test_points = generate_random_points_seeded(1000, (-5.0, 5.0), 123)
+        .expect("Failed to generate random test points");
 
     c.bench_function("random/insphere_1000_queries", |b| {
         b.iter(|| {
@@ -208,7 +200,6 @@ fn benchmark_edge_cases(c: &mut Criterion) {
 /// Numerical consistency test - compare results of all three methods
 fn numerical_consistency_test() {
     println!("\n=== Numerical Consistency Test ===");
-    let mut rng = rand::rng();
     let mut all_match = 0;
     let mut insphere_distance_matches = 0;
     let mut insphere_lifted_matches = 0;
@@ -216,9 +207,9 @@ fn numerical_consistency_test() {
     let mut total = 0;
     let mut disagreements = Vec::new();
 
-    for _ in 0..1000 {
-        let simplex_points = generate_random_simplex_3d(&mut rng);
-        let test_point = generate_random_test_point_3d(&mut rng);
+    for i in 0..1000_u64 {
+        let simplex_points = generate_random_simplex_3d(1000 + i);
+        let test_point = generate_random_test_point_3d(2000 + i);
 
         let result_insphere = insphere(&simplex_points, test_point);
         let result_distance = insphere_distance(&simplex_points, test_point);

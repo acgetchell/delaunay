@@ -11,6 +11,9 @@ use rand::Rng;
 use rand::distr::uniform::SampleUniform;
 use std::iter::Sum;
 
+use crate::core::traits::data_type::DataType;
+use crate::core::triangulation_data_structure::Tds;
+use crate::core::vertex::Vertex;
 use crate::geometry::matrix::{MatrixError, invert};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
@@ -1562,6 +1565,161 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
     }
 
     Ok(points)
+}
+
+/// Generate a random Delaunay triangulation with specified parameters.
+///
+/// This utility function combines random point generation and triangulation creation
+/// in a single convenient function. It generates random points using either seeded
+/// or unseeded random generation, converts them to vertices, and creates a Delaunay
+/// triangulation using the Bowyer-Watson algorithm.
+///
+/// This function is particularly useful for testing, benchmarking, and creating
+/// triangulations for analysis or visualization purposes.
+///
+/// # Type Parameters
+///
+/// * `T` - Coordinate scalar type (must implement `CoordinateScalar + SampleUniform`)
+/// * `U` - Vertex data type (must implement `DataType`)
+/// * `V` - Cell data type (must implement `DataType`)
+/// * `D` - Dimensionality (const generic parameter)
+///
+/// # Arguments
+///
+/// * `n_points` - Number of random points to generate
+/// * `bounds` - Coordinate bounds as `(min, max)` tuple
+/// * `vertex_data` - Optional data to attach to each generated vertex
+/// * `seed` - Optional seed for reproducible results. If `None`, uses thread-local RNG
+///
+/// # Returns
+///
+/// A `Result` containing either:
+/// - `Ok(Tds<T, U, V, D>)` - The successfully created triangulation
+/// - `Err` - An error from point generation or triangulation construction
+///
+/// # Errors
+///
+/// This function can fail with:
+/// - `RandomPointGenerationError` if point generation fails (invalid bounds, etc.)
+/// - `TdsError` if triangulation construction fails (degenerate points, etc.)
+///
+/// # Panics
+///
+/// This function can panic if:
+/// - Vertex construction fails due to invalid data types or constraints
+/// - This should not happen with valid inputs and supported data types
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::generate_random_triangulation;
+///
+/// // Generate a 2D triangulation with 100 points, no seed (random each time)
+/// let triangulation_2d = generate_random_triangulation::<f64, (), (), 2>(
+///     100,
+///     (-10.0, 10.0),
+///     None,
+///     None
+/// ).unwrap();
+///
+/// // Generate a 3D triangulation with 50 points, seeded for reproducibility  
+/// let triangulation_3d = generate_random_triangulation::<f64, (), (), 3>(
+///     50,
+///     (-5.0, 5.0),
+///     None,
+///     Some(42)
+/// ).unwrap();
+///
+/// // Generate a 4D triangulation with custom vertex data
+/// let triangulation_4d = generate_random_triangulation::<f64, i32, (), 4>(
+///     25,
+///     (0.0, 1.0),
+///     Some(123),
+///     Some(456)
+/// ).unwrap();
+///
+/// // For string-like data, use fixed-size character arrays (Copy types)
+/// let triangulation_with_strings = generate_random_triangulation::<f64, [char; 8], (), 2>(
+///     20,
+///     (0.0, 1.0),
+///     Some(['v', 'e', 'r', 't', 'e', 'x', '_', 'A']),
+///     Some(789)
+/// ).unwrap();
+/// ```
+///
+/// # Note on String Data
+///
+/// Due to the `DataType` trait requiring `Copy`, `String` and `&str` cannot be used directly
+/// as vertex data. For string-like data, consider using:
+/// - Fixed-size character arrays: `[char; N]`
+/// - Small integer types that can be mapped to strings: `u32`, `u64`
+/// - Custom Copy types that wrap string-like data
+///
+/// # Performance Notes
+///
+/// - Point generation is O(n) and typically fast
+/// - Triangulation construction complexity varies by dimension:
+///   - 2D, 3D: O(n log n) expected with Bowyer-Watson algorithm
+///   - 4D+: O(n²) worst case, significantly slower for large point sets
+/// - Consider using smaller point counts for dimensions ≥ 4
+///
+/// # See Also
+///
+/// - [`generate_random_points`] - For generating points without triangulation
+/// - [`generate_random_points_seeded`] - For seeded random point generation only
+/// - [`Tds::new`] - For creating triangulations from existing vertices
+pub fn generate_random_triangulation<T, U, V, const D: usize>(
+    n_points: usize,
+    bounds: (T, T),
+    vertex_data: Option<U>,
+    seed: Option<u64>,
+) -> Result<Tds<T, U, V, D>, Box<dyn std::error::Error>>
+where
+    T: CoordinateScalar
+        + SampleUniform
+        + std::ops::AddAssign<T>
+        + std::ops::SubAssign<T>
+        + std::iter::Sum
+        + num_traits::cast::NumCast,
+    U: DataType,
+    V: DataType,
+    for<'a> &'a T: std::ops::Div<T>,
+    [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+{
+    // Generate random points (seeded or unseeded)
+    let points: Vec<Point<T, D>> = match seed {
+        Some(seed_value) => generate_random_points_seeded(n_points, bounds, seed_value)?,
+        None => generate_random_points(n_points, bounds)?,
+    };
+
+    // Convert points to vertices using the vertex! macro pattern
+    let vertices: Vec<Vertex<T, U, D>> = points
+        .into_iter()
+        .map(|point| {
+            use crate::core::vertex::VertexBuilder;
+            vertex_data.map_or_else(
+                || {
+                    VertexBuilder::default()
+                        .point(point)
+                        .build()
+                        .expect("Failed to build vertex without data")
+                },
+                |data| {
+                    VertexBuilder::default()
+                        .point(point)
+                        .data(data)
+                        .build()
+                        .expect("Failed to build vertex with data")
+                },
+            )
+        })
+        .collect();
+
+    // Create and return triangulation
+    let triangulation =
+        Tds::<T, U, V, D>::new(&vertices).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
+    Ok(triangulation)
 }
 
 #[cfg(test)]
@@ -4090,5 +4248,153 @@ mod tests {
         let large_result = scaled_hypot_2d(1e10, 1e10);
         let expected = (2.0_f64).sqrt() * 1e10;
         assert_relative_eq!(large_result, expected, epsilon = 1e-5);
+    }
+
+    // =============================================================================
+    // RANDOM TRIANGULATION GENERATION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_generate_random_triangulation_basic() {
+        // Test 2D triangulation creation
+        let triangulation_2d =
+            generate_random_triangulation::<f64, (), (), 2>(10, (-5.0, 5.0), None, Some(42))
+                .unwrap();
+
+        assert_eq!(triangulation_2d.number_of_vertices(), 10);
+        assert_eq!(triangulation_2d.dim(), 2);
+        assert!(triangulation_2d.is_valid().is_ok());
+
+        // Test 3D triangulation creation with data
+        let triangulation_3d =
+            generate_random_triangulation::<f64, i32, (), 3>(8, (0.0, 1.0), Some(123), Some(456))
+                .unwrap();
+
+        assert_eq!(triangulation_3d.number_of_vertices(), 8);
+        assert_eq!(triangulation_3d.dim(), 3);
+        assert!(triangulation_3d.is_valid().is_ok());
+
+        // Test seeded vs unseeded (should get different results)
+        let triangulation_seeded =
+            generate_random_triangulation::<f64, (), (), 2>(5, (-1.0, 1.0), None, Some(789))
+                .unwrap();
+
+        let triangulation_unseeded =
+            generate_random_triangulation::<f64, (), (), 2>(5, (-1.0, 1.0), None, None).unwrap();
+
+        // Both should be valid
+        assert!(triangulation_seeded.is_valid().is_ok());
+        assert!(triangulation_unseeded.is_valid().is_ok());
+        assert_eq!(triangulation_seeded.number_of_vertices(), 5);
+        assert_eq!(triangulation_unseeded.number_of_vertices(), 5);
+    }
+
+    #[test]
+    fn test_generate_random_triangulation_error_cases() {
+        // Test invalid bounds
+        let result = generate_random_triangulation::<f64, (), (), 2>(
+            10,
+            (5.0, 1.0), // min > max
+            None,
+            Some(42),
+        );
+        assert!(result.is_err());
+
+        // Test zero points
+        let result =
+            generate_random_triangulation::<f64, (), (), 2>(0, (-1.0, 1.0), None, Some(42));
+        assert!(result.is_ok()); // Should succeed with empty triangulation
+        let triangulation = result.unwrap();
+        assert_eq!(triangulation.number_of_vertices(), 0);
+        assert_eq!(triangulation.dim(), -1);
+    }
+
+    #[test]
+    fn test_generate_random_triangulation_reproducibility() {
+        // Same seed should produce identical triangulations
+        let triangulation1 =
+            generate_random_triangulation::<f64, (), (), 3>(6, (-2.0, 2.0), None, Some(12345))
+                .unwrap();
+
+        let triangulation2 =
+            generate_random_triangulation::<f64, (), (), 3>(6, (-2.0, 2.0), None, Some(12345))
+                .unwrap();
+
+        // Should have same structural properties
+        assert_eq!(
+            triangulation1.number_of_vertices(),
+            triangulation2.number_of_vertices()
+        );
+        assert_eq!(
+            triangulation1.number_of_cells(),
+            triangulation2.number_of_cells()
+        );
+        assert_eq!(triangulation1.dim(), triangulation2.dim());
+    }
+
+    #[test]
+    fn test_generate_random_triangulation_dimensions() {
+        // Test different dimensional triangulations
+
+        // 2D with sufficient points for full triangulation
+        let tri_2d =
+            generate_random_triangulation::<f64, (), (), 2>(15, (0.0, 10.0), None, Some(555))
+                .unwrap();
+        assert_eq!(tri_2d.dim(), 2);
+        assert!(tri_2d.number_of_cells() > 0);
+
+        // 3D with sufficient points for full triangulation
+        let tri_3d =
+            generate_random_triangulation::<f64, (), (), 3>(20, (-3.0, 3.0), None, Some(666))
+                .unwrap();
+        assert_eq!(tri_3d.dim(), 3);
+        assert!(tri_3d.number_of_cells() > 0);
+
+        // 4D with sufficient points for full triangulation
+        let tri_4d =
+            generate_random_triangulation::<f64, (), (), 4>(12, (-1.0, 1.0), None, Some(777))
+                .unwrap();
+        assert_eq!(tri_4d.dim(), 4);
+        assert!(tri_4d.number_of_cells() > 0);
+    }
+
+    #[test]
+    fn test_generate_random_triangulation_with_data() {
+        // Test with different data types for vertices
+
+        // Test with fixed-size character array (Copy type that can represent strings)
+        // NOTE: This is a workaround for the DataType trait requiring Copy, which
+        // prevents using String or &str directly due to lifetime/ownership constraints
+        let tri_with_char_array = generate_random_triangulation::<f64, [char; 8], (), 2>(
+            6,
+            (-2.0, 2.0),
+            Some(['v', 'e', 'r', 't', 'e', 'x', '_', 'd']),
+            Some(888),
+        )
+        .unwrap();
+
+        assert_eq!(tri_with_char_array.number_of_vertices(), 6);
+        assert!(tri_with_char_array.is_valid().is_ok());
+
+        // Convert the char array to a string to demonstrate string-like usage
+        let char_array_data = ['v', 'e', 'r', 't', 'e', 'x', '_', 'd'];
+        let string_representation: String = char_array_data.iter().collect();
+        assert_eq!(string_representation, "vertex_d");
+
+        // Test with integer data
+        let tri_with_int_data =
+            generate_random_triangulation::<f64, u32, (), 3>(8, (0.0, 5.0), Some(42u32), Some(999))
+                .unwrap();
+
+        assert_eq!(tri_with_int_data.number_of_vertices(), 8);
+        assert!(tri_with_int_data.is_valid().is_ok());
+
+        // Test without data (None)
+        let tri_no_data =
+            generate_random_triangulation::<f64, (), (), 2>(5, (-1.0, 1.0), None, Some(111))
+                .unwrap();
+
+        assert_eq!(tri_no_data.number_of_vertices(), 5);
+        assert!(tri_no_data.is_valid().is_ok());
     }
 }

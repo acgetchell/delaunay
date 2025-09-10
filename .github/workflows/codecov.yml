@@ -56,10 +56,19 @@ jobs:
           # - Exclusions: exclude-files = ["benches/*", "examples/*"]
           # - Test threads: test-threads = 1
           cargo tarpaulin --config tarpaulin.toml
+          
+          # Sanity check: verify coverage report was generated
+          ls -la coverage || true
+          test -f coverage/cobertura.xml || {
+            echo "::error::coverage/cobertura.xml not found. Verify tarpaulin.toml has out = [\"Xml\"] and output-dir = \"coverage/\"."
+            find coverage -maxdepth 2 -type f -print 2>/dev/null || true
+            exit 2
+          }
         env:
           RUST_BACKTRACE: 1
 
       - name: Upload coverage to Codecov
+        if: ${{ success() && hashFiles('coverage/cobertura.xml') != '' }}
         uses: codecov/codecov-action@8f6ec407a34d5ec2b33d7d8f7f50279493b5efb4  # v5.5.0
         with:
           files: coverage/cobertura.xml
@@ -70,6 +79,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload coverage to Codacy
+        if: ${{ success() && hashFiles('coverage/cobertura.xml') != '' }}
         uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699  # v1.3.0
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}

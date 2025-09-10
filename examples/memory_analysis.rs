@@ -4,9 +4,7 @@
 //! using the existing allocation counter infrastructure from the tests.
 
 use delaunay::geometry::algorithms::ConvexHull;
-use delaunay::geometry::util::generate_random_points;
-use delaunay::prelude::*;
-use delaunay::vertex;
+use delaunay::geometry::util::generate_random_triangulation;
 use std::time::Instant;
 
 /// Create test helper that mimics the existing test infrastructure  
@@ -34,15 +32,19 @@ where
 macro_rules! generate_memory_analysis {
     ($name:ident, $dim:literal) => {
         #[allow(unused_variables)] // tri_info and hull_info are used conditionally based on count-allocations feature
-        fn $name(points: &[Point<f64, $dim>]) {
-            println!("  Analyzing {}D triangulation with {} points", $dim, points.len());
-
-            let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+        fn $name(n_points: usize, seed: u64) {
+            println!("  Analyzing {}D triangulation with {} points", $dim, n_points);
 
             // Measure triangulation construction
             let start = Instant::now();
             let (tds, tri_info) = measure_with_result(|| {
-                Tds::<f64, (), (), $dim>::new(&vertices).expect("failed to build triangulation")
+                generate_random_triangulation::<f64, (), (), $dim>(
+                    n_points,
+                    (-50.0, 50.0),
+                    None,
+                    Some(seed),
+                )
+                .expect("failed to build triangulation")
             });
             let construction_time = start.elapsed();
 
@@ -118,34 +120,25 @@ fn main() {
 
     // Test with a moderate number of points across all dimensions
     let n_points = 25;
-    let range = (-50.0, 50.0);
 
     println!("=== Memory Analysis with {n_points} Points ===");
     println!();
 
-    // 2D Analysis
+    // 2D Analysis with seed for reproducibility
     println!("--- 2D Triangulation ---");
-    let points_2d =
-        generate_random_points::<f64, 2>(n_points, range).expect("Failed to generate 2D points");
-    analyze_triangulation_memory_2d(&points_2d);
+    analyze_triangulation_memory_2d(n_points, 12345);
 
-    // 3D Analysis
+    // 3D Analysis with different seed
     println!("--- 3D Triangulation ---");
-    let points_3d =
-        generate_random_points::<f64, 3>(n_points, range).expect("Failed to generate 3D points");
-    analyze_triangulation_memory_3d(&points_3d);
+    analyze_triangulation_memory_3d(n_points, 23456);
 
-    // 4D Analysis
+    // 4D Analysis with different seed
     println!("--- 4D Triangulation ---");
-    let points_4d =
-        generate_random_points::<f64, 4>(n_points, range).expect("Failed to generate 4D points");
-    analyze_triangulation_memory_4d(&points_4d);
+    analyze_triangulation_memory_4d(n_points, 34567);
 
-    // 5D Analysis
+    // 5D Analysis with different seed
     println!("--- 5D Triangulation ---");
-    let points_5d =
-        generate_random_points::<f64, 5>(n_points, range).expect("Failed to generate 5D points");
-    analyze_triangulation_memory_5d(&points_5d);
+    analyze_triangulation_memory_5d(n_points, 45678);
 
     println!("=== Key Insights (empirical) ===");
     println!(

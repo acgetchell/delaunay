@@ -3,7 +3,7 @@
 //! This example demonstrates extracting and analyzing a 3D convex hull from a Delaunay
 //! triangulation using 50 randomly generated points. It showcases:
 //!
-//! - Creating random 3D vertices
+//! - Using the `generate_random_triangulation` utility function for convenience
 //! - Building a Delaunay triangulation using the Bowyer-Watson algorithm
 //! - Extracting the convex hull from the triangulation
 //! - Analyzing convex hull properties (facets, vertices, dimension)
@@ -28,10 +28,9 @@
 //! - Validation results
 //! - Performance metrics
 
+use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::*;
 use num_traits::cast::cast;
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 use std::time::Instant;
 
 fn main() {
@@ -39,21 +38,16 @@ fn main() {
     println!("3D Convex Hull Example - 50 Random Points");
     println!("=================================================================\n");
 
-    // Generate 50 random 3D points with a fixed seed for reproducibility
-    let vertices = generate_random_vertices_3d(50, 42);
-
-    println!("Generated {} vertices:", vertices.len());
-    display_vertices(&vertices[..10]); // Show first 10 vertices
-    if vertices.len() > 10 {
-        println!("  ... and {} more vertices", vertices.len() - 10);
-    }
-    println!();
-
-    // Create Delaunay triangulation with timing
-    println!("Creating Delaunay triangulation...");
+    // Create Delaunay triangulation with timing using the utility function
+    println!("Creating 3D Delaunay triangulation with 50 random points...");
     let start = Instant::now();
 
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = match Tds::new(&vertices) {
+    let tds: Tds<f64, (), (), 3> = match generate_random_triangulation(
+        50,            // Number of points
+        (-10.0, 10.0), // Coordinate bounds
+        None,          // No vertex data
+        Some(42),      // Fixed seed for reproducibility
+    ) {
         Ok(triangulation) => {
             let construction_time = start.elapsed();
             println!("✓ Triangulation created successfully in {construction_time:?}");
@@ -65,6 +59,24 @@ fn main() {
         }
     };
 
+    // Display some vertex information
+    let vertex_count = tds.number_of_vertices();
+    println!("Generated {vertex_count} vertices");
+    println!("First few vertices:");
+    for (displayed, (_key, vertex)) in (&tds.vertices).into_iter().enumerate() {
+        if displayed >= 10 {
+            break;
+        }
+        let coords: [f64; 3] = vertex.into();
+        println!(
+            "  v{:2}: [{:8.3}, {:8.3}, {:8.3}]",
+            displayed, coords[0], coords[1], coords[2]
+        );
+    }
+    if vertex_count > 10 {
+        println!("  ... and {} more vertices", vertex_count - 10);
+    }
+
     // Display triangulation properties
     analyze_triangulation(&tds);
 
@@ -72,7 +84,7 @@ fn main() {
     extract_and_analyze_convex_hull(&tds);
 
     // Test point containment
-    test_point_containment(&tds, &vertices);
+    test_point_containment(&tds, &[]);
 
     // Analyze visible facets
     analyze_visible_facets(&tds);
@@ -85,34 +97,8 @@ fn main() {
     println!("=================================================================");
 }
 
-/// Generate random 3D vertices with a specified seed for reproducibility
-fn generate_random_vertices_3d(count: usize, seed: u64) -> Vec<Vertex<f64, Option<()>, 3>> {
-    let mut rng = StdRng::seed_from_u64(seed);
-
-    (0..count)
-        .map(|_| {
-            vertex!([
-                rng.random_range(-10.0..10.0),
-                rng.random_range(-10.0..10.0),
-                rng.random_range(-10.0..10.0)
-            ])
-        })
-        .collect()
-}
-
-/// Display a subset of vertices with their coordinates
-fn display_vertices(vertices: &[Vertex<f64, Option<()>, 3>]) {
-    for (i, vertex) in vertices.iter().enumerate() {
-        let coords: [f64; 3] = vertex.into();
-        println!(
-            "  v{:2}: [{:8.3}, {:8.3}, {:8.3}]",
-            i, coords[0], coords[1], coords[2]
-        );
-    }
-}
-
 /// Analyze and display triangulation properties
-fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
+fn analyze_triangulation(tds: &Tds<f64, (), (), 3>) {
     println!("Triangulation Analysis:");
     println!("======================");
     println!("  Number of vertices: {}", tds.number_of_vertices());
@@ -136,13 +122,12 @@ fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
 }
 
 /// Extract and analyze the convex hull from the triangulation
-fn extract_and_analyze_convex_hull(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
+fn extract_and_analyze_convex_hull(tds: &Tds<f64, (), (), 3>) {
     println!("Convex Hull Extraction:");
     println!("=======================");
 
     let start = Instant::now();
-    let hull: ConvexHull<f64, Option<()>, Option<()>, 3> = match ConvexHull::from_triangulation(tds)
-    {
+    let hull: ConvexHull<f64, (), (), 3> = match ConvexHull::from_triangulation(tds) {
         Ok(convex_hull) => {
             let extraction_time = start.elapsed();
             println!("✓ Convex hull extracted successfully in {extraction_time:?}");
@@ -198,17 +183,16 @@ fn extract_and_analyze_convex_hull(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
     println!();
 }
 
-/// Test point containment with various points
+/// Test point containment with various points (updated to work with generated triangulation)
 fn test_point_containment(
-    tds: &Tds<f64, Option<()>, Option<()>, 3>,
-    original_vertices: &[Vertex<f64, Option<()>, 3>],
+    tds: &Tds<f64, (), (), 3>,
+    _original_vertices: &[()], // Not needed anymore since we access vertices from tds
 ) {
     println!("Point Containment Tests:");
     println!("=======================");
 
     // Extract convex hull for containment tests
-    let hull: ConvexHull<f64, Option<()>, Option<()>, 3> = match ConvexHull::from_triangulation(tds)
-    {
+    let hull: ConvexHull<f64, (), (), 3> = match ConvexHull::from_triangulation(tds) {
         Ok(h) => h,
         Err(e) => {
             println!("✗ Failed to extract convex hull for containment tests: {e}");
@@ -219,15 +203,16 @@ fn test_point_containment(
     // Test 1: Points inside the convex hull (centroid and near-centroid points)
     println!("  Testing interior points:");
 
-    // Calculate centroid of original vertices
+    // Calculate centroid of triangulation vertices
     let mut centroid = [0.0f64; 3];
-    for vertex in original_vertices {
+    let vertex_count = tds.number_of_vertices();
+    for (_, vertex) in &tds.vertices {
         let coords: [f64; 3] = vertex.into();
         for (i, &coord) in coords.iter().enumerate() {
             centroid[i] += coord;
         }
     }
-    let vertex_count_f64 = cast(original_vertices.len()).unwrap_or(1.0f64);
+    let vertex_count_f64 = cast(vertex_count).unwrap_or(1.0f64);
     for coord in &mut centroid {
         *coord /= vertex_count_f64;
     }
@@ -251,12 +236,17 @@ fn test_point_containment(
     let negative_point = Point::new([-20.0, -20.0, -20.0]);
     test_point_containment_single(&hull, &negative_point, "Negative exterior", tds);
 
-    // Test 3: Original vertices (should be on boundary or inside)
-    println!("\n  Testing original vertices:");
-    let sample_vertices = std::cmp::min(3, original_vertices.len());
-    for (i, vertex) in original_vertices.iter().take(sample_vertices).enumerate() {
+    // Test 3: Sample triangulation vertices (should be on boundary or inside)
+    println!("\n  Testing triangulation vertices:");
+    let sample_vertices = std::cmp::min(3, vertex_count);
+    for (i, (_, vertex)) in tds.vertices.iter().enumerate().take(sample_vertices) {
         let point: Point<f64, 3> = vertex.into();
-        test_point_containment_single(&hull, &point, &format!("Original vertex {}", i + 1), tds);
+        test_point_containment_single(
+            &hull,
+            &point,
+            &format!("Triangulation vertex {}", i + 1),
+            tds,
+        );
     }
 
     println!();
@@ -264,10 +254,10 @@ fn test_point_containment(
 
 /// Test containment for a single point and display results
 fn test_point_containment_single(
-    hull: &ConvexHull<f64, Option<()>, Option<()>, 3>,
+    hull: &ConvexHull<f64, (), (), 3>,
     point: &Point<f64, 3>,
     description: &str,
-    tds: &Tds<f64, Option<()>, Option<()>, 3>,
+    tds: &Tds<f64, (), (), 3>,
 ) {
     let coords = point.to_array();
 
@@ -295,13 +285,12 @@ fn test_point_containment_single(
 }
 
 /// Analyze visible facets from external points
-fn analyze_visible_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
+fn analyze_visible_facets(tds: &Tds<f64, (), (), 3>) {
     println!("Visible Facet Analysis:");
     println!("======================");
 
     // Extract convex hull for visible facet analysis
-    let hull: ConvexHull<f64, Option<()>, Option<()>, 3> = match ConvexHull::from_triangulation(tds)
-    {
+    let hull: ConvexHull<f64, (), (), 3> = match ConvexHull::from_triangulation(tds) {
         Ok(h) => h,
         Err(e) => {
             println!("✗ Failed to extract convex hull for visible facet analysis: {e}");
@@ -390,7 +379,7 @@ fn analyze_visible_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
 }
 
 /// Perform performance analysis and benchmarking
-fn performance_analysis(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
+fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
     println!("Performance Analysis:");
     println!("====================");
 

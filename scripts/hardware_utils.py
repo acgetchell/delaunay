@@ -211,7 +211,7 @@ class HardwareInfo:
             CPU model name
         """
         return self._run_command(
-            [ps_cmd, "-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).Name"]
+            [ps_cmd, "-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).Name"],
         ).strip()
 
     def _get_windows_cpu_cores(self, ps_cmd: str) -> str:
@@ -231,7 +231,7 @@ class HardwareInfo:
                 "-NonInteractive",
                 "-Command",
                 "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfCores",
-            ]
+            ],
         ).strip()
 
     def _get_windows_cpu_threads(self, ps_cmd: str) -> str:
@@ -251,7 +251,7 @@ class HardwareInfo:
                 "-NonInteractive",
                 "-Command",
                 "(Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).NumberOfLogicalProcessors",
-            ]
+            ],
         ).strip()
 
     def get_memory_info(self) -> str:
@@ -295,7 +295,7 @@ class HardwareInfo:
                                 "$mem_bytes = [math]::Round((Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory); "
                                 '$mem_gb = [math]::Round($mem_bytes / 1GB, 1); Write-Output "$mem_gb GB" '
                                 '} catch { Write-Output "Unknown" }',
-                            ]
+                            ],
                         ).strip()
                     except subprocess.CalledProcessError:
                         pass

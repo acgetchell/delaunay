@@ -183,7 +183,7 @@ class PerformanceSummaryGenerator:
                     f"**Memory**: {hw_info['MEMORY']}",
                     f"**OS**: {hw_info['OS']}",
                     f"**Rust**: {hw_info['RUST']}",
-                ]
+                ],
             )
         except Exception as e:
             logging.debug("Could not get hardware info: %s", e)
@@ -194,7 +194,7 @@ class PerformanceSummaryGenerator:
                 "",
                 "## Performance Results Summary",
                 "",
-            ]
+            ],
         )
 
         # Add circumsphere performance results from actual benchmark data
@@ -283,7 +283,7 @@ class PerformanceSummaryGenerator:
 
             # Run the circumsphere benchmark with reduced sample size for speed
             result = run_cargo_command(
-                ["bench", "--bench", "circumsphere_containment", "--", "--sample-size", "10", "--measurement-time", "5", "--warm-up-time", "1"],
+                ["bench", "--bench", "circumsphere_containment", "--", *DEV_MODE_BENCH_ARGS],
                 cwd=self.project_root,
                 timeout=240,  # 4 minute timeout for quick benchmarks
                 capture_output=True,
@@ -351,7 +351,7 @@ class PerformanceSummaryGenerator:
             "",
             "### Numerical Accuracy Analysis",
             "",
-            "Based on 1000 random test cases:",
+            "Based on random test cases:",
             "",
         ]
 
@@ -368,7 +368,7 @@ class PerformanceSummaryGenerator:
                     f"- **insphere vs insphere_lifted**: {insphere_lifted} agreement (different algorithms)",
                     f"- **insphere_distance vs insphere_lifted**: {distance_lifted} agreement",
                     f"- **All three methods agree**: {all_agree} (expected due to different numerical approaches)",
-                ]
+                ],
             )
         else:
             # Use reference data when no fresh benchmark data is available
@@ -380,7 +380,7 @@ class PerformanceSummaryGenerator:
                     "- **All three methods agree**: ~0% (expected due to different numerical approaches, reference data)",
                     "",
                     "*Note: To get current numerical accuracy data, run with `--run-benchmarks` flag.*",
-                ]
+                ],
             )
 
         lines.append("")
@@ -450,7 +450,9 @@ class PerformanceSummaryGenerator:
         return benchmark_mappings, edge_case_mappings, method_mappings, edge_method_mappings
 
     def _parse_regular_benchmarks(
-        self, benchmark_mappings: dict[str, tuple[str, str]], method_mappings: dict[str, str]
+        self,
+        benchmark_mappings: dict[str, tuple[str, str]],
+        method_mappings: dict[str, str],
     ) -> list[CircumsphereTestCase]:
         """
         Parse regular benchmark results.
@@ -474,7 +476,9 @@ class PerformanceSummaryGenerator:
         return test_cases
 
     def _parse_edge_case_benchmarks(
-        self, edge_case_mappings: dict[str, tuple[str, str]], edge_method_mappings: dict[str, str]
+        self,
+        edge_case_mappings: dict[str, tuple[str, str]],
+        edge_method_mappings: dict[str, str],
     ) -> list[CircumsphereTestCase]:
         """
         Parse edge case benchmark results.
@@ -536,7 +540,7 @@ class PerformanceSummaryGenerator:
 
         if estimates_file.exists():
             try:
-                with estimates_file.open() as f:
+                with estimates_file.open(encoding="utf-8") as f:
                     estimates = json.load(f)
 
                 # Extract mean time in nanoseconds
@@ -688,7 +692,7 @@ class PerformanceSummaryGenerator:
                 "",
                 "⚠️ No benchmark results available. Run benchmarks first:",
                 "```bash",
-                "uv run performance-summary-utils generate --run-benchmarks",
+                "uv run benchmark-utils generate-summary --run-benchmarks",
                 "```",
                 "",
             ]
@@ -708,8 +712,11 @@ class PerformanceSummaryGenerator:
                 cases_by_dimension[dim] = []
             cases_by_dimension[dim].append(test_case)
 
-        # Sort dimensions (2D, 3D, 4D, etc.)
-        sorted_dims = sorted(cases_by_dimension.keys(), key=lambda x: (len(x), x))
+        # Sort dimensions numerically (2D, 3D, 4D, etc.) to avoid misordering
+        sorted_dims = sorted(
+            cases_by_dimension.keys(),
+            key=lambda d: int(str(d).rstrip("D")) if str(d).rstrip("D").isdigit() else sys.maxsize,
+        )
 
         for dimension in sorted_dims:
             dim_cases = cases_by_dimension[dimension]
@@ -720,7 +727,7 @@ class PerformanceSummaryGenerator:
                     "",
                     "| Test Case | insphere | insphere_distance | insphere_lifted | Winner |",
                     "|-----------|----------|------------------|-----------------|---------|",
-                ]
+                ],
             )
 
             # Add single query performance data from parsed results
@@ -771,9 +778,12 @@ class PerformanceSummaryGenerator:
                 # Emit a concise single-line summary from the block's first two fields
                 for i, line in enumerate(first_lines):
                     if line.startswith("Hardware Information:"):
-                        os_line = first_lines[i + 1].strip()
-                        cpu_line = first_lines[i + 2].strip()
-                        metadata_lines.append(f"Hardware: {cpu_line.removeprefix('CPU: ').strip()}")
+                        cpu_line = first_lines[i + 2].strip() if i + 2 < len(first_lines) else ""
+                        cores_line = first_lines[i + 3].strip() if i + 3 < len(first_lines) else ""
+                        cpu = cpu_line.removeprefix("CPU: ").strip()
+                        cores = cores_line.removeprefix("CPU Cores: ").strip()
+                        summary = f"{cpu} ({cores} cores)" if cpu and cores else cpu or "Unknown CPU"
+                        metadata_lines.append(f"Hardware: {summary}")
                         break
 
             if metadata_lines:
@@ -781,7 +791,7 @@ class PerformanceSummaryGenerator:
                     [
                         "### Current Baseline Information",
                         "",
-                    ]
+                    ],
                 )
                 for meta_line in metadata_lines:
                     lines.append(f"- **{meta_line}**")
@@ -799,7 +809,7 @@ class PerformanceSummaryGenerator:
                     "",
                     f"*Error parsing baseline results: {e}*",
                     "",
-                ]
+                ],
             )
 
         return lines
@@ -820,7 +830,7 @@ class PerformanceSummaryGenerator:
                         "Recent benchmark comparison detected performance regressions.",
                         "See comparison details in the benchmark comparison output.",
                         "",
-                    ]
+                    ],
                 )
 
                 # Extract and include specific regression details from content
@@ -838,7 +848,7 @@ class PerformanceSummaryGenerator:
                         "",
                         "Recent benchmark comparison shows no significant performance regressions.",
                         "",
-                    ]
+                    ],
                 )
 
         except Exception:
@@ -848,7 +858,7 @@ class PerformanceSummaryGenerator:
                     "",
                     "*No recent comparison data available*",
                     "",
-                ]
+                ],
             )
 
         return lines
@@ -881,7 +891,7 @@ class PerformanceSummaryGenerator:
             [
                 "## Recommendations",
                 "",
-            ]
+            ],
         )
 
         # Generate dynamic recommendations based on performance ranking
@@ -900,7 +910,7 @@ class PerformanceSummaryGenerator:
                     "",
                     "The standard `insphere` method remains the most numerically stable option when correctness is prioritized over performance.",
                     "",
-                ]
+                ],
             )
 
         return lines
@@ -1008,7 +1018,7 @@ class PerformanceSummaryGenerator:
                 "",
                 "### Performance Summary",
                 "",
-            ]
+            ],
         )
 
         # Add current benchmark-based summary
@@ -1022,7 +1032,7 @@ class PerformanceSummaryGenerator:
                     f"- `{performance_ranking[0][0]}`: {times[0]} (fastest)",
                     f"- `{performance_ranking[1][0]}`: {times[1]} (balanced)",
                     f"- `{performance_ranking[2][0]}`: {times[2]} (transparent)",
-                ]
+                ],
             )
 
         return lines
@@ -1172,6 +1182,78 @@ class CriterionParser:
             return None
 
     @staticmethod
+    def _extract_dimension_from_dir(dim_dir: Path) -> str | None:
+        """Extract dimension string from directory name (e.g., '2d' -> '2')."""
+        dim = dim_dir.name.removesuffix("d")
+        if dim.isdigit():
+            return dim
+        # Fallback: extract trailing "<digits>d"
+        m = re.search(r"(\d+)d$", dim_dir.name)
+        return m.group(1) if m else None
+
+    @staticmethod
+    def _find_estimates_file(point_dir: Path) -> Path | None:
+        """Find estimates.json file in point directory (prefer new/ over base/)."""
+        new_file = point_dir / "new" / "estimates.json"
+        if new_file.exists():
+            return new_file
+        base_file = point_dir / "base" / "estimates.json"
+        return base_file if base_file.exists() else None
+
+    @staticmethod
+    def _process_point_directory(point_dir: Path, dim: str) -> BenchmarkData | None:
+        """Process a single point count directory and extract benchmark data."""
+        if not point_dir.is_dir():
+            return None
+
+        try:
+            point_count = int(point_dir.name)
+        except ValueError:
+            return None
+
+        estimates_file = CriterionParser._find_estimates_file(point_dir)
+        if not estimates_file:
+            return None
+
+        return CriterionParser.parse_estimates_json(estimates_file, point_count, f"{dim}D")
+
+    @staticmethod
+    def _process_fallback_discovery(criterion_dir: Path) -> list[BenchmarkData]:
+        """Recursively discover estimates.json files when structured search fails."""
+        results = []
+        seen: set[tuple[int, str]] = set()
+
+        for estimates_file in criterion_dir.rglob("estimates.json"):
+            parent_name = estimates_file.parent.name
+            if parent_name not in {"base", "new"}:
+                continue
+
+            # Find nearest numeric points dir and nearest "<Nd>" dir in ancestors
+            points_dir = next((p for p in estimates_file.parents if p.name.isdigit()), None)
+            dim_dir = next((p for p in estimates_file.parents if re.search(r"\d+d$", p.name)), None)
+            if not points_dir or not dim_dir:
+                continue
+
+            dim_match = re.search(r"(\d+)d$", dim_dir.name)
+            if not dim_match:
+                continue
+
+            points = int(points_dir.name)
+            dimension = f"{dim_match.group(1)}D"
+            key = (points, dimension)
+
+            # Prefer "new" over "base" when duplicates exist
+            if key in seen and parent_name == "base":
+                continue
+
+            bd = CriterionParser.parse_estimates_json(estimates_file, points, dimension)
+            if bd:
+                seen.add(key)
+                results.append(bd)
+
+        return results
+
+    @staticmethod
     def find_criterion_results(target_dir: Path) -> list[BenchmarkData]:
         """
         Find and parse all Criterion benchmark results.
@@ -1190,36 +1272,21 @@ class CriterionParser:
 
         # Look for benchmark results in *d directories (group names can change)
         for dim_dir in sorted(p for p in criterion_dir.iterdir() if p.is_dir() and p.name.endswith("d")):
-            dim = dim_dir.name.removesuffix("d")
-            if not dim.isdigit():
-                # Fallback: extract trailing "<digits>d"
-                m = re.search(r"(\d+)d$", dim_dir.name)
-                if not m:
-                    continue
-                dim = m.group(1)
+            dim = CriterionParser._extract_dimension_from_dir(dim_dir)
+            if not dim:
+                continue
+
             # Iterate all nested benchmark targets under the <Nd> group
             for benchmark_dir in (p for p in dim_dir.iterdir() if p.is_dir()):
                 # Find point count directories
                 for point_dir in benchmark_dir.iterdir():
-                    if not point_dir.is_dir():
-                        continue
+                    benchmark_data = CriterionParser._process_point_directory(point_dir, dim)
+                    if benchmark_data:
+                        results.append(benchmark_data)
 
-                    try:
-                        point_count = int(point_dir.name)
-                    except ValueError:
-                        continue
-
-                    # Look for estimates.json (prefer new/ over base/)
-                    estimates_file = None
-                    if (point_dir / "new" / "estimates.json").exists():
-                        estimates_file = point_dir / "new" / "estimates.json"
-                    elif (point_dir / "base" / "estimates.json").exists():
-                        estimates_file = point_dir / "base" / "estimates.json"
-
-                    if estimates_file:
-                        benchmark_data = CriterionParser.parse_estimates_json(estimates_file, point_count, f"{dim}D")
-                        if benchmark_data:
-                            results.append(benchmark_data)
+        # Fallback: recursively discover estimates.json if nothing was found above
+        if not results:
+            results = CriterionParser._process_fallback_discovery(criterion_dir)
 
         # Sort by dimension, then by point count
         results.sort(key=lambda x: (int(x.dimension.rstrip("D")), x.points))
@@ -1437,7 +1504,11 @@ class PerformanceComparator:
         return results
 
     def _write_comparison_file(
-        self, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData], baseline_content: str, output_file: Path
+        self,
+        current_results: list[BenchmarkData],
+        baseline_results: dict[str, BenchmarkData],
+        baseline_content: str,
+        output_file: Path,
     ) -> bool:
         """Write comparison results to file."""
         # Prepare metadata
@@ -1547,12 +1618,12 @@ class PerformanceComparator:
             if average_regression_found:
                 f.write(
                     f"🚨 OVERALL REGRESSION: Average performance decreased by {average_change:.1f}% "
-                    f"(exceeds {self.regression_threshold}% threshold)\n"
+                    f"(exceeds {self.regression_threshold}% threshold)\n",
                 )
             elif average_change < -self.regression_threshold:
                 f.write(
                     f"🎉 OVERALL IMPROVEMENT: Average performance improved by {abs(average_change):.1f}% "
-                    f"(exceeds {self.regression_threshold}% threshold)\n"
+                    f"(exceeds {self.regression_threshold}% threshold)\n",
                 )
             else:
                 f.write(f"✅ OVERALL OK: Average change within acceptable range (±{self.regression_threshold}%)\n")
@@ -1572,7 +1643,7 @@ class PerformanceComparator:
         if benchmark.throughput_mean is not None:
             f.write(
                 f"Current Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, "
-                f"{benchmark.throughput_high}] {benchmark.throughput_unit}\n"
+                f"{benchmark.throughput_high}] {benchmark.throughput_unit}\n",
             )
 
     def _write_baseline_benchmark_data(self, f, benchmark: BenchmarkData) -> None:
@@ -1581,7 +1652,7 @@ class PerformanceComparator:
         if benchmark.throughput_mean is not None:
             f.write(
                 f"Baseline Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, "
-                f"{benchmark.throughput_high}] {benchmark.throughput_unit}\n"
+                f"{benchmark.throughput_high}] {benchmark.throughput_unit}\n",
             )
 
     def _write_time_comparison(self, f, current: BenchmarkData, baseline: BenchmarkData) -> tuple[float | None, bool]:
@@ -2142,7 +2213,10 @@ def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> N
     elif args.command == "compare":
         comparator = PerformanceComparator(project_root)
         success, regression_found = comparator.compare_with_baseline(
-            args.baseline, dev_mode=args.dev, output_file=args.output, bench_timeout=args.bench_timeout
+            args.baseline,
+            dev_mode=args.dev,
+            output_file=args.output,
+            bench_timeout=args.bench_timeout,
         )
 
         if not success:

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Enhance AI-generated commit messages in changelog with Keep a Changelog categorization.
+"""Enhance AI-generated commit messages in changelog with Keep a Changelog categorization.
 
 This script processes changelog entries and categorizes them according to
 Keep a Changelog format (Added/Changed/Fixed/Removed/Deprecated/Security).
@@ -19,6 +18,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 # Precompiled regex patterns for performance
 COMMIT_BULLET_RE = re.compile(r"^- \*\*")
+TITLE_FALLBACK_RE = re.compile(r"-\s+([^[(]+?)(?:\s+\(#\d+\))?\s*(?:\[`[a-f0-9]{7,40}`\].*)?$", re.IGNORECASE)
 
 
 def _get_regex_patterns():
@@ -182,11 +182,9 @@ def _extract_title_text(entry):
     lines = entry.splitlines()
     if not lines:
         return ""
-
     first = lines[0]
-    pattern = r"-\s+([^[(]+?)(?:\s+\(#\d+\))?\s*(?:\[`[a-f0-9]{7,40}`\].*)?$"
-    match = re.match(pattern, first, re.I)
-    return match[1].lower().strip() if match else ""
+    match = TITLE_FALLBACK_RE.match(first)
+    return match.group(1).lower().strip() if match else ""
 
 
 def _categorize_entry(title_text, patterns):
@@ -323,7 +321,7 @@ def _process_changelog_lines(lines):
                     "in_changes_section": section_flags[1],
                     "in_fixed_issues": section_flags[2],
                     "in_merged_prs_section": section_flags[3],
-                }
+                },
             )
             if section_flags[0] == "merged_prs":
                 output_lines.append(line)  # Keep Merged Pull Requests header
@@ -354,12 +352,13 @@ def _process_changelog_lines(lines):
                     "in_changes_section": False,
                     "in_fixed_issues": False,
                     "in_merged_prs_section": False,
-                }
+                },
             )
 
             # Add the release header to output if it's a new release
             if re.match(r"^## ", line):
-                output_lines.append("")  # Add blank line before new release
+                if output_lines and output_lines[-1] != "":
+                    output_lines.append("")  # Avoid double blank lines
                 output_lines.append(line)
                 line_index += 1
                 continue
@@ -376,7 +375,6 @@ def _process_changelog_lines(lines):
     # Process any remaining entries at the end of the file
     if categorize_entries_list:
         process_and_output_categorized_entries(categorize_entries_list, output_lines)
-        categorize_entries_list.clear()
 
     return output_lines
 
