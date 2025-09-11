@@ -23,13 +23,19 @@ import pytest
 
 from benchmark_models import (
     BenchmarkData,
+    CircumspherePerformanceData,
+    CircumsphereTestCase,
 )
 from benchmark_utils import (
+    DEV_MODE_BENCH_ARGS,
+    BaselineGenerator,
     BenchmarkRegressionHelper,
     CriterionParser,
     PerformanceComparator,
     PerformanceSummaryGenerator,
+    ProjectRootNotFoundError,
     WorkflowHelper,
+    find_project_root,
 )
 
 
@@ -1358,8 +1364,6 @@ class TestProjectRootHandling:
             sub_dir.mkdir()
 
             with temp_chdir(sub_dir):
-                from benchmark_utils import find_project_root
-
                 result = find_project_root()
                 # Resolve both paths to handle symlinks (macOS /var -> /private/var)
                 assert result.resolve() == temp_path.resolve()
@@ -1370,8 +1374,6 @@ class TestProjectRootHandling:
             temp_path = Path(temp_dir)
 
             with temp_chdir(temp_path):
-                from benchmark_utils import ProjectRootNotFoundError, find_project_root
-
                 with pytest.raises(ProjectRootNotFoundError, match=r"Could not locate Cargo\.toml"):
                     find_project_root()
 
@@ -1401,8 +1403,6 @@ class TestTimeoutHandling:
             setup_func(temp_dir)
 
             # Import and instantiate the class dynamically
-            from benchmark_utils import BaselineGenerator, PerformanceComparator
-
             if component_class == "BaselineGenerator":
                 component = BaselineGenerator(project_root)
                 method_args = ()
@@ -1431,8 +1431,6 @@ class TestTimeoutHandling:
 
     def test_timeout_error_handling_baseline_generator(self, capsys):
         """Test proper error handling when benchmark times out in BaselineGenerator."""
-        from benchmark_utils import BaselineGenerator
-
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = BaselineGenerator(project_root)
@@ -2075,9 +2073,6 @@ Benchmark completed."""
 
     def test_dimension_sorting_numeric_order(self):
         """Test that dimensions are sorted numerically, not lexically."""
-        from benchmark_models import CircumspherePerformanceData, CircumsphereTestCase
-        from benchmark_utils import PerformanceSummaryGenerator
-
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
@@ -2161,8 +2156,6 @@ Hardware Information:
 
     def test_dev_mode_args_consistency(self):
         """Test that DEV_MODE_BENCH_ARGS is used consistently."""
-        from benchmark_utils import DEV_MODE_BENCH_ARGS
-
         # Verify the constant exists and has expected structure
         assert isinstance(DEV_MODE_BENCH_ARGS, list)
         assert "--sample-size" in DEV_MODE_BENCH_ARGS

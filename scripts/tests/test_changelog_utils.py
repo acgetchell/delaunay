@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, mock_open, patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 
-from changelog_utils import ChangelogError, ChangelogUtils, GitRepoError, VersionError
+from changelog_utils import ChangelogError, ChangelogNotFoundError, ChangelogUtils, GitRepoError, VersionError
 from subprocess_utils import run_git_command
 
 
@@ -209,8 +209,6 @@ class TestChangelogUtils:
     def test_get_project_root_not_found(self, mock_find_changelog):
         """Test project root detection failure."""
         # Mock find_changelog_path to raise ChangelogNotFoundError
-        from changelog_utils import ChangelogNotFoundError
-
         mock_find_changelog.side_effect = ChangelogNotFoundError("CHANGELOG.md not found")
 
         with pytest.raises(ChangelogError) as cm:

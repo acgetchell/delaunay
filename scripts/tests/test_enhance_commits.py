@@ -6,13 +6,18 @@ Tests changelog processing, commit categorization, regex patterns,
 and Keep a Changelog format output functionality.
 """
 
+import io
+import re
 import tempfile
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from enhance_commits import (
+    COMMIT_BULLET_RE,
+    TITLE_FALLBACK_RE,
     _add_section_with_entries,
     _categorize_entry,
     _collect_commit_entry,
@@ -151,8 +156,6 @@ class TestRegexPatterns:
 
 def _match_pattern(pattern, text):
     """Helper function to test if a pattern matches text."""
-    import re
-
     try:
         return bool(re.search(pattern, text.lower()))
     except re.error:
@@ -694,8 +697,6 @@ class TestEdgeCases:
 
     def test_compiled_regex_performance(self):
         """Test that the compiled fallback regex works correctly and efficiently."""
-        from enhance_commits import TITLE_FALLBACK_RE, _extract_title_text
-
         # Test the compiled regex directly
         test_line = "- fix: improve performance (#123) [`abc1234`](https://example.com)"
         match = TITLE_FALLBACK_RE.match(test_line)
@@ -780,8 +781,6 @@ class TestImprovements:
 
     def test_indented_commit_bullet_regex(self):
         """Test that COMMIT_BULLET_RE matches bullets with leading whitespace."""
-        from enhance_commits import COMMIT_BULLET_RE
-
         # Test standard format with dash bullets (no indentation)
         assert COMMIT_BULLET_RE.match("- **Fix: some issue**")
 
@@ -818,7 +817,6 @@ class TestImprovements:
 
     def test_optimized_first_line_extraction(self):
         """Test that first line extraction doesn't build unnecessary lists."""
-        from enhance_commits import _extract_title_text
 
         # Test with multiline entry - should only process first line
         multiline_entry = "- **Fix: issue with parser**\n  Additional details\n  More info"
@@ -836,7 +834,6 @@ class TestImprovements:
 
     def test_generalized_indentation_matching(self):
         """Test that body content collection works with various indentation."""
-        from enhance_commits import _collect_commit_entry
 
         # Test with 2+ spaces (minimum indentation)
         lines = [
@@ -866,8 +863,6 @@ class TestImprovements:
 
     def test_title_fallback_regex_handles_indentation(self):
         """Test that TITLE_FALLBACK_RE regex handles indented bullets robustly."""
-        from enhance_commits import TITLE_FALLBACK_RE, _extract_title_text
-
         # Test cases without indentation (should still work)
         test_cases_no_indent = [
             "- Fix performance regression",
@@ -934,7 +929,6 @@ class TestImprovements:
 
     def test_match_group_compatibility(self):
         """Test that title extraction uses Match.group(1) for Python compatibility."""
-        from enhance_commits import _extract_title_text
 
         # Test entry with markdown bold formatting
         test_entry = "- **Fix memory leak in allocator** (#456) [`def5678`](link)"
@@ -955,11 +949,6 @@ class TestImprovements:
 
     def test_helpful_usage_message(self):
         """Test that the script provides helpful usage message on bad args."""
-        import io
-        from contextlib import redirect_stderr
-        from unittest.mock import patch
-
-        from enhance_commits import main
 
         # Test with no arguments
         stderr_capture = io.StringIO()

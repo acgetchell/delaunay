@@ -5,6 +5,8 @@ Test suite for benchmark_models.py module.
 Tests data models, parsing functions, and formatting utilities for benchmark processing.
 """
 
+import re
+
 import pytest
 
 from benchmark_models import (
@@ -448,7 +450,5 @@ class TestFormattingFunctions:
         assert "| 5000 | N/A | N/A | N/A |" in markdown_content
 
         # Should not contain any numeric scaling values
-        import re
-
         numeric_scaling_pattern = r"\| [^|]+ \| [^|]+ \| [^|]+ \| [0-9.]+x \|"
         assert not re.search(numeric_scaling_pattern, markdown_content)

@@ -22,17 +22,12 @@ from typing import Any
 
 from subprocess_utils import (
     ExecutableNotFoundError,
-    get_git_remote_url,
-    run_safe_command,
-)
-from subprocess_utils import (
     check_git_history as _check_git_history,
-)
-from subprocess_utils import (
     check_git_repo as _check_git_repo,
-)
-from subprocess_utils import (
+    get_git_remote_url,
     run_git_command as _run_git_command,
+    run_git_command_with_input,
+    run_safe_command,
 )
 
 
@@ -783,8 +778,6 @@ class ChangelogUtils:
         print(f"{BLUE}Creating tag '{tag_version}' with changelog content...{NC}")
 
         try:
-            from subprocess_utils import run_git_command_with_input
-
             # Tag format already validated by validate_semver(); no second check needed
 
             # Use secure wrapper for git command with stdin input

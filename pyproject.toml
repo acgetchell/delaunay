@@ -71,7 +71,6 @@ ignore = [
     "T201",    # print found - appropriate for CLI output and user feedback
     "TRY300",  # Consider moving statement to else block - acceptable control flow for CLI scripts
     "TRY301",  # Abstract raise to inner function - acceptable for straightforward CLI error handling
-    "PLC0415", # import should be at top-level - acceptable for CLI scripts to reduce startup time
     "ARG001",  # Unused function argument - common in signal handlers and callback functions
     "ERA001",  # Found commented-out code - acceptable for explanatory comments in CLI tools
     "EXE001",  # Shebang is present but file is not executable - handled by packaging/deployment
@@ -92,6 +91,9 @@ ignore = [
 known-first-party = ["benchmark_utils", "changelog_utils", "enhance_commits", "hardware_utils", "subprocess_utils"]
 force-single-line = false
 split-on-trailing-comma = true
+combine-as-imports = true
+order-by-type = true
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 # Organize imports: standard library, third-party, first-party, local
 
 [tool.ruff.format]
