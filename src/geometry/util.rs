@@ -473,16 +473,17 @@ pub fn safe_scalar_from_f64<T: CoordinateScalar>(
 ///
 /// # Precision Limits
 ///
-/// - `f64` mantissa has 52 bits of precision
-/// - `usize` values larger than 2^52 (4,503,599,627,370,496) may lose precision
+/// - `f64` integers are exact up to 2^53 − 1
+/// - `usize` values larger than 2^53 − 1 (9,007,199,254,740,991) may lose precision
 /// - On 32-bit platforms, `usize` is only 32 bits, so precision loss is impossible
 /// - On 64-bit platforms, `usize` can be up to 64 bits, so precision loss is possible
 pub fn safe_usize_to_scalar<T: CoordinateScalar>(
     value: usize,
 ) -> Result<T, CoordinateConversionError> {
     // Check for potential precision loss when converting usize to f64
-    // f64 has 52 bits of precision in the mantissa, so values larger than 2^52 may lose precision
-    const MAX_PRECISE_USIZE_IN_F64: u64 = 1_u64 << 52; // 2^52 = 4,503,599,627,370,496
+    // f64 has 53 bits of integer precision (including the implicit bit).
+    // Integers up to 2^53 - 1 are exactly representable.
+    const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1; // 9,007,199,254,740,991
 
     // Use try_from to safely convert usize to u64 for comparison
     let value_u64 =
@@ -1308,10 +1309,7 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
     let mut points = Vec::with_capacity(n_points);
 
     for _ in 0..n_points {
-        let coords = [T::zero(); D].map(|_| {
-            use rand::Rng;
-            rng.random_range(range.0..range.1)
-        });
+        let coords = [T::zero(); D].map(|_| rng.random_range(range.0..range.1));
         points.push(Point::new(coords));
     }
 
@@ -1923,7 +1921,7 @@ mod tests {
         let safe_large_values = [
             usize::try_from(1_u64 << 50).unwrap_or(usize::MAX), // 2^50, well within f64 precision
             usize::try_from(1_u64 << 51).unwrap_or(usize::MAX), // 2^51, still safe
-            usize::try_from((1_u64 << 52) - 1).unwrap_or(usize::MAX), // Just under 2^52, should be safe
+            usize::try_from((1_u64 << 53) - 2).unwrap_or(usize::MAX), // Just under 2^53-1, should be safe
         ];
 
         for &value in &safe_large_values {
@@ -1943,14 +1941,17 @@ mod tests {
 
     #[test]
     fn test_safe_usize_to_scalar_precision_boundary() {
-        // Test the exact boundary value: 2^52
-        const MAX_PRECISE_USIZE_IN_F64: u64 = 1_u64 << 52;
+        // Test the exact boundary value: 2^53-1
+        const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1;
 
         // This should succeed (exactly at the boundary)
         if usize::try_from(MAX_PRECISE_USIZE_IN_F64).is_ok() {
             let boundary_value = usize::try_from(MAX_PRECISE_USIZE_IN_F64).unwrap();
             let result: Result<f64, _> = safe_usize_to_scalar(boundary_value);
-            assert!(result.is_ok(), "Boundary value 2^52 should be convertible");
+            assert!(
+                result.is_ok(),
+                "Boundary value 2^53-1 should be convertible"
+            );
 
             let converted = result.unwrap();
             let back_converted: usize =
@@ -1964,14 +1965,14 @@ mod tests {
 
     #[test]
     fn test_safe_usize_to_scalar_precision_loss_detection() {
-        // Test values that would lose precision (only on 64-bit platforms where usize can exceed 2^52)
-        const MAX_PRECISE_USIZE_IN_F64: u64 = 1_u64 << 52;
+        // Test values that would lose precision (only on 64-bit platforms where usize can exceed 2^53-1)
+        const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1;
 
         if std::mem::size_of::<usize>() >= 8 {
             // On 64-bit platforms, test values that would lose precision
             let precision_loss_values = [
-                usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 1).unwrap_or(usize::MAX), // Just over 2^52
-                usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 100).unwrap_or(usize::MAX), // Well over 2^52
+                usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 1).unwrap_or(usize::MAX), // Just over 2^53-1
+                usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 100).unwrap_or(usize::MAX), // Well over 2^53-1
             ];
 
             for &value in &precision_loss_values {
@@ -2004,7 +2005,7 @@ mod tests {
                 }
             }
         } else {
-            // On 32-bit platforms, usize cannot exceed 2^52, so all values should succeed
+            // On 32-bit platforms, usize cannot exceed 2^53-1, so all values should succeed
             println!("Skipping precision loss test on 32-bit platform");
         }
     }
@@ -2053,7 +2054,7 @@ mod tests {
     #[test]
     fn test_safe_usize_to_scalar_error_message_format() {
         // Test that error messages are properly formatted
-        const MAX_PRECISE_USIZE_IN_F64: u64 = 1_u64 << 52;
+        const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1;
 
         if std::mem::size_of::<usize>() >= 8 {
             let large_value = usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 1).unwrap_or(usize::MAX);
@@ -2096,7 +2097,7 @@ mod tests {
             std::mem::size_of::<usize>()
         );
         println!("usize::MAX = {}", usize::MAX);
-        println!("2^52 = {}", 1_u64 << 52);
+        println!("2^53-1 = {}", (1_u64 << 53) - 1);
 
         // Values that should work on any platform
         let universal_safe_values = [0, 1, 100, 10000];

@@ -8,7 +8,6 @@ across different platforms with proper mocking.
 
 import platform
 import subprocess
-import unittest
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
@@ -16,17 +15,19 @@ import pytest
 from hardware_utils import HardwareComparator, HardwareInfo
 
 
-class TestHardwareInfo(unittest.TestCase):
+@pytest.fixture
+def hardware():
+    """Fixture for HardwareInfo instance."""
+    return HardwareInfo()
+
+
+class TestHardwareInfo:
     """Test cases for HardwareInfo class."""
 
-    def setUp(self):
-        """Set up test fixtures."""
-        self.hardware = HardwareInfo()
-
-    def test_init(self):
+    def test_init(self, hardware):
         """Test HardwareInfo initialization."""
-        assert self.hardware.os_type == platform.system()
-        assert self.hardware.machine == platform.machine()
+        assert hardware.os_type == platform.system()
+        assert hardware.machine == platform.machine()
 
     @patch("hardware_utils.platform.system")
     def test_init_with_different_os(self, mock_system):
@@ -35,30 +36,30 @@ class TestHardwareInfo(unittest.TestCase):
         hardware = HardwareInfo()
         assert hardware.os_type == "Linux"
 
-    def test_run_command_empty_cmd(self):
+    def test_run_command_empty_cmd(self, hardware):
         """Test _run_command with empty command list."""
         with pytest.raises(ValueError, match="Command list cannot be empty"):
-            self.hardware._run_command([])  # noqa: SLF001
+            hardware._run_command([])  # noqa: SLF001
 
     @patch("hardware_utils.run_safe_command")
-    def test_run_command_success(self, mock_run_safe):
+    def test_run_command_success(self, mock_run_safe, hardware):
         """Test successful command execution."""
         mock_result = Mock()
         mock_result.stdout = "test output\n"
         mock_run_safe.return_value = mock_result
 
-        result = self.hardware._run_command(["echo", "test"])  # noqa: SLF001
+        result = hardware._run_command(["echo", "test"])  # noqa: SLF001
 
         assert result == "test output"
         mock_run_safe.assert_called_once_with("echo", ["test"], check=True)
 
     @patch("hardware_utils.run_safe_command")
-    def test_run_command_failure(self, mock_run_safe):
+    def test_run_command_failure(self, mock_run_safe, hardware):
         """Test command execution failure."""
         mock_run_safe.side_effect = subprocess.CalledProcessError(1, "cmd")
 
         with pytest.raises(subprocess.CalledProcessError):
-            self.hardware._run_command(["false"])  # noqa: SLF001
+            hardware._run_command(["false"])  # noqa: SLF001
 
     @patch("hardware_utils.platform.system")
     @patch.object(HardwareInfo, "_run_command")
@@ -209,50 +210,50 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_rust_info_success(self, mock_run_command, mock_which):
+    def test_get_rust_info_success(self, mock_run_command, mock_which, hardware):
         """Test Rust info detection when rustc is available."""
         mock_which.return_value = "/usr/bin/rustc"
         mock_run_command.side_effect = ["rustc 1.70.0 (90c541806 2023-05-31)", "rustc 1.70.0 (90c541806 2023-05-31)\nhost: x86_64-apple-darwin\n"]
 
-        rust_version, rust_target = self.hardware.get_rust_info()
+        rust_version, rust_target = hardware.get_rust_info()
 
         assert rust_version == "rustc 1.70.0 (90c541806 2023-05-31)"
         assert rust_target == "x86_64-apple-darwin"
 
     @patch("hardware_utils.shutil.which")
-    def test_get_rust_info_no_rustc(self, mock_which):
+    def test_get_rust_info_no_rustc(self, mock_which, hardware):
         """Test Rust info detection when rustc is not available."""
         mock_which.return_value = None
 
-        rust_version, rust_target = self.hardware.get_rust_info()
+        rust_version, rust_target = hardware.get_rust_info()
 
         assert rust_version == "Unknown"
         assert rust_target == "Unknown"
 
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_rust_info_command_failure(self, mock_run_command, mock_which):
+    def test_get_rust_info_command_failure(self, mock_run_command, mock_which, hardware):
         """Test Rust info detection when rustc commands fail."""
         mock_which.return_value = "/usr/bin/rustc"
         mock_run_command.side_effect = subprocess.CalledProcessError(1, "cmd")
 
-        rust_version, rust_target = self.hardware.get_rust_info()
+        rust_version, rust_target = hardware.get_rust_info()
 
         assert rust_version == "Unknown"
         assert rust_target == "Unknown"
 
-    def test_get_hardware_info(self):
+    def test_get_hardware_info(self, hardware):
         """Test comprehensive hardware info collection."""
         with (
-            patch.object(self.hardware, "get_cpu_info") as mock_cpu,
-            patch.object(self.hardware, "get_memory_info") as mock_memory,
-            patch.object(self.hardware, "get_rust_info") as mock_rust,
+            patch.object(hardware, "get_cpu_info") as mock_cpu,
+            patch.object(hardware, "get_memory_info") as mock_memory,
+            patch.object(hardware, "get_rust_info") as mock_rust,
         ):
             mock_cpu.return_value = ("Intel i7", "8", "16")
             mock_memory.return_value = "16.0 GB"
             mock_rust.return_value = ("rustc 1.70.0", "x86_64-unknown-linux-gnu")
 
-            info = self.hardware.get_hardware_info()
+            info = hardware.get_hardware_info()
 
             expected_keys = ["OS", "CPU", "CPU_CORES", "CPU_THREADS", "MEMORY", "RUST", "TARGET"]
             assert set(info.keys()) == set(expected_keys)
@@ -263,29 +264,28 @@ Thread(s) per core:  2"""
             assert info["RUST"] == "rustc 1.70.0"
             assert info["TARGET"] == "x86_64-unknown-linux-gnu"
 
+    @pytest.mark.parametrize(
+        ("system_name", "expected_os"), [("Darwin", "macOS"), ("Linux", "Linux"), ("Windows", "Windows"), ("FreeBSD", "Unknown (FreeBSD)")]
+    )
     @patch("hardware_utils.platform.system")
-    def test_get_hardware_info_os_mapping(self, mock_system):
+    def test_get_hardware_info_os_mapping(self, mock_system, system_name, expected_os):
         """Test OS name mapping in hardware info."""
-        test_cases = [("Darwin", "macOS"), ("Linux", "Linux"), ("Windows", "Windows"), ("FreeBSD", "Unknown (FreeBSD)")]
+        mock_system.return_value = system_name
+        hardware = HardwareInfo()
 
-        for system_name, expected_os in test_cases:
-            with self.subTest(system=system_name):
-                mock_system.return_value = system_name
-                hardware = HardwareInfo()
+        with (
+            patch.object(hardware, "get_cpu_info") as mock_cpu,
+            patch.object(hardware, "get_memory_info") as mock_memory,
+            patch.object(hardware, "get_rust_info") as mock_rust,
+        ):
+            mock_cpu.return_value = ("CPU", "4", "8")
+            mock_memory.return_value = "8.0 GB"
+            mock_rust.return_value = ("rustc 1.70.0", "target")
 
-                with (
-                    patch.object(hardware, "get_cpu_info") as mock_cpu,
-                    patch.object(hardware, "get_memory_info") as mock_memory,
-                    patch.object(hardware, "get_rust_info") as mock_rust,
-                ):
-                    mock_cpu.return_value = ("CPU", "4", "8")
-                    mock_memory.return_value = "8.0 GB"
-                    mock_rust.return_value = ("rustc 1.70.0", "target")
+            info = hardware.get_hardware_info()
+            assert info["OS"] == expected_os
 
-                    info = hardware.get_hardware_info()
-                    assert info["OS"] == expected_os
-
-    def test_format_hardware_info(self):
+    def test_format_hardware_info(self, hardware):
         """Test hardware info formatting."""
         test_info = {
             "OS": "macOS",
@@ -297,7 +297,7 @@ Thread(s) per core:  2"""
             "TARGET": "x86_64-apple-darwin",
         }
 
-        formatted = self.hardware.format_hardware_info(test_info)
+        formatted = hardware.format_hardware_info(test_info)
 
         assert "Hardware Information:" in formatted
         assert "OS: macOS" in formatted
@@ -308,9 +308,9 @@ Thread(s) per core:  2"""
         assert "Rust: rustc 1.70.0" in formatted
         assert "Target: x86_64-apple-darwin" in formatted
 
-    def test_format_hardware_info_none(self):
+    def test_format_hardware_info_none(self, hardware):
         """Test hardware info formatting with None input."""
-        with patch.object(self.hardware, "get_hardware_info") as mock_get_info:
+        with patch.object(hardware, "get_hardware_info") as mock_get_info:
             mock_get_info.return_value = {
                 "OS": "Linux",
                 "CPU": "AMD Ryzen",
@@ -321,11 +321,11 @@ Thread(s) per core:  2"""
                 "TARGET": "x86_64-unknown-linux-gnu",
             }
 
-            formatted = self.hardware.format_hardware_info(None)
+            formatted = hardware.format_hardware_info(None)
             assert "OS: Linux" in formatted
 
 
-class TestHardwareComparator(unittest.TestCase):
+class TestHardwareComparator:
     """Test cases for HardwareComparator class."""
 
     def test_parse_baseline_hardware_complete(self):
@@ -522,9 +522,9 @@ Other content here...
         assert not has_warnings
         assert "Hardware configurations are compatible" in report
 
-    def test_extract_memory_value(self):
-        """Test memory value extraction from strings."""
-        test_cases = [
+    @pytest.mark.parametrize(
+        ("memory_str", "expected"),
+        [
             ("16.0 GB", 16.0),
             ("32.5 GB", 32.5),
             ("8GB", 8.0),
@@ -533,18 +533,18 @@ Other content here...
             ("Unknown", None),
             ("Invalid format", None),
             ("", None),
-        ]
+        ],
+    )
+    def test_extract_memory_value(self, memory_str, expected):
+        """Test memory value extraction from strings."""
+        result = HardwareComparator._extract_memory_value(memory_str)  # noqa: SLF001
+        if expected is None:
+            assert result is None
+        else:
+            assert result == pytest.approx(expected, abs=1e-9)
 
-        for memory_str, expected in test_cases:
-            with self.subTest(memory_str=memory_str):
-                result = HardwareComparator._extract_memory_value(memory_str)  # noqa: SLF001
-                if expected is None:
-                    assert result is None
-                else:
-                    assert result == pytest.approx(expected, abs=1e-9)
 
-
-class TestHardwareUtilsIntegration(unittest.TestCase):
+class TestHardwareUtilsIntegration:
     """Integration tests for hardware_utils functionality."""
 
     def test_real_hardware_info_structure(self):
@@ -591,7 +591,3 @@ class TestHardwareUtilsIntegration(unittest.TestCase):
         expected_fields = ["OS:", "CPU:", "CPU Cores:", "CPU Threads:", "Memory:", "Rust:", "Target:"]
         for field in expected_fields:
             assert field in formatted
-
-
-if __name__ == "__main__":
-    unittest.main()

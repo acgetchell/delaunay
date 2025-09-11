@@ -161,7 +161,11 @@ macro_rules! measure_memory {
                     None,
                     Some(seed),
                 )
-                .unwrap();
+                .expect(concat!(
+                    "generate_random_triangulation failed for ",
+                    stringify!($dim),
+                    "D"
+                ));
                 black_box(tds)
             });
 
@@ -297,7 +301,7 @@ fn write_memory_records_to_csv() {
 
     if let Ok(mut file) = File::create(&csv_path) {
         if let Err(e) = MemoryRecord::write_csv_header(&mut file) {
-            eprintln!("failed writing CSV header: {e}");
+            eprintln!("failed writing CSV header to {}: {e}", csv_path.display());
             return;
         }
 
@@ -307,7 +311,10 @@ fn write_memory_records_to_csv() {
                 .expect("MEMORY_RECORDS mutex poisoned");
             for record in records.iter() {
                 if let Err(e) = record.write_csv_row(&mut file) {
-                    eprintln!("failed writing CSV row: {e}");
+                    eprintln!(
+                        "failed writing CSV row (dim={} points={}): {e}",
+                        record.dimension, record.points
+                    );
                 }
             }
         } // Drop the lock here

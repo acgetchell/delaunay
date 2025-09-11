@@ -36,6 +36,21 @@
 //! # Development mode - reduced scale for quick feedback
 //! PROFILING_DEV_MODE=1 cargo bench --bench profiling_suite
 //! ```
+//!
+//! ## Environment Variable Configuration
+//!
+//! The benchmark suite supports several environment variables for customization:
+//!
+//! - `PROFILING_DEV_MODE`: Set to "1", "true", "yes", or "on" for reduced scale (faster iteration)
+//! - `BENCH_MEASUREMENT_TIME`: Override measurement time in seconds (minimum: 1, guards against invalid values)
+//! - `BENCH_PERCENTILE`: Configure percentile for memory analysis (1-100, default: 95)
+//! - `BENCH_SAMPLE_SIZE`: Override Criterion sample size (default: 10)
+//! - `BENCH_WARMUP_SECS`: Override Criterion warm-up time in seconds (default: 10)
+//!
+//! Example with custom configuration:
+//! ```bash
+//! BENCH_SAMPLE_SIZE=5 BENCH_WARMUP_SECS=5 BENCH_PERCENTILE=90 cargo bench --bench profiling_suite
+//! ```
 
 #![allow(missing_docs)]
 
@@ -134,11 +149,13 @@ fn get_profiling_counts() -> &'static [usize] {
 }
 
 /// Helper function to parse benchmark measurement time from environment
+/// Guards against zero/invalid values by ensuring minimum of 1 second
 fn bench_time(default_secs: u64) -> Duration {
-    std::env::var("BENCH_MEASUREMENT_TIME")
+    let secs = std::env::var("BENCH_MEASUREMENT_TIME")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
-        .map_or_else(|| Duration::from_secs(default_secs), Duration::from_secs)
+        .map_or_else(|| default_secs.max(1), |parsed| parsed.max(1));
+    Duration::from_secs(secs)
 }
 
 /// Point distribution types for comprehensive testing
@@ -263,7 +280,12 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("triangulation_scaling_3d");
     group.measurement_time(bench_time(180));
 
-    for &count in counts {
+    // 3D: cap to 100_000 in production to avoid runaway memory/time
+    for count in counts
+        .iter()
+        .copied()
+        .filter(|c| is_dev_mode() || *c <= 100_000)
+    {
         for &distribution in &distributions {
             // Skip very large counts for 3D in development mode to prevent timeouts
             if is_dev_mode() && count > 10_000 {
@@ -312,7 +334,12 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("triangulation_scaling_4d");
     group.measurement_time(bench_time(240));
 
-    for &count in high_dim_counts {
+    // 4D: cap to 3_000 in production to avoid runaway memory/time
+    for count in high_dim_counts
+        .iter()
+        .copied()
+        .filter(|c| is_dev_mode() || *c <= 3_000)
+    {
         for &distribution in &distributions {
             // Pre-generate sample points to calculate actual count and avoid double-generation
             let sample_points =
@@ -355,7 +382,12 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("triangulation_scaling_5d");
     group.measurement_time(bench_time(300));
 
-    for &count in ultra_high_dim_counts {
+    // 5D: cap to 1_000 in production to avoid runaway memory/time
+    for count in ultra_high_dim_counts
+        .iter()
+        .copied()
+        .filter(|c| is_dev_mode() || *c <= 1_000)
+    {
         for &distribution in &distributions {
             // Pre-generate sample points to calculate actual count and avoid double-generation
             let sample_points =
@@ -393,19 +425,27 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 // Memory Usage Profiling
 // ============================================================================
 
-/// Calculate 95th percentile from a slice of values using nearest-rank method
+/// Calculate percentile from a slice of values using nearest-rank method
+/// Supports configurable percentile via environment variable `BENCH_PERCENTILE` (default: 95)
 #[allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss
 )]
-fn calculate_95th_percentile(values: &mut [u64]) -> u64 {
+fn calculate_percentile(values: &mut [u64]) -> u64 {
     if values.is_empty() {
         return 0;
     }
+
+    // Parse percentile from environment, defaulting to 95
+    let percentile = std::env::var("BENCH_PERCENTILE")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .map_or(95, |p| p.clamp(1, 100)); // Clamp to valid percentile range
+
     values.sort_unstable();
     let n = values.len();
-    let rank = (95 * n).div_ceil(100); // 1-based nearest-rank
+    let rank = percentile.saturating_mul(n).saturating_div(100).max(1); // 1-based nearest-rank, prevent overflow
     let index = rank.saturating_sub(1).min(n - 1); // 0-based index
     values[index]
 }
@@ -517,19 +557,22 @@ fn bench_memory_usage<const D: usize>(
                             .max()
                             .unwrap_or(0),
                     };
-                    let avg_actual_count =
-                        actual_point_counts.iter().sum::<usize>() / actual_point_counts.len();
+                    let avg_actual_count = if actual_point_counts.is_empty() {
+                        0
+                    } else {
+                        actual_point_counts.iter().sum::<usize>() / actual_point_counts.len()
+                    };
 
-                    // Calculate 95th percentile of bytes_max
+                    // Calculate percentile of bytes_max (configurable via BENCH_PERCENTILE, default 95th)
                     let mut bytes_max_values: Vec<u64> =
                         allocation_infos.iter().map(|i| i.bytes_max).collect();
-                    let percentile_95 = calculate_95th_percentile(&mut bytes_max_values);
+                    let percentile_value = calculate_percentile(&mut bytes_max_values);
 
                     print_alloc_summary(
                         &avg_info,
                         &format!("{D}D Triangulation"),
                         avg_actual_count,
-                        percentile_95,
+                        percentile_value,
                     );
                 }
 
@@ -618,7 +661,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
                 // Precompute all valid simplex vertices outside the benchmark loop
                 let mut precomputed_simplices: Vec<
                     SmallBuffer<Point<f64, 3>, SIMPLEX_VERTICES_BUFFER_SIZE>,
-                > = Vec::new();
+                > = Vec::with_capacity(MAX_PRECOMPUTED_SIMPLICES);
                 let mut sampled_count = 0;
                 for cell in tds.cells() {
                     if sampled_count >= MAX_PRECOMPUTED_SIMPLICES {
@@ -755,10 +798,22 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
 
 criterion_group!(
     name = profiling_benches;
-    config = Criterion::default()
-        .sample_size(10)  // Fewer samples due to long-running nature
-        .warm_up_time(Duration::from_secs(10))
-        .measurement_time(bench_time(60));
+    config = {
+        // Allow configuration via environment variables for CI stability
+        let sample_size = std::env::var("BENCH_SAMPLE_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+        let warm_up_secs = std::env::var("BENCH_WARMUP_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+
+        Criterion::default()
+            .sample_size(sample_size)  // Configurable samples (default: 10 for long-running benchmarks)
+            .warm_up_time(Duration::from_secs(warm_up_secs))  // Configurable warm-up (default: 10s)
+            .measurement_time(bench_time(60))
+    };
     targets =
         benchmark_triangulation_scaling,
         benchmark_memory_profiling,

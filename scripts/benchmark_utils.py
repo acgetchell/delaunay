@@ -715,7 +715,11 @@ class PerformanceSummaryGenerator:
         # Sort dimensions numerically (2D, 3D, 4D, etc.) to avoid misordering
         sorted_dims = sorted(
             cases_by_dimension.keys(),
-            key=lambda d: int(str(d).rstrip("D")) if str(d).rstrip("D").isdigit() else sys.maxsize,
+            key=lambda d: (
+                int(str(d).strip().removesuffix("D").removesuffix("d"))
+                if str(d).strip().removesuffix("D").removesuffix("d").isdigit()
+                else sys.maxsize
+            ),
         )
 
         for dimension in sorted_dims:
@@ -780,6 +784,8 @@ class PerformanceSummaryGenerator:
                     if line.startswith("Hardware Information:"):
                         cpu_line = first_lines[i + 2].strip() if i + 2 < len(first_lines) else ""
                         cores_line = first_lines[i + 3].strip() if i + 3 < len(first_lines) else ""
+                        if not cpu_line and not cores_line:
+                            continue
                         cpu = cpu_line.removeprefix("CPU: ").strip()
                         cores = cores_line.removeprefix("CPU Cores: ").strip()
                         summary = f"{cpu} ({cores} cores)" if cpu and cores else cpu or "Unknown CPU"
@@ -947,16 +953,17 @@ class PerformanceSummaryGenerator:
         rankings = []
         if sorted_methods:
             fastest_time = sorted_methods[0][1]
+            rank_index = {m: i for i, (m, _) in enumerate(sorted_methods)}
 
             for method, avg_time in sorted_methods:
-                if avg_time == fastest_time:
+                idx = rank_index[method]
+                slowdown = (avg_time / fastest_time) if fastest_time > 0 else 1
+                if idx == 0:
                     desc = "(fastest) - Consistently best performance across all tests"
-                elif method == "insphere":
-                    slowdown = (avg_time / fastest_time) if fastest_time > 0 else 1
-                    desc = f"(middle) - ~{slowdown:.1f}x slower than fastest, but good performance"
-                else:  # insphere_distance
-                    slowdown = (avg_time / fastest_time) if fastest_time > 0 else 1
-                    desc = f"(slowest) - ~{slowdown:.1f}x slower due to explicit circumcenter calculation"
+                elif idx == 1:
+                    desc = f"(middle) - ~{slowdown:.1f}x slower than fastest"
+                else:
+                    desc = f"(slowest) - ~{slowdown:.1f}x slower than fastest"
 
                 rankings.append((method, avg_time, desc))
 
@@ -1271,7 +1278,7 @@ class CriterionParser:
             return results
 
         # Look for benchmark results in *d directories (group names can change)
-        for dim_dir in sorted(p for p in criterion_dir.iterdir() if p.is_dir() and p.name.endswith("d")):
+        for dim_dir in sorted(p for p in criterion_dir.iterdir() if p.is_dir() and re.search(r"\d+[dD]$", p.name)):
             dim = CriterionParser._extract_dimension_from_dir(dim_dir)
             if not dim:
                 continue
@@ -1979,10 +1986,9 @@ class BenchmarkRegressionHelper:
             diff_range = f"{baseline_commit}..HEAD"
             result = run_git_command(["diff", "--name-only", diff_range], cwd=root, timeout=60)
 
-            relevant_patterns = [r"^src/", r"^benches/", r"^Cargo\.toml$", r"^Cargo\.lock$"]
+            patterns = [re.compile(p) for p in (r"^src/", r"^benches/", r"^Cargo\.toml$", r"^Cargo\.lock$")]
             changed_files = result.stdout.strip().split("\n") if result.stdout.strip() else []
-
-            has_relevant_changes = any(re.match(pattern, file) for file in changed_files for pattern in relevant_patterns)
+            has_relevant_changes = any(p.match(file) for file in changed_files for p in patterns)
 
             # Return result based on whether changes were detected
             # Future improvement: Consider skipping when HEAD is a merge commit of the same baseline

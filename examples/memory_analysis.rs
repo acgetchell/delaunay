@@ -37,15 +37,21 @@ macro_rules! generate_memory_analysis {
 
             // Measure triangulation construction
             let start = Instant::now();
-            let (tds, tri_info) = measure_with_result(|| {
+            let (tds_res, tri_info) = measure_with_result(|| {
                 generate_random_triangulation::<f64, (), (), $dim>(
                     n_points,
                     (-50.0, 50.0),
                     None,
                     Some(seed),
                 )
-                .expect("failed to build triangulation")
             });
+            let tds = match tds_res {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("✗ Failed to build triangulation: {e}");
+                    return;
+                }
+            };
             let construction_time = start.elapsed();
 
             let num_vertices = tds.number_of_vertices();
@@ -53,10 +59,16 @@ macro_rules! generate_memory_analysis {
 
             // Measure convex hull extraction
             let start = Instant::now();
-            let (hull, hull_info) = measure_with_result(|| {
+            let (hull_res, hull_info) = measure_with_result(|| {
                 ConvexHull::from_triangulation(&tds)
-                    .expect("failed to construct convex hull from triangulation")
             });
+            let hull = match hull_res {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("✗ Failed to construct convex hull from triangulation: {e}");
+                    return;
+                }
+            };
             let hull_time = start.elapsed();
 
             let hull_facets = hull.facet_count();
@@ -75,14 +87,16 @@ macro_rules! generate_memory_analysis {
                     let hull_bytes = hull_info.bytes_total as f64;
                     let tri_kb = tri_bytes / 1024.0;
                     let hull_kb = hull_bytes / 1024.0;
+                    let tri_mib = tri_kb / 1024.0;
+                    let hull_mib = hull_kb / 1024.0;
                     if tri_info.bytes_total > 0 && num_vertices > 0 {
                         let bytes_per_vertex = tri_bytes / num_vertices as f64;
                         let hull_ratio = (hull_bytes / tri_bytes) * 100.0;
-                        println!("    Triangulation memory: {tri_kb:.1} KB ({bytes_per_vertex:.0} bytes/vertex)");
-                        println!("    Hull memory: {hull_kb:.1} KB ({hull_ratio:.1}% of triangulation)");
+                        println!("    Triangulation memory: {tri_kb:.1} KiB ({tri_mib:.2} MiB, {bytes_per_vertex:.0} bytes/vertex)");
+                        println!("    Hull memory: {hull_kb:.1} KiB ({hull_mib:.2} MiB, {hull_ratio:.1}% of triangulation)");
                     } else {
-                        println!("    Triangulation memory: {tri_kb:.1} KB");
-                        println!("    Hull memory: {hull_kb:.1} KB");
+                        println!("    Triangulation memory: {tri_kb:.1} KiB ({tri_mib:.2} MiB)");
+                        println!("    Hull memory: {hull_kb:.1} KiB ({hull_mib:.2} MiB)");
                     }
                 }
             }

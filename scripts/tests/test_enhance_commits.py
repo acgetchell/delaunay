@@ -25,6 +25,12 @@ from enhance_commits import (
 )
 
 
+@pytest.fixture
+def regex_patterns():
+    """Fixture to provide regex patterns for categorization tests."""
+    return _get_regex_patterns()
+
+
 class TestRegexPatterns:
     """Test cases for regex pattern functionality."""
 
@@ -180,111 +186,130 @@ class TestTitleExtraction:
         assert _extract_title_text("- ") == ""
         assert _extract_title_text("no match pattern") == ""
 
+    @pytest.mark.parametrize(
+        ("case", "expected"),
+        [
+            ("- Simple commit (#456)", "simple commit"),
+            ("- Another fix [`def5678`](https://example.com/commit/def5678)", "another fix"),
+            ("- Fix bug in parser", "fix bug in parser"),  # No PR number or commit hash
+        ],
+    )
+    def test_extract_title_edge_cases(self, case, expected):
+        """Test title extraction edge cases that use fallback regex."""
+        title = _extract_title_text(case)
+        assert title == expected
+
 
 class TestCategorization:
     """Test cases for entry categorization logic."""
 
-    def test_categorize_added_entries(self):
-        """Test categorization of 'Added' entries."""
-        patterns = _get_regex_patterns()
-
-        test_cases = [
+    @pytest.mark.parametrize(
+        "title",
+        [
             "add new benchmarking system",
             "implement delaunay triangulation",
             "create performance metrics",
             "enable multithreading support",
-        ]
+        ],
+    )
+    def test_categorize_added_entries(self, title, regex_patterns):
+        """Test categorization of 'Added' entries."""
+        result = _categorize_entry(title, regex_patterns)
+        assert result == "added"
 
-        for title in test_cases:
-            result = _categorize_entry(title, patterns)
-            assert result == "added", f"'{title}' should be categorized as 'added'"
-
-    def test_categorize_fixed_entries(self):
-        """Test categorization of 'Fixed' entries."""
-        patterns = _get_regex_patterns()
-
-        test_cases = [
+    @pytest.mark.parametrize(
+        "title",
+        [
             "fix compilation error on windows",
             "resolve memory leak in allocator",
             "patch security vulnerability in parser",
             "correct numerical precision issues",
-        ]
+        ],
+    )
+    def test_categorize_fixed_entries(self, title, regex_patterns):
+        """Test categorization of 'Fixed' entries."""
+        result = _categorize_entry(title, regex_patterns)
+        assert result == "fixed"
 
-        for title in test_cases:
-            result = _categorize_entry(title, patterns)
-            assert result == "fixed", f"'{title}' should be categorized as 'fixed'"
-
-    def test_categorize_changed_entries(self):
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "improve performance by 15%",
+            "update rust version to 1.70",
+            "refactor core algorithms",
+            "optimize memory usage",
+        ],
+    )
+    def test_categorize_changed_entries(self, title, regex_patterns):
         """Test categorization of 'Changed' entries."""
-        patterns = _get_regex_patterns()
+        result = _categorize_entry(title, regex_patterns)
+        assert result == "changed"
 
-        test_cases = ["improve performance by 15%", "update rust version to 1.70", "refactor core algorithms", "optimize memory usage"]
-
-        for title in test_cases:
-            result = _categorize_entry(title, patterns)
-            assert result == "changed", f"'{title}' should be categorized as 'changed'"
-
-    def test_categorize_default_fallback(self):
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "misc updates to documentation",
+            "various tweaks and adjustments",
+            "general maintenance",
+        ],
+    )
+    def test_categorize_default_fallback(self, title, regex_patterns):
         """Test that uncategorized entries fall back to 'changed'."""
-        patterns = _get_regex_patterns()
+        result = _categorize_entry(title, regex_patterns)
+        assert result == "changed"
 
-        # Ambiguous entries that don't match specific patterns
-        test_cases = ["misc updates to documentation", "various tweaks and adjustments", "general maintenance"]
-
-        for title in test_cases:
-            result = _categorize_entry(title, patterns)
-            assert result == "changed", f"'{title}' should default to 'changed'"
-
-    def test_categorize_priority_order(self):
+    def test_categorize_priority_order(self, regex_patterns):
         """Test that categorization follows priority order (added > removed > fixed > changed)."""
-        patterns = _get_regex_patterns()
-
         # Entry that could match multiple categories - should pick highest priority
         title = "add fix for memory leak"  # Could be 'added' or 'fixed'
-        result = _categorize_entry(title, patterns)
+        result = _categorize_entry(title, regex_patterns)
         assert result == "added", "Should prioritize 'added' over 'fixed'"
 
 
 class TestSectionHandling:
     """Test cases for section header processing."""
 
-    def test_process_section_header_changes(self):
+    @pytest.mark.parametrize(
+        "header",
+        ["### Changes", "### Changed"],
+    )
+    def test_process_section_header_changes(self, header):
         """Test processing Changes section header."""
-        test_cases = ["### Changes", "### Changed"]
+        result = _process_section_header(header)
+        assert result == ("changes", True, False, False)
 
-        for header in test_cases:
-            result = _process_section_header(header)
-            assert result == ("changes", True, False, False)
-
-    def test_process_section_header_fixed(self):
+    @pytest.mark.parametrize(
+        "header",
+        ["### Fixed", "### Fixed Issues"],
+    )
+    def test_process_section_header_fixed(self, header):
         """Test processing Fixed section header."""
-        test_cases = ["### Fixed", "### Fixed Issues"]
+        result = _process_section_header(header)
+        assert result == ("fixed", False, True, False)
 
-        for header in test_cases:
-            result = _process_section_header(header)
-            assert result == ("fixed", False, True, False)
-
-    def test_process_section_header_other_categories(self):
+    @pytest.mark.parametrize(
+        ("header", "expected"),
+        [
+            ("### Added", ("added", True, False, False)),
+            ("### Removed", ("removed", True, False, False)),
+            ("### Deprecated", ("deprecated", True, False, False)),
+            ("### Security", ("security", True, False, False)),
+            ("### Merged Pull Requests", ("merged_prs", False, False, True)),
+        ],
+    )
+    def test_process_section_header_other_categories(self, header, expected):
         """Test processing other category headers."""
-        test_cases = {
-            "### Added": ("added", True, False, False),
-            "### Removed": ("removed", True, False, False),
-            "### Deprecated": ("deprecated", True, False, False),
-            "### Security": ("security", True, False, False),
-            "### Merged Pull Requests": ("merged_prs", False, False, True),
-        }
+        result = _process_section_header(header)
+        assert result == expected
 
-        for header, expected in test_cases.items():
-            result = _process_section_header(header)
-            assert result == expected, f"Header '{header}' should return {expected}"
-
-    def test_process_section_header_no_match(self):
+    @pytest.mark.parametrize(
+        "header",
+        ["## Release v1.0.0", "### Some Other Section", "Normal text line", ""],
+    )
+    def test_process_section_header_no_match(self, header):
         """Test processing non-section headers."""
-        test_cases = ["## Release v1.0.0", "### Some Other Section", "Normal text line", ""]
-
-        for header in test_cases:
-            result = _process_section_header(header)
-            assert result is None, f"'{header}' should not match any section pattern"
+        result = _process_section_header(header)
+        assert result is None
 
 
 class TestCommitEntryCollection:
@@ -632,16 +657,8 @@ class TestEdgeCases:
         title = _extract_title_text(entry)
         assert title == "fix: improve performance"
 
-        # Test edge cases that go through fallback regex
-        edge_cases = [
-            ("- Simple commit (#456)", "simple commit"),
-            ("- Another fix [`def5678`](https://example.com/commit/def5678)", "another fix"),
-            ("- Fix bug in parser", "fix bug in parser"),  # No PR number or commit hash
-        ]
-
-        for case, expected in edge_cases:
-            title = _extract_title_text(case)
-            assert title == expected, f"Expected '{expected}', got '{title}' for input '{case}'"
+        # Test edge cases that go through fallback regex - moved to parametrized test
+        # See test_extract_title_edge_cases for parametrized version
 
         # Verify the compiled regex is faster than recompiling each time
         # (This mainly tests that TITLE_FALLBACK_RE is available and compiled)
@@ -706,3 +723,115 @@ class TestEdgeCases:
         # Check that entries are still properly categorized
         # The "Update something" should be categorized as "Changed"
         assert "Update something" in output_text
+
+
+class TestImprovements:
+    """Test cases for the specific improvements made to the script."""
+
+    def test_indented_commit_bullet_regex(self):
+        """Test that COMMIT_BULLET_RE matches bullets with leading whitespace."""
+        from enhance_commits import COMMIT_BULLET_RE
+
+        # Test standard format (no indentation)
+        assert COMMIT_BULLET_RE.match("- **Fix: some issue**")
+
+        # Test with leading spaces
+        assert COMMIT_BULLET_RE.match("  - **Fix: some issue**")
+        assert COMMIT_BULLET_RE.match("    -   **Add: new feature**")
+
+        # Test with tabs
+        assert COMMIT_BULLET_RE.match("\t- **Change: update deps**")
+        assert COMMIT_BULLET_RE.match("\t\t-\t**Remove: old code**")
+
+        # Test mixed whitespace
+        assert COMMIT_BULLET_RE.match(" \t - \t**Security: patch CVE**")
+
+        # Test non-matching patterns
+        assert not COMMIT_BULLET_RE.match("* **Not a dash bullet**")
+        assert not COMMIT_BULLET_RE.match("- Not bold text")
+        assert not COMMIT_BULLET_RE.match("  * **Wrong bullet type**")
+
+    def test_optimized_first_line_extraction(self):
+        """Test that first line extraction doesn't build unnecessary lists."""
+        from enhance_commits import _extract_title_text
+
+        # Test with multiline entry - should only process first line
+        multiline_entry = "- **Fix: issue with parser**\n  Additional details\n  More info"
+        result = _extract_title_text(multiline_entry)
+        assert result == "fix: issue with parser"
+
+        # Test single line entry
+        single_line = "- **Add: new feature**"
+        result = _extract_title_text(single_line)
+        assert result == "add: new feature"
+
+        # Test empty entry
+        result = _extract_title_text("")
+        assert result == ""
+
+    def test_generalized_indentation_matching(self):
+        """Test that body content collection works with various indentation."""
+        from enhance_commits import _collect_commit_entry
+
+        # Test with 2+ spaces (minimum indentation)
+        lines = [
+            "- **Fix: memory leak**",
+            "  This fixes a critical issue",
+            "   with additional details",
+            "    and more info",
+            "next non-indented line",
+        ]
+        entry, next_index = _collect_commit_entry(lines, 0)
+        expected = "- **Fix: memory leak**\n  This fixes a critical issue\n   with additional details\n    and more info"
+        assert entry == expected
+        assert next_index == 4  # Should stop at the non-indented line
+
+        # Test with tabs and mixed whitespace
+        lines_tabs = ["- **Add: new feature**", "\t\tTab-indented content", " \t Mixed whitespace", "    Four spaces", "no indent"]
+        entry, next_index = _collect_commit_entry(lines_tabs, 0)
+        expected_tabs = "- **Add: new feature**\n\t\tTab-indented content\n \t Mixed whitespace\n    Four spaces"
+        assert entry == expected_tabs
+        assert next_index == 4
+
+        # Test that single space doesn't count as indentation
+        lines_single = ["- **Change: update**", " single space should not match", "normal line"]
+        entry, next_index = _collect_commit_entry(lines_single, 0)
+        assert entry == "- **Change: update**"  # Should not include single-space line
+        assert next_index == 1
+
+    def test_helpful_usage_message(self):
+        """Test that the script provides helpful usage message on bad args."""
+        import io
+        from contextlib import redirect_stderr
+        from unittest.mock import patch
+
+        from enhance_commits import main
+
+        # Test with no arguments
+        stderr_capture = io.StringIO()
+        with (
+            patch("sys.argv", ["enhance_commits.py"]),
+            redirect_stderr(stderr_capture),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+
+        assert exc_info.value.code == 1
+        stderr_output = stderr_capture.getvalue()
+        assert "Usage:" in stderr_output
+        assert "enhance_commits.py" in stderr_output
+        assert "<input_changelog>" in stderr_output
+        assert "<output_changelog>" in stderr_output
+
+        # Test with wrong number of arguments (single arg)
+        stderr_capture = io.StringIO()
+        with (
+            patch("sys.argv", ["enhance_commits.py", "single_arg"]),
+            redirect_stderr(stderr_capture),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+
+        assert exc_info.value.code == 1
+        stderr_output = stderr_capture.getvalue()
+        assert "Usage:" in stderr_output

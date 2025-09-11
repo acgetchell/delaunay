@@ -51,7 +51,7 @@ fn main() {
             triangulation
         }
         Err(e) => {
-            println!("✗ Failed to create triangulation: {e}");
+            eprintln!("✗ Failed to create triangulation: {e}");
             return;
         }
     };
@@ -60,14 +60,11 @@ fn main() {
     let vertex_count = tds.number_of_vertices();
     println!("Generated {vertex_count} vertices");
     println!("First few vertices:");
-    for (displayed, (_key, vertex)) in (&tds.vertices).into_iter().enumerate() {
-        if displayed >= 10 {
-            break;
-        }
+    for (i, (_key, vertex)) in tds.vertices.iter().take(10).enumerate() {
         let coords: [f64; 3] = vertex.into();
         println!(
             "  v{:2}: [{:8.3}, {:8.3}, {:8.3}]",
-            displayed, coords[0], coords[1], coords[2]
+            i, coords[0], coords[1], coords[2]
         );
     }
     if vertex_count > 10 {
@@ -116,6 +113,7 @@ fn analyze_triangulation(tds: &Tds<f64, (), (), 3>) {
         println!("\n  Cell Analysis:");
         let mut valid_cells = 0;
         let mut total_neighbors = 0;
+        let mut shown = 0;
 
         for (cell_key, cell) in tds.cells() {
             // Count valid cells
@@ -128,13 +126,14 @@ fn analyze_triangulation(tds: &Tds<f64, (), (), 3>) {
                 total_neighbors += neighbors.len();
             }
 
-            // Show details for first few cells
-            if valid_cells <= 3 {
+            // Show details for first few valid cells
+            if shown < 3 {
                 println!("    Cell {cell_key:?}:");
                 println!("      Vertices: {}", cell.vertices().len());
                 if let Some(neighbors) = &cell.neighbors {
                     println!("      Neighbors: {}", neighbors.len());
                 }
+                shown += 1;
             }
         }
 
@@ -282,9 +281,9 @@ fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
         })
         .collect();
 
-    let len_u32 = u32::try_from(boundary_times.len()).unwrap_or(1u32);
+    let len_u32_boundary = u32::try_from(boundary_times.len()).unwrap_or(1u32);
     let avg_boundary_time: std::time::Duration =
-        boundary_times.iter().sum::<std::time::Duration>() / len_u32;
+        boundary_times.iter().sum::<std::time::Duration>() / len_u32_boundary;
 
     println!("\n  Boundary Computation Performance (3 runs):");
     println!("    • Average time: {avg_boundary_time:?}");
@@ -294,7 +293,7 @@ fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
     let cell_size = std::mem::size_of::<Cell<f64, (), (), 3>>();
     let estimated_memory = (vertex_count * vertex_size) + (cell_count * cell_size);
 
-    println!("\n  Memory Usage Estimation:");
+    println!("\n  Memory Usage Estimation (stack only, excludes heap allocations):");
     println!("    • Vertex memory: ~{} bytes", vertex_count * vertex_size);
     println!("    • Cell memory:   ~{} bytes", cell_count * cell_size);
     let estimated_f64 = cast(estimated_memory).unwrap_or(0.0f64);
@@ -302,6 +301,7 @@ fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
         "    • Total memory:  ~{estimated_memory} bytes ({:.1} KB)",
         estimated_f64 / 1024.0
     );
+    println!("    Note: This excludes heap-owned data like neighbors and internal collections");
 
     // Performance per vertex/cell ratios
     if vertex_count > 0 && cell_count > 0 {

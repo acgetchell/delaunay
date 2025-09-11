@@ -17,7 +17,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 # Can be imported when needed: from changelog_utils import ChangelogUtils
 
 # Precompiled regex patterns for performance
-COMMIT_BULLET_RE = re.compile(r"^- \*\*")
+COMMIT_BULLET_RE = re.compile(r"^\s*-\s*\*\*")
 TITLE_FALLBACK_RE = re.compile(r"-\s+([^[(]+?)(?:\s+\(#\d+\))?\s*(?:\[`[a-f0-9]{7,40}`\].*)?$", re.IGNORECASE)
 
 
@@ -38,9 +38,8 @@ def _get_regex_patterns():
             r"\benables\b",
             r"\benabling\b",
             r"\benabled\b",
-            r"\bsupport\b",
-            r"\bsupports\b",
-            r"\badding support\b",
+            r"\badd(?:s|ed|ing)?\s+support\b",
+            r"\bintroduc(?:e|es|ed|ing)\s+support\b",
             r"\bimplement\b",
             r"\bimplements\b",
             r"\bimplementing\b",
@@ -71,6 +70,9 @@ def _get_regex_patterns():
             r"\beliminates\b",
             r"\beliminating\b",
             r"\beliminated\b",
+            r"\bremov(?:e|es|ed|ing)\s+support\b",
+            r"\bdrop(?:s|ped|ping)?\s+support\b",
+            r"\bdelet(?:e|es|ed|ing)\s+support\b",
         ],
         "fixed": [
             r"\bfix\b",
@@ -179,10 +181,7 @@ def _extract_title_text(entry):
         return title_match[1].lower().strip()
 
     # Fallback: parse from the first line
-    lines = entry.splitlines()
-    if not lines:
-        return ""
-    first = lines[0]
+    first = entry.split("\n", 1)[0]
     match = TITLE_FALLBACK_RE.match(first)
     return match.group(1).lower().strip() if match else ""
 
@@ -291,8 +290,8 @@ def _collect_commit_entry(lines, line_index):
     next_line_index = line_index + 1
     while next_line_index < len(lines) and (
         lines[next_line_index].strip() == ""  # Empty line
-        or lines[next_line_index].startswith("  ")
-    ):  # Indented body content
+        or re.match(r"^\s{2,}", lines[next_line_index])  # Indented body content
+    ):
         current_entry.append(lines[next_line_index].rstrip())
         next_line_index += 1
 
@@ -382,6 +381,7 @@ def _process_changelog_lines(lines):
 def main():
     """Main function to process changelog entries."""
     if len(sys.argv) != 3:
+        print(f"Usage: {Path(sys.argv[0]).name} <input_changelog> <output_changelog>", file=sys.stderr)
         sys.exit(1)
 
     input_file = sys.argv[1]

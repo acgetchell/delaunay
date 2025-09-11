@@ -33,20 +33,34 @@ from benchmark_utils import (
 )
 
 
+@pytest.fixture
+def sample_estimates_data():
+    """Fixture for common estimates.json test data."""
+    return {
+        "mean": {
+            "point_estimate": 110000.0,  # 110 microseconds in nanoseconds
+            "confidence_interval": {"lower_bound": 100000.0, "upper_bound": 120000.0},
+        },
+    }
+
+
+@pytest.fixture
+def sample_benchmark_data():
+    """Fixture for common BenchmarkData test objects."""
+    return {
+        "2d_1000": BenchmarkData(1000, "2D").with_timing(100.0, 110.0, 120.0, "µs"),
+        "2d_2000": BenchmarkData(2000, "2D").with_timing(190.0, 200.0, 210.0, "µs"),
+        "3d_1000": BenchmarkData(1000, "3D").with_timing(200.0, 220.0, 240.0, "µs"),
+    }
+
+
 class TestCriterionParser:
     """Test cases for CriterionParser class."""
 
-    def test_parse_estimates_json_valid_data(self):
+    def test_parse_estimates_json_valid_data(self, sample_estimates_data):
         """Test parsing valid estimates.json data."""
-        estimates_data = {
-            "mean": {
-                "point_estimate": 110000.0,  # 110 microseconds in nanoseconds
-                "confidence_interval": {"lower_bound": 100000.0, "upper_bound": 120000.0},
-            },
-        }
-
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(estimates_data, f)
+            json.dump(sample_estimates_data, f)
             f.flush()
             estimates_path = Path(f.name)
 
@@ -61,7 +75,7 @@ class TestCriterionParser:
             assert result.time_high == 120.0
             assert result.time_unit == "µs"
             assert result.throughput_mean is not None
-            assert abs(result.throughput_mean - 9090.909) < 0.001  # 1000 * 1000 / 110
+            assert result.throughput_mean == pytest.approx(9090.909, abs=0.001)  # 1000 * 1000 / 110
         finally:
             estimates_path.unlink()
 
@@ -257,7 +271,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         time_change, is_regression = comparator._write_time_comparison(output, current, baseline)
 
         # Change is (110 - 105) / 105 * 100 = 4.76%
-        assert abs(time_change - 4.76) < 0.01
+        assert time_change == pytest.approx(4.76, abs=0.01)
         assert not is_regression  # Less than 5% threshold
 
         result = output.getvalue()
@@ -340,7 +354,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert "SUMMARY" in result
         assert "Total benchmarks compared: 3" in result
         assert "Individual regressions (>5.0%): 1" in result  # Only the +20% one
-        assert "Average time change: -0.0%" in result
+        assert re.search(r"Average time change:\s*-?0\.0%", result)
         assert "✅ OVERALL OK" in result
 
     def test_write_performance_comparison_with_average_regression(self, comparator):
@@ -482,7 +496,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         time_change, is_regression = comparator._write_time_comparison(output, current, baseline)
 
         # 7% change should not be regression with 10% threshold
-        assert abs(time_change - 7.0) < 0.001  # Use tolerance for floating-point comparison
+        assert time_change == pytest.approx(7.0, abs=0.001)  # Use pytest.approx for floating-point comparison
         assert not is_regression
 
 
@@ -909,21 +923,21 @@ Time: [220.0, 250.0, 280.0] µs
         finally:
             Path(output_file).unlink(missing_ok=True)
 
-    def test_sanitize_artifact_name_edge_cases(self):
-        """Test artifact name sanitization with edge cases."""
-
-        # Test with unicode and various special characters
-        test_cases = [
+    @pytest.mark.parametrize(
+        ("input_tag", "expected_output"),
+        [
             ("v1.0.0-alpha.1", "performance-baseline-v1.0.0-alpha.1"),
             ("tag with spaces", "performance-baseline-tag_with_spaces"),
             ("v1.0.0+build.123", "performance-baseline-v1.0.0_build.123"),
-        ]
+        ],
+    )
+    def test_sanitize_artifact_name_edge_cases(self, input_tag, expected_output):
+        """Test artifact name sanitization with edge cases."""
+        result = WorkflowHelper.sanitize_artifact_name(input_tag)
+        assert result == expected_output
 
-        for input_tag, expected_output in test_cases:
-            result = WorkflowHelper.sanitize_artifact_name(input_tag)
-            assert result == expected_output
-
-        # Test special characters are properly replaced
+    def test_sanitize_artifact_name_special_characters(self):
+        """Test that special characters are properly replaced in artifact names."""
         special_chars_input = "@#$%^&*()[]{}|\\<>?"
         result = WorkflowHelper.sanitize_artifact_name(special_chars_input)
         assert re.fullmatch(r"performance-baseline-[A-Za-z0-9._-]+", result)
@@ -1114,22 +1128,22 @@ Hardware Information:
         assert should_skip
         assert reason == "same_commit"
 
-    @patch("benchmark_utils.subprocess.run")
-    def test_determine_benchmark_skip_baseline_not_found(self, mock_subprocess):
+    @patch("benchmark_utils.run_git_command")
+    def test_determine_benchmark_skip_baseline_not_found(self, mock_git):
         """Test skip determination when baseline commit not found in history."""
         # Simulate git cat-file failing
-        mock_subprocess.side_effect = subprocess.CalledProcessError(1, "git cat-file")
+        mock_git.side_effect = subprocess.CalledProcessError(1, "git")
 
         should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc123", "def456")
 
         assert not should_skip
         assert reason == "baseline_commit_not_found"
 
-    @patch("benchmark_utils.subprocess.run")
-    def test_determine_benchmark_skip_no_changes(self, mock_subprocess):
+    @patch("benchmark_utils.run_git_command")
+    def test_determine_benchmark_skip_no_changes(self, mock_git):
         """Test skip determination when no relevant changes found."""
         # Mock successful git commands
-        mock_subprocess.side_effect = [
+        mock_git.side_effect = [
             Mock(returncode=0),  # git cat-file succeeds
             Mock(returncode=0, stdout="docs/README.md\n.github/workflows/other.yml\n", stderr=""),  # git diff
         ]
@@ -1139,11 +1153,11 @@ Hardware Information:
         assert should_skip
         assert reason == "no_relevant_changes"
 
-    @patch("benchmark_utils.subprocess.run")
-    def test_determine_benchmark_skip_changes_detected(self, mock_subprocess):
+    @patch("benchmark_utils.run_git_command")
+    def test_determine_benchmark_skip_changes_detected(self, mock_git):
         """Test skip determination when relevant changes are detected."""
         # Mock successful git commands
-        mock_subprocess.side_effect = [
+        mock_git.side_effect = [
             Mock(returncode=0),  # git cat-file succeeds
             Mock(returncode=0, stdout="src/core/mod.rs\nbenches/performance.rs\n", stderr=""),  # git diff
         ]
@@ -1365,44 +1379,54 @@ class TestProjectRootHandling:
 class TestTimeoutHandling:
     """Test cases for benchmark timeout functionality."""
 
-    def test_baseline_generator_timeout_parameter_passed(self):
-        """Test that BaselineGenerator accepts and uses timeout parameter."""
-        from benchmark_utils import BaselineGenerator
-
+    @pytest.mark.parametrize(
+        ("component_class", "method_name", "setup_func"),
+        [
+            (
+                "BaselineGenerator",
+                "generate_baseline",
+                lambda _: None,  # No extra setup needed
+            ),
+            (
+                "PerformanceComparator",
+                "compare_with_baseline",
+                lambda temp_dir: (Path(temp_dir) / "baseline.txt").write_text("mock baseline"),
+            ),
+        ],
+    )
+    def test_timeout_parameter_passed(self, component_class, method_name, setup_func):
+        """Test that benchmark components accept and use timeout parameter."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
-            generator = BaselineGenerator(project_root)
+            setup_func(temp_dir)
+
+            # Import and instantiate the class dynamically
+            from benchmark_utils import BaselineGenerator, PerformanceComparator
+
+            if component_class == "BaselineGenerator":
+                component = BaselineGenerator(project_root)
+                method_args = ()
+            else:  # PerformanceComparator
+                component = PerformanceComparator(project_root)
+                method_args = (Path(temp_dir) / "baseline.txt",)
 
             # Test that the method signature accepts bench_timeout
             with patch("benchmark_utils.run_cargo_command") as mock_cargo:
                 mock_cargo.side_effect = subprocess.TimeoutExpired("cargo", 120)
 
-                success = generator.generate_baseline(bench_timeout=120)
+                method = getattr(component, method_name)
+                result = method(*method_args, bench_timeout=120)
 
-                assert not success
+                # BaselineGenerator returns bool, PerformanceComparator returns tuple
+                if component_class == "BaselineGenerator":
+                    assert result is False
+                else:
+                    success, regression = result
+                    assert not success
+                    assert not regression
+
                 # Verify timeout was passed to run_cargo_command calls
                 assert mock_cargo.call_count >= 1
-                assert any(call.kwargs.get("timeout") == 120 for call in mock_cargo.call_args_list)
-
-    def test_performance_comparator_timeout_parameter_passed(self):
-        """Test that PerformanceComparator accepts and uses timeout parameter."""
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            baseline_file = Path(temp_dir) / "baseline.txt"
-            baseline_file.write_text("mock baseline")
-
-            comparator = PerformanceComparator(project_root)
-
-            # Test that the method signature accepts bench_timeout
-            with patch("benchmark_utils.run_cargo_command") as mock_cargo:
-                mock_cargo.side_effect = subprocess.TimeoutExpired("cargo", 120)
-
-                success, regression = comparator.compare_with_baseline(baseline_file, bench_timeout=120)
-
-                assert not success
-                assert not regression
-                # Verify timeout was passed to run_cargo_command
                 assert any(call.kwargs.get("timeout") == 120 for call in mock_cargo.call_args_list)
 
     def test_timeout_error_handling_baseline_generator(self, capsys):

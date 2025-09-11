@@ -31,32 +31,24 @@ from subprocess_utils import (
 class TestGetSafeExecutable:
     """Test get_safe_executable function."""
 
-    def test_finds_existing_executable(self):
+    @pytest.mark.parametrize("command", ["echo", "git", "ls"])
+    def test_finds_existing_executables(self, command):
         """Test that it finds common executables."""
-        # Test with common unix command
-        result = get_safe_executable("echo")
+        result = get_safe_executable(command)
         assert isinstance(result, str)
         assert len(result) > 0
-        assert result.endswith("echo") or "echo" in result
+        assert command in result  # Command name should be in the path
 
-    def test_finds_git_executable(self):
-        """Test that it finds git (required for project)."""
-        git_path = get_safe_executable("git")
-        assert isinstance(git_path, str)
-        assert len(git_path) > 0
-        # Should be an absolute path
-        assert git_path.startswith("/")
+        # Git should be an absolute path (important for project)
+        if command == "git":
+            assert result.startswith("/")
 
-    def test_raises_on_nonexistent_executable(self):
+    @pytest.mark.parametrize("fake_command", ["definitely-nonexistent-command-xyz", "fake-command-for-testing", "nonexistent123"])
+    def test_raises_on_nonexistent_executables(self, fake_command):
         """Test that it raises ExecutableNotFoundError for nonexistent commands."""
-        with pytest.raises(ExecutableNotFoundError, match="not found in PATH"):
-            get_safe_executable("definitely-nonexistent-command-xyz")
-
-    def test_error_message_contains_command_name(self):
-        """Test that error message contains the command name."""
-        fake_command = "fake-command-for-testing"
-        with pytest.raises(ExecutableNotFoundError) as exc_info:
+        with pytest.raises(ExecutableNotFoundError, match="not found in PATH") as exc_info:
             get_safe_executable(fake_command)
+        # Error message should contain the command name
         assert fake_command in str(exc_info.value)
 
 
@@ -254,20 +246,18 @@ class TestSecurityFeatures:
         with pytest.raises(subprocess.CalledProcessError):
             run_safe_command("ls", ["/definitely-nonexistent-directory"])
 
-    def test_run_git_command_rejects_executable_override(self):
-        """Test that run_git_command raises ValueError when executable is overridden."""
+    @pytest.mark.parametrize(
+        ("function", "args", "kwargs"),
+        [
+            (run_git_command, (["status"],), {"executable": "/malicious/fake/git"}),
+            (run_cargo_command, (["--version"],), {"executable": "/malicious/fake/cargo"}),
+            (run_safe_command, ("echo", ["test"]), {"executable": "/malicious/fake/command"}),
+        ],
+    )
+    def test_rejects_executable_override(self, function, args, kwargs):
+        """Test that functions reject executable override for security."""
         with pytest.raises(ValueError, match="Overriding 'executable' is not allowed"):
-            run_git_command(["status"], executable="/malicious/fake/git")
-
-    def test_run_cargo_command_rejects_executable_override(self):
-        """Test that run_cargo_command raises ValueError when executable is overridden."""
-        with pytest.raises(ValueError, match="Overriding 'executable' is not allowed"):
-            run_cargo_command(["--version"], executable="/malicious/fake/cargo")
-
-    def test_run_safe_command_rejects_executable_override(self):
-        """Test that run_safe_command raises ValueError when executable is overridden."""
-        with pytest.raises(ValueError, match="Overriding 'executable' is not allowed"):
-            run_safe_command("echo", ["test"], executable="/malicious/fake/command")
+            function(*args, **kwargs)
 
     def test_run_git_command_with_input_rejects_executable_override(self):
         """Test that run_git_command_with_input raises ValueError when executable is overridden."""

@@ -5,6 +5,8 @@ Test suite for benchmark_models.py module.
 Tests data models, parsing functions, and formatting utilities for benchmark processing.
 """
 
+import pytest
+
 from benchmark_models import (
     BenchmarkData,
     CircumspherePerformanceData,
@@ -109,14 +111,40 @@ class TestCircumsphereTestCase:
         test_case = CircumsphereTestCase("test_basic_3d", "3D", methods)
 
         # Relative to winner (insphere_lifted)
-        assert test_case.get_relative_performance("insphere_lifted") == 1.0
-        assert test_case.get_relative_performance("insphere") == 1.25  # 1000/800
-        assert test_case.get_relative_performance("insphere_distance") == 1.5  # 1200/800
+        assert test_case.get_relative_performance("insphere_lifted") == pytest.approx(1.0)
+        assert test_case.get_relative_performance("insphere") == pytest.approx(1.25)  # 1000/800
+        assert test_case.get_relative_performance("insphere_distance") == pytest.approx(1.5)  # 1200/800
 
     def test_get_winner_empty_methods(self):
         """Test get_winner with empty methods dict."""
         test_case = CircumsphereTestCase("test_empty", "3D", {})
         assert test_case.get_winner() is None
+
+    def test_get_relative_performance_nonexistent_method(self):
+        """Test get_relative_performance with non-existent method returns 0.0."""
+        methods = {
+            "insphere": CircumspherePerformanceData("insphere", 1000.0),
+        }
+        test_case = CircumsphereTestCase("test_basic_3d", "3D", methods)
+
+        # Should return 0.0 for non-existent method
+        assert test_case.get_relative_performance("nonexistent_method") == pytest.approx(0.0)
+
+    def test_version_comparison_data_division_by_zero_edge_case(self):
+        """Test VersionComparisonData handles edge case gracefully."""
+        # This doesn't raise an exception but demonstrates pytest usage for edge case testing
+        comparison = VersionComparisonData(
+            test_case="Edge Case",
+            method="insphere",
+            old_version="v0.3.0",
+            new_version="v0.3.1",
+            old_value=0.0,  # Zero old value
+            new_value=100.0,
+            unit="ns",
+        )
+
+        # Should handle division by zero gracefully (returns 0.0)
+        assert comparison.improvement_pct == pytest.approx(0.0)
 
 
 class TestVersionComparisonData:
@@ -135,7 +163,7 @@ class TestVersionComparisonData:
         )
 
         expected_improvement = ((808.0 - 805.0) / 808.0) * 100
-        assert abs(comparison.improvement_pct - expected_improvement) < 0.001
+        assert comparison.improvement_pct == pytest.approx(expected_improvement, abs=0.001)
 
     def test_zero_old_value(self):
         """Test improvement calculation with zero old value."""
@@ -260,6 +288,10 @@ class TestFormattingFunctions:
 
     def test_format_time_value(self):
         """Test formatting time values with appropriate precision."""
+        # Test zero and negative values (should return N/A)
+        assert format_time_value(0.0, "µs") == "N/A"
+        assert format_time_value(-1.0, "µs") == "N/A"
+
         # Test different value ranges
         assert format_time_value(0.5, "µs") == "0.500 µs"
         assert format_time_value(110.0, "µs") == "110.00 µs"
@@ -371,3 +403,52 @@ class TestFormattingFunctions:
 
         # Numeric dimensions should come first (1d, 2D, 3D), then non-numeric (custom_format)
         assert pos_1d < pos_2d < pos_3d < pos_custom
+
+    def test_format_benchmark_tables_scaling_baseline_with_zero_first_entry(self):
+        """Test scaling baseline calculation when first entry has zero/empty time.
+
+        This tests the fix for the issue where using 1.0 as fallback when the
+        first entry has zero/empty time inflates scaling calculations.
+        """
+        benchmarks = [
+            BenchmarkData(1000, "2D").with_timing(0.0, 0.0, 0.0, "µs"),  # Zero time (invalid)
+            BenchmarkData(2000, "2D").with_timing(100.0, 110.0, 120.0, "µs"),  # Valid baseline
+            BenchmarkData(5000, "2D").with_timing(450.0, 500.0, 550.0, "µs"),  # Should scale against 110.0
+        ]
+
+        lines = format_benchmark_tables(benchmarks)
+        markdown_content = "\n".join(lines)
+
+        # First entry should show N/A for time and scaling (because it has zero time)
+        assert "| 1000 | N/A | N/A | N/A |" in markdown_content
+
+        # Second entry should be baseline (1.0x) since it's first valid entry
+        assert "| 2000 | 110.00 µs | N/A | 1.0x |" in markdown_content
+
+        # Third entry should scale against 110.0 (not against 1.0 fallback)
+        # Scaling: 500/110 ≈ 4.5
+        assert "4.5x" in markdown_content
+        # Should not contain inflated scaling that would result from 1.0 fallback
+        assert "500.0x" not in markdown_content  # This would be 500/1.0 if bug existed
+
+    def test_format_benchmark_tables_scaling_baseline_all_zero_times(self):
+        """Test scaling baseline calculation when all entries have zero/empty time."""
+        benchmarks = [
+            BenchmarkData(1000, "2D").with_timing(0.0, 0.0, 0.0, "µs"),
+            BenchmarkData(2000, "2D").with_timing(0.0, 0.0, 0.0, "µs"),
+            BenchmarkData(5000, "2D").with_timing(0.0, 0.0, 0.0, "µs"),
+        ]
+
+        lines = format_benchmark_tables(benchmarks)
+        markdown_content = "\n".join(lines)
+
+        # All entries should show N/A for time and scaling since no valid baseline exists
+        assert "| 1000 | N/A | N/A | N/A |" in markdown_content
+        assert "| 2000 | N/A | N/A | N/A |" in markdown_content
+        assert "| 5000 | N/A | N/A | N/A |" in markdown_content
+
+        # Should not contain any numeric scaling values
+        import re
+
+        numeric_scaling_pattern = r"\| [^|]+ \| [^|]+ \| [^|]+ \| [0-9.]+x \|"
+        assert not re.search(numeric_scaling_pattern, markdown_content)

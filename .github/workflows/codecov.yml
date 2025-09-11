@@ -50,20 +50,54 @@ jobs:
 
       - name: Run coverage
         run: |
-          # All configuration is in tarpaulin.toml [tool.tarpaulin] section
-          # - XML output: out = ["Xml"]
-          # - Output directory: output-dir = "coverage/"
-          # - Exclusions: exclude-files = ["benches/*", "examples/*"]
-          # - Test threads: test-threads = 1
-          cargo tarpaulin --config tarpaulin.toml
+          # Create coverage directory with proper permissions
+          mkdir -p coverage
+          chmod 755 coverage
           
-          # Sanity check: verify coverage report was generated
-          ls -la coverage || true
-          test -f coverage/cobertura.xml || {
-            echo "::error::coverage/cobertura.xml not found. Verify tarpaulin.toml has out = [\"Xml\"] and output-dir = \"coverage/\"."
-            find coverage -maxdepth 2 -type f -print 2>/dev/null || true
+          echo "::debug::Current directory: $(pwd)"
+          echo "::debug::Coverage directory permissions: $(ls -ld coverage)"
+          
+          # Tarpaulin configuration (explicit arguments):
+          # - XML output: --out Xml
+          # - Output directory: --output-dir coverage
+          # - Exclusions: --exclude-files "benches/*" "examples/*"
+          # - All features: --all-features
+          # - Workspace: --workspace
+          # - Timeout: --timeout 120
+          # - Verbose: --verbose
+          # - Implicit test threads: --implicit-test-threads
+          echo "::group::Running tarpaulin"
+          # Use explicit arguments for reliability (config file approach has issues)
+          cargo tarpaulin \
+            --out Xml \
+            --output-dir coverage \
+            --exclude-files "benches/*" "examples/*" \
+            --all-features \
+            --workspace \
+            --timeout 120 \
+            --verbose \
+            --implicit-test-threads
+          echo "::endgroup::"
+          
+          # Detailed sanity check: verify coverage report was generated
+          echo "::group::Coverage verification"
+          echo "Directory listing:"
+          ls -la coverage/ || echo "Coverage directory not found"
+          
+          echo "\nSearching for XML files:"
+          find . -name "*.xml" -type f -ls 2>/dev/null || echo "No XML files found"
+          
+          echo "\nSearching for cobertura files:"
+          find . -name "*cobertura*" -type f -ls 2>/dev/null || echo "No cobertura files found"
+          
+          if [ ! -f coverage/cobertura.xml ]; then
+            echo "::error::coverage/cobertura.xml not found. Tarpaulin failed to generate XML output."
+            echo "::error::Check tarpaulin logs above for errors."
             exit 2
-          }
+          else
+            echo "::notice::Coverage report generated successfully: $(wc -l < coverage/cobertura.xml) lines"
+          fi
+          echo "::endgroup::"
         env:
           RUST_BACKTRACE: 1
 

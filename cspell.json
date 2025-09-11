@@ -11,6 +11,7 @@
         "**/build/**",
         "**/coverage/**",
         "**/venv/**",
+        "**/.venv/**",
         "**/.mypy_cache/**",
         "**/.ruff_cache/**"
     ],
@@ -238,7 +239,11 @@
         "xlarge",
         "zenodo",
         "Zenodo",
-        "zerocopy"
+        "zerocopy",
+        "bdelet",
+        "bintroduc",
+        "bremov",
+        "endgroup"
     ],
     "ignoreWords": [],
     "import": []

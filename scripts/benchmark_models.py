@@ -48,7 +48,7 @@ class BenchmarkData:
             f"Time: [{self.time_low}, {self.time_mean}, {self.time_high}] {self.time_unit}",
         ]
 
-        if self.throughput_mean is not None:
+        if self.throughput_low is not None and self.throughput_mean is not None and self.throughput_high is not None and self.throughput_unit:
             lines.append(f"Throughput: [{self.throughput_low}, {self.throughput_mean}, {self.throughput_high}] {self.throughput_unit}")
 
         lines.append("")
@@ -140,6 +140,10 @@ def parse_benchmark_header(line: str) -> BenchmarkData | None:
         dimension = match.group(2)
         return BenchmarkData(points=points, dimension=dimension)
     return None
+
+
+# NOTE: For hot-path parsing of large baseline files in CI, consider precompiling
+# the regex patterns below using re.compile() for better performance.
 
 
 def parse_time_data(benchmark: BenchmarkData, line: str) -> bool:
@@ -257,10 +261,14 @@ def format_time_value(value: float, unit: str) -> str:
         unit: Current unit of the value
 
     Returns:
-        Formatted time string with appropriate unit
+        Formatted time string with appropriate unit, or "N/A" for invalid values
     """
+    # Return N/A for zero or negative values (invalid measurements)
+    if value <= 0:
+        return "N/A"
+
     # Normalize microsecond aliases to standard µs
-    unit = {"us": "µs", "μs": "µs"}.get(unit, unit)
+    unit = {"us": "µs", "μs": "µs"}.get((unit or "").strip(), (unit or "").strip())
     # Convert µs to ms if >= 1000 µs
     if unit == "µs" and value >= 1000:
         return f"{value / 1000:.3f} ms"
@@ -334,8 +342,8 @@ def format_benchmark_tables(benchmarks: list[BenchmarkData]) -> list[str]:
         )
 
         # Calculate scaling relative to smallest benchmark
-        first_bench = dim_benchmarks[0] if dim_benchmarks else None
-        baseline_time = first_bench.time_mean if first_bench and first_bench.time_mean > 0 else 1.0
+        first_nonzero = next((b for b in dim_benchmarks if b.time_mean and b.time_mean > 0), None)
+        baseline_time = first_nonzero.time_mean if first_nonzero else None
 
         for bench in dim_benchmarks:
             # Format time and throughput
@@ -347,7 +355,7 @@ def format_benchmark_tables(benchmarks: list[BenchmarkData]) -> list[str]:
             )
 
             # Calculate scaling factor
-            if bench.time_mean > 0 and baseline_time > 0:
+            if bench.time_mean > 0 and baseline_time and baseline_time > 0:
                 scaling = bench.time_mean / baseline_time
                 scaling_str = f"{scaling:.1f}x"
             else:

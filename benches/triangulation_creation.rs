@@ -29,9 +29,8 @@
 //! - 4D: O(n²) worst case, slower
 //! - 5D: O(n²) worst case, much slower
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::geometry::util::generate_random_triangulation;
-use std::hint::black_box;
 
 // =============================================================================
 // TRIANGULATION BENCHMARKS
@@ -41,7 +40,7 @@ use std::hint::black_box;
 ///
 /// This function:
 /// - Uses the `generate_random_triangulation` utility for consistent setup
-/// - Measures end-to-end triangulation creation performance
+/// - Measures triangulation creation time excluding Drop overhead via `iter_batched`
 /// - Configures appropriate sample sizes based on dimension
 ///
 /// # Parameters
@@ -52,7 +51,7 @@ use std::hint::black_box;
 /// # Benchmark Structure
 /// 1. Uses seeded random generation for reproducible results
 /// 2. Creates 1,000 points in (-100.0, 100.0)ᴰ coordinate space
-/// 3. Times complete triangulation creation with `black_box` optimization prevention
+/// 3. Times triangulation creation excluding Drop via `iter_batched`
 /// 4. Reports time and throughput metrics
 fn bench_triangulation_creation_generic<const D: usize>(c: &mut Criterion, benchmark_name: &str)
 where
@@ -65,17 +64,19 @@ where
     }
     group.throughput(Throughput::Elements(1_000u64));
     group.bench_function("triangulation", |b| {
-        b.iter(|| {
-            black_box(
+        b.iter_batched(
+            || (),
+            |()| {
                 generate_random_triangulation::<f64, (), (), D>(
-                    1_000,                   // Number of points
-                    (-100.0, 100.0),         // Coordinate bounds
-                    None,                    // No vertex data
-                    Some(10_864 + D as u64), // Seeded for reproducible results
+                    1_000,
+                    (-100.0, 100.0),
+                    None,
+                    Some(10_864 + D as u64),
                 )
-                .expect("Failed to generate triangulation"),
-            );
-        });
+                .expect("Failed to generate triangulation")
+            },
+            BatchSize::SmallInput,
+        );
     });
     group.finish();
 }
