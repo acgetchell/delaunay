@@ -533,6 +533,56 @@ class TestChangelogProcessing:
         assert "[Unreleased]" in content
         assert "[1.0.0]" in content
 
+    def test_process_changelog_lines_proper_mpr_ordering(self):
+        """Test that categorized entries appear before Merged Pull Requests section."""
+        input_lines = [
+            "## [1.0.0] - 2024-01-15",
+            "",
+            "### Changes",
+            "",
+            "- **Add new feature** (#123)",
+            "- **Fix critical bug** (#456)",
+            "- **Update dependencies** (#789)",
+            "",
+            "### Merged Pull Requests",
+            "",
+            "- Add feature by @user (#123)",
+            "  This PR adds a new feature",
+            "  with detailed implementation.",
+            "- Fix bug by @contributor (#456)",
+            "  Critical bug fix for production.",
+        ]
+
+        result = _process_changelog_lines(input_lines)
+        content = "\n".join(result)
+
+        # Verify that categorized sections appear in the output
+        assert "### Added" in content
+        assert "### Fixed" in content
+        assert "### Changed" in content
+        assert "### Merged Pull Requests" in content
+
+        # Verify proper ordering: categorized sections should come before MPRs
+        added_pos = content.find("### Added")
+        fixed_pos = content.find("### Fixed")
+        changed_pos = content.find("### Changed")
+        mpr_pos = content.find("### Merged Pull Requests")
+
+        assert added_pos < mpr_pos, "Added section should come before Merged Pull Requests"
+        assert fixed_pos < mpr_pos, "Fixed section should come before Merged Pull Requests"
+        assert changed_pos < mpr_pos, "Changed section should come before Merged Pull Requests"
+
+        # Verify entries are correctly categorized
+        assert "Add new feature" in content
+        assert "Fix critical bug" in content
+        assert "Update dependencies" in content
+
+        # Verify MPR section is preserved but descriptions are filtered out
+        assert "Add feature by @user" in content
+        assert "Fix bug by @contributor" in content
+        assert "This PR adds a new feature" not in content  # Should be filtered out
+        assert "Critical bug fix for production." not in content  # Should be filtered out
+
 
 class TestMainFunction:
     """Test cases for main function and CLI interface."""
@@ -732,24 +782,39 @@ class TestImprovements:
         """Test that COMMIT_BULLET_RE matches bullets with leading whitespace."""
         from enhance_commits import COMMIT_BULLET_RE
 
-        # Test standard format (no indentation)
+        # Test standard format with dash bullets (no indentation)
         assert COMMIT_BULLET_RE.match("- **Fix: some issue**")
 
-        # Test with leading spaces
+        # Test standard format with asterisk bullets (no indentation)
+        assert COMMIT_BULLET_RE.match("* **Fix: some issue**")
+
+        # Test with leading spaces - dash bullets
         assert COMMIT_BULLET_RE.match("  - **Fix: some issue**")
         assert COMMIT_BULLET_RE.match("    -   **Add: new feature**")
 
-        # Test with tabs
+        # Test with leading spaces - asterisk bullets
+        assert COMMIT_BULLET_RE.match("  * **Fix: some issue**")
+        assert COMMIT_BULLET_RE.match("    *   **Add: new feature**")
+
+        # Test with tabs - dash bullets
         assert COMMIT_BULLET_RE.match("\t- **Change: update deps**")
         assert COMMIT_BULLET_RE.match("\t\t-\t**Remove: old code**")
 
-        # Test mixed whitespace
-        assert COMMIT_BULLET_RE.match(" \t - \t**Security: patch CVE**")
+        # Test with tabs - asterisk bullets
+        assert COMMIT_BULLET_RE.match("\t* **Change: update deps**")
+        assert COMMIT_BULLET_RE.match("\t\t*\t**Remove: old code**")
 
-        # Test non-matching patterns
-        assert not COMMIT_BULLET_RE.match("* **Not a dash bullet**")
+        # Test mixed whitespace - both bullet types
+        assert COMMIT_BULLET_RE.match(" \t - \t**Security: patch CVE**")
+        assert COMMIT_BULLET_RE.match(" \t * \t**Security: patch CVE**")
+
+        # Test non-matching patterns (no bold formatting)
         assert not COMMIT_BULLET_RE.match("- Not bold text")
-        assert not COMMIT_BULLET_RE.match("  * **Wrong bullet type**")
+        assert not COMMIT_BULLET_RE.match("* Not bold text")
+
+        # Test non-bullet characters
+        assert not COMMIT_BULLET_RE.match("+ **Not supported bullet**")
+        assert not COMMIT_BULLET_RE.match("1. **Not a bullet list**")
 
     def test_optimized_first_line_extraction(self):
         """Test that first line extraction doesn't build unnecessary lists."""
@@ -798,6 +863,95 @@ class TestImprovements:
         entry, next_index = _collect_commit_entry(lines_single, 0)
         assert entry == "- **Change: update**"  # Should not include single-space line
         assert next_index == 1
+
+    def test_title_fallback_regex_handles_indentation(self):
+        """Test that TITLE_FALLBACK_RE regex handles indented bullets robustly."""
+        from enhance_commits import TITLE_FALLBACK_RE, _extract_title_text
+
+        # Test cases without indentation (should still work)
+        test_cases_no_indent = [
+            "- Fix performance regression",
+            "- Fix performance regression (#123)",
+            "- Fix performance regression [`abc1234`]",
+            "- Fix performance regression (#123) [`abc1234`](https://example.com)",
+        ]
+
+        for case in test_cases_no_indent:
+            match = TITLE_FALLBACK_RE.match(case)
+            assert match is not None, f"Should match non-indented case: {case}"
+            assert match.group(1) == "Fix performance regression", f"Should extract correct title from: {case}"
+
+        # Test cases with indentation (the improvement)
+        test_cases_indented = [
+            "  - Fix performance regression",  # 2 spaces
+            "    - Fix performance regression",  # 4 spaces
+            "\t- Fix performance regression",  # Tab
+            " \t - Fix performance regression",  # Mixed whitespace
+            "  - Fix performance regression (#123)",
+            "    - Fix performance regression [`abc1234`]",
+            "\t- Fix performance regression (#123) [`abc1234`](https://example.com)",
+        ]
+
+        for case in test_cases_indented:
+            match = TITLE_FALLBACK_RE.match(case)
+            assert match is not None, f"Should match indented case: {case!r}"
+            assert match.group(1) == "Fix performance regression", f"Should extract correct title from: {case!r}"
+
+        # Test through the extraction function for integration
+        indented_entries = [
+            "  - Fix memory leak (#456) [`def5678`](link)",
+            "\t- Update dependencies and improve performance (#789)",
+            "    - Remove deprecated functionality",
+        ]
+
+        expected_titles = [
+            "fix memory leak",
+            "update dependencies and improve performance",
+            "remove deprecated functionality",
+        ]
+
+        for entry, expected in zip(indented_entries, expected_titles, strict=False):
+            result = _extract_title_text(entry)
+            assert result == expected, f"Should extract '{expected}' from '{entry}', got '{result}'"
+
+        # Test cases that should NOT match (validation)
+        non_matching_cases = [
+            "not a bullet point",
+            "+ Different bullet type",
+            "1. Numbered list",
+            "- ",  # Empty title
+            "",  # Empty string
+        ]
+
+        for case in non_matching_cases:
+            match = TITLE_FALLBACK_RE.match(case)
+            if case in ["", "- "]:
+                # These cases are handled by the extraction function's empty checks
+                result = _extract_title_text(case)
+                assert result == "", f"Empty case should return empty string: {case!r}"
+            else:
+                assert match is None, f"Should not match non-bullet case: {case!r}"
+
+    def test_match_group_compatibility(self):
+        """Test that title extraction uses Match.group(1) for Python compatibility."""
+        from enhance_commits import _extract_title_text
+
+        # Test entry with markdown bold formatting
+        test_entry = "- **Fix memory leak in allocator** (#456) [`def5678`](link)"
+
+        # This should work correctly with Match.group(1) approach
+        result = _extract_title_text(test_entry)
+        assert result == "fix memory leak in allocator"
+
+        # Test with complex formatting
+        complex_entry = "- **Add comprehensive performance monitoring system** (#999) [`abc1234`](https://example.com)\n  Additional details here"
+        result = _extract_title_text(complex_entry)
+        assert result == "add comprehensive performance monitoring system"
+
+        # Test edge case with empty bold section (should fall back to regex)
+        edge_case = "- Fix simple bug (#123)"
+        result = _extract_title_text(edge_case)
+        assert result == "fix simple bug"
 
     def test_helpful_usage_message(self):
         """Test that the script provides helpful usage message on bad args."""

@@ -243,7 +243,8 @@
         "bdelet",
         "bintroduc",
         "bremov",
-        "endgroup"
+        "endgroup",
+        "notgithub"
     ],
     "ignoreWords": [],
     "import": []

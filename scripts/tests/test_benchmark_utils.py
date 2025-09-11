@@ -1116,14 +1116,14 @@ Hardware Information:
 
     def test_determine_benchmark_skip_unknown_baseline(self):
         """Test skip determination with unknown baseline commit."""
-        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("unknown", "def456")
+        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("unknown", "def4567")
 
         assert not should_skip
         assert reason == "unknown_baseline"
 
     def test_determine_benchmark_skip_same_commit(self):
         """Test skip determination with same commit."""
-        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc123", "abc123")
+        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc1234", "abc1234")
 
         assert should_skip
         assert reason == "same_commit"
@@ -1134,7 +1134,7 @@ Hardware Information:
         # Simulate git cat-file failing
         mock_git.side_effect = subprocess.CalledProcessError(1, "git")
 
-        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc123", "def456")
+        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc1234", "def4567")
 
         assert not should_skip
         assert reason == "baseline_commit_not_found"
@@ -1148,7 +1148,7 @@ Hardware Information:
             Mock(returncode=0, stdout="docs/README.md\n.github/workflows/other.yml\n", stderr=""),  # git diff
         ]
 
-        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc123", "def456")
+        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc1234", "def4567")
 
         assert should_skip
         assert reason == "no_relevant_changes"
@@ -1162,17 +1162,17 @@ Hardware Information:
             Mock(returncode=0, stdout="src/core/mod.rs\nbenches/performance.rs\n", stderr=""),  # git diff
         ]
 
-        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc123", "def456")
+        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc1234", "def4567")
 
         assert not should_skip
         assert reason == "changes_detected"
 
     def test_display_skip_message(self, capsys):
         """Test displaying skip messages."""
-        BenchmarkRegressionHelper.display_skip_message("same_commit", "abc123")
+        BenchmarkRegressionHelper.display_skip_message("same_commit", "abc1234")
 
         captured = capsys.readouterr()
-        assert "🔍 Current commit matches baseline (abc123)" in captured.out
+        assert "🔍 Current commit matches baseline (abc1234)" in captured.out
 
     def test_display_no_baseline_message(self, capsys):
         """Test displaying no baseline message."""
@@ -1668,9 +1668,12 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             assert "no significant performance regressions" in markdown_content
 
     @patch("benchmark_utils.get_git_commit_hash")
+    @patch("benchmark_utils.run_git_command")
     @patch("benchmark_utils.datetime")
-    def test_generate_markdown_content(self, mock_datetime, mock_git_commit):
+    def test_generate_markdown_content(self, mock_datetime, mock_run_git, mock_git_commit):
         """Test generating complete markdown content."""
+        # Avoid calling actual git in __init__ helpers
+        mock_run_git.side_effect = Exception("git unavailable in test")
         mock_git_commit.return_value = "abc123def456"
         mock_now = Mock()
         mock_now.strftime.return_value = "2024-01-15 10:30:00 UTC"
@@ -1777,7 +1780,7 @@ Benchmark completed."""
     @patch("benchmark_utils.run_cargo_command")
     def test_run_circumsphere_benchmarks_success(self, mock_cargo):
         """Test running circumsphere benchmarks successfully."""
-        mock_cargo.return_value = Mock()
+        mock_cargo.return_value = Mock(stdout="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -1838,8 +1841,10 @@ Benchmark completed."""
             captured = capsys.readouterr()
             assert "Error running circumsphere benchmarks" in captured.out
 
-    def test_generate_summary_success(self, capsys):
+    @patch("benchmark_utils.run_git_command")
+    def test_generate_summary_success(self, mock_git, capsys):
         """Test successful generation of performance summary."""
+        mock_git.side_effect = Exception("git unavailable in test")
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)

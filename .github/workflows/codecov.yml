@@ -53,10 +53,9 @@ jobs:
           # Create coverage directory with proper permissions
           mkdir -p coverage
           chmod 755 coverage
-          
+
           echo "::debug::Current directory: $(pwd)"
           echo "::debug::Coverage directory permissions: $(ls -ld coverage)"
-          
           # Tarpaulin configuration (explicit arguments):
           # - XML output: --out Xml
           # - Output directory: --output-dir coverage
@@ -78,24 +77,28 @@ jobs:
             --verbose \
             --implicit-test-threads
           echo "::endgroup::"
-          
+
           # Detailed sanity check: verify coverage report was generated
           echo "::group::Coverage verification"
           echo "Directory listing:"
           ls -la coverage/ || echo "Coverage directory not found"
-          
-          echo "\nSearching for XML files:"
+
+          printf "\nSearching for XML files:\n"
           find . -name "*.xml" -type f -ls 2>/dev/null || echo "No XML files found"
-          
-          echo "\nSearching for cobertura files:"
+
+          printf "\nSearching for cobertura files:\n"
           find . -name "*cobertura*" -type f -ls 2>/dev/null || echo "No cobertura files found"
-          
+
           if [ ! -f coverage/cobertura.xml ]; then
             echo "::error::coverage/cobertura.xml not found. Tarpaulin failed to generate XML output."
             echo "::error::Check tarpaulin logs above for errors."
             exit 2
           else
             echo "::notice::Coverage report generated successfully: $(wc -l < coverage/cobertura.xml) lines"
+          fi
+          # Sanity: ensure benches/examples aren't present (defense-in-depth with .codecov.yml)
+          if rg -n '(^|/)(benches|examples)/' coverage/cobertura.xml; then
+            echo "::warning::benches/ or examples/ paths detected in coverage report"
           fi
           echo "::endgroup::"
         env:

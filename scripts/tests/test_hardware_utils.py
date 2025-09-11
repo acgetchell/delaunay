@@ -530,6 +530,7 @@ Other content here...
             ("8GB", 8.0),
             ("64 GB", 64.0),
             ("16,5 GB", 16.5),  # Comma decimal separator
+            ("1.0 TB", 1.0),  # Larger unit still parses numeric part
             ("Unknown", None),
             ("Invalid format", None),
             ("", None),

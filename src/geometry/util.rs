@@ -1098,12 +1098,12 @@ where
 
         // Calculate (D-1)! factorial - peroxide's factorial function returns usize
         let factorial_usize = factorial(D - 1);
-        let factorial_val = safe_usize_to_scalar::<f64>(factorial_usize).map_err(|_| {
+        let factorial_val = safe_usize_to_scalar::<f64>(factorial_usize).map_err(|e| {
             CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
                 value: factorial_usize.to_string(),
                 from_type: "usize",
                 to_type: "f64",
-                details: "Factorial value too large for f64 precision".to_string(),
+                details: e.to_string(),
             })
         })?;
         sqrt_det / factorial_val

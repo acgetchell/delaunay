@@ -192,8 +192,8 @@ fn generate_points_by_distribution<const D: usize>(
             let raw = count_f64.powf(1.0 / d_f64).ceil();
 
             let points_per_dim = if raw.is_finite() && raw >= 2.0 {
-                // Use safe conversion from f64 to usize
-                cast::<f64, usize>(raw).unwrap_or(2)
+                // Saturate instead of shrinking to 2 on cast failure
+                cast::<f64, usize>(raw).unwrap_or(usize::MAX).max(2)
             } else {
                 2
             };
@@ -445,8 +445,11 @@ fn calculate_percentile(values: &mut [u64]) -> u64 {
 
     values.sort_unstable();
     let n = values.len();
-    let rank = percentile.saturating_mul(n).saturating_div(100).max(1); // 1-based nearest-rank, prevent overflow
-    let index = rank.saturating_sub(1).min(n - 1); // 0-based index
+    // nearest-rank: ceil(p/100 * n), clamped to [1, n]
+    let rank = ((percentile.saturating_mul(n)).saturating_add(99))
+        .saturating_div(100)
+        .clamp(1, n);
+    let index = rank - 1; // safe: rank in [1, n]
     values[index]
 }
 
@@ -635,6 +638,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("query_latency");
     group.measurement_time(bench_time(90));
+    group.throughput(Throughput::Elements(MAX_QUERY_RESULTS as u64));
 
     for &count in counts {
         // Create triangulation and test circumsphere queries

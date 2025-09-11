@@ -3,30 +3,13 @@
 //! This example demonstrates basic memory usage analysis for Delaunay triangulations
 //! using the existing allocation counter infrastructure from the tests.
 
+use delaunay::core::util::measure_with_result;
 use delaunay::geometry::algorithms::ConvexHull;
 use delaunay::geometry::util::generate_random_triangulation;
 use std::time::Instant;
 
-/// Create test helper that mimics the existing test infrastructure  
-#[cfg(feature = "count-allocations")]
-fn measure_with_result<F, R>(f: F) -> (R, allocation_counter::AllocationInfo)
-where
-    F: FnOnce() -> R,
-{
-    let mut result: Option<R> = None;
-    let info = allocation_counter::measure(|| {
-        result = Some(f());
-    });
-    (result.expect("Closure should have set result"), info)
-}
-
-#[cfg(not(feature = "count-allocations"))]
-fn measure_with_result<F, R>(f: F) -> (R, ())
-where
-    F: FnOnce() -> R,
-{
-    (f(), ())
-}
+/// Bounds for random triangulation (min, max) - consistent with benchmarks
+const BOUNDS: (f64, f64) = (-100.0, 100.0);
 
 /// Macro to generate dimension-specific memory analysis functions
 macro_rules! generate_memory_analysis {
@@ -40,7 +23,7 @@ macro_rules! generate_memory_analysis {
             let (tds_res, tri_info) = measure_with_result(|| {
                 generate_random_triangulation::<f64, (), (), $dim>(
                     n_points,
-                    (-50.0, 50.0),
+                    BOUNDS,
                     None,
                     Some(seed),
                 )
@@ -92,11 +75,27 @@ macro_rules! generate_memory_analysis {
                     if tri_info.bytes_total > 0 && num_vertices > 0 {
                         let bytes_per_vertex = tri_bytes / num_vertices as f64;
                         let hull_ratio = (hull_bytes / tri_bytes) * 100.0;
-                        println!("    Triangulation memory: {tri_kb:.1} KiB ({tri_mib:.2} MiB, {bytes_per_vertex:.0} bytes/vertex)");
-                        println!("    Hull memory: {hull_kb:.1} KiB ({hull_mib:.2} MiB, {hull_ratio:.1}% of triangulation)");
+                        if tri_kb >= 1024.0 {
+                            println!("    Triangulation memory: {tri_kb:.1} KiB ({tri_mib:.2} MiB, {bytes_per_vertex:.0} bytes/vertex)");
+                        } else {
+                            println!("    Triangulation memory: {tri_kb:.1} KiB ({bytes_per_vertex:.0} bytes/vertex)");
+                        }
+                        if hull_kb >= 1024.0 {
+                            println!("    Hull memory: {hull_kb:.1} KiB ({hull_mib:.2} MiB, {hull_ratio:.1}% of triangulation)");
+                        } else {
+                            println!("    Hull memory: {hull_kb:.1} KiB ({hull_ratio:.1}% of triangulation)");
+                        }
                     } else {
-                        println!("    Triangulation memory: {tri_kb:.1} KiB ({tri_mib:.2} MiB)");
-                        println!("    Hull memory: {hull_kb:.1} KiB ({hull_mib:.2} MiB)");
+                        if tri_kb >= 1024.0 {
+                            println!("    Triangulation memory: {tri_kb:.1} KiB ({tri_mib:.2} MiB)");
+                        } else {
+                            println!("    Triangulation memory: {tri_kb:.1} KiB");
+                        }
+                        if hull_kb >= 1024.0 {
+                            println!("    Hull memory: {hull_kb:.1} KiB ({hull_mib:.2} MiB)");
+                        } else {
+                            println!("    Hull memory: {hull_kb:.1} KiB");
+                        }
                     }
                 }
             }

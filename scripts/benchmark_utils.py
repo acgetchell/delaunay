@@ -779,18 +779,12 @@ class PerformanceSummaryGenerator:
                 if line.startswith(("Generated at:", "Date:", "Git commit:", "Hardware:")):
                     metadata_lines.append(line)
             if not any(line.startswith("Hardware:") for line in metadata_lines) and "Hardware Information:" in content:
-                # Emit a concise single-line summary from the block's first two fields
-                for i, line in enumerate(first_lines):
-                    if line.startswith("Hardware Information:"):
-                        cpu_line = first_lines[i + 2].strip() if i + 2 < len(first_lines) else ""
-                        cores_line = first_lines[i + 3].strip() if i + 3 < len(first_lines) else ""
-                        if not cpu_line and not cores_line:
-                            continue
-                        cpu = cpu_line.removeprefix("CPU: ").strip()
-                        cores = cores_line.removeprefix("CPU Cores: ").strip()
-                        summary = f"{cpu} ({cores} cores)" if cpu and cores else cpu or "Unknown CPU"
-                        metadata_lines.append(f"Hardware: {summary}")
-                        break
+                hw = HardwareComparator.parse_baseline_hardware(content)
+                cpu = hw.get("CPU", "")
+                cores = hw.get("CPU_CORES", "")
+                if cpu:
+                    summary = f"{cpu} ({cores} cores)" if cores and cores != "Unknown" else cpu
+                    metadata_lines.append(f"Hardware: {summary}")
 
             if metadata_lines:
                 lines.extend(
@@ -1194,8 +1188,8 @@ class CriterionParser:
         dim = dim_dir.name.removesuffix("d")
         if dim.isdigit():
             return dim
-        # Fallback: extract trailing "<digits>d"
-        m = re.search(r"(\d+)d$", dim_dir.name)
+        # Fallback: extract trailing "<digits>d" or "<digits>D"
+        m = re.search(r"(\d+)[dD]$", dim_dir.name)
         return m.group(1) if m else None
 
     @staticmethod
@@ -1235,13 +1229,13 @@ class CriterionParser:
             if parent_name not in {"base", "new"}:
                 continue
 
-            # Find nearest numeric points dir and nearest "<Nd>" dir in ancestors
+            # Find nearest numeric points dir and nearest "<Nd>" or "<ND>" dir in ancestors
             points_dir = next((p for p in estimates_file.parents if p.name.isdigit()), None)
-            dim_dir = next((p for p in estimates_file.parents if re.search(r"\d+d$", p.name)), None)
+            dim_dir = next((p for p in estimates_file.parents if re.search(r"\d+[dD]$", p.name)), None)
             if not points_dir or not dim_dir:
                 continue
 
-            dim_match = re.search(r"(\d+)d$", dim_dir.name)
+            dim_match = re.search(r"(\d+)[dD]$", dim_dir.name)
             if not dim_match:
                 continue
 
@@ -1975,7 +1969,7 @@ class BenchmarkRegressionHelper:
         try:
             # Check if baseline commit exists in git history
             # Validate baseline_commit is a proper SHA (security: prevent injection)
-            if not re.match(r"^[0-9A-Fa-f]{6,40}$", baseline_commit):
+            if not re.match(r"^[0-9A-Fa-f]{7,40}$", baseline_commit):
                 return False, "invalid_baseline_sha"
 
             commit_ref = f"{baseline_commit}^{{commit}}"

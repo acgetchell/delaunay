@@ -607,6 +607,69 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
     hash
 }
 
+// =============================================================================
+// MEMORY MEASUREMENT UTILITIES
+// =============================================================================
+
+/// Memory measurement helper for allocation tracking in examples, tests, and benchmarks.
+///
+/// This utility function provides a consistent interface for measuring memory allocations
+/// across different parts of the codebase. It returns both the result of the closure
+/// and allocation information when the `count-allocations` feature is enabled.
+///
+/// # Arguments
+///
+/// * `f` - A closure to execute while measuring allocations
+///
+/// # Returns
+///
+/// When `count-allocations` feature is enabled: Returns a tuple `(R, AllocationInfo)`
+/// where `R` is the closure result and `AllocationInfo` contains allocation metrics.
+///
+/// When feature is disabled: Returns a tuple `(R, ())` where the allocation info is empty.
+///
+/// # Panics
+///
+/// This function should never panic under normal usage. The internal `expect()` call
+/// is used because the closure is guaranteed to execute and set the result.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// // With count-allocations feature enabled
+/// use delaunay::core::util::measure_with_result;
+///
+/// let (result, alloc_info) = measure_with_result(|| {
+///     // Some memory-allocating operation
+///     vec![1, 2, 3, 4, 5]
+/// });
+///
+/// #[cfg(feature = "count-allocations")]
+/// println!("Allocated {} bytes", alloc_info.bytes_total);
+/// ```
+#[cfg(feature = "count-allocations")]
+pub fn measure_with_result<F, R>(f: F) -> (R, allocation_counter::AllocationInfo)
+where
+    F: FnOnce() -> R,
+{
+    let mut result: Option<R> = None;
+    let info = allocation_counter::measure(|| {
+        result = Some(f());
+    });
+    (result.expect("Closure should have set result"), info)
+}
+
+/// Memory measurement helper (no-op version when count-allocations feature is disabled).
+///
+/// See [`measure_with_result`] for full documentation.
+#[cfg(not(feature = "count-allocations"))]
+pub fn measure_with_result<F, R>(f: F) -> (R, ())
+where
+    F: FnOnce() -> R,
+{
+    (f(), ())
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -1274,5 +1337,133 @@ mod tests {
         // Edge case: k > len
         let combinations_5 = generate_combinations(&vertices, 5);
         assert!(combinations_5.is_empty());
+    }
+
+    // =============================================================================
+    // MEMORY MEASUREMENT UTILITIES TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_measure_with_result_basic_functionality() {
+        // Test that the function returns the correct result
+        let expected_result = 42;
+        let (result, _alloc_info) = measure_with_result(|| expected_result);
+        assert_eq!(result, expected_result);
+    }
+
+    #[test]
+    fn test_measure_with_result_with_vec_allocation() {
+        // Test with a closure that allocates memory
+        let (result, _alloc_info) = measure_with_result(|| vec![1, 2, 3, 4, 5]);
+        assert_eq!(result, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_measure_with_result_with_string_allocation() {
+        // Test with string allocation and manipulation
+        let (result, _alloc_info) = measure_with_result(|| {
+            let mut s = String::new();
+            s.push_str("Hello, ");
+            s.push_str("World!");
+            s
+        });
+        assert_eq!(result, "Hello, World!");
+    }
+
+    #[test]
+    fn test_measure_with_result_with_complex_operations() {
+        // Test with more complex operations that might allocate
+        let (result, _alloc_info) = measure_with_result(|| {
+            let mut data: Vec<String> = Vec::new();
+            for i in 0..10 {
+                data.push(format!("Item {i}"));
+            }
+            data.len()
+        });
+        assert_eq!(result, 10);
+    }
+
+    #[test]
+    fn test_measure_with_result_no_panic_on_closure_result() {
+        // Test that the function doesn't panic when extracting the result
+        // This validates that the internal expect() call should never trigger
+        let (result, _alloc_info) = measure_with_result(|| {
+            // Simulate various types of operations
+            let data = [1, 2, 3];
+            data.iter().sum::<i32>()
+        });
+        assert_eq!(result, 6);
+    }
+
+    #[test]
+    fn test_measure_with_result_return_type_consistency() {
+        // Test that the function correctly handles different return types
+
+        // Test with tuple
+        let (result, _alloc_info) = measure_with_result(|| ("hello", 42));
+        assert_eq!(result, ("hello", 42));
+
+        // Test with Option
+        let (result, _alloc_info) = measure_with_result(|| Some("value"));
+        assert_eq!(result, Some("value"));
+
+        // Test with Result
+        let (result, _alloc_info) = measure_with_result(|| Ok::<i32, &str>(123));
+        assert_eq!(result, Ok(123));
+    }
+
+    #[cfg(feature = "count-allocations")]
+    #[test]
+    fn test_measure_with_result_allocation_info_structure() {
+        // Test that allocation info has expected structure when feature is enabled
+        let (_result, alloc_info) = measure_with_result(|| {
+            // Allocate some memory
+            vec![0u8; 1024]
+        });
+
+        // Verify that we got an AllocationInfo struct by accessing its fields
+        // This validates that the function properly returns allocation info
+        // We access all fields to ensure the struct is properly constructed
+        std::hint::black_box(&alloc_info.bytes_total);
+        std::hint::black_box(&alloc_info.count_total);
+        std::hint::black_box(&alloc_info.bytes_current);
+        std::hint::black_box(&alloc_info.count_current);
+        std::hint::black_box(&alloc_info.bytes_max);
+        std::hint::black_box(&alloc_info.count_max);
+
+        // Test that we can actually use the allocation info
+        // For a vec![0u8; 1024], we expect some allocation to have occurred
+        assert!(
+            alloc_info.bytes_total > 0,
+            "Should have allocated memory for the vector"
+        );
+    }
+
+    #[cfg(not(feature = "count-allocations"))]
+    #[test]
+    fn test_measure_with_result_no_allocation_feature() {
+        // Test that when feature is disabled, we get unit type
+        let (_result, alloc_info) = measure_with_result(|| vec![0u8; 1024]);
+
+        // Verify that alloc_info is unit type ()
+        assert_eq!(alloc_info, ());
+    }
+
+    #[test]
+    fn test_measure_with_result_closure_execution_order() {
+        // Test that the closure is executed exactly once and in the right context
+        use std::sync::{Arc, Mutex};
+
+        let counter = Arc::new(Mutex::new(0));
+        let counter_clone = Arc::clone(&counter);
+
+        let (result, _alloc_info) = measure_with_result(move || {
+            let mut count = counter_clone.lock().unwrap();
+            *count += 1;
+            *count
+        });
+
+        assert_eq!(result, 1);
+        assert_eq!(*counter.lock().unwrap(), 1);
     }
 }

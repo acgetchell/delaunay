@@ -148,8 +148,20 @@ class ChangelogUtils:
         Raises:
             VersionError: If invalid SemVer format
         """
-        # SemVer: vMAJOR.MINOR.PATCH with optional -PRERELEASE and optional +BUILD
-        semver_pattern = r"^v[0-9]+(\.[0-9]+){2}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$"
+        # SemVer 2.0.0 strict: vMAJOR.MINOR.PATCH with optional -PRERELEASE and optional +BUILD
+        # No leading zeros in numeric identifiers (MAJOR, MINOR, PATCH, pre-release numeric parts)
+        semver_pattern = (
+            r"^v"
+            r"(0|[1-9]\d*)\."
+            r"(0|[1-9]\d*)\."
+            r"(0|[1-9]\d*)"
+            r"(?:-(?:"
+            r"(?:0|[1-9]\d*)"
+            r"|(?:[A-Za-z-][0-9A-Za-z-]*)"
+            r")(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*"
+            r")?"
+            r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+        )
 
         if not re.match(semver_pattern, tag_version):
             msg = f"Tag version should follow SemVer format 'vX.Y.Z' (e.g., v0.3.5, v1.2.3-rc.1, v1.2.3+build.5). Got: {tag_version}"

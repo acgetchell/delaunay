@@ -17,8 +17,11 @@ sys.path.insert(0, str(SCRIPT_DIR))
 # Can be imported when needed: from changelog_utils import ChangelogUtils
 
 # Precompiled regex patterns for performance
-COMMIT_BULLET_RE = re.compile(r"^\s*-\s*\*\*")
-TITLE_FALLBACK_RE = re.compile(r"-\s+([^[(]+?)(?:\s+\(#\d+\))?\s*(?:\[`[a-f0-9]{7,40}`\].*)?$", re.IGNORECASE)
+COMMIT_BULLET_RE = re.compile(r"^\s*[-*]\s*\*\*")
+TITLE_FALLBACK_RE = re.compile(
+    r"^\s*-\s+([^[(]+?)(?:\s+\(#\d+\))?\s*(?:\[`[a-f0-9]{7,40}`\].*)?$",
+    re.IGNORECASE,
+)
 
 
 def _get_regex_patterns():
@@ -178,7 +181,7 @@ def _extract_title_text(entry):
 
     # Extract just the commit title (between first ** and second **)
     if title_match := re.search(r"\*\*(.*?)\*\*", entry):
-        return title_match[1].lower().strip()
+        return title_match.group(1).lower().strip()
 
     # Fallback: parse from the first line
     first = entry.split("\n", 1)[0]
@@ -323,6 +326,12 @@ def _process_changelog_lines(lines):
                 },
             )
             if section_flags[0] == "merged_prs":
+                # Flush categorized entries for this release before MPRs
+                if categorize_entries_list:
+                    process_and_output_categorized_entries(categorize_entries_list, output_lines)
+                    categorize_entries_list.clear()
+                if output_lines and output_lines[-1] != "":
+                    output_lines.append("")
                 output_lines.append(line)  # Keep Merged Pull Requests header
             line_index += 1
             continue

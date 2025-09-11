@@ -6,12 +6,9 @@ error handling, and changelog generation workflows.
 """
 
 import json
-import os
-import shutil
 
 # Import the module under test
 import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -45,6 +42,8 @@ class TestChangelogUtils:
             ("___", "\\_\\_\\_"),
             ("```", "\\`\\`\\`"),
             ("[[[]]]", "\\[\\[\\[\\]\\]\\]"),
+            ("Text with (parens)", "Text with (parens)"),
+            ("Curly {braces}", "Curly {braces}"),
         ],
     )
     def test_escape_markdown(self, input_text, expected):
@@ -65,8 +64,8 @@ class TestChangelogUtils:
     )
     def test_validate_semver_valid(self, version):
         """Test semantic version validation with valid versions."""
-        # Should not raise any exception
-        ChangelogUtils.validate_semver(version)
+        # Should not raise and should return True
+        assert ChangelogUtils.validate_semver(version) is True
 
     @pytest.mark.parametrize(
         "version",
@@ -76,6 +75,11 @@ class TestChangelogUtils:
             "v1",  # Missing minor and patch
             "vx.y.z",  # Non-numeric components
             "v1.0.0.0",  # Too many components
+            "v01.2.3",  # Leading zero in MAJOR
+            "v1.02.3",  # Leading zero in MINOR
+            "v1.2.03",  # Leading zero in PATCH
+            "v1.2.3-01",  # Leading zero in pre-release numeric id
+            "v1.2.3-rc.01",  # Leading zero in dotted pre-release numeric id
             "",  # Empty string
             "random-text",  # Not a version at all
         ],
@@ -216,30 +220,16 @@ class TestChangelogUtils:
 
 
 @pytest.fixture
-def git_repo_fixture():
-    """Fixture for temporary git repository setup."""
-    temp_dir = tempfile.mkdtemp()
-    original_cwd = Path.cwd()
-
-    # Change to temp directory and initialize git repo
-    os.chdir(temp_dir)
-
-    # Initialize git repo with initial commit
+def git_repo_fixture(tmp_path: Path, monkeypatch):
+    """Fixture for temporary git repository setup (isolated cwd)."""
+    monkeypatch.chdir(tmp_path)
     run_git_command(["init"])
     run_git_command(["config", "user.name", "Test User"])
     run_git_command(["config", "user.email", "test@example.com"])
-
-    # Create initial commit
-    Path("README.md").write_text("# Test Repo\n")
+    (tmp_path / "README.md").write_text("# Test Repo\n", encoding="utf-8")
     run_git_command(["add", "README.md"])
     run_git_command(["commit", "-m", "Initial commit"])
-
-    yield temp_dir
-
-    # Clean up
-    os.chdir(original_cwd)
-    if temp_dir:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+    return str(tmp_path)
 
 
 class TestChangelogUtilsWithGitOperations:
@@ -290,17 +280,10 @@ class TestChangelogUtilsWithGitOperations:
         # Verify we're in the git repository set up by the fixture
         assert str(git_repo_fixture) in str(Path.cwd())
 
-        # Add a test remote
-        run_git_command(["remote", "add", "test-origin", input_url])
-
-        try:
-            # Mock the get_git_remote_url to return our test URL
-            with patch("changelog_utils.get_git_remote_url", return_value=input_url):
-                result = ChangelogUtils.get_repository_url()
-                assert result == expected_url
-        finally:
-            # Clean up remote
-            run_git_command(["remote", "remove", "test-origin"])
+        # Mock the get_git_remote_url to return our test URL
+        with patch("changelog_utils.get_git_remote_url", return_value=input_url):
+            result = ChangelogUtils.get_repository_url()
+            assert result == expected_url
 
     def test_commit_processing_with_test_commits(self, git_repo_fixture):
         """Test commit processing with specially crafted test commits."""
@@ -364,6 +347,9 @@ class TestChangelogUtilsErrorHandling:
             "not-a-url",
             "ftp://invalid.com/repo",
             "https://notgithub.com/owner/repo",
+            "ssh://git@gitlab.com/owner/repo.git",  # non-GitHub host
+            "git://notgithub.com/owner/repo",  # git protocol to non-GitHub
+            "git@github.com/owner/repo",  # scp-like form missing ':'
         ],
     )
     def test_invalid_repository_url_format(self, invalid_url):

@@ -6,12 +6,16 @@
 #![allow(missing_docs)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::core::util::measure_with_result;
 use delaunay::geometry::util::generate_random_triangulation;
 use std::fs::File;
 use std::hint::black_box;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
+
+/// Bounds for random triangulation generation - consistent with examples and other benchmarks
+const BOUNDS: (f64, f64) = (-100.0, 100.0);
 
 /// Memory measurement record for CSV output
 #[derive(Debug, Clone)]
@@ -20,10 +24,10 @@ struct MemoryRecord {
     points: usize,
     vertices: usize,
     cells: usize,
-    allocations_total: usize,
-    bytes_total: usize,
-    allocations_peak: usize,
-    bytes_peak: usize,
+    allocations_total: u64,
+    bytes_total: u64,
+    allocations_peak: u64,
+    bytes_peak: u64,
     bytes_per_vertex: f64,
     bytes_per_cell: f64,
 }
@@ -56,10 +60,10 @@ impl MemoryRecord {
             points,
             vertices,
             cells,
-            allocations_total: info.count_total.try_into().unwrap_or(0),
-            bytes_total: info.bytes_total.try_into().unwrap_or(0),
-            allocations_peak: info.count_max.try_into().unwrap_or(0),
-            bytes_peak: info.bytes_max.try_into().unwrap_or(0),
+            allocations_total: info.count_total,
+            bytes_total: info.bytes_total,
+            allocations_peak: info.count_max,
+            bytes_peak: info.bytes_max,
             bytes_per_vertex,
             bytes_per_cell,
         }
@@ -117,28 +121,7 @@ impl MemoryRecord {
 /// Global storage for memory records (safe access using Mutex)
 static MEMORY_RECORDS: Mutex<Vec<MemoryRecord>> = Mutex::new(Vec::new());
 
-/// Helper function to measure memory usage
-#[cfg(feature = "count-allocations")]
-fn measure_with_result<F, R>(f: F) -> (R, allocation_counter::AllocationInfo)
-where
-    F: FnOnce() -> R,
-{
-    let mut result: Option<R> = None;
-    let info = allocation_counter::measure(|| {
-        result = Some(f());
-    });
-    (result.expect("Closure should have set result"), info)
-}
-
-#[cfg(not(feature = "count-allocations"))]
-fn measure_with_result<F, R>(f: F) -> (R, ())
-where
-    F: FnOnce() -> R,
-{
-    (f(), ())
-}
-
-// Point generation functions are now imported from util module
+// Memory measurement and point generation functions are now imported from util modules
 
 /// Store a memory record safely
 fn store_memory_record(record: MemoryRecord) {
@@ -157,7 +140,7 @@ macro_rules! measure_memory {
             let (tds, info) = measure_with_result(|| {
                 let tds = generate_random_triangulation::<f64, (), (), $dim>(
                     n_points,
-                    (-100.0, 100.0),
+                    BOUNDS,
                     None,
                     Some(seed),
                 )
@@ -348,14 +331,27 @@ fn print_memory_summary() {
                     {
                         #[allow(clippy::cast_precision_loss)]
                         let kb_total = record.bytes_total as f64 / 1024.0;
-                        println!(
-                            "  {} points: {} vertices, {} cells, {:.1} KB total, {:.2} bytes/vertex",
-                            record.points,
-                            record.vertices,
-                            record.cells,
-                            kb_total,
-                            record.bytes_per_vertex
-                        );
+                        let mib_total = kb_total / 1024.0;
+                        if kb_total >= 1024.0 {
+                            println!(
+                                "  {} points: {} vertices, {} cells, {:.1} KB ({:.2} MiB) total, {:.2} bytes/vertex",
+                                record.points,
+                                record.vertices,
+                                record.cells,
+                                kb_total,
+                                mib_total,
+                                record.bytes_per_vertex
+                            );
+                        } else {
+                            println!(
+                                "  {} points: {} vertices, {} cells, {:.1} KB total, {:.2} bytes/vertex",
+                                record.points,
+                                record.vertices,
+                                record.cells,
+                                kb_total,
+                                record.bytes_per_vertex
+                            );
+                        }
                     }
 
                     #[cfg(not(feature = "count-allocations"))]

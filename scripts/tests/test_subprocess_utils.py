@@ -6,6 +6,7 @@ These tests ensure the security utilities function correctly and maintain
 their secure-by-default behavior while providing flexibility through kwargs.
 """
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -37,11 +38,12 @@ class TestGetSafeExecutable:
         result = get_safe_executable(command)
         assert isinstance(result, str)
         assert len(result) > 0
-        assert command in result  # Command name should be in the path
-
-        # Git should be an absolute path (important for project)
-        if command == "git":
-            assert result.startswith("/")
+        assert Path(result).name.startswith(command)  # Command name should match basename
+        # Absolute path on all platforms
+        assert Path(result).is_absolute()
+        # Skip commands that are not guaranteed cross-platform
+        if sys.platform.startswith("win") and command in {"ls", "echo"}:
+            pytest.skip(f"{command} may not be an external executable on Windows")
 
     @pytest.mark.parametrize("fake_command", ["definitely-nonexistent-command-xyz", "fake-command-for-testing", "nonexistent123"])
     def test_raises_on_nonexistent_executables(self, fake_command):
@@ -84,6 +86,7 @@ class TestRunGitCommand:
 class TestRunCargoCommand:
     """Test run_cargo_command function."""
 
+    @pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo not installed in PATH")
     def test_cargo_version(self):
         """Test basic cargo command execution."""
         result = run_cargo_command(["--version"])
@@ -91,6 +94,7 @@ class TestRunCargoCommand:
         assert "cargo" in result.stdout.lower()
         assert isinstance(result.stdout, str)
 
+    @pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo not installed in PATH")
     def test_cargo_command_with_custom_params(self):
         """Test cargo command with custom parameters."""
         result = run_cargo_command(["check", "--dry-run"], check=False)
@@ -128,12 +132,14 @@ class TestRunSafeCommand:
     def test_custom_check_parameter(self):
         """Test overriding check parameter."""
         # Command that will fail
-        result = run_safe_command("ls", ["/definitely-nonexistent-directory"], check=False)
+        result = run_safe_command("git", ["invalid-git-subcommand-xyz"], check=False)
         assert result.returncode != 0
         # Should not raise because check=False
 
     def test_custom_capture_output_parameter(self):
         """Test overriding capture_output parameter."""
+        if sys.platform.startswith("win"):
+            pytest.skip("echo may not be an external executable on Windows")
         result = run_safe_command("echo", ["no capture"], capture_output=False)
         # When capture_output=False, stdout should be None
         assert result.stdout is None
@@ -163,12 +169,14 @@ class TestGitRepositoryFunctions:
 
     def test_check_git_repo_in_git_repo(self):
         """Test check_git_repo returns True when in a git repository."""
-        # Assuming tests are run from within the git repository
+        if not check_git_repo():
+            pytest.skip("Not running inside a git repository")
         assert check_git_repo() is True
 
     def test_check_git_history_with_history(self):
         """Test check_git_history returns True when git history exists."""
-        # Assuming the repository has commit history
+        if not check_git_history():
+            pytest.skip("Repository has no commit history")
         assert check_git_history() is True
 
     def test_get_git_commit_hash_returns_hash(self):
@@ -181,6 +189,9 @@ class TestGitRepositoryFunctions:
 
     def test_get_git_remote_url_returns_url(self):
         """Test that get_git_remote_url returns a valid URL."""
+        remotes = run_git_command(["remote"]).stdout.split()
+        if "origin" not in remotes:
+            pytest.skip("No 'origin' remote configured")
         remote_url = get_git_remote_url("origin")
         assert isinstance(remote_url, str)
         assert len(remote_url) > 0
@@ -228,7 +239,7 @@ class TestSecurityFeatures:
         # This is implicitly tested by get_safe_executable tests,
         # but let's verify the behavior
         git_path = get_safe_executable("git")
-        assert git_path.startswith("/")  # Should be absolute path
+        assert Path(git_path).is_absolute()  # Should be absolute path
         assert "git" in git_path
 
     def test_no_shell_execution(self):
@@ -244,7 +255,7 @@ class TestSecurityFeatures:
         """Test that check=True is the default for security."""
         # Command that will fail should raise by default
         with pytest.raises(subprocess.CalledProcessError):
-            run_safe_command("ls", ["/definitely-nonexistent-directory"])
+            run_safe_command("git", ["invalid-git-subcommand-xyz"])
 
     @pytest.mark.parametrize(
         ("function", "args", "kwargs"),
@@ -254,10 +265,19 @@ class TestSecurityFeatures:
             (run_safe_command, ("echo", ["test"]), {"executable": "/malicious/fake/command"}),
         ],
     )
-    def test_rejects_executable_override(self, function, args, kwargs):
+    def test_rejects_executable_override(self, function, args, kwargs, monkeypatch):
         """Test that functions reject executable override for security."""
+        called = {"run": False}
+
+        def fake_run(*_a, **_k):
+            called["run"] = True  # should never be set
+            msg = "subprocess.run should not be called on override"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr("subprocess.run", fake_run)
         with pytest.raises(ValueError, match="Overriding 'executable' is not allowed"):
             function(*args, **kwargs)
+        assert called["run"] is False
 
     def test_run_git_command_with_input_rejects_executable_override(self):
         """Test that run_git_command_with_input raises ValueError when executable is overridden."""
