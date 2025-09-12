@@ -56,7 +56,7 @@ delaunay/
 │   ├── README.md                                 # Examples documentation
 │   ├── convex_hull_3d_50_points.rs               # 3D convex hull extraction and analysis example
 │   ├── into_from_conversions.rs                  # Into/From trait conversion examples
-│   ├── memory_analysis.rs                        # Memory usage analysis example
+│   ├── memory_analysis.rs                        # Memory usage analysis example with allocation counting
 │   ├── point_comparison_and_hashing.rs           # Point operations examples
 │   └── triangulation_3d_50_points.rs             # 3D triangulation example
 ├── benches/                                      # Performance benchmarks
@@ -67,12 +67,12 @@ delaunay/
 │   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
 │   ├── memory_scaling.rs                         # Memory usage scaling benchmarks
 │   ├── microbenchmarks.rs                        # Fine-grained performance tests
-│   ├── profiling_suite.rs                        # Comprehensive profiling suite (see .github/workflows/profiling-benchmarks.yml)
+│   ├── profiling_suite.rs                        # Comprehensive profiling suite with allocation counting support
 │   ├── triangulation_creation.rs                 # Triangulation creation benchmarks
 │   └── triangulation_vs_hull_memory.rs           # Memory comparison benchmarks
 ├── tests/                                        # Integration tests
 │   ├── README.md                                 # Integration tests guide and usage instructions
-│   ├── allocation_api.rs                         # Memory allocation profiling and testing utilities
+│   ├── allocation_api.rs                         # Memory allocation profiling and testing utilities (requires count-allocations feature)
 │   ├── circumsphere_debug_tools.rs               # Interactive circumsphere testing and debugging utilities
 │   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
 │   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
@@ -134,7 +134,7 @@ delaunay/
 ├── CODE_OF_CONDUCT.md                            # Community guidelines
 ├── CONTRIBUTING.md                               # Contribution guidelines and development workflows
 ├── Cargo.lock                                    # Dependency lockfile
-├── Cargo.toml                                    # Package configuration and dependencies
+├── Cargo.toml                                    # Package configuration and dependencies (includes allocation-counter for memory profiling)
 ├── cspell.json                                   # Spell checking configuration
 ├── LICENSE                                       # BSD-3-Clause License
 ├── pyproject.toml                                # Python project configuration for development scripts
@@ -154,6 +154,15 @@ cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocap
 cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
 # Or run all debug tests at once
 cargo test --test circumsphere_debug_tools -- --nocapture
+```
+
+**Note**: Memory allocation profiling is available through the `count-allocations` feature:
+
+```bash
+# Run allocation profiling tests
+cargo test --test allocation_api --features count-allocations
+# Run benchmarks with allocation counting
+cargo bench --bench profiling_suite --features count-allocations
 ```
 
 **Note**: Python tests in `scripts/tests/` are executed via pytest (use `uv run pytest` for reproducible envs) and discovered via `pyproject.toml`. Run with:
@@ -203,9 +212,9 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality i
 
 #### Development Infrastructure
 
-- **`examples/`** - Usage demonstrations and trait examples
-- **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage)
-- **`tests/`** - Integration tests, debugging utilities, and regression testing
+- **`examples/`** - Usage demonstrations and trait examples, including memory profiling examples
+- **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage) and memory allocation tracking
+- **`tests/`** - Integration tests, debugging utilities, regression testing, and allocation profiling tools
 - **`docs/`** - Architecture guides, performance documentation, and templates
 - **`scripts/`** - Python utilities for automation and CI integration
 
@@ -213,6 +222,7 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality i
 
 - **Quality Control**: `.codacy.yml`, `rustfmt.toml`, `pyproject.toml`, linting configurations
 - **Environment**: `rust-toolchain.toml`, `.python-version`, `.cargo/config.toml`, GitHub Actions workflows
+- **Memory Profiling**: `count-allocations` feature flag, allocation-counter dependency, profiling benchmarks
 - **Project Metadata**: `CITATION.cff`, `REFERENCES.md`, `WARP.md`
 
 ### Architectural Principles
@@ -222,13 +232,24 @@ The project structure reflects several key architectural decisions:
 1. **Separation of Concerns**: Clear boundaries between data structures (`core/`) and algorithms (`geometry/`)
 2. **Generic Design**: Extensive use of generics for coordinate types, data associations, and dimensionality
 3. **Trait-Based Architecture**: Heavy use of traits for extensibility and code reuse
-4. **Performance Focus**: Dedicated benchmarking infrastructure and performance regression detection
-5. **Academic Integration**: Strong support for research use with comprehensive citations and references
-6. **Cross-Platform Development**: Modern Python tooling alongside traditional Rust development
-7. **Quality Assurance**: Multiple layers of automated quality control and testing
+4. **Performance Focus**: Dedicated benchmarking infrastructure, performance regression detection, and memory allocation profiling
+5. **Memory Profiling**: Comprehensive allocation tracking with `count-allocations` feature for detailed memory analysis
+6. **Academic Integration**: Strong support for research use with comprehensive citations and references
+7. **Cross-Platform Development**: Modern Python tooling alongside traditional Rust development
+8. **Quality Assurance**: Multiple layers of automated quality control and testing
 
 This structure supports both library users (through examples and documentation) and contributors (through comprehensive
 development tooling and clear architectural guidance).
+
+#### Memory Profiling System
+
+Version 0.4.3 introduces comprehensive memory profiling capabilities:
+
+- **Allocation Tracking**: Optional `count-allocations` feature using the `allocation-counter` crate
+- **Memory Benchmarks**: Dedicated benchmarks for memory scaling analysis (`memory_scaling.rs`, `triangulation_vs_hull_memory.rs`)
+- **Profiling Examples**: `memory_analysis.rs` demonstrates allocation counting across different operations
+- **Integration Testing**: `allocation_api.rs` provides utilities for testing memory usage in various scenarios
+- **CI Integration**: Automated profiling benchmarks with detailed allocation reports
 
 ---
 
