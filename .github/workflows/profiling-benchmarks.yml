@@ -1,0 +1,227 @@
+name: Comprehensive Profiling Benchmarks
+
+on:
+  # Manual trigger for on-demand profiling runs
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Profiling mode'
+        required: false
+        default: 'development'
+        type: choice
+        options:
+          - 'development'
+          - 'production'
+      benchmark_filter:
+        description: 'Benchmark filter (optional - e.g., "triangulation_scaling" or "memory_profiling")'
+        required: false
+        default: ''
+        type: string
+
+  # Monthly scheduled run for trend monitoring
+  schedule:
+    # First Sunday of each month at 2 AM UTC
+    - cron: '0 2 1-7 * 0'
+
+  # Trigger on release tags for baseline profiling data
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  comprehensive-profiling:
+    name: Comprehensive Performance Profiling
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 hours timeout for comprehensive profiling
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-profiling-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-profiling-
+            ${{ runner.os }}-cargo-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Set profiling mode
+        run: |
+          INPUT_MODE="${{ github.event.inputs.mode }}"
+          if [[ "$INPUT_MODE" == "development" ]]; then
+            echo "PROFILING_DEV_MODE=1" >> $GITHUB_ENV
+            echo "Running in development mode (reduced scale)"
+          else
+            echo "Running in production mode (full scale)"
+          fi
+
+      - name: Build profiling suite
+        run: |
+          cargo build --release --bench profiling_suite
+
+      - name: Run comprehensive profiling benchmarks
+        run: |
+          # Create results directory
+          mkdir -p profiling-results
+
+          # Set benchmark filter if provided
+          BENCH_FILTER=""
+          if [[ -n "${{ github.event.inputs.benchmark_filter }}" ]]; then
+            BENCH_FILTER="-- ${{ github.event.inputs.benchmark_filter }}"
+          fi
+
+          # Run profiling (timing-focused)
+          echo "Starting comprehensive profiling benchmarks..."
+          if [[ -z "$BENCH_FILTER" ]] || [[ "$BENCH_FILTER" != *"memory"* ]]; then
+            cargo bench --bench profiling_suite $BENCH_FILTER \
+              2>&1 | tee profiling-results/profiling_output.log
+          else
+            # If filter contains memory, run only the filtered benchmarks
+            cargo bench --bench profiling_suite --features count-allocations $BENCH_FILTER \
+              2>&1 | tee profiling-results/profiling_output.log
+            echo "MEMORY_BENCHMARKS_RUN=true" >> $GITHUB_ENV
+          fi
+
+      - name: Run profiling with memory allocation tracking (if not already done)
+        if: ${{ !contains(github.event.inputs.benchmark_filter, 'memory') && env.MEMORY_BENCHMARKS_RUN != 'true' }}
+        run: |
+          echo "Running memory-specific profiling with allocation tracking..."
+          cargo bench --bench profiling_suite --features count-allocations -- memory_profiling \
+            2>&1 | tee profiling-results/memory_profiling_detailed.log
+
+      - name: Generate profiling summary
+        run: |
+          # Create a summary of the profiling run
+          cat > profiling-results/profiling_summary.md << EOF
+          # Comprehensive Profiling Results
+
+          **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          **Commit**: ${{ github.sha }}
+          **Branch**: ${{ github.ref_name }}
+          **Trigger**: ${{ github.event_name }}
+          **Mode**: ${{ env.PROFILING_DEV_MODE == '1' && 'Development' || 'Production' }}
+          **Runner**: ${{ runner.os }}
+
+          ## Configuration
+
+          - **Profiling Mode**: ${{ env.PROFILING_DEV_MODE == '1' &&
+            'Development (reduced scale for faster iteration)' ||
+            'Production (full 10³-10⁶ point scale)' }}
+          - **Memory Tracking**: ${{ contains(github.event.inputs.benchmark_filter, 'memory') &&
+            'Enabled for memory benchmarks (count-allocations feature)' ||
+            'Enabled only for memory-specific runs' }}
+          - **Benchmark Filter**: ${{ github.event.inputs.benchmark_filter != '' &&
+            github.event.inputs.benchmark_filter || 'All benchmarks' }}
+
+          ## Benchmark Categories Run
+
+          - **Triangulation Scaling**: Large-scale triangulation performance (2D-5D)
+          - **Memory Profiling**: Memory allocation tracking and analysis
+          - **Query Latency**: Circumsphere containment query performance
+          - **Algorithmic Bottlenecks**: Boundary facets and convex hull operations
+
+          ## Point Distributions Tested
+
+          - **Random**: Uniform random distribution
+          - **Grid**: Regular grid pattern (best-case scenario)
+          - **Poisson Disk**: Spatially uniform distribution (realistic scenario)
+
+          ## Files Generated
+
+          - \`profiling_output.log\`: Complete benchmark output
+          - \`memory_profiling_detailed.log\`: Detailed memory allocation analysis
+          - \`criterion/\`: HTML reports and detailed timing data
+
+          EOF
+
+      - name: Check for performance regressions (if baseline exists)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          # For tagged releases, save as new baseline
+          echo "Tagged release detected - this will serve as new profiling baseline"
+          cp -r target/criterion profiling-results/criterion-baseline-${{ github.ref_name }}
+
+      - name: Upload profiling results
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiling-results-${{ github.run_number }}
+          path: profiling-results/
+          retention-days: 30
+
+      - name: Upload profiling baseline (for tagged releases)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiling-baseline-${{ github.ref_name }}
+          path: |
+            profiling-results/
+            target/criterion/
+          retention-days: 90  # Keep baselines longer
+
+      - name: Comment on commit (if triggered manually)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Manual profiling run completed for commit ${{ github.sha }}"
+          echo "Check the Actions tab for detailed results and artifacts"
+
+  memory-stress-test:
+    name: Memory Stress Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-memory-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run allocation API tests
+        run: |
+          echo "Running allocation API tests..."
+          cargo test --test allocation_api --features count-allocations --verbose
+
+      - name: Run memory scaling benchmarks
+        run: |
+          echo "Running memory scaling analysis..."
+          cargo bench --bench memory_scaling --features count-allocations
+
+      - name: Upload memory test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-stress-results-${{ github.run_number }}
+          path: |
+            target/criterion/
+          retention-days: 14

@@ -3,47 +3,38 @@
 //! This example demonstrates basic memory usage analysis for Delaunay triangulations
 //! using the existing allocation counter infrastructure from the tests.
 
+use delaunay::core::util::measure_with_result;
 use delaunay::geometry::algorithms::ConvexHull;
-use delaunay::geometry::util::generate_random_points;
-use delaunay::prelude::*;
-use delaunay::vertex;
+use delaunay::geometry::util::generate_random_triangulation;
 use std::time::Instant;
 
-/// Create test helper that mimics the existing test infrastructure  
-#[cfg(feature = "count-allocations")]
-fn measure_with_result<F, R>(f: F) -> (R, allocation_counter::AllocationInfo)
-where
-    F: FnOnce() -> R,
-{
-    let mut result: Option<R> = None;
-    let info = allocation_counter::measure(|| {
-        result = Some(f());
-    });
-    (result.expect("Closure should have set result"), info)
-}
-
-#[cfg(not(feature = "count-allocations"))]
-fn measure_with_result<F, R>(f: F) -> (R, ())
-where
-    F: FnOnce() -> R,
-{
-    (f(), ())
-}
+/// Bounds for random triangulation (min, max) - consistent with benchmarks
+const BOUNDS: (f64, f64) = (-100.0, 100.0);
 
 /// Macro to generate dimension-specific memory analysis functions
 macro_rules! generate_memory_analysis {
     ($name:ident, $dim:literal) => {
         #[allow(unused_variables)] // tri_info and hull_info are used conditionally based on count-allocations feature
-        fn $name(points: &[Point<f64, $dim>]) {
-            println!("  Analyzing {}D triangulation with {} points", $dim, points.len());
-
-            let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+        fn $name(n_points: usize, seed: u64) {
+            println!("  Analyzing {}D triangulation with {} points", $dim, n_points);
 
             // Measure triangulation construction
             let start = Instant::now();
-            let (tds, tri_info) = measure_with_result(|| {
-                Tds::<f64, (), (), $dim>::new(&vertices).expect("failed to build triangulation")
+            let (tds_res, tri_info) = measure_with_result(|| {
+                generate_random_triangulation::<f64, (), (), $dim>(
+                    n_points,
+                    BOUNDS,
+                    None,
+                    Some(seed),
+                )
             });
+            let tds = match tds_res {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("✗ Failed to build triangulation: {e}");
+                    return;
+                }
+            };
             let construction_time = start.elapsed();
 
             let num_vertices = tds.number_of_vertices();
@@ -51,10 +42,16 @@ macro_rules! generate_memory_analysis {
 
             // Measure convex hull extraction
             let start = Instant::now();
-            let (hull, hull_info) = measure_with_result(|| {
+            let (hull_res, hull_info) = measure_with_result(|| {
                 ConvexHull::from_triangulation(&tds)
-                    .expect("failed to construct convex hull from triangulation")
             });
+            let hull = match hull_res {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("✗ Failed to construct convex hull from triangulation: {e}");
+                    return;
+                }
+            };
             let hull_time = start.elapsed();
 
             let hull_facets = hull.facet_count();
@@ -73,14 +70,32 @@ macro_rules! generate_memory_analysis {
                     let hull_bytes = hull_info.bytes_total as f64;
                     let tri_kb = tri_bytes / 1024.0;
                     let hull_kb = hull_bytes / 1024.0;
+                    let tri_mib = tri_kb / 1024.0;
+                    let hull_mib = hull_kb / 1024.0;
                     if tri_info.bytes_total > 0 && num_vertices > 0 {
                         let bytes_per_vertex = tri_bytes / num_vertices as f64;
                         let hull_ratio = (hull_bytes / tri_bytes) * 100.0;
-                        println!("    Triangulation memory: {tri_kb:.1} KB ({bytes_per_vertex:.0} bytes/vertex)");
-                        println!("    Hull memory: {hull_kb:.1} KB ({hull_ratio:.1}% of triangulation)");
+                        if tri_kb >= 1024.0 {
+                            println!("    Triangulation memory: {tri_kb:.1} KiB ({tri_mib:.2} MiB, {bytes_per_vertex:.0} bytes/vertex)");
+                        } else {
+                            println!("    Triangulation memory: {tri_kb:.1} KiB ({bytes_per_vertex:.0} bytes/vertex)");
+                        }
+                        if hull_kb >= 1024.0 {
+                            println!("    Hull memory: {hull_kb:.1} KiB ({hull_mib:.2} MiB, {hull_ratio:.1}% of triangulation)");
+                        } else {
+                            println!("    Hull memory: {hull_kb:.1} KiB ({hull_ratio:.1}% of triangulation)");
+                        }
                     } else {
-                        println!("    Triangulation memory: {tri_kb:.1} KB");
-                        println!("    Hull memory: {hull_kb:.1} KB");
+                        if tri_kb >= 1024.0 {
+                            println!("    Triangulation memory: {tri_kb:.1} KiB ({tri_mib:.2} MiB)");
+                        } else {
+                            println!("    Triangulation memory: {tri_kb:.1} KiB");
+                        }
+                        if hull_kb >= 1024.0 {
+                            println!("    Hull memory: {hull_kb:.1} KiB ({hull_mib:.2} MiB)");
+                        } else {
+                            println!("    Hull memory: {hull_kb:.1} KiB");
+                        }
                     }
                 }
             }
@@ -118,34 +133,25 @@ fn main() {
 
     // Test with a moderate number of points across all dimensions
     let n_points = 25;
-    let range = (-50.0, 50.0);
 
     println!("=== Memory Analysis with {n_points} Points ===");
     println!();
 
-    // 2D Analysis
+    // 2D Analysis with seed for reproducibility
     println!("--- 2D Triangulation ---");
-    let points_2d =
-        generate_random_points::<f64, 2>(n_points, range).expect("Failed to generate 2D points");
-    analyze_triangulation_memory_2d(&points_2d);
+    analyze_triangulation_memory_2d(n_points, 12345);
 
-    // 3D Analysis
+    // 3D Analysis with different seed
     println!("--- 3D Triangulation ---");
-    let points_3d =
-        generate_random_points::<f64, 3>(n_points, range).expect("Failed to generate 3D points");
-    analyze_triangulation_memory_3d(&points_3d);
+    analyze_triangulation_memory_3d(n_points, 23456);
 
-    // 4D Analysis
+    // 4D Analysis with different seed
     println!("--- 4D Triangulation ---");
-    let points_4d =
-        generate_random_points::<f64, 4>(n_points, range).expect("Failed to generate 4D points");
-    analyze_triangulation_memory_4d(&points_4d);
+    analyze_triangulation_memory_4d(n_points, 34567);
 
-    // 5D Analysis
+    // 5D Analysis with different seed
     println!("--- 5D Triangulation ---");
-    let points_5d =
-        generate_random_points::<f64, 5>(n_points, range).expect("Failed to generate 5D points");
-    analyze_triangulation_memory_5d(&points_5d);
+    analyze_triangulation_memory_5d(n_points, 45678);
 
     println!("=== Key Insights (empirical) ===");
     println!(

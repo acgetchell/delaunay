@@ -6,14 +6,16 @@
 #![allow(missing_docs)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::geometry::util::generate_random_points_seeded;
-use delaunay::prelude::*;
-use delaunay::vertex;
+use delaunay::core::util::measure_with_result;
+use delaunay::geometry::util::generate_random_triangulation;
 use std::fs::File;
 use std::hint::black_box;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
+
+/// Bounds for random triangulation generation - consistent with examples and other benchmarks
+const BOUNDS: (f64, f64) = (-100.0, 100.0);
 
 /// Memory measurement record for CSV output
 #[derive(Debug, Clone)]
@@ -22,10 +24,10 @@ struct MemoryRecord {
     points: usize,
     vertices: usize,
     cells: usize,
-    allocations_total: usize,
-    bytes_total: usize,
-    allocations_peak: usize,
-    bytes_peak: usize,
+    allocations_total: u64,
+    bytes_total: u64,
+    allocations_peak: u64,
+    bytes_peak: u64,
     bytes_per_vertex: f64,
     bytes_per_cell: f64,
 }
@@ -58,10 +60,10 @@ impl MemoryRecord {
             points,
             vertices,
             cells,
-            allocations_total: info.count_total.try_into().unwrap_or(0),
-            bytes_total: info.bytes_total.try_into().unwrap_or(0),
-            allocations_peak: info.count_max.try_into().unwrap_or(0),
-            bytes_peak: info.bytes_max.try_into().unwrap_or(0),
+            allocations_total: info.count_total,
+            bytes_total: info.bytes_total,
+            allocations_peak: info.count_max,
+            bytes_peak: info.bytes_max,
             bytes_per_vertex,
             bytes_per_cell,
         }
@@ -69,7 +71,12 @@ impl MemoryRecord {
 
     /// Create a placeholder record when allocation counting is disabled
     #[cfg(not(feature = "count-allocations"))]
-    fn new_placeholder(dimension: usize, points: usize, vertices: usize, cells: usize) -> Self {
+    const fn new_placeholder(
+        dimension: usize,
+        points: usize,
+        vertices: usize,
+        cells: usize,
+    ) -> Self {
         Self {
             dimension,
             points,
@@ -114,28 +121,7 @@ impl MemoryRecord {
 /// Global storage for memory records (safe access using Mutex)
 static MEMORY_RECORDS: Mutex<Vec<MemoryRecord>> = Mutex::new(Vec::new());
 
-/// Helper function to measure memory usage
-#[cfg(feature = "count-allocations")]
-fn measure_with_result<F, R>(f: F) -> (R, allocation_counter::AllocationInfo)
-where
-    F: FnOnce() -> R,
-{
-    let mut result: Option<R> = None;
-    let info = allocation_counter::measure(|| {
-        result = Some(f());
-    });
-    (result.expect("Closure should have set result"), info)
-}
-
-#[cfg(not(feature = "count-allocations"))]
-fn measure_with_result<F, R>(f: F) -> (R, ())
-where
-    F: FnOnce() -> R,
-{
-    (f(), ())
-}
-
-// Point generation functions are now imported from util module
+// Memory measurement and point generation functions are now imported from util modules
 
 /// Store a memory record safely
 fn store_memory_record(record: MemoryRecord) {
@@ -145,77 +131,48 @@ fn store_memory_record(record: MemoryRecord) {
     records.push(record);
 }
 
-/// Measure memory for 2D triangulations
-#[allow(unused_variables)] // info is used conditionally based on count-allocations feature
-fn measure_2d_memory(points: &[Point<f64, 2>], n_points: usize) -> MemoryRecord {
-    let (tds, info) = measure_with_result(|| {
-        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-        Tds::<f64, (), (), 2>::new(&vertices).unwrap()
-    });
+/// Macro to reduce duplication in memory measurement functions
+macro_rules! measure_memory {
+    ($dim:literal, $func_name:ident) => {
+        /// Measure memory for D-dimensional triangulations
+        #[allow(unused_variables)] // info is used conditionally based on count-allocations feature
+        fn $func_name(n_points: usize, seed: u64) -> MemoryRecord {
+            let (tds, info) = measure_with_result(|| {
+                let tds = generate_random_triangulation::<f64, (), (), $dim>(
+                    n_points,
+                    BOUNDS,
+                    None,
+                    Some(seed),
+                )
+                .expect(concat!(
+                    "generate_random_triangulation failed for ",
+                    stringify!($dim),
+                    "D"
+                ));
+                black_box(tds)
+            });
 
-    let vertex_count = tds.number_of_vertices();
-    let cells = tds.number_of_cells();
+            let vertex_count = tds.number_of_vertices();
+            let cells = tds.number_of_cells();
 
-    #[cfg(feature = "count-allocations")]
-    return MemoryRecord::new(2, n_points, vertex_count, cells, &info);
+            #[cfg(feature = "count-allocations")]
+            {
+                MemoryRecord::new($dim, n_points, vertex_count, cells, &info)
+            }
 
-    #[cfg(not(feature = "count-allocations"))]
-    return MemoryRecord::new_placeholder(2, n_points, vertex_count, cells);
+            #[cfg(not(feature = "count-allocations"))]
+            {
+                MemoryRecord::new_placeholder($dim, n_points, vertex_count, cells)
+            }
+        }
+    };
 }
 
-/// Measure memory for 3D triangulations
-#[allow(unused_variables)] // info is used conditionally based on count-allocations feature
-fn measure_3d_memory(points: &[Point<f64, 3>], n_points: usize) -> MemoryRecord {
-    let (tds, info) = measure_with_result(|| {
-        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-        Tds::<f64, (), (), 3>::new(&vertices).unwrap()
-    });
-
-    let vertex_count = tds.number_of_vertices();
-    let cells = tds.number_of_cells();
-
-    #[cfg(feature = "count-allocations")]
-    return MemoryRecord::new(3, n_points, vertex_count, cells, &info);
-
-    #[cfg(not(feature = "count-allocations"))]
-    return MemoryRecord::new_placeholder(3, n_points, vertex_count, cells);
-}
-
-/// Measure memory for 4D triangulations
-#[allow(unused_variables)] // info is used conditionally based on count-allocations feature
-fn measure_4d_memory(points: &[Point<f64, 4>], n_points: usize) -> MemoryRecord {
-    let (tds, info) = measure_with_result(|| {
-        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-        Tds::<f64, (), (), 4>::new(&vertices).unwrap()
-    });
-
-    let vertex_count = tds.number_of_vertices();
-    let cells = tds.number_of_cells();
-
-    #[cfg(feature = "count-allocations")]
-    return MemoryRecord::new(4, n_points, vertex_count, cells, &info);
-
-    #[cfg(not(feature = "count-allocations"))]
-    return MemoryRecord::new_placeholder(4, n_points, vertex_count, cells);
-}
-
-/// Measure memory for 5D triangulations
-#[allow(unused_variables)] // info is used conditionally based on count-allocations feature
-fn measure_5d_memory(points: &[Point<f64, 5>], n_points: usize) -> MemoryRecord {
-    let (tds, info) = measure_with_result(|| {
-        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-        Tds::<f64, (), (), 5>::new(&vertices).unwrap()
-    });
-
-    let vertex_count = tds.number_of_vertices();
-    let cells = tds.number_of_cells();
-
-    #[cfg(feature = "count-allocations")]
-    return MemoryRecord::new(5, n_points, vertex_count, cells, &info);
-
-    #[cfg(not(feature = "count-allocations"))]
-    return MemoryRecord::new_placeholder(5, n_points, vertex_count, cells);
-}
+// Generate memory measurement functions using the macro
+measure_memory!(2, measure_2d_memory);
+measure_memory!(3, measure_3d_memory);
+measure_memory!(4, measure_4d_memory);
+measure_memory!(5, measure_5d_memory);
 
 /// Benchmark memory scaling for 2D triangulations
 fn benchmark_memory_scaling_2d(c: &mut Criterion) {
@@ -229,11 +186,8 @@ fn benchmark_memory_scaling_2d(c: &mut Criterion) {
             BenchmarkId::new("triangulation_2d", n_points),
             &n_points,
             |b, &n_points| {
-                let points: Vec<Point<f64, 2>> =
-                    generate_random_points_seeded(n_points, (-100.0, 100.0), 12345).unwrap();
-
                 b.iter(|| {
-                    let record = measure_2d_memory(&points, n_points);
+                    let record = measure_2d_memory(n_points, 12345);
                     store_memory_record(record);
                     black_box(());
                 });
@@ -257,11 +211,8 @@ fn benchmark_memory_scaling_3d(c: &mut Criterion) {
             BenchmarkId::new("triangulation_3d", n_points),
             &n_points,
             |b, &n_points| {
-                let points: Vec<Point<f64, 3>> =
-                    generate_random_points_seeded(n_points, (-100.0, 100.0), 23456).unwrap();
-
                 b.iter(|| {
-                    let record = measure_3d_memory(&points, n_points);
+                    let record = measure_3d_memory(n_points, 23456);
                     store_memory_record(record);
                     black_box(());
                 });
@@ -285,11 +236,8 @@ fn benchmark_memory_scaling_4d(c: &mut Criterion) {
             BenchmarkId::new("triangulation_4d", n_points),
             &n_points,
             |b, &n_points| {
-                let points: Vec<Point<f64, 4>> =
-                    generate_random_points_seeded(n_points, (-100.0, 100.0), 34567).unwrap();
-
                 b.iter(|| {
-                    let record = measure_4d_memory(&points, n_points);
+                    let record = measure_4d_memory(n_points, 34567);
                     store_memory_record(record);
                     black_box(());
                 });
@@ -313,11 +261,8 @@ fn benchmark_memory_scaling_5d(c: &mut Criterion) {
             BenchmarkId::new("triangulation_5d", n_points),
             &n_points,
             |b, &n_points| {
-                let points: Vec<Point<f64, 5>> =
-                    generate_random_points_seeded(n_points, (-100.0, 100.0), 45678).unwrap();
-
                 b.iter(|| {
-                    let record = measure_5d_memory(&points, n_points);
+                    let record = measure_5d_memory(n_points, 45678);
                     store_memory_record(record);
                     black_box(());
                 });
@@ -338,18 +283,28 @@ fn write_memory_records_to_csv() {
     let csv_path = target_dir.join("memory_scaling.csv");
 
     if let Ok(mut file) = File::create(&csv_path) {
-        let _ = MemoryRecord::write_csv_header(&mut file);
+        if let Err(e) = MemoryRecord::write_csv_header(&mut file) {
+            eprintln!("failed writing CSV header to {}: {e}", csv_path.display());
+            return;
+        }
 
         {
             let records = MEMORY_RECORDS
                 .lock()
                 .expect("MEMORY_RECORDS mutex poisoned");
             for record in records.iter() {
-                let _ = record.write_csv_row(&mut file);
+                if let Err(e) = record.write_csv_row(&mut file) {
+                    eprintln!(
+                        "failed writing CSV row (dim={} points={}): {e}",
+                        record.dimension, record.points
+                    );
+                }
             }
         } // Drop the lock here
 
         println!("Memory scaling results written to: {}", csv_path.display());
+    } else {
+        eprintln!("failed to create {}", csv_path.display());
     }
 }
 
@@ -376,14 +331,27 @@ fn print_memory_summary() {
                     {
                         #[allow(clippy::cast_precision_loss)]
                         let kb_total = record.bytes_total as f64 / 1024.0;
-                        println!(
-                            "  {} points: {} vertices, {} cells, {:.1} KB total, {:.2} bytes/vertex",
-                            record.points,
-                            record.vertices,
-                            record.cells,
-                            kb_total,
-                            record.bytes_per_vertex
-                        );
+                        let mib_total = kb_total / 1024.0;
+                        if kb_total >= 1024.0 {
+                            println!(
+                                "  {} points: {} vertices, {} cells, {:.1} KB ({:.2} MiB) total, {:.2} bytes/vertex",
+                                record.points,
+                                record.vertices,
+                                record.cells,
+                                kb_total,
+                                mib_total,
+                                record.bytes_per_vertex
+                            );
+                        } else {
+                            println!(
+                                "  {} points: {} vertices, {} cells, {:.1} KB total, {:.2} bytes/vertex",
+                                record.points,
+                                record.vertices,
+                                record.cells,
+                                kb_total,
+                                record.bytes_per_vertex
+                            );
+                        }
                     }
 
                     #[cfg(not(feature = "count-allocations"))]

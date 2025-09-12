@@ -1,21 +1,21 @@
+use crate::core::collections::{FacetToCellsMap, FastHashMap, SmallBuffer};
 use crate::core::facet::{Facet, FacetError};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::{CellKey, Tds};
+use crate::core::triangulation_data_structure::Tds;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::simplex_orientation;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
 };
 use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
-use arc_swap::ArcSwap;
+use arc_swap::ArcSwapOption;
 use nalgebra::ComplexField;
 use num_traits::NumCast;
 use num_traits::{One, Zero};
 use ordered_float::OrderedFloat;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::collections::HashMap;
 use std::iter::Sum;
 use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
 use std::sync::{
@@ -157,9 +157,10 @@ where
     /// The boundary facets that form the convex hull
     pub hull_facets: Vec<Facet<T, U, V, D>>,
     /// Cache for the facet-to-cells mapping to avoid rebuilding it for each facet check
-    /// Uses `ArcSwap` for lock-free atomic updates when cache needs invalidation
+    /// Uses `ArcSwapOption` for lock-free atomic updates when cache needs invalidation
+    /// This avoids Some/None wrapping boilerplate compared to `ArcSwap<Option<T>>`
     #[allow(clippy::type_complexity)]
-    facet_to_cells_cache: ArcSwap<Option<HashMap<u64, Vec<(CellKey, usize)>>>>,
+    facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
     /// Generation counter at the time the cache was built.
     /// Used to detect when the TDS has been mutated and cache needs invalidation.
     /// Uses `Arc<AtomicU64>` for consistent tracking across cloned `ConvexHull` instances.
@@ -263,8 +264,9 @@ where
 
         Ok(Self {
             hull_facets,
-            facet_to_cells_cache: ArcSwap::from_pointee(None),
-            cached_generation: tds.generation.clone(),
+            facet_to_cells_cache: ArcSwapOption::empty(),
+            // Snapshot the current TDS generation; do not share the AtomicU64
+            cached_generation: Arc::new(AtomicU64::new(tds.generation.load(Ordering::Relaxed))),
         })
     }
 
@@ -373,46 +375,49 @@ where
         let current_generation = tds.generation.load(Ordering::Relaxed);
         let cached_generation = self.cached_generation.load(Ordering::Relaxed);
 
-        // Get or build the cached facet-to-cells mapping using ArcSwap
+        // Get or build the cached facet-to-cells mapping using ArcSwapOption
         // If the TDS generation matches the cached generation, cache is current
         let facet_to_cells_arc = if current_generation == cached_generation {
             // Cache is current - load existing cache or build if it doesn't exist
-            let current_cache_guard = self.facet_to_cells_cache.load();
-            if current_cache_guard.is_none() {
-                // No cache exists yet - build and store it
-                let new_cache = tds.build_facet_to_cells_hashmap();
-                let new_cache_arc = Arc::new(Some(new_cache));
+            self.facet_to_cells_cache.load_full().map_or_else(
+                || {
+                    // No cache exists yet - build and store it
+                    let new_cache = tds.build_facet_to_cells_hashmap();
+                    let new_cache_arc = Arc::new(new_cache);
 
-                // Try to swap in the new cache (another thread might have done it already)
-                let _ = self
-                    .facet_to_cells_cache
-                    .compare_and_swap(&*current_cache_guard, new_cache_arc.clone());
-
-                new_cache_arc
-            } else {
-                // Clone the Arc from the Guard to return the correct type
-                current_cache_guard.clone()
-            }
+                    // Try to swap in the new cache (another thread might have done it already)
+                    // If another thread beat us to it, use their cache instead
+                    let none_ref: Option<Arc<FacetToCellsMap>> = None;
+                    let _old = self
+                        .facet_to_cells_cache
+                        .compare_and_swap(&none_ref, Some(new_cache_arc.clone()));
+                    // Load the current cache (could be ours or another thread's)
+                    self.facet_to_cells_cache
+                        .load_full()
+                        .unwrap_or(new_cache_arc)
+                },
+                |existing_cache| {
+                    // Cache exists and is current - use it
+                    existing_cache
+                },
+            )
         } else {
             // Cache is stale - need to invalidate and rebuild
             let new_cache = tds.build_facet_to_cells_hashmap();
-            let new_cache_arc = Arc::new(Some(new_cache));
+            let new_cache_arc = Arc::new(new_cache);
 
             // Atomically swap in the new cache
-            self.facet_to_cells_cache.store(new_cache_arc.clone());
+            self.facet_to_cells_cache.store(Some(new_cache_arc.clone()));
 
-            // Update the generation counter
+            // Update the generation snapshot
             self.cached_generation
                 .store(current_generation, Ordering::Relaxed);
 
             new_cache_arc
         };
 
-        // Extract the cache from the Arc
-        let facet_to_cells = facet_to_cells_arc
-            .as_ref()
-            .as_ref()
-            .expect("Cache should be Some at this point");
+        // No need for double as_ref() with ArcSwapOption
+        let facet_to_cells = facet_to_cells_arc.as_ref();
 
         let facet_key = facet.key();
 
@@ -927,7 +932,17 @@ where
             }
 
             // Check that vertices are distinct - collect all duplicates for this facet
-            let mut uuid_to_positions: HashMap<uuid::Uuid, Vec<usize>> = HashMap::new();
+            // Use SmallVec for positions to avoid heap allocation for typical small collections
+            // Size 8 should cover most practical dimensions (up to 7D vertices per facet)
+            //
+            // TODO: Optimize for high-dimensional cases (D > 7)
+            // Consider using conditional buffer type based on dimension:
+            // - if D <= 8: use SmallBuffer<usize, 8> for stack allocation
+            // - if D > 8: use Vec<usize> directly to avoid wasted stack space
+            // This could be implemented with const generics when SmallVec supports it,
+            // or with a runtime check using an enum wrapper.
+            let mut uuid_to_positions: FastHashMap<uuid::Uuid, SmallBuffer<usize, 8>> =
+                FastHashMap::default();
             for (position, vertex) in vertices.iter().enumerate() {
                 uuid_to_positions
                     .entry(vertex.uuid())
@@ -936,9 +951,11 @@ where
             }
 
             // Find any UUIDs that appear more than once
+            // Convert SmallBuffer to Vec for the error type (maintains API compatibility)
             let duplicate_groups: Vec<Vec<usize>> = uuid_to_positions
                 .into_values()
                 .filter(|positions| positions.len() > 1)
+                .map(smallvec::SmallVec::into_vec)
                 .collect();
 
             if !duplicate_groups.is_empty() {
@@ -1082,10 +1099,10 @@ where
     /// // ... perform visibility operations ...
     /// ```
     pub fn invalidate_cache(&self) {
-        // Clear the cache
-        self.facet_to_cells_cache.store(Arc::new(None));
+        // Clear the cache using ArcSwapOption::store(None)
+        self.facet_to_cells_cache.store(None);
 
-        // Reset the generation counter to 0 to force cache rebuild
+        // Reset only our snapshot to force rebuild on next access
         self.cached_generation.store(0, Ordering::Relaxed);
     }
 }
@@ -1100,7 +1117,7 @@ where
     fn default() -> Self {
         Self {
             hull_facets: Vec::new(),
-            facet_to_cells_cache: ArcSwap::from_pointee(None),
+            facet_to_cells_cache: ArcSwapOption::empty(),
             cached_generation: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -3335,16 +3352,16 @@ mod tests {
         println!("  Initial TDS generation: {initial_tds_generation}");
         println!("  Initial hull cached generation: {initial_hull_generation}");
 
-        // Verify they share the same Arc (same memory location)
+        // ConvexHull keeps an independent snapshot for staleness detection
         assert!(
-            std::ptr::eq(tds.generation.as_ref(), hull.cached_generation.as_ref()),
-            "TDS and ConvexHull should share the same Arc<AtomicU64> for generation tracking"
+            !std::ptr::eq(tds.generation.as_ref(), hull.cached_generation.as_ref()),
+            "ConvexHull should keep an independent generation snapshot"
         );
 
-        // Verify initial generations match
+        // Verify initial generations match (hull starts with snapshot of TDS generation)
         assert_eq!(
             initial_tds_generation, initial_hull_generation,
-            "Initial generations should match since ConvexHull clones TDS generation"
+            "Initial generations should match since ConvexHull snapshots TDS generation"
         );
 
         // Test initial cache building - first visibility test should build the cache
@@ -3367,7 +3384,7 @@ mod tests {
             "Generations should still match after cache building"
         );
 
-        // Verify cache exists by checking that it contains expected facet keys
+        // Verify cache was built
         let cache_arc = hull.facet_to_cells_cache.load();
         assert!(
             cache_arc.is_some(),
@@ -3388,33 +3405,19 @@ mod tests {
         println!("    TDS generation: {modified_tds_gen}");
         println!("    Hull cached generation: {stale_hull_gen}");
 
-        // Verify that both see the same change since they share the Arc
-        assert_eq!(
-            modified_tds_gen, stale_hull_gen,
-            "Both should see the generation change since they share the same Arc"
-        );
+        // Hull snapshot is now stale relative to TDS
+        assert!(modified_tds_gen > stale_hull_gen);
         assert_eq!(
             modified_tds_gen,
             old_generation + 1,
             "Generation should be incremented"
         );
 
-        println!("  ✓ Generation change correctly detected by both TDS and ConvexHull");
+        println!("  ✓ Generation change correctly detected - hull snapshot is now stale");
 
         // Test cache invalidation and rebuild
-        // Since both the TDS and ConvexHull share the same Arc, the generation comparison
-        // will actually show them as equal. Let's test this differently by manually
-        // simulating a stale cache scenario.
-
-        // First, let's create a separate ConvexHull with its own generation counter
-        // to simulate what would happen with independent generation tracking
-        let hull_with_independent_generation = ConvexHull {
-            hull_facets: hull.hull_facets.clone(),
-            facet_to_cells_cache: ArcSwap::from_pointee(Some(
-                cache_arc.as_ref().as_ref().unwrap().clone(),
-            )),
-            cached_generation: Arc::new(AtomicU64::new(old_generation)), // Stale generation
-        };
+        // Next visibility call should rebuild the cache due to stale snapshot
+        let hull_with_independent_generation = &hull;
 
         let stale_gen = hull_with_independent_generation
             .cached_generation

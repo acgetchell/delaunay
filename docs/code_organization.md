@@ -36,6 +36,7 @@ delaunay/
 │   │   │   └── insertion_algorithm.rs            # Insertion algorithm traits
 │   │   ├── boundary.rs                           # Boundary analysis and facet detection
 │   │   ├── cell.rs                               # Cell (simplex) implementation
+│   │   ├── collections.rs                        # Optimized collection types (re-exported via prelude)
 │   │   ├── facet.rs                              # Facet implementation
 │   │   ├── triangulation_data_structure.rs       # Main Tds struct
 │   │   ├── util.rs                               # Helper functions for triangulation operations
@@ -59,12 +60,14 @@ delaunay/
 │   ├── point_comparison_and_hashing.rs           # Point operations examples
 │   └── triangulation_3d_50_points.rs             # 3D triangulation example
 ├── benches/                                      # Performance benchmarks
-│   ├── README.md                                 # Benchmarking guide and performance results
+│   ├── README.md                                 # Benchmarking guide and usage instructions
+│   ├── PERFORMANCE_RESULTS.md                    # Auto-generated performance results and analysis
 │   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
 │   ├── ci_performance_suite.rs                   # CI-optimized performance suite (2D-5D regression testing)
 │   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
 │   ├── memory_scaling.rs                         # Memory usage scaling benchmarks
 │   ├── microbenchmarks.rs                        # Fine-grained performance tests
+│   ├── profiling_suite.rs                        # Comprehensive profiling suite (see .github/workflows/profiling-benchmarks.yml)
 │   ├── triangulation_creation.rs                 # Triangulation creation benchmarks
 │   └── triangulation_vs_hull_memory.rs           # Memory comparison benchmarks
 ├── tests/                                        # Integration tests
@@ -87,18 +90,21 @@ delaunay/
 ├── scripts/                                      # Development and CI scripts
 │   ├── tests/                                    # Python utility tests
 │   │   ├── __init__.py                           # Test package initialization
+│   │   ├── conftest.py                           # Shared test fixtures and configuration
+│   │   ├── test_benchmark_models.py              # Tests for benchmark_models.py data models and parsing/formatting functions
+│   │   ├── test_benchmark_utils.py               # Tests for benchmark_utils.py business logic and utilities
 │   │   ├── test_changelog_utils.py               # Comprehensive tests for changelog_utils.py
+│   │   ├── test_enhance_commits.py               # Tests for enhance_commits.py
 │   │   ├── test_hardware_utils.py                # Tests for hardware_utils.py
 │   │   └── test_subprocess_utils.py              # Comprehensive tests for subprocess_utils.py
 │   ├── README.md                                 # Scripts documentation
-│   ├── benchmark_utils.py                        # Python utilities for benchmark processing and hardware detection
+│   ├── benchmark_models.py                       # Data models for benchmark parsing and formatting
+│   ├── benchmark_utils.py                        # Benchmark processing, baseline generation, and performance comparison utilities
 │   ├── changelog_utils.py                        # Comprehensive Python utilities for changelog generation, processing, and git tagging
-│   ├── enhance_commits.py                        # Commit enhancement utilities
-│   ├── hardware_utils.py                         # Python utilities for hardware information and system capabilities
+│   ├── enhance_commits.py                        # Commit enhancement and categorization utilities
+│   ├── hardware_utils.py                         # Hardware information detection and system capabilities analysis
 │   ├── run_all_examples.sh                       # Validate all examples
-│   └── subprocess_utils.py                       # Secure subprocess execution utilities for git and system commands
-├── .cargo/                                       # Cargo configuration
-│   └── config.toml                               # Build configuration
+│   └── subprocess_utils.py                       # Secure subprocess execution utilities and shared project navigation functions
 ├── .github/                                      # GitHub configuration
 │   ├── workflows/                                # CI/CD workflows
 │   │   ├── audit.yml                             # Security vulnerability scanning
@@ -107,9 +113,12 @@ delaunay/
 │   │   ├── codacy.yml                            # Code quality analysis
 │   │   ├── codecov.yml                           # Test coverage tracking
 │   │   ├── generate-baseline.yml                 # Automated performance baseline generation on releases
+│   │   ├── profiling-benchmarks.yml              # Profiling suite for large-scale performance analysis
 │   │   └── rust-clippy.yml                       # Additional clippy analysis
 │   ├── CODEOWNERS                                # Code ownership definitions
 │   └── dependabot.yml                            # Dependency update configuration
+├── .cargo/                                       # Cargo configuration
+│   └── config.toml                               # Build configuration
 ├── .auto-changelog                               # Auto-changelog configuration
 ├── .codacy.yml                                   # Codacy code quality configuration
 ├── .codecov.yml                                  # Codecov configuration
@@ -147,6 +156,30 @@ cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
 cargo test --test circumsphere_debug_tools -- --nocapture
 ```
 
+**Note**: Python tests in `scripts/tests/` are executed via pytest (use `uv run pytest` for reproducible envs) and discovered via `pyproject.toml`. Run with:
+
+```bash
+# Pre-req for uv users (optional): pipx install uv
+
+# Run all Python utility tests
+uv run pytest -q
+# Or run specific test files
+uv run pytest scripts/tests/test_benchmark_utils.py
+
+# Without uv:
+pytest -q
+pytest scripts/tests/test_benchmark_utils.py
+```
+
+**Note**: Performance summary generation is available through the benchmark utilities CLI:
+
+```bash
+# Generate performance summary in benches/PERFORMANCE_RESULTS.md
+uv run benchmark-utils generate-summary
+```
+
+The `benchmark-utils` CLI provides integrated benchmark workflow functionality including performance summary generation.
+
 ### Architecture Overview
 
 #### Core Library (`src/`)
@@ -155,6 +188,7 @@ cargo test --test circumsphere_debug_tools -- --nocapture
 
 - `triangulation_data_structure.rs` - Main `Tds` struct
 - `vertex.rs`, `cell.rs`, `facet.rs` - Core geometric primitives
+- `collections.rs` - Optimized collection types and utilities
 - `boundary.rs` - Boundary detection and analysis
 - `algorithms/` - Bowyer-Watson implementations
 - `traits/` - Core trait definitions
@@ -543,40 +577,45 @@ mod tests {
 
 ### Module-Specific Variations
 
-#### `cell.rs` (2,442 lines)
+#### `cell.rs` (large module)
 
 - Most comprehensive implementation
 - Multiple specialized implementation blocks
 - Extensive geometric predicates integration
 - Detailed Hash/Eq contract documentation
 
-#### `vertex.rs` (1,950 lines)
+#### `vertex.rs` (large module)
 
 - Strong focus on coordinate validation
 - Comprehensive equality testing
 - Multiple numeric type support
 - Detailed serialization testing
 
-#### `facet.rs` (1,420 lines)
+#### `facet.rs` (medium module)
 
 - Geometric relationship focus
 - Key generation utilities
 - Adjacency testing
 - Error handling for geometric constraints
 
-#### `boundary.rs` (415 lines)
+#### `boundary.rs` (small module)
 
 - Trait implementation focused
 - Algorithm-specific testing
 - Performance benchmarking
 - Integration with TDS
 
-#### `util.rs` (871 lines)
+#### `util.rs` (large module)
 
 - Function-focused (not struct-focused)
-- Extensive edge case testing
-- Generic type coverage
-- Utility function combinations
+- UUID generation and validation utilities with comprehensive error handling
+- Extreme coordinate finding functions for SlotMap-based vertex collections
+- Supercell simplex creation for triangulation initialization
+- Hash utilities for stable, deterministic hash computation
+- Facet adjacency checking and geometric utilities
+- Combination generation for k-simplex vertex combinations
+- Multi-dimensional testing across 1D-5D with both f32 and f64 coordinate types
+- Extensive edge case testing and error handling validation with systematic test organization
 
 ### Key Conventions
 

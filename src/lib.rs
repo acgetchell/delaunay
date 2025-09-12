@@ -159,6 +159,8 @@ pub mod core {
     }
     pub mod boundary;
     pub mod cell;
+    /// High-performance collection types optimized for computational geometry
+    pub mod collections;
     pub mod facet;
     pub mod triangulation_data_structure;
     pub mod util;
@@ -179,6 +181,8 @@ pub mod core {
     pub use triangulation_data_structure::*;
     pub use util::*;
     pub use vertex::*;
+    // Note: collections module not re-exported here to avoid namespace pollution
+    // Import specific types via prelude or use crate::core::collections::
 }
 
 /// Contains geometric types including the `Point` struct and geometry predicates.
@@ -233,6 +237,13 @@ pub mod prelude {
         vertex::*,
     };
 
+    // Re-export commonly used collection types from core::collections
+    // These are frequently used in advanced examples and downstream code
+    pub use crate::core::collections::{
+        CellNeighborsMap, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer, VertexToCellsMap,
+        fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+    };
+
     // Re-export from geometry
     pub use crate::geometry::{
         algorithms::*, matrix::*, point::*, predicates::*, robust_predicates::*,
@@ -276,6 +287,36 @@ mod tests {
         assert!(is_normal::<Facet<f64, Option<()>, Option<()>, 3>>());
         assert!(is_normal::<Cell<f64, Option<()>, Option<()>, 4>>());
         assert!(is_normal::<Tds<f64, Option<()>, Option<()>, 4>>());
+    }
+
+    #[test]
+    fn test_prelude_collections_exports() {
+        use crate::prelude::*;
+
+        // Test that we can use the collections from the prelude
+        let mut map: FastHashMap<u64, usize> = FastHashMap::default();
+        map.insert(123, 456);
+        assert_eq!(map.get(&123), Some(&456));
+
+        let mut set: FastHashSet<u64> = FastHashSet::default();
+        set.insert(789);
+        assert!(set.contains(&789));
+
+        let mut buffer: SmallBuffer<i32, 8> = SmallBuffer::new();
+        buffer.push(42);
+        assert_eq!(buffer.len(), 1);
+
+        // Test capacity helpers
+        let map_with_cap = fast_hash_map_with_capacity::<u64, usize>(100);
+        assert!(map_with_cap.capacity() >= 100);
+
+        let set_with_cap = fast_hash_set_with_capacity::<u64>(50);
+        assert!(set_with_cap.capacity() >= 50);
+
+        // Test domain-specific types can be instantiated
+        let _facet_map: FacetToCellsMap = FacetToCellsMap::default();
+        let _neighbors: CellNeighborsMap = CellNeighborsMap::default();
+        let _vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
     }
 
     // =============================================================================

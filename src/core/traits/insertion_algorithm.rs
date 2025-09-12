@@ -907,11 +907,12 @@ where
         for cells in facet_to_cells.values() {
             if cells.len() == 1 {
                 let (cell_key, facet_index) = cells[0];
+                let fi = <usize as From<_>>::from(facet_index);
                 if let Some(cell) = tds.cells().get(cell_key)
                     && let Ok(facets) = cell.facets()
-                    && facet_index < facets.len()
+                    && facets.get(fi).is_some()
                 {
-                    let facet = &facets[facet_index];
+                    let facet = &facets[fi];
 
                     // Try to create a cell from this facet and the vertex
                     if Self::create_cell_from_facet_and_vertex(tds, facet, vertex) {
@@ -930,11 +931,12 @@ where
         // If boundary facets don't work, try ALL facets (including internal ones)
         for cells in facet_to_cells.values() {
             for &(cell_key, facet_index) in cells {
+                let fi = <usize as From<_>>::from(facet_index);
                 if let Some(cell) = tds.cells().get(cell_key)
                     && let Ok(facets) = cell.facets()
-                    && facet_index < facets.len()
+                    && facets.get(fi).is_some()
                 {
-                    let facet = &facets[facet_index];
+                    let facet = &facets[fi];
 
                     // Try to create a cell from this facet and the vertex
                     if Self::create_cell_from_facet_and_vertex(tds, facet, vertex) {
@@ -1190,9 +1192,7 @@ where
             let (cell_key, facet_index) = cells[0];
             if let Some(cell) = tds.cells().get(cell_key) {
                 if let Ok(facets) = cell.facets() {
-                    if facet_index < facets.len() {
-                        let facet = &facets[facet_index];
-
+                    if let Some(facet) = facets.get(<usize as From<_>>::from(facet_index)) {
                         // Test visibility using proper orientation predicates
                         if Self::is_facet_visible_from_vertex_impl(tds, facet, vertex, cell_key) {
                             visible_facets.push(facet.clone());

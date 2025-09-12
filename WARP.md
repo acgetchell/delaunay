@@ -32,6 +32,15 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - Validate all modified JSON files:
   - `git status --porcelain | awk '/\.json$/ {print $2}' | xargs -r -n1 jq empty`
 
+#### TOML File Validation (AI Assistant Guidance)
+
+- **ALWAYS** validate TOML files after editing them
+- **PREFERRED**: Use `uv run python -c "import tomllib; tomllib.load(open('<filename>.toml', 'rb')); print('<filename>.toml is valid TOML')"` for validation
+- **REQUIRED** when modifying `pyproject.toml`, `Cargo.toml`, or any other TOML configuration files
+- **FAST**: Uses Python's built-in `tomllib` (Python 3.11+) for reliable validation
+- Validate all modified TOML files:
+  - `git status --porcelain | awk '/\.toml$/ {print $2}' | xargs -r -I {} uv run python -c "import tomllib; tomllib.load(open('{}', 'rb')); print('{} is valid TOML')"`
+
 #### Spell Check Dictionary Management (AI Assistant Guidance)
 
 - **ALWAYS** run spell check after editing ANY files (code, documentation, configuration files, etc.)
@@ -44,10 +53,15 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 #### Import Organization (AI Assistant Guidance)
 
-- **ALWAYS** use `uvx ruff check --fix $(git ls-files '*.py')` to fix import issues and other code quality problems
-- **AUTOMATICALLY** removes unused imports, organizes import order, fixes line length, and other style issues
-- **PREFERRED** over manual cleanup - let ruff handle it automatically
-- **FOLLOW UP** with `uvx ruff format scripts/` and `uv run pytest` to ensure correctness
+- **ALWAYS** use `uv run ruff check scripts/ --select F401,F811,I,PLC0415` to check for all import issues:
+  - **F401**: Unused imports
+  - **F811**: Redefined/duplicate imports  
+  - **I**: Import ordering issues
+  - **PLC0415**: Local imports that should be at top-level
+- **AUTOFIX** command: `uv run ruff check scripts/ --select F401,F811,I,PLC0415 --fix`
+- **COMPREHENSIVE** check: Shows all import issues including redundant local imports
+- **PREFERRED** over manual cleanup - let ruff handle automatic fixes
+- **FOLLOW UP** with `uv run ruff format scripts/` and `uv run pytest` to ensure correctness
 - **NOTE**: The comprehensive Python quality check in the main commands section covers all ruff rules including import organization
 
 #### Shell Script Formatting (AI Assistant Guidance)
@@ -99,7 +113,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::
 
 # Rust documentation validation (required for crates.io publishing)
 # NOTE: Documentation failures will prevent publishing to crates.io
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
 
 # Python code quality (for scripts/ directory)
 # See "Import Organization (AI Assistant Guidance)" section for detailed ruff usage
@@ -119,6 +133,9 @@ git ls-files -z '*.md' '*.rs' '*.toml' '*.json' \
 
 # JSON validation (when JSON files are modified, path-safe)
 git ls-files -z '*.json' | xargs -0 -r -n1 jq empty
+
+# TOML validation (when TOML files are modified, path-safe)
+git ls-files -z '*.toml' | xargs -0 -r -I {} uv run python -c "import tomllib; tomllib.load(open('{}', 'rb')); print('{} is valid TOML')"
 ```
 
 ### Testing and Validation
@@ -192,13 +209,6 @@ These items are incomplete and may require future attention:
 - **Dependencies**: Baseline system is complete and ready for optimization work
 - **Tracking**: Create GitHub issue for performance optimization roadmap
 
-### Python Code Quality Improvements
-
-- **Status**: Partially complete
-- **Remaining**: Replace deprecated `typing.Dict/List/Tuple`, improve error handling patterns, reduce function argument counts
-- **Tools**: Uses ruff for comprehensive linting (replaces pylint)
-- **Tracking**: Create GitHub issue for Python code modernization checklist
-
 ### Benchmark System Validation
 
 - **Status**: Implementation complete, testing in progress
@@ -236,7 +246,6 @@ These items are incomplete and may require future attention:
 - **IF** other Rust code changed (`src/`, etc.) → **MUST** run standard Rust tests:
   - `cargo test --lib --verbose`
   - `cargo test --doc --verbose`
-  - `cargo test --examples --verbose`
 - **FOR ANY** Rust code changes → validate documentation (see "Code Quality Checks → Rust documentation validation")
 - **IMPORTANT**: For allocation testing, use `cargo test --test allocation_api --features count-allocations`
 - **PURPOSE**: Ensures appropriate validation for the type of code changes made
@@ -262,6 +271,19 @@ These items are incomplete and may require future attention:
 - **Verbose Output**: Use `--nocapture` flag for debugging tests that produce detailed analysis output
 - **Test Structure**: Convert CLI-style applications in tests to proper `#[test]` functions for better integration with cargo test framework
 - **Memory Testing**: Use `--features count-allocations` for allocation profiling tests
+
+### Test-Driven Development (TDD) Guidelines
+
+- **PREFERRED**: Use Test-Driven Development (TDD) approach for new feature development
+- **TDD Cycle**: Follow the Red-Green-Refactor cycle:
+  1. **Red**: Write failing tests first that define the desired functionality
+  2. **Green**: Write minimal code to make tests pass
+  3. **Refactor**: Improve code quality while keeping tests passing
+- **Test Types**: Apply TDD to both unit tests (`src/` modules with `#[cfg(test)]`) and integration tests (`tests/` directory)
+- **Benefits**: TDD ensures better test coverage, cleaner APIs, and more maintainable code architecture
+- **Rust-Specific**: Leverage Rust's type system and compiler feedback during the TDD process
+- **Documentation**: Use `cargo test --doc` to validate code examples in documentation as part of TDD
+- **Performance**: Write performance-focused tests early to catch regressions during development
 
 ### Documentation Standards
 

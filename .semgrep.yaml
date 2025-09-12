@@ -48,6 +48,11 @@ exclude:
   - "Cargo.lock"
   - "benches/baseline_results.txt"
   - "benches/benchmark_results/"
+  # Exclude test files from error-prone checks - pytest uses assert statements
+  - "scripts/tests/"
+  - "tests/"
+  - "**/test_*.py"
+  - "**/*_test.py"
 
 # Include only relevant file types
 include:
@@ -56,5 +61,5 @@ include:
   - "*.sh"
 
 # Custom rules for this project (can be extended as needed)
-# Currently empty - using community rulesets above
+# Currently empty - using community rulesets above with path exclusions
 # Add project-specific patterns here if needed in the future

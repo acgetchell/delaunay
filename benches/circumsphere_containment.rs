@@ -8,77 +8,62 @@
 //! 3. **`insphere_lifted`**: Matrix determinant method with lifted paraboloid approach
 //!
 //! The benchmarks include:
-//! - Basic performance tests with fixed simplices
 //! - Random query tests with multiple vertices
-//! - Tests across different dimensions (2D, 3D, 4D)
+//! - Tests across different dimensions (2D, 3D, 4D, 5D)
 //! - Edge case tests with boundary and distant vertices
 //! - Numerical consistency validation between all three algorithms
 
 #![allow(missing_docs)]
 
 use criterion::{Criterion, criterion_group, criterion_main};
+use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::*;
-use rand::Rng;
 use std::hint::black_box;
 
-/// Generate a random simplex for benchmarking
-fn generate_random_simplex_3d(rng: &mut impl Rng) -> Vec<Point<f64, 3>> {
-    (0..4)
-        .map(|_| {
-            let x = rng.random::<f64>().mul_add(20.0, -10.0); // Range -10.0..10.0
-            let y = rng.random::<f64>().mul_add(20.0, -10.0);
-            let z = rng.random::<f64>().mul_add(20.0, -10.0);
-            Point::new([x, y, z])
-        })
-        .collect()
+/// Generate a standard D-dimensional simplex (D+1 vertices)
+///
+/// Creates a simplex with vertices at:
+/// - Origin: [0, 0, ..., 0]
+/// - Unit basis vectors: [1, 0, ..., 0], [0, 1, 0, ..., 0], ..., [0, 0, ..., 1]
+fn standard_simplex<const D: usize>() -> Vec<Point<f64, D>> {
+    let mut pts = Vec::with_capacity(D + 1);
+
+    // Add origin
+    pts.push(Point::new([0.0; D]));
+
+    // Add unit basis vectors
+    for i in 0..D {
+        let mut coords = [0.0; D];
+        coords[i] = 1.0;
+        pts.push(Point::new(coords));
+    }
+
+    pts
 }
 
-/// Generate a random test point
-fn generate_random_test_point_3d(rng: &mut impl Rng) -> Point<f64, 3> {
-    let x = rng.random::<f64>().mul_add(10.0, -5.0); // Range -5.0..5.0
-    let y = rng.random::<f64>().mul_add(10.0, -5.0);
-    let z = rng.random::<f64>().mul_add(10.0, -5.0);
-    Point::new([x, y, z])
+/// Generate a random 3D simplex (tetrahedron) for benchmarking using seeded generation
+fn generate_random_simplex_3d(seed: u64) -> Vec<Point<f64, 3>> {
+    generate_random_points_seeded(4, (-10.0, 10.0), seed)
+        .expect("Failed to generate random simplex points")
 }
 
-/// Benchmark basic circumsphere containment with fixed simplex
-fn benchmark_basic_circumsphere_containment(c: &mut Criterion) {
-    let simplex_points = vec![
-        Point::new([0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0]),
-    ];
-    let test_point = Point::new([0.5, 0.5, 0.5]);
-
-    c.bench_function("basic/insphere", |b| {
-        b.iter(|| black_box(insphere(black_box(&simplex_points), black_box(test_point)).unwrap()));
-    });
-
-    c.bench_function("basic/insphere_distance", |b| {
-        b.iter(|| {
-            black_box(insphere_distance(black_box(&simplex_points), black_box(test_point)).unwrap())
-        });
-    });
-
-    c.bench_function("basic/insphere_lifted", |b| {
-        b.iter(|| {
-            black_box(insphere_lifted(black_box(&simplex_points), black_box(test_point)).unwrap())
-        });
-    });
+/// Generate a random 3D test point using seeded generation
+fn generate_random_test_point_3d(seed: u64) -> Point<f64, 3> {
+    generate_random_points_seeded(1, (-5.0, 5.0), seed)
+        .expect("Failed to generate random test point")
+        .into_iter()
+        .next()
+        .expect("Expected exactly one test point")
 }
 
 /// Benchmark with many random queries
 fn benchmark_random_queries(c: &mut Criterion) {
-    let mut rng = rand::rng();
+    // Generate a fixed simplex for consistent benchmarking using seeded generation
+    let simplex_points = generate_random_simplex_3d(42);
 
-    // Generate a fixed simplex for consistent benchmarking
-    let simplex_points = generate_random_simplex_3d(&mut rng);
-
-    // Generate many test points
-    let test_points: Vec<_> = (0..1000)
-        .map(|_| generate_random_test_point_3d(&mut rng))
-        .collect();
+    // Generate many test points using seeded generation for reproducible results
+    let test_points = generate_random_points_seeded(1000, (-5.0, 5.0), 123)
+        .expect("Failed to generate random test points");
 
     c.bench_function("random/insphere_1000_queries", |b| {
         b.iter(|| {
@@ -109,109 +94,112 @@ fn benchmark_random_queries(c: &mut Criterion) {
     });
 }
 
-/// Benchmark with different simplex sizes (2D, 3D, 4D)
-fn benchmark_different_dimensions(c: &mut Criterion) {
-    let _rng = rand::rng();
-
-    // 2D case
-    let simplex_2d = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([0.0, 1.0]),
-    ];
-    let test_point_2d = Point::new([0.3, 0.3]);
-
-    c.bench_function("2d/insphere", |b| {
-        b.iter(|| black_box(insphere(black_box(&simplex_2d), black_box(test_point_2d)).unwrap()));
-    });
-
-    c.bench_function("2d/insphere_distance", |b| {
-        b.iter(|| {
-            black_box(insphere_distance(black_box(&simplex_2d), black_box(test_point_2d)).unwrap())
+/// Macro to reduce duplication in benchmark functions
+macro_rules! bench_simplex {
+    ($c:ident, $dim:literal, $simplex:expr, $pt:expr) => {{
+        $c.bench_function(concat!($dim, "d/insphere"), |b| {
+            b.iter(|| black_box(insphere(black_box(&$simplex), black_box($pt)).unwrap()))
         });
-    });
-
-    c.bench_function("2d/insphere_lifted", |b| {
-        b.iter(|| {
-            black_box(insphere_lifted(black_box(&simplex_2d), black_box(test_point_2d)).unwrap())
+        $c.bench_function(concat!($dim, "d/insphere_distance"), |b| {
+            b.iter(|| black_box(insphere_distance(black_box(&$simplex), black_box($pt)).unwrap()))
         });
-    });
-
-    // 4D case
-    let simplex_4d = vec![
-        Point::new([0.0, 0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 0.0, 1.0]),
-    ];
-    let test_point_4d = Point::new([0.2, 0.2, 0.2, 0.2]);
-
-    c.bench_function("4d/insphere", |b| {
-        b.iter(|| black_box(insphere(black_box(&simplex_4d), black_box(test_point_4d)).unwrap()));
-    });
-
-    c.bench_function("4d/insphere_distance", |b| {
-        b.iter(|| {
-            black_box(insphere_distance(black_box(&simplex_4d), black_box(test_point_4d)).unwrap())
+        $c.bench_function(concat!($dim, "d/insphere_lifted"), |b| {
+            b.iter(|| black_box(insphere_lifted(black_box(&$simplex), black_box($pt)).unwrap()))
         });
-    });
-
-    c.bench_function("4d/insphere_lifted", |b| {
-        b.iter(|| {
-            black_box(insphere_lifted(black_box(&simplex_4d), black_box(test_point_4d)).unwrap())
-        });
-    });
+    }};
 }
 
-/// Benchmark edge cases (points on boundary, far away, etc.)
+/// Macro to reduce duplication in edge case benchmarks
+macro_rules! bench_edge_case {
+    ($c:ident, $dim:literal, $case:literal, $simplex:expr, $pt:expr) => {{
+        $c.bench_function(
+            concat!("edge_cases_", $dim, "d/", $case, "_insphere"),
+            |b| b.iter(|| black_box(insphere(black_box(&$simplex), black_box($pt)).unwrap())),
+        );
+        $c.bench_function(
+            concat!("edge_cases_", $dim, "d/", $case, "_distance"),
+            |b| {
+                b.iter(|| {
+                    black_box(insphere_distance(black_box(&$simplex), black_box($pt)).unwrap())
+                })
+            },
+        );
+        $c.bench_function(concat!("edge_cases_", $dim, "d/", $case, "_lifted"), |b| {
+            b.iter(|| black_box(insphere_lifted(black_box(&$simplex), black_box($pt)).unwrap()))
+        });
+    }};
+}
+
+/// Benchmark with different simplex sizes (2D, 3D, 4D, 5D)
+fn benchmark_different_dimensions(c: &mut Criterion) {
+    // 2D case - triangle in 2D space
+    let simplex_2d = standard_simplex::<2>();
+    let test_point_2d = Point::new([0.3, 0.3]);
+    bench_simplex!(c, 2, simplex_2d, test_point_2d);
+
+    // 3D case - tetrahedron in 3D space
+    let simplex_3d = standard_simplex::<3>();
+    let test_point_3d = Point::new([0.25, 0.25, 0.25]);
+    bench_simplex!(c, 3, simplex_3d, test_point_3d);
+
+    // 4D case - 4-simplex in 4D space
+    let simplex_4d = standard_simplex::<4>();
+    let test_point_4d = Point::new([0.2, 0.2, 0.2, 0.2]);
+    bench_simplex!(c, 4, simplex_4d, test_point_4d);
+
+    // 5D case - 5-simplex in 5D space
+    let simplex_5d = standard_simplex::<5>();
+    let test_point_5d = Point::new([0.16, 0.16, 0.16, 0.16, 0.16]);
+    bench_simplex!(c, 5, simplex_5d, test_point_5d);
+}
+
+/// Benchmark edge cases (points on boundary, far away, near-boundary, etc.) across all dimensions
 fn benchmark_edge_cases(c: &mut Criterion) {
-    let point1 = Point::new([0.0, 0.0, 0.0]);
-    let point2 = Point::new([1.0, 0.0, 0.0]);
-    let point3 = Point::new([0.0, 1.0, 0.0]);
-    let point4 = Point::new([0.0, 0.0, 1.0]);
-    let simplex_points = vec![point1, point2, point3, point4];
+    // 2D edge cases - triangle
+    let simplex_2d = standard_simplex::<2>();
+    let boundary_point_2d = simplex_2d[0]; // Point on boundary
+    let far_point_2d = Point::new([1000.0, 1000.0]);
+    // Near-boundary point (epsilon away from circumsphere)
+    let eps = 1e-9;
+    let near_boundary_2d = Point::new([eps, 0.0]);
+    bench_edge_case!(c, 2, "boundary_point", simplex_2d, boundary_point_2d);
+    bench_edge_case!(c, 2, "far_point", simplex_2d, far_point_2d);
+    bench_edge_case!(c, 2, "near_boundary", simplex_2d, near_boundary_2d);
 
-    // Test with point on the boundary (one of the simplex points)
-    c.bench_function("edge_cases/boundary_point_insphere", |b| {
-        b.iter(|| black_box(insphere(black_box(&simplex_points), black_box(point1)).unwrap()));
-    });
+    // 3D edge cases - tetrahedron
+    let simplex_3d = standard_simplex::<3>();
+    let boundary_point_3d = simplex_3d[0]; // Point on boundary
+    let far_point_3d = Point::new([1000.0, 1000.0, 1000.0]);
+    // Near-boundary point (epsilon away from circumsphere)
+    let near_boundary_3d = Point::new([eps, 0.0, 0.0]);
+    bench_edge_case!(c, 3, "boundary_point", simplex_3d, boundary_point_3d);
+    bench_edge_case!(c, 3, "far_point", simplex_3d, far_point_3d);
+    bench_edge_case!(c, 3, "near_boundary", simplex_3d, near_boundary_3d);
 
-    c.bench_function("edge_cases/boundary_point_distance", |b| {
-        b.iter(|| {
-            black_box(insphere_distance(black_box(&simplex_points), black_box(point1)).unwrap())
-        });
-    });
+    // 4D edge cases - 4-simplex
+    let simplex_4d = standard_simplex::<4>();
+    let boundary_point_4d = simplex_4d[0]; // Point on boundary
+    let far_point_4d = Point::new([1000.0, 1000.0, 1000.0, 1000.0]);
+    // Near-boundary point (epsilon away from circumsphere)
+    let near_boundary_4d = Point::new([eps, 0.0, 0.0, 0.0]);
+    bench_edge_case!(c, 4, "boundary_point", simplex_4d, boundary_point_4d);
+    bench_edge_case!(c, 4, "far_point", simplex_4d, far_point_4d);
+    bench_edge_case!(c, 4, "near_boundary", simplex_4d, near_boundary_4d);
 
-    c.bench_function("edge_cases/boundary_point_lifted", |b| {
-        b.iter(|| {
-            black_box(insphere_lifted(black_box(&simplex_points), black_box(point1)).unwrap())
-        });
-    });
-
-    // Test with far away point
-    let far_point = Point::new([1000.0, 1000.0, 1000.0]);
-    c.bench_function("edge_cases/far_point_insphere", |b| {
-        b.iter(|| black_box(insphere(black_box(&simplex_points), black_box(far_point)).unwrap()));
-    });
-
-    c.bench_function("edge_cases/far_point_distance", |b| {
-        b.iter(|| {
-            black_box(insphere_distance(black_box(&simplex_points), black_box(far_point)).unwrap())
-        });
-    });
-
-    c.bench_function("edge_cases/far_point_lifted", |b| {
-        b.iter(|| {
-            black_box(insphere_lifted(black_box(&simplex_points), black_box(far_point)).unwrap())
-        });
-    });
+    // 5D edge cases - 5-simplex
+    let simplex_5d = standard_simplex::<5>();
+    let boundary_point_5d = simplex_5d[0]; // Point on boundary
+    let far_point_5d = Point::new([1000.0, 1000.0, 1000.0, 1000.0, 1000.0]);
+    // Near-boundary point (epsilon away from circumsphere)
+    let near_boundary_5d = Point::new([eps, 0.0, 0.0, 0.0, 0.0]);
+    bench_edge_case!(c, 5, "boundary_point", simplex_5d, boundary_point_5d);
+    bench_edge_case!(c, 5, "far_point", simplex_5d, far_point_5d);
+    bench_edge_case!(c, 5, "near_boundary", simplex_5d, near_boundary_5d);
 }
 
 /// Numerical consistency test - compare results of all three methods
 fn numerical_consistency_test() {
     println!("\n=== Numerical Consistency Test ===");
-    let mut rng = rand::rng();
     let mut all_match = 0;
     let mut insphere_distance_matches = 0;
     let mut insphere_lifted_matches = 0;
@@ -219,9 +207,9 @@ fn numerical_consistency_test() {
     let mut total = 0;
     let mut disagreements = Vec::new();
 
-    for _ in 0..1000 {
-        let simplex_points = generate_random_simplex_3d(&mut rng);
-        let test_point = generate_random_test_point_3d(&mut rng);
+    for i in 0..1000_u64 {
+        let simplex_points = generate_random_simplex_3d(1000 + i);
+        let test_point = generate_random_test_point_3d(2000 + i);
 
         let result_insphere = insphere(&simplex_points, test_point);
         let result_distance = insphere_distance(&simplex_points, test_point);
@@ -250,6 +238,10 @@ fn numerical_consistency_test() {
         }
     }
 
+    if total == 0 {
+        println!("Method Comparisons (0 total tests): no valid cases; skipping percentage report.");
+        return;
+    }
     println!("Method Comparisons ({total} total tests):");
     println!(
         "  insphere vs insphere_distance:  {}/{} ({:.2}%)",
@@ -304,7 +296,6 @@ fn benchmark_with_consistency_check(c: &mut Criterion) {
     numerical_consistency_test();
 
     // Then run benchmarks
-    benchmark_basic_circumsphere_containment(c);
     benchmark_random_queries(c);
     benchmark_different_dimensions(c);
     benchmark_edge_cases(c);

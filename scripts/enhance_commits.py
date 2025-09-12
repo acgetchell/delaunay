@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Enhance AI-generated commit messages in changelog with Keep a Changelog categorization.
+"""Enhance AI-generated commit messages in changelog with Keep a Changelog categorization.
 
 This script processes changelog entries and categorizes them according to
 Keep a Changelog format (Added/Changed/Fixed/Removed/Deprecated/Security).
@@ -16,6 +15,13 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 # Shared utilities available but not yet used in this script
 # Can be imported when needed: from changelog_utils import ChangelogUtils
+
+# Precompiled regex patterns for performance
+COMMIT_BULLET_RE = re.compile(r"^\s*[-*]\s*\*\*")
+TITLE_FALLBACK_RE = re.compile(
+    r"^\s*-\s+([^[(]+?)(?:\s+\(#\d+\))?\s*(?:\[`[a-f0-9]{7,40}`\].*)?$",
+    re.IGNORECASE,
+)
 
 
 def _get_regex_patterns():
@@ -35,9 +41,8 @@ def _get_regex_patterns():
             r"\benables\b",
             r"\benabling\b",
             r"\benabled\b",
-            r"\bsupport\b",
-            r"\bsupports\b",
-            r"\badding support\b",
+            r"\badd(?:s|ed|ing)?\s+support\b",
+            r"\bintroduc(?:e|es|ed|ing)\s+support\b",
             r"\bimplement\b",
             r"\bimplements\b",
             r"\bimplementing\b",
@@ -68,6 +73,9 @@ def _get_regex_patterns():
             r"\beliminates\b",
             r"\beliminating\b",
             r"\beliminated\b",
+            r"\bremov(?:e|es|ed|ing)\s+support\b",
+            r"\bdrop(?:s|ped|ping)?\s+support\b",
+            r"\bdelet(?:e|es|ed|ing)\s+support\b",
         ],
         "fixed": [
             r"\bfix\b",
@@ -168,15 +176,17 @@ def _get_regex_patterns():
 
 def _extract_title_text(entry):
     """Extract commit title from entry for pattern matching."""
+    if not entry or not entry.strip():
+        return ""
+
     # Extract just the commit title (between first ** and second **)
     if title_match := re.search(r"\*\*(.*?)\*\*", entry):
-        return title_match[1].lower().strip()
+        return title_match.group(1).lower().strip()
 
     # Fallback: parse from the first line
-    first = entry.splitlines()[0]
-    pattern = r"-\s+([^[(]+?)(?:\s+\(#\d+\))?\s*(?:\[`[a-f0-9]{7,40}`\].*)?$"
-    match = re.match(pattern, first, re.I)
-    return match[1].lower().strip() if match else ""
+    first = entry.split("\n", 1)[0]
+    match = TITLE_FALLBACK_RE.match(first)
+    return match.group(1).lower().strip() if match else ""
 
 
 def _categorize_entry(title_text, patterns):
@@ -283,8 +293,8 @@ def _collect_commit_entry(lines, line_index):
     next_line_index = line_index + 1
     while next_line_index < len(lines) and (
         lines[next_line_index].strip() == ""  # Empty line
-        or lines[next_line_index].startswith("  ")
-    ):  # Indented body content
+        or re.match(r"^\s{2,}", lines[next_line_index])  # Indented body content
+    ):
         current_entry.append(lines[next_line_index].rstrip())
         next_line_index += 1
 
@@ -313,20 +323,33 @@ def _process_changelog_lines(lines):
                     "in_changes_section": section_flags[1],
                     "in_fixed_issues": section_flags[2],
                     "in_merged_prs_section": section_flags[3],
-                }
+                },
             )
             if section_flags[0] == "merged_prs":
+                # Flush categorized entries for this release before MPRs
+                if categorize_entries_list:
+                    process_and_output_categorized_entries(categorize_entries_list, output_lines)
+                    categorize_entries_list.clear()
+                if output_lines and output_lines[-1] != "":
+                    output_lines.append("")
                 output_lines.append(line)  # Keep Merged Pull Requests header
             line_index += 1
             continue
 
-        # Check if we're at a release end or file end
+        # Process commit lines in Changes or Fixed Issues sections FIRST
+        if (section_state["in_changes_section"] or section_state["in_fixed_issues"]) and COMMIT_BULLET_RE.match(line):
+            entry, next_index = _collect_commit_entry(lines, line_index)
+            categorize_entries_list.append(entry)
+            line_index = next_index
+            continue
+
+        # Check if we're at a release end or file end AFTER processing entries
         in_section = any(section_state.values())
         is_release_end = re.match(r"^## ", line) and in_section
         is_file_end = line_index == len(lines) - 1
 
-        if is_release_end or is_file_end:
-            # Process any pending entries
+        if is_release_end or (is_file_end and categorize_entries_list):
+            # Process any pending entries only if we have them
             if categorize_entries_list:
                 process_and_output_categorized_entries(categorize_entries_list, output_lines)
                 categorize_entries_list.clear()
@@ -337,25 +360,16 @@ def _process_changelog_lines(lines):
                     "in_changes_section": False,
                     "in_fixed_issues": False,
                     "in_merged_prs_section": False,
-                }
+                },
             )
 
             # Add the release header to output if it's a new release
             if re.match(r"^## ", line):
-                output_lines.append("")  # Add blank line before new release
+                if output_lines and output_lines[-1] != "":
+                    output_lines.append("")  # Avoid double blank lines
                 output_lines.append(line)
-            else:
-                # Not a release header, add normally
-                output_lines.append(line)
-            line_index += 1
-            continue
-
-        # Process commit lines in Changes or Fixed Issues sections
-        if (section_state["in_changes_section"] or section_state["in_fixed_issues"]) and re.match(r"^- \*\*", line):
-            entry, next_index = _collect_commit_entry(lines, line_index)
-            categorize_entries_list.append(entry)
-            line_index = next_index
-            continue
+                line_index += 1
+                continue
 
         # Skip PR description content in Merged Pull Requests section
         if section_state["in_merged_prs_section"] and re.match(r"^  ", line):
@@ -366,12 +380,17 @@ def _process_changelog_lines(lines):
         output_lines.append(line)
         line_index += 1
 
+    # Process any remaining entries at the end of the file
+    if categorize_entries_list:
+        process_and_output_categorized_entries(categorize_entries_list, output_lines)
+
     return output_lines
 
 
 def main():
     """Main function to process changelog entries."""
     if len(sys.argv) != 3:
+        print(f"Usage: {Path(sys.argv[0]).name} <input_changelog> <output_changelog>", file=sys.stderr)
         sys.exit(1)
 
     input_file = sys.argv[1]

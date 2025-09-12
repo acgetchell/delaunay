@@ -40,18 +40,50 @@ def get_safe_executable(command: str) -> str:
     return full_path
 
 
-def run_git_command(
-    args: list[str], cwd: Path | None = None, capture_output: bool = True, text: bool = True, check: bool = True
-) -> subprocess.CompletedProcess[str]:
+def _build_run_kwargs(function_name: str, **kwargs: Any) -> dict[str, Any]:
+    """
+    Build secure kwargs for subprocess.run with consistent hardening.
+
+    Args:
+        function_name: Name of the calling function (for error messages)
+        **kwargs: User-provided kwargs to validate and merge
+
+    Returns:
+        Validated and hardened kwargs dict for subprocess.run
+
+    Raises:
+        ValueError: If insecure parameters are provided
+    """
+    # Disallow shell=True to preserve security guarantees
+    if kwargs.get("shell"):
+        msg = f"shell=True is not allowed in {function_name}"
+        raise ValueError(msg)
+    # Disallow overriding the program to execute
+    if "executable" in kwargs:
+        msg = f"Overriding 'executable' is not allowed in {function_name}"
+        raise ValueError(msg)
+    # Enforce text mode for stable typing (CompletedProcess[str])
+    kwargs.pop("text", None)
+    run_kwargs = {
+        "capture_output": True,
+        "text": True,
+        "check": True,  # Secure default
+        **kwargs,  # Allow overriding other safe defaults
+    }
+    # Prefer deterministic UTF-8 unless caller overrides
+    run_kwargs.setdefault("encoding", "utf-8")
+    return run_kwargs
+
+
+def run_git_command(args: list[str], cwd: Path | None = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
     """
     Run a git command securely using full executable path.
 
     Args:
         args: Git command arguments (without 'git' prefix)
         cwd: Working directory for the command
-        capture_output: Whether to capture stdout/stderr
-        text: Whether to return text output
-        check: Whether to raise CalledProcessError on non-zero exit
+        **kwargs: Additional arguments passed to subprocess.run
+                  (e.g., capture_output=True, text=True, check=True, timeout=60)
 
     Returns:
         CompletedProcess result
@@ -59,15 +91,25 @@ def run_git_command(
     Raises:
         ExecutableNotFoundError: If git is not found
         subprocess.CalledProcessError: If command fails and check=True
+        subprocess.TimeoutExpired: If command times out
+
+    Note:
+        Uses UTF-8 encoding by default for deterministic behavior across environments.
+        Override by passing encoding="<other>" via kwargs if needed.
     """
     git_path = get_safe_executable("git")
-    return subprocess.run(  # noqa: S603  # Uses validated full executable path, no shell=True
-        [git_path, *args], cwd=cwd, capture_output=capture_output, text=text, check=check
+    run_kwargs = _build_run_kwargs("run_git_command", **kwargs)
+    return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
+        [git_path, *args],
+        cwd=cwd,
+        **run_kwargs,
     )
 
 
 def run_cargo_command(
-    args: list[str], cwd: Path | None = None, capture_output: bool = True, text: bool = True, check: bool = True
+    args: list[str],
+    cwd: Path | None = None,
+    **kwargs: Any,
 ) -> subprocess.CompletedProcess[str]:
     """
     Run a cargo command securely using full executable path.
@@ -75,9 +117,8 @@ def run_cargo_command(
     Args:
         args: Cargo command arguments (without 'cargo' prefix)
         cwd: Working directory for the command
-        capture_output: Whether to capture stdout/stderr
-        text: Whether to return text output
-        check: Whether to raise CalledProcessError on non-zero exit
+        **kwargs: Additional arguments passed to subprocess.run
+                 (e.g., capture_output=True, text=True, check=True, timeout=60)
 
     Returns:
         CompletedProcess result
@@ -85,10 +126,14 @@ def run_cargo_command(
     Raises:
         ExecutableNotFoundError: If cargo is not found
         subprocess.CalledProcessError: If command fails and check=True
+        subprocess.TimeoutExpired: If command times out
     """
     cargo_path = get_safe_executable("cargo")
-    return subprocess.run(  # noqa: S603  # Uses validated full executable path, no shell=True
-        [cargo_path, *args], cwd=cwd, capture_output=capture_output, text=text, check=check
+    run_kwargs = _build_run_kwargs("run_cargo_command", **kwargs)
+    return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
+        [cargo_path, *args],
+        cwd=cwd,
+        **run_kwargs,
     )
 
 
@@ -111,15 +156,11 @@ def run_safe_command(command: str, args: list[str], cwd: Path | None = None, **k
         subprocess.CalledProcessError: If command fails and check=True
     """
     command_path = get_safe_executable(command)
-    # Set secure defaults for subprocess.run
-    run_kwargs = {
-        "capture_output": True,
-        "text": True,
-        "check": True,  # Secure default
-        **kwargs,  # Allow overriding defaults
-    }
+    run_kwargs = _build_run_kwargs(f"run_safe_command for {command}", **kwargs)
     return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
-        [command_path, *args], cwd=cwd, **run_kwargs
+        [command_path, *args],
+        cwd=cwd,
+        **run_kwargs,
     )
 
 
@@ -186,7 +227,10 @@ def check_git_history() -> bool:
 
 
 def run_git_command_with_input(
-    args: list[str], input_data: str, cwd: Path | None = None, text: bool = True, check: bool = True
+    args: list[str],
+    input_data: str,
+    cwd: Path | None = None,
+    **kwargs: Any,
 ) -> subprocess.CompletedProcess[str]:
     """
     Run a git command securely with stdin input using full executable path.
@@ -195,8 +239,8 @@ def run_git_command_with_input(
         args: Git command arguments (without 'git' prefix)
         input_data: Data to send to stdin
         cwd: Working directory for the command
-        text: Whether to handle text input/output
-        check: Whether to raise CalledProcessError on non-zero exit
+        **kwargs: Additional arguments passed to subprocess.run
+                 (e.g., text=True, check=True, timeout=60)
 
     Returns:
         CompletedProcess result
@@ -204,8 +248,41 @@ def run_git_command_with_input(
     Raises:
         ExecutableNotFoundError: If git is not found
         subprocess.CalledProcessError: If command fails and check=True
+        subprocess.TimeoutExpired: If command times out
+
+    Note:
+        Uses UTF-8 encoding by default for deterministic behavior across environments.
+        Override by passing encoding="<other>" via kwargs if needed.
     """
     git_path = get_safe_executable("git")
-    return subprocess.run(  # noqa: S603  # Uses validated full executable path, no shell=True
-        [git_path, *args], cwd=cwd, input=input_data, text=text, check=check, capture_output=True
+    run_kwargs = _build_run_kwargs("run_git_command_with_input", **kwargs)
+    return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
+        [git_path, *args],
+        cwd=cwd,
+        input=input_data,
+        **run_kwargs,
     )
+
+
+# Project navigation utilities
+class ProjectRootNotFoundError(Exception):
+    """Raised when project root directory cannot be located."""
+
+
+def find_project_root() -> Path:
+    """Find the project root by looking for Cargo.toml.
+
+    Returns:
+        Path to project root directory
+
+    Raises:
+        ProjectRootNotFoundError: If Cargo.toml cannot be found in any parent directory
+    """
+    current_dir = Path.cwd()
+    project_root = current_dir
+    while project_root != project_root.parent:
+        if (project_root / "Cargo.toml").exists():
+            return project_root
+        project_root = project_root.parent
+    msg = "Could not locate Cargo.toml to determine project root"
+    raise ProjectRootNotFoundError(msg)

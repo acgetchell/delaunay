@@ -109,6 +109,7 @@ impl std::fmt::Display for Orientation {
 /// let oriented = simplex_orientation(&simplex_points).unwrap();
 /// assert_eq!(oriented, Orientation::NEGATIVE);
 /// ```
+#[inline]
 pub fn simplex_orientation<T, const D: usize>(
     simplex_points: &[Point<T, D>],
 ) -> Result<Orientation, CoordinateConversionError>
@@ -339,108 +340,9 @@ where
 /// let inside_point = Point::new([0.25, 0.25, 0.25]);
 /// assert_eq!(insphere(&simplex_points, inside_point).unwrap(), InSphere::INSIDE);
 /// ```
-/// Check if a point is contained within the circumsphere of a simplex using matrix determinant.
 ///
-/// This is the `InSphere` predicate test, which determines whether a test point lies inside,
-/// outside, or on the boundary of the circumsphere of a given simplex. This method is preferred
-/// over `circumsphere_contains` as it provides better numerical stability by using a matrix
-/// determinant approach instead of distance calculations, which can accumulate floating-point errors.
-///
-/// # Algorithm
-///
-/// This implementation follows the robust geometric predicates approach described in:
-///
-/// Shewchuk, J. R. "Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric
-/// Predicates." Discrete & Computational Geometry 18, no. 3 (1997): 305-363.
-/// DOI: [10.1007/PL00009321](https://doi.org/10.1007/PL00009321)
-///
-/// The in-sphere test uses the determinant of a specially constructed matrix. For a
-/// d-dimensional simplex with points `p₁, p₂, ..., pₐ₊₁` and test point `p`, the
-/// matrix has the structure:
-///
-/// ```text
-/// |  x₁   y₁   z₁  ...  x₁²+y₁²+z₁²+...  1  |
-/// |  x₂   y₂   z₂  ...  x₂²+y₂²+z₂²+...  1  |
-/// |  x₃   y₃   z₃  ...  x₃²+y₃²+z₃²+...  1  |
-/// |  ...  ...  ... ...       ...        ... |
-/// |  xₚ   yₚ   zₚ   ...  xₚ²+yₚ²+zₚ²+...   1  |
-/// ```
-///
-/// Where each row contains:
-/// - The d coordinates of a point
-/// - The squared norm (sum of squares) of the point coordinates
-/// - A constant 1
-///
-/// The test point `p` is inside the circumsphere if and only if the determinant
-/// has the correct sign relative to the simplex orientation.
-///
-/// # Mathematical Background
-///
-/// This determinant test is mathematically equivalent to checking if the test point
-/// lies inside the circumsphere, but avoids the numerical instability that can arise
-/// from computing circumcenter coordinates and distances explicitly. As demonstrated
-/// by Shewchuk, this approach provides much better numerical robustness for geometric
-/// computations.
-///
-/// The sign of the determinant depends on the orientation of the simplex:
-/// - For a **positively oriented** simplex: positive determinant means the point is inside
-/// - For a **negatively oriented** simplex: negative determinant means the point is inside
-///
-/// This function automatically determines the simplex orientation using [`simplex_orientation`]
-/// and interprets the determinant sign accordingly, ensuring correct results regardless
-/// of vertex ordering.
-///
-/// # Arguments
-///
-/// * `simplex_points` - A slice of points that form the simplex (must have exactly D+1 points)
-/// * `test_point` - The point to test for containment
-///
-/// # Returns
-///
-/// Returns [`InSphere::INSIDE`] if the given point is inside the circumsphere,
-/// [`InSphere::BOUNDARY`] if it's on the boundary, or [`InSphere::OUTSIDE`] if it's outside.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - The number of simplex points is not exactly D+1.
-/// - Matrix operations fail.
-/// - Coordinate conversion fails.
-/// - The simplex is degenerate, making in-sphere test unreliable.
-///
-/// # References
-///
-/// - Shewchuk, J. R. "Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric
-///   Predicates." Discrete & Computational Geometry 18, no. 3 (1997): 305-363.
-/// - Shewchuk, J. R. "Robust Adaptive Floating-Point Geometric Predicates."
-///   Proceedings of the Twelfth Annual Symposium on Computational Geometry (1996): 141-150.
-///
-/// # Example
-///
-/// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::predicates::insphere;
-/// use delaunay::geometry::InSphere;
-/// let point1 = Point::new([0.0, 0.0, 0.0]);
-/// let point2 = Point::new([1.0, 0.0, 0.0]);
-/// let point3 = Point::new([0.0, 1.0, 0.0]);
-/// let point4 = Point::new([0.0, 0.0, 1.0]);
-/// let simplex_points = vec![point1, point2, point3, point4];
-///
-/// // Test with a point clearly outside the circumsphere
-/// let outside_point = Point::new([2.0, 2.0, 2.0]);
-/// assert_eq!(insphere(&simplex_points, outside_point).unwrap(), InSphere::OUTSIDE);
-///
-/// // Test with a point clearly inside the circumsphere
-/// let inside_point = Point::new([0.25, 0.25, 0.25]);
-/// assert_eq!(insphere(&simplex_points, inside_point).unwrap(), InSphere::INSIDE);
-///
-/// // Test with one of the simplex vertices (on boundary, but result might vary slightly due to precision)
-/// let vertex = Point::new([0.0, 0.0, 0.0]);
-/// let result_vertex = insphere(&simplex_points, vertex).unwrap();
-/// assert!(matches!(result_vertex, InSphere::BOUNDARY | InSphere::INSIDE));
-/// ```
+/// See function-level docs above for detailed explanation and references.
+#[inline]
 pub fn insphere<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: Point<T, D>,

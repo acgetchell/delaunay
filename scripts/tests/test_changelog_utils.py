@@ -6,37 +6,25 @@ error handling, and changelog generation workflows.
 """
 
 import json
-import os
-import shutil
 
 # Import the module under test
 import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 
-from changelog_utils import ChangelogError, ChangelogUtils, GitRepoError, VersionError
+from changelog_utils import ChangelogError, ChangelogNotFoundError, ChangelogUtils, GitRepoError, VersionError
 from subprocess_utils import run_git_command
 
 
 class TestChangelogUtils:
     """Test suite for ChangelogUtils class."""
 
-    def setup_method(self, method):  # noqa: ARG002
-        """Set up test fixtures."""
-        self.temp_dir = None
-
-    def teardown_method(self, method):  # noqa: ARG002
-        """Clean up after tests."""
-        if self.temp_dir:
-            shutil.rmtree(self.temp_dir, ignore_errors=True)
-
-    def test_escape_markdown(self):
-        """Test markdown character escaping."""
-        test_cases = [
+    @pytest.mark.parametrize(
+        ("input_text", "expected"),
+        [
             # Basic escaping
             ("Simple text", "Simple text"),
             ("Text with *bold*", "Text with \\*bold\\*"),
@@ -54,42 +42,52 @@ class TestChangelogUtils:
             ("___", "\\_\\_\\_"),
             ("```", "\\`\\`\\`"),
             ("[[[]]]", "\\[\\[\\[\\]\\]\\]"),
-        ]
+            ("Text with (parens)", "Text with (parens)"),
+            ("Curly {braces}", "Curly {braces}"),
+        ],
+    )
+    def test_escape_markdown(self, input_text, expected):
+        """Test markdown character escaping."""
+        result = ChangelogUtils.escape_markdown(input_text)
+        assert result == expected
 
-        for input_text, expected in test_cases:
-            result = ChangelogUtils.escape_markdown(input_text)
-            assert result == expected, f"Failed for input: {input_text!r}"
-
-    def test_validate_semver(self):
-        """Test semantic version validation."""
-        # Valid versions
-        valid_versions = [
+    @pytest.mark.parametrize(
+        "version",
+        [
             "v1.0.0",
             "v0.1.0",
             "v10.20.30",
             "v1.0.0-alpha",
             "v1.0.0-beta.1",
             "v2.0.0-rc.1+build.123",
-        ]
+        ],
+    )
+    def test_validate_semver_valid(self, version):
+        """Test semantic version validation with valid versions."""
+        # Should not raise and should return True
+        assert ChangelogUtils.validate_semver(version) is True
 
-        for version in valid_versions:
-            # Should not raise any exception
-            ChangelogUtils.validate_semver(version)
-
-        # Invalid versions
-        invalid_versions = [
+    @pytest.mark.parametrize(
+        "version",
+        [
             "1.0.0",  # Missing 'v' prefix
             "v1.0",  # Missing patch version
             "v1",  # Missing minor and patch
             "vx.y.z",  # Non-numeric components
             "v1.0.0.0",  # Too many components
+            "v01.2.3",  # Leading zero in MAJOR
+            "v1.02.3",  # Leading zero in MINOR
+            "v1.2.03",  # Leading zero in PATCH
+            "v1.2.3-01",  # Leading zero in pre-release numeric id
+            "v1.2.3-rc.01",  # Leading zero in dotted pre-release numeric id
             "",  # Empty string
             "random-text",  # Not a version at all
-        ]
-
-        for version in invalid_versions:
-            with pytest.raises(VersionError):
-                ChangelogUtils.validate_semver(version)
+        ],
+    )
+    def test_validate_semver_invalid(self, version):
+        """Test semantic version validation with invalid versions."""
+        with pytest.raises(VersionError):
+            ChangelogUtils.validate_semver(version)
 
     @patch("changelog_utils._check_git_repo")
     def test_validate_git_repo_success(self, mock_check_git_repo):
@@ -174,17 +172,18 @@ class TestChangelogUtils:
         for line in result:
             assert len(line) <= 50
 
-    def test_escape_version_for_regex(self):
-        """Test version string escaping for regex use."""
-        test_cases = [
+    @pytest.mark.parametrize(
+        ("version", "expected"),
+        [
             ("v1.0.0", "v1\\.0\\.0"),
             ("v2.1.0-beta.1", "v2\\.1\\.0\\-beta\\.1"),
             ("v1.0.0+build.123", "v1\\.0\\.0\\+build\\.123"),
-        ]
-
-        for version, expected in test_cases:
-            result = ChangelogUtils.escape_version_for_regex(version)
-            assert result == expected, f"Failed for version: {version!r}"
+        ],
+    )
+    def test_escape_version_for_regex(self, version, expected):
+        """Test version string escaping for regex use."""
+        result = ChangelogUtils.escape_version_for_regex(version)
+        assert result == expected
 
     @patch("changelog_utils.ChangelogUtils.find_changelog_path")
     def test_get_project_root_current_dir(self, mock_find_changelog):
@@ -210,8 +209,6 @@ class TestChangelogUtils:
     def test_get_project_root_not_found(self, mock_find_changelog):
         """Test project root detection failure."""
         # Mock find_changelog_path to raise ChangelogNotFoundError
-        from changelog_utils import ChangelogNotFoundError
-
         mock_find_changelog.side_effect = ChangelogNotFoundError("CHANGELOG.md not found")
 
         with pytest.raises(ChangelogError) as cm:
@@ -220,35 +217,28 @@ class TestChangelogUtils:
         assert "Cannot determine project root" in str(cm.value)
 
 
+@pytest.fixture
+def git_repo_fixture(tmp_path: Path, monkeypatch):
+    """Fixture for temporary git repository setup (isolated cwd)."""
+    monkeypatch.chdir(tmp_path)
+    run_git_command(["init"])
+    run_git_command(["config", "user.name", "Test User"])
+    run_git_command(["config", "user.email", "test@example.com"])
+    (tmp_path / "README.md").write_text("# Test Repo\n", encoding="utf-8")
+    run_git_command(["add", "README.md"])
+    run_git_command(["commit", "-m", "Initial commit"])
+    return str(tmp_path)
+
+
 class TestChangelogUtilsWithGitOperations:
     """Test suite for changelog utils that require git operations."""
 
-    def setup_method(self, method):  # noqa: ARG002
-        """Set up temporary git repository for testing."""
-        self.temp_dir = tempfile.mkdtemp()
-        self.original_cwd = Path.cwd()
-
-        # Change to temp directory and initialize git repo
-        os.chdir(self.temp_dir)
-
-        # Initialize git repo with initial commit
-        run_git_command(["init"])
-        run_git_command(["config", "user.name", "Test User"])
-        run_git_command(["config", "user.email", "test@example.com"])
-
-        # Create initial commit
-        Path("README.md").write_text("# Test Repo\n")
-        run_git_command(["add", "README.md"])
-        run_git_command(["commit", "-m", "Initial commit"])
-
-    def teardown_method(self, method):  # noqa: ARG002
-        """Clean up temporary git repository."""
-        os.chdir(self.original_cwd)
-        if self.temp_dir:
-            shutil.rmtree(self.temp_dir, ignore_errors=True)
-
-    def test_temporary_git_tag_operations(self):
+    def test_temporary_git_tag_operations(self, git_repo_fixture):
         """Test git tag creation and cleanup with temporary tags."""
+        # The fixture sets up a git repo in a temp directory and changes to it
+        # We can verify we're in the right place by checking the temp dir
+        assert str(git_repo_fixture) in str(Path.cwd())
+
         test_tag = "v0.1.0-test"
 
         try:
@@ -274,30 +264,30 @@ class TestChangelogUtilsWithGitOperations:
             result = run_git_command(["tag", "-l", test_tag], check=False)
             assert result.stdout.strip() == ""
 
-    def test_git_repository_url_normalization(self):
-        """Test repository URL normalization from various formats."""
-        test_cases = [
+    @pytest.mark.parametrize(
+        ("input_url", "expected_url"),
+        [
             ("git@github.com:owner/repo.git", "https://github.com/owner/repo"),
             ("https://github.com/owner/repo.git", "https://github.com/owner/repo"),
             ("https://github.com/owner/repo", "https://github.com/owner/repo"),
             ("ssh://git@github.com/owner/repo.git", "https://github.com/owner/repo"),
-        ]
+        ],
+    )
+    def test_git_repository_url_normalization(self, git_repo_fixture, input_url, expected_url):
+        """Test repository URL normalization from various formats."""
+        # Verify we're in the git repository set up by the fixture
+        assert str(git_repo_fixture) in str(Path.cwd())
 
-        for input_url, expected_url in test_cases:
-            # Add a test remote
-            run_git_command(["remote", "add", "test-origin", input_url])
+        # Mock the get_git_remote_url to return our test URL
+        with patch("changelog_utils.get_git_remote_url", return_value=input_url):
+            result = ChangelogUtils.get_repository_url()
+            assert result == expected_url
 
-            try:
-                # Mock the get_git_remote_url to return our test URL
-                with patch("changelog_utils.get_git_remote_url", return_value=input_url):
-                    result = ChangelogUtils.get_repository_url()
-                    assert result == expected_url, f"Failed for URL: {input_url!r}"
-            finally:
-                # Clean up remote
-                run_git_command(["remote", "remove", "test-origin"])
-
-    def test_commit_processing_with_test_commits(self):
+    def test_commit_processing_with_test_commits(self, git_repo_fixture):
         """Test commit processing with specially crafted test commits."""
+        # Verify we're in the git repository set up by the fixture
+        assert str(git_repo_fixture) in str(Path.cwd())
+
         # Create a commit with special characters in the title
         test_content = "Test content with *bold* and _italic_ and `code`"
         test_file = Path("test.txt")
@@ -349,20 +339,24 @@ class TestChangelogUtilsErrorHandling:
 
         assert "Could not detect git remote origin URL" in str(cm.value)
 
-    def test_invalid_repository_url_format(self):
-        """Test handling of invalid repository URL formats."""
-        invalid_urls = [
+    @pytest.mark.parametrize(
+        "invalid_url",
+        [
             "not-a-url",
             "ftp://invalid.com/repo",
             "https://notgithub.com/owner/repo",
-        ]
+            "ssh://git@gitlab.com/owner/repo.git",  # non-GitHub host
+            "git://notgithub.com/owner/repo",  # git protocol to non-GitHub
+            "git@github.com/owner/repo",  # scp-like form missing ':'
+        ],
+    )
+    def test_invalid_repository_url_format(self, invalid_url):
+        """Test handling of invalid repository URL formats."""
+        with patch("changelog_utils.get_git_remote_url", return_value=invalid_url):
+            with pytest.raises(GitRepoError) as cm:
+                ChangelogUtils.get_repository_url()
 
-        for invalid_url in invalid_urls:
-            with patch("changelog_utils.get_git_remote_url", return_value=invalid_url):
-                with pytest.raises(GitRepoError) as cm:
-                    ChangelogUtils.get_repository_url()
-
-                assert "Unsupported git remote URL" in str(cm.value), f"Failed for URL: {invalid_url!r}"
+            assert "Unsupported git remote URL" in str(cm.value)
 
     def test_empty_repository_url(self):
         """Test handling of empty repository URL."""
@@ -592,8 +586,3 @@ class TestChangelogTitleFormatting:
         result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_length)  # noqa: SLF001
         assert len(result) >= expected_min_lines
         assert all(len(line) <= max_length for line in result)
-
-
-if __name__ == "__main__":
-    # Run the tests with pytest
-    pytest.main([__file__, "-v"])

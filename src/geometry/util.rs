@@ -11,6 +11,9 @@ use rand::Rng;
 use rand::distr::uniform::SampleUniform;
 use std::iter::Sum;
 
+use crate::core::traits::data_type::DataType;
+use crate::core::triangulation_data_structure::Tds;
+use crate::core::vertex::Vertex;
 use crate::geometry::matrix::{MatrixError, invert};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
@@ -113,12 +116,93 @@ pub enum CircumcenterError {
     ValueConversion(#[from] ValueConversionError),
 }
 
-// ============================================================================
-// Safe Coordinate Conversion Functions
-// ============================================================================
+// =============================================================================
+// CONSTANTS AND HELPERS
+// =============================================================================
+
+/// Default maximum bytes allowed for grid allocation to prevent OOM in CI.
+///
+/// This default safety cap prevents excessive memory allocation when generating grid points.
+/// The limit of 4 GiB provides reasonable headroom for modern systems (GitHub Actions
+/// runners have 7GB) while still protecting against extreme allocations.
+///
+/// The actual cap can be overridden via the `MAX_GRID_BYTES_SAFETY_CAP` environment variable.
+const MAX_GRID_BYTES_SAFETY_CAP_DEFAULT: usize = 4_294_967_296; // 4 GiB
+
+/// Get the maximum bytes allowed for grid allocation.
+///
+/// Reads the `MAX_GRID_BYTES_SAFETY_CAP` environment variable if set,
+/// otherwise returns the default value of 4 GiB. This allows CI environments
+/// with different memory limits to tune the safety cap as needed.
+///
+/// # Returns
+///
+/// The maximum number of bytes allowed for grid allocation
+fn max_grid_bytes_safety_cap() -> usize {
+    if let Ok(v) = std::env::var("MAX_GRID_BYTES_SAFETY_CAP")
+        && let Ok(n) = v.parse::<usize>()
+    {
+        return n;
+    }
+    MAX_GRID_BYTES_SAFETY_CAP_DEFAULT
+}
+
+/// Format bytes in human-readable form (e.g., "4.2 GiB", "512 MiB").
+///
+/// This helper function converts byte counts to human-readable strings
+/// using binary prefixes (1024-based) for better UX in error messages.
+fn format_bytes(bytes: usize) -> String {
+    const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
+
+    // Use safe cast to avoid precision loss warnings
+    let Ok(mut size) = safe_usize_to_scalar::<f64>(bytes) else {
+        // Fallback for extremely large values
+        return format!("{bytes} B");
+    };
+
+    let mut unit_index = 0;
+
+    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_index += 1;
+    }
+
+    if unit_index == 0 {
+        format!("{} {}", bytes, UNITS[0])
+    } else {
+        format!("{:.1} {}", size, UNITS[unit_index])
+    }
+}
+
+// =============================================================================
+// SAFE COORDINATE CONVERSION FUNCTIONS
+// =============================================================================
+
+/// Compute 2D hypot using numerically stable scaled algorithm.
+///
+/// This is used as a fallback when standard library hypot conversion fails.
+/// It implements the same scaling approach used in the general hypot algorithm.
+///
+/// # Arguments
+///
+/// * `x` - First coordinate
+/// * `y` - Second coordinate
+///
+/// # Returns
+///
+/// The computed hypot value using scaled computation
+fn scaled_hypot_2d<T: CoordinateScalar + num_traits::Zero>(x: T, y: T) -> T {
+    let max_abs = Float::abs(x).max(Float::abs(y));
+    if max_abs == T::zero() {
+        return T::zero();
+    }
+    // Use scaled computation for numerical stability
+    let x_scaled = x / max_abs;
+    let y_scaled = y / max_abs;
+    max_abs * Float::sqrt(x_scaled * x_scaled + y_scaled * y_scaled)
+}
 
 /// Safely convert a coordinate value from type T to f64.
-///
 /// This function provides proper error handling for coordinate type conversions,
 /// replacing the unsafe `cast(x).unwrap_or(fallback)` pattern with explicit
 /// error reporting. It also checks for non-finite values (NaN, infinity).
@@ -389,16 +473,17 @@ pub fn safe_scalar_from_f64<T: CoordinateScalar>(
 ///
 /// # Precision Limits
 ///
-/// - `f64` mantissa has 52 bits of precision
-/// - `usize` values larger than 2^52 (4,503,599,627,370,496) may lose precision
+/// - `f64` integers are exact up to 2^53 − 1
+/// - `usize` values larger than 2^53 − 1 (9,007,199,254,740,991) may lose precision
 /// - On 32-bit platforms, `usize` is only 32 bits, so precision loss is impossible
 /// - On 64-bit platforms, `usize` can be up to 64 bits, so precision loss is possible
 pub fn safe_usize_to_scalar<T: CoordinateScalar>(
     value: usize,
 ) -> Result<T, CoordinateConversionError> {
     // Check for potential precision loss when converting usize to f64
-    // f64 has 52 bits of precision in the mantissa, so values larger than 2^52 may lose precision
-    const MAX_PRECISE_USIZE_IN_F64: u64 = 1_u64 << 52; // 2^52 = 4,503,599,627,370,496
+    // f64 has 53 bits of integer precision (including the implicit bit).
+    // Integers up to 2^53 - 1 are exactly representable.
+    const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1; // 9,007,199,254,740,991
 
     // Use try_from to safely convert usize to u64 for comparison
     let value_u64 =
@@ -525,29 +610,13 @@ where
                 (safe_scalar_to_f64(coords[0]), safe_scalar_to_f64(coords[1]))
             {
                 let result_f64 = a_f64.hypot(b_f64);
-                if let Ok(result) = safe_scalar_from_f64(result_f64) {
-                    result
-                } else {
-                    // Fall back to general algorithm if conversion back fails
-                    let max_abs = Float::abs(coords[0]).max(Float::abs(coords[1]));
-                    if max_abs == T::zero() {
-                        return T::zero();
-                    }
-                    // Use scaled computation for numerical stability
-                    let x_scaled = coords[0] / max_abs;
-                    let y_scaled = coords[1] / max_abs;
-                    max_abs * Float::sqrt(x_scaled * x_scaled + y_scaled * y_scaled)
-                }
+                safe_scalar_from_f64(result_f64).unwrap_or_else(|_| {
+                    // Fall back to scaled algorithm if conversion back fails
+                    scaled_hypot_2d(coords[0], coords[1])
+                })
             } else {
-                // Fall back to general algorithm if conversion fails
-                let max_abs = Float::abs(coords[0]).max(Float::abs(coords[1]));
-                if max_abs == T::zero() {
-                    return T::zero();
-                }
-                // Use scaled computation for numerical stability
-                let x_scaled = coords[0] / max_abs;
-                let y_scaled = coords[1] / max_abs;
-                max_abs * Float::sqrt(x_scaled * x_scaled + y_scaled * y_scaled)
+                // Fall back to scaled algorithm if conversion fails
+                scaled_hypot_2d(coords[0], coords[1])
             }
         }
         _ => {
@@ -1027,16 +1096,16 @@ where
     } else {
         let sqrt_det = det.sqrt();
 
-        // Calculate (D-1)! factorial using peroxide's factorial function
-        let factorial_val = cast::<_, f64>(factorial(D - 1)).ok_or_else(|| {
+        // Calculate (D-1)! factorial - peroxide's factorial function returns usize
+        let factorial_usize = factorial(D - 1);
+        let factorial_val = safe_usize_to_scalar::<f64>(factorial_usize).map_err(|e| {
             CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-                value: format!("{}", factorial(D - 1)),
+                value: factorial_usize.to_string(),
                 from_type: "usize",
                 to_type: "f64",
-                details: "Factorial value too large for f64 precision".to_string(),
+                details: e.to_string(),
             })
         })?;
-
         sqrt_det / factorial_val
     };
 
@@ -1240,14 +1309,415 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
     let mut points = Vec::with_capacity(n_points);
 
     for _ in 0..n_points {
-        let coords = [T::zero(); D].map(|_| {
-            use rand::Rng;
-            rng.random_range(range.0..range.1)
-        });
+        let coords = [T::zero(); D].map(|_| rng.random_range(range.0..range.1));
         points.push(Point::new(coords));
     }
 
     Ok(points)
+}
+
+/// Generate points arranged in a regular grid pattern.
+///
+/// This function creates points in D-dimensional space arranged in a regular grid
+/// (Cartesian product of equally spaced coordinates),
+/// which provides a structured, predictable point distribution useful for
+/// benchmarking and testing geometric algorithms under best-case scenarios.
+///
+/// The implementation uses an efficient mixed-radix counter to generate
+/// coordinates on-the-fly without allocating intermediate index vectors,
+/// making it memory-efficient for large grids and high dimensions.
+///
+/// # Arguments
+///
+/// * `points_per_dim` - Number of points along each dimension
+/// * `spacing` - Distance between adjacent grid points
+/// * `offset` - Translation offset for the entire grid
+///
+/// # Returns
+///
+/// Vector of grid points, or a `RandomPointGenerationError` if parameters are invalid.
+///
+/// # Errors
+///
+/// * `RandomPointGenerationError::InvalidPointCount` if `points_per_dim` is zero
+///
+/// # References
+///
+/// The mixed-radix counter algorithm is described in:
+/// - D. E. Knuth, *The Art of Computer Programming, Vol. 4A: Combinatorial Algorithms*, Addison-Wesley, 2011.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::generate_grid_points;
+///
+/// // Generate 2D grid: 4x4 = 16 points with unit spacing
+/// let grid_2d = generate_grid_points::<f64, 2>(4, 1.0, [0.0, 0.0]).unwrap();
+/// assert_eq!(grid_2d.len(), 16);
+///
+/// // Generate 3D grid: 3x3x3 = 27 points with spacing 2.0
+/// let grid_3d = generate_grid_points::<f64, 3>(3, 2.0, [0.0, 0.0, 0.0]).unwrap();
+/// assert_eq!(grid_3d.len(), 27);
+///
+/// // Generate 4D grid centered at origin
+/// let grid_4d = generate_grid_points::<f64, 4>(2, 1.0, [-0.5, -0.5, -0.5, -0.5]).unwrap();
+/// assert_eq!(grid_4d.len(), 16); // 2^4 = 16 points
+/// ```
+pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
+    points_per_dim: usize,
+    spacing: T,
+    offset: [T; D],
+) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
+    if points_per_dim == 0 {
+        return Err(RandomPointGenerationError::InvalidPointCount { n_points: 0 });
+    }
+
+    // Compute total_points with overflow checking (avoids debug panic or release wrap)
+    let mut total_points: usize = 1;
+    for _ in 0..D {
+        total_points = total_points.checked_mul(points_per_dim).ok_or_else(|| {
+            RandomPointGenerationError::RandomGenerationFailed {
+                min: "0".into(),
+                max: format!("{}", points_per_dim.saturating_sub(1)),
+                details: format!("Requested grid size {points_per_dim}^{D} overflows usize"),
+            }
+        })?;
+    }
+
+    // Dimension/type-aware memory cap: total_points * D * size_of::<T>()
+    let per_point_bytes = D.saturating_mul(core::mem::size_of::<T>());
+    let total_bytes = total_points.saturating_mul(per_point_bytes);
+    let cap = max_grid_bytes_safety_cap();
+    if total_bytes > cap {
+        return Err(RandomPointGenerationError::RandomGenerationFailed {
+            min: "n/a".into(),
+            max: "n/a".into(),
+            details: format!(
+                "Requested grid requires {} (> cap {})",
+                format_bytes(total_bytes),
+                format_bytes(cap)
+            ),
+        });
+    }
+    let mut points = Vec::with_capacity(total_points);
+
+    // Use mixed-radix counter over D dimensions (see Knuth TAOCP Vol 4A)
+    // This avoids O(N) memory allocation for intermediate index vectors
+    let mut idx = [0usize; D];
+    for _ in 0..total_points {
+        let mut coords = [T::zero(); D];
+        for d in 0..D {
+            let index_as_scalar = safe_usize_to_scalar::<T>(idx[d]).map_err(|_| {
+                RandomPointGenerationError::RandomGenerationFailed {
+                    min: "0".to_string(),
+                    max: format!("{}", points_per_dim - 1),
+                    details: format!("Failed to convert grid index {idx:?} to coordinate type"),
+                }
+            })?;
+            coords[d] = offset[d] + index_as_scalar * spacing;
+        }
+        points.push(Point::new(coords));
+
+        // Increment mixed-radix counter
+        for d in (0..D).rev() {
+            idx[d] += 1;
+            if idx[d] < points_per_dim {
+                break;
+            }
+            idx[d] = 0;
+        }
+    }
+
+    Ok(points)
+}
+
+/// Generate points using Poisson disk sampling for uniform distribution.
+///
+/// This function creates points with approximately uniform spacing using a
+/// simplified Poisson disk sampling algorithm. This provides a more natural
+/// point distribution than pure random sampling, useful for benchmarking
+/// algorithms under realistic scenarios.
+///
+/// **Important**: The algorithm may terminate early if `min_distance` is too tight
+/// for the given bounds and dimension, resulting in fewer points than requested.
+/// In higher dimensions, tight spacing constraints become exponentially more
+/// difficult to satisfy.
+///
+/// # Arguments
+///
+/// * `n_points` - Target number of points to generate
+/// * `bounds` - Bounding box as (min, max) coordinates
+/// * `min_distance` - Minimum distance between any two points
+/// * `seed` - Seed for reproducible results
+///
+/// # Returns
+///
+/// Vector of Poisson-distributed points, or a `RandomPointGenerationError` if parameters are invalid.
+/// Note: The actual number of points may be less than `n_points` due to spacing constraints.
+///
+/// # Errors
+///
+/// * `RandomPointGenerationError::InvalidRange` if min >= max in bounds
+/// * `RandomPointGenerationError::RandomGenerationFailed` if `min_distance` is too large for the bounds
+///   or if no points can be generated within the attempt limit
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::generate_poisson_points;
+///
+/// // Generate ~100 2D points with minimum distance 0.1 in unit square
+/// let poisson_2d = generate_poisson_points::<f64, 2>(100, (0.0, 1.0), 0.1, 42).unwrap();
+/// // Actual count may be less than 100 due to spacing constraints
+///
+/// // Generate 3D points in a cube
+/// let poisson_3d = generate_poisson_points::<f64, 3>(50, (-1.0, 1.0), 0.2, 123).unwrap();
+/// ```
+pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usize>(
+    n_points: usize,
+    bounds: (T, T),
+    min_distance: T,
+    seed: u64,
+) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
+    use rand::Rng;
+    use rand::SeedableRng;
+
+    // Validate bounds
+    if bounds.0 >= bounds.1 {
+        return Err(RandomPointGenerationError::InvalidRange {
+            min: format!("{:?}", bounds.0),
+            max: format!("{:?}", bounds.1),
+        });
+    }
+
+    if n_points == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+
+    // Early validation: if min_distance is non-positive, skip spacing constraints
+    if min_distance <= T::zero() {
+        let mut points = Vec::with_capacity(n_points);
+        for _ in 0..n_points {
+            let coords = [T::zero(); D].map(|_| rng.random_range(bounds.0..bounds.1));
+            points.push(Point::new(coords));
+        }
+        return Ok(points);
+    }
+
+    let mut points: Vec<Point<T, D>> = Vec::new();
+
+    // Simple Poisson disk sampling: rejection method
+    // Scale max attempts with dimension since higher dimensions make spacing harder
+    // Base: 30 attempts per point, scaled exponentially with dimension to account
+    // for the curse of dimensionality in Poisson disk sampling
+    let dimension_scaling = match D {
+        0..=2 => 1,
+        3..=4 => 2,
+        5..=6 => 4,
+        _ => 8, // Very high dimensions need much more attempts
+    };
+    let max_attempts = (n_points * 30).saturating_mul(dimension_scaling);
+    let mut attempts = 0;
+
+    while points.len() < n_points && attempts < max_attempts {
+        attempts += 1;
+
+        // Generate candidate point
+        let coords = [T::zero(); D].map(|_| rng.random_range(bounds.0..bounds.1));
+        let candidate = Point::new(coords);
+
+        // Check distance to all existing points
+        let mut valid = true;
+        let candidate_coords: [T; D] = candidate.to_array();
+        for existing_point in &points {
+            let existing_coords: [T; D] = existing_point.to_array();
+
+            // Calculate distance using hypot for numerical stability
+            let mut diff_coords = [T::zero(); D];
+            for i in 0..D {
+                diff_coords[i] = candidate_coords[i] - existing_coords[i];
+            }
+            let distance = hypot(diff_coords);
+
+            if distance < min_distance {
+                valid = false;
+                break;
+            }
+        }
+
+        if valid {
+            points.push(candidate);
+        }
+    }
+
+    if points.is_empty() {
+        return Err(RandomPointGenerationError::RandomGenerationFailed {
+            min: format!("{:?}", bounds.0),
+            max: format!("{:?}", bounds.1),
+            details: format!(
+                "Could not generate any points with minimum distance {min_distance:?} in given bounds"
+            ),
+        });
+    }
+
+    Ok(points)
+}
+
+/// Generate a random Delaunay triangulation with specified parameters.
+///
+/// This utility function combines random point generation and triangulation creation
+/// in a single convenient function. It generates random points using either seeded
+/// or unseeded random generation, converts them to vertices, and creates a Delaunay
+/// triangulation using the Bowyer-Watson algorithm.
+///
+/// This function is particularly useful for testing, benchmarking, and creating
+/// triangulations for analysis or visualization purposes.
+///
+/// # Type Parameters
+///
+/// * `T` - Coordinate scalar type (must implement `CoordinateScalar + SampleUniform`)
+/// * `U` - Vertex data type (must implement `DataType`)
+/// * `V` - Cell data type (must implement `DataType`)
+/// * `D` - Dimensionality (const generic parameter)
+///
+/// # Arguments
+///
+/// * `n_points` - Number of random points to generate
+/// * `bounds` - Coordinate bounds as `(min, max)` tuple
+/// * `vertex_data` - Optional data to attach to each generated vertex
+/// * `seed` - Optional seed for reproducible results. If `None`, uses thread-local RNG
+///
+/// # Returns
+///
+/// A `Result` containing either:
+/// - `Ok(Tds<T, U, V, D>)` - The successfully created triangulation
+/// - `Err` - An error from point generation or triangulation construction
+///
+/// # Errors
+///
+/// This function can fail with:
+/// - `RandomPointGenerationError` if point generation fails (invalid bounds, etc.)
+/// - `TdsError` if triangulation construction fails (degenerate points, etc.)
+///
+/// # Panics
+///
+/// This function can panic if:
+/// - Vertex construction fails due to invalid data types or constraints
+/// - This should not happen with valid inputs and supported data types
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::generate_random_triangulation;
+///
+/// // Generate a 2D triangulation with 100 points, no seed (random each time)
+/// let triangulation_2d = generate_random_triangulation::<f64, (), (), 2>(
+///     100,
+///     (-10.0, 10.0),
+///     None,
+///     None
+/// ).unwrap();
+///
+/// // Generate a 3D triangulation with 50 points, seeded for reproducibility  
+/// let triangulation_3d = generate_random_triangulation::<f64, (), (), 3>(
+///     50,
+///     (-5.0, 5.0),
+///     None,
+///     Some(42)
+/// ).unwrap();
+///
+/// // Generate a 4D triangulation with custom vertex data
+/// let triangulation_4d = generate_random_triangulation::<f64, i32, (), 4>(
+///     25,
+///     (0.0, 1.0),
+///     Some(123),
+///     Some(456)
+/// ).unwrap();
+///
+/// // For string-like data, use fixed-size character arrays (Copy types)
+/// let triangulation_with_strings = generate_random_triangulation::<f64, [char; 8], (), 2>(
+///     20,
+///     (0.0, 1.0),
+///     Some(['v', 'e', 'r', 't', 'e', 'x', '_', 'A']),
+///     Some(789)
+/// ).unwrap();
+/// ```
+///
+/// # Note on String Data
+///
+/// Due to the `DataType` trait requiring `Copy`, `String` and `&str` cannot be used directly
+/// as vertex data. For string-like data, consider using:
+/// - Fixed-size character arrays: `[char; N]`
+/// - Small integer types that can be mapped to strings: `u32`, `u64`
+/// - Custom Copy types that wrap string-like data
+///
+/// # Performance Notes
+///
+/// - Point generation is O(n) and typically fast
+/// - Triangulation construction complexity varies by dimension:
+///   - 2D, 3D: O(n log n) expected with Bowyer-Watson algorithm
+///   - 4D+: O(n²) worst case, significantly slower for large point sets
+/// - Consider using smaller point counts for dimensions ≥ 4
+///
+/// # See Also
+///
+/// - [`generate_random_points`] - For generating points without triangulation
+/// - [`generate_random_points_seeded`] - For seeded random point generation only
+/// - [`Tds::new`] - For creating triangulations from existing vertices
+pub fn generate_random_triangulation<T, U, V, const D: usize>(
+    n_points: usize,
+    bounds: (T, T),
+    vertex_data: Option<U>,
+    seed: Option<u64>,
+) -> Result<Tds<T, U, V, D>, Box<dyn std::error::Error>>
+where
+    T: CoordinateScalar
+        + SampleUniform
+        + std::ops::AddAssign<T>
+        + std::ops::SubAssign<T>
+        + std::iter::Sum
+        + num_traits::cast::NumCast,
+    U: DataType,
+    V: DataType,
+    for<'a> &'a T: std::ops::Div<T>,
+    [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+{
+    // Generate random points (seeded or unseeded)
+    let points: Vec<Point<T, D>> = match seed {
+        Some(seed_value) => generate_random_points_seeded(n_points, bounds, seed_value)?,
+        None => generate_random_points(n_points, bounds)?,
+    };
+
+    // Convert points to vertices using the vertex! macro pattern
+    let vertices: Vec<Vertex<T, U, D>> = points
+        .into_iter()
+        .map(|point| {
+            use crate::core::vertex::VertexBuilder;
+            vertex_data.map_or_else(
+                || {
+                    VertexBuilder::default()
+                        .point(point)
+                        .build()
+                        .expect("Failed to build vertex without data")
+                },
+                |data| {
+                    VertexBuilder::default()
+                        .point(point)
+                        .data(data)
+                        .build()
+                        .expect("Failed to build vertex with data")
+                },
+            )
+        })
+        .collect();
+
+    // Create and return triangulation
+    let triangulation =
+        Tds::<T, U, V, D>::new(&vertices).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
+    Ok(triangulation)
 }
 
 #[cfg(test)]
@@ -1451,7 +1921,7 @@ mod tests {
         let safe_large_values = [
             usize::try_from(1_u64 << 50).unwrap_or(usize::MAX), // 2^50, well within f64 precision
             usize::try_from(1_u64 << 51).unwrap_or(usize::MAX), // 2^51, still safe
-            usize::try_from((1_u64 << 52) - 1).unwrap_or(usize::MAX), // Just under 2^52, should be safe
+            usize::try_from((1_u64 << 53) - 2).unwrap_or(usize::MAX), // Just under 2^53-1, should be safe
         ];
 
         for &value in &safe_large_values {
@@ -1471,14 +1941,17 @@ mod tests {
 
     #[test]
     fn test_safe_usize_to_scalar_precision_boundary() {
-        // Test the exact boundary value: 2^52
-        const MAX_PRECISE_USIZE_IN_F64: u64 = 1_u64 << 52;
+        // Test the exact boundary value: 2^53-1
+        const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1;
 
         // This should succeed (exactly at the boundary)
         if usize::try_from(MAX_PRECISE_USIZE_IN_F64).is_ok() {
             let boundary_value = usize::try_from(MAX_PRECISE_USIZE_IN_F64).unwrap();
             let result: Result<f64, _> = safe_usize_to_scalar(boundary_value);
-            assert!(result.is_ok(), "Boundary value 2^52 should be convertible");
+            assert!(
+                result.is_ok(),
+                "Boundary value 2^53-1 should be convertible"
+            );
 
             let converted = result.unwrap();
             let back_converted: usize =
@@ -1492,14 +1965,14 @@ mod tests {
 
     #[test]
     fn test_safe_usize_to_scalar_precision_loss_detection() {
-        // Test values that would lose precision (only on 64-bit platforms where usize can exceed 2^52)
-        const MAX_PRECISE_USIZE_IN_F64: u64 = 1_u64 << 52;
+        // Test values that would lose precision (only on 64-bit platforms where usize can exceed 2^53-1)
+        const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1;
 
         if std::mem::size_of::<usize>() >= 8 {
             // On 64-bit platforms, test values that would lose precision
             let precision_loss_values = [
-                usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 1).unwrap_or(usize::MAX), // Just over 2^52
-                usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 100).unwrap_or(usize::MAX), // Well over 2^52
+                usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 1).unwrap_or(usize::MAX), // Just over 2^53-1
+                usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 100).unwrap_or(usize::MAX), // Well over 2^53-1
             ];
 
             for &value in &precision_loss_values {
@@ -1532,7 +2005,7 @@ mod tests {
                 }
             }
         } else {
-            // On 32-bit platforms, usize cannot exceed 2^52, so all values should succeed
+            // On 32-bit platforms, usize cannot exceed 2^53-1, so all values should succeed
             println!("Skipping precision loss test on 32-bit platform");
         }
     }
@@ -1581,7 +2054,7 @@ mod tests {
     #[test]
     fn test_safe_usize_to_scalar_error_message_format() {
         // Test that error messages are properly formatted
-        const MAX_PRECISE_USIZE_IN_F64: u64 = 1_u64 << 52;
+        const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1;
 
         if std::mem::size_of::<usize>() >= 8 {
             let large_value = usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 1).unwrap_or(usize::MAX);
@@ -1624,7 +2097,7 @@ mod tests {
             std::mem::size_of::<usize>()
         );
         println!("usize::MAX = {}", usize::MAX);
-        println!("2^52 = {}", 1_u64 << 52);
+        println!("2^53-1 = {}", (1_u64 << 53) - 1);
 
         // Values that should work on any platform
         let universal_safe_values = [0, 1, 100, 10000];
@@ -3329,5 +3802,600 @@ mod tests {
                 assert!((-1.0..1.0).contains(&coord));
             }
         }
+    }
+
+    // =============================================================================
+    // GRID POINT GENERATION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_generate_grid_points_2d() {
+        // Test 2D grid generation
+        let grid = generate_grid_points::<f64, 2>(3, 1.0, [0.0, 0.0]).unwrap();
+
+        assert_eq!(grid.len(), 9); // 3^2 = 9 points
+
+        // Check that we get the expected coordinates
+        let expected_coords = [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [2.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [2.0, 1.0],
+            [0.0, 2.0],
+            [1.0, 2.0],
+            [2.0, 2.0],
+        ];
+
+        for point in &grid {
+            let coords: [f64; 2] = point.into();
+            // Grid generation order might vary, so check if point exists in expected set
+            assert!(
+                expected_coords.iter().any(|&expected| {
+                    (coords[0] - expected[0]).abs() < 1e-10
+                        && (coords[1] - expected[1]).abs() < 1e-10
+                }),
+                "Point {coords:?} not found in expected coordinates"
+            );
+        }
+    }
+
+    #[test]
+    fn test_generate_grid_points_3d() {
+        // Test 3D grid generation
+        let grid = generate_grid_points::<f64, 3>(2, 2.0, [1.0, 1.0, 1.0]).unwrap();
+
+        assert_eq!(grid.len(), 8); // 2^3 = 8 points
+
+        // Check that all points are within expected bounds
+        for point in &grid {
+            let coords: [f64; 3] = point.into();
+            for &coord in &coords {
+                assert!((1.0..=3.0).contains(&coord)); // offset 1.0 + (0 or 1) * spacing 2.0
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_grid_points_4d() {
+        // Test 4D grid generation
+        let grid = generate_grid_points::<f32, 4>(2, 0.5, [-0.5, -0.5, -0.5, -0.5]).unwrap();
+
+        assert_eq!(grid.len(), 16); // 2^4 = 16 points
+
+        // Check coordinate ranges
+        for point in &grid {
+            let coords: [f32; 4] = point.into();
+            for &coord in &coords {
+                assert!((-0.5..=0.0).contains(&coord)); // offset -0.5 + (0 or 1) * spacing 0.5
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_grid_points_edge_cases() {
+        // Test single point grid
+        let grid = generate_grid_points::<f64, 3>(1, 1.0, [0.0, 0.0, 0.0]).unwrap();
+        assert_eq!(grid.len(), 1);
+        let coords: [f64; 3] = (&grid[0]).into();
+        // Use approx for floating point comparison
+        for (actual, expected) in coords.iter().zip([0.0, 0.0, 0.0].iter()) {
+            assert!((actual - expected).abs() < 1e-15);
+        }
+
+        // Test zero spacing
+        let grid = generate_grid_points::<f64, 2>(2, 0.0, [5.0, 5.0]).unwrap();
+        assert_eq!(grid.len(), 4);
+        for point in &grid {
+            let coords: [f64; 2] = point.into();
+            // Use approx for floating point comparison
+            for (actual, expected) in coords.iter().zip([5.0, 5.0].iter()) {
+                assert!((actual - expected).abs() < 1e-15);
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_grid_points_error_handling() {
+        // Test zero points per dimension
+        let result = generate_grid_points::<f64, 2>(0, 1.0, [0.0, 0.0]);
+        assert!(result.is_err());
+        match result {
+            Err(RandomPointGenerationError::InvalidPointCount { n_points }) => {
+                assert_eq!(n_points, 0);
+            }
+            _ => panic!("Expected InvalidPointCount error"),
+        }
+
+        // Test safety cap for excessive points (prevents OOM)
+        let result = generate_grid_points::<f64, 3>(1000, 1.0, [0.0, 0.0, 0.0]);
+        assert!(result.is_err());
+        let error_msg = format!("{}", result.unwrap_err());
+        assert!(error_msg.contains("cap"));
+        // Should contain human-readable byte formatting (no longer contains raw "bytes")
+        assert!(
+            error_msg.contains("GiB") || error_msg.contains("MiB") || error_msg.contains("KiB"),
+            "Error message should contain human-readable byte units: {error_msg}"
+        );
+    }
+
+    #[test]
+    fn test_generate_grid_points_overflow_detection() {
+        // Test overflow detection when points_per_dim^D would overflow usize
+        // We'll use a dimension that would cause overflow
+        const LARGE_D: usize = 64; // This will definitely cause overflow
+        let offset = [0.0; LARGE_D];
+        let spacing = 0.1; // This would require 10^64 points which overflows usize
+        let points_per_dim = 10;
+
+        let result = generate_grid_points::<f64, LARGE_D>(points_per_dim, spacing, offset);
+        assert!(result.is_err(), "Expected error due to usize overflow");
+
+        if let Err(RandomPointGenerationError::RandomGenerationFailed {
+            min: _,
+            max: _,
+            details,
+        }) = result
+        {
+            assert!(
+                details.contains("overflows usize"),
+                "Expected overflow error, got: {details}"
+            );
+        } else {
+            panic!("Expected RandomGenerationFailed error due to overflow");
+        }
+    }
+
+    #[test]
+    fn test_generate_grid_points_large_coordinates() {
+        // Test with large coordinate values
+        let grid = generate_grid_points::<f64, 2>(2, 1000.0, [1e6, 1e6]).unwrap();
+        assert_eq!(grid.len(), 4);
+
+        for point in &grid {
+            let coords: [f64; 2] = point.into();
+            assert!((1e6..=1e6 + 1000.0).contains(&coords[0]));
+            assert!((1e6..=1e6 + 1000.0).contains(&coords[1]));
+        }
+    }
+
+    #[test]
+    fn test_generate_grid_points_negative_spacing() {
+        // Test with negative spacing
+        let grid = generate_grid_points::<f64, 2>(3, -1.0, [2.0, 2.0]).unwrap();
+        assert_eq!(grid.len(), 9);
+
+        // With negative spacing, coordinates should decrease from offset
+        // Grid indices are 0, 1, 2, so coordinates are:
+        // offset + index * spacing = 2.0 + {0,1,2} * (-1.0) = {2.0, 1.0, 0.0}
+        let mut found_coords = std::collections::HashSet::new();
+        for point in &grid {
+            let coords: [f64; 2] = point.into();
+            // Each coordinate should be exactly one of: 2.0, 1.0, 0.0
+            for &coord in &coords {
+                assert!(
+                    (coord - 2.0).abs() < 1e-15
+                        || (coord - 1.0).abs() < 1e-15
+                        || coord.abs() < 1e-15,
+                    "Unexpected coordinate: {coord}"
+                );
+            }
+            found_coords.insert(format!("{:.1}_{:.1}", coords[0], coords[1]));
+        }
+
+        // Should find all 9 expected coordinate combinations
+        assert_eq!(
+            found_coords.len(),
+            9,
+            "Should have 9 unique coordinate pairs"
+        );
+    }
+
+    // =============================================================================
+    // POISSON POINT GENERATION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_generate_poisson_points_2d() {
+        // Test 2D Poisson disk sampling
+        let points = generate_poisson_points::<f64, 2>(50, (0.0, 10.0), 0.5, 42).unwrap();
+
+        // Should generate some points (exact count depends on spacing constraints)
+        assert!(!points.is_empty());
+        assert!(points.len() <= 50); // May be less than requested due to spacing constraints
+
+        // Check that all points are within bounds
+        for point in &points {
+            let coords: [f64; 2] = point.into();
+            assert!((0.0..10.0).contains(&coords[0]));
+            assert!((0.0..10.0).contains(&coords[1]));
+        }
+
+        // Check minimum distance constraint
+        for (i, p1) in points.iter().enumerate() {
+            for (j, p2) in points.iter().enumerate() {
+                if i != j {
+                    let coords1: [f64; 2] = p1.into();
+                    let coords2: [f64; 2] = p2.into();
+                    let diff = [coords1[0] - coords2[0], coords1[1] - coords2[1]];
+                    let distance = hypot(diff);
+                    assert!(
+                        distance >= 0.5 - 1e-10,
+                        "Distance {distance} violates minimum distance constraint"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_poisson_points_3d() {
+        // Test 3D Poisson disk sampling
+        let points = generate_poisson_points::<f64, 3>(30, (-1.0, 1.0), 0.2, 123).unwrap();
+
+        assert!(!points.is_empty());
+
+        // Check bounds and minimum distance
+        for point in &points {
+            let coords: [f64; 3] = point.into();
+            for &coord in &coords {
+                assert!((-1.0..1.0).contains(&coord));
+            }
+        }
+
+        // Check minimum distance constraint in 3D
+        for (i, p1) in points.iter().enumerate() {
+            for (j, p2) in points.iter().enumerate() {
+                if i != j {
+                    let coords1: [f64; 3] = p1.into();
+                    let coords2: [f64; 3] = p2.into();
+                    let diff = [
+                        coords1[0] - coords2[0],
+                        coords1[1] - coords2[1],
+                        coords1[2] - coords2[2],
+                    ];
+                    let distance = hypot(diff);
+                    assert!(distance >= 0.2 - 1e-10);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_poisson_points_reproducible() {
+        // Test that same seed produces same results
+        let points1 = generate_poisson_points::<f64, 2>(25, (0.0, 5.0), 0.3, 456).unwrap();
+        let points2 = generate_poisson_points::<f64, 2>(25, (0.0, 5.0), 0.3, 456).unwrap();
+
+        assert_eq!(points1.len(), points2.len());
+
+        for (p1, p2) in points1.iter().zip(points2.iter()) {
+            let coords1: [f64; 2] = p1.into();
+            let coords2: [f64; 2] = p2.into();
+
+            for (c1, c2) in coords1.iter().zip(coords2.iter()) {
+                assert_relative_eq!(c1, c2, epsilon = 1e-15);
+            }
+        }
+
+        // Different seeds should produce different results
+        let points3 = generate_poisson_points::<f64, 2>(25, (0.0, 5.0), 0.3, 789).unwrap();
+        assert_ne!(points1, points3);
+    }
+
+    #[test]
+    fn test_generate_poisson_points_error_handling() {
+        // Test invalid range
+        let result = generate_poisson_points::<f64, 2>(50, (10.0, 5.0), 0.1, 42);
+        assert!(result.is_err());
+        match result {
+            Err(RandomPointGenerationError::InvalidRange { min, max }) => {
+                assert_eq!(min, "10.0");
+                assert_eq!(max, "5.0");
+            }
+            _ => panic!("Expected InvalidRange error"),
+        }
+
+        // Test minimum distance too large for bounds (should produce few/no points)
+        let result = generate_poisson_points::<f64, 2>(100, (0.0, 1.0), 10.0, 42);
+        match result {
+            Ok(points) => {
+                // Should produce very few points or fail
+                assert!(points.len() < 5);
+            }
+            Err(RandomPointGenerationError::RandomGenerationFailed { .. }) => {
+                // This is also acceptable - can't fit points with such large spacing
+            }
+            _ => panic!("Unexpected error type"),
+        }
+
+        // Test zero distance optimization (should return exact count without spacing checks)
+        let result = generate_poisson_points::<f64, 2>(100, (0.0, 10.0), 0.0, 42);
+        assert!(result.is_ok());
+        let points = result.unwrap();
+        assert_eq!(points.len(), 100); // Should get exactly the requested number
+
+        // Test negative distance optimization (should return exact count without spacing checks)
+        let result = generate_poisson_points::<f64, 2>(50, (0.0, 10.0), -1.0, 42);
+        assert!(result.is_ok());
+        let points = result.unwrap();
+        assert_eq!(points.len(), 50); // Should get exactly the requested number
+    }
+
+    #[test]
+    fn test_generate_poisson_points_small_spacing() {
+        // Test with very small minimum distance (should behave more like random sampling)
+        let points = generate_poisson_points::<f64, 2>(20, (0.0, 10.0), 0.01, 999).unwrap();
+
+        // Should be able to generate close to the requested number
+        assert!(points.len() >= 15); // Allow some margin for randomness
+
+        // All points should still respect the minimum distance
+        for (i, p1) in points.iter().enumerate() {
+            for (j, p2) in points.iter().enumerate() {
+                if i != j {
+                    let coords1: [f64; 2] = p1.into();
+                    let coords2: [f64; 2] = p2.into();
+                    let diff = [coords1[0] - coords2[0], coords1[1] - coords2[1]];
+                    let distance = hypot(diff);
+                    assert!(distance >= 0.01 - 1e-12);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_poisson_points_coordinate_types() {
+        // Test with f32 coordinates
+        let points_f32 =
+            generate_poisson_points::<f32, 3>(15, (0.0_f32, 5.0_f32), 0.5_f32, 333).unwrap();
+
+        assert!(!points_f32.is_empty());
+
+        for point in &points_f32 {
+            let coords: [f32; 3] = point.into();
+            for &coord in &coords {
+                assert!((0.0..5.0).contains(&coord));
+            }
+        }
+
+        // Test with f64 coordinates
+        let points_f64 = generate_poisson_points::<f64, 4>(10, (-2.0, 2.0), 0.4, 777).unwrap();
+
+        assert!(!points_f64.is_empty());
+
+        for point in &points_f64 {
+            let coords: [f64; 4] = point.into();
+            for &coord in &coords {
+                assert!((-2.0..2.0).contains(&coord));
+            }
+        }
+    }
+
+    // =============================================================================
+    // SAFETY CAP AND UTILITY FUNCTION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_max_grid_bytes_safety_cap_default_value() {
+        // Test that the default value is as expected
+        assert_eq!(MAX_GRID_BYTES_SAFETY_CAP_DEFAULT, 4_294_967_296); // 4 GiB
+
+        // Test that the function doesn't crash and returns a reasonable value
+        // (We can't safely test env var manipulation in a crate that forbids unsafe)
+        let cap = max_grid_bytes_safety_cap();
+        assert!(cap > 0, "Safety cap should be positive");
+        // The actual value depends on environment, but function should not crash
+    }
+
+    #[test]
+    fn test_format_bytes() {
+        // Test byte formatting with various sizes
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1024), "1.0 KiB");
+        assert_eq!(format_bytes(1536), "1.5 KiB");
+        assert_eq!(format_bytes(1_048_576), "1.0 MiB");
+        assert_eq!(format_bytes(1_073_741_824), "1.0 GiB");
+        assert_eq!(format_bytes(MAX_GRID_BYTES_SAFETY_CAP_DEFAULT), "4.0 GiB");
+        assert_eq!(format_bytes(5_368_709_120), "5.0 GiB");
+        assert_eq!(format_bytes(1_099_511_627_776), "1.0 TiB");
+    }
+
+    #[test]
+    fn test_generate_grid_points_safety_cap_enforcement() {
+        // Test that very large grids fail with the current safety cap
+        // We can't safely modify environment variables in a crate that forbids unsafe,
+        // so we test with a grid that would exceed the default 4 GiB cap
+        let result = generate_grid_points::<f64, 3>(1000, 1.0, [0.0, 0.0, 0.0]);
+        assert!(result.is_err(), "Should fail with safety cap exceeded");
+
+        if let Err(RandomPointGenerationError::RandomGenerationFailed { details, .. }) = result {
+            assert!(
+                details.contains("cap"),
+                "Error should mention cap: {details}"
+            );
+            // Should contain human-readable formatting
+            assert!(
+                details.contains('B'),
+                "Error should use human-readable bytes: {details}"
+            );
+            // Should contain one of the byte unit suffixes
+            assert!(
+                details.contains("GiB") || details.contains("MiB") || details.contains("KiB"),
+                "Error should use human-readable byte units: {details}"
+            );
+        } else {
+            panic!("Expected RandomGenerationFailed error");
+        }
+    }
+
+    #[test]
+    fn test_scaled_hypot_2d() {
+        // Test our fallback scaled hypot implementation
+        let result = scaled_hypot_2d(3.0, 4.0);
+        assert_relative_eq!(result, 5.0, epsilon = 1e-10);
+
+        // Test with zero values
+        let zero_result = scaled_hypot_2d(0.0, 0.0);
+        assert_relative_eq!(zero_result, 0.0, epsilon = 1e-10);
+
+        // Test with negative values
+        let neg_result = scaled_hypot_2d(-3.0, 4.0);
+        assert_relative_eq!(neg_result, 5.0, epsilon = 1e-10);
+
+        // Test with very large values to check scaling behavior
+        let large_result = scaled_hypot_2d(1e10, 1e10);
+        let expected = (2.0_f64).sqrt() * 1e10;
+        assert_relative_eq!(large_result, expected, epsilon = 1e-5);
+    }
+
+    // =============================================================================
+    // RANDOM TRIANGULATION GENERATION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_generate_random_triangulation_basic() {
+        // Test 2D triangulation creation
+        let triangulation_2d =
+            generate_random_triangulation::<f64, (), (), 2>(10, (-5.0, 5.0), None, Some(42))
+                .unwrap();
+
+        assert_eq!(triangulation_2d.number_of_vertices(), 10);
+        assert_eq!(triangulation_2d.dim(), 2);
+        assert!(triangulation_2d.is_valid().is_ok());
+
+        // Test 3D triangulation creation with data
+        let triangulation_3d =
+            generate_random_triangulation::<f64, i32, (), 3>(8, (0.0, 1.0), Some(123), Some(456))
+                .unwrap();
+
+        assert_eq!(triangulation_3d.number_of_vertices(), 8);
+        assert_eq!(triangulation_3d.dim(), 3);
+        assert!(triangulation_3d.is_valid().is_ok());
+
+        // Test seeded vs unseeded (should get different results)
+        let triangulation_seeded =
+            generate_random_triangulation::<f64, (), (), 2>(5, (-1.0, 1.0), None, Some(789))
+                .unwrap();
+
+        let triangulation_unseeded =
+            generate_random_triangulation::<f64, (), (), 2>(5, (-1.0, 1.0), None, None).unwrap();
+
+        // Both should be valid
+        assert!(triangulation_seeded.is_valid().is_ok());
+        assert!(triangulation_unseeded.is_valid().is_ok());
+        assert_eq!(triangulation_seeded.number_of_vertices(), 5);
+        assert_eq!(triangulation_unseeded.number_of_vertices(), 5);
+    }
+
+    #[test]
+    fn test_generate_random_triangulation_error_cases() {
+        // Test invalid bounds
+        let result = generate_random_triangulation::<f64, (), (), 2>(
+            10,
+            (5.0, 1.0), // min > max
+            None,
+            Some(42),
+        );
+        assert!(result.is_err());
+
+        // Test zero points
+        let result =
+            generate_random_triangulation::<f64, (), (), 2>(0, (-1.0, 1.0), None, Some(42));
+        assert!(result.is_ok()); // Should succeed with empty triangulation
+        let triangulation = result.unwrap();
+        assert_eq!(triangulation.number_of_vertices(), 0);
+        assert_eq!(triangulation.dim(), -1);
+    }
+
+    #[test]
+    fn test_generate_random_triangulation_reproducibility() {
+        // Same seed should produce identical triangulations
+        let triangulation1 =
+            generate_random_triangulation::<f64, (), (), 3>(6, (-2.0, 2.0), None, Some(12345))
+                .unwrap();
+
+        let triangulation2 =
+            generate_random_triangulation::<f64, (), (), 3>(6, (-2.0, 2.0), None, Some(12345))
+                .unwrap();
+
+        // Should have same structural properties
+        assert_eq!(
+            triangulation1.number_of_vertices(),
+            triangulation2.number_of_vertices()
+        );
+        assert_eq!(
+            triangulation1.number_of_cells(),
+            triangulation2.number_of_cells()
+        );
+        assert_eq!(triangulation1.dim(), triangulation2.dim());
+    }
+
+    #[test]
+    fn test_generate_random_triangulation_dimensions() {
+        // Test different dimensional triangulations
+
+        // 2D with sufficient points for full triangulation
+        let tri_2d =
+            generate_random_triangulation::<f64, (), (), 2>(15, (0.0, 10.0), None, Some(555))
+                .unwrap();
+        assert_eq!(tri_2d.dim(), 2);
+        assert!(tri_2d.number_of_cells() > 0);
+
+        // 3D with sufficient points for full triangulation
+        let tri_3d =
+            generate_random_triangulation::<f64, (), (), 3>(20, (-3.0, 3.0), None, Some(666))
+                .unwrap();
+        assert_eq!(tri_3d.dim(), 3);
+        assert!(tri_3d.number_of_cells() > 0);
+
+        // 4D with sufficient points for full triangulation
+        let tri_4d =
+            generate_random_triangulation::<f64, (), (), 4>(12, (-1.0, 1.0), None, Some(777))
+                .unwrap();
+        assert_eq!(tri_4d.dim(), 4);
+        assert!(tri_4d.number_of_cells() > 0);
+    }
+
+    #[test]
+    fn test_generate_random_triangulation_with_data() {
+        // Test with different data types for vertices
+
+        // Test with fixed-size character array (Copy type that can represent strings)
+        // NOTE: This is a workaround for the DataType trait requiring Copy, which
+        // prevents using String or &str directly due to lifetime/ownership constraints
+        let tri_with_char_array = generate_random_triangulation::<f64, [char; 8], (), 2>(
+            6,
+            (-2.0, 2.0),
+            Some(['v', 'e', 'r', 't', 'e', 'x', '_', 'd']),
+            Some(888),
+        )
+        .unwrap();
+
+        assert_eq!(tri_with_char_array.number_of_vertices(), 6);
+        assert!(tri_with_char_array.is_valid().is_ok());
+
+        // Convert the char array to a string to demonstrate string-like usage
+        let char_array_data = ['v', 'e', 'r', 't', 'e', 'x', '_', 'd'];
+        let string_representation: String = char_array_data.iter().collect();
+        assert_eq!(string_representation, "vertex_d");
+
+        // Test with integer data
+        let tri_with_int_data =
+            generate_random_triangulation::<f64, u32, (), 3>(8, (0.0, 5.0), Some(42u32), Some(999))
+                .unwrap();
+
+        assert_eq!(tri_with_int_data.number_of_vertices(), 8);
+        assert!(tri_with_int_data.is_valid().is_ok());
+
+        // Test without data (None)
+        let tri_no_data =
+            generate_random_triangulation::<f64, (), (), 2>(5, (-1.0, 1.0), None, Some(111))
+                .unwrap();
+
+        assert_eq!(tri_no_data.number_of_vertices(), 5);
+        assert!(tri_no_data.is_valid().is_ok());
     }
 }

@@ -106,6 +106,18 @@ pub enum CellValidationError {
         #[from]
         source: CoordinateConversionError,
     },
+    /// The neighbors vector length is inconsistent with the number of vertices (D+1).
+    #[error(
+        "Invalid neighbors length: got {actual}, expected {expected} (D+1) for a {dimension}D simplex"
+    )]
+    InvalidNeighborsLength {
+        /// The actual neighbors length.
+        actual: usize,
+        /// The expected neighbors length (= D+1).
+        expected: usize,
+        /// The dimension D.
+        dimension: usize,
+    },
 }
 
 // =============================================================================
@@ -210,9 +222,10 @@ where
 ///   universally unique identifier for a [Cell] in order to identify
 ///   each instance.
 /// - `neighbors`: The `neighbors` property is an optional container of [Uuid]
-///   values. It represents the [Uuid]s of the neighboring cells that are connected
-///   to the current [Cell], indexed such that the `i-th` neighbor is opposite the
-///   `i-th` [Vertex].
+///   values with enforced length `D+1` (when present). It represents the [Uuid]s
+///   of the neighboring cells connected to the current [Cell], indexed such that
+///   the `i-th` neighbor is opposite the `i-th` [Vertex]. The length is validated
+///   to match the expected simplex structure.
 /// - `data`: The `data` property is an optional field that can hold a value of
 ///   type `V`. It allows storage of additional data associated with the [Cell];
 ///   the data must implement [Eq], [Hash], [Ord], [`PartialEq`], and [`PartialOrd`].
@@ -229,8 +242,19 @@ where
     #[builder(setter(skip), default = "make_uuid()")]
     uuid: Uuid,
     /// The neighboring cells connected to the current cell.
+    /// This field enforces a length of exactly `D+1` when present. Each
+    /// `Some(uuid)` represents a neighbor at that position, while `None`
+    /// indicates no neighbor at that position. The positional semantics ensure
+    /// that `neighbors[i]` is the neighbor opposite `vertices[i]`.
+    ///
+    /// # Example
+    /// For a 3D cell (tetrahedron) with 4 vertices:
+    /// - `neighbors[0]` is the neighbor opposite `vertices[0]` (shares vertices 1, 2, 3)
+    /// - `neighbors[1]` is the neighbor opposite `vertices[1]` (shares vertices 0, 2, 3)
+    /// - `neighbors[2]` is the neighbor opposite `vertices[2]` (shares vertices 0, 1, 3)
+    /// - `neighbors[3]` is the neighbor opposite `vertices[3]` (shares vertices 0, 1, 2)
     #[builder(setter(skip), default = "None")]
-    pub neighbors: Option<Vec<Uuid>>,
+    pub neighbors: Option<Vec<Option<Uuid>>>,
     /// The optional data associated with the cell.
     #[builder(setter(into, strip_option), default)]
     pub data: Option<V>,
@@ -430,7 +454,7 @@ where
     ///
     /// # Returns
     ///
-    /// A reference to the `Vec<Vertex<T, U, D>>` containing the vertices of the cell.
+    /// A slice containing the vertices of the cell.
     ///
     /// # Example
     ///
@@ -448,8 +472,8 @@ where
     /// assert_eq!(cell.vertices().len(), 4);
     /// ```
     #[inline]
-    pub const fn vertices(&self) -> &Vec<Vertex<T, U, D>> {
-        &self.vertices
+    pub fn vertices(&self) -> &[Vertex<T, U, D>] {
+        &self.vertices[..]
     }
 
     /// Returns the UUID of the [Cell].
@@ -503,8 +527,11 @@ where
     /// // Initially neighbors should be None
     /// assert!(cell.neighbors.is_none());
     ///
-    /// // Simulate setting some neighbors
-    /// cell.neighbors = Some(vec![Uuid::new_v4(), Uuid::new_v4()]);
+    /// // Simulate setting some neighbors (3D cell needs exactly 4 neighbor slots)
+    /// // Position i corresponds to neighbor opposite vertex i; use None where no neighbor exists
+    /// cell.neighbors = Some(vec![
+    ///     Some(Uuid::new_v4()), None, None, Some(Uuid::new_v4())
+    /// ]);
     /// assert!(cell.neighbors.is_some());
     ///
     /// // Clear the neighbors
@@ -831,16 +858,19 @@ where
     /// - All vertices are distinct from one another
     /// - The cell UUID is valid and not nil
     /// - The cell has exactly D+1 vertices (forming a proper D-simplex)
+    /// - If neighbors are provided, they must have exactly D+1 entries (positional semantics)
     ///
-    /// Note: This method does not validate neighbor structure, which requires global
-    /// knowledge of the triangulation and is handled by the [`Tds`](crate::core::triangulation_data_structure::Tds).
+    /// Note: This method validates basic neighbor structure invariants but does not validate
+    /// the correctness of neighbor relationships, which requires global knowledge of the
+    /// triangulation and is handled by the [`Tds`](crate::core::triangulation_data_structure::Tds).
     ///
     /// # Errors
     ///
     /// Returns `CellValidationError::InvalidVertex` if any vertex is invalid,
     /// `CellValidationError::InvalidUuid` if the cell's UUID is nil,
-    /// `CellValidationError::DuplicateVertices` if the cell contains duplicate vertices, or
-    /// `CellValidationError::InsufficientVertices` if the cell doesn't have exactly D+1 vertices.
+    /// `CellValidationError::DuplicateVertices` if the cell contains duplicate vertices,
+    /// `CellValidationError::InsufficientVertices` if the cell doesn't have exactly D+1 vertices, or
+    /// `CellValidationError::InvalidNeighborsLength` if neighbors are provided but don't have D+1 entries.
     ///
     /// # Example
     ///
@@ -875,6 +905,17 @@ where
         if self.vertices.len() != D + 1 {
             return Err(CellValidationError::InsufficientVertices {
                 actual: self.vertices.len(),
+                expected: D + 1,
+                dimension: D,
+            });
+        }
+
+        // If neighbors are provided, enforce positional semantics: length must be D+1
+        if let Some(neighbors) = &self.neighbors
+            && neighbors.len() != D + 1
+        {
+            return Err(CellValidationError::InvalidNeighborsLength {
+                actual: neighbors.len(),
                 expected: D + 1,
                 dimension: D,
             });
@@ -1356,8 +1397,8 @@ mod tests {
         // Set different neighbors - Hash implementation ignores neighbors for Eq/Hash contract
         let neighbor_id1 = Uuid::new_v4();
         let neighbor_id2 = Uuid::new_v4();
-        cell1.neighbors = Some(vec![neighbor_id1]);
-        cell2.neighbors = Some(vec![neighbor_id2]);
+        cell1.neighbors = Some(vec![Some(neighbor_id1), None, None, None]);
+        cell2.neighbors = Some(vec![Some(neighbor_id2), None, None, None]);
 
         let mut hasher1 = DefaultHasher::new();
         let mut hasher2 = DefaultHasher::new();
@@ -1391,8 +1432,8 @@ mod tests {
         // Set different neighbors
         let neighbor_id1 = Uuid::new_v4();
         let neighbor_id2 = Uuid::new_v4();
-        cell1.neighbors = Some(vec![neighbor_id1]);
-        cell2.neighbors = Some(vec![neighbor_id2]);
+        cell1.neighbors = Some(vec![Some(neighbor_id1), None, None, None]);
+        cell2.neighbors = Some(vec![Some(neighbor_id2), None, None, None]);
 
         let mut hasher1 = DefaultHasher::new();
         let mut hasher2 = DefaultHasher::new();
@@ -1591,8 +1632,8 @@ mod tests {
         // Initially neighbors should be None
         assert!(cell.neighbors.is_none());
 
-        // Simulate setting some neighbors
-        cell.neighbors = Some(vec![Uuid::new_v4(), Uuid::new_v4()]);
+        // Simulate setting some neighbors (3D cell needs exactly 4 neighbor slots)
+        cell.neighbors = Some(vec![Some(Uuid::new_v4()), Some(Uuid::new_v4()), None, None]);
         assert!(cell.neighbors.is_some());
 
         // Clear the neighbors using the new method
@@ -2679,6 +2720,135 @@ mod tests {
         println!("✓ Correctly detected insufficient vertices during cell creation");
     }
 
+    #[test]
+    fn test_cell_is_valid_neighbors_length_validation() {
+        // Test that is_valid checks neighbors length matches D+1
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        // Create a valid 2D cell (triangle)
+        let mut cell: Cell<f64, Option<()>, Option<()>, 2> = cell!(vertices);
+        assert!(cell.is_valid().is_ok(), "Valid cell should pass validation");
+
+        // Manually set neighbors with correct length (D+1 = 3)
+        cell.neighbors = Some(vec![None, None, None]);
+        assert!(
+            cell.is_valid().is_ok(),
+            "Cell with correct neighbors length should pass validation"
+        );
+
+        // Set neighbors with incorrect length (too few)
+        cell.neighbors = Some(vec![None, None]);
+        let result = cell.is_valid();
+        assert!(
+            result.is_err(),
+            "Cell with too few neighbors should fail validation"
+        );
+
+        if let Err(CellValidationError::InvalidNeighborsLength {
+            actual,
+            expected,
+            dimension,
+        }) = result
+        {
+            assert_eq!(actual, 2);
+            assert_eq!(expected, 3);
+            assert_eq!(dimension, 2);
+        } else {
+            panic!("Expected InvalidNeighborsLength error, got: {result:?}");
+        }
+
+        // Set neighbors with incorrect length (too many)
+        cell.neighbors = Some(vec![None, None, None, None]);
+        let result = cell.is_valid();
+        assert!(
+            result.is_err(),
+            "Cell with too many neighbors should fail validation"
+        );
+
+        if let Err(CellValidationError::InvalidNeighborsLength {
+            actual,
+            expected,
+            dimension,
+        }) = result
+        {
+            assert_eq!(actual, 4);
+            assert_eq!(expected, 3);
+            assert_eq!(dimension, 2);
+        } else {
+            panic!("Expected InvalidNeighborsLength error, got: {result:?}");
+        }
+
+        println!("✓ Cell neighbors length validation works correctly");
+    }
+
+    #[test]
+    fn test_cell_is_valid_neighbors_length_3d() {
+        // Test neighbors length validation for 3D cells
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let mut cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
+
+        // Set neighbors with correct length (D+1 = 4)
+        cell.neighbors = Some(vec![None, None, None, None]);
+        assert!(
+            cell.is_valid().is_ok(),
+            "3D cell with correct neighbors length should pass validation"
+        );
+
+        // Set neighbors with incorrect length
+        cell.neighbors = Some(vec![None, None, None]);
+        let result = cell.is_valid();
+        assert!(
+            result.is_err(),
+            "3D cell with wrong neighbors length should fail validation"
+        );
+
+        if let Err(CellValidationError::InvalidNeighborsLength {
+            actual,
+            expected,
+            dimension,
+        }) = result
+        {
+            assert_eq!(actual, 3);
+            assert_eq!(expected, 4);
+            assert_eq!(dimension, 3);
+        } else {
+            panic!("Expected InvalidNeighborsLength error, got: {result:?}");
+        }
+
+        println!("✓ 3D cell neighbors length validation works correctly");
+    }
+
+    #[test]
+    fn test_cell_is_valid_no_neighbors_is_valid() {
+        // Test that cells with no neighbors (None) are still valid
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let mut cell: Cell<f64, Option<()>, Option<()>, 2> = cell!(vertices);
+
+        // Explicitly set neighbors to None
+        cell.neighbors = None;
+        assert!(
+            cell.is_valid().is_ok(),
+            "Cell with no neighbors should be valid"
+        );
+
+        println!("✓ Cell with no neighbors passes validation");
+    }
+
     // =============================================================================
     // CELL PARTIALEQ AND EQ TESTS
     // =============================================================================
@@ -2876,9 +3046,14 @@ mod tests {
         let mut cell1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices.clone());
         let mut cell2: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
 
-        // Add different neighbors to the cells
-        cell1.neighbors = Some(vec![uuid::Uuid::new_v4(), uuid::Uuid::new_v4()]);
-        cell2.neighbors = Some(vec![uuid::Uuid::new_v4()]); // Different neighbors
+        // Add different neighbors to the cells (3D cell needs exactly 4 neighbor slots)
+        cell1.neighbors = Some(vec![
+            Some(uuid::Uuid::new_v4()),
+            Some(uuid::Uuid::new_v4()),
+            None,
+            None,
+        ]);
+        cell2.neighbors = Some(vec![Some(uuid::Uuid::new_v4()), None, None, None]); // Different neighbors
 
         // Cells should still be equal since PartialEq only compares vertices
         assert_eq!(

@@ -667,31 +667,33 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
     ) -> Result<HashMap<u64, Vec<CellKey>>, TriangulationValidationError> {
-        let mut facet_to_cells: HashMap<u64, Vec<CellKey>> = HashMap::new();
+        // Reuse existing mapping from TDS to avoid recomputation
+        let tds_map = tds.build_facet_to_cells_hashmap();
 
-        for (cell_key, cell) in tds.cells() {
-            if let Ok(facets) = cell.facets() {
-                for facet in facets {
-                    facet_to_cells
-                        .entry(facet.key())
-                        .or_default()
-                        .push(cell_key);
+        // Transform the TDS map into the required format with validation
+        let facet_to_cells: HashMap<u64, Vec<CellKey>> = tds_map
+            .into_iter()
+            .map(|(facet_key, cell_facet_pairs)| {
+                // Extract just the CellKeys, discarding facet indices
+                let cell_keys: Vec<CellKey> = cell_facet_pairs
+                    .iter()
+                    .map(|(cell_key, _)| *cell_key)
+                    .collect();
+
+                // Validate that no facet is shared by more than 2 cells
+                if cell_keys.len() > 2 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Facet {} is shared by {} cells (should be ≤2)",
+                            facet_key,
+                            cell_keys.len()
+                        ),
+                    });
                 }
-            }
-        }
 
-        // Validate that no facet is shared by more than 2 cells
-        for (facet_key, cells) in &facet_to_cells {
-            if cells.len() > 2 {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Facet {} is shared by {} cells (should be ≤2)",
-                        facet_key,
-                        cells.len()
-                    ),
-                });
-            }
-        }
+                Ok((facet_key, cell_keys))
+            })
+            .collect::<Result<HashMap<_, _>, _>>()?;
 
         Ok(facet_to_cells)
     }
@@ -790,8 +792,8 @@ where
             let (cell_key, facet_index) = cells[0];
             if let Some(cell) = tds.cells().get(cell_key) {
                 if let Ok(facets) = cell.facets() {
-                    if facet_index < facets.len() {
-                        let facet = &facets[facet_index];
+                    if (facet_index as usize) < facets.len() {
+                        let facet = &facets[facet_index as usize];
 
                         // Test visibility using robust orientation predicates with fallback
                         if self.is_facet_visible_from_vertex_robust(tds, facet, vertex, cell_key) {
@@ -1413,7 +1415,7 @@ mod tests {
             // Verify neighbor relationships are consistent
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
-                    for neighbor_uuid in neighbors {
+                    for neighbor_uuid in neighbors.iter().flatten() {
                         if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid)
                             && let Some(neighbor) = tds.cells().get(*neighbor_key)
                         {
@@ -1424,7 +1426,9 @@ mod tests {
                                     .get_by_right(&cell_key)
                                     .expect("Cell should have UUID");
                                 assert!(
-                                    neighbor_neighbors.contains(cell_uuid),
+                                    neighbor_neighbors
+                                        .iter()
+                                        .any(|n| n.as_ref() == Some(cell_uuid)),
                                     "Neighbor relationship should be symmetric after insertion {}",
                                     i + 1
                                 );
@@ -1556,7 +1560,7 @@ mod tests {
             // Verify neighbor relationships are consistent
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
-                    for neighbor_uuid in neighbors {
+                    for neighbor_uuid in neighbors.iter().flatten() {
                         if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid)
                             && let Some(neighbor) = tds.cells().get(*neighbor_key)
                         {
@@ -1567,7 +1571,9 @@ mod tests {
                                     .get_by_right(&cell_key)
                                     .expect("Cell should have UUID");
                                 assert!(
-                                    neighbor_neighbors.contains(cell_uuid),
+                                    neighbor_neighbors
+                                        .iter()
+                                        .any(|opt| opt.as_ref() == Some(cell_uuid)),
                                     "Neighbor relationship should be symmetric after hull extension {}",
                                     i + 1
                                 );
@@ -1722,12 +1728,12 @@ mod tests {
                             .get_by_right(&cell1_key)
                             .expect("Cell1 should have UUID");
                         assert!(
-                            neighbors1.contains(cell2_uuid),
+                            neighbors1.iter().flatten().any(|uuid| uuid == cell2_uuid),
                             "Cell1 should reference cell2 as neighbor after insertion {}",
                             i + 1
                         );
                         assert!(
-                            neighbors2.contains(cell1_uuid),
+                            neighbors2.iter().flatten().any(|uuid| uuid == cell1_uuid),
                             "Cell2 should reference cell1 as neighbor after insertion {}",
                             i + 1
                         );

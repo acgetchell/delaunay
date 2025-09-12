@@ -3,7 +3,7 @@
 //! This example demonstrates creating a 3D Delaunay triangulation using 50 randomly
 //! generated points. It showcases:
 //!
-//! - Creating random 3D vertices
+//! - Using the `generate_random_triangulation` utility function for convenience
 //! - Building a Delaunay triangulation using the Bowyer-Watson algorithm
 //! - Analyzing triangulation properties (vertices, cells, dimension)
 //! - Validating the triangulation's geometric properties
@@ -25,10 +25,9 @@
 //! - Boundary analysis
 //! - Performance metrics
 
+use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::*;
 use num_traits::cast::cast;
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 use std::time::Instant;
 
 fn main() {
@@ -36,31 +35,41 @@ fn main() {
     println!("3D Delaunay Triangulation Example - 50 Random Points");
     println!("=================================================================\n");
 
-    // Generate 50 random 3D points with a fixed seed for reproducibility
-    let vertices = generate_random_vertices_3d(50, 42);
-
-    println!("Generated {} vertices:", vertices.len());
-    display_vertices(&vertices[..10]); // Show first 10 vertices
-    if vertices.len() > 10 {
-        println!("  ... and {} more vertices", vertices.len() - 10);
-    }
-    println!();
-
-    // Create Delaunay triangulation with timing
-    println!("Creating Delaunay triangulation...");
+    // Create Delaunay triangulation with timing using the utility function
+    println!("Creating 3D Delaunay triangulation with 50 random points...");
     let start = Instant::now();
 
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = match Tds::new(&vertices) {
+    let tds: Tds<f64, (), (), 3> = match generate_random_triangulation(
+        50,            // Number of points
+        (-10.0, 10.0), // Coordinate bounds
+        None,          // No vertex data
+        Some(42),      // Fixed seed for reproducibility
+    ) {
         Ok(triangulation) => {
             let construction_time = start.elapsed();
             println!("✓ Triangulation created successfully in {construction_time:?}");
             triangulation
         }
         Err(e) => {
-            println!("✗ Failed to create triangulation: {e}");
+            eprintln!("✗ Failed to create triangulation: {e}");
             return;
         }
     };
+
+    // Display some vertex information by accessing the triangulation's vertices
+    let vertex_count = tds.number_of_vertices();
+    println!("Generated {vertex_count} vertices");
+    println!("First few vertices:");
+    for (i, (_key, vertex)) in tds.vertices.iter().take(10).enumerate() {
+        let coords: [f64; 3] = vertex.into();
+        println!(
+            "  v{:2}: [{:8.3}, {:8.3}, {:8.3}]",
+            i, coords[0], coords[1], coords[2]
+        );
+    }
+    if vertex_count > 10 {
+        println!("  ... and {} more vertices", vertex_count - 10);
+    }
 
     println!();
 
@@ -81,34 +90,8 @@ fn main() {
     println!("=================================================================");
 }
 
-/// Generate random 3D vertices with a specified seed for reproducibility
-fn generate_random_vertices_3d(count: usize, seed: u64) -> Vec<Vertex<f64, Option<()>, 3>> {
-    let mut rng = StdRng::seed_from_u64(seed);
-
-    (0..count)
-        .map(|_| {
-            vertex!([
-                rng.random_range(-10.0..10.0),
-                rng.random_range(-10.0..10.0),
-                rng.random_range(-10.0..10.0)
-            ])
-        })
-        .collect()
-}
-
-/// Display a subset of vertices with their coordinates
-fn display_vertices(vertices: &[Vertex<f64, Option<()>, 3>]) {
-    for (i, vertex) in vertices.iter().enumerate() {
-        let coords: [f64; 3] = vertex.into();
-        println!(
-            "  v{:2}: [{:8.3}, {:8.3}, {:8.3}]",
-            i, coords[0], coords[1], coords[2]
-        );
-    }
-}
-
 /// Analyze and display triangulation properties
-fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
+fn analyze_triangulation(tds: &Tds<f64, (), (), 3>) {
     println!("Triangulation Analysis:");
     println!("======================");
     println!("  Number of vertices: {}", tds.number_of_vertices());
@@ -130,6 +113,7 @@ fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
         println!("\n  Cell Analysis:");
         let mut valid_cells = 0;
         let mut total_neighbors = 0;
+        let mut shown = 0;
 
         for (cell_key, cell) in tds.cells() {
             // Count valid cells
@@ -142,13 +126,14 @@ fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
                 total_neighbors += neighbors.len();
             }
 
-            // Show details for first few cells
-            if valid_cells <= 3 {
+            // Show details for first few valid cells
+            if shown < 3 {
                 println!("    Cell {cell_key:?}:");
                 println!("      Vertices: {}", cell.vertices().len());
                 if let Some(neighbors) = &cell.neighbors {
                     println!("      Neighbors: {}", neighbors.len());
                 }
+                shown += 1;
             }
         }
 
@@ -164,7 +149,7 @@ fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
 }
 
 /// Validate the triangulation and report results
-fn validate_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
+fn validate_triangulation(tds: &Tds<f64, (), (), 3>) {
     println!("Triangulation Validation:");
     println!("========================");
 
@@ -211,7 +196,7 @@ fn validate_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
 }
 
 /// Analyze boundary properties of the triangulation
-fn analyze_boundary_properties(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
+fn analyze_boundary_properties(tds: &Tds<f64, (), (), 3>) {
     println!("Boundary Analysis:");
     println!("=================");
 
@@ -260,7 +245,7 @@ fn analyze_boundary_properties(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
 }
 
 /// Perform performance analysis and benchmarking
-fn performance_analysis(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
+fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
     println!("Performance Analysis:");
     println!("====================");
 
@@ -296,19 +281,19 @@ fn performance_analysis(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
         })
         .collect();
 
-    let len_u32 = u32::try_from(boundary_times.len()).unwrap_or(1u32);
+    let len_u32_boundary = u32::try_from(boundary_times.len()).unwrap_or(1u32);
     let avg_boundary_time: std::time::Duration =
-        boundary_times.iter().sum::<std::time::Duration>() / len_u32;
+        boundary_times.iter().sum::<std::time::Duration>() / len_u32_boundary;
 
     println!("\n  Boundary Computation Performance (3 runs):");
     println!("    • Average time: {avg_boundary_time:?}");
 
     // Memory usage estimation
-    let vertex_size = std::mem::size_of::<Vertex<f64, Option<()>, 3>>();
-    let cell_size = std::mem::size_of::<Cell<f64, Option<()>, Option<()>, 3>>();
+    let vertex_size = std::mem::size_of::<Vertex<f64, (), 3>>();
+    let cell_size = std::mem::size_of::<Cell<f64, (), (), 3>>();
     let estimated_memory = (vertex_count * vertex_size) + (cell_count * cell_size);
 
-    println!("\n  Memory Usage Estimation:");
+    println!("\n  Memory Usage Estimation (stack only, excludes heap allocations):");
     println!("    • Vertex memory: ~{} bytes", vertex_count * vertex_size);
     println!("    • Cell memory:   ~{} bytes", cell_count * cell_size);
     let estimated_f64 = cast(estimated_memory).unwrap_or(0.0f64);
@@ -316,6 +301,7 @@ fn performance_analysis(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
         "    • Total memory:  ~{estimated_memory} bytes ({:.1} KB)",
         estimated_f64 / 1024.0
     );
+    println!("    Note: This excludes heap-owned data like neighbors and internal collections");
 
     // Performance per vertex/cell ratios
     if vertex_count > 0 && cell_count > 0 {
@@ -328,69 +314,5 @@ fn performance_analysis(tds: &Tds<f64, Option<()>, Option<()>, 3>) {
         println!("\n  Performance Ratios:");
         println!("    • Validation per vertex: {validation_per_vertex:.2} ns");
         println!("    • Validation per cell:   {validation_per_cell:.2} ns");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_vertex_generation() {
-        let vertices = generate_random_vertices_3d(10, 42);
-        assert_eq!(vertices.len(), 10);
-
-        // Verify vertices are within expected range
-        for vertex in &vertices {
-            let coords: [f64; 3] = vertex.into();
-            for &coord in &coords {
-                assert!(coord >= -10.0 && coord <= 10.0);
-            }
-        }
-    }
-
-    #[test]
-    fn test_small_triangulation() {
-        let vertices = generate_random_vertices_3d(5, 123);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        assert_eq!(tds.number_of_vertices(), 5);
-        assert!(tds.number_of_cells() > 0);
-        assert_eq!(tds.dim(), 3);
-        assert!(tds.is_valid().is_ok());
-    }
-
-    #[test]
-    fn test_triangulation_properties() {
-        let vertices = generate_random_vertices_3d(20, 456);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        // Basic property checks
-        assert!(tds.number_of_vertices() > 0);
-        assert!(tds.number_of_cells() > 0);
-        assert_eq!(tds.dim(), 3);
-
-        // Validation should pass
-        assert!(tds.is_valid().is_ok());
-
-        // Should have boundary facets
-        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-        assert!(!boundary_facets.is_empty());
-    }
-
-    #[test]
-    fn test_reproducibility() {
-        // Same seed should produce same vertices
-        let vertices1 = generate_random_vertices_3d(10, 789);
-        let vertices2 = generate_random_vertices_3d(10, 789);
-
-        assert_eq!(vertices1.len(), vertices2.len());
-        for (v1, v2) in vertices1.iter().zip(vertices2.iter()) {
-            let coords1: [f64; 3] = v1.into();
-            let coords2: [f64; 3] = v2.into();
-            for (c1, c2) in coords1.iter().zip(coords2.iter()) {
-                assert!((c1 - c2).abs() < f64::EPSILON);
-            }
-        }
     }
 }
