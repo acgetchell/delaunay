@@ -246,7 +246,8 @@ def process_and_output_categorized_entries(entries, output_lines):
         categorized[category].append(entry)
 
     # Output entries in Keep a Changelog order
-    any_sections_output = False
+    # Check if output_lines already has content to determine if we need blank lines
+    any_sections_output = bool(output_lines and output_lines[-1].strip())
     section_order = ["added", "changed", "deprecated", "removed", "fixed", "security"]
     section_names = {
         "added": "Added",

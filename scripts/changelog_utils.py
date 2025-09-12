@@ -10,6 +10,7 @@ Requires Python 3.13+ for modern typing features and datetime.UTC.
 
 import argparse
 import json
+import logging
 import os
 import re
 import shutil
@@ -1135,49 +1136,195 @@ class ChangelogGenerator:
             output_file: Path to output file for expanded content
             repo_url: Repository URL for generating commit links
         """
+        processor = ChangelogProcessor(repo_url)
+        processor.process_file(input_file, output_file)
 
+
+class ChangelogProcessor:
+    """Handles the processing of changelog files with squashed PR expansion."""
+
+    def __init__(self, repo_url: str) -> None:
+        """Initialize the processor with repository URL."""
+        self.repo_url = repo_url
+        self.pending_expanded_commits: list[str] = []
+        self.in_merged_prs_section = False
+        self.current_release_has_changes_section = False
+        self.changes_section_index = -1
+
+    def process_file(self, input_file: Path, output_file: Path) -> None:
+        """Process changelog file and write expanded content."""
         content = input_file.read_text(encoding="utf-8")
         lines = content.split("\n")
         output_lines = []
 
         for line in lines:
-            # Check for commit lines with SHA patterns
-            commit_match = re.search(r"- \*\*.*?\*\*.*?\[`([a-f0-9]{7,40})`\]", line) or re.search(r"- .*?\(#[0-9]+\) \[`([a-f0-9]{7,40})`\]", line)
+            processed_line = self._process_line(line, output_lines)
+            if processed_line is not None:
+                output_lines.append(processed_line)
 
-            if commit_match:
-                commit_sha = commit_match.group(1)
-
-                # Check if this is a squashed PR commit
-                try:
-                    result_output, _ = ChangelogUtils.run_git_command(["--no-pager", "show", commit_sha, "--format=%s", "--no-patch"])
-                    commit_subject = result_output.strip()
-
-                    if re.search(r"\(#[0-9]+\)$", commit_subject):
-                        # Use Python utility to process the commit
-                        try:
-                            processed_commit = ChangelogUtils.process_squashed_commit(commit_sha, repo_url)
-                            if processed_commit.strip():
-                                output_lines.append(processed_commit)
-                            else:
-                                # Fallback to original line if processing failed
-                                output_lines.append(line)
-                        except Exception:
-                            # Fallback to original line if processing failed
-                            output_lines.append(line)
-                    else:
-                        # Not a squashed PR, keep original line
-                        output_lines.append(line)
-
-                except Exception:
-                    # Git command failed, keep original line
-                    output_lines.append(line)
-            else:
-                # Not a commit line, keep as is
-                output_lines.append(line)
+        # Handle any remaining expanded commits at end of file
+        self._finalize_pending_commits(output_lines)
 
         # Write processed content
         output_content = "\n".join(output_lines)
         output_file.write_text(output_content, encoding="utf-8")
+
+    def _process_line(self, line: str, output_lines: list[str]) -> str | None:
+        """Process a single line and return the line to append or None to skip."""
+        # Handle section headers first
+        if self._handle_section_headers(line, output_lines):
+            return line
+
+        # Handle new release sections
+        if self._handle_new_release(line, output_lines):
+            return line
+
+        # Handle PR entries in merged PRs section
+        if self._handle_pr_entry(line):
+            return line
+
+        # Handle commit lines with SHA patterns
+        return self._handle_commit_line(line)
+
+    def _handle_section_headers(self, line: str, output_lines: list[str]) -> bool:
+        """Handle section header lines and update state accordingly."""
+        if re.match(r"^### *Merged Pull Requests$", line):
+            self.in_merged_prs_section = True
+            return True
+
+        if re.match(r"^### *(Changes|Changed)$", line):
+            self.current_release_has_changes_section = True
+            self.changes_section_index = len(output_lines)
+            self.in_merged_prs_section = False  # Reset merged PRs state when entering Changes section
+            return True
+
+        # Reset section tracking when we hit other sections
+        if re.match(r"^### ", line) and not re.match(r"^### *Merged Pull Requests$", line):
+            self.in_merged_prs_section = False
+
+        return False
+
+    def _handle_new_release(self, line: str, output_lines: list[str]) -> bool:
+        """Handle new release sections and manage pending commits."""
+        if re.match(r"^## ", line) and output_lines:
+            self._insert_pending_commits(output_lines)
+            self._reset_release_state()
+            return True
+        return False
+
+    def _handle_pr_entry(self, line: str) -> bool:
+        """Handle PR entries in Merged Pull Requests sections."""
+        if not self.in_merged_prs_section:
+            return False
+
+        pr_match = re.search(r"^- .*?\[`#(?P<pr>\d+)`\]\(.*\)\s*$", line)
+        if not pr_match:
+            return False
+
+        pr_number = pr_match.group("pr")
+        self._process_pr_squashed_commit(pr_number)
+        return True
+
+    def _handle_commit_line(self, line: str) -> str:
+        """Handle commit lines with SHA patterns."""
+        commit_match = re.search(r"- \*\*.*?\*\*.*?\[`([a-f0-9]{7,40})`\]", line) or re.search(r"- .*?\(#[0-9]+\) \[`([a-f0-9]{7,40})`\]", line)
+
+        if not commit_match:
+            return line
+
+        commit_sha = commit_match.group(1)
+        return self._process_commit_sha(commit_sha, line)
+
+    def _process_pr_squashed_commit(self, pr_number: str) -> None:
+        """Process a squashed commit for the given PR number."""
+        try:
+            grep_pattern = "(#" + pr_number + ")$"
+            sha_output, _ = ChangelogUtils.run_git_command(
+                [
+                    "--no-pager",
+                    "log",
+                    "--format=%H",
+                    "--grep",
+                    grep_pattern,
+                    "-n",
+                    "1",
+                ],
+                check=False,
+            )
+            commit_sha = sha_output.strip().splitlines()[0] if sha_output.strip() else ""
+            if commit_sha:
+                self._expand_squashed_commit(commit_sha)
+        except Exception as e:
+            logging.debug("Failed to process PR squashed commit for PR #%s: %s", pr_number, e)
+
+    def _process_commit_sha(self, commit_sha: str, original_line: str) -> str:
+        """Process a commit SHA and return the appropriate line."""
+        try:
+            result_output, _ = ChangelogUtils.run_git_command(["--no-pager", "show", commit_sha, "--format=%s", "--no-patch"])
+            commit_subject = result_output.strip()
+
+            if re.search(r"\(#[0-9]+\)$", commit_subject):
+                return self._expand_squashed_commit_inline(commit_sha, original_line)
+
+        except Exception as e:
+            logging.debug("Failed to process commit SHA %s: %s", commit_sha, e)
+
+        return original_line
+
+    def _expand_squashed_commit(self, commit_sha: str) -> None:
+        """Expand a squashed commit and add to pending commits."""
+        try:
+            processed_commit = ChangelogUtils.process_squashed_commit(commit_sha, self.repo_url)
+            if processed_commit.strip():
+                self.pending_expanded_commits.extend(processed_commit.split("\n"))
+        except Exception as e:
+            logging.debug("Failed to expand squashed commit %s: %s", commit_sha, e)
+
+    def _expand_squashed_commit_inline(self, commit_sha: str, original_line: str) -> str:
+        """Expand a squashed commit inline or return original line."""
+        try:
+            processed_commit = ChangelogUtils.process_squashed_commit(commit_sha, self.repo_url)
+            if processed_commit.strip():
+                return processed_commit
+        except Exception as e:
+            logging.debug("Failed to expand squashed commit inline %s: %s", commit_sha, e)
+        return original_line
+
+    def _insert_pending_commits(self, output_lines: list[str]) -> None:
+        """Insert pending expanded commits into the output."""
+        if not self.pending_expanded_commits:
+            return
+
+        if self.current_release_has_changes_section and self.changes_section_index >= 0:
+            # Add to existing Changes section - use slice insertion to preserve order and avoid O(n²)
+            insert_index = self.changes_section_index + 1
+            output_lines[insert_index:insert_index] = ["", *self.pending_expanded_commits]
+        else:
+            # Create new Changes section before this release
+            output_lines.extend(["", "### Changes", ""])
+            output_lines.extend(self.pending_expanded_commits)
+
+        self.pending_expanded_commits.clear()
+
+    def _reset_release_state(self) -> None:
+        """Reset state variables for a new release section."""
+        self.in_merged_prs_section = False
+        self.current_release_has_changes_section = False
+        self.changes_section_index = -1
+
+    def _finalize_pending_commits(self, output_lines: list[str]) -> None:
+        """Handle any remaining expanded commits at the end of the file."""
+        if not self.pending_expanded_commits:
+            return
+
+        if self.current_release_has_changes_section and self.changes_section_index >= 0:
+            # Add to existing Changes section - use slice insertion to preserve order and avoid O(n²)
+            insert_index = self.changes_section_index + 1
+            output_lines[insert_index:insert_index] = ["", *self.pending_expanded_commits]
+        else:
+            # Add Changes section at the end
+            output_lines.extend(["", "### Changes", ""])
+            output_lines.extend(self.pending_expanded_commits)
 
 
 if __name__ == "__main__":

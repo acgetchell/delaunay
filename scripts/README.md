@@ -108,10 +108,10 @@ uv run changelog-utils generate
 uv run changelog-utils generate --debug
 
 # Create git tag with changelog content as message
-uv run changelog-utils tag v0.4.2
+uv run changelog-utils tag vX.Y.Z
 
 # Force recreate existing tag
-uv run changelog-utils tag v0.4.2 --force
+uv run changelog-utils tag vX.Y.Z --force
 ```
 
 **Enhanced Features**:
@@ -163,7 +163,7 @@ Hardware Information:
   CPU Cores: 10
   CPU Threads: 10
   Memory: 16.0 GB
-  Rust: rustc 1.82.0
+  Rust: rustc 1.89.0
   Target: aarch64-apple-darwin
 ```
 

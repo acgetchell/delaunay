@@ -1373,9 +1373,8 @@ class TestProjectRootHandling:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
 
-            with temp_chdir(temp_path):
-                with pytest.raises(ProjectRootNotFoundError, match=r"Could not locate Cargo\.toml"):
-                    find_project_root()
+            with temp_chdir(temp_path), pytest.raises(ProjectRootNotFoundError, match=r"Could not locate Cargo\.toml"):
+                find_project_root()
 
 
 class TestTimeoutHandling:

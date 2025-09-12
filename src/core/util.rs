@@ -1446,7 +1446,7 @@ mod tests {
         let (_result, alloc_info) = measure_with_result(|| vec![0u8; 1024]);
 
         // Verify that alloc_info is unit type ()
-        assert_eq!(alloc_info, ());
+        let _: () = alloc_info;
     }
 
     #[test]
