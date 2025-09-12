@@ -11,10 +11,11 @@ issues, including the "No cavity boundary facets found" error and other precisio
 4. [Robust Predicates](#robust-predicates)
 5. [Matrix Conditioning](#matrix-conditioning)
 6. [Usage Examples](#usage-examples)
-7. [Convex Hull Robustness](#convex-hull-robustness)
-8. [Testing and Validation](#testing-and-validation)
-9. [Performance Considerations](#performance-considerations)
-10. [Migration Strategy](#migration-strategy)
+7. [Configuration Selection Guide](#configuration-selection-guide)
+8. [Convex Hull Robustness](#convex-hull-robustness)
+9. [Testing and Validation](#testing-and-validation)
+10. [Performance Considerations](#performance-considerations)
+11. [Migration Strategy](#migration-strategy)
 
 ## Problem Overview
 
@@ -194,8 +195,8 @@ for cell_key in &tds.cells().indices().collect::<Vec<_>>() {
                 bad_cells.push(*cell_key);
             }
         }
-        Err(_) => {
-            // Log error but continue with next cell
+        Err(e) => {
+            eprintln!("Insphere test failed for cell {:?}: {}", cell_key, e);
             continue;
         }
     }
@@ -304,7 +305,7 @@ if tds_result.is_err() {
 ### Robust Predicate Testing
 
 ```rust
-use delaunay::geometry::robust_predicates::{robust_insphere, config_presets};
+use delaunay::geometry::robust_predicates::{robust_insphere, config_presets, InSphere};
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
 
@@ -319,7 +320,7 @@ let simplex = vec![
 let test_point = Point::new([0.25, 0.25, 0.25]);
 
 // Use robust configuration for stability
-let config = config_presets::degenerate_robust();
+let config = config_presets::degenerate_robust::<f64>();
 let result = robust_insphere(&simplex, &test_point, &config)?;
 
 match result {
@@ -365,7 +366,7 @@ use delaunay::core::algorithms::robust_bowyer_watson::RobustBoyerWatson;
 let general_algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
 // For high-precision scientific computing
-let precision_config = config_presets::high_precision();
+let precision_config = config_presets::high_precision::<f64>();
 let precise_algorithm = RobustBoyerWatson::with_config(precision_config);
 
 // For problematic/degenerate inputs
@@ -514,6 +515,7 @@ fn fallback_visibility_test(
     let distance_squared = squared_norm(diff_coords);
     
     // Simple threshold-based visibility
+    // Note: T::from_usize/T::from_f64 require num_traits::{FromPrimitive, Num}
     let threshold = T::from_f64(1.0).unwrap_or_else(T::one);
     distance_squared > threshold
 }
@@ -554,9 +556,9 @@ The robust predicates system has comprehensive test coverage demonstrating real-
 
 **Integration Tests:**
 
-- `tests/robust_predicates_showcase.rs` - Demonstrates cases where robust predicates solve failures
-- `tests/robust_predicates_comparison.rs` - Numerical accuracy testing across dimensions
-- `tests/coordinate_conversion_errors.rs` - Error handling for extreme values
+- [`tests/robust_predicates_showcase.rs`](../tests/robust_predicates_showcase.rs) - Demonstrates cases where robust predicates solve failures
+- [`tests/robust_predicates_comparison.rs`](../tests/robust_predicates_comparison.rs) - Numerical accuracy testing across dimensions
+- [`tests/coordinate_conversion_errors.rs`](../tests/coordinate_conversion_errors.rs) - Error handling for extreme values
 
 **Test Results Summary:**
 
@@ -634,6 +636,7 @@ mod robustness_tests {
 ### Performance Benchmarks
 
 ```rust
+// Note: Add [[bench]] entries in Cargo.toml or use cargo bench --features criterion
 #[cfg(test)]
 mod performance_tests {
     use criterion::{Criterion, black_box};
@@ -674,8 +677,9 @@ The robust predicates and algorithms add computational overhead, but provide sig
 4. **Consistency verification**: ~100% overhead (double computation) when enabled
 5. **RobustBoyerWatson vs IncrementalBoyerWatson**: ~20-40% slower for normal cases, but succeeds on cases that would fail
 
-> **Note**: These percentages are based on benchmark measurements from `benches/robust_predicates_comparison.rs`
-> and `tests/robust_predicates_showcase.rs`. Actual overhead may vary based on input complexity and geometry.
+> **Note**: These percentages are based on benchmark measurements from [`benches/robust_predicates_comparison.rs`](../benches/robust_predicates_comparison.rs)
+> and [`tests/robust_predicates_showcase.rs`](../tests/robust_predicates_showcase.rs). For detailed results, see [`benches/PERFORMANCE_RESULTS.md`](../benches/PERFORMANCE_RESULTS.md).
+> Actual overhead may vary based on input complexity and geometry.
 
 ### When to Use Robust Algorithms
 
@@ -738,10 +742,13 @@ The robust predicates and algorithms add computational overhead, but provide sig
 2. **Short-term**: Implement tiered approach for new applications
 
    ```rust
+   use delaunay::core::error::TriangulationError;
+   
    // Try standard first, fall back to robust
    match Tds::new(&vertices) {
        Ok(tds) => tds,
-       Err(_) => create_with_robust_algorithm(&vertices)?,
+       Err(_) => create_with_robust_algorithm(&vertices)?
+           .map_err(|e: TriangulationError| e)?,
    }
    ```
 

@@ -242,8 +242,6 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 (*cell_key, vertices)
             })
             .collect();
-        
-        // Use bit vectors for faster intersection counting
         for (cell_key, cell) in &self.cells {
             let Some(neighbors) = &cell.neighbors else { continue };
             
@@ -253,13 +251,13 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 });
             }
             
-            let this_vertices = &cell_vertices[&cell_key];
+            let this_vertices = cell_vertices.get(cell_key).expect("missing cell key");
             
             for neighbor_uuid in neighbors {
                 let Some(&neighbor_key) = self.cell_bimap.get_by_left(neighbor_uuid) else {
                     continue;
                 };
-                let neighbor_vertices = &cell_vertices[&neighbor_key];
+                let neighbor_vertices = cell_vertices.get(&neighbor_key).expect("missing neighbor key");
                 
                 // Fast intersection count using sorted vectors
                 let shared_count = count_intersections_sorted(this_vertices, neighbor_vertices);

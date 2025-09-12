@@ -53,16 +53,15 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 #### Import Organization (AI Assistant Guidance)
 
-- **ALWAYS** use `uv run ruff check scripts/ --select F401,F811,I,PLC0415` to check for all import issues:
+- **USE COMPREHENSIVE**: `uv run ruff check scripts/ --fix` (recommended - covers all rules)
+- **IMPORT-ONLY** (if needed): `uv run ruff check scripts/ --select F401,F811,I,PLC0415 --fix`
   - **F401**: Unused imports
   - **F811**: Redefined/duplicate imports  
   - **I**: Import ordering issues
   - **PLC0415**: Local imports that should be at top-level
-- **AUTOFIX** command: `uv run ruff check scripts/ --select F401,F811,I,PLC0415 --fix`
-- **COMPREHENSIVE** check: Shows all import issues including redundant local imports
-- **PREFERRED** over manual cleanup - let ruff handle automatic fixes
+- **PREFERRED**: Use comprehensive check over manual cleanup - let ruff handle all fixes
 - **FOLLOW UP** with `uv run ruff format scripts/` and `uv run pytest` to ensure correctness
-- **NOTE**: The comprehensive Python quality check in the main commands section covers all ruff rules including import organization
+- **NOTE**: The main "Code Quality Checks" section uses the comprehensive approach
 
 #### Shell Script Formatting (AI Assistant Guidance)
 
@@ -116,7 +115,11 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::
 RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
 
 # Python code quality (for scripts/ directory)
-# See "Import Organization (AI Assistant Guidance)" section for detailed ruff usage
+uv run ruff check scripts/ --fix  # Comprehensive check with auto-fixes
+uv run ruff format scripts/      # Code formatting
+uv run pytest                   # Run tests
+# All ruff rules applied including: F401 (unused imports), F811 (duplicate imports), 
+# I (import order), PLC0415 (local imports), S110 (try-except-pass), PLR0912/PLR0915 (complexity)
 
 # Shell script formatting and linting (path-safe)
 git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -w
