@@ -181,7 +181,7 @@ uv run changelog-utils generate
 
 # Create git tag with changelog content (user-only; WARP must not execute)
 # Run manually from your terminal:
-# uv run changelog-utils tag v0.4.3
+# uv run changelog-utils tag vX.Y.Z
 ```
 
 ## Project Context

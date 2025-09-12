@@ -43,6 +43,8 @@ As of version 0.4.3, the delaunay library includes comprehensive robustness impr
    - Multiple fallback strategies for degenerate cases
    - Scale-factor recovery for proper determinant interpretation
    - Symbolic perturbation for handling extreme degeneracies
+     (implements Simulation of Simplicity-style epsilon ordering to break ties
+     deterministically when geometric predicates fail)
 
 2. **Configuration System** (`src/geometry/robust_predicates.rs`)
    - `RobustPredicateConfig` for customizable tolerance settings
@@ -210,7 +212,7 @@ The `condition_matrix` function in `src/geometry/robust_predicates.rs` implement
 /// Apply conditioning to improve matrix stability
 fn condition_matrix(
     mut matrix: na::DMatrix<f64>,
-    _config: &RobustPredicateConfig<T>,
+    _config: &RobustPredicateConfig<f64>,
 ) -> (na::DMatrix<f64>, f64) {
     let mut scale_factor = 1.0;
     
@@ -490,14 +492,14 @@ fn fallback_visibility_test(
     let facet_vertices = facet.vertices();
     let mut centroid_coords = [T::zero(); D];
     
-    for vertex_point in &vertex_points {
+    for vertex_point in &facet_vertices {
         let coords: [T; D] = vertex_point.into();
         for (i, &coord) in coords.iter().enumerate() {
             centroid_coords[i] += coord;
         }
     }
     
-    let num_vertices = T::from_usize(vertex_points.len()).unwrap_or_else(T::one);
+    let num_vertices = T::from_usize(facet_vertices.len()).unwrap_or_else(T::one);
     for coord in &mut centroid_coords {
         *coord /= num_vertices;
     }
@@ -557,8 +559,11 @@ The robust predicates system has comprehensive test coverage demonstrating real-
 
 **Test Results Summary:**
 
-- Robust predicates successfully handle 4/4 degenerate test cases that cause standard predicates to fail
-- Covers nearly coplanar points, cocircular boundary cases, high precision instability, and extreme aspect ratios
+- Robust predicates successfully handle degenerate test cases that cause standard predicates to fail:
+  - `test_nearly_coplanar_points` - Nearly coplanar point configurations
+  - `test_large_coordinate_values` - Extreme coordinate values and precision issues
+  - `test_consistency_verification` - Boundary case consistency
+  - Additional showcase tests in `robust_predicates_showcase.rs`
 - Demonstrates consistent results across dimensions (2D-5D)
 - Validates error recovery for "No cavity boundary facets found" scenarios
 
@@ -667,6 +672,9 @@ The robust predicates and algorithms add computational overhead, but provide sig
 3. **Matrix conditioning**: ~30-50% overhead for problematic cases
 4. **Consistency verification**: ~100% overhead (double computation) when enabled
 5. **RobustBoyerWatson vs IncrementalBoyerWatson**: ~20-40% slower for normal cases, but succeeds on cases that would fail
+
+> **Note**: These percentages are based on benchmark measurements from `benches/robust_predicates_comparison.rs`
+> and `tests/robust_predicates_showcase.rs`. Actual overhead may vary based on input complexity and geometry.
 
 ### When to Use Robust Algorithms
 

@@ -1440,14 +1440,13 @@ mod tests {
     }
 
     #[cfg(not(feature = "count-allocations"))]
-    #[allow(clippy::unit_cmp)]
     #[test]
     fn test_measure_with_result_no_allocation_feature() {
         // Test that when feature is disabled, we get unit type
         let (_result, alloc_info) = measure_with_result(|| vec![0u8; 1024]);
 
         // Verify that alloc_info is unit type ()
-        assert_eq!(alloc_info, ());
+        let _: () = alloc_info;
     }
 
     #[test]

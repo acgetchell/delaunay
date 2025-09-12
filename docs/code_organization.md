@@ -23,6 +23,15 @@ The delaunay project follows a standard Rust library structure with additional t
 
 ### Complete Directory Tree
 
+> **Tip**: Generate this tree in CI
+>
+> ```bash
+> # scripts/dev/print_tree.sh
+> git ls-files | sed 's/^/delaunay\//' | tree -I 'target|.git|**/*.png|**/*.svg' -F --fromfile
+> ```
+>
+> This keeps the directory tree automatically synchronized with the actual project structure.
+
 ```text
 delaunay/
 ├── src/                                          # Core library code
@@ -165,6 +174,10 @@ cargo test --test allocation_api --features count-allocations
 cargo bench --bench profiling_suite --features count-allocations
 ```
 
+> **Allocator Requirements**: Results depend on the system allocator (typically the default allocator on stable Rust).
+> For consistent results across environments, ensure the same allocator is used. The `allocation-counter` crate works
+> with the global allocator interface.
+
 **Note**: Robust predicates testing demonstrates cases where enhanced numerical stability prevents triangulation failures:
 
 ```bash
@@ -223,9 +236,11 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality i
 
 #### Development Infrastructure
 
-- **`examples/`** - Usage demonstrations and trait examples, including memory profiling examples
+- **`examples/`** - Usage demos and trait examples, including memory profiling (see: [examples/memory_analysis.rs](../examples/README.md#memory-analysis-example))
 - **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage) and memory allocation tracking
-- **`tests/`** - Integration tests, debugging utilities, regression testing, allocation profiling tools, and robust predicates validation
+  (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite))
+- **`tests/`** - Integration tests, debugging utilities, regression testing, allocation profiling tools
+  (see: [tests/allocation_api.rs](../tests/README.md#allocation-profiling-tests)), and robust predicates validation
 - **`docs/`** - Architecture guides, performance documentation, numerical robustness guide, and templates
 - **`scripts/`** - Python utilities for automation and CI integration
 

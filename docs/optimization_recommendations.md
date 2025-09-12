@@ -316,6 +316,33 @@ fn assign_neighbors(&mut self) {
     
     // Rest of implementation...
 }
+
+// For FxHashMap variants, use with_capacity_and_hasher to set hasher explicitly
+fn assign_neighbors_fast(&mut self) {
+    use fxhash::{FxHashMap, FxHashSet, FxBuildHasher};
+    
+    let mut facet_map: FxHashMap<u64, Vec<CellKey>> = 
+        FxHashMap::with_capacity_and_hasher(
+            self.cells.len() * (D + 1), 
+            FxBuildHasher::default()
+        );
+    
+    let mut neighbor_map: FxHashMap<CellKey, FxHashSet<CellKey>> = 
+        FxHashMap::with_capacity_and_hasher(
+            self.cells.len(),
+            FxBuildHasher::default()
+        );
+    
+    // Initialize with proper capacity and hasher
+    for cell_key in self.cells.keys() {
+        neighbor_map.insert(
+            cell_key, 
+            FxHashSet::with_capacity_and_hasher(D + 1, FxBuildHasher::default())
+        );
+    }
+    
+    // Rest of implementation...
+}
 ```
 
 ### B. **Reduce Temporary Allocations**
@@ -348,23 +375,32 @@ fn remove_duplicate_cells_optimized(&mut self) -> usize {
     duplicate_count
 }
 
-// Fast hash computation without sorting
+// Collision-resistant hash computation using canonical ordering
+// Note: Previous XOR-based approach was collision-prone (e.g., A⊕B⊕C = A⊕D⊕E for some sets)
 #[derive(Hash, PartialEq, Eq)]
 struct VertexSetHash(u64);
 
 fn compute_vertex_set_hash<T, U, const D: usize>(vertices: &[Vertex<T, U, D>]) -> VertexSetHash {
-    use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
+    use smallvec::SmallVec;
     
-    // XOR all vertex UUIDs for order-independent hash
-    let mut combined = 0u128;
-    for vertex in vertices {
-        combined ^= vertex.uuid().as_u128();
-    }
+    // Canonical, order-independent hash: sort vertex keys then hash
+    // Note: Assumes VertexKey is available and implements Hash + Ord
+    let mut keys: SmallVec<[VertexKey; 8]> =
+        vertices.iter().filter_map(|v| v.key()).collect();
+    keys.sort_unstable();
     
-    let mut hasher = DefaultHasher::new();
-    combined.hash(&mut hasher);
+    let mut hasher = fxhash::FxHasher::default();
+    keys.hash(&mut hasher);
     VertexSetHash(hasher.finish())
+    
+    // Alternative if VertexKey is not available:
+    // let mut uuids: SmallVec<[uuid::Uuid; 8]> =
+    //     vertices.iter().map(|v| v.uuid()).collect();
+    // uuids.sort_unstable();
+    // let mut hasher = fxhash::FxHasher::default();
+    // uuids.hash(&mut hasher);
+    // VertexSetHash(hasher.finish())
 }
 ```
 
@@ -799,13 +835,13 @@ tds.validate_facet_sharing()?;    // Validate facet sharing constraints
 
 // Algorithm selection for construction
 use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
-use crate::core::algorithms::robust_bowyer_watson::RobustIncrementalBoyerWatson;
+use crate::core::algorithms::robust_bowyer_watson::RobustBoyerWatson;
 
 // Standard algorithm (recommended)
 let algorithm = IncrementalBoyerWatson::new();
 
 // Enhanced numerical stability (for difficult cases)
-let robust_algorithm = RobustIncrementalBoyerWatson::new();
+let robust_algorithm = RobustBoyerWatson::new();
 ```
 
 ### **Performance Monitoring**
@@ -842,7 +878,7 @@ impl Tds<T, U, V, D> {
 
 ## 9. **Planned Future Optimizations** 🚀
 
-### **A. Optimize Collections with FastHashMap and SmallBuffer** (Issue #72)
+### **A. Optimize Collections with FastHashMap and SmallVec** (Issue #72)
 
 **Status**: Planning phase
 **Priority**: High
@@ -913,10 +949,13 @@ impl Tds<T, U, V, D> {
    ```
 
 4. **Performance Benefits Expected**
-   - 15-30% faster hashing operations with FxHashMap
+   - 15-30% faster hashing operations with FxHashMap (non-cryptographic; avoid for untrusted inputs)
    - Reduced allocations for small collections with SmallVec
    - Better cache locality with stack allocation
    - Lower memory overhead for temporary collections
+
+   > **Security Note**: FxHashMap uses a non-cryptographic hash function and is not DOS-safe
+   > for attacker-controlled keys. Only use with trusted internal data structures.
 
 ### **B. Switch to Using CellKeys and VertexKeys for Internal Functions** (Issue #73)
 

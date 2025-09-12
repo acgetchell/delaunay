@@ -163,7 +163,7 @@ Hardware Information:
   CPU Cores: 10
   CPU Threads: 10
   Memory: 16.0 GB
-  Rust: rustc 1.82.0
+  Rust: rustc 1.89.0
   Target: aarch64-apple-darwin
 ```
 
