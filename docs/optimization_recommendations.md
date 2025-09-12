@@ -840,7 +840,372 @@ impl Tds<T, U, V, D> {
 }
 ```
 
-## 9. **Summary** ✅
+## 9. **Planned Future Optimizations** 🚀
+
+### **A. Optimize Collections with FastHashMap and SmallBuffer** (Issue #72)
+
+**Status**: Planning phase
+**Priority**: High
+**Scope**: Replace standard collections with optimized alternatives for better performance
+
+#### **Planned Improvements:**
+
+1. **FastHashMap Integration**
+
+   ```rust
+   // Replace HashMap with FxHashMap for non-cryptographic hashing
+   use fxhash::{FxHashMap, FxHashSet};
+   
+   // Current:
+   type CellNeighborMap = HashMap<CellKey, HashSet<CellKey>>;
+   
+   // Optimized:
+   type FastCellNeighborMap = FxHashMap<CellKey, FxHashSet<CellKey>>;
+   
+   impl<T, U, V, const D: usize> Tds<T, U, V, D> {
+       fn assign_neighbors_fast(&mut self) {
+           let mut neighbor_map: FastCellNeighborMap = 
+               FxHashMap::with_capacity_and_hasher(
+                   self.cells.len(), 
+                   fxhash::FxBuildHasher::default()
+               );
+           // Implementation with faster hashing
+       }
+   }
+   ```
+
+2. **SmallVec for Stack Allocation**
+
+   ```rust
+   use smallvec::{SmallVec, smallvec};
+   
+   // Stack-allocate small vertex collections
+   type SmallVertexVec<T, U, const D: usize> = SmallVec<[Vertex<T, U, D>; 8]>;
+   type SmallCellVec = SmallVec<[CellKey; 16]>;
+   type SmallFacetVec<T, U, V, const D: usize> = SmallVec<[Facet<T, U, V, D>; 8]>;
+   
+   impl<T, U, V, const D: usize> Cell<T, U, V, D> {
+       fn neighbors_small(&self) -> SmallCellVec {
+           match &self.neighbors {
+               Some(neighbors) => {
+                   let mut small_vec = SmallCellVec::new();
+                   small_vec.extend(neighbors.iter().map(|uuid| {
+                       // Convert UUID to CellKey
+                   }));
+                   small_vec
+               }
+               None => SmallCellVec::new(),
+           }
+       }
+   }
+   ```
+
+3. **Optimized Validation Collections**
+
+   ```rust
+   struct ValidationBuffers {
+       // Use faster collections for validation
+       cell_vertex_sets: FxHashMap<CellKey, FxHashSet<VertexKey>>,
+       duplicate_detector: FxHashMap<SmallVec<[Uuid; 8]>, CellKey>,
+       facet_sharing_map: FxHashMap<u64, u8>,
+       temp_vertex_keys: SmallVec<[VertexKey; 8]>,
+   }
+   ```
+
+4. **Performance Benefits Expected**
+   - 15-30% faster hashing operations with FxHashMap
+   - Reduced allocations for small collections with SmallVec
+   - Better cache locality with stack allocation
+   - Lower memory overhead for temporary collections
+
+### **B. Switch to Using CellKeys and VertexKeys for Internal Functions** (Issue #73)
+
+**Status**: Planning phase
+**Priority**: Medium
+**Scope**: Refactor internal functions to use keys instead of UUIDs for better performance
+
+#### **Migration Plan:**
+
+1. **Internal API Refactoring**
+
+   ```rust
+   // Current: UUID-based internal functions
+   impl<T, U, V, const D: usize> Tds<T, U, V, D> {
+       fn find_cells_containing_vertex(&self, vertex_uuid: Uuid) -> Vec<CellKey> {
+           // Requires UUID-to-key lookup for every operation
+           // Less efficient
+       }
+   }
+   
+   // Target: Key-based internal functions
+   impl<T, U, V, const D: usize> Tds<T, U, V, D> {
+       fn find_cells_containing_vertex_key(&self, vertex_key: VertexKey) -> Vec<CellKey> {
+           // Direct key usage - more efficient
+           // No lookup overhead
+       }
+       
+       // Keep UUID-based public API for compatibility
+       pub fn find_cells_containing_vertex(&self, vertex_uuid: Uuid) -> Vec<CellKey> {
+           if let Some(&vertex_key) = self.vertex_bimap.get_by_left(&vertex_uuid) {
+               self.find_cells_containing_vertex_key(vertex_key)
+           } else {
+               Vec::new()
+           }
+       }
+   }
+   ```
+
+2. **Key-Based Neighbor Operations**
+
+   ```rust
+   impl<T, U, V, const D: usize> Cell<T, U, V, D> {
+       // Internal function using keys directly
+       fn add_neighbor_key(&mut self, tds: &Tds<T, U, V, D>, neighbor_key: CellKey) {
+           if let Some(neighbor_cell) = tds.cells.get(neighbor_key) {
+               // Direct key-based access - much faster
+               self.neighbors.get_or_insert_with(Vec::new).push(neighbor_cell.uuid());
+           }
+       }
+       
+       // Keep UUID-based public API
+       pub fn add_neighbor(&mut self, tds: &Tds<T, U, V, D>, neighbor_uuid: Uuid) {
+           if let Some(&neighbor_key) = tds.cell_bimap.get_by_left(&neighbor_uuid) {
+               self.add_neighbor_key(tds, neighbor_key);
+           }
+       }
+   }
+   ```
+
+3. **Validation Function Optimization**
+
+   ```rust
+   impl<T, U, V, const D: usize> Tds<T, U, V, D> {
+       fn validate_neighbors_with_keys(&self) -> Result<(), TriangulationValidationError> {
+           // Pre-compute vertex key sets for all cells
+           let cell_vertex_keys: FxHashMap<CellKey, SmallVec<[VertexKey; 8]>> = 
+               self.cells.iter().map(|(cell_key, cell)| {
+                   let vertex_keys: SmallVec<[VertexKey; 8]> = cell.vertices()
+                       .iter()
+                       .filter_map(|v| self.vertex_bimap.get_by_left(&v.uuid()))
+                       .copied()
+                       .collect();
+                   (cell_key, vertex_keys)
+               }).collect();
+               
+           // Use keys throughout validation - no UUID lookups
+           for (cell_key, cell) in &self.cells {
+               if let Some(neighbors) = &cell.neighbors {
+                   let this_vertices = &cell_vertex_keys[&cell_key];
+                   for neighbor_uuid in neighbors {
+                       if let Some(&neighbor_key) = self.cell_bimap.get_by_left(neighbor_uuid) {
+                           let neighbor_vertices = &cell_vertex_keys[&neighbor_key];
+                           // Fast key-based intersection
+                           if count_key_intersections(this_vertices, neighbor_vertices) != D {
+                               return Err(/* validation error */);
+                           }
+                       }
+                   }
+               }
+           }
+           Ok(())
+       }
+   }
+   ```
+
+4. **Performance Benefits Expected**
+   - Eliminate UUID-to-key lookups in hot paths
+   - 20-40% performance improvement in neighbor operations
+   - Reduced memory overhead in internal data structures
+   - Better cache locality with direct key access
+
+### **C. Abstract SlotMap Collection Type** (Issue #74)
+
+**Status**: Planning phase
+**Priority**: Medium
+**Scope**: Create abstraction layer over SlotMap for better maintainability and potential future optimizations
+
+#### **Planned Enhancements:**
+
+1. **Collection Abstraction Trait**
+
+   ```rust
+   use slotmap::{SlotMap, DefaultKey};
+   
+   /// Generic collection trait for stable-key collections
+   pub trait StableKeyCollection<K, V> {
+       fn insert(&mut self, value: V) -> K;
+       fn get(&self, key: K) -> Option<&V>;
+       fn get_mut(&mut self, key: K) -> Option<&mut V>;
+       fn remove(&mut self, key: K) -> Option<V>;
+       fn len(&self) -> usize;
+       fn is_empty(&self) -> bool;
+       fn iter(&self) -> Box<dyn Iterator<Item = (K, &V)> + '_>;
+       fn keys(&self) -> Box<dyn Iterator<Item = K> + '_>;
+       fn values(&self) -> Box<dyn Iterator<Item = &V> + '_>;
+   }
+   
+   /// SlotMap implementation of the collection trait
+   pub struct SlotMapCollection<K, V> 
+   where
+       K: slotmap::Key,
+   {
+       inner: SlotMap<K, V>,
+   }
+   
+   impl<K, V> StableKeyCollection<K, V> for SlotMapCollection<K, V>
+   where
+       K: slotmap::Key,
+   {
+       fn insert(&mut self, value: V) -> K {
+           self.inner.insert(value)
+       }
+       
+       fn get(&self, key: K) -> Option<&V> {
+           self.inner.get(key)
+       }
+       
+       // ... implement other methods
+   }
+   ```
+
+2. **Tds Refactoring with Abstract Collections**
+
+   ```rust
+   pub struct Tds<T, U, V, const D: usize, CC = SlotMapCollection<CellKey, Cell<T, U, V, D>>, VC = SlotMapCollection<VertexKey, Vertex<T, U, D>>>
+   where
+       T: CoordinateScalar,
+       U: DataType,
+       V: DataType,
+       CC: StableKeyCollection<CellKey, Cell<T, U, V, D>>,
+       VC: StableKeyCollection<VertexKey, Vertex<T, U, D>>,
+   {
+       pub cells: CC,
+       pub vertices: VC,
+       pub cell_bimap: BiMap<Uuid, CellKey>,
+       pub vertex_bimap: BiMap<Uuid, VertexKey>,
+   }
+   
+   // Type aliases for backward compatibility
+   pub type DefaultTds<T, U, V, const D: usize> = Tds<T, U, V, D>;
+   ```
+
+3. **Alternative Collection Implementations**
+
+   ```rust
+   /// Future: BTreeMap-based collection for ordered iteration
+   pub struct BTreeCollection<K, V> 
+   where
+       K: Ord + Clone,
+   {
+       inner: BTreeMap<K, V>,
+       next_key: K,
+   }
+   
+   /// Future: Dense vector-based collection for memory efficiency
+   pub struct DenseVectorCollection<V> {
+       data: Vec<Option<V>>,
+       free_indices: Vec<usize>,
+       generation: Vec<u32>,
+   }
+   
+   /// Future: Memory pool collection for allocation optimization
+   pub struct PoolCollection<K, V> {
+       pool: typed_arena::Arena<V>,
+       key_map: FxHashMap<K, *mut V>,
+   }
+   ```
+
+4. **Migration Strategy**
+
+   ```rust
+   // Phase 1: Abstract current SlotMap usage
+   impl<T, U, V, const D: usize> Tds<T, U, V, D> {
+       pub fn with_custom_collections<CC, VC>() -> Tds<T, U, V, D, CC, VC>
+       where
+           CC: StableKeyCollection<CellKey, Cell<T, U, V, D>> + Default,
+           VC: StableKeyCollection<VertexKey, Vertex<T, U, D>> + Default,
+       {
+           Tds {
+               cells: CC::default(),
+               vertices: VC::default(),
+               cell_bimap: BiMap::new(),
+               vertex_bimap: BiMap::new(),
+           }
+       }
+   }
+   
+   // Phase 2: Benchmarking different collection types
+   #[cfg(test)]
+   mod collection_benchmarks {
+       #[bench]
+       fn bench_slotmap_vs_btree() {
+           // Compare performance characteristics
+       }
+   }
+   ```
+
+5. **Benefits Expected**
+   - Flexibility to swap collection implementations
+   - Better testing with mock collections
+   - Future optimization opportunities (memory pools, hardware-aware allocations)
+   - Cleaner separation of concerns
+   - Potential for specialized collections per use case
+
+### **D. Benchmark System Enhancement**
+
+**Status**: Implementation complete, validation in progress
+**Priority**: Low
+**Scope**: Validate release flow and hardware compatibility
+
+#### **Remaining Work:**
+
+1. **Release Flow Validation**
+   - Test git tag generation with benchmark artifacts
+   - Validate hardware compatibility warnings
+   - Performance baseline artifact management
+
+2. **Enhanced Reporting**
+
+   ```rust
+   struct BenchmarkReport {
+       performance_metrics: PerformanceMetrics,
+       memory_usage: MemoryUsage,
+       regression_analysis: RegressionAnalysis,
+       hardware_compatibility: HardwareCompatibility,
+   }
+   ```
+
+## 10. **Implementation Timeline** 📅
+
+### **Phase 1: Collection Optimization** (Q1 2026)
+
+- Issue #72: FastHashMap and SmallBuffer integration
+- Replace HashMap with FxHashMap throughout codebase
+- Implement SmallVec for stack allocation of small collections
+- Optimize validation functions with faster collections
+
+### **Phase 2: Key-Based Internal APIs** (Q2 2026)
+
+- Issue #73: Refactor internal functions to use CellKeys/VertexKeys
+- Eliminate UUID-to-key lookups in hot paths
+- Optimize neighbor operations and validation
+- Maintain backward compatibility with UUID-based public APIs
+
+### **Phase 3: Collection Abstraction** (Q3 2026)
+
+- Issue #74: Abstract SlotMap collection types
+- Implement StableKeyCollection trait
+- Create alternative collection implementations
+- Enable collection swapping and specialized optimizations
+
+### **Phase 4: System Validation and Enhancement** (Q4 2026)
+
+- Comprehensive benchmarking of all optimizations
+- Documentation updates and migration guides
+- Performance regression testing and validation
+- Future optimization planning (SIMD, parallel processing)
+
+## 11. **Summary** ✅
 
 The optimization recommendations in this document have been **largely completed** through the successful implementation
 of the Pure Incremental Delaunay Triangulation refactoring project.
@@ -853,13 +1218,15 @@ The major achievements include:
 - Pure incremental algorithm eliminating supercell complexity
 - Multi-strategy vertex insertion (cavity-based and hull extension)
 - Robust geometric predicates with enhanced numerical stability
+- Memory profiling system with allocation tracking (v0.4.3)
 - Comprehensive test coverage (503/503 tests passing)
 
-### **⚠️ Remaining Opportunities**
+### **🚀 Planned Future Work**
 
-- Implementation of `is_valid_fast()` for frequent validation during construction
-- XOR-based duplicate detection to eliminate sorting overhead
-- Advanced optimizations for very large datasets (spatial indexing, SIMD, parallel processing)
+- **Collection Optimization (Issue #72)**: FastHashMap and SmallBuffer integration for 15-30% performance improvements
+- **Key-Based Internal APIs (Issue #73)**: Eliminate UUID-to-key lookups for 20-40% performance gains in neighbor operations
+- **Collection Abstraction (Issue #74)**: Abstract SlotMap types for flexibility and future optimization opportunities
+- **System Enhancement**: Advanced optimizations (SIMD, parallel processing, spatial indexing) and enhanced benchmarking
 
 ### **📈 Performance Status**
 
@@ -869,5 +1236,6 @@ The current implementation successfully handles:
 - Medium triangulations: Excellent performance with proper complexity scaling
 - Large triangulations: 50 vertices in 3D completing in ~333ms
 - Multi-dimensional: Working correctly across 2D, 3D, 4D, and 5D
+- Memory profiling: Comprehensive allocation tracking with count-allocations feature
 
-The optimization framework is now production-ready and provides a solid foundation for future enhancements.
+The optimization framework is now production-ready and provides a solid foundation for the planned future enhancements outlined above.
