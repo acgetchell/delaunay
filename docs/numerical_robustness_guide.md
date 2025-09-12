@@ -431,6 +431,7 @@ fn try_with_filtered_vertices(
     println!("Filtered robust triangulation succeeded");
     Ok(tds)
 }
+```
 
 ```rust
 fn remove_duplicate_and_near_duplicate_points(

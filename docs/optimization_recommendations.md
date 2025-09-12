@@ -234,11 +234,12 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         let cell_vertices: HashMap<CellKey, Vec<VertexKey>> = self.cells
             .iter()
             .map(|(cell_key, cell)| {
-                let vertices: Vec<VertexKey> = cell.vertices()
+                let mut vertices: Vec<VertexKey> = cell.vertices()
                     .iter()
                     .filter_map(|v| self.vertex_bimap.get_by_left(&v.uuid()).copied())
                     .collect();
-                (cell_key, vertices)
+                vertices.sort_unstable();
+                (*cell_key, vertices)
             })
             .collect();
         
@@ -376,7 +377,8 @@ fn remove_duplicate_cells_optimized(&mut self) -> usize {
 }
 
 // Collision-resistant hash computation using canonical ordering
-// Note: Previous XOR-based approach was collision-prone (e.g., A⊕B⊕C = A⊕D⊕E for some sets)
+// This approach is preferred over XOR-based hashing which is collision-prone
+// (e.g., XOR allows A⊕B⊕C = A⊕D⊕E for different vertex sets)
 #[derive(Hash, PartialEq, Eq)]
 struct VertexSetHash(u64);
 
@@ -385,6 +387,7 @@ fn compute_vertex_set_hash<T, U, const D: usize>(vertices: &[Vertex<T, U, D>]) -
     use smallvec::SmallVec;
     
     // Canonical, order-independent hash: sort vertex keys then hash
+    // This ensures identical vertex sets always produce the same hash
     // Note: Assumes VertexKey is available and implements Hash + Ord
     let mut keys: SmallVec<[VertexKey; 8]> =
         vertices.iter().filter_map(|v| v.key()).collect();
@@ -462,22 +465,22 @@ where
 ```rust
 impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     fn boundary_facets_optimized(&self) -> Vec<Facet<T, U, V, D>> {
-        let mut boundary_facets = Vec::new();
-        let mut seen_facets: HashSet<u64> = HashSet::new();
+        use std::collections::HashMap;
+        let mut counts: HashMap<u64, (u8, Facet<T, U, V, D>)> = HashMap::new();
         
         for cell in self.cells.values() {
             for facet in cell.facets() {
-                let facet_key = facet.key();
-                
-                if seen_facets.contains(&facet_key) {
-                    // This facet is shared - not a boundary facet
-                    // Remove it if it was previously added
-                    boundary_facets.retain(|f| f.key() != facet_key);
-                } else {
-                    // First time seeing this facet - potentially a boundary facet
-                    seen_facets.insert(facet_key);
-                    boundary_facets.push(facet.clone());
-                }
+                counts
+                    .entry(facet.key())
+                    .and_modify(|(c, _)| *c += 1)
+                    .or_insert((1, facet.clone()));
+            }
+        }
+        
+        let mut boundary_facets = Vec::new();
+        for (c, f) in counts.into_values() {
+            if c == 1 {
+                boundary_facets.push(f);
             }
         }
         
@@ -661,7 +664,7 @@ impl VertexBitSet {
 ### **MEDIUM PRIORITY (Potential 20-40% speedups)**
 
 1. **Optimized `is_valid_fast()` implementation** - Lightweight validation for frequent checks during construction
-2. **XOR-based duplicate cell detection** - Eliminate sorting in `validate_no_duplicate_cells()`
+2. **Order-independent, collision-resistant hashing** - Use canonical sort + FxHasher or multiset hashing with salted hasher for duplicate detection
 3. **FxHashMap replacements** - Use faster non-cryptographic hashing where appropriate
 4. **SmallVec for small collections** - Stack allocation for vertex/neighbor lists
 

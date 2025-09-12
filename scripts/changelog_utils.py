@@ -1139,9 +1139,101 @@ class ChangelogGenerator:
         content = input_file.read_text(encoding="utf-8")
         lines = content.split("\n")
         output_lines = []
+        
+        # Track expanded PR commits to add to Changes section
+        pending_expanded_commits = []
+        in_merged_prs_section = False
+        current_release_has_changes_section = False
+        changes_section_index = -1
 
-        for line in lines:
-            # Check for commit lines with SHA patterns
+        line_index = 0
+        while line_index < len(lines):
+            line = lines[line_index]
+            
+            # Track if we're in a Merged Pull Requests section
+            if re.match(r"^### *Merged Pull Requests$", line):
+                in_merged_prs_section = True
+                output_lines.append(line)
+                line_index += 1
+                continue
+            
+            # Track if we find a Changes section in current release
+            if re.match(r"^### *(Changes|Changed)$", line):
+                current_release_has_changes_section = True
+                changes_section_index = len(output_lines)
+                output_lines.append(line)
+                line_index += 1
+                continue
+            
+            # Check if we're starting a new release or ending current one
+            if re.match(r"^## ", line) and output_lines:
+                # Add pending expanded commits before the new release
+                if pending_expanded_commits:
+                    if current_release_has_changes_section and changes_section_index >= 0:
+                        # Add to existing Changes section
+                        output_lines.insert(changes_section_index + 1, "")
+                        for commit in pending_expanded_commits:
+                            output_lines.insert(changes_section_index + 2, commit)
+                    else:
+                        # Create new Changes section before this release
+                        output_lines.extend(["", "### Changes", ""])
+                        output_lines.extend(pending_expanded_commits)
+                    
+                    pending_expanded_commits.clear()
+                
+                # Reset state for new release
+                in_merged_prs_section = False
+                current_release_has_changes_section = False
+                changes_section_index = -1
+                output_lines.append(line)
+                line_index += 1
+                continue
+            
+            # Reset section tracking when we hit other sections
+            if re.match(r"^### ", line) and not re.match(r"^### *Merged Pull Requests$", line):
+                in_merged_prs_section = False
+
+            # Handle PR entries in Merged Pull Requests section
+            if in_merged_prs_section:
+                pr_match = re.search(r"^- .*?\[`#(?P<pr>\d+)`\]\(.*\)\s*$", line)
+                if pr_match:
+                    pr_number = pr_match.group("pr")
+                    # Try to resolve the squashed commit SHA
+                    try:
+                        grep_pattern = f"(#" + pr_number + ")$"
+                        sha_output, rc = ChangelogUtils.run_git_command(
+                            [
+                                "--no-pager",
+                                "log",
+                                "--format=%H",
+                                "--grep",
+                                grep_pattern,
+                                "-n",
+                                "1",
+                            ],
+                            check=False,
+                        )
+                        commit_sha = sha_output.strip().splitlines()[0] if sha_output.strip() else ""
+                        if commit_sha:
+                            try:
+                                processed_commit = ChangelogUtils.process_squashed_commit(commit_sha, repo_url)
+                                if processed_commit.strip():
+                                    # Add to pending list for Changes section instead of inline
+                                    pending_expanded_commits.extend(processed_commit.split("\n"))
+                                    # Keep simple PR reference
+                                    output_lines.append(line)
+                                else:
+                                    output_lines.append(line)
+                            except Exception:
+                                output_lines.append(line)
+                        else:
+                            output_lines.append(line)
+                    except Exception:
+                        output_lines.append(line)
+                    line_index += 1
+                    continue
+
+            # Handle commit lines with SHA patterns (commits already listed with links)
             commit_match = re.search(r"- \*\*.*?\*\*.*?\[`([a-f0-9]{7,40})`\]", line) or re.search(r"- .*?\(#[0-9]+\) \[`([a-f0-9]{7,40})`\]", line)
 
             if commit_match:
@@ -1159,21 +1251,30 @@ class ChangelogGenerator:
                             if processed_commit.strip():
                                 output_lines.append(processed_commit)
                             else:
-                                # Fallback to original line if processing failed
                                 output_lines.append(line)
                         except Exception:
-                            # Fallback to original line if processing failed
                             output_lines.append(line)
                     else:
-                        # Not a squashed PR, keep original line
                         output_lines.append(line)
 
                 except Exception:
-                    # Git command failed, keep original line
                     output_lines.append(line)
             else:
-                # Not a commit line, keep as is
                 output_lines.append(line)
+            
+            line_index += 1
+        
+        # Handle any remaining expanded commits at end of file
+        if pending_expanded_commits:
+            if current_release_has_changes_section and changes_section_index >= 0:
+                # Add to existing Changes section
+                output_lines.insert(changes_section_index + 1, "")
+                for commit in pending_expanded_commits:
+                    output_lines.insert(changes_section_index + 2, commit)
+            else:
+                # Add Changes section at the end
+                output_lines.extend(["", "### Changes", ""])
+                output_lines.extend(pending_expanded_commits)
 
         # Write processed content
         output_content = "\n".join(output_lines)
