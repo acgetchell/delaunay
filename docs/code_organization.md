@@ -165,6 +165,17 @@ cargo test --test allocation_api --features count-allocations
 cargo bench --bench profiling_suite --features count-allocations
 ```
 
+**Note**: Robust predicates testing demonstrates cases where enhanced numerical stability prevents triangulation failures:
+
+```bash
+# Run robust predicates showcase (demonstrates real problem solving)
+cargo test --test robust_predicates_showcase -- --nocapture
+# Run numerical accuracy comparisons
+cargo test --test robust_predicates_comparison
+# Run coordinate conversion error handling tests
+cargo test --test coordinate_conversion_errors
+```
+
 **Note**: Python tests in `scripts/tests/` are executed via pytest (use `uv run pytest` for reproducible envs) and discovered via `pyproject.toml`. Run with:
 
 ```bash
@@ -199,13 +210,13 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality i
 - `vertex.rs`, `cell.rs`, `facet.rs` - Core geometric primitives
 - `collections.rs` - Optimized collection types and utilities
 - `boundary.rs` - Boundary detection and analysis
-- `algorithms/` - Bowyer-Watson implementations
+- `algorithms/` - Bowyer-Watson implementations (standard and robust)
 - `traits/` - Core trait definitions
 
 **`src/geometry/`** - Geometric algorithms and predicates:
 
 - `point.rs` - NaN-aware Point operations
-- `predicates.rs`, `robust_predicates.rs` - Geometric tests
+- `predicates.rs`, `robust_predicates.rs` - Geometric tests (see [Numerical Robustness Guide](numerical_robustness_guide.md))
 - `matrix.rs` - Linear algebra support
 - `algorithms/convex_hull.rs` - Hull extraction
 - `traits/coordinate.rs` - Coordinate abstractions
@@ -214,8 +225,8 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality i
 
 - **`examples/`** - Usage demonstrations and trait examples, including memory profiling examples
 - **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage) and memory allocation tracking
-- **`tests/`** - Integration tests, debugging utilities, regression testing, and allocation profiling tools
-- **`docs/`** - Architecture guides, performance documentation, and templates
+- **`tests/`** - Integration tests, debugging utilities, regression testing, allocation profiling tools, and robust predicates validation
+- **`docs/`** - Architecture guides, performance documentation, numerical robustness guide, and templates
 - **`scripts/`** - Python utilities for automation and CI integration
 
 #### Configuration

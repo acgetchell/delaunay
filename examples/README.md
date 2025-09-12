@@ -160,3 +160,62 @@ their geometric properties and analysis.
 
 **Run with:** `cargo run --release --example convex_hull_3d_50_points`
 [View source](./convex_hull_3d_50_points.rs)
+
+### 5. Memory Analysis Across Dimensions (`memory_analysis.rs`)
+
+Demonstrates memory usage analysis for Delaunay triangulations across different dimensions (2D-5D) using the memory profiling system introduced in v0.4.3.
+
+**Key Features:**
+
+- **Multi-dimensional analysis**: Tests memory usage patterns from 2D to 5D triangulations
+- **Allocation tracking**: Uses the `count-allocations` feature to provide detailed memory metrics
+- **Performance profiling**: Measures both construction time and memory usage
+- **Convex hull analysis**: Compares triangulation vs hull memory consumption
+- **Reproducible results**: Uses fixed random seeds for consistent analysis
+- **Memory scaling insights**: Provides empirical observations about memory scaling patterns
+
+**Memory Profiling Features:**
+
+- **Detailed allocation tracking**: Shows bytes allocated per vertex/operation
+- **Memory efficiency ratios**: Compares hull memory to triangulation memory
+- **Cross-dimensional comparison**: Analyzes how memory scales with dimension
+- **Feature-aware**: Works with or without `count-allocations` feature
+
+**Sample Output (with count-allocations feature enabled):**
+
+```text
+Memory Analysis for Delaunay Triangulations Across Dimensions
+=============================================================
+✓ Allocation counter enabled - detailed memory tracking available
+
+=== Memory Analysis with 25 Points ===
+
+--- 3D Triangulation ---
+  Analyzing 3D triangulation with 25 points
+    Triangulation: 25 vertices, 94 cells
+    Convex hull: 46 facets
+    Construction time: 1.234ms
+    Hull extraction time: 456μs
+    Triangulation memory: 12.4 KiB (524 bytes/vertex)
+    Hull memory: 3.8 KiB (30.6% of triangulation)
+```
+
+**Usage:**
+
+```bash
+# Basic analysis (without detailed memory tracking)
+cargo run --release --example memory_analysis
+
+# Detailed analysis with allocation tracking
+cargo run --release --example memory_analysis --features count-allocations
+```
+
+**Complementary Benchmarks:**
+
+For comprehensive memory scaling analysis, see:
+
+- `cargo bench --bench memory_scaling --features count-allocations`  
+- `cargo bench --bench triangulation_vs_hull_memory --features count-allocations`
+
+**Run with:** `cargo run --release --example memory_analysis --features count-allocations`  
+[View source](./memory_analysis.rs)

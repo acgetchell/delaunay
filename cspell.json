@@ -164,6 +164,7 @@
         "precomputes",
         "Preparata",
         "println",
+        "eprintln",
         "profraw",
         "proptest",
         "pwsh",
