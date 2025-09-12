@@ -108,10 +108,10 @@ uv run changelog-utils generate
 uv run changelog-utils generate --debug
 
 # Create git tag with changelog content as message
-uv run changelog-utils tag v0.4.2
+uv run changelog-utils tag vX.Y.Z
 
 # Force recreate existing tag
-uv run changelog-utils tag v0.4.2 --force
+uv run changelog-utils tag vX.Y.Z --force
 ```
 
 **Enhanced Features**:
