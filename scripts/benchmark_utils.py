@@ -1733,8 +1733,9 @@ class WorkflowHelper:
         # Set GitHub Actions output if available
         github_output = os.getenv("GITHUB_OUTPUT")
         if github_output:
+            safe = tag_name.replace("\r", "").replace("\n", "")
             with open(github_output, "a", encoding="utf-8") as f:
-                f.write(f"tag_name={tag_name}\n")
+                f.write(f"tag_name={safe}\n")
 
         print(f"Final tag name: {tag_name}", file=sys.stderr)
         return tag_name
@@ -1840,8 +1841,9 @@ class WorkflowHelper:
         # Set GitHub Actions output if available
         github_output = os.getenv("GITHUB_OUTPUT")
         if github_output:
+            safe = artifact_name.replace("\r", "").replace("\n", "")
             with open(github_output, "a", encoding="utf-8") as f:
-                f.write(f"artifact_name={artifact_name}\n")
+                f.write(f"artifact_name={safe}\n")
 
         print(f"Using sanitized artifact name: {artifact_name}", file=sys.stderr)
         return artifact_name
@@ -1870,7 +1872,9 @@ class BenchmarkRegressionHelper:
                         f.write(f"{key}={val}\n")
         # Make variables immediately available in this process as well
         for key, value in env_vars.items():
-            os.environ[key] = value
+            val = "" if value is None else str(value)
+            val = val.replace("\r", "")
+            os.environ[key] = val
 
     @staticmethod
     def prepare_baseline(baseline_dir: Path) -> bool:

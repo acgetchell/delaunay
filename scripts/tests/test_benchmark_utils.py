@@ -2816,12 +2816,48 @@ Hardware Information:
                 # Verify variables are also available in current process
                 assert os.environ["TEST_MULTILINE"] == multiline_value
                 assert os.environ["TEST_SINGLE_LINE"] == "single"
-                assert os.environ["TEST_WITH_CR"] == cr_value
+                # CR characters should be stripped from process environment too
+                assert os.environ["TEST_WITH_CR"] == "Line 1\nLine 2\nLine 3"
 
         finally:
             Path(env_path).unlink(missing_ok=True)
             # Clean up test variables
             for key in ["TEST_MULTILINE", "TEST_SINGLE_LINE", "TEST_WITH_CR"]:
+                os.environ.pop(key, None)
+
+    def test_env_vars_none_value_handling(self):
+        """Test that write_github_env_vars correctly handles None values without errors."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+            env_path = env_file.name
+
+        try:
+            # Clear any existing test variables
+            for key in ["TEST_NONE", "TEST_NORMAL"]:
+                os.environ.pop(key, None)
+
+            test_vars = {
+                "TEST_NONE": None,
+                "TEST_NORMAL": "normal_value",
+            }
+
+            with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                # This should not raise any errors
+                BenchmarkRegressionHelper.write_github_env_vars(test_vars)
+
+                # Verify variables are written to GITHUB_ENV file
+                with open(env_path, encoding="utf-8") as f:
+                    content = f.read()
+                    assert "TEST_NONE=" in content  # None becomes empty string
+                    assert "TEST_NORMAL=normal_value" in content
+
+                # Verify variables are also available in current process
+                assert os.environ["TEST_NONE"] == ""  # None becomes empty string
+                assert os.environ["TEST_NORMAL"] == "normal_value"
+
+        finally:
+            Path(env_path).unlink(missing_ok=True)
+            # Clean up test variables
+            for key in ["TEST_NONE", "TEST_NORMAL"]:
                 os.environ.pop(key, None)
 
     def test_baseline_tag_sanitization(self):
