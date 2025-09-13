@@ -45,6 +45,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 - **ALWAYS** run spell check after editing ANY files (code, documentation, configuration files, etc.)
 - **REQUIRED** when adding or modifying any files to ensure proper spelling throughout the project
+- **EXCEPTION**: **DO NOT** spell-check `cspell.json` itself - it contains intentional misspellings in `flagWords` from mispelled git commits
 - **IF** cspell reports legitimate technical terms, programming keywords, or project-specific terminology as misspelled, add them to the `words` array in `cspell.json`
 - **EXAMPLES**: Python terms (`kwargs`, `args`, `asyncio`), Rust terms (`usize`, `clippy`, `rustc`), technical terms (`triangulation`, `circumsphere`, `delaunay`),
   project/crate names (e.g., `nalgebra`, `serde`, `thiserror`, `pastey`).

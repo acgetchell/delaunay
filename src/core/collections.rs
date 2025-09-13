@@ -419,6 +419,72 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 /// - **Performance**: Optimized for geometric algorithm patterns
 pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
 
+// =============================================================================
+// UUID-KEY MAPPING TYPES
+// =============================================================================
+
+/// Optimized mapping from Vertex UUIDs to `VertexKeys` for fast UUID → Key lookups.
+/// This is the primary direction for most triangulation operations.
+///
+/// # Optimization Rationale
+///
+/// - **Primary Direction**: UUID → Key is the hot path in most algorithms
+/// - **Hash Function**: `FxHash` provides ~2-3x faster lookups than default hasher
+/// - **Use Case**: Converting vertex UUIDs to keys for `SlotMap` access
+/// - **Performance**: O(1) average case, optimized for triangulation algorithms
+///
+/// # Reverse Lookups
+///
+/// For Key → UUID lookups (less common), use direct `SlotMap` access:
+/// ```rust
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+///
+/// // Get first vertex key and its UUID
+/// let (vertex_key, _) = tds.vertices.iter().next().unwrap();
+/// let vertex_uuid = tds.vertices[vertex_key].uuid();
+/// ```
+pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
+
+/// Optimized mapping from Cell UUIDs to `CellKeys` for fast UUID → Key lookups.
+/// This is the primary direction for most triangulation operations.
+///
+/// # Optimization Rationale
+///
+/// - **Primary Direction**: UUID → Key is the hot path in neighbor assignment
+/// - **Hash Function**: `FxHash` provides ~2-3x faster lookups than default hasher
+/// - **Use Case**: Converting cell UUIDs to keys for `SlotMap` access
+/// - **Performance**: O(1) average case, eliminates `BiMap` overhead
+///
+/// # Reverse Lookups
+///
+/// For Key → UUID lookups (less common), use direct `SlotMap` access:
+/// ```rust
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+///
+/// // Get first cell key and its UUID
+/// let (cell_key, _) = tds.cells().iter().next().unwrap();
+/// let cell_uuid = tds.cells()[cell_key].uuid();
+/// ```
+pub type UuidToCellKeyMap = FastHashMap<Uuid, CellKey>;
+
 /// Size constant for batch point processing operations.
 /// 16 provides sufficient capacity for typical geometric algorithm batches.
 const BATCH_PROCESSING_BUFFER_SIZE: usize = 16;

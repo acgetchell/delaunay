@@ -1077,9 +1077,9 @@ where
 
         // Ensure all vertices are registered in the TDS vertex mapping
         for vertex in &vertices {
-            if !tds.vertex_bimap.contains_left(&vertex.uuid()) {
+            if !tds.uuid_to_vertex_key.contains_key(&vertex.uuid()) {
                 let vertex_key = tds.vertices.insert(*vertex);
-                tds.vertex_bimap.insert(vertex.uuid(), vertex_key);
+                tds.uuid_to_vertex_key.insert(vertex.uuid(), vertex_key);
             }
         }
 
@@ -1092,7 +1092,7 @@ where
 
         let cell_key = tds.cells_mut().insert(cell);
         let cell_uuid = tds.cells()[cell_key].uuid();
-        tds.cell_bimap.insert(cell_uuid, cell_key);
+        tds.uuid_to_cell_key.insert(cell_uuid, cell_key);
 
         Ok(())
     }
@@ -1365,9 +1365,9 @@ where
     /// * `tds` - Mutable reference to the triangulation data structure
     /// * `vertex` - The vertex to ensure is registered
     fn ensure_vertex_in_tds(tds: &mut Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) {
-        if !tds.vertex_bimap.contains_left(&vertex.uuid()) {
+        if !tds.uuid_to_vertex_key.contains_key(&vertex.uuid()) {
             let vertex_key = tds.vertices.insert(*vertex);
-            tds.vertex_bimap.insert(vertex.uuid(), vertex_key);
+            tds.uuid_to_vertex_key.insert(vertex.uuid(), vertex_key);
         }
     }
 
@@ -1404,7 +1404,7 @@ where
             Ok(new_cell) => {
                 let cell_key = tds.cells_mut().insert(new_cell);
                 let cell_uuid = tds.cells()[cell_key].uuid();
-                tds.cell_bimap.insert(cell_uuid, cell_key);
+                tds.uuid_to_cell_key.insert(cell_uuid, cell_key);
                 true
             }
             Err(_) => {
@@ -1463,7 +1463,7 @@ where
     {
         for &cell_key in bad_cells {
             if let Some(cell) = tds.cells_mut().remove(cell_key) {
-                tds.cell_bimap.remove_by_left(&cell.uuid());
+                tds.uuid_to_cell_key.remove(&cell.uuid());
             }
         }
     }

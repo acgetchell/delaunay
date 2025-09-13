@@ -1416,19 +1416,18 @@ mod tests {
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
                     for neighbor_uuid in neighbors.iter().flatten() {
-                        if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid)
-                            && let Some(neighbor) = tds.cells().get(*neighbor_key)
+                        if let Some(neighbor_key) = tds.cell_key_from_uuid(neighbor_uuid)
+                            && let Some(neighbor) = tds.cells().get(neighbor_key)
                         {
                             // Each neighbor should also reference this cell as a neighbor
                             if let Some(neighbor_neighbors) = &neighbor.neighbors {
                                 let cell_uuid = tds
-                                    .cell_bimap
-                                    .get_by_right(&cell_key)
+                                    .cell_uuid_from_key(cell_key)
                                     .expect("Cell should have UUID");
                                 assert!(
                                     neighbor_neighbors
                                         .iter()
-                                        .any(|n| n.as_ref() == Some(cell_uuid)),
+                                        .any(|n| n.as_ref() == Some(&cell_uuid)),
                                     "Neighbor relationship should be symmetric after insertion {}",
                                     i + 1
                                 );
@@ -1561,19 +1560,18 @@ mod tests {
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
                     for neighbor_uuid in neighbors.iter().flatten() {
-                        if let Some(neighbor_key) = tds.cell_bimap.get_by_left(neighbor_uuid)
-                            && let Some(neighbor) = tds.cells().get(*neighbor_key)
+                        if let Some(neighbor_key) = tds.cell_key_from_uuid(neighbor_uuid)
+                            && let Some(neighbor) = tds.cells().get(neighbor_key)
                         {
                             // Each neighbor should also reference this cell as a neighbor
                             if let Some(neighbor_neighbors) = &neighbor.neighbors {
                                 let cell_uuid = tds
-                                    .cell_bimap
-                                    .get_by_right(&cell_key)
+                                    .cell_uuid_from_key(cell_key)
                                     .expect("Cell should have UUID");
                                 assert!(
                                     neighbor_neighbors
                                         .iter()
-                                        .any(|opt| opt.as_ref() == Some(cell_uuid)),
+                                        .any(|opt| opt.as_ref() == Some(&cell_uuid)),
                                     "Neighbor relationship should be symmetric after hull extension {}",
                                     i + 1
                                 );
@@ -1720,20 +1718,18 @@ mod tests {
                             (&cell1.neighbors, &cell2.neighbors)
                     {
                         let cell2_uuid = tds
-                            .cell_bimap
-                            .get_by_right(&cell2_key)
+                            .cell_uuid_from_key(cell2_key)
                             .expect("Cell2 should have UUID");
                         let cell1_uuid = tds
-                            .cell_bimap
-                            .get_by_right(&cell1_key)
+                            .cell_uuid_from_key(cell1_key)
                             .expect("Cell1 should have UUID");
                         assert!(
-                            neighbors1.iter().flatten().any(|uuid| uuid == cell2_uuid),
+                            neighbors1.iter().flatten().any(|uuid| *uuid == cell2_uuid),
                             "Cell1 should reference cell2 as neighbor after insertion {}",
                             i + 1
                         );
                         assert!(
-                            neighbors2.iter().flatten().any(|uuid| uuid == cell1_uuid),
+                            neighbors2.iter().flatten().any(|uuid| *uuid == cell1_uuid),
                             "Cell2 should reference cell1 as neighbor after insertion {}",
                             i + 1
                         );
@@ -1744,8 +1740,8 @@ mod tests {
             // 4. All vertices should have proper incident cells assigned
             for (_, vertex) in &tds.vertices {
                 if let Some(incident_cell_uuid) = vertex.incident_cell
-                    && let Some(incident_cell_key) = tds.cell_bimap.get_by_left(&incident_cell_uuid)
-                    && let Some(incident_cell) = tds.cells().get(*incident_cell_key)
+                    && let Some(incident_cell_key) = tds.cell_key_from_uuid(&incident_cell_uuid)
+                    && let Some(incident_cell) = tds.cells().get(incident_cell_key)
                 {
                     let cell_vertices = incident_cell.vertices();
                     let vertex_is_in_cell = cell_vertices.iter().any(|v| v.uuid() == vertex.uuid());
