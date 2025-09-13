@@ -42,6 +42,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  CRITERION_QUIET_MODE: 1
 
 jobs:
   performance-regression:
