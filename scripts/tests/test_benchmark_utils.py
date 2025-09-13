@@ -1014,9 +1014,9 @@ Time: [95.0, 100.0, 105.0] µs
                         assert "BASELINE_EXISTS=false" in env_content
                         assert "BASELINE_SOURCE=missing" in env_content
 
-                    # Check error message was printed
-                    captured = capsys.readouterr()
-                    assert "❌ Downloaded artifact but no baseline_results.txt found" in captured.out
+                # Check error message was printed
+                captured = capsys.readouterr()
+                assert "❌ Downloaded artifact but no baseline*.txt files found" in captured.out
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
@@ -2178,3 +2178,303 @@ Hardware Information:
             # Should use flexible phrasing instead of hardcoded "1000 random test cases"
             assert "Based on random test cases:" in content
             assert "Based on 1000 random test cases:" not in content
+
+
+class TestTagSpecificBaselineHandling:
+    """Test cases for tag-specific baseline file handling functionality."""
+
+    def test_prepare_baseline_with_tag_specific_file(self, capsys):
+        """Test baseline preparation with tag-specific file (baseline-v*.txt)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            tag_baseline_file = baseline_dir / "baseline-v0.4.3.txt"
+
+            # Create a tag-specific baseline file
+            baseline_content = """Date: 2025-09-13 00:00:36 UTC
+Git commit: 1062551a9152a53e938ddbf94c4152ff6ae4254d
+Tag: v0.4.3
+Hardware Information:
+  OS: macOS
+  CPU: Apple M1 (Virtual)
+
+=== 10 Points (2D) ===
+Time: [160.1, 168.18, 177.67] µs
+"""
+            tag_baseline_file.write_text(baseline_content)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
+
+                    assert success
+
+                    # Check that environment variables were set
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_EXISTS=true" in env_content
+                        assert "BASELINE_SOURCE=artifact" in env_content
+
+                    # Check that baseline info was printed with file conversion message
+                    captured = capsys.readouterr()
+                    assert "📦 Prepared baseline from artifact: baseline-v0.4.3.txt → baseline_results.txt" in captured.out
+                    assert "=== Baseline Information" in captured.out
+                    assert "Tag: v0.4.3" in captured.out
+
+                    # Check that baseline_results.txt was created
+                    standard_file = baseline_dir / "baseline_results.txt"
+                    assert standard_file.exists()
+                    assert "Tag: v0.4.3" in standard_file.read_text(encoding="utf-8")
+
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_prepare_baseline_with_generic_baseline_file(self, capsys):
+        """Test baseline preparation with generic baseline*.txt file."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            generic_baseline_file = baseline_dir / "baseline-manual-test.txt"
+
+            # Create a generic baseline file
+            baseline_content = """Date: 2025-09-13 10:30:00 UTC
+Git commit: abcdef123456
+Hardware Information:
+  OS: macOS
+  CPU: Test CPU
+
+=== 100 Points (2D) ===
+Time: [95.0, 100.0, 105.0] µs
+"""
+            generic_baseline_file.write_text(baseline_content)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
+
+                    assert success
+
+                    # Check that baseline info was printed with file conversion message
+                    captured = capsys.readouterr()
+                    assert "📦 Prepared baseline from artifact: baseline-manual-test.txt → baseline_results.txt" in captured.out
+
+                    # Check that baseline_results.txt was created
+                    standard_file = baseline_dir / "baseline_results.txt"
+                    assert standard_file.exists()
+                    assert "Test CPU" in standard_file.read_text(encoding="utf-8")
+
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_prepare_baseline_prefers_standard_name(self, capsys):
+        """Test that prepare_baseline prefers baseline_results.txt over tag-specific files."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+
+            # Create both standard and tag-specific files
+            standard_file = baseline_dir / "baseline_results.txt"
+            tag_file = baseline_dir / "baseline-v1.0.0.txt"
+
+            standard_content = "Standard file content"
+            tag_content = "Tag-specific file content"
+
+            standard_file.write_text(standard_content)
+            tag_file.write_text(tag_content)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
+
+                    assert success
+
+                    # Should use the standard file and not show conversion message
+                    captured = capsys.readouterr()
+                    assert "📦 Prepared baseline from artifact" in captured.out
+                    assert "→" not in captured.out  # No conversion arrow
+
+                    # Standard file should remain unchanged
+                    assert standard_file.read_text(encoding="utf-8") == standard_content
+
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_prepare_baseline_no_matching_files(self, capsys):
+        """Test baseline preparation when no matching baseline files are found."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+
+            # Create some non-matching files
+            (baseline_dir / "metadata.json").write_text("{}")
+            (baseline_dir / "random.txt").write_text("Not a baseline")
+            (baseline_dir / "results.log").write_text("Log data")
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
+
+                    assert not success
+
+                    # Check that environment variables were set correctly for failure
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_EXISTS=false" in env_content
+                        assert "BASELINE_SOURCE=missing" in env_content
+                        assert "BASELINE_ORIGIN=unknown" in env_content
+
+                    # Check error message was printed
+                    captured = capsys.readouterr()
+                    assert "❌ Downloaded artifact but no baseline*.txt files found" in captured.out
+
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_extract_baseline_commit_from_tag_file(self):
+        """Test extracting commit SHA from tag-specific baseline file."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            tag_baseline_file = baseline_dir / "baseline-v0.4.3.txt"
+
+            baseline_content = """Date: 2025-09-13 00:00:36 UTC
+Git commit: 1062551a9152a53e938ddbf94c4152ff6ae4254d
+Tag: v0.4.3
+Hardware Information:
+  OS: macOS
+"""
+            tag_baseline_file.write_text(baseline_content)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
+
+                    assert commit_sha == "1062551a9152a53e938ddbf94c4152ff6ae4254d"
+
+                    # Check that environment variable was set
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_COMMIT=1062551a9152a53e938ddbf94c4152ff6ae4254d" in env_content
+
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_extract_baseline_commit_fallback_to_metadata(self):
+        """Test extracting commit SHA from metadata.json when baseline files have no commit info."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            tag_baseline_file = baseline_dir / "baseline-v0.4.3.txt"
+            metadata_file = baseline_dir / "metadata.json"
+
+            # Baseline file without Git commit line
+            baseline_content = """Date: 2025-09-13 00:00:36 UTC
+Tag: v0.4.3
+Hardware Information:
+  OS: macOS
+"""
+            tag_baseline_file.write_text(baseline_content)
+
+            # Metadata with commit info
+            metadata = {"tag": "v0.4.3", "commit": "fedcba987654321", "generated_at": "2025-09-13T00:00:36Z"}
+            with metadata_file.open("w", encoding="utf-8") as f:
+                json.dump(metadata, f)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
+
+                    assert commit_sha == "fedcba987654321"
+
+                    # Check that environment variable was set
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_COMMIT=fedcba987654321" in env_content
+
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_extract_baseline_commit_handles_multiple_tag_files(self):
+        """Test that extract_baseline_commit uses the first available tag file when multiple exist."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+
+            # Create multiple tag files (should use first one alphabetically)
+            tag_file_1 = baseline_dir / "baseline-v0.4.1.txt"
+            tag_file_2 = baseline_dir / "baseline-v0.4.3.txt"
+
+            tag_content_1 = """Date: 2025-09-13 00:00:36 UTC
+Git commit: abc123def456
+Tag: v0.4.1
+"""
+            tag_content_2 = """Date: 2025-09-13 00:00:36 UTC
+Git commit: def456abc789
+Tag: v0.4.3
+"""
+
+            tag_file_1.write_text(tag_content_1)
+            tag_file_2.write_text(tag_content_2)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
+
+                    # Should use the first file found (likely v0.4.1 alphabetically)
+                    assert commit_sha in ["abc123def456", "def456abc789"]
+                    assert commit_sha != "unknown"
+
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_prepare_baseline_and_extract_commit_integration(self):
+        """Test the integration between prepare_baseline and extract_baseline_commit."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            tag_baseline_file = baseline_dir / "baseline-v0.4.3.txt"
+
+            baseline_content = """Date: 2025-09-13 00:00:36 UTC
+Git commit: 1234567890abcdef
+Tag: v0.4.3
+Hardware Information:
+  OS: macOS
+  CPU: Apple M1 (Virtual)
+
+=== 10 Points (2D) ===
+Time: [160.1, 168.18, 177.67] µs
+"""
+            tag_baseline_file.write_text(baseline_content)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    # First, prepare the baseline (should create baseline_results.txt)
+                    prepare_success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
+                    assert prepare_success
+
+                    # Verify standard file was created
+                    standard_file = baseline_dir / "baseline_results.txt"
+                    assert standard_file.exists()
+
+                    # Then extract commit (should work with the standard file)
+                    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
+                    assert commit_sha == "1234567890abcdef"
+
+            finally:
+                Path(env_path).unlink(missing_ok=True)

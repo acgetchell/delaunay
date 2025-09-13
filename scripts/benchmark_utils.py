@@ -1851,26 +1851,58 @@ class BenchmarkRegressionHelper:
         Returns:
             True if baseline exists and is valid, False otherwise
         """
+        # Look for baseline files in order of preference:
+        # 1. baseline_results.txt (original/standard name)
+        # 2. baseline-v*.txt (tag-specific name from generate-baseline workflow)
+        # 3. Any file matching baseline*.txt
+
         baseline_file = baseline_dir / "baseline_results.txt"
 
-        if baseline_file.exists():
-            print("📦 Prepared baseline from artifact")
+        # If standard name doesn't exist, look for tag-specific files
+        if not baseline_file.exists():
+            tag_files = list(baseline_dir.glob("baseline-v*.txt"))
+            if tag_files:
+                baseline_file = tag_files[0]  # Use the first tag-specific file
 
+        # Still not found? Try any baseline*.txt file
+        if not baseline_file.exists():
+            baseline_files = list(baseline_dir.glob("baseline*.txt"))
+            if baseline_files:
+                baseline_file = baseline_files[0]  # Use the first matching file
+
+        # If a baseline file was found, copy it to baseline_results.txt for consistency
+        if baseline_file.exists() and baseline_file.name != "baseline_results.txt":
+            target_file = baseline_dir / "baseline_results.txt"
+            target_file.write_text(baseline_file.read_text(encoding="utf-8"), encoding="utf-8")
+            print(f"📦 Prepared baseline from artifact: {baseline_file.name} → baseline_results.txt")
+        elif baseline_file.exists():
+            print("📦 Prepared baseline from artifact")
+        else:
+            print("❌ Downloaded artifact but no baseline*.txt files found")
             # Set GitHub Actions environment variables
             github_env = os.getenv("GITHUB_ENV")
             if github_env:
                 with open(github_env, "a", encoding="utf-8") as f:
-                    f.write("BASELINE_EXISTS=true\n")
-                    f.write("BASELINE_SOURCE=artifact\n")
+                    f.write("BASELINE_EXISTS=false\n")
+                    f.write("BASELINE_SOURCE=missing\n")
+                    f.write("BASELINE_ORIGIN=unknown\n")
+            return False
 
-            # Show baseline metadata
-            print("=== Baseline Information (from artifact) ===")
-            with baseline_file.open("r", encoding="utf-8") as f:
-                for _i, line in enumerate(f.readlines()[:3]):
-                    print(line.rstrip())
+        # Set GitHub Actions environment variables
+        github_env = os.getenv("GITHUB_ENV")
+        if github_env:
+            with open(github_env, "a", encoding="utf-8") as f:
+                f.write("BASELINE_EXISTS=true\n")
+                f.write("BASELINE_SOURCE=artifact\n")
 
-            return True
-        print("❌ Downloaded artifact but no baseline_results.txt found")
+        # Show baseline metadata
+        print("=== Baseline Information (from artifact) ===")
+        target_file = baseline_dir / "baseline_results.txt"  # Use the copied/standard file
+        with target_file.open("r", encoding="utf-8") as f:
+            for _i, line in enumerate(f.readlines()[:3]):
+                print(line.rstrip())
+
+        return True
 
         # Set GitHub Actions environment variables
         github_env = os.getenv("GITHUB_ENV")
@@ -1896,6 +1928,56 @@ class BenchmarkRegressionHelper:
                 f.write("BASELINE_ORIGIN=none\n")
 
     @staticmethod
+    def _find_baseline_file(baseline_dir: Path) -> Path | None:
+        """Find the best available baseline file in the directory."""
+        # Try standard name first
+        baseline_file = baseline_dir / "baseline_results.txt"
+        if baseline_file.exists():
+            return baseline_file
+
+        # Try tag-specific files
+        tag_files = list(baseline_dir.glob("baseline-v*.txt"))
+        if tag_files:
+            return tag_files[0]
+
+        # Try any baseline*.txt files
+        baseline_files = list(baseline_dir.glob("baseline*.txt"))
+        if baseline_files:
+            return baseline_files[0]
+
+        return None
+
+    @staticmethod
+    def _extract_commit_from_baseline_file(baseline_file: Path) -> str | None:
+        """Extract commit SHA from baseline text file."""
+        try:
+            with baseline_file.open("r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("Git commit:"):
+                        parts = line.strip().split()
+                        if len(parts) >= 3:
+                            potential_sha = parts[2]
+                            # Validate SHA format (7-40 hex characters)
+                            if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
+                                return potential_sha
+        except (OSError, ValueError) as e:
+            logging.debug("Could not extract commit from %s: %s", baseline_file.name, e)
+        return None
+
+    @staticmethod
+    def _extract_commit_from_metadata(metadata_file: Path) -> str | None:
+        """Extract commit SHA from metadata.json file."""
+        try:
+            with metadata_file.open("r", encoding="utf-8") as f:
+                metadata = json.load(f)
+                potential_sha = metadata.get("commit", "")
+                if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
+                    return potential_sha
+        except (OSError, json.JSONDecodeError, KeyError) as e:
+            logging.debug("Could not extract commit from metadata.json: %s", e)
+        return None
+
+    @staticmethod
     def extract_baseline_commit(baseline_dir: Path) -> str:
         """
         Extract the baseline commit SHA from baseline files.
@@ -1906,39 +1988,22 @@ class BenchmarkRegressionHelper:
         Returns:
             Commit SHA string, or "unknown" if not found
         """
-        baseline_file = baseline_dir / "baseline_results.txt"
-        metadata_file = baseline_dir / "metadata.json"
-
         commit_sha = "unknown"
 
-        # Try to extract from baseline_results.txt first
-        if baseline_file.exists():
-            try:
-                with baseline_file.open("r", encoding="utf-8") as f:
-                    for line in f:
-                        if line.startswith("Git commit:"):
-                            parts = line.strip().split()
-                            if len(parts) >= 3:
-                                potential_sha = parts[2]
-                                # Validate SHA format (7-40 hex characters)
-                                if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
-                                    commit_sha = potential_sha
-                                    break
-            except (OSError, ValueError) as e:
-                # Failed to read/parse baseline file - continue with metadata fallback
-                logging.debug("Could not extract commit from baseline_results.txt: %s", e)
+        # Try to extract from baseline file first
+        baseline_file = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
+        if baseline_file:
+            extracted_sha = BenchmarkRegressionHelper._extract_commit_from_baseline_file(baseline_file)
+            if extracted_sha:
+                commit_sha = extracted_sha
 
         # Fallback to metadata.json if needed
-        if commit_sha == "unknown" and metadata_file.exists():
-            try:
-                with metadata_file.open("r", encoding="utf-8") as f:
-                    metadata = json.load(f)
-                    potential_sha = metadata.get("commit", "")
-                    if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
-                        commit_sha = potential_sha
-            except (OSError, json.JSONDecodeError, KeyError) as e:
-                # Failed to read/parse metadata file - will use "unknown" commit
-                logging.debug("Could not extract commit from metadata.json: %s", e)
+        if commit_sha == "unknown":
+            metadata_file = baseline_dir / "metadata.json"
+            if metadata_file.exists():
+                extracted_sha = BenchmarkRegressionHelper._extract_commit_from_metadata(metadata_file)
+                if extracted_sha:
+                    commit_sha = extracted_sha
 
         # Set GitHub Actions environment variable
         github_env = os.getenv("GITHUB_ENV")
