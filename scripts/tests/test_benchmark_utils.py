@@ -2743,7 +2743,7 @@ Hardware Information:
                 Path(env_path).unlink(missing_ok=True)
 
     def test_env_vars_mirrored_to_current_process(self):
-        """Test that _write_github_env_vars mirrors variables into current process."""
+        """Test that write_github_env_vars mirrors variables into current process."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
             env_path = env_file.name
 
@@ -2758,7 +2758,7 @@ Hardware Information:
             }
 
             with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
-                BenchmarkRegressionHelper._write_github_env_vars(test_vars)
+                BenchmarkRegressionHelper.write_github_env_vars(test_vars)
 
                 # Verify variables are written to GITHUB_ENV file
                 with open(env_path, encoding="utf-8") as f:
@@ -2777,7 +2777,7 @@ Hardware Information:
                 os.environ.pop(key, None)
 
     def test_env_vars_multiline_handling(self):
-        """Test that _write_github_env_vars correctly handles multiline values with heredoc format."""
+        """Test that write_github_env_vars correctly handles multiline values with heredoc format."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
             env_path = env_file.name
 
@@ -2796,7 +2796,7 @@ Hardware Information:
             }
 
             with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
-                BenchmarkRegressionHelper._write_github_env_vars(test_vars)
+                BenchmarkRegressionHelper.write_github_env_vars(test_vars)
 
                 # Verify variables are written to GITHUB_ENV file
                 with open(env_path, encoding="utf-8") as f:

@@ -252,7 +252,9 @@
         "isize",
         "downcasting",
         "Swatinem",
-        "tarpaulin"
+        "tarpaulin",
+        "tarpauline",
+        "varous"
     ],
     "ignoreWords": [],
     "import": []

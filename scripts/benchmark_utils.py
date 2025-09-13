@@ -1851,7 +1851,7 @@ class BenchmarkRegressionHelper:
     """Helper functions for performance regression testing workflow."""
 
     @staticmethod
-    def _write_github_env_vars(env_vars: dict[str, str]) -> None:
+    def write_github_env_vars(env_vars: dict[str, str]) -> None:
         """Helper to write multiple environment variables to GITHUB_ENV.
         Args:
             env_vars: Dictionary of environment variable names and values
@@ -1894,7 +1894,7 @@ class BenchmarkRegressionHelper:
                 print(f"📦 Prepared baseline from artifact: {baseline_file.name} → baseline_results.txt")
             except OSError as e:
                 print(f"❌ Failed to prepare baseline: {e}", file=sys.stderr)
-                BenchmarkRegressionHelper._write_github_env_vars(
+                BenchmarkRegressionHelper.write_github_env_vars(
                     {"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "artifact", "BASELINE_ORIGIN": "artifact"}
                 )
                 return False
@@ -1902,11 +1902,11 @@ class BenchmarkRegressionHelper:
             print("📦 Prepared baseline from artifact")
         else:
             print("❌ Downloaded artifact but no baseline*.txt files found", file=sys.stderr)
-            BenchmarkRegressionHelper._write_github_env_vars({"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "missing", "BASELINE_ORIGIN": "unknown"})
+            BenchmarkRegressionHelper.write_github_env_vars({"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "missing", "BASELINE_ORIGIN": "unknown"})
             return False
 
         # Set GitHub Actions environment variables
-        BenchmarkRegressionHelper._write_github_env_vars(
+        BenchmarkRegressionHelper.write_github_env_vars(
             {"BASELINE_EXISTS": "true", "BASELINE_SOURCE": "artifact", "BASELINE_ORIGIN": "artifact", "BASELINE_SOURCE_FILE": baseline_file.name}
         )
 
@@ -1930,7 +1930,7 @@ class BenchmarkRegressionHelper:
                 raw_tag = tag_line.split(":", 1)[1].strip()
                 # Allow [A-Za-z0-9._-+]; replace others with underscore and cap length
                 safe_tag = re.sub(r"[^A-Za-z0-9._\-+]", "_", raw_tag)[:64]
-                BenchmarkRegressionHelper._write_github_env_vars({"BASELINE_TAG": safe_tag})
+                BenchmarkRegressionHelper.write_github_env_vars({"BASELINE_TAG": safe_tag})
 
         return True
 
@@ -1939,7 +1939,7 @@ class BenchmarkRegressionHelper:
         """Set environment variables when no baseline is found."""
         print("📈 No baseline artifact found for performance comparison")
 
-        BenchmarkRegressionHelper._write_github_env_vars({"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "none", "BASELINE_ORIGIN": "none"})
+        BenchmarkRegressionHelper.write_github_env_vars({"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "none", "BASELINE_ORIGIN": "none"})
 
     @staticmethod
     def _find_baseline_file(baseline_dir: Path) -> Path | None:
@@ -2047,7 +2047,7 @@ class BenchmarkRegressionHelper:
         }
         if baseline_file:
             env_vars["BASELINE_SOURCE_FILE"] = baseline_file.name
-        BenchmarkRegressionHelper._write_github_env_vars(env_vars)
+        BenchmarkRegressionHelper.write_github_env_vars(env_vars)
 
         return commit_sha
 
@@ -2135,7 +2135,7 @@ class BenchmarkRegressionHelper:
             baseline_path: Path to baseline file
 
         Returns:
-            True if test completed successfully (regardless of regressions), False on error
+            True if comparison ran and no regressions detected; False on regressions or error
         """
         try:
             print("🚀 Running performance regression test...")
@@ -2208,11 +2208,8 @@ class BenchmarkRegressionHelper:
                         print("Result: ⚠️ Performance regressions detected")
                         # Set environment variable for machine consumption by CI systems
                         os.environ["BENCHMARK_REGRESSION_DETECTED"] = "true"
-                        # Also export to GITHUB_ENV if available
-                        github_env = os.getenv("GITHUB_ENV")
-                        if github_env:
-                            with open(github_env, "a", encoding="utf-8") as f:
-                                f.write("BENCHMARK_REGRESSION_DETECTED=true\n")
+                        # Also export to GITHUB_ENV using safe helper
+                        BenchmarkRegressionHelper.write_github_env_vars({"BENCHMARK_REGRESSION_DETECTED": "true"})
                         print("   Exported BENCHMARK_REGRESSION_DETECTED=true for downstream CI steps")
                     else:
                         print("Result: ✅ No significant performance regressions")
@@ -2368,11 +2365,12 @@ def execute_regression_commands(args: argparse.Namespace) -> None:
         should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip(args.baseline_commit, args.current_commit)
 
         # Set GitHub Actions environment variables
-        github_env = os.getenv("GITHUB_ENV")
-        if github_env:
-            with open(github_env, "a", encoding="utf-8") as f:
-                f.write(f"SKIP_BENCHMARKS={'true' if should_skip else 'false'}\n")
-                f.write(f"SKIP_REASON={reason}\n")
+        BenchmarkRegressionHelper.write_github_env_vars(
+            {
+                "SKIP_BENCHMARKS": "true" if should_skip else "false",
+                "SKIP_REASON": reason,
+            }
+        )
 
         print(f"skip={should_skip}")
         print(f"reason={reason}")
