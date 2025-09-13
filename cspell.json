@@ -248,7 +248,11 @@
         "bintroduc",
         "bremov",
         "endgroup",
-        "notgithub"
+        "notgithub",
+        "isize",
+        "downcasting",
+        "Swatinem",
+        "tarpaulin"
     ],
     "ignoreWords": [],
     "import": []

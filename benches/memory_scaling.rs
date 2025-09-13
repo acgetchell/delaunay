@@ -17,6 +17,9 @@ use std::sync::Mutex;
 /// Bounds for random triangulation generation - consistent with examples and other benchmarks
 const BOUNDS: (f64, f64) = (-100.0, 100.0);
 
+/// Environment variable to enable quiet mode (reduces benchmark output verbosity)
+const QUIET_MODE_ENV: &str = "CRITERION_QUIET_MODE";
+
 /// Memory measurement record for CSV output
 #[derive(Debug, Clone)]
 struct MemoryRecord {
@@ -252,7 +255,7 @@ fn benchmark_memory_scaling_4d(c: &mut Criterion) {
 fn benchmark_memory_scaling_5d(c: &mut Criterion) {
     let point_counts = [8, 10];
     let mut group = c.benchmark_group("memory_scaling_5d");
-    group.sample_size(5); // Further reduce sample size for 5D
+    group.sample_size(10); // Minimum criterion sampling size
 
     for &n_points in &point_counts {
         group.throughput(Throughput::Elements(n_points as u64));
@@ -284,7 +287,9 @@ fn write_memory_records_to_csv() {
 
     if let Ok(mut file) = File::create(&csv_path) {
         if let Err(e) = MemoryRecord::write_csv_header(&mut file) {
-            eprintln!("failed writing CSV header to {}: {e}", csv_path.display());
+            if std::env::var(QUIET_MODE_ENV).is_err() {
+                eprintln!("failed writing CSV header to {}: {e}", csv_path.display());
+            }
             return;
         }
 
@@ -293,7 +298,9 @@ fn write_memory_records_to_csv() {
                 .lock()
                 .expect("MEMORY_RECORDS mutex poisoned");
             for record in records.iter() {
-                if let Err(e) = record.write_csv_row(&mut file) {
+                if let Err(e) = record.write_csv_row(&mut file)
+                    && std::env::var(QUIET_MODE_ENV).is_err()
+                {
                     eprintln!(
                         "failed writing CSV row (dim={} points={}): {e}",
                         record.dimension, record.points
@@ -302,8 +309,10 @@ fn write_memory_records_to_csv() {
             }
         } // Drop the lock here
 
-        println!("Memory scaling results written to: {}", csv_path.display());
-    } else {
+        if std::env::var(QUIET_MODE_ENV).is_err() {
+            println!("Memory scaling results written to: {}", csv_path.display());
+        }
+    } else if std::env::var(QUIET_MODE_ENV).is_err() {
         eprintln!("failed to create {}", csv_path.display());
     }
 }
@@ -326,39 +335,58 @@ fn print_memory_summary() {
 
             if !dim_records.is_empty() {
                 println!("\n{dimension}D Triangulations:");
-                for record in &dim_records {
+
+                // In quiet mode, show only summary statistics instead of per-measurement details
+                if std::env::var(QUIET_MODE_ENV).is_ok() {
+                    let total_measurements = dim_records.len();
                     #[cfg(feature = "count-allocations")]
                     {
                         #[allow(clippy::cast_precision_loss)]
-                        let kb_total = record.bytes_total as f64 / 1024.0;
-                        let mib_total = kb_total / 1024.0;
-                        if kb_total >= 1024.0 {
-                            println!(
-                                "  {} points: {} vertices, {} cells, {:.1} KB ({:.2} MiB) total, {:.2} bytes/vertex",
-                                record.points,
-                                record.vertices,
-                                record.cells,
-                                kb_total,
-                                mib_total,
-                                record.bytes_per_vertex
-                            );
-                        } else {
-                            println!(
-                                "  {} points: {} vertices, {} cells, {:.1} KB total, {:.2} bytes/vertex",
-                                record.points,
-                                record.vertices,
-                                record.cells,
-                                kb_total,
-                                record.bytes_per_vertex
-                            );
-                        }
+                        let avg_bytes_per_vertex: f64 =
+                            dim_records.iter().map(|r| r.bytes_per_vertex).sum::<f64>()
+                                / total_measurements as f64;
+                        println!(
+                            "  {total_measurements} measurements, avg {avg_bytes_per_vertex:.2} bytes/vertex"
+                        );
                     }
-
                     #[cfg(not(feature = "count-allocations"))]
-                    println!(
-                        "  {} points: {} vertices, {} cells (allocation counting disabled)",
-                        record.points, record.vertices, record.cells
-                    );
+                    println!("  {total_measurements} measurements (allocation counting disabled)");
+                } else {
+                    // Detailed output for non-quiet mode
+                    for record in &dim_records {
+                        #[cfg(feature = "count-allocations")]
+                        {
+                            #[allow(clippy::cast_precision_loss)]
+                            let kb_total = record.bytes_total as f64 / 1024.0;
+                            let mib_total = kb_total / 1024.0;
+                            if kb_total >= 1024.0 {
+                                println!(
+                                    "  {} points: {} vertices, {} cells, {:.1} KB ({:.2} MiB) total, {:.2} bytes/vertex",
+                                    record.points,
+                                    record.vertices,
+                                    record.cells,
+                                    kb_total,
+                                    mib_total,
+                                    record.bytes_per_vertex
+                                );
+                            } else {
+                                println!(
+                                    "  {} points: {} vertices, {} cells, {:.1} KB total, {:.2} bytes/vertex",
+                                    record.points,
+                                    record.vertices,
+                                    record.cells,
+                                    kb_total,
+                                    record.bytes_per_vertex
+                                );
+                            }
+                        }
+
+                        #[cfg(not(feature = "count-allocations"))]
+                        println!(
+                            "  {} points: {} vertices, {} cells (allocation counting disabled)",
+                            record.points, record.vertices, record.cells
+                        );
+                    }
                 }
             }
         }

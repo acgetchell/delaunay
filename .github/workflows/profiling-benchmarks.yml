@@ -216,8 +216,7 @@ jobs:
       - name: Run memory scaling benchmarks
         run: |
           echo "Running memory scaling analysis..."
-          cargo bench --bench memory_scaling --features count-allocations
-
+          CRITERION_QUIET_MODE=1 cargo bench --bench memory_scaling --features count-allocations
       - name: Upload memory test results
         uses: actions/upload-artifact@v4
         with:
