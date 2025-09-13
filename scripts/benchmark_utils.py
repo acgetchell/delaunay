@@ -21,6 +21,8 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+
+# NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
 from shutil import copy2 as copyfile
 
 try:
@@ -1425,12 +1427,14 @@ class PerformanceComparator:
                     ["bench", "--bench", "ci_performance_suite", "--quiet", "--", *DEV_MODE_BENCH_ARGS],
                     cwd=self.project_root,
                     timeout=bench_timeout,
+                    capture_output=True,
                 )
             else:
                 run_cargo_command(
                     ["bench", "--bench", "ci_performance_suite", "--quiet"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
+                    capture_output=True,
                 )
 
             # Parse current results
@@ -1895,16 +1899,22 @@ class BenchmarkRegressionHelper:
         # Show baseline metadata
         print("=== Baseline Information (from artifact) ===")
         target_file = baseline_dir / "baseline_results.txt"  # Use the copied/standard file
-        with target_file.open("r", encoding="utf-8") as f:
-            lines = f.readlines()
+        lines: list[str] = []
+        try:
+            with target_file.open("r", encoding="utf-8") as f:
+                lines = f.readlines()
             for _i, line in enumerate(lines[:10]):
                 print(line.rstrip())
+        except OSError as e:
+            print(f"⚠️ Failed to read baseline summary: {e}", file=sys.stderr)
+            lines = []
 
         # Propagate tag (if present) to the workflow environment
-        tag_line = next((ln for ln in lines if ln.startswith("Tag: ")), None)
-        if tag_line:
-            tag_value = tag_line.split(":", 1)[1].strip()
-            BenchmarkRegressionHelper._write_github_env_vars({"BASELINE_TAG": tag_value})
+        if lines:
+            tag_line = next((ln for ln in lines if ln.startswith("Tag: ")), None)
+            if tag_line:
+                tag_value = tag_line.split(":", 1)[1].strip()
+                BenchmarkRegressionHelper._write_github_env_vars({"BASELINE_TAG": tag_value})
 
         return True
 
@@ -1927,10 +1937,14 @@ class BenchmarkRegressionHelper:
         tag_files = list(baseline_dir.glob("baseline-v*.txt"))
 
         def _version_key(p: Path) -> tuple[int, int, int, int, str]:
+            # Parse semantic version from baseline filename (baseline-vX.Y.Z*.txt)
             m = re.search(r"baseline-v(\d+)\.(\d+)\.(\d+)(?:[^/]*)\.txt$", p.name)
             if m:
                 major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
                 # Prefer stable (no prerelease) over prerelease for same version
+                # NOTE: Prerelease ordering within same version uses lexicographic comparison
+                # (e.g., v1.0.0-alpha < v1.0.0-beta). For fuller semver compliance, consider
+                # using a dedicated semver library if more complex prerelease logic is needed.
                 no_prerelease = 1 if "-" not in p.stem else 0
                 return (major, minor, patch, no_prerelease, p.name)
             # Fallback: put non-matching names last
@@ -2002,13 +2016,11 @@ class BenchmarkRegressionHelper:
                 if extracted_sha:
                     commit_sha = extracted_sha
 
-        # Set GitHub Actions environment variable
-        github_env = os.getenv("GITHUB_ENV")
-        if github_env:
-            with open(github_env, "a", encoding="utf-8") as f:
-                f.write(f"BASELINE_COMMIT={commit_sha}\n")
-                if baseline_file:
-                    f.write(f"BASELINE_SOURCE_FILE={baseline_file.name}\n")
+        # Set GitHub Actions environment variables
+        env_vars = {"BASELINE_COMMIT": commit_sha}
+        if baseline_file:
+            env_vars["BASELINE_SOURCE_FILE"] = baseline_file.name
+        BenchmarkRegressionHelper._write_github_env_vars(env_vars)
 
         return commit_sha
 

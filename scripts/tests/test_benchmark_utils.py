@@ -1061,6 +1061,62 @@ Tag: v1.0.0
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
+    def test_prepare_baseline_read_summary_error_handling(self, capsys):
+        """Test graceful error handling when baseline summary cannot be read."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            baseline_file = baseline_dir / "baseline_results.txt"
+
+            # Create a test baseline file
+            baseline_content = """Date: 2023-12-15 10:30:00 UTC
+Git commit: abc123def456
+Tag: v1.0.0
+Hardware Information:
+  OS: macOS
+  CPU: Apple M4 Max
+
+=== 1000 Points (2D) ===
+Time: [95.0, 100.0, 105.0] µs
+"""
+            baseline_file.write_text(baseline_content)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                # Mock Path.open method to fail for read operations on baseline_results.txt
+                original_path_open = Path.open
+
+                def mock_path_open(self, mode="r", *args, **kwargs):
+                    if self.name == "baseline_results.txt" and "r" in mode:
+                        msg = "Read permission denied"
+                        raise OSError(msg)
+                    return original_path_open(self, mode, *args, **kwargs)
+
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}), patch.object(Path, "open", mock_path_open):
+                    success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
+
+                    # Should still succeed despite read error
+                    assert success
+
+                    # Check that success environment variables were set
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_EXISTS=true" in env_content
+                        assert "BASELINE_SOURCE=artifact" in env_content
+                        assert "BASELINE_ORIGIN=artifact" in env_content
+                        assert "BASELINE_SOURCE_FILE=baseline_results.txt" in env_content
+                        # BASELINE_TAG should not be set since we couldn't read the file
+                        assert "BASELINE_TAG=" not in env_content
+
+                    # Check warning message was printed to stderr
+                    captured = capsys.readouterr()
+                    assert "⚠️ Failed to read baseline summary: Read permission denied" in captured.err
+                    assert "=== Baseline Information (from artifact) ===" in captured.out
+
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
     def test_prepare_baseline_missing_file(self, capsys):
         """Test baseline preparation when baseline file is missing."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2583,8 +2639,8 @@ Tag: v0.4.3
             # Should select the highest version (beta.2 > beta.1 > alpha.1 lexicographically)
             selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
             assert selected is not None
-            # Note: This will be lexicographic since our regex only captures major.minor.patch
-            # For now, this documents the current behavior
+            # Current behavior: lexicographic prerelease ordering; expect beta.2 to win
+            assert selected.name == "baseline-v1.2.3-beta.2.txt"
 
     def test_prepare_baseline_and_extract_commit_integration(self):
         """Test the integration between prepare_baseline and extract_baseline_commit."""
