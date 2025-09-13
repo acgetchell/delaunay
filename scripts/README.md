@@ -49,6 +49,8 @@ benchmarking, changelog management, and hardware detection.
 - **Criterion JSON Parsing**: Direct parsing of Criterion's estimates.json for accuracy
 - **Baseline Generation**: `generate-baseline` command with git metadata
 - **Performance Comparison**: `compare` command with regression detection (>5% threshold)
+- **Flexible Baseline Formats**: Handles standard and tag-specific baseline file naming patterns
+- **Automatic File Conversion**: Converts tag-specific baselines to standard format for compatibility
 - **Hardware Integration**: Automatic hardware info inclusion and comparison
 - **Development Mode**: `--dev` flag for faster benchmarks (10x speedup)
 - **Timezone-Aware Dating**: Proper timezone handling for timestamps
@@ -80,6 +82,35 @@ Time Change: [+0.45%, +0.45%, +0.45%]
 ```
 
 **Dependencies**: Python 3.13+, `hardware_utils.py`
+
+**Regression Testing Workflow Commands**:
+
+```bash
+# Prepare downloaded baseline artifact (handles tag-specific files)
+uv run benchmark-utils prepare-baseline [--baseline-dir DIR]
+
+# Extract commit SHA from baseline artifact
+uv run benchmark-utils extract-baseline-commit [--baseline-dir DIR]
+
+# Determine if benchmarks should be skipped based on changes
+uv run benchmark-utils determine-skip --baseline-commit SHA --current-commit SHA
+
+# Run performance regression test
+uv run benchmark-utils run-regression-test --baseline FILE
+
+# Display regression test results
+uv run benchmark-utils display-results [--results FILE]
+
+# Generate regression testing summary
+uv run benchmark-utils regression-summary
+```
+
+**Baseline File Compatibility**:
+
+- **Standard format**: `baseline_results.txt` (always supported)
+- **Tag-specific format**: `baseline-vX.Y.Z.txt` (automatically converted to standard format)
+- **Generic format**: `baseline*.txt` (fallback for any baseline file)
+- **Metadata support**: Uses `metadata.json` when baseline files lack commit info
 
 ---
 
@@ -437,10 +468,11 @@ The repository includes automated performance regression testing via GitHub Acti
 
 ```bash
 # If baseline exists:
-# 1. Downloads baseline from artifacts
-# 2. Runs uv run benchmark-utils compare --baseline benches/baseline_results.txt
-# 3. Fails CI if >5% performance regression detected
-# 4. Uploads comparison results as artifacts
+# 1. Downloads baseline from artifacts (performance-baseline-vX.Y.Z)
+# 2. Automatically converts tag-specific files (baseline-vX.Y.Z.txt → baseline_results.txt)
+# 3. Runs uv run benchmark-utils run-regression-test --baseline baseline-artifact/baseline_results.txt
+# 4. Flags regressions (sets BENCHMARK_REGRESSION_DETECTED); CI may fail in a later step if configured
+# 5. Uploads comparison results as artifacts
 
 # If no baseline exists:
 # 1. Logs instructions for creating baseline
@@ -451,6 +483,8 @@ The repository includes automated performance regression testing via GitHub Acti
 #### CI Integration Benefits
 
 - **Automated baseline management**: No manual baseline commits needed
+- **Flexible baseline formats**: Handles both standard (`baseline_results.txt`) and tag-specific (`baseline-vX.Y.Z.txt`) naming
+- **Automatic normalization**: Converts tag-specific artifacts to standard format for compatibility
 - **Separate from main CI**: Avoids slowing down regular development workflow
 - **Environment consistency**: Uses macOS runners (Apple Silicon) for reproducible benchmark comparisons
 - **Smart triggering**: Only runs on changes that could affect performance
@@ -466,6 +500,10 @@ The repository includes automated performance regression testing via GitHub Acti
 3. **Path Issues**: Run scripts from the project root directory
 4. **Missing Baseline**: Create a git tag to automatically generate baseline via CI, or run `uv run benchmark-utils generate-baseline` locally
 5. **Python Version**: Ensure Python 3.13+ is installed and available
+6. **Baseline Format Issues**: The system automatically handles different baseline file formats:
+   - `baseline-vX.Y.Z.txt` (from generate-baseline workflow) → converted to `baseline_results.txt`
+   - `baseline_results.txt` (standard format) → used directly
+   - Multiple files → uses first available in preference order
 
 ### Exit Codes
 

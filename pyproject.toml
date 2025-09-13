@@ -26,6 +26,11 @@ classifiers = [
     "Topic :: System :: Benchmarking",
 ]
 
+# Project dependencies
+dependencies = [
+    "packaging",
+]
+
 [project.urls]
 "Homepage" = "https://github.com/acgetchell/delaunay"
 "Documentation" = "https://docs.rs/delaunay"

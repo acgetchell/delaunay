@@ -22,6 +22,12 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+# NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
+from shutil import copy2 as copyfile
+from uuid import uuid4
+
+from packaging.version import Version
+
 try:
     # When executed as a script from scripts/
     from benchmark_models import (  # type: ignore[no-redef]
@@ -1325,15 +1331,17 @@ class BaselineGenerator:
             # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
                 run_cargo_command(
-                    ["bench", "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS],
+                    ["bench", "--bench", "ci_performance_suite", "--quiet", "--", *DEV_MODE_BENCH_ARGS],
                     cwd=self.project_root,
                     timeout=bench_timeout,
+                    capture_output=True,
                 )
             else:
                 run_cargo_command(
-                    ["bench", "--bench", "ci_performance_suite"],
+                    ["bench", "--bench", "ci_performance_suite", "--quiet"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
+                    capture_output=True,
                 )
 
             # Parse Criterion results
@@ -1421,15 +1429,17 @@ class PerformanceComparator:
             # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
                 run_cargo_command(
-                    ["bench", "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS],
+                    ["bench", "--bench", "ci_performance_suite", "--quiet", "--", *DEV_MODE_BENCH_ARGS],
                     cwd=self.project_root,
                     timeout=bench_timeout,
+                    capture_output=True,
                 )
             else:
                 run_cargo_command(
-                    ["bench", "--bench", "ci_performance_suite"],
+                    ["bench", "--bench", "ci_performance_suite", "--quiet"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
+                    capture_output=True,
                 )
 
             # Parse current results
@@ -1440,7 +1450,7 @@ class PerformanceComparator:
                 return False, False
 
             # Parse baseline
-            baseline_content = baseline_file.read_text()
+            baseline_content = baseline_file.read_text(encoding="utf-8")
             baseline_results = self._parse_baseline_file(baseline_content)
 
             # Generate comparison report
@@ -1723,8 +1733,9 @@ class WorkflowHelper:
         # Set GitHub Actions output if available
         github_output = os.getenv("GITHUB_OUTPUT")
         if github_output:
+            safe = tag_name.replace("\r", "").replace("\n", "")
             with open(github_output, "a", encoding="utf-8") as f:
-                f.write(f"tag_name={tag_name}\n")
+                f.write(f"tag_name={safe}\n")
 
         print(f"Final tag name: {tag_name}", file=sys.stderr)
         return tag_name
@@ -1830,8 +1841,9 @@ class WorkflowHelper:
         # Set GitHub Actions output if available
         github_output = os.getenv("GITHUB_OUTPUT")
         if github_output:
+            safe = artifact_name.replace("\r", "").replace("\n", "")
             with open(github_output, "a", encoding="utf-8") as f:
-                f.write(f"artifact_name={artifact_name}\n")
+                f.write(f"artifact_name={safe}\n")
 
         print(f"Using sanitized artifact name: {artifact_name}", file=sys.stderr)
         return artifact_name
@@ -1839,6 +1851,30 @@ class WorkflowHelper:
 
 class BenchmarkRegressionHelper:
     """Helper functions for performance regression testing workflow."""
+
+    @staticmethod
+    def write_github_env_vars(env_vars: dict[str, str]) -> None:
+        """Helper to write multiple environment variables to GITHUB_ENV.
+        Args:
+            env_vars: Dictionary of environment variable names and values
+        """
+        github_env = os.getenv("GITHUB_ENV")
+        if github_env:
+            with open(github_env, "a", encoding="utf-8") as f:
+                for key, value in env_vars.items():
+                    val = "" if value is None else str(value)
+                    # Normalize CR to avoid breaking heredoc boundaries
+                    val = val.replace("\r", "")
+                    if "\n" in val:
+                        token = f"EOF_{uuid4().hex}"
+                        f.write(f"{key}<<{token}\n{val}\n{token}\n")
+                    else:
+                        f.write(f"{key}={val}\n")
+        # Make variables immediately available in this process as well
+        for key, value in env_vars.items():
+            val = "" if value is None else str(value)
+            val = val.replace("\r", "")
+            os.environ[key] = val
 
     @staticmethod
     def prepare_baseline(baseline_dir: Path) -> bool:
@@ -1851,49 +1887,131 @@ class BenchmarkRegressionHelper:
         Returns:
             True if baseline exists and is valid, False otherwise
         """
-        baseline_file = baseline_dir / "baseline_results.txt"
+        # Look for baseline files using shared logic
+        baseline_file = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
 
-        if baseline_file.exists():
+        # If a baseline file was found, copy it to baseline_results.txt for consistency
+        if baseline_file and baseline_file.name != "baseline_results.txt":
+            target_file = baseline_dir / "baseline_results.txt"
+            try:
+                copyfile(baseline_file, target_file)
+                print(f"📦 Prepared baseline from artifact: {baseline_file.name} → baseline_results.txt")
+            except OSError as e:
+                print(f"❌ Failed to prepare baseline: {e}", file=sys.stderr)
+                BenchmarkRegressionHelper.write_github_env_vars(
+                    {"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "artifact", "BASELINE_ORIGIN": "artifact"}
+                )
+                return False
+        elif baseline_file:
             print("📦 Prepared baseline from artifact")
-
-            # Set GitHub Actions environment variables
-            github_env = os.getenv("GITHUB_ENV")
-            if github_env:
-                with open(github_env, "a", encoding="utf-8") as f:
-                    f.write("BASELINE_EXISTS=true\n")
-                    f.write("BASELINE_SOURCE=artifact\n")
-
-            # Show baseline metadata
-            print("=== Baseline Information (from artifact) ===")
-            with baseline_file.open("r", encoding="utf-8") as f:
-                for _i, line in enumerate(f.readlines()[:3]):
-                    print(line.rstrip())
-
-            return True
-        print("❌ Downloaded artifact but no baseline_results.txt found")
+        else:
+            print("❌ Downloaded artifact but no baseline*.txt files found", file=sys.stderr)
+            BenchmarkRegressionHelper.write_github_env_vars({"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "missing", "BASELINE_ORIGIN": "unknown"})
+            return False
 
         # Set GitHub Actions environment variables
-        github_env = os.getenv("GITHUB_ENV")
-        if github_env:
-            with open(github_env, "a", encoding="utf-8") as f:
-                f.write("BASELINE_EXISTS=false\n")
-                f.write("BASELINE_SOURCE=missing\n")
-                f.write("BASELINE_ORIGIN=unknown\n")
+        BenchmarkRegressionHelper.write_github_env_vars(
+            {"BASELINE_EXISTS": "true", "BASELINE_SOURCE": "artifact", "BASELINE_ORIGIN": "artifact", "BASELINE_SOURCE_FILE": baseline_file.name}
+        )
 
-        return False
+        # Show baseline metadata
+        print("=== Baseline Information (from artifact) ===")
+        target_file = baseline_dir / "baseline_results.txt"  # Use the copied/standard file
+        lines: list[str] = []
+        try:
+            with target_file.open("r", encoding="utf-8") as f:
+                lines = f.readlines()
+            for _i, line in enumerate(lines[:10]):
+                print(line.rstrip())
+        except OSError as e:
+            print(f"⚠️ Failed to read baseline summary: {e}", file=sys.stderr)
+            lines = []
+
+        # Propagate tag (if present) to the workflow environment
+        if lines:
+            tag_line = next((ln for ln in lines if ln.startswith("Tag: ")), None)
+            if tag_line:
+                raw_tag = tag_line.split(":", 1)[1].strip()
+                # Allow [A-Za-z0-9._-+]; replace others with underscore and cap length
+                safe_tag = re.sub(r"[^A-Za-z0-9._\-+]", "_", raw_tag)[:64]
+                BenchmarkRegressionHelper.write_github_env_vars({"BASELINE_TAG": safe_tag})
+
+        return True
 
     @staticmethod
     def set_no_baseline_status() -> None:
         """Set environment variables when no baseline is found."""
         print("📈 No baseline artifact found for performance comparison")
 
-        # Set GitHub Actions environment variables
-        github_env = os.getenv("GITHUB_ENV")
-        if github_env:
-            with open(github_env, "a", encoding="utf-8") as f:
-                f.write("BASELINE_EXISTS=false\n")
-                f.write("BASELINE_SOURCE=none\n")
-                f.write("BASELINE_ORIGIN=none\n")
+        BenchmarkRegressionHelper.write_github_env_vars({"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "none", "BASELINE_ORIGIN": "none"})
+
+    @staticmethod
+    def _find_baseline_file(baseline_dir: Path) -> Path | None:
+        """Find the best available baseline file in the directory."""
+        # Try standard name first
+        baseline_file = baseline_dir / "baseline_results.txt"
+        if baseline_file.exists():
+            return baseline_file
+
+        # Try tag-specific files (prefer highest semver if available)
+        tag_files = list(baseline_dir.glob("baseline-v*.txt"))
+
+        def _version_key(p: Path) -> tuple[int, Version | str, str]:
+            # Parse semantic version from baseline filename (baseline-vX.Y.Z[-prerelease]?.txt)
+            # Using packaging.version.Version for proper semantic version comparison
+            m = re.match(r"baseline-v(.+)\.txt$", p.name)
+            if m:
+                version_str = m.group(1)
+                try:
+                    version = Version(version_str)
+                    # Valid version: priority 1 (sorts first when reversed)
+                    return (1, version, p.name)
+                except Exception as e:
+                    # Invalid version format, treat as non-semver
+                    logging.debug("Invalid version format in %s: %s", p.name, e)
+            # Fallback: put non-matching names last (priority 0, sorts after valid versions when reversed)
+            return (0, p.name, "")
+
+        if tag_files:
+            # Sort by version (descending), with None (invalid versions) sorted last
+            tag_files.sort(key=_version_key, reverse=True)
+            # Return the highest valid version, or first file if no valid versions
+            return tag_files[0]
+
+        # Try any baseline*.txt files
+        baseline_files = list(baseline_dir.glob("baseline*.txt"))
+        if baseline_files:
+            # Prefer most recent file when no semver match is available
+            return max(baseline_files, key=lambda p: p.stat().st_mtime)
+
+        return None
+
+    @staticmethod
+    def _extract_commit_from_baseline_file(baseline_file: Path) -> str | None:
+        """Extract commit SHA from baseline text file."""
+        try:
+            with baseline_file.open("r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("Git commit:"):
+                        potential_sha = line.partition(":")[2].strip().split()[0]
+                        if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
+                            return potential_sha
+        except (OSError, ValueError) as e:
+            logging.debug("Could not extract commit from %s: %s", baseline_file.name, e)
+        return None
+
+    @staticmethod
+    def _extract_commit_from_metadata(metadata_file: Path) -> str | None:
+        """Extract commit SHA from metadata.json file."""
+        try:
+            with metadata_file.open("r", encoding="utf-8") as f:
+                metadata = json.load(f)
+                potential_sha = metadata.get("commit", "")
+                if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
+                    return potential_sha
+        except (OSError, json.JSONDecodeError, KeyError) as e:
+            logging.debug("Could not extract commit from metadata.json: %s", e)
+        return None
 
     @staticmethod
     def extract_baseline_commit(baseline_dir: Path) -> str:
@@ -1906,45 +2024,34 @@ class BenchmarkRegressionHelper:
         Returns:
             Commit SHA string, or "unknown" if not found
         """
-        baseline_file = baseline_dir / "baseline_results.txt"
-        metadata_file = baseline_dir / "metadata.json"
-
         commit_sha = "unknown"
+        commit_source = "unknown"
 
-        # Try to extract from baseline_results.txt first
-        if baseline_file.exists():
-            try:
-                with baseline_file.open("r", encoding="utf-8") as f:
-                    for line in f:
-                        if line.startswith("Git commit:"):
-                            parts = line.strip().split()
-                            if len(parts) >= 3:
-                                potential_sha = parts[2]
-                                # Validate SHA format (7-40 hex characters)
-                                if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
-                                    commit_sha = potential_sha
-                                    break
-            except (OSError, ValueError) as e:
-                # Failed to read/parse baseline file - continue with metadata fallback
-                logging.debug("Could not extract commit from baseline_results.txt: %s", e)
+        # Try to extract from baseline file first
+        baseline_file = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
+        if baseline_file:
+            extracted_sha = BenchmarkRegressionHelper._extract_commit_from_baseline_file(baseline_file)
+            if extracted_sha:
+                commit_sha = extracted_sha
+                commit_source = "baseline"
 
         # Fallback to metadata.json if needed
-        if commit_sha == "unknown" and metadata_file.exists():
-            try:
-                with metadata_file.open("r", encoding="utf-8") as f:
-                    metadata = json.load(f)
-                    potential_sha = metadata.get("commit", "")
-                    if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
-                        commit_sha = potential_sha
-            except (OSError, json.JSONDecodeError, KeyError) as e:
-                # Failed to read/parse metadata file - will use "unknown" commit
-                logging.debug("Could not extract commit from metadata.json: %s", e)
+        if commit_sha == "unknown":
+            metadata_file = baseline_dir / "metadata.json"
+            if metadata_file.exists():
+                extracted_sha = BenchmarkRegressionHelper._extract_commit_from_metadata(metadata_file)
+                if extracted_sha:
+                    commit_sha = extracted_sha
+                    commit_source = "metadata"
 
-        # Set GitHub Actions environment variable
-        github_env = os.getenv("GITHUB_ENV")
-        if github_env:
-            with open(github_env, "a", encoding="utf-8") as f:
-                f.write(f"BASELINE_COMMIT={commit_sha}\n")
+        # Set GitHub Actions environment variables
+        env_vars = {
+            "BASELINE_COMMIT": commit_sha,
+            "BASELINE_COMMIT_SOURCE": commit_source,
+        }
+        if baseline_file:
+            env_vars["BASELINE_SOURCE_FILE"] = baseline_file.name
+        BenchmarkRegressionHelper.write_github_env_vars(env_vars)
 
         return commit_sha
 
@@ -2032,7 +2139,7 @@ class BenchmarkRegressionHelper:
             baseline_path: Path to baseline file
 
         Returns:
-            True if test completed successfully (regardless of regressions), False on error
+            True if comparison ran and no regressions detected; False on regressions or error
         """
         try:
             print("🚀 Running performance regression test...")
@@ -2050,9 +2157,9 @@ class BenchmarkRegressionHelper:
             # Provide feedback about regression results
             if regression_found:
                 print("⚠️ Performance regressions detected in benchmark comparison")
-            else:
-                print("✅ No significant performance regressions detected")
+                return False  # cause non-zero exit in CLI
 
+            print("✅ No significant performance regressions detected")
             return True
 
         except Exception as e:
@@ -2105,11 +2212,8 @@ class BenchmarkRegressionHelper:
                         print("Result: ⚠️ Performance regressions detected")
                         # Set environment variable for machine consumption by CI systems
                         os.environ["BENCHMARK_REGRESSION_DETECTED"] = "true"
-                        # Also export to GITHUB_ENV if available
-                        github_env = os.getenv("GITHUB_ENV")
-                        if github_env:
-                            with open(github_env, "a", encoding="utf-8") as f:
-                                f.write("BENCHMARK_REGRESSION_DETECTED=true\n")
+                        # Also export to GITHUB_ENV using safe helper
+                        BenchmarkRegressionHelper.write_github_env_vars({"BENCHMARK_REGRESSION_DETECTED": "true"})
                         print("   Exported BENCHMARK_REGRESSION_DETECTED=true for downstream CI steps")
                     else:
                         print("Result: ✅ No significant performance regressions")
@@ -2265,11 +2369,12 @@ def execute_regression_commands(args: argparse.Namespace) -> None:
         should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip(args.baseline_commit, args.current_commit)
 
         # Set GitHub Actions environment variables
-        github_env = os.getenv("GITHUB_ENV")
-        if github_env:
-            with open(github_env, "a", encoding="utf-8") as f:
-                f.write(f"SKIP_BENCHMARKS={'true' if should_skip else 'false'}\n")
-                f.write(f"SKIP_REASON={reason}\n")
+        BenchmarkRegressionHelper.write_github_env_vars(
+            {
+                "SKIP_BENCHMARKS": "true" if should_skip else "false",
+                "SKIP_REASON": reason,
+            }
+        )
 
         print(f"skip={should_skip}")
         print(f"reason={reason}")

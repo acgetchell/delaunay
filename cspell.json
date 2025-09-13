@@ -254,6 +254,13 @@
         "Swatinem",
         "tarpaulin"
     ],
+    "flagWords": ["varous", "tarpauline"],
+    "overrides": [
+        {
+            "filename": "CHANGELOG.md",
+            "ignoreWords": ["varous", "tarpauline"]
+        }
+    ],
     "ignoreWords": [],
     "import": []
 }
