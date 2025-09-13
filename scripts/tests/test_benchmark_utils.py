@@ -330,6 +330,35 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         result = output.getvalue()
         assert "N/A (baseline mean is 0)" in result
 
+    @patch("benchmark_utils.run_cargo_command")
+    def test_compare_uses_quiet(self, mock_cargo):
+        """Test that PerformanceComparator invokes cargo with --quiet flag."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            baseline_file = temp_path / "baseline.txt"
+
+            # Create a minimal baseline file
+            baseline_content = """Date: 2023-12-15 10:30:00 UTC
+Git commit: abc123
+=== 10 Points (2D) ===
+Time: [1.0, 1.0, 1.0] µs
+"""
+            baseline_file.write_text(baseline_content)
+
+            # Mock successful cargo command
+            mock_result = Mock()
+            mock_result.returncode = 0
+            mock_result.stdout = ""
+            mock_cargo.return_value = mock_result
+
+            comparator = PerformanceComparator(temp_path)
+            comparator.compare_with_baseline(baseline_file, dev_mode=False)
+
+            # Verify cargo was called with --quiet flag
+            assert mock_cargo.call_count >= 1
+            args = mock_cargo.call_args[0][0]
+            assert "--quiet" in args
+
     def test_write_performance_comparison_no_average_regression(self, comparator):
         """Test performance comparison with individual regressions but no average regression."""
         # Create current results with mixed performance changes
@@ -985,6 +1014,7 @@ Time: [95.0, 100.0, 105.0] µs
                         env_content = f.read()
                         assert "BASELINE_EXISTS=true" in env_content
                         assert "BASELINE_SOURCE=artifact" in env_content
+                        assert "BASELINE_ORIGIN=artifact" in env_content
 
                     # Check that baseline info was printed
                     captured = capsys.readouterr()
@@ -2216,6 +2246,7 @@ Time: [160.1, 168.18, 177.67] µs
                         env_content = f.read()
                         assert "BASELINE_EXISTS=true" in env_content
                         assert "BASELINE_SOURCE=artifact" in env_content
+                        assert "BASELINE_ORIGIN=artifact" in env_content
 
                     # Check that baseline info was printed with file conversion message
                     captured = capsys.readouterr()
@@ -2258,6 +2289,13 @@ Time: [95.0, 100.0, 105.0] µs
 
                     assert success
 
+                    # Check that environment variables were set
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_EXISTS=true" in env_content
+                        assert "BASELINE_SOURCE=artifact" in env_content
+                        assert "BASELINE_ORIGIN=artifact" in env_content
+
                     # Check that baseline info was printed with file conversion message
                     captured = capsys.readouterr()
                     assert "📦 Prepared baseline from artifact: baseline-manual-test.txt → baseline_results.txt" in captured.out
@@ -2293,6 +2331,13 @@ Time: [95.0, 100.0, 105.0] µs
                     success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
 
                     assert success
+
+                    # Check that environment variables were set
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_EXISTS=true" in env_content
+                        assert "BASELINE_SOURCE=artifact" in env_content
+                        assert "BASELINE_ORIGIN=artifact" in env_content
 
                     # Should use the standard file and not show conversion message
                     captured = capsys.readouterr()

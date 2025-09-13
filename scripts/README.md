@@ -471,7 +471,7 @@ The repository includes automated performance regression testing via GitHub Acti
 # 1. Downloads baseline from artifacts (performance-baseline-vX.Y.Z)
 # 2. Automatically converts tag-specific files (baseline-vX.Y.Z.txt → baseline_results.txt)
 # 3. Runs uv run benchmark-utils run-regression-test --baseline baseline-artifact/baseline_results.txt
-# 4. Fails CI if >5% performance regression detected
+# 4. Flags regressions (sets BENCHMARK_REGRESSION_DETECTED); CI may fail in a later step if configured
 # 5. Uploads comparison results as artifacts
 
 # If no baseline exists:

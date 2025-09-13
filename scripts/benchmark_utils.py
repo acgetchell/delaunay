@@ -1879,6 +1879,7 @@ class BenchmarkRegressionHelper:
             with open(github_env, "a", encoding="utf-8") as f:
                 f.write("BASELINE_EXISTS=true\n")
                 f.write("BASELINE_SOURCE=artifact\n")
+                f.write("BASELINE_ORIGIN=artifact\n")
 
         # Show baseline metadata
         print("=== Baseline Information (from artifact) ===")
@@ -1911,6 +1912,8 @@ class BenchmarkRegressionHelper:
             return baseline_file
 
         # Try tag-specific files
+        # TODO: current logic picks the first file alphabetically.
+        # If we require "latest tag" behavior, switch to semver-aware sorting here.
         tag_files = sorted(baseline_dir.glob("baseline-v*.txt"))
         if tag_files:
             return tag_files[0]
@@ -2090,9 +2093,9 @@ class BenchmarkRegressionHelper:
             # Provide feedback about regression results
             if regression_found:
                 print("⚠️ Performance regressions detected in benchmark comparison")
-            else:
-                print("✅ No significant performance regressions detected")
+                return False  # cause non-zero exit in CLI
 
+            print("✅ No significant performance regressions detected")
             return True
 
         except Exception as e:
