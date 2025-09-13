@@ -21,7 +21,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from shutil import copyfile
+from shutil import copy2 as copyfile
 
 try:
     # When executed as a script from scripts/
@@ -1858,8 +1858,18 @@ class BenchmarkRegressionHelper:
         # If a baseline file was found, copy it to baseline_results.txt for consistency
         if baseline_file and baseline_file.name != "baseline_results.txt":
             target_file = baseline_dir / "baseline_results.txt"
-            copyfile(baseline_file, target_file)
-            print(f"📦 Prepared baseline from artifact: {baseline_file.name} → baseline_results.txt")
+            try:
+                copyfile(baseline_file, target_file)
+                print(f"📦 Prepared baseline from artifact: {baseline_file.name} → baseline_results.txt")
+            except OSError as e:
+                print(f"❌ Failed to prepare baseline: {e}", file=sys.stderr)
+                github_env = os.getenv("GITHUB_ENV")
+                if github_env:
+                    with open(github_env, "a", encoding="utf-8") as f:
+                        f.write("BASELINE_EXISTS=false\n")
+                        f.write("BASELINE_SOURCE=artifact\n")
+                        f.write("BASELINE_ORIGIN=artifact\n")
+                return False
         elif baseline_file:
             print("📦 Prepared baseline from artifact")
         else:
@@ -1880,13 +1890,14 @@ class BenchmarkRegressionHelper:
                 f.write("BASELINE_EXISTS=true\n")
                 f.write("BASELINE_SOURCE=artifact\n")
                 f.write("BASELINE_ORIGIN=artifact\n")
+                f.write(f"BASELINE_SOURCE_FILE={baseline_file.name}\n")
 
         # Show baseline metadata
         print("=== Baseline Information (from artifact) ===")
         target_file = baseline_dir / "baseline_results.txt"  # Use the copied/standard file
         with target_file.open("r", encoding="utf-8") as f:
             lines = f.readlines()
-            for _i, line in enumerate(lines[:3]):
+            for _i, line in enumerate(lines[:10]):
                 print(line.rstrip())
 
         # Propagate tag (if present) to the workflow environment
@@ -2002,6 +2013,8 @@ class BenchmarkRegressionHelper:
         if github_env:
             with open(github_env, "a", encoding="utf-8") as f:
                 f.write(f"BASELINE_COMMIT={commit_sha}\n")
+                if baseline_file:
+                    f.write(f"BASELINE_SOURCE_FILE={baseline_file.name}\n")
 
         return commit_sha
 
