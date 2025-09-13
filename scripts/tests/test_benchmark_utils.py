@@ -363,6 +363,8 @@ Time: [1.0, 1.0, 1.0] µs
             if dev_mode:
                 for arg in DEV_MODE_BENCH_ARGS:
                     assert arg in args
+            # And output is captured
+            assert mock_cargo.call_args.kwargs.get("capture_output") is True
 
     def test_write_performance_comparison_no_average_regression(self, comparator):
         """Test performance comparison with individual regressions but no average regression."""
@@ -2357,7 +2359,8 @@ Time: [160.1, 168.18, 177.67] µs
 
                     # Check that baseline info was printed with file conversion message
                     captured = capsys.readouterr()
-                    assert "📦 Prepared baseline from artifact: baseline-v0.4.3.txt → baseline_results.txt" in captured.out
+                    assert "Prepared baseline from artifact: baseline-v0.4.3.txt" in captured.out
+                    assert " → baseline_results.txt" in captured.out
                     assert "=== Baseline Information" in captured.out
                     assert "Tag: v0.4.3" in captured.out
 
@@ -2405,7 +2408,8 @@ Time: [95.0, 100.0, 105.0] µs
 
                     # Check that baseline info was printed with file conversion message
                     captured = capsys.readouterr()
-                    assert "📦 Prepared baseline from artifact: baseline-manual-test.txt → baseline_results.txt" in captured.out
+                    assert "Prepared baseline from artifact: baseline-manual-test.txt" in captured.out
+                    assert " → baseline_results.txt" in captured.out
 
                     # Check that baseline_results.txt was created
                     standard_file = baseline_dir / "baseline_results.txt"
@@ -2448,8 +2452,8 @@ Time: [95.0, 100.0, 105.0] µs
 
                     # Should use the standard file and not show conversion message
                     captured = capsys.readouterr()
-                    assert "📦 Prepared baseline from artifact" in captured.out
-                    assert "→" not in captured.out  # No conversion arrow
+                    assert "Prepared baseline from artifact" in captured.out
+                    assert " → " not in captured.out  # No conversion arrow
 
                     # Standard file should remain unchanged
                     assert standard_file.read_text(encoding="utf-8") == standard_content
@@ -2772,6 +2776,208 @@ Hardware Information:
             for key in ["TEST_BASELINE_EXISTS", "TEST_BASELINE_SOURCE"]:
                 os.environ.pop(key, None)
 
+    def test_env_vars_multiline_handling(self):
+        """Test that _write_github_env_vars correctly handles multiline values with heredoc format."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+            env_path = env_file.name
+
+        try:
+            # Clear any existing test variables
+            for key in ["TEST_MULTILINE", "TEST_SINGLE_LINE", "TEST_WITH_CR"]:
+                os.environ.pop(key, None)
+
+            multiline_value = "Line 1\nLine 2\nLine 3"
+            cr_value = "Line 1\r\nLine 2\r\nLine 3"  # Contains CR characters
+
+            test_vars = {
+                "TEST_MULTILINE": multiline_value,
+                "TEST_SINGLE_LINE": "single",
+                "TEST_WITH_CR": cr_value,
+            }
+
+            with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                BenchmarkRegressionHelper._write_github_env_vars(test_vars)
+
+                # Verify variables are written to GITHUB_ENV file
+                with open(env_path, encoding="utf-8") as f:
+                    content = f.read()
+
+                    # Single line should use regular key=value format
+                    assert "TEST_SINGLE_LINE=single" in content
+
+                    # Multiline should use heredoc format
+                    assert "TEST_MULTILINE<<EOF_" in content
+                    assert "Line 1\nLine 2\nLine 3" in content
+
+                    # CR characters should be stripped
+                    assert "Line 1\nLine 2\nLine 3" in content
+                    assert "\r" not in content
+
+                # Verify variables are also available in current process
+                assert os.environ["TEST_MULTILINE"] == multiline_value
+                assert os.environ["TEST_SINGLE_LINE"] == "single"
+                assert os.environ["TEST_WITH_CR"] == cr_value
+
+        finally:
+            Path(env_path).unlink(missing_ok=True)
+            # Clean up test variables
+            for key in ["TEST_MULTILINE", "TEST_SINGLE_LINE", "TEST_WITH_CR"]:
+                os.environ.pop(key, None)
+
+    def test_baseline_tag_sanitization(self):
+        """Test that BASELINE_TAG is sanitized before being exported to GITHUB_ENV."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+
+            # Create baseline file with potentially dangerous tag value
+            baseline_file = baseline_dir / "baseline_results.txt"
+            baseline_content = """Date: 2023-12-15 10:30:00 UTC
+Git commit: abc123def456
+Tag: v1.0.0; echo "injected"; rm -rf /tmp/test
+Hardware Information:
+  OS: macOS
+"""
+            baseline_file.write_text(baseline_content)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    # This should sanitize the dangerous tag
+                    success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
+                    assert success
+
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+
+                        # Verify the tag was sanitized (dangerous characters replaced with underscores)
+                        assert "BASELINE_TAG=v1.0.0__echo__injected___rm_-rf__tmp_test" in env_content
+
+                        # Verify no injection occurred
+                        assert "; echo " not in env_content
+                        assert "rm -rf" not in env_content
+
+                        # Verify other environment variables are still set correctly
+                        assert "BASELINE_EXISTS=true" in env_content
+                        assert "BASELINE_SOURCE=artifact" in env_content
+
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_baseline_tag_length_capping(self):
+        """Test that BASELINE_TAG is capped at 64 characters."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+
+            # Create baseline file with very long tag value
+            baseline_file = baseline_dir / "baseline_results.txt"
+            long_tag = "v1.0.0-" + "a" * 100  # Tag longer than 64 characters
+            baseline_content = f"""Date: 2023-12-15 10:30:00 UTC
+Git commit: abc123def456
+Tag: {long_tag}
+Hardware Information:
+  OS: macOS
+"""
+            baseline_file.write_text(baseline_content)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
+                    assert success
+
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+
+                        # Find the BASELINE_TAG line
+                        tag_line = next((line for line in env_content.split("\n") if line.startswith("BASELINE_TAG=")), None)
+                        assert tag_line is not None
+
+                        # Extract the tag value
+                        tag_value = tag_line.split("=", 1)[1]
+
+                        # Verify it's capped at 64 characters
+                        assert len(tag_value) <= 64
+
+                        # Verify it starts correctly
+                        assert tag_value.startswith("v1.0.0-")
+
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_packaging_version_complex_comparisons(self):
+        """Test that packaging.version handles complex version comparisons correctly."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+
+            # Create files with various complex version formats
+            files_and_expected_order = [
+                "baseline-v2.0.0.txt",  # Highest stable
+                "baseline-v2.0.0rc1.txt",  # RC1 of v2.0.0
+                "baseline-v2.0.0b2.txt",  # Beta 2 of v2.0.0
+                "baseline-v2.0.0b1.txt",  # Beta 1 of v2.0.0
+                "baseline-v2.0.0a1.txt",  # Alpha 1 of v2.0.0
+                "baseline-v1.9.0.txt",  # Lower major version
+                "baseline-v1.9.0rc1.txt",  # RC of lower version
+            ]
+
+            # Create files in reverse order to test sorting
+            for filename in reversed(files_and_expected_order):
+                file = baseline_dir / filename
+                file.write_text(f"Content of {filename}")
+
+            # Should select the highest version (v2.0.0 stable)
+            selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
+            assert selected is not None
+            assert selected.name == "baseline-v2.0.0.txt"
+
+    def test_packaging_version_invalid_versions(self):
+        """Test that invalid version formats are handled gracefully."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+
+            # Create mix of valid and invalid version files
+            valid_file1 = baseline_dir / "baseline-v1.0.0.txt"
+            valid_file2 = baseline_dir / "baseline-v1.2.txt"  # Valid: 1.2 is equivalent to 1.2.0
+            invalid_file1 = baseline_dir / "baseline-vInvalid.txt"
+            generic_file = baseline_dir / "baseline-generic.txt"
+
+            valid_file1.write_text("Valid 1.0.0 content")
+            valid_file2.write_text("Valid 1.2.0 content")
+            invalid_file1.write_text("Invalid version content")
+            generic_file.write_text("Generic content")
+
+            # Should select the highest valid version (1.2.0 > 1.0.0)
+            selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
+            assert selected is not None
+            assert selected.name == "baseline-v1.2.txt"
+            assert "Valid 1.2.0 content" in selected.read_text()
+
+    def test_packaging_version_truly_invalid_versions(self):
+        """Test that truly invalid version formats fall back to generic baseline selection."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+
+            # Create only invalid version files and one generic file
+            invalid_file1 = baseline_dir / "baseline-vInvalid.txt"
+            invalid_file2 = baseline_dir / "baseline-v1.2.3.4.5.txt"  # Too many segments
+            invalid_file3 = baseline_dir / "baseline-vNot-A-Version.txt"
+            generic_file = baseline_dir / "baseline_results.txt"  # Standard fallback
+
+            invalid_file1.write_text("Invalid content 1")
+            invalid_file2.write_text("Invalid content 2")
+            invalid_file3.write_text("Invalid content 3")
+            generic_file.write_text("Generic baseline content")
+
+            # Should fall back to standard baseline file
+            selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
+            assert selected is not None
+            assert selected.name == "baseline_results.txt"
+            assert "Generic baseline content" in selected.read_text()
+
     def test_generic_baseline_prefers_newest_mtime(self):
         """Test that generic baseline files are selected by most recent mtime."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2785,9 +2991,6 @@ Hardware Information:
             older_file.write_text("Older baseline content")
             older_mtime = time.time() - 100  # 100 seconds ago
             os.utime(older_file, (older_mtime, older_mtime))
-
-            # Small delay to ensure different mtime
-            time.sleep(0.01)
 
             # Create newer file
             newer_file.write_text("Newer baseline content")

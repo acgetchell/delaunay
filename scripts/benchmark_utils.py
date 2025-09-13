@@ -24,6 +24,9 @@ from pathlib import Path
 
 # NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
 from shutil import copy2 as copyfile
+from uuid import uuid4
+
+from packaging.version import Version
 
 try:
     # When executed as a script from scripts/
@@ -1447,7 +1450,7 @@ class PerformanceComparator:
                 return False, False
 
             # Parse baseline
-            baseline_content = baseline_file.read_text()
+            baseline_content = baseline_file.read_text(encoding="utf-8")
             baseline_results = self._parse_baseline_file(baseline_content)
 
             # Generate comparison report
@@ -1850,7 +1853,6 @@ class BenchmarkRegressionHelper:
     @staticmethod
     def _write_github_env_vars(env_vars: dict[str, str]) -> None:
         """Helper to write multiple environment variables to GITHUB_ENV.
-
         Args:
             env_vars: Dictionary of environment variable names and values
         """
@@ -1858,7 +1860,14 @@ class BenchmarkRegressionHelper:
         if github_env:
             with open(github_env, "a", encoding="utf-8") as f:
                 for key, value in env_vars.items():
-                    f.write(f"{key}={value}\n")
+                    val = "" if value is None else str(value)
+                    # Normalize CR to avoid breaking heredoc boundaries
+                    val = val.replace("\r", "")
+                    if "\n" in val:
+                        token = f"EOF_{uuid4().hex}"
+                        f.write(f"{key}<<{token}\n{val}\n{token}\n")
+                    else:
+                        f.write(f"{key}={val}\n")
         # Make variables immediately available in this process as well
         for key, value in env_vars.items():
             os.environ[key] = value
@@ -1918,8 +1927,10 @@ class BenchmarkRegressionHelper:
         if lines:
             tag_line = next((ln for ln in lines if ln.startswith("Tag: ")), None)
             if tag_line:
-                tag_value = tag_line.split(":", 1)[1].strip()
-                BenchmarkRegressionHelper._write_github_env_vars({"BASELINE_TAG": tag_value})
+                raw_tag = tag_line.split(":", 1)[1].strip()
+                # Allow [A-Za-z0-9._-+]; replace others with underscore and cap length
+                safe_tag = re.sub(r"[^A-Za-z0-9._\-+]", "_", raw_tag)[:64]
+                BenchmarkRegressionHelper._write_github_env_vars({"BASELINE_TAG": safe_tag})
 
         return True
 
@@ -1941,20 +1952,26 @@ class BenchmarkRegressionHelper:
         # Try tag-specific files (prefer highest semver if available)
         tag_files = list(baseline_dir.glob("baseline-v*.txt"))
 
-        def _version_key(p: Path) -> tuple[int, int, int, int, str]:
+        def _version_key(p: Path) -> tuple[int, Version | str, str]:
             # Parse semantic version from baseline filename (baseline-vX.Y.Z[-prerelease]?.txt)
-            m = re.match(r"baseline-v(\d+)\.(\d+)\.(\d+)(-.+)?\.txt$", p.name)
+            # Using packaging.version.Version for proper semantic version comparison
+            m = re.match(r"baseline-v(.+)\.txt$", p.name)
             if m:
-                major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
-                # Prefer stable (no prerelease) over prerelease for the same version
-                no_prerelease = 1 if m.group(4) is None else 0
-                # Tie-break with filename lexicographically (keeps current prerelease ordering behavior)
-                return (major, minor, patch, no_prerelease, p.name)
-            # Fallback: put non-matching names last
-            return (-1, -1, -1, -1, p.name)
+                version_str = m.group(1)
+                try:
+                    version = Version(version_str)
+                    # Valid version: priority 1 (sorts first when reversed)
+                    return (1, version, p.name)
+                except Exception as e:
+                    # Invalid version format, treat as non-semver
+                    logging.debug("Invalid version format in %s: %s", p.name, e)
+            # Fallback: put non-matching names last (priority 0, sorts after valid versions when reversed)
+            return (0, p.name, "")
 
         if tag_files:
+            # Sort by version (descending), with None (invalid versions) sorted last
             tag_files.sort(key=_version_key, reverse=True)
+            # Return the highest valid version, or first file if no valid versions
             return tag_files[0]
 
         # Try any baseline*.txt files
