@@ -359,6 +359,9 @@ Time: [1.0, 1.0, 1.0] µs
             assert mock_cargo.call_count >= 1
             args = mock_cargo.call_args[0][0]
             assert "--quiet" in args
+            if dev_mode:
+                for arg in DEV_MODE_BENCH_ARGS:
+                    assert arg in args
 
     def test_write_performance_comparison_no_average_regression(self, comparator):
         """Test performance comparison with individual regressions but no average regression."""
@@ -1057,6 +1060,10 @@ Tag: v1.0.0
                     # Check error message was printed to stderr
                     captured = capsys.readouterr()
                     assert "❌ Failed to prepare baseline: Permission denied" in captured.err
+
+                    # Verify that baseline_results.txt was not created due to copy failure
+                    standard_file = baseline_dir / "baseline_results.txt"
+                    assert not standard_file.exists()
 
             finally:
                 Path(env_path).unlink(missing_ok=True)
@@ -2641,6 +2648,24 @@ Tag: v0.4.3
             assert selected is not None
             # Current behavior: lexicographic prerelease ordering; expect beta.2 to win
             assert selected.name == "baseline-v1.2.3-beta.2.txt"
+
+    def test_prerelease_detection_fix_validation(self):
+        """Test that prerelease detection correctly identifies stable vs prerelease versions."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+
+            # Create exactly the same versions to test the prerelease detection bug fix
+            stable_file = baseline_dir / "baseline-v1.0.0.txt"
+            prerelease_file = baseline_dir / "baseline-v1.0.0-rc.1.txt"
+
+            stable_file.write_text("Stable content")
+            prerelease_file.write_text("Prerelease content")
+
+            # The stable version should be selected over the prerelease
+            selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
+            assert selected is not None
+            assert selected.name == "baseline-v1.0.0.txt"
+            assert "Stable content" in selected.read_text()
 
     def test_prepare_baseline_and_extract_commit_integration(self):
         """Test the integration between prepare_baseline and extract_baseline_commit."""

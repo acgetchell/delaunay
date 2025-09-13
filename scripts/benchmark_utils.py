@@ -1331,12 +1331,14 @@ class BaselineGenerator:
                     ["bench", "--bench", "ci_performance_suite", "--quiet", "--", *DEV_MODE_BENCH_ARGS],
                     cwd=self.project_root,
                     timeout=bench_timeout,
+                    capture_output=True,
                 )
             else:
                 run_cargo_command(
                     ["bench", "--bench", "ci_performance_suite", "--quiet"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
+                    capture_output=True,
                 )
 
             # Parse Criterion results
@@ -1937,15 +1939,13 @@ class BenchmarkRegressionHelper:
         tag_files = list(baseline_dir.glob("baseline-v*.txt"))
 
         def _version_key(p: Path) -> tuple[int, int, int, int, str]:
-            # Parse semantic version from baseline filename (baseline-vX.Y.Z*.txt)
-            m = re.search(r"baseline-v(\d+)\.(\d+)\.(\d+)(?:[^/]*)\.txt$", p.name)
+            # Parse semantic version from baseline filename (baseline-vX.Y.Z[-prerelease]?.txt)
+            m = re.match(r"baseline-v(\d+)\.(\d+)\.(\d+)(-.+)?\.txt$", p.name)
             if m:
                 major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
-                # Prefer stable (no prerelease) over prerelease for same version
-                # NOTE: Prerelease ordering within same version uses lexicographic comparison
-                # (e.g., v1.0.0-alpha < v1.0.0-beta). For fuller semver compliance, consider
-                # using a dedicated semver library if more complex prerelease logic is needed.
-                no_prerelease = 1 if "-" not in p.stem else 0
+                # Prefer stable (no prerelease) over prerelease for the same version
+                no_prerelease = 1 if m.group(4) is None else 0
+                # Tie-break with filename lexicographically (keeps current prerelease ordering behavior)
                 return (major, minor, patch, no_prerelease, p.name)
             # Fallback: put non-matching names last
             return (-1, -1, -1, -1, p.name)
