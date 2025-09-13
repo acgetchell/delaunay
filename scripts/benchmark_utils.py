@@ -1842,6 +1842,19 @@ class BenchmarkRegressionHelper:
     """Helper functions for performance regression testing workflow."""
 
     @staticmethod
+    def _write_github_env_vars(env_vars: dict[str, str]) -> None:
+        """Helper to write multiple environment variables to GITHUB_ENV.
+
+        Args:
+            env_vars: Dictionary of environment variable names and values
+        """
+        github_env = os.getenv("GITHUB_ENV")
+        if github_env:
+            with open(github_env, "a", encoding="utf-8") as f:
+                for key, value in env_vars.items():
+                    f.write(f"{key}={value}\n")
+
+    @staticmethod
     def prepare_baseline(baseline_dir: Path) -> bool:
         """
         Prepare baseline for comparison and set environment variables.
@@ -1863,34 +1876,21 @@ class BenchmarkRegressionHelper:
                 print(f"📦 Prepared baseline from artifact: {baseline_file.name} → baseline_results.txt")
             except OSError as e:
                 print(f"❌ Failed to prepare baseline: {e}", file=sys.stderr)
-                github_env = os.getenv("GITHUB_ENV")
-                if github_env:
-                    with open(github_env, "a", encoding="utf-8") as f:
-                        f.write("BASELINE_EXISTS=false\n")
-                        f.write("BASELINE_SOURCE=artifact\n")
-                        f.write("BASELINE_ORIGIN=artifact\n")
+                BenchmarkRegressionHelper._write_github_env_vars(
+                    {"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "artifact", "BASELINE_ORIGIN": "artifact"}
+                )
                 return False
         elif baseline_file:
             print("📦 Prepared baseline from artifact")
         else:
-            print("❌ Downloaded artifact but no baseline*.txt files found")
-            # Set GitHub Actions environment variables
-            github_env = os.getenv("GITHUB_ENV")
-            if github_env:
-                with open(github_env, "a", encoding="utf-8") as f:
-                    f.write("BASELINE_EXISTS=false\n")
-                    f.write("BASELINE_SOURCE=missing\n")
-                    f.write("BASELINE_ORIGIN=unknown\n")
+            print("❌ Downloaded artifact but no baseline*.txt files found", file=sys.stderr)
+            BenchmarkRegressionHelper._write_github_env_vars({"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "missing", "BASELINE_ORIGIN": "unknown"})
             return False
 
         # Set GitHub Actions environment variables
-        github_env = os.getenv("GITHUB_ENV")
-        if github_env:
-            with open(github_env, "a", encoding="utf-8") as f:
-                f.write("BASELINE_EXISTS=true\n")
-                f.write("BASELINE_SOURCE=artifact\n")
-                f.write("BASELINE_ORIGIN=artifact\n")
-                f.write(f"BASELINE_SOURCE_FILE={baseline_file.name}\n")
+        BenchmarkRegressionHelper._write_github_env_vars(
+            {"BASELINE_EXISTS": "true", "BASELINE_SOURCE": "artifact", "BASELINE_ORIGIN": "artifact", "BASELINE_SOURCE_FILE": baseline_file.name}
+        )
 
         # Show baseline metadata
         print("=== Baseline Information (from artifact) ===")
@@ -1904,10 +1904,7 @@ class BenchmarkRegressionHelper:
         tag_line = next((ln for ln in lines if ln.startswith("Tag: ")), None)
         if tag_line:
             tag_value = tag_line.split(":", 1)[1].strip()
-            github_env = os.getenv("GITHUB_ENV")
-            if github_env:
-                with open(github_env, "a", encoding="utf-8") as f_env:
-                    f_env.write(f"BASELINE_TAG={tag_value}\n")
+            BenchmarkRegressionHelper._write_github_env_vars({"BASELINE_TAG": tag_value})
 
         return True
 
@@ -1916,13 +1913,7 @@ class BenchmarkRegressionHelper:
         """Set environment variables when no baseline is found."""
         print("📈 No baseline artifact found for performance comparison")
 
-        # Set GitHub Actions environment variables
-        github_env = os.getenv("GITHUB_ENV")
-        if github_env:
-            with open(github_env, "a", encoding="utf-8") as f:
-                f.write("BASELINE_EXISTS=false\n")
-                f.write("BASELINE_SOURCE=none\n")
-                f.write("BASELINE_ORIGIN=none\n")
+        BenchmarkRegressionHelper._write_github_env_vars({"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "none", "BASELINE_ORIGIN": "none"})
 
     @staticmethod
     def _find_baseline_file(baseline_dir: Path) -> Path | None:
@@ -1935,12 +1926,15 @@ class BenchmarkRegressionHelper:
         # Try tag-specific files (prefer highest semver if available)
         tag_files = list(baseline_dir.glob("baseline-v*.txt"))
 
-        def _version_key(p: Path) -> tuple[int, int, int, str]:
+        def _version_key(p: Path) -> tuple[int, int, int, int, str]:
             m = re.search(r"baseline-v(\d+)\.(\d+)\.(\d+)(?:[^/]*)\.txt$", p.name)
             if m:
-                return (int(m.group(1)), int(m.group(2)), int(m.group(3)), p.name)
-            # Fallback: put non-matching names last but stable
-            return (-1, -1, -1, p.name)
+                major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                # Prefer stable (no prerelease) over prerelease for same version
+                no_prerelease = 1 if "-" not in p.stem else 0
+                return (major, minor, patch, no_prerelease, p.name)
+            # Fallback: put non-matching names last
+            return (-1, -1, -1, -1, p.name)
 
         if tag_files:
             tag_files.sort(key=_version_key, reverse=True)

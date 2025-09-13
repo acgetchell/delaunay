@@ -1082,9 +1082,9 @@ Tag: v1.0.0
                         assert "BASELINE_EXISTS=false" in env_content
                         assert "BASELINE_SOURCE=missing" in env_content
 
-                # Check error message was printed
+                # Check error message was printed to stderr
                 captured = capsys.readouterr()
-                assert "❌ Downloaded artifact but no baseline*.txt files found" in captured.out
+                assert "❌ Downloaded artifact but no baseline*.txt files found" in captured.err
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
@@ -2416,9 +2416,9 @@ Time: [95.0, 100.0, 105.0] µs
                         assert "BASELINE_SOURCE=missing" in env_content
                         assert "BASELINE_ORIGIN=unknown" in env_content
 
-                    # Check error message was printed
+                    # Check error message was printed to stderr
                     captured = capsys.readouterr()
-                    assert "❌ Downloaded artifact but no baseline*.txt files found" in captured.out
+                    assert "❌ Downloaded artifact but no baseline*.txt files found" in captured.err
 
             finally:
                 Path(env_path).unlink(missing_ok=True)
