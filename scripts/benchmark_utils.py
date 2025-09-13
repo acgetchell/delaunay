@@ -1885,8 +1885,18 @@ class BenchmarkRegressionHelper:
         print("=== Baseline Information (from artifact) ===")
         target_file = baseline_dir / "baseline_results.txt"  # Use the copied/standard file
         with target_file.open("r", encoding="utf-8") as f:
-            for _i, line in enumerate(f.readlines()[:3]):
+            lines = f.readlines()
+            for _i, line in enumerate(lines[:3]):
                 print(line.rstrip())
+
+        # Propagate tag (if present) to the workflow environment
+        tag_line = next((ln for ln in lines if ln.startswith("Tag: ")), None)
+        if tag_line:
+            tag_value = tag_line.split(":", 1)[1].strip()
+            github_env = os.getenv("GITHUB_ENV")
+            if github_env:
+                with open(github_env, "a", encoding="utf-8") as f_env:
+                    f_env.write(f"BASELINE_TAG={tag_value}\n")
 
         return True
 
@@ -1911,11 +1921,18 @@ class BenchmarkRegressionHelper:
         if baseline_file.exists():
             return baseline_file
 
-        # Try tag-specific files
-        # TODO: current logic picks the first file alphabetically.
-        # If we require "latest tag" behavior, switch to semver-aware sorting here.
-        tag_files = sorted(baseline_dir.glob("baseline-v*.txt"))
+        # Try tag-specific files (prefer highest semver if available)
+        tag_files = list(baseline_dir.glob("baseline-v*.txt"))
+
+        def _version_key(p: Path) -> tuple[int, int, int, str]:
+            m = re.search(r"baseline-v(\d+)\.(\d+)\.(\d+)(?:[^/]*)\.txt$", p.name)
+            if m:
+                return (int(m.group(1)), int(m.group(2)), int(m.group(3)), p.name)
+            # Fallback: put non-matching names last but stable
+            return (-1, -1, -1, p.name)
+
         if tag_files:
+            tag_files.sort(key=_version_key, reverse=True)
             return tag_files[0]
 
         # Try any baseline*.txt files
@@ -1932,12 +1949,9 @@ class BenchmarkRegressionHelper:
             with baseline_file.open("r", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("Git commit:"):
-                        parts = line.strip().split()
-                        if len(parts) >= 3:
-                            potential_sha = parts[2]
-                            # Validate SHA format (7-40 hex characters)
-                            if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
-                                return potential_sha
+                        potential_sha = line.partition(":")[2].strip().split()[0]
+                        if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
+                            return potential_sha
         except (OSError, ValueError) as e:
             logging.debug("Could not extract commit from %s: %s", baseline_file.name, e)
         return None

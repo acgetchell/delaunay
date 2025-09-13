@@ -2247,6 +2247,7 @@ Time: [160.1, 168.18, 177.67] µs
                         assert "BASELINE_EXISTS=true" in env_content
                         assert "BASELINE_SOURCE=artifact" in env_content
                         assert "BASELINE_ORIGIN=artifact" in env_content
+                        assert "BASELINE_TAG=v0.4.3" in env_content
 
                     # Check that baseline info was printed with file conversion message
                     captured = capsys.readouterr()
@@ -2452,11 +2453,11 @@ Hardware Information:
                 Path(env_path).unlink(missing_ok=True)
 
     def test_extract_baseline_commit_handles_multiple_tag_files(self):
-        """Test that extract_baseline_commit deterministically selects the alphabetically first tag file when multiple exist."""
+        """Test that extract_baseline_commit selects the highest semver tag file when multiple exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
 
-            # Create multiple tag files (should use first one alphabetically)
+            # Create multiple tag files (should use highest semver version)
             tag_file_1 = baseline_dir / "baseline-v0.4.1.txt"
             tag_file_2 = baseline_dir / "baseline-v0.4.3.txt"
 
@@ -2479,8 +2480,8 @@ Tag: v0.4.3
                 with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
                     commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
 
-                    # Should pick v0.4.1 first (alphabetically sorted)
-                    assert commit_sha == "abc123def456"
+                    # Should pick v0.4.3 (highest semver version)
+                    assert commit_sha == "def456abc789"
 
             finally:
                 Path(env_path).unlink(missing_ok=True)
@@ -2519,6 +2520,11 @@ Time: [160.1, 168.18, 177.67] µs
                     # Then extract commit (should work with the standard file)
                     commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
                     assert commit_sha == "1234567890abcdef"
+
+                    # Check that BASELINE_TAG was also exported during prepare_baseline
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_TAG=v0.4.3" in env_content
 
             finally:
                 Path(env_path).unlink(missing_ok=True)
