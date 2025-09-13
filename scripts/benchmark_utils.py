@@ -1859,6 +1859,9 @@ class BenchmarkRegressionHelper:
             with open(github_env, "a", encoding="utf-8") as f:
                 for key, value in env_vars.items():
                     f.write(f"{key}={value}\n")
+        # Make variables immediately available in this process as well
+        for key, value in env_vars.items():
+            os.environ[key] = value
 
     @staticmethod
     def prepare_baseline(baseline_dir: Path) -> bool:
@@ -1955,9 +1958,10 @@ class BenchmarkRegressionHelper:
             return tag_files[0]
 
         # Try any baseline*.txt files
-        baseline_files = sorted(baseline_dir.glob("baseline*.txt"))
+        baseline_files = list(baseline_dir.glob("baseline*.txt"))
         if baseline_files:
-            return baseline_files[0]
+            # Prefer most recent file when no semver match is available
+            return max(baseline_files, key=lambda p: p.stat().st_mtime)
 
         return None
 
@@ -2000,6 +2004,7 @@ class BenchmarkRegressionHelper:
             Commit SHA string, or "unknown" if not found
         """
         commit_sha = "unknown"
+        commit_source = "unknown"
 
         # Try to extract from baseline file first
         baseline_file = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
@@ -2007,6 +2012,7 @@ class BenchmarkRegressionHelper:
             extracted_sha = BenchmarkRegressionHelper._extract_commit_from_baseline_file(baseline_file)
             if extracted_sha:
                 commit_sha = extracted_sha
+                commit_source = "baseline"
 
         # Fallback to metadata.json if needed
         if commit_sha == "unknown":
@@ -2015,9 +2021,13 @@ class BenchmarkRegressionHelper:
                 extracted_sha = BenchmarkRegressionHelper._extract_commit_from_metadata(metadata_file)
                 if extracted_sha:
                     commit_sha = extracted_sha
+                    commit_source = "metadata"
 
         # Set GitHub Actions environment variables
-        env_vars = {"BASELINE_COMMIT": commit_sha}
+        env_vars = {
+            "BASELINE_COMMIT": commit_sha,
+            "BASELINE_COMMIT_SOURCE": commit_source,
+        }
         if baseline_file:
             env_vars["BASELINE_SOURCE_FILE"] = baseline_file.name
         BenchmarkRegressionHelper._write_github_env_vars(env_vars)

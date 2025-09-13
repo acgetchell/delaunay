@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -1195,10 +1196,11 @@ Hardware Information:
 
                     assert commit_sha == "abc123def456"
 
-                    # Check that environment variable was set
+                    # Check that environment variables were set
                     with open(env_path, encoding="utf-8") as f:
                         env_content = f.read()
                         assert "BASELINE_COMMIT=abc123def456" in env_content
+                        assert "BASELINE_COMMIT_SOURCE=baseline" in env_content
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
@@ -1222,10 +1224,11 @@ Hardware Information:
 
                     assert commit_sha == "def456abc789"
 
-                    # Check that environment variable was set
+                    # Check that environment variables were set
                     with open(env_path, encoding="utf-8") as f:
                         env_content = f.read()
                         assert "BASELINE_COMMIT=def456abc789" in env_content
+                        assert "BASELINE_COMMIT_SOURCE=metadata" in env_content
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
@@ -1244,10 +1247,11 @@ Hardware Information:
 
                     assert commit_sha == "unknown"
 
-                    # Check that environment variable was set
+                    # Check that environment variables were set
                     with open(env_path, encoding="utf-8") as f:
                         env_content = f.read()
                         assert "BASELINE_COMMIT=unknown" in env_content
+                        assert "BASELINE_COMMIT_SOURCE=unknown" in env_content
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
@@ -2509,10 +2513,11 @@ Hardware Information:
 
                     assert commit_sha == "1062551a9152a53e938ddbf94c4152ff6ae4254d"
 
-                    # Check that environment variable was set
+                    # Check that environment variables were set
                     with open(env_path, encoding="utf-8") as f:
                         env_content = f.read()
                         assert "BASELINE_COMMIT=1062551a9152a53e938ddbf94c4152ff6ae4254d" in env_content
+                        assert "BASELINE_COMMIT_SOURCE=baseline" in env_content
 
             finally:
                 Path(env_path).unlink(missing_ok=True)
@@ -2546,10 +2551,11 @@ Hardware Information:
 
                     assert commit_sha == "fedcba987654321"
 
-                    # Check that environment variable was set
+                    # Check that environment variables were set
                     with open(env_path, encoding="utf-8") as f:
                         env_content = f.read()
                         assert "BASELINE_COMMIT=fedcba987654321" in env_content
+                        assert "BASELINE_COMMIT_SOURCE=metadata" in env_content
 
             finally:
                 Path(env_path).unlink(missing_ok=True)
@@ -2648,6 +2654,151 @@ Tag: v0.4.3
             assert selected is not None
             # Current behavior: lexicographic prerelease ordering; expect beta.2 to win
             assert selected.name == "baseline-v1.2.3-beta.2.txt"
+
+    def test_baseline_commit_source_from_baseline_file(self):
+        """Test that BASELINE_COMMIT_SOURCE is 'baseline' when commit is extracted from baseline file."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            baseline_file = baseline_dir / "baseline_results.txt"
+            baseline_content = """Date: 2023-12-15 10:30:00 UTC
+Git commit: abc123def456
+Hardware Information:
+  OS: macOS
+"""
+            baseline_file.write_text(baseline_content)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
+
+                    assert commit_sha == "abc123def456"
+
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_COMMIT=abc123def456" in env_content
+                        assert "BASELINE_COMMIT_SOURCE=baseline" in env_content
+                        assert "BASELINE_SOURCE_FILE=baseline_results.txt" in env_content
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_baseline_commit_source_from_metadata_file(self):
+        """Test that BASELINE_COMMIT_SOURCE is 'metadata' when commit is extracted from metadata.json."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+
+            # Create baseline file without commit info
+            baseline_file = baseline_dir / "baseline_results.txt"
+            baseline_file.write_text("Date: 2023-12-15\nHardware: Test\n")
+
+            # Create metadata file with commit info
+            metadata_file = baseline_dir / "metadata.json"
+            metadata = {"commit": "def456abc789", "tag": "v1.0.0"}
+            with metadata_file.open("w", encoding="utf-8") as f:
+                json.dump(metadata, f)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
+
+                    assert commit_sha == "def456abc789"
+
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_COMMIT=def456abc789" in env_content
+                        assert "BASELINE_COMMIT_SOURCE=metadata" in env_content
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_baseline_commit_source_unknown_when_no_commit_found(self):
+        """Test that BASELINE_COMMIT_SOURCE is 'unknown' when no commit is found anywhere."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            baseline_file = baseline_dir / "baseline_results.txt"
+            baseline_file.write_text("Date: 2023-12-15\n")
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
+
+                    assert commit_sha == "unknown"
+
+                    with open(env_path, encoding="utf-8") as f:
+                        env_content = f.read()
+                        assert "BASELINE_COMMIT=unknown" in env_content
+                        assert "BASELINE_COMMIT_SOURCE=unknown" in env_content
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_env_vars_mirrored_to_current_process(self):
+        """Test that _write_github_env_vars mirrors variables into current process."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+            env_path = env_file.name
+
+        try:
+            # Clear any existing test variables
+            for key in ["TEST_BASELINE_EXISTS", "TEST_BASELINE_SOURCE"]:
+                os.environ.pop(key, None)
+
+            test_vars = {
+                "TEST_BASELINE_EXISTS": "true",
+                "TEST_BASELINE_SOURCE": "artifact",
+            }
+
+            with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                BenchmarkRegressionHelper._write_github_env_vars(test_vars)
+
+                # Verify variables are written to GITHUB_ENV file
+                with open(env_path, encoding="utf-8") as f:
+                    content = f.read()
+                    assert "TEST_BASELINE_EXISTS=true" in content
+                    assert "TEST_BASELINE_SOURCE=artifact" in content
+
+                # Verify variables are also available in current process
+                assert os.environ["TEST_BASELINE_EXISTS"] == "true"
+                assert os.environ["TEST_BASELINE_SOURCE"] == "artifact"
+
+        finally:
+            Path(env_path).unlink(missing_ok=True)
+            # Clean up test variables
+            for key in ["TEST_BASELINE_EXISTS", "TEST_BASELINE_SOURCE"]:
+                os.environ.pop(key, None)
+
+    def test_generic_baseline_prefers_newest_mtime(self):
+        """Test that generic baseline files are selected by most recent mtime."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+
+            # Create multiple generic baseline files with different mtime
+            older_file = baseline_dir / "baseline-older.txt"
+            newer_file = baseline_dir / "baseline-newer.txt"
+
+            # Create older file first
+            older_file.write_text("Older baseline content")
+            older_mtime = time.time() - 100  # 100 seconds ago
+            os.utime(older_file, (older_mtime, older_mtime))
+
+            # Small delay to ensure different mtime
+            time.sleep(0.01)
+
+            # Create newer file
+            newer_file.write_text("Newer baseline content")
+            newer_mtime = time.time() - 50  # 50 seconds ago
+            os.utime(newer_file, (newer_mtime, newer_mtime))
+
+            # Should select the file with the most recent mtime
+            selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
+            assert selected is not None
+            assert selected.name == "baseline-newer.txt"
+            assert "Newer baseline content" in selected.read_text()
 
     def test_prerelease_detection_fix_validation(self):
         """Test that prerelease detection correctly identifies stable vs prerelease versions."""
