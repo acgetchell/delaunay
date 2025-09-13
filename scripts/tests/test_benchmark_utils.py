@@ -2407,7 +2407,7 @@ Hardware Information:
                 Path(env_path).unlink(missing_ok=True)
 
     def test_extract_baseline_commit_handles_multiple_tag_files(self):
-        """Test that extract_baseline_commit uses the first available tag file when multiple exist."""
+        """Test that extract_baseline_commit deterministically selects the alphabetically first tag file when multiple exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
 
@@ -2434,9 +2434,8 @@ Tag: v0.4.3
                 with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
                     commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
 
-                    # Should use the first file found (likely v0.4.1 alphabetically)
-                    assert commit_sha in ["abc123def456", "def456abc789"]
-                    assert commit_sha != "unknown"
+                    # Should pick v0.4.1 first (alphabetically sorted)
+                    assert commit_sha == "abc123def456"
 
             finally:
                 Path(env_path).unlink(missing_ok=True)

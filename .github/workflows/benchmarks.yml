@@ -297,4 +297,4 @@ jobs:
 
       - name: Summary
         if: always()
-        run: uv run benchmark-utils generate-summary
+        run: uv run benchmark-utils regression-summary

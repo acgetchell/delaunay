@@ -21,6 +21,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from shutil import copyfile
 
 try:
     # When executed as a script from scripts/
@@ -1851,31 +1852,15 @@ class BenchmarkRegressionHelper:
         Returns:
             True if baseline exists and is valid, False otherwise
         """
-        # Look for baseline files in order of preference:
-        # 1. baseline_results.txt (original/standard name)
-        # 2. baseline-v*.txt (tag-specific name from generate-baseline workflow)
-        # 3. Any file matching baseline*.txt
-
-        baseline_file = baseline_dir / "baseline_results.txt"
-
-        # If standard name doesn't exist, look for tag-specific files
-        if not baseline_file.exists():
-            tag_files = list(baseline_dir.glob("baseline-v*.txt"))
-            if tag_files:
-                baseline_file = tag_files[0]  # Use the first tag-specific file
-
-        # Still not found? Try any baseline*.txt file
-        if not baseline_file.exists():
-            baseline_files = list(baseline_dir.glob("baseline*.txt"))
-            if baseline_files:
-                baseline_file = baseline_files[0]  # Use the first matching file
+        # Look for baseline files using shared logic
+        baseline_file = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
 
         # If a baseline file was found, copy it to baseline_results.txt for consistency
-        if baseline_file.exists() and baseline_file.name != "baseline_results.txt":
+        if baseline_file and baseline_file.name != "baseline_results.txt":
             target_file = baseline_dir / "baseline_results.txt"
-            target_file.write_text(baseline_file.read_text(encoding="utf-8"), encoding="utf-8")
+            copyfile(baseline_file, target_file)
             print(f"📦 Prepared baseline from artifact: {baseline_file.name} → baseline_results.txt")
-        elif baseline_file.exists():
+        elif baseline_file:
             print("📦 Prepared baseline from artifact")
         else:
             print("❌ Downloaded artifact but no baseline*.txt files found")
@@ -1904,16 +1889,6 @@ class BenchmarkRegressionHelper:
 
         return True
 
-        # Set GitHub Actions environment variables
-        github_env = os.getenv("GITHUB_ENV")
-        if github_env:
-            with open(github_env, "a", encoding="utf-8") as f:
-                f.write("BASELINE_EXISTS=false\n")
-                f.write("BASELINE_SOURCE=missing\n")
-                f.write("BASELINE_ORIGIN=unknown\n")
-
-        return False
-
     @staticmethod
     def set_no_baseline_status() -> None:
         """Set environment variables when no baseline is found."""
@@ -1936,12 +1911,12 @@ class BenchmarkRegressionHelper:
             return baseline_file
 
         # Try tag-specific files
-        tag_files = list(baseline_dir.glob("baseline-v*.txt"))
+        tag_files = sorted(baseline_dir.glob("baseline-v*.txt"))
         if tag_files:
             return tag_files[0]
 
         # Try any baseline*.txt files
-        baseline_files = list(baseline_dir.glob("baseline*.txt"))
+        baseline_files = sorted(baseline_dir.glob("baseline*.txt"))
         if baseline_files:
             return baseline_files[0]
 
