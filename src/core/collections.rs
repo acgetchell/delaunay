@@ -450,8 +450,8 @@ pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
 /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 ///
 /// // Get first vertex key and its UUID
-/// let (vertex_key, _) = tds.vertices.iter().next().unwrap();
-/// let vertex_uuid = tds.vertices[vertex_key].uuid();
+/// let (vertex_key, _) = tds.vertices().iter().next().unwrap();
+/// let vertex_uuid = tds.vertices()[vertex_key].uuid();
 /// ```
 pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 

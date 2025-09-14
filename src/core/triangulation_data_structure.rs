@@ -403,7 +403,7 @@ where
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     /// `SlotMap` for storing vertices, allowing stable keys and efficient access.
-    pub vertices: SlotMap<VertexKey, Vertex<T, U, D>>,
+    vertices: SlotMap<VertexKey, Vertex<T, U, D>>,
 
     /// `SlotMap` for storing cells, providing stable keys and efficient access.
     cells: SlotMap<CellKey, Cell<T, U, V, D>>,
@@ -495,23 +495,17 @@ where
         &self.cells
     }
 
-    /// Returns a mutable reference to the cells `SlotMap`.
+    /// Returns a reference to the vertices `SlotMap`.
     ///
-    /// This method provides mutable access to the internal cells collection,
-    /// allowing external code to modify cells. This is primarily intended for
-    /// testing purposes and should be used with caution as it can break
-    /// triangulation invariants.
+    /// This method provides read-only access to the internal vertices collection,
+    /// allowing external code to iterate over or access specific vertices by their keys.
+    /// This provides a consistent API alongside `cells()` for accessing the triangulation's
+    /// core data structures.
     ///
     /// # Returns
     ///
-    /// A mutable reference to the `SlotMap<CellKey, Cell<T, U, V, D>>` containing all cells
+    /// A reference to the `SlotMap<VertexKey, Vertex<T, U, D>>` containing all vertices
     /// in the triangulation data structure.
-    ///
-    /// # Warning
-    ///
-    /// This method provides direct mutable access to the internal cell storage.
-    /// Modifying cells through this method can break triangulation invariants
-    /// and should only be used for testing or when you understand the implications.
     ///
     /// # Examples
     ///
@@ -526,19 +520,20 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
-    /// // Access the cells SlotMap mutably (for testing purposes)
-    /// let cells_mut = tds.cells_mut();
+    /// // Access the vertices SlotMap using the accessor method
+    /// let vertices_map = tds.vertices();
+    /// println!("Number of vertices: {}", vertices_map.len());
     ///
-    /// // Clear all neighbor relationships (for testing)
-    /// for cell in cells_mut.values_mut() {
-    ///     cell.neighbors = None;
+    /// // Iterate over all vertices
+    /// for (vertex_key, vertex) in vertices_map {
+    ///     println!("Vertex {:?} at position {:?}", vertex_key, vertex.point());
     /// }
     /// ```
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn cells_mut(&mut self) -> &mut SlotMap<CellKey, Cell<T, U, V, D>> {
-        &mut self.cells
+    #[must_use]
+    pub const fn vertices(&self) -> &SlotMap<VertexKey, Vertex<T, U, D>> {
+        &self.vertices
     }
 
     /// The function returns the number of vertices in the triangulation
@@ -775,8 +770,181 @@ where
     V: DataType,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
+    /// Returns a mutable reference to the vertices `SlotMap`.
+    ///
+    /// This method provides mutable access to the internal vertices collection,
+    /// allowing external code to modify vertices. This is primarily intended for
+    /// testing purposes and should be used with caution as it can break
+    /// triangulation invariants.
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the `SlotMap<VertexKey, Vertex<T, U, D>>` containing all vertices
+    /// in the triangulation data structure.
+    ///
+    /// # Warning
+    ///
+    /// This method provides direct mutable access to the internal vertex storage.
+    /// Modifying vertices through this method can break triangulation invariants
+    /// and should only be used for testing or when you understand the implications.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// // Access the vertices SlotMap mutably (for testing purposes)
+    /// let vertices_mut = tds.vertices_mut();
+    ///
+    /// // Modify vertex data (for testing - breaks triangulation invariants!)
+    /// for vertex in vertices_mut.values_mut() {
+    ///     // This would break the triangulation if done in practice
+    ///     // vertex.data = new_data;
+    /// }
+    /// ```
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn vertices_mut(&mut self) -> &mut SlotMap<VertexKey, Vertex<T, U, D>> {
+        &mut self.vertices
+    }
+
+    /// Returns a mutable reference to the cells `SlotMap`.
+    ///
+    /// This method provides mutable access to the internal cells collection,
+    /// allowing external code to modify cells. This is primarily intended for
+    /// testing purposes and should be used with caution as it can break
+    /// triangulation invariants.
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the `SlotMap<CellKey, Cell<T, U, V, D>>` containing all cells
+    /// in the triangulation data structure.
+    ///
+    /// # Warning
+    ///
+    /// This method provides direct mutable access to the internal cell storage.
+    /// Modifying cells through this method can break triangulation invariants
+    /// and should only be used for testing or when you understand the implications.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// // Access the cells SlotMap mutably (for testing purposes)
+    /// let cells_mut = tds.cells_mut();
+    ///
+    /// // Clear all neighbor relationships (for testing)
+    /// for cell in cells_mut.values_mut() {
+    ///     cell.neighbors = None;
+    /// }
+    /// ```
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn cells_mut(&mut self) -> &mut SlotMap<CellKey, Cell<T, U, V, D>> {
+        &mut self.cells
+    }
+
+    /// Atomically inserts a vertex and creates the UUID-to-key mapping.
+    ///
+    /// This method ensures that both the vertex insertion and UUID mapping are
+    /// performed together, maintaining data structure invariants. This is preferred
+    /// over separate `vertices_mut().insert()` + `uuid_to_vertex_key.insert()` calls
+    /// which can leave the data structure in an inconsistent state if interrupted.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertex` - The vertex to insert
+    ///
+    /// # Returns
+    ///
+    /// The `VertexKey` that can be used to access the inserted vertex.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::vertex;
+    ///
+    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
+    /// let vertex = vertex!([1.0, 2.0, 3.0]);
+    /// let vertex_key = tds.insert_vertex_with_mapping(vertex);
+    ///
+    /// // Both the vertex and its UUID mapping are now available
+    /// assert!(tds.vertices().contains_key(vertex_key));
+    /// assert!(tds.vertex_key_from_uuid(&vertex.uuid()).is_some());
+    /// ```
+    pub fn insert_vertex_with_mapping(&mut self, vertex: Vertex<T, U, D>) -> VertexKey {
+        let vertex_uuid = vertex.uuid();
+        let vertex_key = self.vertices.insert(vertex);
+        self.uuid_to_vertex_key.insert(vertex_uuid, vertex_key);
+        vertex_key
+    }
+
+    /// Atomically inserts a cell and creates the UUID-to-key mapping.
+    ///
+    /// This method ensures that both the cell insertion and UUID mapping are
+    /// performed together, maintaining data structure invariants. This is preferred
+    /// over separate `cells_mut().insert()` + `uuid_to_cell_key.insert()` calls
+    /// which can leave the data structure in an inconsistent state if interrupted.
+    ///
+    /// # Arguments
+    ///
+    /// * `cell` - The cell to insert
+    ///
+    /// # Returns
+    ///
+    /// The `CellKey` that can be used to access the inserted cell.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::cell::CellBuilder;
+    /// use delaunay::vertex;
+    ///
+    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let cell = CellBuilder::default().vertices(vertices).build().unwrap();
+    /// let cell_key = tds.insert_cell_with_mapping(cell);
+    ///
+    /// // Both the cell and its UUID mapping are now available
+    /// assert!(tds.cells().contains_key(cell_key));
+    /// assert!(tds.cell_key_from_uuid(&tds.cells()[cell_key].uuid()).is_some());
+    /// ```
+    pub fn insert_cell_with_mapping(&mut self, cell: Cell<T, U, V, D>) -> CellKey {
+        let cell_uuid = cell.uuid();
+        let cell_key = self.cells.insert(cell);
+        self.uuid_to_cell_key.insert(cell_uuid, cell_key);
+        cell_key
+    }
+
     /// Helper function to get vertex keys for a cell using the optimized UUID→Key mapping.
-    /// This eliminates the need for `BiMap` lookups in hot paths.
+    /// This provides efficient UUID→Key lookups in hot paths.
     ///
     /// # Arguments
     ///
@@ -878,7 +1046,7 @@ where
     }
 
     /// Helper function to get a vertex key from a vertex UUID using the optimized UUID→Key mapping.
-    /// This eliminates `BiMap` lookups in hot paths.
+    /// This provides efficient UUID→Key lookups in hot paths.
     ///
     /// # Arguments
     ///
@@ -911,7 +1079,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first vertex and its UUID
-    /// let (vertex_key, vertex) = tds.vertices.iter().next().unwrap();
+    /// let (vertex_key, vertex) = tds.vertices().iter().next().unwrap();
     /// let vertex_uuid = vertex.uuid();
     ///
     /// // Use the helper function to find the vertex key from its UUID
@@ -1044,7 +1212,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first vertex key and expected UUID
-    /// let (vertex_key, vertex) = tds.vertices.iter().next().unwrap();
+    /// let (vertex_key, vertex) = tds.vertices().iter().next().unwrap();
     /// let expected_uuid = vertex.uuid();
     ///
     /// // Use the helper function to get UUID from the vertex key
@@ -1069,7 +1237,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first vertex's UUID
-    /// let (_, vertex) = tds.vertices.iter().next().unwrap();
+    /// let (_, vertex) = tds.vertices().iter().next().unwrap();
     /// let original_uuid = vertex.uuid();
     ///
     /// // Convert UUID to key, then key back to UUID
@@ -1158,7 +1326,7 @@ where
     /// for vertex in cell.vertices() {
     ///     // Find the vertex key corresponding to this vertex UUID
     ///     let vertex_key = tds.vertex_key_from_uuid(&vertex.uuid()).expect("Vertex UUID should map to a key");
-    ///     assert!(tds.vertices.contains_key(vertex_key), "Cell vertex should exist in triangulation");
+    ///     assert!(tds.vertices().contains_key(vertex_key), "Cell vertex should exist in triangulation");
     /// }
     /// ```
     ///
@@ -1567,6 +1735,11 @@ where
     /// - **Time Complexity**: O(N×F) where N is the number of cells and F is the number of facets per cell
     /// - **Space Complexity**: O(N×F) for temporary storage of facet mappings and neighbor arrays
     ///
+    /// **Memory Allocation Note**: The current implementation uses a two-phase UUID conversion
+    /// process that creates intermediate Vec allocations. For performance-critical applications
+    /// with large triangulations, consider storing neighbors as `Option<CellKey>` internally
+    /// and exposing UUIDs only via accessor methods to eliminate UUID conversion overhead.
+    ///
     /// # Errors
     ///
     /// Returns a `TriangulationValidationError` if:
@@ -1687,8 +1860,15 @@ where
             })?[vertex_index2] = Some(cell_key1);
         }
 
-        // This is a two-phase process to appease the borrow checker. First we collect all the
-        // updates, then we apply them.
+        // Apply updates using a per-cell approach to minimize memory allocations.
+        // Note: This two-phase process is required to appease the borrow checker.
+        // Alternative approaches like scoped borrows could eliminate the intermediate Vec,
+        // but this current approach provides good performance for typical triangulation sizes.
+        //
+        // Performance consideration: If profiling shows this Vec allocation as a hotspot,
+        // consider using unsafe code or a more complex iterator approach to enable
+        // single-phase updates with temporary SmallBuffer<Option<Uuid>, MAX_PRACTICAL_DIMENSION_SIZE>
+        // for per-cell neighbor UUID conversion.
         let updates: Vec<(CellKey, Vec<Option<Uuid>>)> = cell_neighbors
             .iter()
             .map(|(cell_key, neighbors)| {
@@ -1860,6 +2040,11 @@ where
         // First pass: identify duplicate cells
         for (cell_key, cell) in &self.cells {
             let Ok(mut vertex_keys) = self.vertex_keys_for_cell(cell) else {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "debug: skipping cell {} due to unresolved vertex keys",
+                    cell.uuid()
+                );
                 continue; // Skip cells with unresolved vertex keys
             };
             vertex_keys.sort_unstable();
@@ -1954,6 +2139,11 @@ where
         // Iterate over all cells and their facets
         for (cell_id, cell) in &self.cells {
             let Ok(vertex_keys) = self.vertex_keys_for_cell(cell) else {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "debug: skipping cell {} due to missing vertex keys in facet mapping",
+                    cell.uuid()
+                );
                 continue; // Skip cells with missing vertex keys
             };
 
@@ -2029,6 +2219,10 @@ where
                 let (first_cell_key, first_facet_index) = cell_facet_pairs[0];
                 if let Some(first_cell) = self.cells.get(first_cell_key) {
                     let Ok(vertex_keys) = self.vertex_keys_for_cell(first_cell) else {
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "debug: skipping cell {first_cell_key:?} due to unresolved vertex keys in facet sharing fix"
+                        );
                         continue; // Skip if we can't resolve vertex keys
                     };
                     let mut facet_vertex_keys = Vec::with_capacity(vertex_keys.len() - 1);
@@ -2042,6 +2236,10 @@ where
                     for &(cell_key, _facet_index) in &cell_facet_pairs {
                         if let Some(cell) = self.cells.get(cell_key) {
                             let Ok(cell_vertex_keys_vec) = self.vertex_keys_for_cell(cell) else {
+                                #[cfg(debug_assertions)]
+                                eprintln!(
+                                    "debug: skipping cell {cell_key:?} due to unresolved vertex keys in validation"
+                                );
                                 continue; // Skip cells with unresolved vertex keys
                             };
                             let cell_vertex_keys: FastHashSet<VertexKey> =
@@ -2270,6 +2468,11 @@ where
 
         for (cell_key, cell) in &self.cells {
             let Ok(vertex_keys) = self.vertex_keys_for_cell(cell) else {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "debug: skipping cell {} due to missing vertex keys in duplicate validation",
+                    cell.uuid()
+                );
                 continue; // Skip cells with missing vertex keys
             };
 
@@ -2962,6 +3165,116 @@ mod tests {
         assert_eq!(empty_tds.number_of_vertices(), 0);
         assert_eq!(empty_tds.number_of_cells(), 0);
         assert_eq!(empty_tds.dim(), -1);
+    }
+
+    #[test]
+    fn test_vertices_accessor_empty() {
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let vertices_map = tds.vertices();
+        assert_eq!(vertices_map.len(), 0, "Empty TDS should have no vertices");
+        assert_eq!(tds.number_of_vertices(), vertices_map.len());
+    }
+
+    #[test]
+    fn test_vertices_accessor_populated_and_consistency() {
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        // Access via accessor
+        let vertices_map = tds.vertices();
+        assert_eq!(vertices_map.len(), 4, "Tetrahedron should have 4 vertices");
+        assert_eq!(tds.number_of_vertices(), vertices_map.len());
+
+        // UUID-to-key mapping consistency
+        for (vertex_key, vertex) in vertices_map {
+            let uuid = vertex.uuid();
+            let mapped_key = tds
+                .vertex_key_from_uuid(&uuid)
+                .expect("Vertex UUID should map to a key");
+            assert_eq!(mapped_key, vertex_key);
+        }
+
+        // Iteration usage pattern: collect UUIDs and ensure uniqueness
+        let uuids: std::collections::HashSet<_> = vertices_map
+            .values()
+            .map(super::super::vertex::Vertex::uuid)
+            .collect();
+        assert_eq!(uuids.len(), vertices_map.len());
+    }
+
+    #[test]
+    fn test_vertices_accessor_after_additions() {
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        assert_eq!(tds.vertices().len(), 0);
+
+        let v1: Vertex<f64, usize, 3> = vertex!([0.0, 0.0, 0.0]);
+        let v2: Vertex<f64, usize, 3> = vertex!([1.0, 0.0, 0.0]);
+        let v3: Vertex<f64, usize, 3> = vertex!([0.0, 1.0, 0.0]);
+        let v4: Vertex<f64, usize, 3> = vertex!([0.0, 0.0, 1.0]);
+
+        tds.add(v1).unwrap();
+        assert_eq!(tds.vertices().len(), 1);
+        tds.add(v2).unwrap();
+        assert_eq!(tds.vertices().len(), 2);
+        tds.add(v3).unwrap();
+        assert_eq!(tds.vertices().len(), 3);
+        tds.add(v4).unwrap();
+        assert_eq!(tds.vertices().len(), 4);
+
+        // Access points through accessor and ensure expected coordinates exist
+        let points: Vec<[f64; 3]> = tds
+            .vertices()
+            .values()
+            .map(|v| v.point().to_array())
+            .collect();
+
+        // Check that all expected points are present
+        let expected_points = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ];
+
+        for expected in expected_points {
+            // Use contains for efficiency, ignoring float comparison warnings since this is test code
+            let found = points.iter().any(|&p| {
+                #[allow(clippy::float_cmp)]
+                {
+                    p == expected
+                }
+            });
+            assert!(found, "Expected point {expected:?} not found");
+        }
+    }
+
+    #[test]
+    fn test_mutable_accessors_consistency() {
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        // Test that both mutable accessors are available and consistent
+        let vertices_count_before = tds.vertices_mut().len();
+        let cells_count_before = tds.cells_mut().len();
+
+        assert_eq!(vertices_count_before, 4);
+        assert_eq!(cells_count_before, 1);
+
+        // Test that both accessors provide access to the same data structures
+        assert_eq!(tds.vertices().len(), vertices_count_before);
+        assert_eq!(tds.cells().len(), cells_count_before);
     }
 
     // =============================================================================

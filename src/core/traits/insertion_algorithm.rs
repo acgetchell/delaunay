@@ -4,6 +4,7 @@
 //! interface for different vertex insertion strategies, including the basic
 //! Bowyer-Watson algorithm and robust variants with enhanced numerical stability.
 
+use crate::core::collections::FastHashSet;
 use crate::core::{
     cell::CellBuilder,
     facet::Facet,
@@ -19,6 +20,9 @@ use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
 };
+
+/// Margin factor used for bounding box expansion in exterior vertex detection
+const MARGIN_FACTOR: f64 = 0.1;
 
 /// Strategy used for vertex insertion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -483,25 +487,28 @@ where
         let vertex_coords: [T; D] = vertex.point().into();
 
         // Calculate rough bounding box of existing vertices
-        let mut min_coords = [cast(f64::INFINITY)
-            .unwrap_or_else(|| T::zero() + T::one() * cast(1e10f64).unwrap_or_else(T::one));
-            D];
-        let mut max_coords = [cast(f64::NEG_INFINITY)
-            .unwrap_or_else(|| T::zero() - T::one() * cast(1e10f64).unwrap_or_else(T::one));
-            D];
+        let mut min_coords = [T::zero(); D];
+        let mut max_coords = [T::zero(); D];
+        let mut initialized = false;
         let mut vertex_count = 0;
 
-        for existing_vertex in tds.vertices.values() {
+        for existing_vertex in tds.vertices().values() {
             let coords: [T; D] = existing_vertex.point().into();
             vertex_count += 1;
 
-            for i in 0..D {
-                if coords[i] < min_coords[i] {
-                    min_coords[i] = coords[i];
+            if initialized {
+                for i in 0..D {
+                    if coords[i] < min_coords[i] {
+                        min_coords[i] = coords[i];
+                    }
+                    if coords[i] > max_coords[i] {
+                        max_coords[i] = coords[i];
+                    }
                 }
-                if coords[i] > max_coords[i] {
-                    max_coords[i] = coords[i];
-                }
+            } else {
+                min_coords = coords;
+                max_coords = coords;
+                initialized = true;
             }
         }
 
@@ -510,7 +517,7 @@ where
         }
 
         // Calculate bounding box margins (10% expansion)
-        let margin_factor: T = cast(0.1f64).unwrap_or_else(T::zero);
+        let margin_factor: T = cast(MARGIN_FACTOR).unwrap_or_else(T::zero);
         let mut expanded_min = [T::zero(); D];
         let mut expanded_max = [T::zero(); D];
 
@@ -634,15 +641,13 @@ where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
-        use std::collections::HashSet;
-
         let mut boundary_facets = Vec::new();
 
         if bad_cells.is_empty() {
             return Ok(boundary_facets);
         }
 
-        let bad_cell_set: HashSet<crate::core::triangulation_data_structure::CellKey> =
+        let bad_cell_set: FastHashSet<crate::core::triangulation_data_structure::CellKey> =
             bad_cells.iter().copied().collect();
 
         // Use the canonical facet-to-cells map from TDS (already uses VertexKeys)
@@ -663,6 +668,11 @@ where
 
             let bad_count = bad_cells_sharing.len();
             let total_count = sharing_cells.len();
+            #[cfg(debug_assertions)]
+            debug_assert!(
+                total_count <= 2,
+                "Facet shared by more than two cells (total_count = {total_count})"
+            );
 
             // A facet is on the cavity boundary if:
             // 1. Exactly one bad cell uses it (boundary between bad and good)
@@ -795,6 +805,15 @@ where
         // Create new cells
         let cells_created = Self::create_cells_from_boundary_facets(tds, &boundary_facets, vertex);
 
+        // Finalize the triangulation after insertion to fix any invalid states
+        Self::finalize_after_insertion(tds).map_err(|e| {
+            TriangulationValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Failed to finalize triangulation after cavity-based insertion: {e}"
+                ),
+            }
+        })?;
+
         Ok(InsertionInfo {
             strategy: InsertionStrategy::CavityBased,
             cells_removed,
@@ -848,6 +867,15 @@ where
 
         // Create new cells from visible facets
         let cells_created = Self::create_cells_from_boundary_facets(tds, &visible_facets, vertex);
+
+        // Finalize the triangulation after insertion to fix any invalid states
+        Self::finalize_after_insertion(tds).map_err(|e| {
+            TriangulationValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Failed to finalize triangulation after hull extension insertion: {e}"
+                ),
+            }
+        })?;
 
         Ok(InsertionInfo {
             strategy: InsertionStrategy::HullExtension,
@@ -907,6 +935,15 @@ where
 
                     // Try to create a cell from this facet and the vertex
                     if Self::create_cell_from_facet_and_vertex(tds, facet, vertex) {
+                        // Finalize the triangulation after insertion to fix any invalid states
+                        Self::finalize_after_insertion(tds).map_err(|e| {
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Failed to finalize triangulation after fallback insertion: {e}"
+                                ),
+                            }
+                        })?;
+
                         return Ok(InsertionInfo {
                             strategy: InsertionStrategy::Fallback,
                             cells_removed: 0,
@@ -931,6 +968,15 @@ where
 
                     // Try to create a cell from this facet and the vertex
                     if Self::create_cell_from_facet_and_vertex(tds, facet, vertex) {
+                        // Finalize the triangulation after insertion to fix any invalid states
+                        Self::finalize_after_insertion(tds).map_err(|e| {
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Failed to finalize triangulation after fallback insertion: {e}"
+                                ),
+                            }
+                        })?;
+
                         return Ok(InsertionInfo {
                             strategy: InsertionStrategy::Fallback,
                             cells_removed: 0,
@@ -1069,8 +1115,7 @@ where
         // Ensure all vertices are registered in the TDS vertex mapping
         for vertex in &vertices {
             if !tds.uuid_to_vertex_key.contains_key(&vertex.uuid()) {
-                let vertex_key = tds.vertices.insert(*vertex);
-                tds.uuid_to_vertex_key.insert(vertex.uuid(), vertex_key);
+                tds.insert_vertex_with_mapping(*vertex);
             }
         }
 
@@ -1081,9 +1126,7 @@ where
                 message: format!("Failed to create initial simplex: {e}"),
             })?;
 
-        let cell_key = tds.cells_mut().insert(cell);
-        let cell_uuid = tds.cells()[cell_key].uuid();
-        tds.uuid_to_cell_key.insert(cell_uuid, cell_key);
+        tds.insert_cell_with_mapping(cell);
 
         Ok(())
     }
@@ -1348,7 +1391,7 @@ where
     /// Ensures that a vertex is properly registered in the TDS
     ///
     /// This is a shared utility method that both implementations can use.
-    /// It checks if the vertex UUID is already mapped in the TDS bimap,
+    /// It checks if the vertex UUID is already mapped in the TDS UUID-to-key mapping,
     /// and if not, inserts the vertex and creates the mapping.
     ///
     /// # Arguments
@@ -1357,8 +1400,7 @@ where
     /// * `vertex` - The vertex to ensure is registered
     fn ensure_vertex_in_tds(tds: &mut Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) {
         if !tds.uuid_to_vertex_key.contains_key(&vertex.uuid()) {
-            let vertex_key = tds.vertices.insert(*vertex);
-            tds.uuid_to_vertex_key.insert(vertex.uuid(), vertex_key);
+            tds.insert_vertex_with_mapping(*vertex);
         }
     }
 
@@ -1391,18 +1433,13 @@ where
         let mut facet_vertices = facet.vertices();
         facet_vertices.push(*vertex);
 
-        match CellBuilder::default().vertices(facet_vertices).build() {
-            Ok(new_cell) => {
-                let cell_key = tds.cells_mut().insert(new_cell);
-                let cell_uuid = tds.cells()[cell_key].uuid();
-                tds.uuid_to_cell_key.insert(cell_uuid, cell_key);
+        CellBuilder::default()
+            .vertices(facet_vertices)
+            .build()
+            .is_ok_and(|new_cell| {
+                tds.insert_cell_with_mapping(new_cell);
                 true
-            }
-            Err(_) => {
-                // Cell creation failed - this can happen with degenerate configurations
-                false
-            }
-        }
+            })
     }
 
     /// Creates multiple cells from boundary facets and a vertex
@@ -1439,7 +1476,7 @@ where
 
     /// Removes bad cells from the triangulation
     ///
-    /// This is a shared utility method that removes cells and their bimap entries.
+    /// This is a shared utility method that removes cells and their UUID-to-key mapping entries.
     ///
     /// # Arguments
     ///

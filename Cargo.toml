@@ -20,7 +20,6 @@ allocation-counter = { version = "0.8.1", optional = true }  # for memory profil
 anyhow = "1.0.99"
 arc-swap = "1.7.1"
 approx = "0.5.1"
-bimap = "0.6.3"
 clap = { version = "4.5.47", features = ["derive"] }
 derive_builder = "0.20.1"
 fxhash = "0.2.1"  # Fast non-cryptographic hashing for performance

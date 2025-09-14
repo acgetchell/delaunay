@@ -79,8 +79,8 @@ pub enum FacetError {
     /// The cell does not contain the vertex.
     #[error("The cell does not contain the vertex!")]
     CellDoesNotContainVertex,
-    /// A vertex UUID was not found in the vertex bimap.
-    #[error("Vertex UUID not found in bimap: {uuid}")]
+    /// A vertex UUID was not found in the UUID-to-key mapping.
+    #[error("Vertex UUID not found in mapping: {uuid}")]
     VertexNotFound {
         /// The UUID that was not found.
         uuid: uuid::Uuid,

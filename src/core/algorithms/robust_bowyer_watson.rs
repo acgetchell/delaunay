@@ -4,7 +4,7 @@
 //! into the Bowyer-Watson triangulation algorithm to address the
 //! "No cavity boundary facets found" error.
 
-use std::collections::{HashMap, HashSet};
+use crate::core::collections::{FastHashMap, FastHashSet};
 use std::marker::PhantomData;
 use std::ops::{AddAssign, Div, SubAssign};
 
@@ -276,10 +276,13 @@ where
 
                 // Maintain invariants after structural changes
                 <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
-                    |e| TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Failed to finalize triangulation after cavity-based insertion: {e}"
-                        ),
+                    |e| {
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Failed to finalize triangulation after robust cavity-based insertion \
+                                 (removed {cells_removed} cells, created {cells_created} cells): {e}"
+                            ),
+                        }
                     },
                 )?;
 
@@ -328,7 +331,8 @@ where
             <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
                 |e| TriangulationValidationError::InconsistentDataStructure {
                     message: format!(
-                        "Failed to finalize triangulation after hull extension insertion: {e}"
+                        "Failed to finalize triangulation after robust hull extension insertion \
+                             (created {cells_created} cells): {e}"
                     ),
                 },
             )?;
@@ -512,13 +516,13 @@ where
             return Ok(boundary_facets);
         }
 
-        let bad_cell_set: HashSet<CellKey> = bad_cells.iter().copied().collect();
+        let bad_cell_set: FastHashSet<CellKey> = bad_cells.iter().copied().collect();
 
         // Build facet-to-cells mapping with enhanced validation
         let facet_to_cells = self.build_validated_facet_mapping(tds)?;
 
         // Find boundary facets with improved logic
-        let mut processed_facets = HashSet::new();
+        let mut processed_facets = FastHashSet::default();
 
         for &bad_cell_key in bad_cells {
             if let Some(bad_cell) = tds.cells().get(bad_cell_key)
@@ -666,12 +670,12 @@ where
     fn build_validated_facet_mapping(
         &self,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<HashMap<u64, Vec<CellKey>>, TriangulationValidationError> {
+    ) -> Result<FastHashMap<u64, Vec<CellKey>>, TriangulationValidationError> {
         // Reuse existing mapping from TDS to avoid recomputation
         let tds_map = tds.build_facet_to_cells_hashmap();
 
         // Transform the TDS map into the required format with validation
-        let facet_to_cells: HashMap<u64, Vec<CellKey>> = tds_map
+        let facet_to_cells: FastHashMap<u64, Vec<CellKey>> = tds_map
             .into_iter()
             .map(|(facet_key, cell_facet_pairs)| {
                 // Extract just the CellKeys, discarding facet indices
@@ -693,7 +697,7 @@ where
 
                 Ok((facet_key, cell_keys))
             })
-            .collect::<Result<HashMap<_, _>, _>>()?;
+            .collect::<Result<FastHashMap<_, _>, _>>()?;
 
         Ok(facet_to_cells)
     }
@@ -921,14 +925,9 @@ where
             }
         }
         // Use safe conversion to avoid precision loss warning
+        // Note: This will never fail for facet sizes (≤ D) but we keep the safe conversion for consistency
         let num_vertices = crate::geometry::util::safe_usize_to_scalar::<T>(facet_vertices.len())
-            .unwrap_or_else(|_| {
-                // Fallback for extremely large facet vertex counts (unlikely in practice)
-                // This would only happen if the facet has more than 2^53-1 vertices
-                // which is practically impossible for geometric applications
-                #[allow(clippy::cast_precision_loss)]
-                <T as From<f64>>::from(facet_vertices.len() as f64)
-            });
+            .expect("facet vertex count is always small");
         for coord in &mut centroid_coords {
             *coord /= num_vertices;
         }
@@ -944,9 +943,12 @@ where
         // For exterior vertices, use a more aggressive threshold
         // If the vertex is far from the facet centroid, consider it visible
         // Use a threshold based on the perturbation scale multiplied by a factor
-        let threshold = self.predicate_config.perturbation_scale
-            * self.predicate_config.perturbation_scale
-            * <T as From<f64>>::from(100.0);
+        let threshold = {
+            const VISIBILITY_THRESHOLD_MULTIPLIER: f64 = 100.0;
+            self.predicate_config.perturbation_scale
+                * self.predicate_config.perturbation_scale
+                * <T as From<f64>>::from(VISIBILITY_THRESHOLD_MULTIPLIER)
+        };
         distance_squared > threshold
     }
 
@@ -1005,7 +1007,7 @@ where
 
         // Also check if we're in a high-density area
         let nearby_vertices = tds
-            .vertices
+            .vertices()
             .values()
             .filter(|v| {
                 let v_coords: [T; D] = v.point().into();
@@ -1614,7 +1616,7 @@ mod tests {
                 }
 
                 // The newly inserted vertex should be in the triangulation
-                let vertex_found = tds.vertices.values().any(|v| {
+                let vertex_found = tds.vertices().values().any(|v| {
                     let v_coords: [f64; 3] = (*v).into();
                     let test_coords: [f64; 3] = test_vertex.point().into();
                     v_coords
@@ -1682,7 +1684,7 @@ mod tests {
             );
 
             // 2. No duplicate cells should exist
-            let mut cell_signatures = std::collections::HashSet::new();
+            let mut cell_signatures = FastHashSet::default();
             for (_, cell) in tds.cells() {
                 let mut vertex_uuids: Vec<_> = cell
                     .vertices()
@@ -1746,7 +1748,7 @@ mod tests {
             }
 
             // 4. All vertices should have proper incident cells assigned
-            for (_, vertex) in &tds.vertices {
+            for (_, vertex) in tds.vertices() {
                 if let Some(incident_cell_uuid) = vertex.incident_cell
                     && let Some(incident_cell_key) = tds.cell_key_from_uuid(&incident_cell_uuid)
                     && let Some(incident_cell) = tds.cells().get(incident_cell_key)
