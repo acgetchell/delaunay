@@ -752,6 +752,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "bench")]
     fn test_boundary_analysis_performance_characteristics() {
         // Test that boundary analysis methods have reasonable performance characteristics
         use std::time::Instant;
@@ -837,6 +838,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "bench")]
     fn benchmark_boundary_facets_performance() {
         use crate::core::algorithms::robust_bowyer_watson::RobustBoyerWatson;
         use crate::core::traits::insertion_algorithm::InsertionAlgorithm;

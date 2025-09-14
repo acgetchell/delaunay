@@ -178,6 +178,19 @@ cargo bench --bench profiling_suite --features count-allocations
 > For consistent results across environments, ensure the same allocator is used. The `allocation-counter` crate works
 > with the global allocator interface.
 
+**Note**: Benchmark-style tests are available through the `bench` feature for performance analysis and demonstrations:
+
+```bash
+# Run regular tests (excludes timing-sensitive benchmark tests)
+cargo test --lib
+# Run all tests including benchmark-style performance analysis
+cargo test --lib --features bench
+```
+
+> **CI Stability**: The `bench` feature gates timing-based tests that may be flaky in CI environments.
+> These tests are designed for local performance analysis and ergonomics validation rather than
+> deterministic unit testing. Use `--features bench` when conducting performance investigations.
+
 **Note**: Robust predicates testing demonstrates cases where enhanced numerical stability prevents triangulation failures:
 
 ```bash
@@ -249,6 +262,7 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality i
 - **Quality Control**: `.codacy.yml`, `rustfmt.toml`, `pyproject.toml`, linting configurations
 - **Environment**: `rust-toolchain.toml`, `.python-version`, `.cargo/config.toml`, GitHub Actions workflows
 - **Memory Profiling**: `count-allocations` feature flag, allocation-counter dependency, profiling benchmarks
+- **Performance Analysis**: `bench` feature flag for timing-based tests and performance demonstrations
 - **Project Metadata**: `CITATION.cff`, `REFERENCES.md`, `WARP.md`
 
 ### Architectural Principles
@@ -260,9 +274,10 @@ The project structure reflects several key architectural decisions:
 3. **Trait-Based Architecture**: Heavy use of traits for extensibility and code reuse
 4. **Performance Focus**: Dedicated benchmarking infrastructure, performance regression detection, and memory allocation profiling
 5. **Memory Profiling**: Comprehensive allocation tracking with `count-allocations` feature for detailed memory analysis
-6. **Academic Integration**: Strong support for research use with comprehensive citations and references
-7. **Cross-Platform Development**: Modern Python tooling alongside traditional Rust development
-8. **Quality Assurance**: Multiple layers of automated quality control and testing
+6. **Performance Analysis**: Optional `bench` feature for timing-based tests and performance demonstrations
+7. **Academic Integration**: Strong support for research use with comprehensive citations and references
+8. **Cross-Platform Development**: Modern Python tooling alongside traditional Rust development
+9. **Quality Assurance**: Multiple layers of automated quality control and testing
 
 This structure supports both library users (through examples and documentation) and contributors (through comprehensive
 development tooling and clear architectural guidance).

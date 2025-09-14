@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Performance Comparison:");
     println!("======================");
 
-    let iterations = 100_000;
+    let iterations = 10_000;
 
     // Method 1: Allocating Vec (traditional)
     let start = Instant::now();
@@ -71,13 +71,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Method 1 (vertex_uuids): {vec_duration:>8.2?} ({iterations} iterations)");
     println!("  Method 2 (vertex_uuid_iter): {iter_duration:>8.2?} ({iterations} iterations)");
 
-    // Use safe duration casting to avoid precision loss warnings
-    let speedup = if iter_duration.as_nanos() == 0 {
-        f64::INFINITY
+    // Handle speedup calculation with edge case for very fast operations
+    if iter_duration.as_nanos() < 1000 {
+        println!("  Speedup: N/A (iteration time too small to measure reliably)");
     } else {
-        vec_duration.as_secs_f64() / iter_duration.as_secs_f64()
-    };
-    println!("  Speedup: {speedup:.2}x faster");
+        let speedup = vec_duration.as_secs_f64() / iter_duration.as_secs_f64();
+        println!("  Speedup: {speedup:.2}x faster");
+    }
     println!("  Counts match: {}", total_count == total_count_iter);
     println!();
 

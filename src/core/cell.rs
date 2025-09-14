@@ -793,20 +793,19 @@ where
         })
     }
 
-    /// Converts a vector of cells into a `HashMap` indexed by their UUIDs.
+    /// Converts a vector of cells into a `FastHashMap` indexed by their UUIDs.
     ///
     /// This utility function transforms a collection of cells into a hash map structure
-    /// for efficient lookups by UUID. Each cell's unique identifier becomes the key,
-    /// and the cell itself becomes the value in the resulting `HashMap`.
+    /// for efficient lookups by UUID. Uses `FastHashMap` for performance.
     ///
     /// # Arguments
     ///
-    /// * `cells` - A vector of cells to be converted into a `HashMap`.
+    /// * `cells` - A vector of cells to be converted into a `FastHashMap`.
     ///
     /// # Returns
     ///
-    /// A [`HashMap\u003cUuid, Self\u003e`] where each key is a cell's UUID and each value
-    /// is the corresponding cell. The `HashMap` provides O(1) average-case lookups
+    /// A [`FastHashMap\u003cUuid, Self\u003e`] where each key is a cell's UUID and each value
+    /// is the corresponding cell. The map provides O(1) average-case lookups
     /// by UUID.
     ///
     /// # Examples
@@ -845,7 +844,7 @@ where
     /// use delaunay::{cell, vertex};
     /// use delaunay::core::cell::Cell;
     ///
-    /// // Empty vector produces empty HashMap
+    /// // Empty vector produces empty FastHashMap
     /// let empty_cells: Vec<Cell<f64, Option<()>, Option<()>, 3>> = vec![];
     /// let empty_map = Cell::into_hashmap(empty_cells);
     /// assert!(empty_map.is_empty());
@@ -1774,7 +1773,7 @@ mod tests {
 
     #[test]
     fn test_vertex_uuids_4d_cell() {
-        // Test vertex_uuids with a 4D cell (5-simplex) using integer data
+        // Test vertex_uuids with a 4D cell (4-simplex) using integer data
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0, 0.0], 1),
             vertex!([1.0, 0.0, 0.0, 0.0], 2),
@@ -3134,6 +3133,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "bench")]
     fn test_vertex_uuid_iter_by_value_vs_by_reference_analysis() {
         // Comprehensive analysis of whether vertex_uuid_iter should return
         // Uuid by value (current) vs &Uuid by reference (proposed)

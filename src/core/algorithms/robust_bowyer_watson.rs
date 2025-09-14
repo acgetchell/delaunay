@@ -6,7 +6,7 @@
 
 use crate::core::collections::{FastHashMap, FastHashSet};
 use std::marker::PhantomData;
-use std::ops::{AddAssign, Div, SubAssign};
+use std::ops::{AddAssign, Div, DivAssign, SubAssign};
 
 use crate::core::traits::insertion_algorithm::{
     InsertionAlgorithm, InsertionBuffers, InsertionInfo, InsertionStatistics, InsertionStrategy,
@@ -919,7 +919,10 @@ where
         &self,
         facet: &Facet<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> bool {
+    ) -> bool
+    where
+        T: DivAssign<T>,
+    {
         let facet_vertices = facet.vertices();
 
         // Calculate facet centroid

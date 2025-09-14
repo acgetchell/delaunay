@@ -162,6 +162,9 @@ bash scripts/run_all_examples.sh
 
 # Python utility testing (if Python scripts modified)
 uv run pytest
+
+# Benchmark-style tests (performance analysis and demonstrations)
+cargo test --lib --features bench  # Includes timing-based tests normally excluded from CI
 ```
 
 ### Performance and Benchmarks
