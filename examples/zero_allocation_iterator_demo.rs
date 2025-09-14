@@ -7,6 +7,7 @@
 
 use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::*;
+use std::hint::black_box;
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,7 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Get the first cell from the triangulation
-    let (_cell_key, cell) = tds.cells().iter().next().unwrap();
+    let Some(cell) = tds.cells().values().next() else {
+        eprintln!("No cells in triangulation; nothing to demo.");
+        return Ok(());
+    };
     println!(
         "Using a 4D cell with {} vertices from triangulation\n",
         cell.number_of_vertices()
@@ -55,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut total_count = 0;
     for _ in 0..iterations {
         let uuids = cell.vertex_uuids(); // Allocates Vec
-        total_count += uuids.len(); // Force use to prevent optimization
+        total_count += black_box(uuids.len()); // Prevent optimization
     }
     let vec_duration = start.elapsed();
 
@@ -64,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut total_count_iter = 0;
     for _ in 0..iterations {
         let count = cell.vertex_uuid_iter().count(); // No allocation
-        total_count_iter += count;
+        total_count_iter += black_box(count);
     }
     let iter_duration = start.elapsed();
 
@@ -72,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Method 2 (vertex_uuid_iter): {iter_duration:>8.2?} ({iterations} iterations)");
 
     // Handle speedup calculation with edge case for very fast operations
-    if iter_duration.as_nanos() < 1000 {
+    if iter_duration.as_nanos() < 1000 || vec_duration.as_nanos() < 1000 {
         println!("  Speedup: N/A (iteration time too small to measure reliably)");
     } else {
         let speedup = vec_duration.as_secs_f64() / iter_duration.as_secs_f64();

@@ -545,8 +545,8 @@ where
     /// Returns the UUIDs of the vertices in this cell.
     ///
     /// This method provides access to the vertex UUIDs that form this cell.
-    /// Use `Tds::vertex_key_from_uuid()` or `Tds::vertex_keys_for_cell()`
-    /// to convert these UUIDs to `VertexKey`s when working with the TDS.
+    /// Use `Tds::vertex_key_from_uuid()` to convert these UUIDs to `VertexKey`s
+    /// when working with the TDS.
     ///
     /// # Returns
     ///
@@ -578,6 +578,7 @@ where
     /// let unique_count = uuids.iter().collect::<std::collections::HashSet<_>>().len();
     /// assert_eq!(unique_count, uuids.len());
     /// ```
+    #[inline]
     pub fn vertex_uuids(&self) -> Vec<Uuid> {
         self.vertices()
             .iter()

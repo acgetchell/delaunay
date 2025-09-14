@@ -4,6 +4,7 @@
 //! providing methods to identify and analyze boundary facets in d-dimensional triangulations.
 
 use super::{
+    collections::VertexKeyBuffer,
     facet::{Facet, FacetError, facet_key_from_vertex_keys},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
     triangulation_data_structure::Tds,
@@ -148,12 +149,79 @@ where
         // Compute the facet key using VertexKeys (same method as build_facet_to_cells_hashmap)
         // Get the vertex keys for the facet's vertices
         let facet_vertices = facet.vertices();
-        let mut vertex_keys = Vec::with_capacity(facet_vertices.len());
+        let mut vertex_keys = VertexKeyBuffer::with_capacity(facet_vertices.len());
 
         // Look up VertexKey for each vertex in the facet
         for vertex in &facet_vertices {
-            match self.uuid_to_vertex_key.get(&vertex.uuid()) {
-                Some(&key) => vertex_keys.push(key),
+            match self.vertex_key_from_uuid(&vertex.uuid()) {
+                Some(key) => vertex_keys.push(key),
+                None => return false, // Vertex not in triangulation, so facet can't be boundary
+            }
+        }
+
+        // Generate the facet key using the same method as build_facet_to_cells_hashmap
+        let facet_key = facet_key_from_vertex_keys(&vertex_keys);
+
+        facet_to_cells
+            .get(&facet_key)
+            .is_some_and(|cells| cells.len() == 1)
+    }
+
+    /// Checks if a specific facet is a boundary facet using a precomputed facet map.
+    ///
+    /// This is an optimized version of `is_boundary_facet` that accepts a prebuilt
+    /// facet-to-cells map to avoid recomputation in tight loops.
+    ///
+    /// # Arguments
+    ///
+    /// * `facet` - The facet to check.
+    /// * `facet_to_cells` - Precomputed map from facet keys to cells containing them.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the facet is on the boundary (belongs to only one cell), `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// // Build the facet map once for multiple queries
+    /// let facet_to_cells = tds.build_facet_to_cells_hashmap();
+    ///
+    /// // Check multiple facets efficiently
+    /// if let Some(cell) = tds.cells().values().next() {
+    ///     if let Ok(facets) = cell.facets() {
+    ///         for facet in &facets {
+    ///             let is_boundary = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
+    ///             println!("Facet is boundary: {is_boundary}");
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    fn is_boundary_facet_with_map(
+        &self,
+        facet: &Facet<T, U, V, D>,
+        facet_to_cells: &super::collections::FacetToCellsMap,
+    ) -> bool {
+        // Get the vertex keys for the facet's vertices
+        let facet_vertices = facet.vertices();
+        let mut vertex_keys = VertexKeyBuffer::with_capacity(facet_vertices.len());
+
+        // Look up VertexKey for each vertex in the facet
+        for vertex in &facet_vertices {
+            match self.vertex_key_from_uuid(&vertex.uuid()) {
+                Some(key) => vertex_keys.push(key),
                 None => return false, // Vertex not in triangulation, so facet can't be boundary
             }
         }
@@ -205,10 +273,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::BoundaryAnalysis;
+    use crate::core::collections::FastHashMap;
     use crate::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
-    use std::collections::HashMap;
     use uuid::Uuid;
 
     // =============================================================================
@@ -304,6 +372,45 @@ mod tests {
         );
 
         println!("✓ 3D tetrahedron boundary analysis works correctly");
+    }
+
+    #[test]
+    fn test_is_boundary_facet_with_map_cached_version() {
+        // Test the cached version of is_boundary_facet for better performance in tight loops
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Build the facet map once for efficiency
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+
+        // Get all facets from the single tetrahedron
+        let cell = tds.cells().values().next().expect("Should have one cell");
+        let facets = cell.facets().expect("Should get facets from cell");
+
+        // Test that both methods give the same results
+        for facet in &facets {
+            let is_boundary_regular = tds.is_boundary_facet(facet);
+            let is_boundary_cached = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
+
+            assert_eq!(
+                is_boundary_regular, is_boundary_cached,
+                "Regular and cached methods should give same result"
+            );
+
+            // In a single tetrahedron, all facets are boundary facets
+            assert!(
+                is_boundary_cached,
+                "All facets in single tetrahedron should be boundary facets"
+            );
+        }
+
+        println!("✓ Cached boundary facet method works correctly and matches regular method");
     }
 
     #[test]
@@ -427,7 +534,7 @@ mod tests {
         );
 
         // Build a map of facet keys to the cells that contain them for detailed verification
-        let mut facet_map: HashMap<u64, Vec<Uuid>> = HashMap::new();
+        let mut facet_map: FastHashMap<u64, Vec<Uuid>> = FastHashMap::default();
         for cell in tds.cells().values() {
             for facet in cell.facets().expect("Should get cell facets") {
                 facet_map.entry(facet.key()).or_default().push(cell.uuid());

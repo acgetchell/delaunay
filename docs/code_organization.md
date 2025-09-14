@@ -262,7 +262,7 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality i
 - **Quality Control**: `.codacy.yml`, `rustfmt.toml`, `pyproject.toml`, linting configurations
 - **Environment**: `rust-toolchain.toml`, `.python-version`, `.cargo/config.toml`, GitHub Actions workflows
 - **Memory Profiling**: `count-allocations` feature flag, allocation-counter dependency, profiling benchmarks
-- **Performance Analysis**: `bench` feature flag for timing-based tests and performance demonstrations
+- **Performance Analysis**: `bench` feature flag for timing-based tests and performance demos (see "Benchmark-style tests" note above)
 - **Project Metadata**: `CITATION.cff`, `REFERENCES.md`, `WARP.md`
 
 ### Architectural Principles
@@ -274,7 +274,7 @@ The project structure reflects several key architectural decisions:
 3. **Trait-Based Architecture**: Heavy use of traits for extensibility and code reuse
 4. **Performance Focus**: Dedicated benchmarking infrastructure, performance regression detection, and memory allocation profiling
 5. **Memory Profiling**: Comprehensive allocation tracking with `count-allocations` feature for detailed memory analysis
-6. **Performance Analysis**: Optional `bench` feature for timing-based tests and performance demonstrations
+6. **Performance Analysis (opt-in)**: `bench` feature for timing-based tests and ergonomics checks; distinct from CI-driven regression detection in item 4
 7. **Academic Integration**: Strong support for research use with comprehensive citations and references
 8. **Cross-Platform Development**: Modern Python tooling alongside traditional Rust development
 9. **Quality Assurance**: Multiple layers of automated quality control and testing

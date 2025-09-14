@@ -4,7 +4,8 @@
 //! into the Bowyer-Watson triangulation algorithm to address the
 //! "No cavity boundary facets found" error.
 
-use crate::core::collections::{FastHashMap, FastHashSet};
+use crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE;
+use crate::core::collections::{FastHashMap, FastHashSet, SmallBuffer};
 use std::marker::PhantomData;
 use std::ops::{AddAssign, Div, DivAssign, SubAssign};
 
@@ -459,12 +460,14 @@ where
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
     ) -> Vec<CellKey> {
-        let mut bad_cells = Vec::new();
+        let mut bad_cells = SmallBuffer::<CellKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+        let mut vertex_points =
+            SmallBuffer::<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>::with_capacity(D + 1);
 
         for (cell_key, cell) in tds.cells() {
-            // Extract vertex points from the cell
-            let vertex_points: Vec<Point<T, D>> =
-                cell.vertices().iter().map(|v| *v.point()).collect();
+            // Extract vertex points from the cell (reusing buffer)
+            vertex_points.clear();
+            vertex_points.extend(cell.vertices().iter().map(|v| *v.point()));
 
             if vertex_points.len() < D + 1 {
                 continue; // Skip incomplete cells
@@ -502,7 +505,7 @@ where
             }
         }
 
-        bad_cells
+        bad_cells.into_vec()
     }
 
     /// Find cavity boundary facets with enhanced error handling.
@@ -793,12 +796,9 @@ where
 
         // Get all boundary facets (facets shared by exactly one cell)
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
-        let boundary_facets: Vec<_> = facet_to_cells
-            .iter()
-            .filter(|(_, cells)| cells.len() == 1)
-            .collect();
 
-        for (_facet_key, cells) in boundary_facets {
+        // Directly iterate over filtered boundary facets without collecting into a temporary Vec
+        for (_facet_key, cells) in facet_to_cells.iter().filter(|(_, cells)| cells.len() == 1) {
             let (cell_key, facet_index) = cells[0];
             if let Some(cell) = tds.cells().get(cell_key) {
                 if let Ok(facets) = cell.facets() {

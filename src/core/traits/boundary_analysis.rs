@@ -129,6 +129,25 @@ where
     /// ```
     fn is_boundary_facet(&self, facet: &Facet<T, U, V, D>) -> bool;
 
+    /// Checks if a specific facet is a boundary facet using a precomputed facet map.
+    ///
+    /// This is an optimized version of `is_boundary_facet` that accepts a prebuilt
+    /// facet-to-cells map to avoid recomputation in tight loops.
+    ///
+    /// # Arguments
+    ///
+    /// * `facet` - The facet to check.
+    /// * `facet_to_cells` - Precomputed map from facet keys to cells containing them.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the facet is on the boundary (belongs to only one cell), `false` otherwise.
+    fn is_boundary_facet_with_map(
+        &self,
+        facet: &Facet<T, U, V, D>,
+        facet_to_cells: &crate::core::collections::FacetToCellsMap,
+    ) -> bool;
+
     /// Returns the number of boundary facets in the triangulation.
     ///
     /// This is a more efficient way to count boundary facets without creating
