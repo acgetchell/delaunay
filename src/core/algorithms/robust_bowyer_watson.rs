@@ -24,6 +24,7 @@ use crate::geometry::{
     predicates::InSphere,
     robust_predicates::{RobustPredicateConfig, config_presets, robust_insphere},
     traits::coordinate::{Coordinate, CoordinateScalar},
+    util::safe_usize_to_scalar,
 };
 use nalgebra::{self as na, ComplexField};
 use serde::{Serialize, de::DeserializeOwned};
@@ -679,10 +680,15 @@ where
             .into_iter()
             .map(|(facet_key, cell_facet_pairs)| {
                 // Extract just the CellKeys, discarding facet indices
-                let cell_keys: Vec<CellKey> = cell_facet_pairs
+                let mut cell_keys: Vec<CellKey> = cell_facet_pairs
                     .iter()
                     .map(|(cell_key, _)| *cell_key)
                     .collect();
+
+                // Defensively deduplicate cell keys in case build_facet_to_cells_hashmap()
+                // ever yields duplicate (cell_key, idx) pairs per facet
+                cell_keys.sort_unstable();
+                cell_keys.dedup();
 
                 // Validate that no facet is shared by more than 2 cells
                 if cell_keys.len() > 2 {
@@ -925,9 +931,10 @@ where
             }
         }
         // Use safe conversion to avoid precision loss warning
-        // Note: This will never fail for facet sizes (≤ D) but we keep the safe conversion for consistency
-        let num_vertices = crate::geometry::util::safe_usize_to_scalar::<T>(facet_vertices.len())
-            .expect("facet vertex count is always small");
+        // Note: This should never fail for facet sizes (≤ D) but we handle it defensively
+        let Ok(num_vertices) = safe_usize_to_scalar::<T>(facet_vertices.len()) else {
+            return false; // Conservatively treat as not visible if conversion fails
+        };
         for coord in &mut centroid_coords {
             *coord /= num_vertices;
         }
@@ -1686,11 +1693,7 @@ mod tests {
             // 2. No duplicate cells should exist
             let mut cell_signatures = FastHashSet::default();
             for (_, cell) in tds.cells() {
-                let mut vertex_uuids: Vec<_> = cell
-                    .vertices()
-                    .iter()
-                    .map(crate::core::vertex::Vertex::uuid)
-                    .collect();
+                let mut vertex_uuids: Vec<_> = cell.vertex_uuid_iter().collect();
                 vertex_uuids.sort();
                 let signature = format!("{vertex_uuids:?}");
 

@@ -2830,32 +2830,16 @@ where
 
         // Sort cells by their vertex UUIDs
         self_cells.sort_by(|a, b| {
-            let mut a_vertex_uuids: Vec<Uuid> = a
-                .vertices()
-                .iter()
-                .map(super::vertex::Vertex::uuid)
-                .collect();
-            let mut b_vertex_uuids: Vec<Uuid> = b
-                .vertices()
-                .iter()
-                .map(super::vertex::Vertex::uuid)
-                .collect();
+            let mut a_vertex_uuids: Vec<Uuid> = a.vertex_uuid_iter().collect();
+            let mut b_vertex_uuids: Vec<Uuid> = b.vertex_uuid_iter().collect();
             a_vertex_uuids.sort_unstable();
             b_vertex_uuids.sort_unstable();
             a_vertex_uuids.cmp(&b_vertex_uuids)
         });
 
         other_cells.sort_by(|a, b| {
-            let mut a_vertex_uuids: Vec<Uuid> = a
-                .vertices()
-                .iter()
-                .map(super::vertex::Vertex::uuid)
-                .collect();
-            let mut b_vertex_uuids: Vec<Uuid> = b
-                .vertices()
-                .iter()
-                .map(super::vertex::Vertex::uuid)
-                .collect();
+            let mut a_vertex_uuids: Vec<Uuid> = a.vertex_uuid_iter().collect();
+            let mut b_vertex_uuids: Vec<Uuid> = b.vertex_uuid_iter().collect();
             a_vertex_uuids.sort_unstable();
             b_vertex_uuids.sort_unstable();
             a_vertex_uuids.cmp(&b_vertex_uuids)
