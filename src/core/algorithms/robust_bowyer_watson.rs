@@ -920,7 +920,15 @@ where
                 centroid_coords[i] += coord;
             }
         }
-        let num_vertices = T::from_usize(facet_vertices.len()).unwrap_or_else(T::one);
+        // Use safe conversion to avoid precision loss warning
+        let num_vertices = crate::geometry::util::safe_usize_to_scalar::<T>(facet_vertices.len())
+            .unwrap_or_else(|_| {
+                // Fallback for extremely large facet vertex counts (unlikely in practice)
+                // This would only happen if the facet has more than 2^53-1 vertices
+                // which is practically impossible for geometric applications
+                #[allow(clippy::cast_precision_loss)]
+                <T as From<f64>>::from(facet_vertices.len() as f64)
+            });
         for coord in &mut centroid_coords {
             *coord /= num_vertices;
         }
@@ -938,7 +946,7 @@ where
         // Use a threshold based on the perturbation scale multiplied by a factor
         let threshold = self.predicate_config.perturbation_scale
             * self.predicate_config.perturbation_scale
-            * T::from_f64(100.0).unwrap_or_else(|| T::one());
+            * <T as From<f64>>::from(100.0);
         distance_squared > threshold
     }
 
@@ -1000,7 +1008,7 @@ where
             .vertices
             .values()
             .filter(|v| {
-                let v_coords: [T; D] = (*v).into();
+                let v_coords: [T; D] = v.point().into();
                 let distance_squared: f64 = coords
                     .iter()
                     .zip(v_coords.iter())

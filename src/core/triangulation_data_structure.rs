@@ -411,14 +411,20 @@ where
     /// Fast mapping from Vertex UUIDs to their `VertexKeys` for efficient UUID → Key lookups.
     /// This optimizes the common operation of looking up vertex keys by UUID.
     /// For reverse Key → UUID lookups, we use direct `SlotMap` access: `vertices[key].uuid()`.
+    ///
+    /// SAFETY: External mutation of this map will violate TDS invariants.
+    /// This should only be modified through TDS methods that maintain consistency.
     #[serde(skip)] // Skip serialization - can be reconstructed from vertices
-    pub uuid_to_vertex_key: UuidToVertexKeyMap,
+    pub(crate) uuid_to_vertex_key: UuidToVertexKeyMap,
 
     /// Fast mapping from Cell UUIDs to their `CellKeys` for efficient UUID → Key lookups.
     /// This optimizes the common operation of looking up cell keys by UUID.
     /// For reverse Key → UUID lookups, we use direct `SlotMap` access: `cells[key].uuid()`.
+    ///
+    /// SAFETY: External mutation of this map will violate TDS invariants.
+    /// This should only be modified through TDS methods that maintain consistency.
     #[serde(skip)] // Skip serialization - can be reconstructed from cells
-    pub uuid_to_cell_key: UuidToCellKeyMap,
+    pub(crate) uuid_to_cell_key: UuidToCellKeyMap,
 
     /// The current construction state of the triangulation.
     /// This field tracks whether the triangulation has enough vertices to form a complete
@@ -783,12 +789,14 @@ where
     ///
     /// # Performance
     ///
-    /// This uses `FastHashMap` for O(1) UUID→Key lookups instead of `BiMap`'s dual-lookup overhead.
+    /// This uses `FastHashMap` for O(1) UUID→Key lookups.
+    #[inline]
     fn vertex_keys_for_cell(
         &self,
         cell: &Cell<T, U, V, D>,
     ) -> Result<Vec<VertexKey>, super::facet::FacetError> {
-        cell.vertices()
+        let keys: Result<Vec<VertexKey>, _> = cell
+            .vertices()
             .iter()
             .map(|v| {
                 self.uuid_to_vertex_key
@@ -796,11 +804,21 @@ where
                     .copied()
                     .ok_or_else(|| super::facet::FacetError::VertexNotFound { uuid: v.uuid() })
             })
-            .collect()
+            .collect();
+
+        #[cfg(debug_assertions)]
+        if let Ok(ref k) = keys {
+            debug_assert_eq!(
+                k.len(),
+                cell.vertices().len(),
+                "Mapping drift detected: vertex count mismatch"
+            );
+        }
+
+        keys
     }
 
     /// Helper function to get a cell key from a cell UUID using the optimized UUID→Key mapping.
-    /// This eliminates `BiMap` lookups in hot paths.
     ///
     /// # Arguments
     ///
@@ -1692,6 +1710,9 @@ where
             }
         }
 
+        // Topology changed; invalidate caches.
+        self.generation.fetch_add(1, Ordering::Relaxed);
+
         Ok(())
     }
 
@@ -1838,7 +1859,9 @@ where
 
         // First pass: identify duplicate cells
         for (cell_key, cell) in &self.cells {
-            let mut vertex_keys = self.vertex_keys_for_cell(cell).unwrap_or_default();
+            let Ok(mut vertex_keys) = self.vertex_keys_for_cell(cell) else {
+                continue; // Skip cells with unresolved vertex keys
+            };
             vertex_keys.sort_unstable();
 
             if let Some(_existing_cell_key) = unique_cells.get(&vertex_keys) {
@@ -1925,6 +1948,9 @@ where
         let mut facet_to_cells: FacetToCellsMap =
             fast_hash_map_with_capacity(self.cells.len() * (D + 1));
 
+        // Preallocate facet_vertex_keys buffer outside the loops to avoid per-iteration allocations
+        let mut facet_vertex_keys = Vec::with_capacity(D);
+
         // Iterate over all cells and their facets
         for (cell_id, cell) in &self.cells {
             let Ok(vertex_keys) = self.vertex_keys_for_cell(cell) else {
@@ -1932,7 +1958,8 @@ where
             };
 
             for i in 0..cell.vertices().len() {
-                let mut facet_vertex_keys = Vec::with_capacity(cell.vertices().len() - 1);
+                // Clear and reuse the buffer instead of allocating a new one
+                facet_vertex_keys.clear();
                 for (j, &key) in vertex_keys.iter().enumerate() {
                     if i != j {
                         facet_vertex_keys.push(key);
@@ -2001,7 +2028,9 @@ where
             if cell_facet_pairs.len() > 2 {
                 let (first_cell_key, first_facet_index) = cell_facet_pairs[0];
                 if let Some(first_cell) = self.cells.get(first_cell_key) {
-                    let vertex_keys = self.vertex_keys_for_cell(first_cell).unwrap_or_default();
+                    let Ok(vertex_keys) = self.vertex_keys_for_cell(first_cell) else {
+                        continue; // Skip if we can't resolve vertex keys
+                    };
                     let mut facet_vertex_keys = Vec::with_capacity(vertex_keys.len() - 1);
                     for (i, &key) in vertex_keys.iter().enumerate() {
                         if i != first_facet_index as usize {
@@ -2012,11 +2041,11 @@ where
                     let mut valid_cells = ValidCellsBuffer::new();
                     for &(cell_key, _facet_index) in &cell_facet_pairs {
                         if let Some(cell) = self.cells.get(cell_key) {
-                            let cell_vertex_keys: FastHashSet<VertexKey> = self
-                                .vertex_keys_for_cell(cell)
-                                .unwrap_or_default()
-                                .into_iter()
-                                .collect();
+                            let Ok(cell_vertex_keys_vec) = self.vertex_keys_for_cell(cell) else {
+                                continue; // Skip cells with unresolved vertex keys
+                            };
+                            let cell_vertex_keys: FastHashSet<VertexKey> =
+                                cell_vertex_keys_vec.into_iter().collect();
                             let facet_vertex_keys_set: FastHashSet<VertexKey> =
                                 facet_vertex_keys.iter().copied().collect();
 
@@ -2330,7 +2359,7 @@ where
     /// # Validation Checks
     ///
     /// This function performs comprehensive validation including:
-    /// 1. **Mapping consistency**: Validates vertex and cell UUID-to-key bidirectional mappings
+    /// 1. **Mapping consistency**: Validates vertex and cell UUID-to-key mappings
     /// 2. **Cell uniqueness**: Checks for duplicate cells with identical vertex sets
     /// 3. **Individual cell validation**: Calls [`is_valid()`](crate::core::cell::Cell::is_valid) on each cell
     /// 4. **Facet sharing validation**: Ensures no facet is shared by >2 cells
@@ -2366,45 +2395,6 @@ where
     /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
     /// assert!(tds.is_valid().is_ok());
     /// ```
-    ///
-    /// Error handling example:
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::{Tds, TriangulationValidationError};
-    /// use delaunay::{vertex, cell};
-    /// use uuid::Uuid;
-    ///
-    /// let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
-    ///
-    /// // Create a valid cell first, then corrupt it to have a nil UUID
-    /// let vertices = vec![
-    ///     vertex!([1.0, 2.0, 3.0]),
-    ///     vertex!([4.0, 5.0, 6.0]),
-    ///     vertex!([7.0, 8.0, 9.0]),
-    ///     vertex!([10.0, 11.0, 12.0]),
-    /// ];
-    ///
-    /// // Add vertices to TDS
-    /// for vertex in &vertices {
-    ///     let vertex_key = tds.vertices.insert(*vertex);
-    ///     tds.uuid_to_vertex_key.insert(vertex.uuid(), vertex_key);
-    /// }
-    ///
-    /// let mut cell = cell!(vertices);
-    /// let cell_key = tds.cells_mut().insert(cell);
-    /// let cell_uuid = tds.cells().get(cell_key).unwrap().uuid();
-    ///
-    /// // Corrupt the cell bimap to create inconsistency
-    /// tds.uuid_to_cell_key.insert(Uuid::nil(), cell_key); // Invalid mapping
-    ///
-    /// // Validation should fail due to mapping inconsistency
-    /// match tds.is_valid() {
-    ///     Err(TriangulationValidationError::MappingInconsistency { .. }) => {
-    ///         // Expected error
-    ///     }
-    ///     _ => panic!("Expected MappingInconsistency error"),
-    /// }
-    /// ```
     pub fn is_valid(&self) -> Result<(), TriangulationValidationError>
     where
         [T; D]: DeserializeOwned + Serialize + Sized,
@@ -2423,7 +2413,7 @@ where
                     // This shouldn't happen if validate_cell_mappings passed
                     return TriangulationValidationError::InconsistentDataStructure {
                         message: format!(
-                            "Cell key {cell_id:?} has no UUID mapping in bimap during validation"
+                            "Cell key {cell_id:?} has no UUID mapping during validation"
                         ),
                     };
                 };
@@ -2674,8 +2664,8 @@ where
         }
 
         // If we get here, the triangulations have the same structure
-        // BiMaps are derived from the vertices/cells, so if those match, the BiMaps should be consistent
-        // (We don't need to compare the BiMaps directly since they're just indexing structures)
+        // UUID→Key maps are derived from the vertices/cells, so if those match, the maps should be consistent
+        // (We don't need to compare the maps directly since they're just indexing structures)
 
         true
     }
@@ -2716,9 +2706,6 @@ where
         enum Field {
             Vertices,
             Cells,
-            // Legacy fields for backward compatibility - we ignore these now
-            VertexBimap,
-            CellBimap,
         }
 
         struct TdsVisitor<T, U, V, const D: usize>(PhantomData<(T, U, V)>);
@@ -2756,10 +2743,6 @@ where
                                 return Err(de::Error::duplicate_field("cells"));
                             }
                             cells = Some(map.next_value()?);
-                        }
-                        Field::VertexBimap | Field::CellBimap => {
-                            // Legacy fields - ignore them, we'll rebuild mappings from data
-                            let _ignored: serde_json::Value = map.next_value()?;
                         }
                     }
                 }
@@ -2802,8 +2785,8 @@ where
 // SERDE HELPERS
 // =============================================================================
 
-// UUID-to-key mappings are now skipped during serialization and reconstructed during
-// deserialization, so no custom serialization functions are needed.
+// UUID-to-key mappings are skipped during serialization and reconstructed during
+// deserialization from the vertices and cells data.
 
 // =============================================================================
 // TESTS

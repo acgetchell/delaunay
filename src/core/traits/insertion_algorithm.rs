@@ -634,8 +634,7 @@ where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
-        use crate::core::facet::facet_key_from_vertex_keys;
-        use std::collections::{HashMap, HashSet};
+        use std::collections::HashSet;
 
         let mut boundary_facets = Vec::new();
 
@@ -646,77 +645,49 @@ where
         let bad_cell_set: HashSet<crate::core::triangulation_data_structure::CellKey> =
             bad_cells.iter().copied().collect();
 
-        // Build a complete mapping from facet keys to all cells that contain them
-        let mut facet_to_cells: HashMap<
-            u64,
-            Vec<crate::core::triangulation_data_structure::CellKey>,
-        > = HashMap::new();
-        for (cell_key, cell) in tds.cells() {
-            if let Ok(facets) = cell.facets() {
-                for facet in &facets {
-                    // Compute facet key using VertexKeys
-                    let facet_vertices = facet.vertices();
-                    let mut vertex_keys = Vec::with_capacity(facet_vertices.len());
-                    for vertex in &facet_vertices {
-                        if let Some(key) = tds.vertex_key_from_uuid(&vertex.uuid()) {
-                            vertex_keys.push(key);
-                        }
-                    }
-                    if vertex_keys.len() == facet_vertices.len() {
-                        let facet_key = facet_key_from_vertex_keys(&vertex_keys);
-                        facet_to_cells.entry(facet_key).or_default().push(cell_key);
-                    }
-                }
+        // Use the canonical facet-to-cells map from TDS (already uses VertexKeys)
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+
+        // Track which boundary facets we need to create
+        let mut boundary_facet_specs = Vec::new();
+
+        // Process each facet in the map to identify boundary facets
+        for sharing_cells in facet_to_cells.values() {
+            // Count how many bad vs good cells share this facet
+            // Note: sharing_cells contains (CellKey, facet_index) pairs
+            let bad_cells_sharing: Vec<_> = sharing_cells
+                .iter()
+                .filter(|&&(cell_key, _)| bad_cell_set.contains(&cell_key))
+                .copied()
+                .collect();
+
+            let bad_count = bad_cells_sharing.len();
+            let total_count = sharing_cells.len();
+
+            // A facet is on the cavity boundary if:
+            // 1. Exactly one bad cell uses it (boundary between bad and good)
+            // 2. OR it's a true boundary facet (only one cell total) that's bad
+            if bad_count == 1 && (total_count == 2 || total_count == 1) {
+                // Store the bad cell key and facet index for later processing
+                let (bad_cell_key, facet_index) = bad_cells_sharing[0];
+                boundary_facet_specs.push((bad_cell_key, facet_index));
             }
+            // Skip facets that are:
+            // - Internal to the cavity (bad_count > 1)
+            // - Not touched by any bad cells (bad_count == 0)
+            // - Invalid sharing (total_count > 2)
         }
 
-        // Find cavity boundary facets with improved logic
-        let mut processed_facets = HashSet::new();
-
-        for &bad_cell_key in bad_cells {
-            if let Some(bad_cell) = tds.cells().get(bad_cell_key)
-                && let Ok(facets) = bad_cell.facets()
-            {
-                for facet in facets {
-                    // Compute facet key using VertexKeys
-                    let facet_vertices = facet.vertices();
-                    let mut vertex_keys = Vec::with_capacity(facet_vertices.len());
-                    for vertex in &facet_vertices {
-                        if let Some(key) = tds.vertex_key_from_uuid(&vertex.uuid()) {
-                            vertex_keys.push(key);
-                        }
-                    }
-                    if vertex_keys.len() != facet_vertices.len() {
-                        continue; // Skip if we can't find all vertex keys
-                    }
-                    let facet_key = facet_key_from_vertex_keys(&vertex_keys);
-
-                    // Skip already processed facets
-                    if processed_facets.contains(&facet_key) {
-                        continue;
-                    }
-
-                    if let Some(sharing_cells) = facet_to_cells.get(&facet_key) {
-                        // Count how many bad vs good cells share this facet
-                        let bad_count = sharing_cells
-                            .iter()
-                            .filter(|&&cell_key| bad_cell_set.contains(&cell_key))
-                            .count();
-                        let total_count = sharing_cells.len();
-
-                        // A facet is on the cavity boundary if:
-                        // 1. Exactly one bad cell uses it (boundary between bad and good)
-                        // 2. OR it's a true boundary facet (only one cell total) that's bad
-                        if bad_count == 1 && (total_count == 2 || total_count == 1) {
-                            // This is a cavity boundary facet - it separates bad from good cells
-                            // or is a boundary facet of a bad cell
-                            boundary_facets.push(facet.clone());
-                            processed_facets.insert(facet_key);
-                        }
-                        // Skip facets that are:
-                        // - Internal to the cavity (bad_count > 1)
-                        // - Not touched by any bad cells (bad_count == 0)
-                        // - Invalid sharing (total_count > 2)
+        // Now create the actual Facet objects for the identified boundary facets
+        for (cell_key, facet_index) in boundary_facet_specs {
+            if let Some(cell) = tds.cells().get(cell_key) {
+                // Convert facet_index (u8) to usize for array indexing
+                let facet_idx = <usize as From<u8>>::from(facet_index);
+                if facet_idx < cell.vertices().len() {
+                    let opposite_vertex = cell.vertices()[facet_idx];
+                    // Create the facet using the Cell and its opposite vertex
+                    if let Ok(facet) = Facet::new(cell.clone(), opposite_vertex) {
+                        boundary_facets.push(facet);
                     }
                 }
             }
@@ -1617,7 +1588,7 @@ mod tests {
     #[test]
     fn test_is_facet_visible_from_vertex_impl_orientation_cases() {
         use crate::core::facet::facet_key_from_vertex_keys;
-        
+
         println!("Testing is_facet_visible_from_vertex_impl with different orientations");
 
         // Create simple tetrahedron

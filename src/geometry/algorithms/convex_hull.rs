@@ -352,6 +352,7 @@ where
     /// // Note: The result depends on which facet is selected and the point's position
     /// // This test just verifies the method executes without error
     /// ```
+    #[allow(clippy::too_many_lines)] // This function has detailed logic that is clearer when kept together
     pub fn is_facet_visible_from_point(
         &self,
         facet: &Facet<T, U, V, D>,
@@ -421,12 +422,16 @@ where
         let facet_to_cells = facet_to_cells_arc.as_ref();
 
         // Compute the facet key using VertexKeys (same method as build_facet_to_cells_hashmap)
-        let facet_vertices_for_key = facet.vertices();
-        let mut vertex_keys = Vec::with_capacity(facet_vertices_for_key.len());
-        for vertex in &facet_vertices_for_key {
+        // Reuse the facet_vertices we already computed earlier
+        let mut vertex_keys = Vec::with_capacity(facet_vertices.len());
+        for vertex in &facet_vertices {
             match tds.vertex_key_from_uuid(&vertex.uuid()) {
                 Some(key) => vertex_keys.push(key),
-                None => return Err(FacetError::FacetNotFoundInTriangulation),
+                None => {
+                    return Err(FacetError::VertexNotFound {
+                        uuid: vertex.uuid(),
+                    });
+                }
             }
         }
         let facet_key = facet_key_from_vertex_keys(&vertex_keys);
