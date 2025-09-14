@@ -4,7 +4,7 @@
 //! providing methods to identify and analyze boundary facets in d-dimensional triangulations.
 
 use super::{
-    facet::{Facet, FacetError},
+    facet::{Facet, FacetError, facet_key_from_vertex_keys},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
     triangulation_data_structure::Tds,
 };
@@ -144,8 +144,25 @@ where
         // Build the facet-to-cells map to check if the facet belongs to only one cell
         // Note: This recomputes the map per call; for repeated queries, compute once and reuse.
         let facet_to_cells = self.build_facet_to_cells_hashmap();
+
+        // Compute the facet key using VertexKeys (same method as build_facet_to_cells_hashmap)
+        // Get the vertex keys for the facet's vertices
+        let facet_vertices = facet.vertices();
+        let mut vertex_keys = Vec::with_capacity(facet_vertices.len());
+
+        // Look up VertexKey for each vertex in the facet
+        for vertex in &facet_vertices {
+            match self.uuid_to_vertex_key.get(&vertex.uuid()) {
+                Some(&key) => vertex_keys.push(key),
+                None => return false, // Vertex not in triangulation, so facet can't be boundary
+            }
+        }
+
+        // Generate the facet key using the same method as build_facet_to_cells_hashmap
+        let facet_key = facet_key_from_vertex_keys(&vertex_keys);
+
         facet_to_cells
-            .get(&facet.key())
+            .get(&facet_key)
             .is_some_and(|cells| cells.len() == 1)
     }
 
@@ -227,12 +244,16 @@ mod tests {
         );
 
         // All facets should be boundary facets
+        let mut confirmed_boundary = 0;
         for boundary_facet in &boundary_facets {
-            assert!(
-                tds.is_boundary_facet(boundary_facet),
-                "All facets should be boundary facets in single triangle"
-            );
+            if tds.is_boundary_facet(boundary_facet) {
+                confirmed_boundary += 1;
+            }
         }
+        assert_eq!(
+            confirmed_boundary, 3,
+            "All facets should be boundary facets in single triangle"
+        );
 
         println!("✓ 2D triangle boundary analysis works correctly");
     }
@@ -271,12 +292,16 @@ mod tests {
         );
 
         // All facets should be boundary facets
+        let mut confirmed_boundary = 0;
         for boundary_facet in &boundary_facets {
-            assert!(
-                tds.is_boundary_facet(boundary_facet),
-                "All facets should be boundary facets in single tetrahedron"
-            );
+            if tds.is_boundary_facet(boundary_facet) {
+                confirmed_boundary += 1;
+            }
         }
+        assert_eq!(
+            confirmed_boundary, 4,
+            "All facets should be boundary facets in single tetrahedron"
+        );
 
         println!("✓ 3D tetrahedron boundary analysis works correctly");
     }
@@ -312,12 +337,16 @@ mod tests {
         );
 
         // All facets should be boundary facets
+        let mut confirmed_boundary = 0;
         for boundary_facet in &boundary_facets {
-            assert!(
-                tds.is_boundary_facet(boundary_facet),
-                "All facets should be boundary facets in single 4D simplex"
-            );
+            if tds.is_boundary_facet(boundary_facet) {
+                confirmed_boundary += 1;
+            }
         }
+        assert_eq!(
+            confirmed_boundary, 5,
+            "All facets should be boundary facets in single 4D simplex"
+        );
 
         println!("✓ 4D simplex boundary analysis works correctly");
     }
@@ -394,7 +423,7 @@ mod tests {
         assert_eq!(
             tds.number_of_boundary_facets(),
             6,
-            "Count should match the vector length"
+            "Count should match vector length"
         );
 
         // Build a map of facet keys to the cells that contain them for detailed verification
@@ -559,19 +588,12 @@ mod tests {
             );
 
             // Each facet from boundary_facets() should be identified as boundary by is_boundary_facet()
-            let mut boundary_facets_confirmed = 0;
             for facet in &boundary_facets {
                 assert!(
                     tds.is_boundary_facet(facet),
                     "Facet from boundary_facets() should be confirmed as boundary by is_boundary_facet()"
                 );
-                boundary_facets_confirmed += 1;
             }
-
-            assert_eq!(
-                boundary_facets_confirmed, boundary_count_from_vector,
-                "All facets should be confirmed as boundary"
-            );
 
             // Count boundary facets by checking each facet individually
             let mut boundary_count_from_individual_checks = 0;
@@ -639,8 +661,6 @@ mod tests {
                     "Each facet from boundary_facets() should be confirmed as boundary"
                 );
             }
-
-            println!("  ✓ {boundary_count} boundary facets identified and verified");
 
             // Basic sanity checks
             assert!(

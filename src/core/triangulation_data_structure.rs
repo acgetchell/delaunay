@@ -171,9 +171,9 @@ use uuid::Uuid;
 
 // Crate-internal imports
 use crate::core::collections::{
-    CellNeighborsMap, CellRemovalBuffer, CellVertexKeysMap, CellVerticesMap, FacetToCellsMap,
-    FastHashMap, FastHashSet, SmallBuffer, UuidToCellKeyMap, UuidToVertexKeyMap, ValidCellsBuffer,
-    VertexToCellsMap, VertexUuidSet, fast_hash_map_with_capacity,
+    CellRemovalBuffer, CellVertexKeysMap, CellVerticesMap, FacetToCellsMap, FastHashMap,
+    FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, UuidToCellKeyMap, UuidToVertexKeyMap,
+    ValidCellsBuffer, VertexToCellsMap, fast_hash_map_with_capacity,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
@@ -1623,7 +1623,10 @@ where
         }
 
         // For each cell, build an ordered neighbor array where neighbors[i] is opposite vertices[i]
-        let mut cell_neighbors: CellNeighborsMap = fast_hash_map_with_capacity(self.cells.len());
+        let mut cell_neighbors: FastHashMap<
+            CellKey,
+            SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>,
+        > = fast_hash_map_with_capacity(self.cells.len());
 
         // Initialize each cell with a SmallBuffer of None values (one per vertex)
         for (cell_key, cell) in &self.cells {
@@ -1635,7 +1638,6 @@ where
 
         // For each facet that is shared by exactly two cells, establish neighbor relationships
         for (facet_key, facet_infos) in facet_map {
-            // Check for invalid triangulation: facets shared by more than 2 cells
             if facet_infos.len() > 2 {
                 return Err(TriangulationValidationError::InconsistentDataStructure {
                     message: format!(
@@ -1646,7 +1648,6 @@ where
                 });
             }
 
-            // Skip facets that are not shared (only belong to 1 cell)
             if facet_infos.len() != 2 {
                 continue;
             }
@@ -1654,62 +1655,40 @@ where
             let (cell_key1, vertex_index1) = facet_infos[0];
             let (cell_key2, vertex_index2) = facet_infos[1];
 
-            // Get UUIDs for the cells using optimized SlotMap access
-            let cell_uuid1 = self.cell_uuid_from_key(cell_key1).ok_or_else(|| {
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Cell key {cell_key1:?} not found in cells SlotMap during neighbor assignment"
-                    ),
-                }
-            })?;
-            let cell_uuid2 = self.cell_uuid_from_key(cell_key2).ok_or_else(|| {
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Cell key {cell_key2:?} not found in cells SlotMap during neighbor assignment"
-                    ),
-                }
-            })?;
-
             // Set neighbors with semantic constraint: neighbors[i] is opposite vertices[i]
-            // Cell1's neighbor at vertex_index1 is Cell2 (sharing facet opposite to vertex_index1)
             cell_neighbors.get_mut(&cell_key1).ok_or_else(|| {
                 TriangulationValidationError::InconsistentDataStructure {
                     message: format!("Cell key {cell_key1:?} not found in cell neighbors map"),
                 }
-            })?[vertex_index1] = Some(cell_uuid2);
+            })?[vertex_index1] = Some(cell_key2);
 
-            // Cell2's neighbor at vertex_index2 is Cell1 (sharing facet opposite to vertex_index2)
             cell_neighbors.get_mut(&cell_key2).ok_or_else(|| {
                 TriangulationValidationError::InconsistentDataStructure {
                     message: format!("Cell key {cell_key2:?} not found in cell neighbors map"),
                 }
-            })?[vertex_index2] = Some(cell_uuid1);
+            })?[vertex_index2] = Some(cell_key1);
         }
 
-        // Update the cells with their neighbor information, maintaining the semantic ordering
-        for (cell_key, neighbor_options) in cell_neighbors {
-            let cell = self.cells.get_mut(cell_key).ok_or_else(|| {
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Cell key {cell_key:?} not found in cells during neighbor assignment"
-                    ),
+        // This is a two-phase process to appease the borrow checker. First we collect all the
+        // updates, then we apply them.
+        let updates: Vec<(CellKey, Vec<Option<Uuid>>)> = cell_neighbors
+            .iter()
+            .map(|(cell_key, neighbors)| {
+                let neighbor_uuids = neighbors
+                    .iter()
+                    .map(|&key| key.and_then(|k| self.cell_uuid_from_key(k)))
+                    .collect();
+                (*cell_key, neighbor_uuids)
+            })
+            .collect();
+
+        for (cell_key, neighbor_uuids) in updates {
+            if let Some(cell) = self.cells.get_mut(cell_key) {
+                if neighbor_uuids.iter().all(Option::is_none) {
+                    cell.neighbors = None;
+                } else {
+                    cell.neighbors = Some(neighbor_uuids);
                 }
-            })?;
-
-            // Preserve positional semantics: neighbors[i] corresponds to neighbor opposite vertices[i]
-            let neighbors: Vec<Option<Uuid>> = neighbor_options.into_vec();
-
-            if neighbors.iter().all(Option::is_none) {
-                cell.neighbors = None;
-            } else {
-                // Debug assertion: ensure neighbors array maintains positional semantics
-                // neighbors[i] should correspond to the neighbor opposite vertices[i]
-                debug_assert_eq!(
-                    neighbors.len(),
-                    cell.vertices().len(),
-                    "Neighbor array length must match vertex count for positional semantics"
-                );
-                cell.neighbors = Some(neighbors);
             }
         }
 
@@ -1798,15 +1777,11 @@ where
             fast_hash_map_with_capacity(self.vertices.len());
 
         for (cell_key, cell) in &self.cells {
-            // For each vertex in cell.vertices(): look up its VertexKey via optimized mapping and push cell_key
-            for vertex in cell.vertices() {
-                let vertex_key = self.vertex_key_from_uuid(&vertex.uuid())
-                    .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Vertex UUID {:?} not found in vertex mapping during incident cell assignment",
-                            vertex.uuid()
-                        ),
-                    })?;
+            let vertex_keys = self.vertex_keys_for_cell(cell)
+                .map_err(|_e| TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Failed to get vertex keys for cell {}: Vertex UUID not found in vertex mapping", cell.uuid()),
+                })?;
+            for &vertex_key in &vertex_keys {
                 vertex_to_cells
                     .entry(vertex_key)
                     .or_default()
@@ -1863,32 +1838,13 @@ where
 
         // First pass: identify duplicate cells
         for (cell_key, cell) in &self.cells {
-            // Create a sorted vector of vertex keys for more efficient uniqueness checking
-            // Use vertex keys instead of UUIDs for better performance (keys are smaller and faster to compare)
-            let mut vertex_keys: Vec<VertexKey> = Vec::with_capacity(cell.vertices().len());
+            let mut vertex_keys = self.vertex_keys_for_cell(cell).unwrap_or_default();
+            vertex_keys.sort_unstable();
 
-            // Convert vertex UUIDs to keys using our optimized mapping
-            let mut all_keys_found = true;
-            for vertex in cell.vertices() {
-                if let Some(key) = self.vertex_key_from_uuid(&vertex.uuid()) {
-                    vertex_keys.push(key);
-                } else {
-                    // Skip this cell if we can't resolve all vertex keys (shouldn't happen in valid triangulations)
-                    all_keys_found = false;
-                    break;
-                }
-            }
-
-            if all_keys_found {
-                vertex_keys.sort_unstable(); // Keys are faster to sort than UUIDs
-
-                if let Some(_existing_cell_key) = unique_cells.get(&vertex_keys) {
-                    // This is a duplicate cell - mark for removal
-                    cells_to_remove.push(cell_key);
-                } else {
-                    // This is a unique cell
-                    unique_cells.insert(vertex_keys, cell_key);
-                }
+            if let Some(_existing_cell_key) = unique_cells.get(&vertex_keys) {
+                cells_to_remove.push(cell_key);
+            } else {
+                unique_cells.insert(vertex_keys, cell_key);
             }
         }
 
@@ -1971,31 +1927,27 @@ where
 
         // Iterate over all cells and their facets
         for (cell_id, cell) in &self.cells {
-            // Skip cells that fail to produce facets (shouldn't happen in valid triangulations)
-            if let Ok(facets) = cell.facets() {
-                // Iterate over each facet in the cell
-                for (facet_index, facet) in facets.iter().enumerate() {
-                    // Compute the canonical key for this facet
-                    let facet_key = facet.key();
+            let Ok(vertex_keys) = self.vertex_keys_for_cell(cell) else {
+                continue; // Skip cells with missing vertex keys
+            };
 
-                    // Insert the (cell_id, facet_index) pair into the HashMap
-                    // Ensure the facet index fits within FacetIndex (u8). This should always hold
-                    // under the crate's dimensional constraints (D ≤ 254). In release builds,
-                    // gracefully skip impossible cases instead of panicking.
-                    debug_assert!(
-                        u8::try_from(facet_index).is_ok(),
-                        "facet_index too large for u8"
-                    );
-                    let Ok(facet_index_u8) = u8::try_from(facet_index) else {
-                        // Pathological dimension; skip this facet mapping without panicking.
-                        continue;
-                    };
-
-                    facet_to_cells
-                        .entry(facet_key)
-                        .or_default()
-                        .push((cell_id, facet_index_u8));
+            for i in 0..cell.vertices().len() {
+                let mut facet_vertex_keys = Vec::with_capacity(cell.vertices().len() - 1);
+                for (j, &key) in vertex_keys.iter().enumerate() {
+                    if i != j {
+                        facet_vertex_keys.push(key);
+                    }
                 }
+
+                let facet_key = facet_key_from_vertex_keys(&facet_vertex_keys);
+                let Ok(facet_index_u8) = u8::try_from(i) else {
+                    continue;
+                };
+
+                facet_to_cells
+                    .entry(facet_key)
+                    .or_default()
+                    .push((cell_id, facet_index_u8));
             }
         }
 
@@ -2047,60 +1999,53 @@ where
         // Find facets that are shared by more than 2 cells and validate which ones are correct
         for (facet_key, cell_facet_pairs) in facet_to_cells {
             if cell_facet_pairs.len() > 2 {
-                // Get the actual facet from the first cell to determine its vertices
                 let (first_cell_key, first_facet_index) = cell_facet_pairs[0];
-                let first_cell = &self.cells[first_cell_key];
-                let facets = first_cell.facets()?;
-                let reference_facet = &facets[first_facet_index as usize];
-
-                // Get the vertices that make up this facet using Facet::vertices()
-                let facet_vertices = reference_facet.vertices();
-                let facet_vertex_uuids: VertexUuidSet = facet_vertices
-                    .iter()
-                    .map(super::vertex::Vertex::uuid)
-                    .collect();
-
-                let mut valid_cells = ValidCellsBuffer::new();
-
-                // Check each cell to see if it truly contains all vertices of this facet
-                for &(cell_key, _facet_index) in &cell_facet_pairs {
-                    let cell = &self.cells[cell_key];
-
-                    // Get cell vertices using Cell::vertices()
-                    let cell_vertex_uuids: VertexUuidSet = cell
-                        .vertices()
-                        .iter()
-                        .map(super::vertex::Vertex::uuid)
-                        .collect();
-
-                    // A cell is valid if it contains all the vertices of the facet
-                    if facet_vertex_uuids.is_subset(&cell_vertex_uuids) {
-                        valid_cells.push(cell_key);
-                    } else {
-                        // This cell doesn't actually contain all the facet vertices - mark for removal
-                        cells_to_remove.insert(cell_key);
+                if let Some(first_cell) = self.cells.get(first_cell_key) {
+                    let vertex_keys = self.vertex_keys_for_cell(first_cell).unwrap_or_default();
+                    let mut facet_vertex_keys = Vec::with_capacity(vertex_keys.len() - 1);
+                    for (i, &key) in vertex_keys.iter().enumerate() {
+                        if i != first_facet_index as usize {
+                            facet_vertex_keys.push(key);
+                        }
                     }
-                }
 
-                // If we still have more than 2 valid cells, remove the excess ones
-                // (This shouldn't happen in a proper triangulation, but handle it just in case)
-                if valid_cells.len() > 2 {
-                    for &cell_key in valid_cells.iter().skip(2) {
-                        cells_to_remove.insert(cell_key);
+                    let mut valid_cells = ValidCellsBuffer::new();
+                    for &(cell_key, _facet_index) in &cell_facet_pairs {
+                        if let Some(cell) = self.cells.get(cell_key) {
+                            let cell_vertex_keys: FastHashSet<VertexKey> = self
+                                .vertex_keys_for_cell(cell)
+                                .unwrap_or_default()
+                                .into_iter()
+                                .collect();
+                            let facet_vertex_keys_set: FastHashSet<VertexKey> =
+                                facet_vertex_keys.iter().copied().collect();
+
+                            if facet_vertex_keys_set.is_subset(&cell_vertex_keys) {
+                                valid_cells.push(cell_key);
+                            } else {
+                                cells_to_remove.insert(cell_key);
+                            }
+                        }
                     }
-                }
 
-                if cfg!(debug_assertions) {
-                    let total_cells = cell_facet_pairs.len();
-                    let removed_count = total_cells - valid_cells.len().min(2);
-                    if removed_count > 0 {
-                        eprintln!(
-                            "Warning: Facet {} was shared by {} cells, removing {} invalid cells (keeping {} valid)",
-                            facet_key,
-                            total_cells,
-                            removed_count,
-                            valid_cells.len().min(2)
-                        );
+                    if valid_cells.len() > 2 {
+                        for &cell_key in valid_cells.iter().skip(2) {
+                            cells_to_remove.insert(cell_key);
+                        }
+                    }
+
+                    if cfg!(debug_assertions) {
+                        let total_cells = cell_facet_pairs.len();
+                        let removed_count = total_cells - valid_cells.len().min(2);
+                        if removed_count > 0 {
+                            eprintln!(
+                                "Warning: Facet {} was shared by {} cells, removing {} invalid cells (keeping {} valid)",
+                                facet_key,
+                                total_cells,
+                                removed_count,
+                                valid_cells.len().min(2)
+                            );
+                        }
                     }
                 }
             }
@@ -2295,16 +2240,17 @@ where
         let mut duplicates = Vec::new();
 
         for (cell_key, cell) in &self.cells {
-            // Create a sorted vector of vertex UUIDs as a key for uniqueness
-            let mut vertex_uuids: Vec<Uuid> = cell.vertices().iter().map(Vertex::uuid).collect();
-            vertex_uuids.sort_unstable();
+            let Ok(vertex_keys) = self.vertex_keys_for_cell(cell) else {
+                continue; // Skip cells with missing vertex keys
+            };
 
-            if let Some(existing_cell_key) = unique_cells.get(&vertex_uuids) {
-                // This is a duplicate cell
-                duplicates.push((cell_key, *existing_cell_key, vertex_uuids.clone()));
+            let mut sorted_keys = vertex_keys;
+            sorted_keys.sort_unstable();
+
+            if let Some(existing_cell_key) = unique_cells.get(&sorted_keys) {
+                duplicates.push((cell_key, *existing_cell_key, sorted_keys.clone()));
             } else {
-                // This is a unique cell
-                unique_cells.insert(vertex_uuids, cell_key);
+                unique_cells.insert(sorted_keys, cell_key);
             }
         }
 
@@ -2869,10 +2815,8 @@ mod tests {
     use super::*;
     use crate::cell;
     use crate::core::{
-        collections::{FastHashMap, VertexUuidSet},
-        traits::boundary_analysis::BoundaryAnalysis,
-        util::facets_are_adjacent,
-        vertex::VertexBuilder,
+        collections::FastHashMap, traits::boundary_analysis::BoundaryAnalysis,
+        util::facets_are_adjacent, vertex::VertexBuilder,
     };
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
     use crate::vertex;
@@ -4164,7 +4108,7 @@ mod tests {
         tds.assign_neighbors().unwrap();
 
         // Collect cells and verify the semantic constraint
-        let cells: Vec<_> = tds.cells().values().collect();
+        let cells: Vec<_> = tds.cells.values().collect();
         assert_eq!(cells.len(), 2, "Should have exactly 2 cells");
 
         for cell in &cells {
@@ -4190,10 +4134,7 @@ mod tests {
                 let neighbor_cell_key = tds
                     .cell_key_from_uuid(&neighbor_uuid)
                     .expect("Neighbor UUID should map to a cell key");
-                let neighbor_cell = tds
-                    .cells()
-                    .get(neighbor_cell_key)
-                    .expect("Neighbor cell should exist");
+                let neighbor_cell = &tds.cells[neighbor_cell_key];
 
                 // For each vertex position i in the current cell:
                 // - The facet opposite to vertices[i] should be shared with neighbors[i]
@@ -4201,14 +4142,20 @@ mod tests {
 
                 // Since we only have 1 neighbor stored, we need to find which vertex index
                 // this neighbor corresponds to by checking which vertex is NOT shared
-                let cell_vertices: VertexUuidSet =
-                    cell.vertices().iter().map(Vertex::uuid).collect();
-                let neighbor_vertices: VertexUuidSet =
-                    neighbor_cell.vertices().iter().map(Vertex::uuid).collect();
+                let cell_vertex_keys: FastHashSet<VertexKey> = tds
+                    .vertex_keys_for_cell(cell)
+                    .unwrap()
+                    .into_iter()
+                    .collect();
+                let neighbor_vertex_keys: FastHashSet<VertexKey> = tds
+                    .vertex_keys_for_cell(neighbor_cell)
+                    .unwrap()
+                    .into_iter()
+                    .collect();
 
                 // Find vertices that are in current cell but not in neighbor (should be exactly 1)
-                let unique_to_cell: Vec<Uuid> = cell_vertices
-                    .difference(&neighbor_vertices)
+                let unique_to_cell: Vec<VertexKey> = cell_vertex_keys
+                    .difference(&neighbor_vertex_keys)
                     .copied()
                     .collect();
                 assert_eq!(
@@ -4217,21 +4164,22 @@ mod tests {
                     "Should have exactly 1 vertex unique to current cell"
                 );
 
-                let unique_vertex_uuid = unique_to_cell[0];
+                let unique_vertex_key = unique_to_cell[0];
 
                 // Find the index of this unique vertex in the current cell
-                let unique_vertex_index = cell
-                    .vertices()
+                let unique_vertex_index = tds
+                    .vertex_keys_for_cell(cell)
+                    .unwrap()
                     .iter()
-                    .position(|v| v.uuid() == unique_vertex_uuid)
+                    .position(|&k| k == unique_vertex_key)
                     .expect("Unique vertex should be found in cell");
 
                 // The semantic constraint: neighbors[i] should be opposite vertices[i]
                 // Since we only store actual neighbors (filter out None), we need to map back
                 // For now, we verify that the neighbor relationship is geometrically sound:
                 // The cells should share exactly D=3 vertices (they share a facet)
-                let shared_vertices: VertexUuidSet = cell_vertices
-                    .intersection(&neighbor_vertices)
+                let shared_vertices: FastHashSet<VertexKey> = cell_vertex_keys
+                    .intersection(&neighbor_vertex_keys)
                     .copied()
                     .collect();
                 assert_eq!(

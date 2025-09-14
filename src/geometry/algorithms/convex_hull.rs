@@ -358,6 +358,7 @@ where
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
     ) -> Result<bool, FacetError> {
+        use crate::core::facet::facet_key_from_vertex_keys;
         use crate::geometry::predicates::Orientation;
 
         // Get the vertices that make up this facet
@@ -419,7 +420,16 @@ where
         // No need for double as_ref() with ArcSwapOption
         let facet_to_cells = facet_to_cells_arc.as_ref();
 
-        let facet_key = facet.key();
+        // Compute the facet key using VertexKeys (same method as build_facet_to_cells_hashmap)
+        let facet_vertices_for_key = facet.vertices();
+        let mut vertex_keys = Vec::with_capacity(facet_vertices_for_key.len());
+        for vertex in &facet_vertices_for_key {
+            match tds.vertex_key_from_uuid(&vertex.uuid()) {
+                Some(key) => vertex_keys.push(key),
+                None => return Err(FacetError::FacetNotFoundInTriangulation),
+            }
+        }
+        let facet_key = facet_key_from_vertex_keys(&vertex_keys);
 
         let adjacent_cells = facet_to_cells
             .get(&facet_key)

@@ -634,6 +634,7 @@ where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
+        use crate::core::facet::facet_key_from_vertex_keys;
         use std::collections::{HashMap, HashSet};
 
         let mut boundary_facets = Vec::new();
@@ -652,11 +653,19 @@ where
         > = HashMap::new();
         for (cell_key, cell) in tds.cells() {
             if let Ok(facets) = cell.facets() {
-                for facet in facets {
-                    facet_to_cells
-                        .entry(facet.key())
-                        .or_default()
-                        .push(cell_key);
+                for facet in &facets {
+                    // Compute facet key using VertexKeys
+                    let facet_vertices = facet.vertices();
+                    let mut vertex_keys = Vec::with_capacity(facet_vertices.len());
+                    for vertex in &facet_vertices {
+                        if let Some(key) = tds.vertex_key_from_uuid(&vertex.uuid()) {
+                            vertex_keys.push(key);
+                        }
+                    }
+                    if vertex_keys.len() == facet_vertices.len() {
+                        let facet_key = facet_key_from_vertex_keys(&vertex_keys);
+                        facet_to_cells.entry(facet_key).or_default().push(cell_key);
+                    }
                 }
             }
         }
@@ -669,7 +678,18 @@ where
                 && let Ok(facets) = bad_cell.facets()
             {
                 for facet in facets {
-                    let facet_key = facet.key();
+                    // Compute facet key using VertexKeys
+                    let facet_vertices = facet.vertices();
+                    let mut vertex_keys = Vec::with_capacity(facet_vertices.len());
+                    for vertex in &facet_vertices {
+                        if let Some(key) = tds.vertex_key_from_uuid(&vertex.uuid()) {
+                            vertex_keys.push(key);
+                        }
+                    }
+                    if vertex_keys.len() != facet_vertices.len() {
+                        continue; // Skip if we can't find all vertex keys
+                    }
+                    let facet_key = facet_key_from_vertex_keys(&vertex_keys);
 
                     // Skip already processed facets
                     if processed_facets.contains(&facet_key) {
@@ -1596,6 +1616,8 @@ mod tests {
 
     #[test]
     fn test_is_facet_visible_from_vertex_impl_orientation_cases() {
+        use crate::core::facet::facet_key_from_vertex_keys;
+        
         println!("Testing is_facet_visible_from_vertex_impl with different orientations");
 
         // Create simple tetrahedron
@@ -1618,7 +1640,18 @@ mod tests {
 
         // Find the cell adjacent to this boundary facet
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
-        let facet_key = test_facet.key();
+
+        // Compute facet key using VertexKeys
+        let facet_vertices = test_facet.vertices();
+        let mut vertex_keys = Vec::with_capacity(facet_vertices.len());
+        for vertex in &facet_vertices {
+            vertex_keys.push(
+                tds.vertex_key_from_uuid(&vertex.uuid())
+                    .expect("Vertex should be in TDS"),
+            );
+        }
+        let facet_key = facet_key_from_vertex_keys(&vertex_keys);
+
         let adjacent_cells = facet_to_cells.get(&facet_key).unwrap();
         assert_eq!(
             adjacent_cells.len(),

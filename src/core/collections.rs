@@ -353,9 +353,10 @@ pub type FacetInfoBuffer = SmallBuffer<(CellKey, FacetIndex), MAX_PRACTICAL_DIME
 // =============================================================================
 
 /// Semantic constant for the maximum practical dimension in computational geometry.
+///
 /// Most applications work with dimensions 2D-5D, so 8 provides comfortable headroom
 /// while keeping stack allocation efficient.
-const MAX_PRACTICAL_DIMENSION_SIZE: usize = 8;
+pub const MAX_PRACTICAL_DIMENSION_SIZE: usize = 8;
 
 /// Buffer sized for vertex collections in D-dimensional simplices.
 /// A D-dimensional simplex has D+1 vertices, so this handles up to 7D simplices on stack.
