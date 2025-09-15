@@ -537,11 +537,17 @@ where
                     // Derive key from vertex VertexKeys to match TDS mapping
                     let facet_vertices = facet.vertices();
                     let mut vertex_keys = VertexKeyBuffer::with_capacity(facet_vertices.len());
+                    let mut all_found = true;
                     for v in &facet_vertices {
                         if let Some(k) = tds.vertex_key_from_uuid(&v.uuid()) {
                             vertex_keys.push(k);
+                        } else {
+                            all_found = false;
+                            break;
                         }
-                        // If vertex not in TDS, just skip it (continue to next iteration)
+                    }
+                    if !all_found {
+                        continue; // Cannot form a valid facet key
                     }
                     let facet_key = facet_key_from_vertex_keys(&vertex_keys);
 
@@ -812,8 +818,9 @@ where
             let (cell_key, facet_index) = cells[0];
             if let Some(cell) = tds.cells().get(cell_key) {
                 if let Ok(facets) = cell.facets() {
-                    if (facet_index as usize) < facets.len() {
-                        let facet = &facets[facet_index as usize];
+                    let idx = usize::from(facet_index);
+                    if idx < facets.len() {
+                        let facet = &facets[idx];
 
                         // Test visibility using robust orientation predicates with fallback
                         if self.is_facet_visible_from_vertex_robust(tds, facet, vertex, cell_key) {

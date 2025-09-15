@@ -1582,25 +1582,32 @@ mod tests {
             (Point::new([1.5, 1.5, 1.5]), "Beyond facet diameter"),
         ];
 
-        let mut visible_count = 0;
-        let mut not_visible_count = 0;
+        // Test each point and collect visibility results
+        let visibility_results: Vec<(Point<f64, 3>, &str, bool)> = test_points
+            .into_iter()
+            .map(|(point, description)| {
+                let is_visible =
+                    ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
+                        test_facet, &point,
+                    )
+                    .unwrap();
 
-        for (point, description) in test_points {
-            let is_visible =
-                ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
-                    test_facet, &point,
-                )
-                .unwrap();
+                let coords: [f64; 3] = point.into();
+                println!("  Point {coords:?} ({description}) - Visible: {is_visible}");
 
-            let coords: [f64; 3] = point.into();
-            println!("  Point {coords:?} ({description}) - Visible: {is_visible}");
+                (point, description, is_visible)
+            })
+            .collect();
 
-            if is_visible {
-                visible_count += 1;
-            } else {
-                not_visible_count += 1;
-            }
-        }
+        // Count results using iterator patterns
+        let visible_count = visibility_results
+            .iter()
+            .filter(|(_, _, visible)| *visible)
+            .count();
+        let not_visible_count = visibility_results
+            .iter()
+            .filter(|(_, _, visible)| !*visible)
+            .count();
 
         // The new scale-adaptive approach should still distinguish between close and far points
         // but the exact threshold is now based on the facet geometry
@@ -1692,14 +1699,14 @@ mod tests {
             })
             .collect();
 
-        // All results should be the same
+        // All results should be the same using iterator pattern
         let first_result = consistency_results[0];
-        for (i, &result) in consistency_results.iter().enumerate() {
-            assert_eq!(
-                result, first_result,
-                "Result {i} should be consistent with first result"
-            );
-        }
+        assert!(
+            consistency_results
+                .iter()
+                .all(|&result| result == first_result),
+            "All consistency results should match the first result"
+        );
 
         println!(
             "  Consistency test: all {} results were {}",

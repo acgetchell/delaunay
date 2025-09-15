@@ -138,7 +138,7 @@ where
     ///
     /// * `facet` - The facet to check.
     /// * `facet_to_cells` - Precomputed map from facet keys to cells containing them.
-    ///   Obtain this by calling `build_facet_to_cells_hashmap()` on the triangulation.
+    ///   Obtain this by calling [`build_facet_to_cells_hashmap`] on the triangulation.
     ///
     /// # Returns
     ///
@@ -173,10 +173,12 @@ where
     ///     }
     /// }
     /// ```
+    ///
+    /// [`build_facet_to_cells_hashmap`]: crate::core::triangulation_data_structure::Tds::build_facet_to_cells_hashmap
     fn is_boundary_facet_with_map(
         &self,
         facet: &Facet<T, U, V, D>,
-        facet_to_cells: &crate::prelude::FacetToCellsMap,
+        facet_to_cells: &crate::core::collections::FacetToCellsMap,
     ) -> bool;
 
     /// Returns the number of boundary facets in the triangulation.

@@ -2226,8 +2226,9 @@ where
                         continue; // Skip if we can't resolve vertex keys
                     };
                     let mut facet_vertex_keys = Vec::with_capacity(vertex_keys.len() - 1);
+                    let idx = first_facet_index as usize;
                     for (i, &key) in vertex_keys.iter().enumerate() {
-                        if i != first_facet_index as usize {
+                        if i != idx {
                             facet_vertex_keys.push(key);
                         }
                     }
@@ -5712,22 +5713,15 @@ mod tests {
             }
         }
 
-        // Count boundary and shared facets
-        let mut boundary_count = 0;
-        let mut shared_count = 0;
+        // Count boundary and shared facets using iterator patterns
+        let boundary_count = facet_map.values().filter(|cells| cells.len() == 1).count();
+        let shared_count = facet_map.values().filter(|cells| cells.len() == 2).count();
 
-        for (_, cells) in facet_map {
-            if cells.len() == 1 {
-                boundary_count += 1;
-            } else if cells.len() == 2 {
-                shared_count += 1;
-            } else {
-                panic!(
-                    "Facet should be shared by at most 2 cells, found {}",
-                    cells.len()
-                );
-            }
-        }
+        // Verify no facet is shared by more than 2 cells (geometrically impossible)
+        assert!(
+            facet_map.values().all(|cells| cells.len() <= 2),
+            "No facet should be shared by more than 2 cells"
+        );
 
         // Two tetrahedra should have 6 boundary facets and 1 shared facet
         assert_eq!(boundary_count, 6, "Should have 6 boundary facets");

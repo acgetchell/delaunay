@@ -612,11 +612,11 @@ where
     /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices.clone());
     ///
     /// // Iterate over vertex UUIDs without allocation
-    /// let mut count = 0;
-    /// for uuid in cell.vertex_uuid_iter() {
-    ///     assert_ne!(uuid, Uuid::nil());
-    ///     count += 1;
-    /// }
+    /// assert!(
+    ///     cell.vertex_uuid_iter().all(|uuid| uuid != Uuid::nil()),
+    ///     "All UUIDs should be non-nil"
+    /// );
+    /// let count = cell.vertex_uuid_iter().count();
     /// assert_eq!(count, 4);
     ///
     /// // Can also get the length directly

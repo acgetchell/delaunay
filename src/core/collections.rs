@@ -107,7 +107,7 @@ use crate::core::triangulation_data_structure::{CellKey, VertexKey};
 ///
 /// // 3D triangulation: facets 0, 1, 2, 3 (fits comfortably in u8)
 /// let facet: FacetIndex = 2;
-/// assert_eq!(facet as usize, 2);
+/// assert_eq!(usize::from(facet), 2);
 /// ```
 pub type FacetIndex = u8;
 

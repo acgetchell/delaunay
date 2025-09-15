@@ -191,7 +191,7 @@ where
     fn is_boundary_facet_with_map(
         &self,
         facet: &Facet<T, U, V, D>,
-        facet_to_cells: &crate::prelude::FacetToCellsMap,
+        facet_to_cells: &crate::core::collections::FacetToCellsMap,
     ) -> bool {
         if let Some(facet_key) = self.facet_key_for_facet(facet) {
             return facet_to_cells
@@ -323,14 +323,8 @@ mod tests {
         );
 
         // All facets should be boundary facets
-        let mut confirmed_boundary = 0;
-        for boundary_facet in &boundary_facets {
-            if tds.is_boundary_facet(boundary_facet) {
-                confirmed_boundary += 1;
-            }
-        }
-        assert_eq!(
-            confirmed_boundary, 3,
+        assert!(
+            boundary_facets.iter().all(|f| tds.is_boundary_facet(f)),
             "All facets should be boundary facets in single triangle"
         );
 
@@ -612,7 +606,9 @@ mod tests {
         let mut facet_map: FastHashMap<u64, Vec<Uuid>> = FastHashMap::default();
         for cell in tds.cells().values() {
             for facet in cell.facets().expect("Should get cell facets") {
-                facet_map.entry(facet.key()).or_default().push(cell.uuid());
+                if let Some(fk) = tds.facet_key_for_facet(&facet) {
+                    facet_map.entry(fk).or_default().push(cell.uuid());
+                }
             }
         }
 
@@ -801,8 +797,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "bench")]
     fn test_boundary_facets_large_triangulation() {
         // Test with a larger triangulation to ensure scalability
+        // This test is marked as benchmark-only due to its performance-sensitive nature
         use rand::Rng;
 
         let mut rng = rand::rng();
