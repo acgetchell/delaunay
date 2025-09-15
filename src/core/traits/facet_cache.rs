@@ -118,8 +118,8 @@ where
         use std::sync::atomic::Ordering;
 
         // Check if cache is stale and needs to be invalidated
-        let current_generation = tds.generation.load(Ordering::Relaxed);
-        let cached_generation = self.cached_generation().load(Ordering::Relaxed);
+        let current_generation = tds.generation.load(Ordering::Acquire);
+        let cached_generation = self.cached_generation().load(Ordering::Acquire);
 
         // Get or build the cached facet-to-cells mapping using ArcSwapOption
         // If the TDS generation matches the cached generation, cache is current
@@ -138,7 +138,11 @@ where
                         .facet_cache()
                         .compare_and_swap(&none_ref, Some(new_cache_arc.clone()));
                     // Load the current cache (could be ours or another thread's)
-                    self.facet_cache().load_full().unwrap_or(new_cache_arc)
+                    let cache = self.facet_cache().load_full().unwrap_or(new_cache_arc);
+                    // Record the generation snapshot that the cache corresponds to
+                    self.cached_generation()
+                        .store(current_generation, Ordering::Release);
+                    cache
                 },
                 |existing_cache| {
                     // Cache exists and is current - use it
@@ -151,11 +155,11 @@ where
             let new_cache_arc = Arc::new(new_cache);
 
             // Atomically swap in the new cache
-            self.facet_cache().store(Some(new_cache_arc.clone()));
+            self.facet_cache().store(Some(new_cache_arc.clone())); // ArcSwap ensures proper publication
 
             // Update the generation snapshot
             self.cached_generation()
-                .store(current_generation, Ordering::Relaxed);
+                .store(current_generation, Ordering::Release);
 
             new_cache_arc
         }
@@ -183,7 +187,7 @@ where
         self.facet_cache().store(None);
 
         // Reset generation to force rebuild
-        self.cached_generation().store(0, Ordering::Relaxed);
+        self.cached_generation().store(0, Ordering::Release);
     }
 }
 

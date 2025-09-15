@@ -456,7 +456,8 @@ where
     ///
     /// When geometric predicates fail due to degeneracy, this method provides
     /// a simple heuristic based on distance from the facet centroid. The threshold
-    /// is scale-adaptive, based on the facet's diameter squared.
+    /// is scale-adaptive, based on the facet's diameter squared, with an epsilon-based
+    /// bound to prevent false positives from numeric noise near the hull surface.
     ///
     /// # Arguments
     ///
@@ -478,7 +479,8 @@ where
     /// 1. Calculate the centroid of the facet vertices
     /// 2. Compute the distance from the test point to the centroid
     /// 3. Use the facet's diameter (max edge length) as a scale-adaptive threshold
-    /// 4. Return true if the distance exceeds the threshold (likely outside/visible)
+    /// 4. Add a small relative epsilon (1e-12 scale) to avoid false positives from numeric noise
+    /// 5. Return true if the distance exceeds the adjusted threshold (likely outside/visible)
     fn fallback_visibility_test(
         facet: &Facet<T, U, V, D>,
         point: &Point<T, D>,
@@ -528,7 +530,17 @@ where
                 }
             }
         }
-        Ok(distance_squared > max_edge_sq)
+
+        // Add epsilon-based bound to avoid false positives from numeric noise
+        // Use a small relative epsilon (1e-12 scale) to handle near-surface points
+        let epsilon_factor = num_traits::NumCast::from(1e-12f64).unwrap_or_else(|| {
+            // Fallback for types that can't represent 1e-12 (e.g., very limited precision)
+            num_traits::NumCast::from(1e-6f64).unwrap_or_else(T::default_tolerance)
+        });
+        let epsilon_threshold = max_edge_sq * epsilon_factor;
+        let adjusted_threshold = max_edge_sq + epsilon_threshold;
+
+        Ok(distance_squared > adjusted_threshold)
     }
 
     /// Finds all hull facets visible from an external point

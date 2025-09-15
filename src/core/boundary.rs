@@ -107,6 +107,12 @@ where
     ///
     /// A boundary facet is a facet that belongs to only one cell in the triangulation.
     ///
+    /// # Performance Note
+    ///
+    /// This method rebuilds the facet-to-cells map on every call, which has O(N·F) complexity.
+    /// For checking multiple facets in hot paths, prefer using `is_boundary_facet_with_map()`
+    /// with a precomputed map to avoid recomputation.
+    ///
     /// # Arguments
     ///
     /// * `facet` - The facet to check.
@@ -195,6 +201,13 @@ where
     ) -> bool {
         let facet_vertices = facet.vertices();
         if facet_vertices.len() != D {
+            debug_assert_eq!(
+                facet_vertices.len(),
+                D,
+                "Invalid facet: expected {} vertices, got {}",
+                D,
+                facet_vertices.len()
+            );
             return false;
         }
         if let Ok(facet_key) = derive_facet_key_from_vertices(&facet_vertices, self) {
