@@ -138,14 +138,45 @@ where
     ///
     /// * `facet` - The facet to check.
     /// * `facet_to_cells` - Precomputed map from facet keys to cells containing them.
+    ///   Obtain this by calling `build_facet_to_cells_hashmap()` on the triangulation.
     ///
     /// # Returns
     ///
     /// `true` if the facet is on the boundary (belongs to only one cell), `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// // Build the facet map once for multiple queries (efficient for batch operations)
+    /// let facet_to_cells = tds.build_facet_to_cells_hashmap();
+    ///
+    /// // Check multiple facets efficiently using the cached map
+    /// if let Some(cell) = tds.cells().values().next() {
+    ///     let facets = cell.facets().expect("Failed to get facets from cell");
+    ///     for facet in &facets {
+    ///         let is_boundary = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
+    ///         println!("Facet is boundary: {is_boundary}");
+    ///         // In a single tetrahedron, all facets are boundary facets
+    ///         assert!(is_boundary);
+    ///     }
+    /// }
+    /// ```
     fn is_boundary_facet_with_map(
         &self,
         facet: &Facet<T, U, V, D>,
-        facet_to_cells: &crate::core::collections::FacetToCellsMap,
+        facet_to_cells: &crate::prelude::FacetToCellsMap,
     ) -> bool;
 
     /// Returns the number of boundary facets in the triangulation.

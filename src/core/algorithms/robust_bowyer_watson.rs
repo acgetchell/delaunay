@@ -5,7 +5,8 @@
 //! "No cavity boundary facets found" error.
 
 use crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE;
-use crate::core::collections::{FastHashMap, FastHashSet, SmallBuffer};
+use crate::core::collections::{FastHashMap, FastHashSet, SmallBuffer, VertexKeyBuffer};
+use crate::core::facet::facet_key_from_vertex_keys;
 use std::marker::PhantomData;
 use std::ops::{AddAssign, Div, DivAssign, SubAssign};
 
@@ -533,7 +534,16 @@ where
                 && let Ok(facets) = bad_cell.facets()
             {
                 for facet in facets {
-                    let facet_key = facet.key();
+                    // Derive key from vertex VertexKeys to match TDS mapping
+                    let facet_vertices = facet.vertices();
+                    let mut vertex_keys = VertexKeyBuffer::with_capacity(facet_vertices.len());
+                    for v in &facet_vertices {
+                        if let Some(k) = tds.vertex_key_from_uuid(&v.uuid()) {
+                            vertex_keys.push(k);
+                        }
+                        // If vertex not in TDS, just skip it (continue to next iteration)
+                    }
+                    let facet_key = facet_key_from_vertex_keys(&vertex_keys);
 
                     if processed_facets.contains(&facet_key) {
                         continue;
@@ -1627,8 +1637,8 @@ mod tests {
 
                 // The newly inserted vertex should be in the triangulation
                 let vertex_found = tds.vertices().values().any(|v| {
-                    let v_coords: [f64; 3] = (*v).into();
-                    let test_coords: [f64; 3] = test_vertex.point().into();
+                    let v_coords: [f64; 3] = v.point().to_array();
+                    let test_coords: [f64; 3] = test_vertex.point().to_array();
                     v_coords
                         .iter()
                         .zip(test_coords.iter())

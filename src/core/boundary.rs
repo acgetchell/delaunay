@@ -142,29 +142,8 @@ where
     /// }
     /// ```
     fn is_boundary_facet(&self, facet: &Facet<T, U, V, D>) -> bool {
-        // Build the facet-to-cells map to check if the facet belongs to only one cell
-        // Note: This recomputes the map per call; for repeated queries, compute once and reuse.
         let facet_to_cells = self.build_facet_to_cells_hashmap();
-
-        // Compute the facet key using VertexKeys (same method as build_facet_to_cells_hashmap)
-        // Get the vertex keys for the facet's vertices
-        let facet_vertices = facet.vertices();
-        let mut vertex_keys = VertexKeyBuffer::with_capacity(facet_vertices.len());
-
-        // Look up VertexKey for each vertex in the facet
-        for vertex in &facet_vertices {
-            match self.vertex_key_from_uuid(&vertex.uuid()) {
-                Some(key) => vertex_keys.push(key),
-                None => return false, // Vertex not in triangulation, so facet can't be boundary
-            }
-        }
-
-        // Generate the facet key using the same method as build_facet_to_cells_hashmap
-        let facet_key = facet_key_from_vertex_keys(&vertex_keys);
-
-        facet_to_cells
-            .get(&facet_key)
-            .is_some_and(|cells| cells.len() == 1)
+        self.is_boundary_facet_with_map(facet, &facet_to_cells)
     }
 
     /// Checks if a specific facet is a boundary facet using a precomputed facet map.
@@ -212,26 +191,14 @@ where
     fn is_boundary_facet_with_map(
         &self,
         facet: &Facet<T, U, V, D>,
-        facet_to_cells: &super::collections::FacetToCellsMap,
+        facet_to_cells: &crate::prelude::FacetToCellsMap,
     ) -> bool {
-        // Get the vertex keys for the facet's vertices
-        let facet_vertices = facet.vertices();
-        let mut vertex_keys = VertexKeyBuffer::with_capacity(facet_vertices.len());
-
-        // Look up VertexKey for each vertex in the facet
-        for vertex in &facet_vertices {
-            match self.vertex_key_from_uuid(&vertex.uuid()) {
-                Some(key) => vertex_keys.push(key),
-                None => return false, // Vertex not in triangulation, so facet can't be boundary
-            }
+        if let Some(facet_key) = self.facet_key_for_facet(facet) {
+            return facet_to_cells
+                .get(&facet_key)
+                .is_some_and(|cells| cells.len() == 1);
         }
-
-        // Generate the facet key using the same method as build_facet_to_cells_hashmap
-        let facet_key = facet_key_from_vertex_keys(&vertex_keys);
-
-        facet_to_cells
-            .get(&facet_key)
-            .is_some_and(|cells| cells.len() == 1)
+        false
     }
 
     /// Returns the number of boundary facets in the triangulation.
@@ -267,6 +234,50 @@ where
             .values()
             .filter(|cells| cells.len() == 1)
             .count()
+    }
+}
+
+/// Additional helper methods for Tds boundary analysis.
+impl<T, U, V, const D: usize> Tds<T, U, V, D>
+where
+    T: CoordinateScalar
+        + AddAssign<T>
+        + ComplexField<RealField = T>
+        + SubAssign<T>
+        + Sum
+        + From<f64>
+        + DeserializeOwned,
+    U: DataType + DeserializeOwned,
+    V: DataType + DeserializeOwned,
+    f64: From<T>,
+    for<'a> &'a T: Div<T>,
+    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    ordered_float::OrderedFloat<f64>: From<T>,
+{
+    /// Helper method to compute a facet key from a facet's vertices.
+    ///
+    /// This method extracts the vertex keys for all vertices in the facet and
+    /// computes a consistent hash key that can be used for facet-to-cells mapping.
+    ///
+    /// # Arguments
+    ///
+    /// * `facet` - The facet to compute the key for.
+    ///
+    /// # Returns
+    ///
+    /// `Some(facet_key)` if all vertices in the facet are found in the triangulation,
+    /// `None` if any vertex is missing from the triangulation.
+    #[inline]
+    fn facet_key_for_facet(&self, facet: &Facet<T, U, V, D>) -> Option<u64> {
+        let facet_vertices = facet.vertices();
+        let mut vertex_keys = VertexKeyBuffer::with_capacity(facet_vertices.len());
+        for vertex in &facet_vertices {
+            match self.vertex_key_from_uuid(&vertex.uuid()) {
+                Some(key) => vertex_keys.push(key),
+                None => return None,
+            }
+        }
+        Some(facet_key_from_vertex_keys(&vertex_keys))
     }
 }
 
@@ -411,6 +422,70 @@ mod tests {
         }
 
         println!("✓ Cached boundary facet method works correctly and matches regular method");
+    }
+
+    #[test]
+    fn test_facet_key_for_facet_helper_method() {
+        // Test the helper method facet_key_for_facet to ensure proper facet key computation
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Get a facet from the single tetrahedron
+        let cell = tds.cells().values().next().expect("Should have one cell");
+        let facets = cell.facets().expect("Should get facets from cell");
+        let test_facet = &facets[0];
+
+        // Test that the helper method returns Some(key) for valid facets
+        let facet_key_result = tds.facet_key_for_facet(test_facet);
+        assert!(
+            facet_key_result.is_some(),
+            "facet_key_for_facet should return Some(key) for valid facet"
+        );
+
+        let facet_key = facet_key_result.unwrap();
+
+        // Verify the key is non-zero (should be a proper hash)
+        assert_ne!(facet_key, 0, "Facet key should be non-zero");
+
+        // Test that the same facet produces the same key (deterministic)
+        let facet_key_2 = tds.facet_key_for_facet(test_facet).unwrap();
+        assert_eq!(
+            facet_key, facet_key_2,
+            "Same facet should produce same key (deterministic)"
+        );
+
+        // Test that different facets produce different keys
+        if facets.len() > 1 {
+            let different_facet = &facets[1];
+            let different_key = tds.facet_key_for_facet(different_facet).unwrap();
+            assert_ne!(
+                facet_key, different_key,
+                "Different facets should produce different keys"
+            );
+        }
+
+        // Test consistency with build_facet_to_cells_hashmap
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        assert!(
+            facet_to_cells.contains_key(&facet_key),
+            "Key from helper method should exist in facet_to_cells map"
+        );
+
+        // Verify the facet is correctly identified as boundary using the computed key
+        let cells_for_facet = &facet_to_cells[&facet_key];
+        assert_eq!(
+            cells_for_facet.len(),
+            1,
+            "Facet in single tetrahedron should belong to exactly 1 cell"
+        );
+
+        println!("✓ facet_key_for_facet helper method works correctly and consistently");
     }
 
     #[test]
