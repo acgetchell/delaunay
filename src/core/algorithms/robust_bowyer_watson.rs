@@ -5,8 +5,8 @@
 //! "No cavity boundary facets found" error.
 
 use crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE;
-use crate::core::collections::{FastHashMap, FastHashSet, SmallBuffer, VertexKeyBuffer};
-use crate::core::facet::facet_key_from_vertex_keys;
+use crate::core::collections::{FastHashMap, FastHashSet, SmallBuffer};
+use crate::core::util::derive_facet_key_from_vertices;
 use std::marker::PhantomData;
 use std::ops::{AddAssign, Div, DivAssign, SubAssign};
 
@@ -534,22 +534,11 @@ where
                 && let Ok(facets) = bad_cell.facets()
             {
                 for facet in facets {
-                    // Derive key from vertex VertexKeys to match TDS mapping
+                    // Derive facet key using the utility function
                     let facet_vertices = facet.vertices();
-                    let mut vertex_keys = VertexKeyBuffer::with_capacity(facet_vertices.len());
-                    let mut all_found = true;
-                    for v in &facet_vertices {
-                        if let Some(k) = tds.vertex_key_from_uuid(&v.uuid()) {
-                            vertex_keys.push(k);
-                        } else {
-                            all_found = false;
-                            break;
-                        }
-                    }
-                    if !all_found {
-                        continue; // Cannot form a valid facet key
-                    }
-                    let facet_key = facet_key_from_vertex_keys(&vertex_keys);
+                    let Ok(facet_key) = derive_facet_key_from_vertices(&facet_vertices, tds) else {
+                        continue;
+                    }; // Cannot form a valid facet key - vertex not found
 
                     if processed_facets.contains(&facet_key) {
                         continue;
@@ -819,6 +808,7 @@ where
             if let Some(cell) = tds.cells().get(cell_key) {
                 if let Ok(facets) = cell.facets() {
                     let idx = usize::from(facet_index);
+                    debug_assert!(idx < facets.len(), "facet_index out of bounds");
                     if idx < facets.len() {
                         let facet = &facets[idx];
 
@@ -971,7 +961,7 @@ where
         // If the vertex is far from the facet centroid, consider it visible
         // Use a threshold based on the perturbation scale multiplied by a factor
         let threshold = {
-            const VISIBILITY_THRESHOLD_MULTIPLIER: f64 = 100.0;
+            const VISIBILITY_THRESHOLD_MULTIPLIER: f64 = 100.0; // TODO: consider moving to RobustPredicateConfig for dataset-specific tuning
             self.predicate_config.perturbation_scale
                 * self.predicate_config.perturbation_scale
                 * <T as From<f64>>::from(VISIBILITY_THRESHOLD_MULTIPLIER)

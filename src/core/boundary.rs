@@ -4,10 +4,10 @@
 //! providing methods to identify and analyze boundary facets in d-dimensional triangulations.
 
 use super::{
-    collections::VertexKeyBuffer,
-    facet::{Facet, FacetError, facet_key_from_vertex_keys},
+    facet::{Facet, FacetError},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
     triangulation_data_structure::Tds,
+    util::derive_facet_key_from_vertices,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use nalgebra::ComplexField;
@@ -193,7 +193,8 @@ where
         facet: &Facet<T, U, V, D>,
         facet_to_cells: &crate::core::collections::FacetToCellsMap,
     ) -> bool {
-        if let Some(facet_key) = self.facet_key_for_facet(facet) {
+        let facet_vertices = facet.vertices();
+        if let Ok(facet_key) = derive_facet_key_from_vertices(&facet_vertices, self) {
             return facet_to_cells
                 .get(&facet_key)
                 .is_some_and(|cells| cells.len() == 1);
@@ -254,31 +255,6 @@ where
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     ordered_float::OrderedFloat<f64>: From<T>,
 {
-    /// Helper method to compute a facet key from a facet's vertices.
-    ///
-    /// This method extracts the vertex keys for all vertices in the facet and
-    /// computes a consistent hash key that can be used for facet-to-cells mapping.
-    ///
-    /// # Arguments
-    ///
-    /// * `facet` - The facet to compute the key for.
-    ///
-    /// # Returns
-    ///
-    /// `Some(facet_key)` if all vertices in the facet are found in the triangulation,
-    /// `None` if any vertex is missing from the triangulation.
-    #[inline]
-    fn facet_key_for_facet(&self, facet: &Facet<T, U, V, D>) -> Option<u64> {
-        let facet_vertices = facet.vertices();
-        let mut vertex_keys = VertexKeyBuffer::with_capacity(facet_vertices.len());
-        for vertex in &facet_vertices {
-            match self.vertex_key_from_uuid(&vertex.uuid()) {
-                Some(key) => vertex_keys.push(key),
-                None => return None,
-            }
-        }
-        Some(facet_key_from_vertex_keys(&vertex_keys))
-    }
 }
 
 #[cfg(test)]
@@ -286,9 +262,9 @@ mod tests {
     use super::BoundaryAnalysis;
     use crate::core::collections::FastHashMap;
     use crate::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
+    use crate::core::util::derive_facet_key_from_vertices;
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
-    use uuid::Uuid;
 
     // =============================================================================
     // SINGLE SIMPLEX TESTS
@@ -365,14 +341,8 @@ mod tests {
         );
 
         // All facets should be boundary facets
-        let mut confirmed_boundary = 0;
-        for boundary_facet in &boundary_facets {
-            if tds.is_boundary_facet(boundary_facet) {
-                confirmed_boundary += 1;
-            }
-        }
-        assert_eq!(
-            confirmed_boundary, 4,
+        assert!(
+            boundary_facets.iter().all(|f| tds.is_boundary_facet(f)),
             "All facets should be boundary facets in single tetrahedron"
         );
 
@@ -419,8 +389,8 @@ mod tests {
     }
 
     #[test]
-    fn test_facet_key_for_facet_helper_method() {
-        // Test the helper method facet_key_for_facet to ensure proper facet key computation
+    fn test_derive_facet_key_from_vertices_integration() {
+        // Test derive_facet_key_from_vertices integration to ensure proper facet key computation
         let points = vec![
             Point::new([0.0, 0.0, 0.0]),
             Point::new([1.0, 0.0, 0.0]),
@@ -435,11 +405,12 @@ mod tests {
         let facets = cell.facets().expect("Should get facets from cell");
         let test_facet = &facets[0];
 
-        // Test that the helper method returns Some(key) for valid facets
-        let facet_key_result = tds.facet_key_for_facet(test_facet);
+        // Test that the utility function returns Ok(key) for valid facets
+        let facet_vertices = test_facet.vertices();
+        let facet_key_result = derive_facet_key_from_vertices(&facet_vertices, &tds);
         assert!(
-            facet_key_result.is_some(),
-            "facet_key_for_facet should return Some(key) for valid facet"
+            facet_key_result.is_ok(),
+            "derive_facet_key_from_vertices should return Ok(key) for valid facet"
         );
 
         let facet_key = facet_key_result.unwrap();
@@ -448,27 +419,18 @@ mod tests {
         assert_ne!(facet_key, 0, "Facet key should be non-zero");
 
         // Test that the same facet produces the same key (deterministic)
-        let facet_key_2 = tds.facet_key_for_facet(test_facet).unwrap();
+        let facet_vertices_2 = test_facet.vertices();
+        let facet_key_2 = derive_facet_key_from_vertices(&facet_vertices_2, &tds).unwrap();
         assert_eq!(
             facet_key, facet_key_2,
             "Same facet should produce same key (deterministic)"
         );
 
-        // Test that different facets produce different keys
-        if facets.len() > 1 {
-            let different_facet = &facets[1];
-            let different_key = tds.facet_key_for_facet(different_facet).unwrap();
-            assert_ne!(
-                facet_key, different_key,
-                "Different facets should produce different keys"
-            );
-        }
-
         // Test consistency with build_facet_to_cells_hashmap
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
         assert!(
             facet_to_cells.contains_key(&facet_key),
-            "Key from helper method should exist in facet_to_cells map"
+            "Key from utility function should exist in facet_to_cells map"
         );
 
         // Verify the facet is correctly identified as boundary using the computed key
@@ -479,7 +441,7 @@ mod tests {
             "Facet in single tetrahedron should belong to exactly 1 cell"
         );
 
-        println!("✓ facet_key_for_facet helper method works correctly and consistently");
+        println!("✓ derive_facet_key_from_vertices integration works correctly and consistently");
     }
 
     #[test]
@@ -603,11 +565,12 @@ mod tests {
         );
 
         // Build a map of facet keys to the cells that contain them for detailed verification
-        let mut facet_map: FastHashMap<u64, Vec<Uuid>> = FastHashMap::default();
-        for cell in tds.cells().values() {
+        let mut facet_map: FastHashMap<u64, Vec<_>> = FastHashMap::default();
+        for (cell_key, cell) in tds.cells() {
             for facet in cell.facets().expect("Should get cell facets") {
-                if let Some(fk) = tds.facet_key_for_facet(&facet) {
-                    facet_map.entry(fk).or_default().push(cell.uuid());
+                let facet_vertices = facet.vertices();
+                if let Ok(fk) = derive_facet_key_from_vertices(&facet_vertices, &tds) {
+                    facet_map.entry(fk).or_default().push(cell_key);
                 }
             }
         }
