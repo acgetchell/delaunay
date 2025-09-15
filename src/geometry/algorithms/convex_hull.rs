@@ -452,65 +452,6 @@ where
         }
     }
 
-    /// Gets or builds the facet-to-cells mapping cache with atomic updates.
-    ///
-    /// This method handles cache invalidation and thread-safe rebuilding of the
-    /// facet-to-cells mapping when the triangulation has been modified.
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - The triangulation data structure to build the cache from
-    ///
-    /// # Returns
-    ///
-    /// An `Arc<FacetToCellsMap>` containing the current facet-to-cells mapping
-    fn get_or_build_facet_cache(&self, tds: &Tds<T, U, V, D>) -> Arc<FacetToCellsMap> {
-        // Check if cache is stale and needs to be invalidated
-        let current_generation = tds.generation.load(Ordering::Relaxed);
-        let cached_generation = self.cached_generation.load(Ordering::Relaxed);
-
-        // Get or build the cached facet-to-cells mapping using ArcSwapOption
-        // If the TDS generation matches the cached generation, cache is current
-        if current_generation == cached_generation {
-            // Cache is current - load existing cache or build if it doesn't exist
-            self.facet_to_cells_cache.load_full().map_or_else(
-                || {
-                    // No cache exists yet - build and store it
-                    let new_cache = tds.build_facet_to_cells_hashmap();
-                    let new_cache_arc = Arc::new(new_cache);
-
-                    // Try to swap in the new cache (another thread might have done it already)
-                    // If another thread beat us to it, use their cache instead
-                    let none_ref: Option<Arc<FacetToCellsMap>> = None;
-                    let _old = self
-                        .facet_to_cells_cache
-                        .compare_and_swap(&none_ref, Some(new_cache_arc.clone()));
-                    // Load the current cache (could be ours or another thread's)
-                    self.facet_to_cells_cache
-                        .load_full()
-                        .unwrap_or(new_cache_arc)
-                },
-                |existing_cache| {
-                    // Cache exists and is current - use it
-                    existing_cache
-                },
-            )
-        } else {
-            // Cache is stale - need to invalidate and rebuild
-            let new_cache = tds.build_facet_to_cells_hashmap();
-            let new_cache_arc = Arc::new(new_cache);
-
-            // Atomically swap in the new cache
-            self.facet_to_cells_cache.store(Some(new_cache_arc.clone()));
-
-            // Update the generation snapshot
-            self.cached_generation
-                .store(current_generation, Ordering::Relaxed);
-
-            new_cache_arc
-        }
-    }
-
     /// Fallback visibility test for degenerate cases
     ///
     /// When geometric predicates fail due to degeneracy, this method provides
@@ -1158,7 +1099,7 @@ where
     }
 
     fn cached_generation(&self) -> &AtomicU64 {
-        &self.cached_generation
+        self.cached_generation.as_ref()
     }
 }
 

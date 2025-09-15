@@ -104,7 +104,7 @@ where
         Self {
             predicate_config: config_presets::general_triangulation::<T>(),
             stats: InsertionStatistics::new(),
-            buffers: InsertionBuffers::with_capacity(100),
+            buffers: InsertionBuffers::with_capacity(D * 10), // Scale capacity with dimension
             hull: None,
             _phantom: PhantomData,
         }
@@ -132,7 +132,7 @@ where
         Self {
             predicate_config: config,
             stats: InsertionStatistics::new(),
-            buffers: InsertionBuffers::with_capacity(100),
+            buffers: InsertionBuffers::with_capacity(D * 10), // Scale capacity with dimension
             hull: None,
             _phantom: PhantomData,
         }
@@ -160,7 +160,7 @@ where
         Self {
             predicate_config: config_presets::degenerate_robust::<T>(),
             stats: InsertionStatistics::new(),
-            buffers: InsertionBuffers::with_capacity(100),
+            buffers: InsertionBuffers::with_capacity(D * 10), // Scale capacity with dimension
             hull: None,
             _phantom: PhantomData,
         }
@@ -279,13 +279,12 @@ where
 
                 // Maintain invariants after structural changes
                 <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
-                    |e| {
-                        TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Failed to finalize triangulation after robust cavity-based insertion \
-                                 (removed {cells_removed} cells, created {cells_created} cells): {e}"
-                            ),
-                        }
+                    |e| TriangulationValidationError::FinalizationFailed {
+                        message: format!(
+                            "Failed to finalize triangulation after robust cavity-based insertion \
+                                 (removed {cells_removed} cells, created {cells_created} cells). \
+                                 Underlying error: {e}"
+                        ),
                     },
                 )?;
 
@@ -332,10 +331,10 @@ where
 
             // Maintain invariants after structural changes
             <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
-                |e| TriangulationValidationError::InconsistentDataStructure {
+                |e| TriangulationValidationError::FinalizationFailed {
                     message: format!(
                         "Failed to finalize triangulation after robust hull extension insertion \
-                             (created {cells_created} cells): {e}"
+                             (created {cells_created} cells). Underlying error: {e}"
                     ),
                 },
             )?;
@@ -462,8 +461,8 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> Vec<CellKey> {
         let mut bad_cells = SmallBuffer::<CellKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-        let mut vertex_points =
-            SmallBuffer::<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>::with_capacity(D + 1);
+        let mut vertex_points = SmallBuffer::<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+        vertex_points.reserve_exact(D + 1);
 
         for (cell_key, cell) in tds.cells() {
             // Extract vertex points from the cell (reusing buffer)
@@ -624,8 +623,10 @@ where
 
         // Finalize the triangulation to ensure consistency
         if let Err(e) = <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds) {
-            return Err(TriangulationValidationError::InconsistentDataStructure {
-                message: format!("Failed to finalize triangulation after hull extension: {e}"),
+            return Err(TriangulationValidationError::FinalizationFailed {
+                message: format!(
+                    "Failed to finalize triangulation after hull extension. Underlying error: {e}"
+                ),
             });
         }
 
@@ -695,8 +696,10 @@ where
 
                 // Defensively deduplicate cell keys in case build_facet_to_cells_hashmap()
                 // ever yields duplicate (cell_key, idx) pairs per facet
-                cell_keys.sort_unstable();
-                cell_keys.dedup();
+                {
+                    let mut seen = FastHashSet::default();
+                    cell_keys.retain(|k| seen.insert(*k));
+                }
 
                 // Validate that no facet is shared by more than 2 cells
                 if cell_keys.len() > 2 {
@@ -800,6 +803,8 @@ where
         let mut visible_facets = Vec::new();
 
         // Get all boundary facets (facets shared by exactly one cell)
+        // TODO: integrate FacetCacheProvider here once available:
+        // let facet_to_cells = self.get_or_build_facet_cache(&tds);
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
 
         // Directly iterate over filtered boundary facets without collecting into a temporary Vec
@@ -961,7 +966,12 @@ where
         // If the vertex is far from the facet centroid, consider it visible
         // Use a threshold based on the perturbation scale multiplied by a factor
         let threshold = {
-            const VISIBILITY_THRESHOLD_MULTIPLIER: f64 = 100.0; // TODO: consider moving to RobustPredicateConfig for dataset-specific tuning
+            // TODO: Move VISIBILITY_THRESHOLD_MULTIPLIER to RobustPredicateConfig
+            // to allow dataset-specific tuning and testing:
+            // let multiplier: T = <T as From<f64>>::from(
+            //     self.predicate_config.visibility_threshold_multiplier.unwrap_or(100.0)
+            // );
+            const VISIBILITY_THRESHOLD_MULTIPLIER: f64 = 100.0;
             self.predicate_config.perturbation_scale
                 * self.predicate_config.perturbation_scale
                 * <T as From<f64>>::from(VISIBILITY_THRESHOLD_MULTIPLIER)
@@ -1023,10 +1033,16 @@ where
         });
 
         // Also check if we're in a high-density area
-        let nearby_vertices = tds
-            .vertices()
-            .values()
-            .filter(|v| {
+        // Guard for large triangulations: limit proximity scan to prevent O(n) overhead
+        let vertex_count = tds.vertices().len();
+        let nearby_vertices = if vertex_count > 1000 {
+            // For large triangulations, use early exit after finding sufficient nearby vertices
+            let mut count = 0;
+            let max_scan = 100; // Early exit threshold
+            for (i, v) in tds.vertices().values().enumerate() {
+                if i >= max_scan {
+                    break; // Early exit to bound computational cost
+                }
                 let v_coords: [T; D] = v.point().into();
                 let distance_squared: f64 = coords
                     .iter()
@@ -1036,9 +1052,32 @@ where
                         diff * diff
                     })
                     .sum();
-                distance_squared < 1e-6 // Very close vertices
-            })
-            .count();
+                if distance_squared < 1e-6 {
+                    count += 1;
+                    if count > 3 {
+                        break; // Found enough nearby vertices
+                    }
+                }
+            }
+            count
+        } else {
+            // For smaller triangulations, do the full scan
+            tds.vertices()
+                .values()
+                .filter(|v| {
+                    let v_coords: [T; D] = v.point().into();
+                    let distance_squared: f64 = coords
+                        .iter()
+                        .zip(v_coords.iter())
+                        .map(|(&a, &b)| {
+                            let diff: f64 = (a - b).into();
+                            diff * diff
+                        })
+                        .sum();
+                    distance_squared < 1e-6 // Very close vertices
+                })
+                .count()
+        };
 
         has_small_coords || has_large_coords || nearby_vertices > 3
     }
@@ -1132,6 +1171,58 @@ mod tests {
     use crate::vertex;
     use approx::assert_abs_diff_eq;
     use approx::assert_abs_diff_ne;
+
+    /// Helper function to verify facet index consistency between neighboring cells
+    ///
+    /// This method checks that the shared facet key computed from both cells'
+    /// perspectives matches, catching subtle neighbor assignment errors.
+    fn verify_facet_index_consistency<T, U, V, const D: usize>(
+        tds: &Tds<T, U, V, D>,
+        cell1_key: CellKey,
+        cell2_key: CellKey,
+        facet_idx: usize,
+        insertion_num: usize,
+    ) where
+        T: CoordinateScalar
+            + std::ops::AddAssign<T>
+            + std::ops::SubAssign<T>
+            + std::iter::Sum
+            + num_traits::cast::NumCast,
+        U: crate::core::traits::data_type::DataType,
+        V: crate::core::traits::data_type::DataType,
+        [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+    {
+        use crate::core::util::derive_facet_key_from_vertices;
+
+        if let (Some(cell1), Some(cell2)) = (tds.cells().get(cell1_key), tds.cells().get(cell2_key))
+            && let (Ok(facets1), Ok(facets2)) = (cell1.facets(), cell2.facets())
+            && facet_idx < facets1.len()
+        {
+            let facet1 = &facets1[facet_idx];
+            let facet1_vertices = facet1.vertices();
+
+            // Derive the facet key from cell1's perspective
+            if let Ok(facet_key1) = derive_facet_key_from_vertices(&facet1_vertices, tds) {
+                // Find the corresponding facet in cell2 that shares the same vertices
+                let mut found_matching_facet = false;
+                for facet2 in facets2 {
+                    let facet2_vertices = facet2.vertices();
+                    if let Ok(facet_key2) = derive_facet_key_from_vertices(&facet2_vertices, tds)
+                        && facet_key1 == facet_key2
+                    {
+                        found_matching_facet = true;
+                        break;
+                    }
+                }
+
+                assert!(
+                    found_matching_facet,
+                    "No matching facet found between neighboring cells after insertion {insertion_num}: \
+                     cell1 facet key {facet_key1} not found in cell2"
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_robust_bowyer_watson_creation() {
@@ -1442,23 +1533,32 @@ mod tests {
             // Verify neighbor relationships are consistent
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
-                    for neighbor_uuid in neighbors.iter().flatten() {
-                        if let Some(neighbor_key) = tds.cell_key_from_uuid(neighbor_uuid)
+                    for (facet_idx, neighbor_uuid) in neighbors.iter().enumerate() {
+                        if let Some(neighbor_uuid) = neighbor_uuid
+                            && let Some(neighbor_key) = tds.cell_key_from_uuid(neighbor_uuid)
                             && let Some(neighbor) = tds.cells().get(neighbor_key)
+                            && let Some(neighbor_neighbors) = &neighbor.neighbors
                         {
                             // Each neighbor should also reference this cell as a neighbor
-                            if let Some(neighbor_neighbors) = &neighbor.neighbors {
-                                let cell_uuid = tds
-                                    .cell_uuid_from_key(cell_key)
-                                    .expect("Cell should have UUID");
-                                assert!(
-                                    neighbor_neighbors
-                                        .iter()
-                                        .any(|n| n.as_ref() == Some(&cell_uuid)),
-                                    "Neighbor relationship should be symmetric after insertion {}",
-                                    i + 1
-                                );
-                            }
+                            let cell_uuid = tds
+                                .cell_uuid_from_key(cell_key)
+                                .expect("Cell should have UUID");
+                            assert!(
+                                neighbor_neighbors
+                                    .iter()
+                                    .any(|n| n.as_ref() == Some(&cell_uuid)),
+                                "Neighbor relationship should be symmetric after insertion {}",
+                                i + 1
+                            );
+
+                            // Verify facet indices consistency
+                            verify_facet_index_consistency(
+                                &tds,
+                                cell_key,
+                                neighbor_key,
+                                facet_idx,
+                                i + 1,
+                            );
                         }
                     }
                 }
@@ -1586,23 +1686,32 @@ mod tests {
             // Verify neighbor relationships are consistent
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
-                    for neighbor_uuid in neighbors.iter().flatten() {
-                        if let Some(neighbor_key) = tds.cell_key_from_uuid(neighbor_uuid)
+                    for (facet_idx, neighbor_uuid) in neighbors.iter().enumerate() {
+                        if let Some(neighbor_uuid) = neighbor_uuid
+                            && let Some(neighbor_key) = tds.cell_key_from_uuid(neighbor_uuid)
                             && let Some(neighbor) = tds.cells().get(neighbor_key)
+                            && let Some(neighbor_neighbors) = &neighbor.neighbors
                         {
                             // Each neighbor should also reference this cell as a neighbor
-                            if let Some(neighbor_neighbors) = &neighbor.neighbors {
-                                let cell_uuid = tds
-                                    .cell_uuid_from_key(cell_key)
-                                    .expect("Cell should have UUID");
-                                assert!(
-                                    neighbor_neighbors
-                                        .iter()
-                                        .any(|opt| opt.as_ref() == Some(&cell_uuid)),
-                                    "Neighbor relationship should be symmetric after hull extension {}",
-                                    i + 1
-                                );
-                            }
+                            let cell_uuid = tds
+                                .cell_uuid_from_key(cell_key)
+                                .expect("Cell should have UUID");
+                            assert!(
+                                neighbor_neighbors
+                                    .iter()
+                                    .any(|opt| opt.as_ref() == Some(&cell_uuid)),
+                                "Neighbor relationship should be symmetric after hull extension {}",
+                                i + 1
+                            );
+
+                            // Verify facet indices consistency
+                            verify_facet_index_consistency(
+                                &tds,
+                                cell_key,
+                                neighbor_key,
+                                facet_idx,
+                                i + 1,
+                            );
                         }
                     }
                 }
@@ -1703,17 +1812,18 @@ mod tests {
             // 2. No duplicate cells should exist
             let mut cell_signatures = FastHashSet::default();
             for (_, cell) in tds.cells() {
-                let mut vertex_uuids: Vec<_> = cell.vertex_uuid_iter().collect();
-                vertex_uuids.sort();
-                let signature = format!("{vertex_uuids:?}");
+                // Create efficient signature using sorted UUID array instead of string formatting
+                let mut vertex_uuids: SmallBuffer<uuid::Uuid, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    cell.vertex_uuid_iter().collect();
+                vertex_uuids.sort_unstable();
 
-                let inserted = cell_signatures.insert(signature.clone());
+                let inserted = cell_signatures.insert(vertex_uuids.clone());
                 if !inserted {
                     #[cfg(debug_assertions)]
                     eprintln!(
-                        "Duplicate cell found after insertion {}: {}",
+                        "Duplicate cell found after insertion {}: {:?}",
                         i + 1,
-                        signature
+                        vertex_uuids
                     );
                 }
                 assert!(inserted, "Duplicate cell found after insertion {}", i + 1);
@@ -1732,8 +1842,8 @@ mod tests {
 
                 // If shared by 2 cells, both should reference each other as neighbors
                 if cells.len() == 2 {
-                    let (cell1_key, _) = cells[0];
-                    let (cell2_key, _) = cells[1];
+                    let (cell1_key, facet1_idx) = cells[0];
+                    let (cell2_key, _facet2_idx) = cells[1];
 
                     if let (Some(cell1), Some(cell2)) =
                         (tds.cells().get(cell1_key), tds.cells().get(cell2_key))
@@ -1755,6 +1865,15 @@ mod tests {
                             neighbors2.iter().flatten().any(|uuid| *uuid == cell1_uuid),
                             "Cell2 should reference cell1 as neighbor after insertion {}",
                             i + 1
+                        );
+
+                        // Verify facet indices consistency for the shared facet
+                        verify_facet_index_consistency(
+                            &tds,
+                            cell1_key,
+                            cell2_key,
+                            facet1_idx as usize,
+                            i + 1,
                         );
                     }
                 }

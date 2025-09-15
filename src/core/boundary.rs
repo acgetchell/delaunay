@@ -194,6 +194,9 @@ where
         facet_to_cells: &crate::core::collections::FacetToCellsMap,
     ) -> bool {
         let facet_vertices = facet.vertices();
+        if facet_vertices.len() != D {
+            return false;
+        }
         if let Ok(facet_key) = derive_facet_key_from_vertices(&facet_vertices, self) {
             return facet_to_cells
                 .get(&facet_key)

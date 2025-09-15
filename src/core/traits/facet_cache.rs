@@ -8,7 +8,6 @@ use super::data_type::DataType;
 use crate::core::{collections::FacetToCellsMap, triangulation_data_structure::Tds};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use arc_swap::ArcSwapOption;
-use nalgebra::ComplexField;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
@@ -56,14 +55,11 @@ use std::{
 /// impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for MyAlgorithm
 /// where
 ///     T: delaunay::geometry::traits::coordinate::CoordinateScalar +
-///        nalgebra::ComplexField<RealField = T> +
-///        std::ops::AddAssign<T> + std::ops::SubAssign<T> + std::iter::Sum + From<f64>,
-///     U: delaunay::core::traits::data_type::DataType,
-///     V: delaunay::core::traits::data_type::DataType,
-///     f64: From<T>,
+///        std::ops::AddAssign<T> + std::ops::SubAssign<T> + std::iter::Sum + num_traits::NumCast,
+///     U: delaunay::core::traits::data_type::DataType + serde::de::DeserializeOwned,
+///     V: delaunay::core::traits::data_type::DataType + serde::de::DeserializeOwned,
 ///     for<'a> &'a T: std::ops::Div<T>,
 ///     [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
-///     ordered_float::OrderedFloat<f64>: From<T>,
 /// {
 ///     fn facet_cache(&self) -> &ArcSwapOption<delaunay::core::collections::FacetToCellsMap> {
 ///         &self.facet_to_cells_cache
@@ -76,18 +72,11 @@ use std::{
 /// ```
 pub trait FacetCacheProvider<T, U, V, const D: usize>
 where
-    T: CoordinateScalar
-        + ComplexField<RealField = T>
-        + AddAssign<T>
-        + SubAssign<T>
-        + Sum
-        + From<f64>,
-    U: DataType,
-    V: DataType,
-    f64: From<T>,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    U: DataType + DeserializeOwned,
+    V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
 {
     /// Returns a reference to the facet cache storage.
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap>;

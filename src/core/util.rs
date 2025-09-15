@@ -625,7 +625,8 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 ///
 /// # Returns
 ///
-/// A `Result` containing the facet key or a `FacetError` if vertex lookup fails
+/// A `Result` containing the facet key or a `FacetError` if vertex lookup fails.
+/// Note: an empty `facet_vertices` slice yields `Ok(0)`.
 ///
 /// # Errors
 ///
@@ -1674,12 +1675,8 @@ mod tests {
         println!("  Testing with empty vertices...");
         let empty_vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![];
         let result_empty = derive_facet_key_from_vertices(&empty_vertices, &tds);
-        // Empty vertices should succeed and produce some key (probably 0)
-        assert!(
-            result_empty.is_ok(),
-            "Empty vertices should succeed (edge case)"
-        );
-        println!("  Empty vertices key: {}", result_empty.unwrap());
+        let key_empty = result_empty.expect("Empty vertices should succeed (edge case)");
+        assert_eq!(key_empty, 0, "Empty vertices should produce key 0");
 
         println!("  ✓ Error handling working correctly");
     }

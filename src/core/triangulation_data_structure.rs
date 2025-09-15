@@ -314,6 +314,12 @@ pub enum TriangulationValidationError {
     /// Facet operation failed during validation.
     #[error("Facet operation failed: {0}")]
     FacetError(#[from] super::facet::FacetError),
+    /// Finalization failed during triangulation operations.
+    #[error("Finalization failed: {message}")]
+    FinalizationFailed {
+        /// Description of the finalization failure, including underlying error details.
+        message: String,
+    },
 }
 
 // =============================================================================
