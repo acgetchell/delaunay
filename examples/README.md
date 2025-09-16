@@ -217,5 +217,46 @@ For comprehensive memory scaling analysis, see:
 - `cargo bench --bench memory_scaling --features count-allocations`  
 - `cargo bench --bench triangulation_vs_hull_memory --features count-allocations`
 
-**Run with:** `cargo run --release --example memory_analysis --features count-allocations`  
+**Run with:** `cargo run --release --example memory_analysis`
 [View source](./memory_analysis.rs)
+
+### 6. Zero-Allocation Iterator Demo (`zero_allocation_iterator_demo.rs`)
+
+Demonstrates the performance benefits and API usage patterns of zero-allocation
+iterators compared to traditional Vec allocation approaches. This example showcases
+the `vertex_uuid_iter()` method which provides iteration over vertex UUIDs without
+heap allocations.
+
+**Key Features:**
+
+- **Performance comparison**: Direct benchmarking between allocation vs zero-allocation approaches
+- **Functional equivalence**: Demonstrates that both methods produce identical results
+- **Iterator capabilities**: Shows ExactSizeIterator implementation and iterator trait support
+- **API usage patterns**: Practical examples of when to use zero-allocation iterators
+- **Memory efficiency**: Zero heap allocations during iteration
+- **Ergonomic usage**: Full iterator trait support (map, filter, collect, etc.)
+
+**Sample Output:**
+
+```text
+Zero-Allocation Iterator Demo
+=================================================================
+
+Using a 4D cell with 5 vertices from triangulation
+
+Functional Equivalence Test:
+===========================
+  vertex_uuids() returned 5 UUIDs
+  vertex_uuid_iter().collect() returned 5 UUIDs
+  Results are identical: true
+
+Performance Comparison:
+======================
+  Method 1 (vertex_uuids):   7.63µs (10000 iterations)
+  Method 2 (vertex_uuid_iter):   0.00ns (10000 iterations)
+  Speedup: N/A (iteration time too small to measure reliably)
+  Counts match: true
+```
+
+**Run with:** `cargo run --release --example zero_allocation_iterator_demo`
+[View source](./zero_allocation_iterator_demo.rs)

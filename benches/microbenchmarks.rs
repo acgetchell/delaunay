@@ -114,14 +114,14 @@ macro_rules! generate_dimensional_benchmarks {
                                     let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
                                     // Add some duplicate cells to make the benchmark meaningful
-                                    let cell_vertices: Vec<_> = tds.vertices.values().copied().collect();
+                                    let cell_vertices: Vec<_> = tds.vertices().values().copied().collect();
                                     if cell_vertices.len() >= ($dim + 1) {
                                         // Create a few duplicate cells
                                         for _ in 0..3 {
                                             let duplicate_cell = cell!(cell_vertices[0..($dim + 1)].to_vec());
                                             let cell_key = tds.cells_mut().insert(duplicate_cell);
                                             let cell_uuid = tds.cells_mut()[cell_key].uuid();
-                                            // Note: Intentionally not updating bimap to create true duplicates for testing
+                                            // Note: Intentionally not updating UUID mappings to create true duplicates for testing
                                             let _ = cell_uuid; // Suppress unused variable warning
                                         }
                                     }

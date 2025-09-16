@@ -79,8 +79,8 @@ pub enum FacetError {
     /// The cell does not contain the vertex.
     #[error("The cell does not contain the vertex!")]
     CellDoesNotContainVertex,
-    /// A vertex UUID was not found in the vertex bimap.
-    #[error("Vertex UUID not found in bimap: {uuid}")]
+    /// A vertex UUID was not found in the UUID-to-key mapping.
+    #[error("Vertex UUID not found in mapping: {uuid}")]
     VertexNotFound {
         /// The UUID that was not found.
         uuid: uuid::Uuid,
@@ -585,83 +585,6 @@ pub fn facet_key_from_vertex_keys(vertex_keys: &[VertexKey]) -> u64 {
     stable_hash_u64_slice(&key_values)
 }
 
-/// Generates a canonical facet key from a collection of vertices using their `VertexKeys`.
-///
-/// This is a convenience method that looks up `VertexKeys` for the given vertices
-/// and then calls `facet_key_from_vertex_keys` to generate the canonical key.
-///
-/// This function requires access to the vertex bimap from a triangulation data structure
-/// to look up the vertex keys. It's typically used within the context of a TDS.
-///
-/// # Arguments
-///
-/// * `vertices` - A slice of vertices to generate a facet key for
-/// * `vertex_bimap` - A reference to the bimap that maps vertex UUIDs to vertex keys
-///
-/// # Returns
-///
-/// A `u64` hash value representing the canonical key of the facet, or an error
-/// if any vertex is not found in the triangulation
-///
-/// # Errors
-///
-/// Returns a `FacetError::VertexNotFound` if any vertex UUID is not found in the provided vertex bimap.
-/// The error will include the missing UUID for debugging purposes.
-///
-/// # Examples
-///
-/// ```
-/// use delaunay::core::facet::facet_key_from_vertices;
-/// use delaunay::core::triangulation_data_structure::VertexKey;
-/// use delaunay::core::vertex::Vertex;
-/// use delaunay::vertex;
-/// use bimap::BiMap;
-/// use uuid::Uuid;
-/// use slotmap::Key;
-///
-/// // Create some vertices with explicit type annotations
-/// let vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-/// ];
-///
-/// // Create a vertex bimap (normally this would be part of a TDS)
-/// let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
-/// for (i, vertex) in vertices.iter().enumerate() {
-///     let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64 + 1));
-///     vertex_bimap.insert(vertex.uuid(), key);
-/// }
-///
-/// // Generate facet key from vertices
-/// let facet_key = facet_key_from_vertices(&vertices, &vertex_bimap).unwrap();
-/// println!("Facet key: {}", facet_key);
-/// ```
-pub fn facet_key_from_vertices<T, U, const D: usize>(
-    vertices: &[Vertex<T, U, D>],
-    vertex_bimap: &bimap::BiMap<uuid::Uuid, VertexKey>,
-) -> Result<u64, FacetError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-{
-    // Look up VertexKeys for all vertices
-    let vertex_keys: Result<Vec<VertexKey>, FacetError> = vertices
-        .iter()
-        .map(|vertex| {
-            vertex_bimap
-                .get_by_left(&vertex.uuid())
-                .copied()
-                .ok_or_else(|| FacetError::VertexNotFound {
-                    uuid: vertex.uuid(),
-                })
-        })
-        .collect();
-
-    vertex_keys.map(|keys| facet_key_from_vertex_keys(&keys))
-}
-
 // =============================================================================
 // TESTS
 // =============================================================================
@@ -672,9 +595,6 @@ mod tests {
     use crate::core::triangulation_data_structure::VertexKey;
     use crate::{cell, vertex};
     use approx::assert_relative_eq;
-    use bimap::BiMap;
-    use slotmap::SlotMap;
-    use uuid::Uuid;
 
     // =============================================================================
     // TYPE ALIASES AND HELPERS
@@ -1415,97 +1335,5 @@ mod tests {
         let empty_keys: Vec<VertexKey> = vec![];
         let key_empty = facet_key_from_vertex_keys(&empty_keys);
         assert_eq!(key_empty, 0, "Empty vertex keys should produce key 0");
-    }
-
-    #[test]
-    fn test_facet_key_from_vertices() {
-        // Create some vertices
-        let vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-        ];
-
-        // Create a vertex bimap
-        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
-        let mut temp_vertices: SlotMap<VertexKey, ()> = SlotMap::with_key();
-
-        for vertex in &vertices {
-            let key = temp_vertices.insert(());
-            vertex_bimap.insert(vertex.uuid(), key);
-        }
-
-        // Generate facet key from vertices
-        let facet_key = facet_key_from_vertices(&vertices, &vertex_bimap).unwrap();
-
-        // Test with different order
-        let mut reversed_vertices = vertices.clone();
-        reversed_vertices.reverse();
-        let facet_key_reversed =
-            facet_key_from_vertices(&reversed_vertices, &vertex_bimap).unwrap();
-
-        assert_eq!(
-            facet_key, facet_key_reversed,
-            "Keys should be consistent regardless of vertex order"
-        );
-
-        // Test with missing vertex
-        let missing_vertex = vertex!([2.0, 2.0, 2.0]);
-        let vertices_with_missing = vec![vertices[0], missing_vertex];
-        let result = facet_key_from_vertices(&vertices_with_missing, &vertex_bimap);
-        assert!(
-            result.is_err(),
-            "Should return an error when vertex is not in bimap"
-        );
-    }
-
-    #[test]
-    fn test_facet_error_vertex_not_found() {
-        // Test the new VertexNotFound error variant
-        let vertices: Vec<Vertex<f64, Option<()>, 3>> =
-            vec![vertex!([0.0, 0.0, 0.0]), vertex!([1.0, 0.0, 0.0])];
-
-        // Create an empty vertex bimap (no vertices mapped)
-        let vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
-
-        // Try to generate facet key from vertices that aren't in the bimap
-        let result = facet_key_from_vertices(&vertices, &vertex_bimap);
-
-        // Should return FacetError::VertexNotFound
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            FacetError::VertexNotFound { uuid } => {
-                assert_eq!(uuid, vertices[0].uuid());
-                println!("✓ Successfully caught VertexNotFound error for UUID: {uuid}");
-            }
-            other => {
-                panic!("Expected VertexNotFound error, got: {other:?}")
-            }
-        }
-
-        // Test the error display message
-        let error = FacetError::VertexNotFound {
-            uuid: vertices[0].uuid(),
-        };
-        let error_message = error.to_string();
-        assert!(error_message.contains("Vertex UUID not found in bimap"));
-        assert!(error_message.contains(&vertices[0].uuid().to_string()));
-
-        // Test partial bimap scenario (some vertices found, some not)
-        let mut partial_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
-        let mut temp_vertices: SlotMap<VertexKey, ()> = SlotMap::with_key();
-        let key = temp_vertices.insert(());
-        partial_bimap.insert(vertices[0].uuid(), key); // Only map the first vertex
-
-        let result_partial = facet_key_from_vertices(&vertices, &partial_bimap);
-        assert!(result_partial.is_err());
-        match result_partial.unwrap_err() {
-            FacetError::VertexNotFound { uuid } => {
-                assert_eq!(uuid, vertices[1].uuid()); // Second vertex should be the missing one
-            }
-            other => {
-                panic!("Expected VertexNotFound error, got: {other:?}")
-            }
-        }
     }
 }

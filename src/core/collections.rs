@@ -107,7 +107,7 @@ use crate::core::triangulation_data_structure::{CellKey, VertexKey};
 ///
 /// // 3D triangulation: facets 0, 1, 2, 3 (fits comfortably in u8)
 /// let facet: FacetIndex = 2;
-/// assert_eq!(facet as usize, 2);
+/// assert_eq!(usize::from(facet), 2);
 /// ```
 pub type FacetIndex = u8;
 
@@ -353,9 +353,10 @@ pub type FacetInfoBuffer = SmallBuffer<(CellKey, FacetIndex), MAX_PRACTICAL_DIME
 // =============================================================================
 
 /// Semantic constant for the maximum practical dimension in computational geometry.
+///
 /// Most applications work with dimensions 2D-5D, so 8 provides comfortable headroom
 /// while keeping stack allocation efficient.
-const MAX_PRACTICAL_DIMENSION_SIZE: usize = 8;
+pub const MAX_PRACTICAL_DIMENSION_SIZE: usize = 8;
 
 /// Buffer sized for vertex collections in D-dimensional simplices.
 /// A D-dimensional simplex has D+1 vertices, so this handles up to 7D simplices on stack.
@@ -418,6 +419,72 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 /// - **Use Case**: Hull algorithms, visibility determination
 /// - **Performance**: Optimized for geometric algorithm patterns
 pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
+
+// =============================================================================
+// UUID-KEY MAPPING TYPES
+// =============================================================================
+
+/// Optimized mapping from Vertex UUIDs to `VertexKeys` for fast UUID → Key lookups.
+/// This is the primary direction for most triangulation operations.
+///
+/// # Optimization Rationale
+///
+/// - **Primary Direction**: UUID → Key is the hot path in most algorithms
+/// - **Hash Function**: `FxHash` provides ~2-3x faster lookups than default hasher
+/// - **Use Case**: Converting vertex UUIDs to keys for `SlotMap` access
+/// - **Performance**: O(1) average case, optimized for triangulation algorithms
+///
+/// # Reverse Lookups
+///
+/// For Key → UUID lookups (less common), use direct `SlotMap` access:
+/// ```rust
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+///
+/// // Get first vertex key and its UUID
+/// let (vertex_key, _) = tds.vertices().iter().next().unwrap();
+/// let vertex_uuid = tds.vertices()[vertex_key].uuid();
+/// ```
+pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
+
+/// Optimized mapping from Cell UUIDs to `CellKeys` for fast UUID → Key lookups.
+/// This is the primary direction for most triangulation operations.
+///
+/// # Optimization Rationale
+///
+/// - **Primary Direction**: UUID → Key is the hot path in neighbor assignment
+/// - **Hash Function**: `FxHash` provides ~2-3x faster lookups than default hasher
+/// - **Use Case**: Converting cell UUIDs to keys for `SlotMap` access
+/// - **Performance**: O(1) average case, eliminates `BiMap` overhead
+///
+/// # Reverse Lookups
+///
+/// For Key → UUID lookups (less common), use direct `SlotMap` access:
+/// ```rust
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+///
+/// // Get first cell key and its UUID
+/// let (cell_key, _) = tds.cells().iter().next().unwrap();
+/// let cell_uuid = tds.cells()[cell_key].uuid();
+/// ```
+pub type UuidToCellKeyMap = FastHashMap<Uuid, CellKey>;
 
 /// Size constant for batch point processing operations.
 /// 16 provides sufficient capacity for typical geometric algorithm batches.

@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a  # v1.14.1
+        uses: actions-rust-lang/setup-rust-toolchain@2fcdc490d667999e01ddbbf0f2823181beef6b39  # v1.15.0
         with:
           target: ${{ matrix.target }}
           cache: true  # Built-in caching
@@ -68,7 +68,7 @@ jobs:
 
       - name: Install uv (for Python linting)
         if: matrix.os == 'ubuntu-latest'
-        uses: astral-sh/setup-uv@557e51de59eb14aaaba2ed9621916900a91d50c6  # v6.6.1
+        uses: astral-sh/setup-uv@b75a909f75acd358c2196fb9a5f1299a9a8868a4  # v6.7.0
         with:
           version: "latest"
 
