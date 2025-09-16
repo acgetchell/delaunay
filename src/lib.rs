@@ -169,9 +169,11 @@ pub mod core {
     pub mod traits {
         pub mod boundary_analysis;
         pub mod data_type;
+        pub mod facet_cache;
         pub mod insertion_algorithm;
         pub use boundary_analysis::*;
         pub use data_type::*;
+        pub use facet_cache::*;
         pub use insertion_algorithm::*;
     }
     // Re-export the `core` modules.

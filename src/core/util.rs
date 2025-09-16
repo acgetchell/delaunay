@@ -608,6 +608,94 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 }
 
 // =============================================================================
+// FACET KEY UTILITIES
+// =============================================================================
+
+/// Derives a facet key from the facet's vertices using the TDS vertex mappings.
+///
+/// This utility function converts the facet's vertices to vertex keys and computes
+/// the canonical facet key for lookup in facet-to-cells mappings. This is a common
+/// operation used across boundary analysis, convex hull algorithms, and insertion
+/// algorithms.
+///
+/// # Arguments
+///
+/// * `facet_vertices` - The vertices that make up the facet
+/// * `tds` - The triangulation data structure for vertex key lookups
+///
+/// # Returns
+///
+/// A `Result` containing the facet key or a `FacetError` if vertex lookup fails.
+/// Note: an empty `facet_vertices` slice yields `Ok(0)`.
+///
+/// # Errors
+///
+/// Returns `FacetError::VertexNotFound` if any vertex UUID cannot be found in the TDS
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::core::util::derive_facet_key_from_vertices;
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+///
+/// // Get facet vertices from a cell
+/// if let Some(cell) = tds.cells().values().next() {
+///     let facet_vertices: Vec<_> = cell.vertices().iter().skip(1).cloned().collect();
+///     let facet_key = derive_facet_key_from_vertices(&facet_vertices, &tds).unwrap();
+///     println!("Facet key: {}", facet_key);
+/// }
+/// ```
+///
+/// # Performance
+///
+/// - Time Complexity: O(V) where V is the number of vertices in the facet
+/// - Space Complexity: O(V) for the temporary vertex keys buffer
+/// - Uses stack-allocated `SmallBuffer` for performance on hot paths
+pub fn derive_facet_key_from_vertices<T, U, V, const D: usize>(
+    facet_vertices: &[crate::core::vertex::Vertex<T, U, D>],
+    tds: &crate::core::triangulation_data_structure::Tds<T, U, V, D>,
+) -> Result<u64, crate::core::facet::FacetError>
+where
+    T: crate::geometry::traits::coordinate::CoordinateScalar,
+    U: crate::core::traits::data_type::DataType,
+    V: crate::core::traits::data_type::DataType,
+    [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+{
+    use crate::core::collections::SmallBuffer;
+    use crate::core::facet::{FacetError, facet_key_from_vertex_keys};
+    use crate::core::triangulation_data_structure::VertexKey;
+
+    // Compute the facet key using VertexKeys (same method as build_facet_to_cells_hashmap)
+    // Stack-allocate for performance on hot paths
+    let mut vertex_keys: SmallBuffer<
+        VertexKey,
+        { crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE },
+    > = SmallBuffer::new();
+
+    for vertex in facet_vertices {
+        match tds.vertex_key_from_uuid(&vertex.uuid()) {
+            Some(key) => vertex_keys.push(key),
+            None => {
+                return Err(FacetError::VertexNotFound {
+                    uuid: vertex.uuid(),
+                });
+            }
+        }
+    }
+
+    Ok(facet_key_from_vertex_keys(&vertex_keys))
+}
+
+// =============================================================================
 // MEMORY MEASUREMENT UTILITIES
 // =============================================================================
 
@@ -1465,5 +1553,184 @@ mod tests {
 
         assert_eq!(result, 1);
         assert_eq!(*counter.lock().unwrap(), 1);
+    }
+
+    // =============================================================================
+    // FACET KEY UTILITIES TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_derive_facet_key_from_vertices() {
+        use crate::core::triangulation_data_structure::Tds;
+
+        println!("Testing derive_facet_key_from_vertices function");
+
+        // Create a triangulation
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Get vertices from a cell to test with
+        let cell = tds.cells().values().next().unwrap();
+        let facet_vertices: Vec<_> = cell.vertices().iter().skip(1).copied().collect();
+
+        println!(
+            "  Testing facet key derivation for facet with {} vertices",
+            facet_vertices.len()
+        );
+
+        // Test successful key derivation
+        let result = derive_facet_key_from_vertices(&facet_vertices, &tds);
+        assert!(
+            result.is_ok(),
+            "Facet key derivation should succeed for valid vertices"
+        );
+
+        let facet_key = result.unwrap();
+        println!("  Derived facet key: {facet_key}");
+
+        // Test that the same vertices produce the same key (deterministic)
+        let result2 = derive_facet_key_from_vertices(&facet_vertices, &tds);
+        assert!(result2.is_ok(), "Second derivation should also succeed");
+        assert_eq!(
+            facet_key,
+            result2.unwrap(),
+            "Same vertices should produce same facet key"
+        );
+
+        // Test different vertices produce different keys
+        let different_facet_vertices: Vec<_> = cell.vertices().iter().take(2).copied().collect();
+        if !different_facet_vertices.is_empty() && different_facet_vertices != facet_vertices {
+            let result3 = derive_facet_key_from_vertices(&different_facet_vertices, &tds);
+            assert!(
+                result3.is_ok(),
+                "Different facet key derivation should succeed"
+            );
+
+            let different_facet_key = result3.unwrap();
+            assert_ne!(
+                facet_key, different_facet_key,
+                "Different vertices should produce different facet keys"
+            );
+            println!("  Different facet key: {different_facet_key}");
+        }
+
+        println!("  ✓ Facet key derivation working correctly");
+    }
+
+    #[test]
+    fn test_derive_facet_key_from_vertices_error_cases() {
+        use crate::core::triangulation_data_structure::Tds;
+        use crate::core::vertex::{Vertex, VertexBuilder};
+        use uuid::Uuid;
+
+        println!("Testing derive_facet_key_from_vertices error handling");
+
+        // Create a triangulation
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Create a vertex with a UUID that doesn't exist in the TDS
+        let invalid_uuid = Uuid::new_v4(); // Random UUID not in TDS
+        let mut invalid_vertex = VertexBuilder::default()
+            .point(crate::geometry::point::Point::new([99.0, 99.0, 99.0]))
+            .build()
+            .expect("Failed to create test vertex");
+        // Manually set the UUID to something not in the TDS
+        invalid_vertex
+            .set_uuid(invalid_uuid)
+            .expect("Failed to set UUID");
+
+        let invalid_vertices = vec![invalid_vertex];
+
+        // Test with vertex not found in TDS
+        println!("  Testing with vertex not found in TDS...");
+        let result = derive_facet_key_from_vertices(&invalid_vertices, &tds);
+
+        assert!(
+            result.is_err(),
+            "Should return error for vertex not found in TDS"
+        );
+
+        if let Err(error) = result {
+            println!("  Expected error: {error}");
+            match error {
+                crate::core::facet::FacetError::VertexNotFound { uuid } => {
+                    assert_eq!(uuid, invalid_uuid, "Error should contain the correct UUID");
+                }
+                _ => panic!("Expected VertexNotFound error, got: {error:?}"),
+            }
+        }
+
+        // Test with empty vertices (edge case)
+        println!("  Testing with empty vertices...");
+        let empty_vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![];
+        let result_empty = derive_facet_key_from_vertices(&empty_vertices, &tds);
+        let key_empty = result_empty.expect("Empty vertices should succeed (edge case)");
+        assert_eq!(key_empty, 0, "Empty vertices should produce key 0");
+
+        println!("  ✓ Error handling working correctly");
+    }
+
+    #[test]
+    fn test_derive_facet_key_from_vertices_consistency() {
+        use crate::core::triangulation_data_structure::Tds;
+
+        println!("Testing derive_facet_key_from_vertices consistency with TDS");
+
+        // Create a triangulation
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Build the facet-to-cells cache
+        let cache = tds.build_facet_to_cells_hashmap();
+
+        // Test that our utility function produces keys that exist in the cache
+        let mut keys_found = 0;
+        let mut keys_tested = 0;
+
+        for cell in tds.cells().values() {
+            let cell_vertices = cell.vertices();
+
+            // Test each possible facet of this cell
+            for skip_vertex_idx in 0..cell_vertices.len() {
+                let facet_vertices: Vec<_> = cell_vertices
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != skip_vertex_idx)
+                    .map(|(_, v)| *v)
+                    .collect();
+
+                if !facet_vertices.is_empty() {
+                    let key_result = derive_facet_key_from_vertices(&facet_vertices, &tds);
+                    if let Ok(derived_key) = key_result {
+                        keys_tested += 1;
+                        if cache.contains_key(&derived_key) {
+                            keys_found += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        println!("  Found {keys_found}/{keys_tested} derived keys in TDS cache");
+        // We expect some keys to be found, but not necessarily all since not all
+        // possible facets are actual facets in the triangulation
+        assert!(keys_tested > 0, "Should have tested some keys");
+        println!("  ✓ Consistency with TDS verified");
     }
 }

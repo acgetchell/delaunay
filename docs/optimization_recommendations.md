@@ -986,7 +986,7 @@ impl Tds<T, U, V, D> {
        
        // Keep UUID-based public API for compatibility
        pub fn find_cells_containing_vertex(&self, vertex_uuid: Uuid) -> Vec<CellKey> {
-           if let Some(&vertex_key) = self.vertex_bimap.get_by_left(&vertex_uuid) {
+           if let Some(&vertex_key) = self.uuid_to_vertex_key.get(&vertex_uuid) {
                self.find_cells_containing_vertex_key(vertex_key)
            } else {
                Vec::new()
@@ -1009,7 +1009,7 @@ impl Tds<T, U, V, D> {
        
        // Keep UUID-based public API
        pub fn add_neighbor(&mut self, tds: &Tds<T, U, V, D>, neighbor_uuid: Uuid) {
-           if let Some(&neighbor_key) = tds.cell_bimap.get_by_left(&neighbor_uuid) {
+           if let Some(&neighbor_key) = tds.uuid_to_cell_key.get(&neighbor_uuid) {
                self.add_neighbor_key(tds, neighbor_key);
            }
        }
@@ -1026,7 +1026,7 @@ impl Tds<T, U, V, D> {
                self.cells.iter().map(|(cell_key, cell)| {
                    let vertex_keys: SmallVec<[VertexKey; 8]> = cell.vertices()
                        .iter()
-                       .filter_map(|v| self.vertex_bimap.get_by_left(&v.uuid()))
+                       .filter_map(|v| self.uuid_to_vertex_key.get(&v.uuid()))
                        .copied()
                        .collect();
                    (cell_key, vertex_keys)
@@ -1037,7 +1037,7 @@ impl Tds<T, U, V, D> {
                if let Some(neighbors) = &cell.neighbors {
                    let this_vertices = &cell_vertex_keys[&cell_key];
                    for neighbor_uuid in neighbors {
-                       if let Some(&neighbor_key) = self.cell_bimap.get_by_left(neighbor_uuid) {
+                       if let Some(&neighbor_key) = self.uuid_to_cell_key.get(neighbor_uuid) {
                            let neighbor_vertices = &cell_vertex_keys[&neighbor_key];
                            // Fast key-based intersection
                            if count_key_intersections(this_vertices, neighbor_vertices) != D {
@@ -1121,8 +1121,8 @@ impl Tds<T, U, V, D> {
    {
        pub cells: CC,
        pub vertices: VC,
-       pub cell_bimap: BiMap<Uuid, CellKey>,
-       pub vertex_bimap: BiMap<Uuid, VertexKey>,
+       pub uuid_to_cell_key: UuidToCellKeyMap,
+       pub uuid_to_vertex_key: UuidToVertexKeyMap,
    }
    
    // Type aliases for backward compatibility
@@ -1168,8 +1168,8 @@ impl Tds<T, U, V, D> {
            Tds {
                cells: CC::default(),
                vertices: VC::default(),
-               cell_bimap: BiMap::new(),
-               vertex_bimap: BiMap::new(),
+               uuid_to_cell_key: UuidToCellKeyMap::default(),
+               uuid_to_vertex_key: UuidToVertexKeyMap::default(),
            }
        }
    }
