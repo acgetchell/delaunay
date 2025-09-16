@@ -986,22 +986,19 @@ where
             }
         })?;
 
-        // Use the existing UUID-based logic for now, but this opens the path for further optimization
-        // where Cell could store vertex keys directly instead of vertices with UUIDs
-        let keys: Result<Vec<VertexKey>, _> = cell
-            .vertices()
-            .iter()
-            .map(|v| {
-                self.uuid_to_vertex_key
-                    .get(&v.uuid())
-                    .copied()
-                    .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
-                        message: format!("Vertex UUID {} not found in mapping", v.uuid()),
-                    })
-            })
-            .collect();
-
-        keys
+        // Use pre-allocation to avoid reallocation in tight loops
+        let mut keys = Vec::with_capacity(cell.vertices().len());
+        for v in cell.vertices() {
+            let key = self
+                .uuid_to_vertex_key
+                .get(&v.uuid())
+                .copied()
+                .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Vertex UUID {} not found in mapping", v.uuid()),
+                })?;
+            keys.push(key);
+        }
+        Ok(keys)
     }
 
     /// Helper function to get a cell key from a cell UUID using the optimized UUID→Key mapping.
@@ -2051,20 +2048,18 @@ where
     /// Remove duplicate cells (cells with identical vertex sets)
     ///
     /// Returns the number of duplicate cells that were removed.
-    pub fn remove_duplicate_cells(&mut self) -> usize {
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError` if vertex keys cannot be retrieved for any cell,
+    /// indicating data structure corruption.
+    pub fn remove_duplicate_cells(&mut self) -> Result<usize, TriangulationValidationError> {
         let mut unique_cells = FastHashMap::default();
         let mut cells_to_remove = CellRemovalBuffer::new();
 
         // First pass: identify duplicate cells
-        for (cell_key, cell) in &self.cells {
-            let Ok(mut vertex_keys) = self.vertex_keys_for_cell_direct(cell_key) else {
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "debug: skipping cell {} due to unresolved vertex keys",
-                    cell.uuid()
-                );
-                continue; // Skip cells with unresolved vertex keys
-            };
+        for cell_key in self.cells.keys() {
+            let mut vertex_keys = self.vertex_keys_for_cell_direct(cell_key)?;
             vertex_keys.sort_unstable();
 
             if let Some(_existing_cell_key) = unique_cells.get(&vertex_keys) {
@@ -2087,7 +2082,7 @@ where
         if duplicate_count > 0 {
             self.generation.fetch_add(1, Ordering::Relaxed);
         }
-        duplicate_count
+        Ok(duplicate_count)
     }
 
     /// Builds a `FacetToCellsMap` mapping facet keys to the cells and facet indices that contain them.
@@ -2149,14 +2144,28 @@ where
     ///
     /// # Requirements
     ///
-    /// This function requires that D ≤ 254, ensuring that facet indices (0..=D) fit within
+    /// This function requires that D ≤ 255, ensuring that facet indices (0..=D) fit within
     /// `FacetIndex` (u8) range. This constraint is enforced by debug assertions.
+    ///
+    /// # Note
+    ///
+    /// Unlike `try_build_facet_to_cells_hashmap`, this method logs warnings but continues
+    /// processing when cells have missing vertex keys. For strict error handling that fails
+    /// on any missing data, use `try_build_facet_to_cells_hashmap` instead.
+    ///
+    /// TODO(Phase 2): This method will be deprecated in favor of the Result-returning version.
+    /// Migration plan:
+    /// 1. Rename `try_build_facet_to_cells_hashmap` -> `build_facet_to_cells_hashmap` (returns Result)
+    /// 2. Rename this method -> `build_facet_to_cells_hashmap_lenient` (mark deprecated)
+    /// 3. Update all call sites to handle Result properly
+    /// 4. Remove deprecated method in Phase 3
+    ///    Track with issue: #85
     #[must_use]
     pub fn build_facet_to_cells_hashmap(&self) -> FacetToCellsMap {
         // Ensure facet indices fit in u8 range
         debug_assert!(
-            D <= 254,
-            "Dimension D must be <= 254 to fit facet indices in u8"
+            D <= 255,
+            "Dimension D must be <= 255 to fit facet indices in u8 (indices 0..=D)"
         );
 
         let mut facet_to_cells: FacetToCellsMap =
@@ -2164,12 +2173,14 @@ where
 
         // Preallocate facet_vertex_keys buffer outside the loops to avoid per-iteration allocations
         let mut facet_vertex_keys = Vec::with_capacity(D);
+        let mut skipped_cells = 0usize;
 
         // Iterate over all cells and their facets
         for (cell_id, cell) in &self.cells {
             // Phase 1: Use direct key-based method to avoid UUID→Key lookups
             // Note: We skip cells with missing vertex keys for backwards compatibility
             let Ok(vertex_keys) = self.vertex_keys_for_cell_direct(cell_id) else {
+                skipped_cells += 1;
                 #[cfg(debug_assertions)]
                 eprintln!(
                     "debug: skipping cell {} due to missing vertex keys in facet mapping",
@@ -2199,6 +2210,13 @@ where
             }
         }
 
+        // Log warning if cells were skipped (useful for debugging data issues)
+        if skipped_cells > 0 {
+            eprintln!(
+                "Warning: Skipped {skipped_cells} cell(s) during facet mapping due to missing vertex keys"
+            );
+        }
+
         facet_to_cells
     }
 
@@ -2206,6 +2224,9 @@ where
     ///
     /// Unlike `build_facet_to_cells_hashmap`, this method returns an error if any cell
     /// has missing vertex keys, ensuring complete and accurate facet topology information.
+    ///
+    /// TODO(Phase 2): This will become the primary `build_facet_to_cells_hashmap` method.
+    /// See `build_facet_to_cells_hashmap` TODO for migration plan.
     ///
     /// # Returns
     ///
@@ -2226,8 +2247,8 @@ where
     ) -> Result<FacetToCellsMap, TriangulationValidationError> {
         // Ensure facet indices fit in u8 range
         debug_assert!(
-            D <= 254,
-            "Dimension D must be <= 254 to fit facet indices in u8"
+            D <= 255,
+            "Dimension D must be <= 255 to fit facet indices in u8 (indices 0..=D)"
         );
 
         let mut facet_to_cells: FacetToCellsMap =
@@ -2389,7 +2410,7 @@ where
         }
 
         // Clean up any resulting duplicate cells
-        let duplicate_cells_removed = self.remove_duplicate_cells();
+        let duplicate_cells_removed = self.remove_duplicate_cells()?;
 
         // After cell removals, neighbor and incident mappings may be stale
         // Recompute them to maintain topology consistency
@@ -3730,7 +3751,7 @@ mod tests {
 
         assert_eq!(result_tds.number_of_cells(), 2); // One original, one duplicate
 
-        let dupes = result_tds.remove_duplicate_cells();
+        let dupes = result_tds.remove_duplicate_cells().unwrap();
 
         assert_eq!(dupes, 1);
 
@@ -4543,11 +4564,8 @@ mod tests {
                 // this neighbor corresponds to by checking which vertex is NOT shared
                 // Get cell key for direct access
                 let cell_key = tds
-                    .cells
-                    .iter()
-                    .find(|(_, c)| c.uuid() == cell.uuid())
-                    .map(|(k, _)| k)
-                    .expect("Cell should have a key");
+                    .cell_key_from_uuid(&cell.uuid())
+                    .expect("Cell UUID should map to a key");
                 let cell_vertex_keys: VertexKeySet = tds
                     .vertex_keys_for_cell_direct(cell_key)
                     .unwrap()
@@ -5305,7 +5323,7 @@ mod tests {
         assert_eq!(result.number_of_cells(), original_cell_count + 3);
 
         // Remove duplicates and capture the number removed
-        let duplicates_removed = result.remove_duplicate_cells();
+        let duplicates_removed = result.remove_duplicate_cells().unwrap();
 
         println!(
             "Successfully removed {} duplicate cells (original: {}, after adding: {}, final: {})",

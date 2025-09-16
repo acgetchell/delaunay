@@ -370,10 +370,32 @@ where
         [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     {
         // First try to find bad cells using the trait's method
-        let mut bad_cells = InsertionAlgorithm::<T, U, V, D>::find_bad_cells(self, tds, vertex);
+        let mut bad_cells = match InsertionAlgorithm::<T, U, V, D>::find_bad_cells(
+            self, tds, vertex,
+        ) {
+            Ok(cells) => cells,
+            Err(crate::core::traits::insertion_algorithm::BadCellsError::AllCellsBad {
+                ..
+            }) => {
+                // All cells marked as bad - try robust method to get a better result
+                self.robust_find_bad_cells(tds, vertex)
+            }
+            Err(
+                crate::core::traits::insertion_algorithm::BadCellsError::TooManyDegenerateCells {
+                    ..
+                },
+            ) => {
+                // Too many degenerate cells - try robust method as fallback
+                self.robust_find_bad_cells(tds, vertex)
+            }
+            Err(crate::core::traits::insertion_algorithm::BadCellsError::NoCells) => {
+                // No cells - return empty
+                return Vec::new();
+            }
+        };
 
         // If the standard method doesn't find any bad cells (likely a degenerate case)
-        // or we're using the robust configuration, use robust predicates as well
+        // or we're using the robust configuration, supplement with robust predicates
         if bad_cells.is_empty() || self.predicate_config.base_tolerance > T::default_tolerance() {
             let robust_bad_cells = self.robust_find_bad_cells(tds, vertex);
 

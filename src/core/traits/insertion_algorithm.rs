@@ -21,6 +21,56 @@ use std::{
     ops::{AddAssign, Div, SubAssign},
 };
 
+/// Error that can occur during bad cells detection
+#[derive(Debug, Clone)]
+pub enum BadCellsError {
+    /// All cells were marked as bad, which is geometrically unusual and likely indicates
+    /// the vertex should be inserted via hull extension instead
+    AllCellsBad {
+        /// Number of cells that were all marked as bad
+        cell_count: usize,
+        /// Number of degenerate cells encountered
+        degenerate_count: usize,
+    },
+    /// Too many degenerate circumspheres to reliably detect bad cells
+    TooManyDegenerateCells {
+        /// Number of degenerate cells
+        degenerate_count: usize,
+        /// Total cells tested
+        total_tested: usize,
+    },
+    /// No cells exist to test
+    NoCells,
+}
+
+impl std::fmt::Display for BadCellsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AllCellsBad {
+                cell_count,
+                degenerate_count,
+            } => {
+                write!(
+                    f,
+                    "All {cell_count} cells marked as bad ({degenerate_count} degenerate). Vertex likely needs hull extension."
+                )
+            }
+            Self::TooManyDegenerateCells {
+                degenerate_count,
+                total_tested,
+            } => {
+                write!(
+                    f,
+                    "Too many degenerate circumspheres ({degenerate_count}/{total_tested})"
+                )
+            }
+            Self::NoCells => write!(f, "No cells exist to test"),
+        }
+    }
+}
+
+impl std::error::Error for BadCellsError {}
+
 /// Margin factor used for bounding box expansion in exterior vertex detection
 const MARGIN_FACTOR: f64 = 0.1;
 
@@ -555,19 +605,33 @@ where
     ///
     /// # Returns
     ///
-    /// A vector of bad cell keys
+    /// A vector of bad cell keys on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns `BadCellsError` if:
+    /// - All cells are marked as bad (likely needs hull extension)
+    /// - Too many degenerate cells to be reliable
+    /// - No cells exist to test
     fn find_bad_cells(
         &mut self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Vec<crate::core::triangulation_data_structure::CellKey>
+    ) -> Result<Vec<crate::core::triangulation_data_structure::CellKey>, BadCellsError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         use crate::geometry::predicates::{InSphere, insphere};
 
+        // Check if there are any cells to test
+        if tds.cells().is_empty() {
+            return Err(BadCellsError::NoCells);
+        }
+
         let mut bad_cells = Vec::new();
+        let mut cells_tested = 0;
+        let mut degenerate_count = 0;
 
         // Only consider cells that have a valid circumsphere and strict containment
         for (cell_key, cell) in tds.cells() {
@@ -576,42 +640,43 @@ where
                 continue;
             }
 
+            cells_tested += 1;
             let vertex_points: Vec<_> = cell.vertices().iter().map(|v| *v.point()).collect();
 
             // Test circumsphere containment
             match insphere(&vertex_points, *vertex.point()) {
                 Ok(InSphere::INSIDE) => {
-                    // Only add if this would create a true Delaunay violation
+                    // Cell is bad - vertex violates Delaunay property
                     bad_cells.push(cell_key);
                 }
-                Ok(InSphere::OUTSIDE | InSphere::BOUNDARY) => {
-                    // Vertex is outside or on the circumsphere - cell is fine
+                Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) => {
+                    // Vertex is outside or on boundary - cell is fine
                 }
                 Err(_) => {
-                    // Skip cells with degenerate circumspheres
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Warning: Could not compute circumsphere for cell {:?}",
-                        cell.uuid()
-                    );
+                    // Degenerate circumsphere or computation error
+                    degenerate_count += 1;
                 }
             }
         }
 
-        // Additional validation: ensure we're not removing ALL cells
+        // Check for problematic conditions
         if bad_cells.len() == tds.cells().len() && tds.cells().len() > 1 {
-            // If we're removing all cells in a multi-cell triangulation, something is wrong
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Warning: Circumsphere test marked all {} cells as bad for vertex {:?}",
-                tds.cells().len(),
-                vertex.point()
-            );
-            // Instead of failing, return an empty list to force hull extension
-            bad_cells.clear();
+            // All cells marked as bad - this is unusual and suggests hull extension is needed
+            return Err(BadCellsError::AllCellsBad {
+                cell_count: tds.cells().len(),
+                degenerate_count,
+            });
         }
 
-        bad_cells
+        if degenerate_count > 0 && degenerate_count * 2 > cells_tested {
+            // More than 50% degenerate cells makes results unreliable
+            return Err(BadCellsError::TooManyDegenerateCells {
+                degenerate_count,
+                total_tested: cells_tested,
+            });
+        }
+
+        Ok(bad_cells)
     }
 
     /// Find the boundary facets of a cavity formed by removing bad cells
@@ -778,8 +843,40 @@ where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
-        // Find bad cells
-        let bad_cells = self.find_bad_cells(tds, vertex);
+        // Find bad cells - use match to convert error to appropriate validation error
+        let bad_cells = match self.find_bad_cells(tds, vertex) {
+            Ok(cells) => cells,
+            Err(BadCellsError::AllCellsBad {
+                cell_count,
+                degenerate_count,
+            }) => {
+                // All cells marked as bad - need hull extension instead
+                return Err(TriangulationValidationError::FailedToCreateCell {
+                    message: format!(
+                        "Cavity-based insertion failed: all {cell_count} cells marked as bad ({degenerate_count} degenerate). \
+                         Vertex likely needs hull extension."
+                    ),
+                });
+            }
+            Err(BadCellsError::TooManyDegenerateCells {
+                degenerate_count,
+                total_tested,
+            }) => {
+                // Too many degenerate cells - triangulation might be in bad state
+                return Err(TriangulationValidationError::FailedToCreateCell {
+                    message: format!(
+                        "Cavity-based insertion failed: too many degenerate cells ({degenerate_count}/{total_tested})."
+                    ),
+                });
+            }
+            Err(BadCellsError::NoCells) => {
+                // No cells to test - triangulation is empty
+                return Err(TriangulationValidationError::FailedToCreateCell {
+                    message: "Cavity-based insertion failed: no cells exist in triangulation."
+                        .to_string(),
+                });
+            }
+        };
 
         if bad_cells.is_empty() {
             // No bad cells found - this method is not applicable
@@ -1161,7 +1258,8 @@ where
         for<'a> &'a T: Div<T>,
     {
         // Remove duplicate cells
-        tds.remove_duplicate_cells();
+        tds.remove_duplicate_cells()
+            .map_err(TriangulationConstructionError::ValidationError)?;
 
         // Fix invalid facet sharing
         tds.fix_invalid_facet_sharing().map_err(|e| {
@@ -1520,7 +1618,7 @@ where
         for<'a> &'a T: Div<T>,
     {
         // Remove duplicate cells first
-        tds.remove_duplicate_cells();
+        tds.remove_duplicate_cells()?;
 
         // Fix invalid facet sharing
         tds.fix_invalid_facet_sharing().map_err(|e| {
@@ -1716,7 +1814,9 @@ mod tests {
 
         // Test with interior vertex that should violate Delaunay property
         let interior_vertex = vertex!([0.5, 0.5, 0.5]);
-        let bad_cells = algorithm.find_bad_cells(&tds, &interior_vertex);
+        let bad_cells = algorithm
+            .find_bad_cells(&tds, &interior_vertex)
+            .expect("Should successfully find bad cells for interior vertex");
 
         // Since this is an interior vertex, it should find the tetrahedron as a bad cell
         assert!(
@@ -1748,7 +1848,9 @@ mod tests {
 
         // Test with exterior vertex that should not violate circumsphere
         let exterior_vertex = vertex!([3.0, 0.0, 0.0]);
-        let bad_cells = algorithm.find_bad_cells(&tds, &exterior_vertex);
+        let bad_cells = algorithm
+            .find_bad_cells(&tds, &exterior_vertex)
+            .expect("Should successfully find bad cells for exterior vertex");
 
         // Exterior vertex should typically find no bad cells (no circumsphere violations)
         println!("  Found {} bad cells for exterior vertex", bad_cells.len());
@@ -1777,19 +1879,29 @@ mod tests {
 
         // Test vertex very close to existing vertex
         let close_vertex = vertex!([0.001, 0.0, 0.0]);
-        let bad_cells = algorithm.find_bad_cells(&tds, &close_vertex);
-        println!("  Close vertex found {} bad cells", bad_cells.len());
+        let bad_cells_close = algorithm
+            .find_bad_cells(&tds, &close_vertex)
+            .unwrap_or_else(|e| {
+                println!("  Close vertex error: {e}");
+                vec![]
+            });
+        println!("  Close vertex found {} bad cells", bad_cells_close.len());
 
         // Test vertex on circumsphere boundary (should be handled gracefully)
         let boundary_vertex = vertex!([0.5, 0.5, 0.0]);
-        let bad_cells_boundary = algorithm.find_bad_cells(&tds, &boundary_vertex);
+        let bad_cells_boundary = algorithm
+            .find_bad_cells(&tds, &boundary_vertex)
+            .unwrap_or_else(|e| {
+                println!("  Boundary vertex error: {e}");
+                vec![]
+            });
         println!(
             "  Boundary vertex found {} bad cells",
             bad_cells_boundary.len()
         );
 
         // All results should be within reasonable bounds
-        assert!(bad_cells.len() <= tds.number_of_cells());
+        assert!(bad_cells_close.len() <= tds.number_of_cells());
         assert!(bad_cells_boundary.len() <= tds.number_of_cells());
 
         println!("✓ Bad cell detection edge cases handled correctly");
@@ -2043,5 +2155,46 @@ mod tests {
         assert_abs_diff_eq!(rate, expected, epsilon = f64::EPSILON);
         println!("  Rate: {rate}, Expected: {expected}");
         println!("✓ Precision handling works correctly");
+    }
+
+    #[test]
+    fn test_find_bad_cells_error_cases() {
+        println!("Testing find_bad_cells error cases");
+
+        // Create an empty triangulation to test NoCells error
+        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let mut algorithm = IncrementalBoyerWatson::new();
+        let vertex = vertex!([0.25, 0.25, 0.25]);
+
+        match algorithm.find_bad_cells(&empty_tds, &vertex) {
+            Err(BadCellsError::NoCells) => {
+                println!("  ✓ Empty triangulation correctly returns NoCells error");
+            }
+            Ok(_) => panic!("Expected NoCells error for empty triangulation"),
+            Err(e) => panic!("Unexpected error: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_bad_cells_error_types() {
+        println!("Testing BadCellsError types");
+
+        // Test error formatting
+        let err1 = BadCellsError::AllCellsBad {
+            cell_count: 5,
+            degenerate_count: 2,
+        };
+        println!("  AllCellsBad error: {err1}");
+
+        let err2 = BadCellsError::TooManyDegenerateCells {
+            degenerate_count: 3,
+            total_tested: 5,
+        };
+        println!("  TooManyDegenerateCells error: {err2}");
+
+        let err3 = BadCellsError::NoCells;
+        println!("  NoCells error: {err3}");
+
+        println!("✓ BadCellsError types work correctly");
     }
 }
