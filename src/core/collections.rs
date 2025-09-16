@@ -895,14 +895,17 @@ mod tests {
         let mut cell_map: KeyBasedCellMap<String> = KeyBasedCellMap::default();
         assert_eq!(cell_map.get(&cell_key1), None);
         cell_map.insert(cell_key1, "cell_data".to_string());
-        assert_eq!(cell_map.get(&cell_key1), Some(&"cell_data".to_string()));
+        assert_eq!(
+            cell_map.get(&cell_key1).map(String::as_str),
+            Some("cell_data")
+        );
         assert_eq!(cell_map.get(&cell_key2), None);
 
         // Test KeyBasedVertexMap insert/get roundtrip
         let mut vertex_map: KeyBasedVertexMap<i32> = KeyBasedVertexMap::default();
         assert_eq!(vertex_map.get(&vertex_key1), None);
         vertex_map.insert(vertex_key1, 42);
-        assert_eq!(vertex_map.get(&vertex_key1), Some(&42));
+        assert_eq!(vertex_map.get(&vertex_key1).copied(), Some(42));
         assert_eq!(vertex_map.get(&vertex_key2), None);
 
         // Test KeyBasedNeighborMap insert/get roundtrip

@@ -95,12 +95,10 @@ where
 
         // Collect all facets that belong to only one cell
         for (_facet_key, cells) in facet_to_cells {
-            if cells.len() == 1
-                && let Some((cell_id, facet_index)) = cells.first().copied()
-            {
-                if let Some(cell) = self.cells().get(cell_id) {
+            if let [(cell_id, facet_index)] = cells.as_slice() {
+                if let Some(cell) = self.cells().get(*cell_id) {
                     // Cache facets per cell to avoid repeated allocations, but propagate errors
-                    let facets = match cell_facets_cache.entry(cell_id) {
+                    let facets = match cell_facets_cache.entry(*cell_id) {
                         Entry::Occupied(e) => e.into_mut(),
                         Entry::Vacant(v) => {
                             let computed = cell.facets()?; // propagate FacetError
@@ -108,11 +106,11 @@ where
                         }
                     };
 
-                    if let Some(f) = facets.get(usize::from(facet_index)) {
+                    if let Some(f) = facets.get(usize::from(*facet_index)) {
                         boundary_facets.push(f.clone());
                     } else {
                         debug_assert!(
-                            usize::from(facet_index) < facets.len(),
+                            usize::from(*facet_index) < facets.len(),
                             "facet_index {} out of bounds for {} facets",
                             facet_index,
                             facets.len()
@@ -124,7 +122,7 @@ where
                     }
                 } else {
                     debug_assert!(
-                        self.cells().contains_key(cell_id),
+                        self.cells().contains_key(*cell_id),
                         "cell_id {cell_id:?} should exist in SlotMap"
                     );
                     #[cfg(debug_assertions)]

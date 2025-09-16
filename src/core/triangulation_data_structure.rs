@@ -1018,9 +1018,8 @@ where
     ) -> Result<Vec<VertexKey>, super::facet::FacetError> {
         let cell = self.cells.get(cell_key).ok_or_else(|| {
             super::facet::FacetError::VertexNotFound {
-                // For error compatibility, we need a UUID - get it from the cell if possible
-                // In practice this error case should be rare since we're working with valid keys
-                uuid: uuid::Uuid::new_v4(), // Placeholder UUID for missing cell case
+                // Use a deterministic sentinel to avoid misleading error messages
+                uuid: uuid::Uuid::nil(),
             }
         })?;
 
@@ -2269,7 +2268,7 @@ where
         for (facet_key, cell_facet_pairs) in facet_to_cells {
             if cell_facet_pairs.len() > 2 {
                 let (first_cell_key, first_facet_index) = cell_facet_pairs[0];
-                if let Some(_first_cell) = self.cells.get(first_cell_key) {
+                if self.cells.contains_key(first_cell_key) {
                     // Phase 1: Use direct key-based method to avoid UUID→Key lookups
                     let Ok(vertex_keys) = self.vertex_keys_for_cell_direct(first_cell_key) else {
                         #[cfg(debug_assertions)]
@@ -2288,7 +2287,7 @@ where
 
                     let mut valid_cells = ValidCellsBuffer::new();
                     for &(cell_key, _facet_index) in &cell_facet_pairs {
-                        if let Some(_cell) = self.cells.get(cell_key) {
+                        if self.cells.contains_key(cell_key) {
                             // Phase 1: Use direct key-based method to avoid UUID→Key lookups
                             let Ok(cell_vertex_keys_vec) =
                                 self.vertex_keys_for_cell_direct(cell_key)
