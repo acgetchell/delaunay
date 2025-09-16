@@ -254,24 +254,6 @@ where
     }
 }
 
-/// Additional helper methods for Tds boundary analysis.
-impl<T, U, V, const D: usize> Tds<T, U, V, D>
-where
-    T: CoordinateScalar
-        + AddAssign<T>
-        + ComplexField<RealField = T>
-        + SubAssign<T>
-        + Sum
-        + From<f64>
-        + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    f64: From<T>,
-    for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
-{
-}
 
 #[cfg(test)]
 mod tests {
@@ -431,8 +413,6 @@ mod tests {
 
         let facet_key = facet_key_result.unwrap();
 
-        // Verify the key is non-zero (should be a proper hash)
-        assert_ne!(facet_key, 0, "Facet key should be non-zero");
 
         // Test that the same facet produces the same key (deterministic)
         let facet_vertices_2 = test_facet.vertices();

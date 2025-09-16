@@ -533,12 +533,10 @@ where
 
         // Add epsilon-based bound to avoid false positives from numeric noise
         // Use a small relative epsilon (1e-12 scale) to handle near-surface points
-        let epsilon_factor = num_traits::NumCast::from(1e-12f64).unwrap_or_else(|| {
-            // Fallback for types that can't represent 1e-12 (e.g., very limited precision)
-            num_traits::NumCast::from(1e-6f64).unwrap_or_else(T::default_tolerance)
-        });
-        let epsilon_threshold = max_edge_sq * epsilon_factor;
-        let adjusted_threshold = max_edge_sq + epsilon_threshold;
+        let epsilon_factor: T = num_traits::NumCast::from(1e-12f64)
+            .or_else(|| num_traits::NumCast::from(1e-6f64))
+            .unwrap_or_else(|| T::default_tolerance());
+        let adjusted_threshold = max_edge_sq + max_edge_sq * epsilon_factor;
 
         Ok(distance_squared > adjusted_threshold)
     }
@@ -1142,6 +1140,7 @@ pub type ConvexHull4D<T, U, V> = ConvexHull<T, U, V, 4>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::triangulation_data_structure::Tds;
     use crate::vertex;
 
