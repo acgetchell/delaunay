@@ -6,9 +6,10 @@
 use super::{
     facet::{Facet, FacetError},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
-    triangulation_data_structure::Tds,
+    triangulation_data_structure::{Tds, CellKey},
     util::derive_facet_key_from_vertices,
 };
+use crate::core::collections::fast_hash_map_with_capacity;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use nalgebra::ComplexField;
 use serde::{Serialize, de::DeserializeOwned};
@@ -86,13 +87,28 @@ where
         // Upper bound on the number of boundary facets is the map size
         let mut boundary_facets = Vec::with_capacity(facet_to_cells.len());
 
+        // Per-call cache to avoid repeated cell.facets() allocations
+        // when multiple boundary facets reference the same cell
+        let mut cell_facets_cache: crate::core::collections::FastHashMap<
+            CellKey,
+            Vec<Facet<T, U, V, D>>,
+        > = fast_hash_map_with_capacity(self.number_of_cells());
+
         // Collect all facets that belong to only one cell
         for (_facet_key, cells) in facet_to_cells {
             if cells.len() == 1
                 && let Some((cell_id, facet_index)) = cells.first().copied()
             {
                 if let Some(cell) = self.cells().get(cell_id) {
-                    let facets = cell.facets()?;
+                    // Check cache first before computing facets
+                    let facets = if let Some(cached_facets) = cell_facets_cache.get(&cell_id) {
+                        cached_facets
+                    } else {
+                        let computed_facets = cell.facets()?;
+                        cell_facets_cache.insert(cell_id, computed_facets);
+                        cell_facets_cache.get(&cell_id).unwrap() // Safe: just inserted
+                    };
+
                     if let Some(f) = facets.get(usize::from(facet_index)) {
                         boundary_facets.push(f.clone());
                     } else {
@@ -210,18 +226,17 @@ where
         facet: &Facet<T, U, V, D>,
         facet_to_cells: &crate::core::collections::FacetToCellsMap,
     ) -> bool {
-        let facet_vertices = facet.vertices();
-        if facet_vertices.len() != D {
-            debug_assert_eq!(
-                facet_vertices.len(),
-                D,
-                "Invalid facet: expected {} vertices, got {}",
-                D,
-                facet_vertices.len()
-            );
-            return false;
-        }
-        match derive_facet_key_from_vertices(&facet_vertices, self) {
+        // Facet::vertices() should always return D vertices by construction
+        // Only check this invariant in debug builds to avoid branch in release
+        debug_assert_eq!(
+            facet.vertices().len(),
+            D,
+            "Invalid facet: expected {} vertices, got {}",
+            D,
+            facet.vertices().len()
+        );
+
+        match derive_facet_key_from_vertices(&facet.vertices(), self) {
             Ok(facet_key) => facet_to_cells
                 .get(&facet_key)
                 .is_some_and(|cells| cells.len() == 1),
@@ -449,6 +464,37 @@ mod tests {
             "Facet in single tetrahedron should belong to exactly 1 cell"
         );
 
+        // Additional verification: ensure the (cell_id, facet_index) from the map
+        // corresponds to test_facet by reconstructing and comparing keys
+        if let Some((cell_id, facet_index)) = cells_for_facet.first().copied() {
+            if let Some(mapped_cell) = tds.cells().get(cell_id) {
+                let mapped_facets = mapped_cell
+                    .facets()
+                    .expect("Should get facets from mapped cell");
+                if let Some(mapped_facet) = mapped_facets.get(usize::from(facet_index)) {
+                    let mapped_facet_vertices = mapped_facet.vertices();
+                    let mapped_facet_key =
+                        derive_facet_key_from_vertices(&mapped_facet_vertices, &tds)
+                            .expect("Should derive key from mapped facet");
+                    assert_eq!(
+                        facet_key, mapped_facet_key,
+                        "Facet key from test_facet should match key from (cell_id, facet_index) mapping"
+                    );
+
+                    // Verify the facets represent the same geometric entity
+                    assert_eq!(
+                        test_facet.key(),
+                        mapped_facet.key(),
+                        "test_facet and mapped facet should have the same facet key"
+                    );
+                } else {
+                    panic!("facet_index {facet_index} out of bounds for cell {cell_id:?}");
+                }
+            } else {
+                panic!("cell_id {cell_id:?} not found in triangulation");
+            }
+        }
+
         println!("✓ derive_facet_key_from_vertices integration works correctly and consistently");
     }
 
@@ -576,7 +622,7 @@ mod tests {
 
         // Build a map of facet keys to the cells that contain them for detailed verification
         let mut facet_map: FastHashMap<u64, Vec<_>> =
-            fast_hash_map_with_capacity(tds.number_of_cells() * 4);
+            fast_hash_map_with_capacity(tds.number_of_cells() * (tds.dim() as usize + 1));
         for (cell_key, cell) in tds.cells() {
             for facet in cell.facets().expect("Should get cell facets") {
                 let facet_vertices = facet.vertices();

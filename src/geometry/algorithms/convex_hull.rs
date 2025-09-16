@@ -19,7 +19,7 @@ use ordered_float::OrderedFloat;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::iter::Sum;
-use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
+use std::ops::{AddAssign, Div, DivAssign, Sub, SubAssign};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -537,8 +537,9 @@ where
         }
         // Add epsilon-based bound to avoid false positives from numeric noise
         // Use a small relative epsilon (1e-12 scale) to handle near-surface points
-        let epsilon_factor: T =
-            num_traits::NumCast::from(1e-12f64).unwrap_or_else(|| T::default_tolerance());
+        let epsilon_factor: T = T::from_f64(1e-12)
+            .or_else(|| T::from_f64(f64::EPSILON))
+            .unwrap_or_else(T::zero);
         let adjusted_threshold = max_edge_sq + max_edge_sq * epsilon_factor;
 
         Ok(distance_squared > adjusted_threshold)
@@ -1092,20 +1093,15 @@ where
 }
 
 // Implementation of FacetCacheProvider trait for ConvexHull
+// Reduced constraint set - removed ComplexField, From<f64>, f64: From<T>, and OrderedFloat bounds
+// which are not required by the trait or the implementation
 impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for ConvexHull<T, U, V, D>
 where
-    T: CoordinateScalar
-        + ComplexField<RealField = T>
-        + AddAssign<T>
-        + SubAssign<T>
-        + Sum
-        + From<f64>,
-    U: DataType,
-    V: DataType,
-    f64: From<T>,
-    for<'a> &'a T: std::ops::Div<T>,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    U: DataType + DeserializeOwned,
+    V: DataType + DeserializeOwned,
+    for<'a> &'a T: Div<T>,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    OrderedFloat<f64>: From<T>,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
@@ -1577,22 +1573,26 @@ mod tests {
             (Point::new([1.5, 1.5, 1.5]), "Beyond facet diameter"),
         ];
 
-        let mut visible_count = 0usize;
-        let mut not_visible_count = 0usize;
-        for (point, description) in test_points {
+        for (point, description) in &test_points {
             let is_visible =
                 ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
-                    test_facet, &point,
+                    test_facet, point,
                 )
                 .unwrap();
-            let coords: [f64; 3] = point.into();
+            let coords: [f64; 3] = (*point).into();
             println!("  Point {coords:?} ({description}) - Visible: {is_visible}");
-            if is_visible {
-                visible_count += 1;
-            } else {
-                not_visible_count += 1;
-            }
         }
+
+        let visible_count = test_points
+            .iter()
+            .filter(|(point, _)| {
+                ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
+                    test_facet, point,
+                )
+                .unwrap()
+            })
+            .count();
+        let not_visible_count = test_points.len() - visible_count;
 
         // The new scale-adaptive approach should still distinguish between close and far points
         // but the exact threshold is now based on the facet geometry
@@ -3527,7 +3527,8 @@ mod tests {
 
         let test_results: Vec<_> = (0..10)
             .map(|i| {
-                let test_pt = Point::new([<f64 as From<_>>::from(i).mul_add(0.1, 2.0), 2.0, 2.0]);
+                let x = <f64 as From<_>>::from(i).mul_add(0.1, 2.0);
+                let test_pt = Point::new([x, 2.0, 2.0]);
                 hull.is_facet_visible_from_point(facet, &test_pt, &tds)
             })
             .collect();
