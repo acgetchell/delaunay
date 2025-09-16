@@ -115,6 +115,7 @@
     "cospherical",
     "cppcheck",
     "cpus",
+    "derefs",
     "detekt",
     "docstrings",
     "dotenv",

@@ -995,9 +995,12 @@ where
     /// **Phase 1 Migration**: Key-based version of `vertex_keys_for_cell` that works directly with `CellKey`.
     ///
     /// This method eliminates UUID→Key lookups by working directly with keys, providing:
-    /// - Zero UUID mapping lookups (O(0) instead of O(D) hash lookups)
+    /// - Zero UUID mapping lookups for cell access (O(1) `SlotMap` lookup instead of O(1) hash lookup)
     /// - Direct `SlotMap` access for maximum performance
     /// - Same functionality as the UUID-based version
+    ///
+    /// Note: Currently still performs O(D) UUID→Key lookups for vertices. This will be
+    /// optimized in Phase 2 when Cell stores vertex keys directly.
     ///
     /// # Arguments
     ///
@@ -1006,34 +1009,39 @@ where
     /// # Returns
     ///
     /// A `Result` containing a `Vec<VertexKey>` if the cell exists and all vertices are valid,
-    /// or a `FacetError` if the cell doesn't exist or vertices are missing.
+    /// or a `TriangulationValidationError` if the cell doesn't exist or vertices are missing.
     ///
     /// # Performance
     ///
-    /// This uses direct `SlotMap` access with O(1) key lookups, avoiding UUID hash operations entirely.
+    /// This uses direct `SlotMap` access with O(1) key lookup for the cell, though vertex
+    /// lookups still require O(D) UUID→Key mappings until Phase 2.
     #[inline]
     fn vertex_keys_for_cell_direct(
         &self,
         cell_key: CellKey,
-    ) -> Result<Vec<VertexKey>, super::facet::FacetError> {
+    ) -> Result<Vec<VertexKey>, TriangulationValidationError> {
         let cell = self.cells.get(cell_key).ok_or_else(|| {
-            super::facet::FacetError::VertexNotFound {
-                // Use a deterministic sentinel to avoid misleading error messages
-                uuid: uuid::Uuid::nil(),
+            TriangulationValidationError::InconsistentDataStructure {
+                message: format!("Cell key {cell_key:?} not found in cells SlotMap"),
             }
         })?;
 
         // Use the existing UUID-based logic for now, but this opens the path for further optimization
         // where Cell could store vertex keys directly instead of vertices with UUIDs
-        cell.vertices()
+        let keys: Result<Vec<VertexKey>, _> = cell
+            .vertices()
             .iter()
             .map(|v| {
                 self.uuid_to_vertex_key
                     .get(&v.uuid())
                     .copied()
-                    .ok_or_else(|| super::facet::FacetError::VertexNotFound { uuid: v.uuid() })
+                    .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
+                        message: format!("Vertex UUID {} not found in mapping", v.uuid()),
+                    })
             })
-            .collect()
+            .collect();
+
+        keys
     }
 
     /// Helper function to get a cell key from a cell UUID using the optimized UUID→Key mapping.
@@ -2124,9 +2132,9 @@ where
 
     /// Builds a `FacetToCellsMap` mapping facet keys to the cells and facet indices that contain them.
     ///
-    /// This method iterates over all cells and their facets once, computes the canonical key
-    /// for each facet using vertex-based key derivation, and creates a mapping from facet keys to the cells
-    /// that contain those facets along with the facet index within each cell.
+    /// This is a convenience method that calls `try_build_facet_to_cells_hashmap` and handles errors
+    /// by skipping cells with missing vertex keys. For correctness-critical code, prefer using
+    /// `try_build_facet_to_cells_hashmap` which propagates errors.
     ///
     /// # Returns
     ///
@@ -2135,6 +2143,11 @@ where
     /// - The value is a vector of tuples containing:
     ///   - `CellKey`: The `SlotMap` key of the cell containing this facet
     ///   - `FacetIndex`: The index of this facet within the cell (0-based)
+    ///
+    /// # Note
+    ///
+    /// This method will skip cells with missing vertex keys and continue processing.
+    /// If you need to ensure all cells are processed, use `try_build_facet_to_cells_hashmap` instead.
     ///
     /// # Examples
     ///
@@ -2189,6 +2202,7 @@ where
         // Iterate over all cells and their facets
         for (cell_id, cell) in &self.cells {
             // Phase 1: Use direct key-based method to avoid UUID→Key lookups
+            // Note: We skip cells with missing vertex keys for backwards compatibility
             let Ok(vertex_keys) = self.vertex_keys_for_cell_direct(cell_id) else {
                 #[cfg(debug_assertions)]
                 eprintln!(
@@ -2220,6 +2234,66 @@ where
         }
 
         facet_to_cells
+    }
+
+    /// Builds a `FacetToCellsMap` with strict error handling.
+    ///
+    /// Unlike `build_facet_to_cells_hashmap`, this method returns an error if any cell
+    /// has missing vertex keys, ensuring complete and accurate facet topology information.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// - `Ok(FacetToCellsMap)`: A complete mapping of facet keys to cells
+    /// - `Err(TriangulationValidationError)`: If any cell has missing vertex keys
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError::InconsistentDataStructure` if any cell
+    /// cannot resolve its vertex keys, which would indicate a corrupted triangulation state.
+    ///
+    /// # Performance
+    ///
+    /// Same as `build_facet_to_cells_hashmap`: O(N×F) time complexity.
+    pub fn try_build_facet_to_cells_hashmap(
+        &self,
+    ) -> Result<FacetToCellsMap, TriangulationValidationError> {
+        let mut facet_to_cells: FacetToCellsMap =
+            fast_hash_map_with_capacity(self.cells.len() * (D + 1));
+
+        // Preallocate facet_vertex_keys buffer outside the loops to avoid per-iteration allocations
+        let mut facet_vertex_keys = Vec::with_capacity(D);
+
+        // Iterate over all cells and their facets
+        for (cell_id, _cell) in &self.cells {
+            // Use direct key-based method to avoid UUID→Key lookups
+            // The error from vertex_keys_for_cell_direct is already TriangulationValidationError
+            let vertex_keys = self.vertex_keys_for_cell_direct(cell_id)?;
+
+            for i in 0..vertex_keys.len() {
+                // Clear and reuse the buffer instead of allocating a new one
+                facet_vertex_keys.clear();
+                for (j, &key) in vertex_keys.iter().enumerate() {
+                    if i != j {
+                        facet_vertex_keys.push(key);
+                    }
+                }
+
+                let facet_key = facet_key_from_vertex_keys(&facet_vertex_keys);
+                let Ok(facet_index_u8) = u8::try_from(i) else {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!("Facet index {i} exceeds u8 range for dimension {D}"),
+                    });
+                };
+
+                facet_to_cells
+                    .entry(facet_key)
+                    .or_default()
+                    .push((cell_id, facet_index_u8));
+            }
+        }
+
+        Ok(facet_to_cells)
     }
 
     /// Fixes invalid facet sharing by removing problematic cells
@@ -2261,7 +2335,12 @@ where
         }
 
         // There are facet sharing issues, proceed with the fix
-        let facet_to_cells = self.build_facet_to_cells_hashmap();
+        // Use try_build for strict error handling, but fall back to build if it fails
+        // If strict build fails, use the lenient version for repair
+        // This allows us to fix what we can even with partial data
+        let facet_to_cells = self
+            .try_build_facet_to_cells_hashmap()
+            .unwrap_or_else(|_| self.build_facet_to_cells_hashmap());
         let mut cells_to_remove: CellKeySet = CellKeySet::default();
 
         // Find facets that are shared by more than 2 cells and validate which ones are correct
@@ -2269,14 +2348,9 @@ where
             if cell_facet_pairs.len() > 2 {
                 let (first_cell_key, first_facet_index) = cell_facet_pairs[0];
                 if self.cells.contains_key(first_cell_key) {
-                    // Phase 1: Use direct key-based method to avoid UUID→Key lookups
-                    let Ok(vertex_keys) = self.vertex_keys_for_cell_direct(first_cell_key) else {
-                        #[cfg(debug_assertions)]
-                        eprintln!(
-                            "debug: skipping cell {first_cell_key:?} due to unresolved vertex keys in facet sharing fix"
-                        );
-                        continue; // Skip if we can't resolve vertex keys
-                    };
+                    // Use direct key-based method with proper error propagation
+                    // The error is already TriangulationValidationError, so just propagate it
+                    let vertex_keys = self.vertex_keys_for_cell_direct(first_cell_key)?;
                     let mut facet_vertex_keys = Vec::with_capacity(vertex_keys.len() - 1);
                     let idx = first_facet_index as usize;
                     for (i, &key) in vertex_keys.iter().enumerate() {
@@ -2285,23 +2359,19 @@ where
                         }
                     }
 
+                    // Build the facet vertex set once, outside the loop
+                    let facet_vertex_keys_set: VertexKeySet =
+                        facet_vertex_keys.iter().copied().collect();
+
                     let mut valid_cells = ValidCellsBuffer::new();
                     for &(cell_key, _facet_index) in &cell_facet_pairs {
                         if self.cells.contains_key(cell_key) {
-                            // Phase 1: Use direct key-based method to avoid UUID→Key lookups
-                            let Ok(cell_vertex_keys_vec) =
-                                self.vertex_keys_for_cell_direct(cell_key)
-                            else {
-                                #[cfg(debug_assertions)]
-                                eprintln!(
-                                    "debug: skipping cell {cell_key:?} due to unresolved vertex keys in validation"
-                                );
-                                continue; // Skip cells with unresolved vertex keys
-                            };
+                            // Use direct key-based method with proper error propagation
+                            // The error is already TriangulationValidationError, so just propagate it
+                            let cell_vertex_keys_vec =
+                                self.vertex_keys_for_cell_direct(cell_key)?;
                             let cell_vertex_keys: VertexKeySet =
                                 cell_vertex_keys_vec.into_iter().collect();
-                            let facet_vertex_keys_set: VertexKeySet =
-                                facet_vertex_keys.iter().copied().collect();
 
                             if facet_vertex_keys_set.is_subset(&cell_vertex_keys) {
                                 valid_cells.push(cell_key);
@@ -2312,6 +2382,9 @@ where
                     }
 
                     if valid_cells.len() > 2 {
+                        // Sort to ensure deterministic selection: keep the two cells with smallest keys
+                        valid_cells.sort_unstable();
+                        // Remove all but the first two (smallest keys)
                         for &cell_key in valid_cells.iter().skip(2) {
                             cells_to_remove.insert(cell_key);
                         }
@@ -2537,15 +2610,8 @@ where
 
         for (cell_key, _cell) in &self.cells {
             // Phase 1: Use direct key-based method to avoid UUID→Key lookups
-            let Ok(vertex_keys) = self.vertex_keys_for_cell_direct(cell_key) else {
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "debug: skipping cell {:?} due to missing vertex keys in duplicate validation",
-                    self.cell_uuid_from_key(cell_key)
-                        .unwrap_or_else(uuid::Uuid::nil)
-                );
-                continue; // Skip cells with missing vertex keys
-            };
+            // The error is already TriangulationValidationError, so just propagate it
+            let vertex_keys = self.vertex_keys_for_cell_direct(cell_key)?;
 
             let mut sorted_keys = vertex_keys;
             sorted_keys.sort_unstable();
@@ -2584,7 +2650,8 @@ where
     /// facets should be shared by exactly 2 adjacent cells.
     fn validate_facet_sharing(&self) -> Result<(), TriangulationValidationError> {
         // Build a map from facet keys to the cells that contain them
-        let facet_to_cells = self.build_facet_to_cells_hashmap();
+        // Use the strict version to ensure we catch any missing vertex keys
+        let facet_to_cells = self.try_build_facet_to_cells_hashmap()?;
 
         // Check for facets shared by more than 2 cells
         for (facet_key, cell_facet_pairs) in facet_to_cells {
@@ -2718,12 +2785,10 @@ where
         let mut cell_vertices: CellVerticesMap = fast_hash_map_with_capacity(self.cells.len());
         let mut cell_vertex_keys: CellVertexKeysMap = fast_hash_map_with_capacity(self.cells.len());
 
-        for (cell_key, cell) in &self.cells {
-            let vertex_keys: Vec<VertexKey> = cell
-                .vertices()
-                .iter()
-                .filter_map(|v| self.vertex_key_from_uuid(&v.uuid()))
-                .collect();
+        for cell_key in self.cells.keys() {
+            // Use vertex_keys_for_cell_direct to ensure all vertex keys are present
+            // The error is already TriangulationValidationError, so just propagate it
+            let vertex_keys = self.vertex_keys_for_cell_direct(cell_key)?;
 
             // Store both the Vec (for positional access) and HashSet (for containment checks)
             let vertex_set: VertexKeySet = vertex_keys.iter().copied().collect();
@@ -4369,6 +4434,16 @@ mod tests {
 
         // Verify that vertices have incident cells assigned when cells exist
         if tds.number_of_cells() > 0 {
+            // Also verify we can use the key-based method to check cell contents
+            for (cell_key, _cell) in &tds.cells {
+                // Test the Phase 1 key-based path
+                let vertex_keys_result = tds.vertex_keys_for_cell_direct(cell_key);
+                assert!(
+                    vertex_keys_result.is_ok(),
+                    "Should be able to get vertex keys for cell using direct method"
+                );
+            }
+
             let assigned_vertices = tds
                 .vertices
                 .values()
@@ -4487,7 +4562,6 @@ mod tests {
                 let neighbor_cell_key = tds
                     .cell_key_from_uuid(&neighbor_uuid)
                     .expect("Neighbor UUID should map to a cell key");
-                let neighbor_cell = &tds.cells[neighbor_cell_key];
 
                 // For each vertex position i in the current cell:
                 // - The facet opposite to vertices[i] should be shared with neighbors[i]
@@ -4495,13 +4569,20 @@ mod tests {
 
                 // Since we only have 1 neighbor stored, we need to find which vertex index
                 // this neighbor corresponds to by checking which vertex is NOT shared
+                // Get cell key for direct access
+                let cell_key = tds
+                    .cells
+                    .iter()
+                    .find(|(_, c)| c.uuid() == cell.uuid())
+                    .map(|(k, _)| k)
+                    .expect("Cell should have a key");
                 let cell_vertex_keys: VertexKeySet = tds
-                    .vertex_keys_for_cell(cell)
+                    .vertex_keys_for_cell_direct(cell_key)
                     .unwrap()
                     .into_iter()
                     .collect();
                 let neighbor_vertex_keys: VertexKeySet = tds
-                    .vertex_keys_for_cell(neighbor_cell)
+                    .vertex_keys_for_cell_direct(neighbor_cell_key)
                     .unwrap()
                     .into_iter()
                     .collect();
@@ -4521,7 +4602,7 @@ mod tests {
 
                 // Find the index of this unique vertex in the current cell
                 let unique_vertex_index = tds
-                    .vertex_keys_for_cell(cell)
+                    .vertex_keys_for_cell_direct(cell_key)
                     .unwrap()
                     .iter()
                     .position(|&k| k == unique_vertex_key)
