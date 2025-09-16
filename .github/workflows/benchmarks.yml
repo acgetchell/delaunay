@@ -55,7 +55,7 @@ jobs:
           fetch-depth: 0  # required to diff against BASELINE_COMMIT
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a  # v1.14.1
+        uses: actions-rust-lang/setup-rust-toolchain@2fcdc490d667999e01ddbbf0f2823181beef6b39  # v1.15.0
         with:
           cache: true
           # Toolchain from rust-toolchain.toml; no extra target needed on macOS-ARM
