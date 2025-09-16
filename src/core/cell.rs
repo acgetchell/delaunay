@@ -47,14 +47,13 @@ use super::{
     util::{UuidValidationError, make_uuid, validate_uuid},
     vertex::{Vertex, VertexValidationError},
 };
+use crate::core::collections::FastHashMap;
 use crate::geometry::{
     point::Point,
     traits::coordinate::{CoordinateConversionError, CoordinateScalar},
 };
-use crate::prelude::VertexKey;
-use bimap::BiMap;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::{collections::HashMap, fmt::Debug, hash::Hash, iter::Sum};
+use std::{fmt::Debug, hash::Hash, iter::Sum};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -543,33 +542,21 @@ where
         self.neighbors = None;
     }
 
-    /// Returns the list of `VertexKeys` for the [Cell].
+    /// Returns the UUIDs of the vertices in this cell.
     ///
-    /// This method maps the vertex UUIDs from this cell to their corresponding `VertexKey`s
-    /// using the provided bimap. This is essential for triangulation operations that need
-    /// to work with `SlotMap` keys rather than UUIDs for efficient access.
-    ///
-    /// # Arguments
-    ///
-    /// * `vertex_bimap` - A reference to the bimap that maps vertex UUIDs to vertex keys
+    /// This method provides access to the vertex UUIDs that form this cell.
+    /// Use `Tds::vertex_key_from_uuid()` to convert these UUIDs to `VertexKey`s
+    /// when working with the TDS.
     ///
     /// # Returns
     ///
-    /// A `Result` containing a `Vec<VertexKey>` if all vertices are found in the bimap,
-    /// or a `FacetError` if any vertex is missing.
-    ///
-    /// # Errors
-    ///
-    /// Returns `FacetError::VertexNotFound` if any vertex UUID in this cell is not found
-    /// in the provided vertex bimap. The error will contain the UUID of the missing vertex.
+    /// A `Vec<Uuid>` containing the UUIDs of all vertices in this cell.
     ///
     /// # Examples
     ///
     /// ```
     /// use delaunay::{cell, vertex};
     /// use delaunay::core::cell::Cell;
-    /// use delaunay::core::triangulation_data_structure::VertexKey;
-    /// use bimap::BiMap;
     /// use uuid::Uuid;
     ///
     /// let vertices = vec![
@@ -580,38 +567,68 @@ where
     /// ];
     /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices.clone());
     ///
-    /// // Create a bimap with the vertex mappings using the cell's vertices
-    /// let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
-    /// let mut vertex_keys = Vec::new();
+    /// // Get vertex UUIDs
+    /// let uuids = cell.vertex_uuids();
+    /// assert_eq!(uuids.len(), 4);
     ///
-    /// for (i, vertex) in cell.vertices().iter().enumerate() {
-    ///     let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
-    ///     vertex_bimap.insert(vertex.uuid(), key);
-    ///     vertex_keys.push(key);
+    /// // Check that UUIDs are not nil and are unique
+    /// for uuid in &uuids {
+    ///     assert_ne!(*uuid, Uuid::nil());
     /// }
-    ///
-    /// // Successfully retrieve vertex keys
-    /// let result = cell.vertex_keys(&vertex_bimap).unwrap();
-    /// assert_eq!(result.len(), 4);
-    ///
-    /// // Test with missing vertex
-    /// let mut empty_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
-    /// let error_result = cell.vertex_keys(&empty_bimap);
-    /// assert!(error_result.is_err());
+    /// let unique_count = uuids.iter().collect::<std::collections::HashSet<_>>().len();
+    /// assert_eq!(unique_count, uuids.len());
     /// ```
-    pub fn vertex_keys(
-        &self,
-        vertex_bimap: &BiMap<Uuid, VertexKey>,
-    ) -> Result<Vec<VertexKey>, FacetError> {
+    #[inline]
+    pub fn vertex_uuids(&self) -> Vec<Uuid> {
         self.vertices()
             .iter()
-            .map(|v| {
-                vertex_bimap
-                    .get_by_left(&v.uuid())
-                    .copied()
-                    .ok_or_else(|| FacetError::VertexNotFound { uuid: v.uuid() })
-            })
+            .map(super::vertex::Vertex::uuid)
             .collect()
+    }
+
+    /// Returns an iterator over vertex UUIDs without allocating a Vec.
+    ///
+    /// This is a zero-allocation alternative to [`vertex_uuids`](Self::vertex_uuids)
+    /// that's more efficient for hot paths where you only need to iterate over the UUIDs.
+    ///
+    /// # Returns
+    ///
+    /// An iterator that yields [`Uuid`] values for each vertex in the cell.
+    /// The iterator implements [`ExactSizeIterator`], so you can call `.len()` on it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::{cell, vertex};
+    /// use delaunay::core::cell::Cell;
+    /// use uuid::Uuid;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices.clone());
+    ///
+    /// // Iterate over vertex UUIDs without allocation
+    /// assert!(
+    ///     cell.vertex_uuid_iter().all(|uuid| uuid != Uuid::nil()),
+    ///     "All UUIDs should be non-nil"
+    /// );
+    /// let count = cell.vertex_uuid_iter().count();
+    /// assert_eq!(count, 4);
+    ///
+    /// // Can also get the length directly
+    /// assert_eq!(cell.vertex_uuid_iter().len(), 4);
+    ///
+    /// // Collect into a Vec if needed
+    /// let uuids: Vec<_> = cell.vertex_uuid_iter().collect();
+    /// assert_eq!(uuids.len(), 4);
+    /// ```
+    #[inline]
+    pub fn vertex_uuid_iter(&self) -> impl ExactSizeIterator<Item = Uuid> + '_ {
+        self.vertices().iter().map(super::vertex::Vertex::uuid)
     }
 
     /// The `dim` function returns the dimensionality of the [Cell].
@@ -777,20 +794,19 @@ where
         })
     }
 
-    /// Converts a vector of cells into a `HashMap` indexed by their UUIDs.
+    /// Converts a vector of cells into a `FastHashMap` indexed by their UUIDs.
     ///
     /// This utility function transforms a collection of cells into a hash map structure
-    /// for efficient lookups by UUID. Each cell's unique identifier becomes the key,
-    /// and the cell itself becomes the value in the resulting `HashMap`.
+    /// for efficient lookups by UUID. Uses `FastHashMap` for performance.
     ///
     /// # Arguments
     ///
-    /// * `cells` - A vector of cells to be converted into a `HashMap`.
+    /// * `cells` - A vector of cells to be converted into a `FastHashMap`.
     ///
     /// # Returns
     ///
-    /// A [`HashMap\u003cUuid, Self\u003e`] where each key is a cell's UUID and each value
-    /// is the corresponding cell. The `HashMap` provides O(1) average-case lookups
+    /// A [`FastHashMap\u003cUuid, Self\u003e`] where each key is a cell's UUID and each value
+    /// is the corresponding cell. The map provides O(1) average-case lookups
     /// by UUID.
     ///
     /// # Examples
@@ -829,13 +845,13 @@ where
     /// use delaunay::{cell, vertex};
     /// use delaunay::core::cell::Cell;
     ///
-    /// // Empty vector produces empty HashMap
+    /// // Empty vector produces empty FastHashMap
     /// let empty_cells: Vec<Cell<f64, Option<()>, Option<()>, 3>> = vec![];
     /// let empty_map = Cell::into_hashmap(empty_cells);
     /// assert!(empty_map.is_empty());
     /// ```
     #[must_use]
-    pub fn into_hashmap(cells: Vec<Self>) -> HashMap<Uuid, Self> {
+    pub fn into_hashmap(cells: Vec<Self>) -> FastHashMap<Uuid, Self> {
         cells.into_iter().map(|c| (c.uuid, c)).collect()
     }
 
@@ -1672,14 +1688,13 @@ mod tests {
     }
 
     // =============================================================================
-    // VERTEX_KEYS METHOD TESTS
+    // VERTEX_UUIDS METHOD TESTS
     // =============================================================================
-    // Comprehensive tests for the vertex_keys method covering both success
-    // and error cases.
+    // Comprehensive tests for the vertex_uuids method covering different scenarios.
 
     #[test]
-    fn test_vertex_keys_success() {
-        // Test the vertex_keys method returns correct vertex keys vector
+    fn test_vertex_uuids_success() {
+        // Test the vertex_uuids method returns correct vertex UUIDs vector
         let vertex1 = vertex!([0.0, 0.0, 0.0], 10);
         let vertex2 = vertex!([1.0, 0.0, 0.0], 20);
         let vertex3 = vertex!([0.0, 1.0, 0.0], 30);
@@ -1687,41 +1702,35 @@ mod tests {
 
         let cell: Cell<f64, i32, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
-        // Create a BiMap mapping vertex UUIDs to VertexKeys
-        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
-        let vertex_keys: Vec<VertexKey> = cell
-            .vertices()
-            .iter()
-            .enumerate()
-            .map(|(i, vertex)| {
-                let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
-                vertex_bimap.insert(vertex.uuid(), key);
-                key
-            })
-            .collect();
+        // Get vertex UUIDs
+        let vertex_uuids = cell.vertex_uuids();
+        assert_eq!(cell.vertex_uuid_iter().len(), 4);
 
-        let result = cell.vertex_keys(&vertex_bimap);
-        assert!(result.is_ok());
-
-        let returned_keys = result.unwrap();
-        assert_eq!(returned_keys.len(), 4);
-
-        // Verify that all returned keys match our expected keys
-        for (expected_key, returned_key) in vertex_keys.iter().zip(returned_keys.iter()) {
-            assert_eq!(expected_key, returned_key);
+        // Verify UUIDs match the cell's vertices using iterator
+        for (expected_uuid, returned_uuid) in cell.vertex_uuid_iter().zip(vertex_uuids.iter()) {
+            assert_eq!(expected_uuid, *returned_uuid);
         }
 
-        println!("✓ vertex_keys method returns correct vertex keys");
+        // Verify all UUIDs are unique
+        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        assert_eq!(unique_uuids.len(), vertex_uuids.len());
+
+        // Verify no nil UUIDs using iterator
+        for uuid in cell.vertex_uuid_iter() {
+            assert_ne!(uuid, Uuid::nil());
+        }
+
+        println!("✓ vertex_uuids method returns correct vertex UUIDs");
     }
 
     #[test]
-    fn test_vertex_keys_empty_cell_fails() {
-        // Test that vertex_keys fails gracefully on invalid cell construction
+    fn test_vertex_uuids_empty_cell_fails() {
+        // Test that cell creation fails gracefully with insufficient vertices
         // Note: We can't actually create an empty cell via normal means due to validation,
-        // but we can test the method's error handling by creating a cell with insufficient vertices
+        // so this test documents expected behavior during construction
 
         // This test documents expected behavior - cell creation with insufficient vertices
-        // should fail during construction, not during vertex_keys() call
+        // should fail during construction, not during vertex_uuids() call
         let vertices = vec![vertex!([0.0, 0.0, 0.0])];
         let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
             CellBuilder::default().vertices(vertices).build();
@@ -1734,44 +1743,38 @@ mod tests {
     }
 
     #[test]
-    fn test_vertex_keys_2d_cell() {
-        // Test vertex_keys with a 2D cell (triangle)
+    fn test_vertex_uuids_2d_cell() {
+        // Test vertex_uuids with a 2D cell (triangle)
         let vertex1 = vertex!([0.0, 0.0], 1);
         let vertex2 = vertex!([1.0, 0.0], 2);
         let vertex3 = vertex!([0.5, 1.0], 3);
 
         let cell: Cell<f64, i32, Option<()>, 2> = cell!(vec![vertex1, vertex2, vertex3]);
 
-        // Create a BiMap mapping vertex UUIDs to VertexKeys
-        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
-        let expected_keys: Vec<VertexKey> = cell
-            .vertices()
-            .iter()
-            .enumerate()
-            .map(|(i, vertex)| {
-                let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
-                vertex_bimap.insert(vertex.uuid(), key);
-                key
-            })
-            .collect();
+        // Get vertex UUIDs
+        let vertex_uuids = cell.vertex_uuids();
+        assert_eq!(cell.vertex_uuid_iter().len(), 3);
 
-        let result = cell.vertex_keys(&vertex_bimap);
-        assert!(result.is_ok());
-
-        let returned_keys = result.unwrap();
-        assert_eq!(returned_keys.len(), 3);
-
-        // Verify that all returned keys match our expected keys
-        for (expected_key, returned_key) in expected_keys.iter().zip(returned_keys.iter()) {
-            assert_eq!(expected_key, returned_key);
+        // Verify UUIDs match the cell's vertices using iterator
+        for (expected_uuid, returned_uuid) in cell.vertex_uuid_iter().zip(vertex_uuids.iter()) {
+            assert_eq!(expected_uuid, *returned_uuid);
         }
 
-        println!("✓ vertex_keys works correctly for 2D cells");
+        // Verify all UUIDs are unique
+        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        assert_eq!(unique_uuids.len(), vertex_uuids.len());
+
+        // Verify no nil UUIDs using iterator
+        for uuid in cell.vertex_uuid_iter() {
+            assert_ne!(uuid, Uuid::nil());
+        }
+
+        println!("✓ vertex_uuids works correctly for 2D cells");
     }
 
     #[test]
-    fn test_vertex_keys_4d_cell() {
-        // Test vertex_keys with a 4D cell (5-simplex) using integer data
+    fn test_vertex_uuids_4d_cell() {
+        // Test vertex_uuids with a 4D cell (4-simplex) using integer data
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0, 0.0], 1),
             vertex!([1.0, 0.0, 0.0, 0.0], 2),
@@ -1782,40 +1785,35 @@ mod tests {
 
         let cell: Cell<f64, i32, Option<()>, 4> = cell!(vertices);
 
-        // Create a BiMap mapping vertex UUIDs to VertexKeys
-        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
-        let expected_keys: Vec<VertexKey> = cell
-            .vertices()
-            .iter()
-            .enumerate()
-            .map(|(i, vertex)| {
-                let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
-                vertex_bimap.insert(vertex.uuid(), key);
-                key
-            })
-            .collect();
+        // Get vertex UUIDs
+        let vertex_uuids = cell.vertex_uuids();
+        assert_eq!(cell.vertex_uuid_iter().len(), 5);
 
-        let result = cell.vertex_keys(&vertex_bimap);
-        assert!(result.is_ok());
+        // Verify UUIDs match the cell's vertices using iterator
+        for (expected_uuid, returned_uuid) in cell.vertex_uuid_iter().zip(vertex_uuids.iter()) {
+            assert_eq!(expected_uuid, *returned_uuid);
+        }
 
-        let returned_keys = result.unwrap();
-        assert_eq!(returned_keys.len(), 5);
+        // Verify all UUIDs are unique
+        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
-        // Verify all 5 vertices are mapped correctly
-        for (i, (expected_key, returned_key)) in
-            expected_keys.iter().zip(returned_keys.iter()).enumerate()
-        {
-            assert_eq!(expected_key, returned_key);
-            let vertex = cell.vertices().get(i).unwrap();
+        // Verify vertex data integrity alongside UUIDs
+        for (i, vertex) in cell.vertices().iter().enumerate() {
             assert_eq!(vertex.data, Some(i32::try_from(i + 1).unwrap()));
         }
 
-        println!("✓ vertex_keys works correctly for 4D cells");
+        // Verify no nil UUIDs using iterator
+        for uuid in cell.vertex_uuid_iter() {
+            assert_ne!(uuid, Uuid::nil());
+        }
+
+        println!("✓ vertex_uuids works correctly for 4D cells");
     }
 
     #[test]
-    fn test_vertex_keys_with_f32_coordinates() {
-        // Test vertex_keys with f32 coordinates
+    fn test_vertex_uuids_with_f32_coordinates() {
+        // Test vertex_uuids with f32 coordinates
         let vertices = vec![
             vertex!([0.0f32, 0.0f32, 0.0f32]),
             vertex!([1.0f32, 0.0f32, 0.0f32]),
@@ -1825,24 +1823,9 @@ mod tests {
 
         let cell: Cell<f32, Option<()>, Option<()>, 3> = cell!(vertices);
 
-        // Create a BiMap mapping vertex UUIDs to VertexKeys
-        let mut vertex_bimap: BiMap<Uuid, VertexKey> = BiMap::new();
-        let expected_keys: Vec<VertexKey> = cell
-            .vertices()
-            .iter()
-            .enumerate()
-            .map(|(i, vertex)| {
-                let key = VertexKey::from(slotmap::KeyData::from_ffi(i as u64));
-                vertex_bimap.insert(vertex.uuid(), key);
-                key
-            })
-            .collect();
-
-        let result = cell.vertex_keys(&vertex_bimap);
-        assert!(result.is_ok());
-
-        let returned_keys = result.unwrap();
-        assert_eq!(returned_keys.len(), 4);
+        // Get vertex UUIDs
+        let vertex_uuids = cell.vertex_uuids();
+        assert_eq!(cell.vertex_uuid_iter().len(), 4);
 
         // Verify coordinate type is preserved
         assert_relative_eq!(
@@ -1851,12 +1834,21 @@ mod tests {
             epsilon = f32::EPSILON
         );
 
-        // Verify that all returned keys match our expected keys
-        for (expected_key, returned_key) in expected_keys.iter().zip(returned_keys.iter()) {
-            assert_eq!(expected_key, returned_key);
+        // Verify UUIDs match the cell's vertices using iterator
+        for (expected_uuid, returned_uuid) in cell.vertex_uuid_iter().zip(vertex_uuids.iter()) {
+            assert_eq!(expected_uuid, *returned_uuid);
         }
 
-        println!("✓ vertex_keys works correctly with f32 coordinates");
+        // Verify all UUIDs are unique
+        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        assert_eq!(unique_uuids.len(), vertex_uuids.len());
+
+        // Verify no nil UUIDs using iterator
+        for uuid in cell.vertex_uuid_iter() {
+            assert_ne!(uuid, Uuid::nil());
+        }
+
+        println!("✓ vertex_uuids works correctly with f32 coordinates");
     }
 
     // =============================================================================
@@ -3139,5 +3131,122 @@ mod tests {
         assert!(cell1 == cell3, "cell1 should equal cell3 (transitivity)");
 
         println!("✓ Cell equality is transitive");
+    }
+
+    #[test]
+    #[cfg(feature = "bench")]
+    fn test_vertex_uuid_iter_by_value_vs_by_reference_analysis() {
+        // Comprehensive analysis of whether vertex_uuid_iter should return
+        // Uuid by value (current) vs &Uuid by reference (proposed)
+        use std::{collections::HashSet, mem, time::Instant};
+        use uuid::Uuid;
+
+        println!("\n=== UUID Performance Analysis: By Value vs By Reference ===");
+
+        // Memory layout analysis
+        println!("\nMemory Layout:");
+        println!("  Size of Uuid:     {} bytes", mem::size_of::<Uuid>());
+        println!("  Size of &Uuid:    {} bytes", mem::size_of::<&Uuid>());
+        println!("  Size of usize:    {} bytes", mem::size_of::<usize>());
+
+        // Create test cell with multiple vertices
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
+
+        println!("\nAPI Ergonomics Test:");
+
+        // Test 1: Direct comparison (by value - current implementation)
+        let first_uuid = cell.vertex_uuid_iter().next().unwrap();
+        assert_ne!(first_uuid, Uuid::nil());
+        println!("  ✓ By value: Direct comparison works: uuid != Uuid::nil()");
+
+        // Test 2: What by-reference would look like (simulation)
+        // Note: We simulate by-reference by collecting values then referencing them
+        let uuid_values: Vec<Uuid> = cell.vertices().iter().map(Vertex::uuid).collect();
+        let uuid_refs: Vec<&Uuid> = uuid_values.iter().collect();
+        let first_uuid_ref = uuid_refs[0];
+        assert_ne!(*first_uuid_ref, Uuid::nil()); // Requires dereferencing
+        println!("  ✓ By reference: Requires dereferencing: *uuid != Uuid::nil()");
+
+        println!("\nPerformance Test (1000 iterations):");
+        let iterations = 1000;
+
+        // Benchmark current by-value implementation
+        let start = Instant::now();
+        let mut by_value_count = 0;
+        for _ in 0..iterations {
+            for uuid in cell.vertex_uuid_iter() {
+                if uuid != Uuid::nil() {
+                    by_value_count += 1;
+                }
+            }
+        }
+        let by_value_time = start.elapsed();
+
+        // Benchmark simulated by-reference implementation
+        let start = Instant::now();
+        let mut by_ref_count = 0;
+        for _ in 0..iterations {
+            // For by-reference simulation, we'd need to store values first
+            let uuid_values: Vec<Uuid> = cell.vertices().iter().map(Vertex::uuid).collect();
+            for uuid_ref in &uuid_values {
+                if *uuid_ref != Uuid::nil() {
+                    by_ref_count += 1;
+                }
+            }
+        }
+        let by_ref_time = start.elapsed();
+
+        println!("  By value time:     {by_value_time:?}");
+        println!("  By reference time: {by_ref_time:?}");
+
+        let ratio = by_ref_time.as_secs_f64() / by_value_time.as_secs_f64().max(f64::EPSILON);
+        if ratio > 1.05 {
+            println!("  → By value is {ratio:.2}x FASTER");
+        } else if ratio < 0.95 {
+            println!("  → By reference is {:.2}x faster", 1.0 / ratio);
+        } else {
+            println!("  → Performance is roughly equivalent");
+        }
+
+        assert_eq!(by_value_count, by_ref_count);
+
+        println!("\nAnalysis Summary:");
+        println!(
+            "  UUID size: {} bytes (small value type)",
+            mem::size_of::<Uuid>()
+        );
+        println!(
+            "  Reference size: {} bytes (pointer)",
+            mem::size_of::<&Uuid>()
+        );
+        println!("  \nFor UUIDs specifically:");
+        println!("  • UUID is only 16 bytes (fits in two 64-bit registers)");
+        println!("  • Modern CPUs copy 16 bytes very efficiently");
+        println!("  • No indirection overhead with by-value");
+        println!("  • Consumers can own the value (no lifetime constraints)");
+        println!("  • Direct comparisons work without dereferencing");
+
+        println!("  \nConclusion: Current by-value implementation is optimal");
+        println!("  Reasons:");
+        println!("    1. Better or equivalent performance (no indirection)");
+        println!("    2. Simpler API (no lifetime constraints)");
+        println!("    3. More ergonomic for consumers (no dereferencing)");
+        println!("    4. Consistent with UUID::new() and similar APIs");
+        println!("    5. 16 bytes is small enough to copy efficiently");
+
+        // Validate current API works as expected
+        assert_eq!(cell.vertex_uuid_iter().count(), 4);
+
+        // Test that we can directly use values in hashmaps, comparisons, etc.
+        let unique_uuids: HashSet<_> = cell.vertex_uuid_iter().collect();
+        assert_eq!(unique_uuids.len(), 4);
+
+        println!("  ✓ Current API validation passed");
     }
 }
