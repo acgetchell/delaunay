@@ -531,6 +531,10 @@ where
             }
         }
 
+        if max_edge_sq == T::zero() {
+            // Degenerate facet geometry; treat as not visible.
+            return Ok(false);
+        }
         // Add epsilon-based bound to avoid false positives from numeric noise
         // Use a small relative epsilon (1e-12 scale) to handle near-surface points
         let epsilon_factor: T =
@@ -3642,7 +3646,7 @@ mod tests {
         let cache = hull.get_or_build_facet_cache(&tds);
 
         // For each facet in the hull, derive its key and check it exists in cache
-        let mut keys_found = 0;
+        let mut keys_found = 0usize;
         for (i, facet) in hull.hull_facets.iter().enumerate() {
             let facet_vertices = facet.vertices();
 
@@ -3653,7 +3657,7 @@ mod tests {
                     keys_found += 1;
                     println!("    Facet {i}: key {derived_key} found in cache ✓");
                 } else {
-                    println!("    Facet {i}: key {derived_key} NOT in cache (boundary facet)");
+                    println!("    Facet {i}: key {derived_key} NOT in cache (unexpected)");
                 }
             } else {
                 println!(
@@ -3673,9 +3677,10 @@ mod tests {
             !cache.is_empty(),
             "Cache should contain facets from the triangulation"
         );
-        assert!(
-            keys_found > 0,
-            "At least one hull facet key should be present in the cache"
+        assert_eq!(
+            keys_found,
+            hull.hull_facets.len(),
+            "Every hull facet key should be present in the cache"
         );
 
         // Test that helper methods work correctly together in visibility testing

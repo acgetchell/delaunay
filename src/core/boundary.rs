@@ -97,9 +97,15 @@ where
                         boundary_facets.push(f.clone());
                     } else {
                         debug_assert!(false, "facet_index out of bounds");
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "boundary_facets: facet_index {facet_index:?} out of bounds for cell_id {cell_id:?}"
+                        );
                     }
                 } else {
                     debug_assert!(false, "cell_id not found in SlotMap");
+                    #[cfg(debug_assertions)]
+                    eprintln!("boundary_facets: cell_id {cell_id:?} not found");
                 }
             }
         }
@@ -215,12 +221,15 @@ where
             );
             return false;
         }
-        if let Ok(facet_key) = derive_facet_key_from_vertices(&facet_vertices, self) {
-            return facet_to_cells
+        match derive_facet_key_from_vertices(&facet_vertices, self) {
+            Ok(facet_key) => facet_to_cells
                 .get(&facet_key)
-                .is_some_and(|cells| cells.len() == 1);
+                .is_some_and(|cells| cells.len() == 1),
+            Err(e) => {
+                debug_assert!(false, "derive_facet_key_from_vertices failed: {e:?}");
+                false
+            }
         }
-        false
     }
 
     /// Returns the number of boundary facets in the triangulation.
@@ -262,7 +271,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::BoundaryAnalysis;
-    use crate::core::collections::FastHashMap;
+    use crate::core::collections::{FastHashMap, fast_hash_map_with_capacity};
     use crate::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
     use crate::core::util::derive_facet_key_from_vertices;
     use crate::core::vertex::Vertex;
@@ -566,7 +575,8 @@ mod tests {
         );
 
         // Build a map of facet keys to the cells that contain them for detailed verification
-        let mut facet_map: FastHashMap<u64, Vec<_>> = FastHashMap::default();
+        let mut facet_map: FastHashMap<u64, Vec<_>> =
+            fast_hash_map_with_capacity(tds.number_of_cells() * 4);
         for (cell_key, cell) in tds.cells() {
             for facet in cell.facets().expect("Should get cell facets") {
                 let facet_vertices = facet.vertices();
