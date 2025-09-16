@@ -13,6 +13,7 @@ use crate::core::collections::{KeyBasedCellMap, fast_hash_map_with_capacity};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use nalgebra::ComplexField;
 use serde::{Serialize, de::DeserializeOwned};
+use std::collections::hash_map::Entry;
 use std::iter::Sum;
 use std::ops::{AddAssign, Div, SubAssign};
 
@@ -98,11 +99,14 @@ where
                 && let Some((cell_id, facet_index)) = cells.first().copied()
             {
                 if let Some(cell) = self.cells().get(cell_id) {
-                    // Cache facets per cell to avoid repeated allocations
-                    cell_facets_cache
-                        .entry(cell_id)
-                        .or_insert_with(|| cell.facets().unwrap_or_default());
-                    let facets = &cell_facets_cache[&cell_id];
+                    // Cache facets per cell to avoid repeated allocations, but propagate errors
+                    let facets = match cell_facets_cache.entry(cell_id) {
+                        Entry::Occupied(e) => e.into_mut(),
+                        Entry::Vacant(v) => {
+                            let computed = cell.facets()?; // propagate FacetError
+                            v.insert(computed)
+                        }
+                    };
 
                     if let Some(f) = facets.get(usize::from(facet_index)) {
                         boundary_facets.push(f.clone());

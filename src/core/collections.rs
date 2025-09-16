@@ -133,13 +133,13 @@ pub use uuid::Uuid;
 // =============================================================================
 
 /// Optimized `HashMap` type for performance-critical operations.
-/// Uses `FxHasher` for ~2-3x faster hashing in non-cryptographic contexts.
+/// Uses `FxHasher` for faster hashing in non-cryptographic contexts.
 ///
 /// # Performance Characteristics
 ///
 /// - **Hash Function**: `FxHash` (non-cryptographic, very fast)
 /// - **Use Case**: Internal mappings where security is not a concern
-/// - **Speedup**: ~2-3x faster than `std::collections::HashMap`
+/// - **Speedup**: ~2-3x faster than `std::collections::HashMap` in typical non-adversarial workloads
 ///
 /// # Security Warning
 ///
@@ -157,13 +157,13 @@ pub use uuid::Uuid;
 pub type FastHashMap<K, V> = FxHashMap<K, V>;
 
 /// Optimized `HashSet` type for performance-critical operations.
-/// Uses `FxHasher` for ~2-3x faster hashing in non-cryptographic contexts.
+/// Uses `FxHasher` for faster hashing in non-cryptographic contexts.
 ///
 /// # Performance Characteristics
 ///
 /// - **Hash Function**: `FxHash` (non-cryptographic, very fast)
 /// - **Use Case**: Internal sets for membership testing
-/// - **Speedup**: ~2-3x faster than `std::collections::HashSet`
+/// - **Speedup**: ~2-3x faster than `std::collections::HashSet` in typical non-adversarial workloads
 ///
 /// # Security Warning
 ///
@@ -188,7 +188,7 @@ pub type FastHashMap<K, V> = FxHashMap<K, V>;
 ///
 /// // For internal algorithms, prefer direct key-based collections
 /// let mut internal_set: CellKeySet = CellKeySet::default();
-/// // internal_set.insert(cell_key); // No UUID lookup needed
+/// // internal_set.insert(cell_key); // Avoids extra UUID→Key lookups
 /// ```
 pub type FastHashSet<T> = FxHashSet<T>;
 
@@ -455,7 +455,7 @@ pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
 /// # Optimization Rationale
 ///
 /// - **Primary Direction**: UUID → Key is the hot path in most algorithms
-/// - **Hash Function**: `FxHash` provides ~2-3x faster lookups than default hasher
+/// - **Hash Function**: `FxHash` provides ~2-3x faster lookups than default hasher in typical non-adversarial workloads
 /// - **Use Case**: Converting vertex UUIDs to keys for `SlotMap` access
 /// - **Performance**: O(1) average case, optimized for triangulation algorithms
 ///
@@ -486,7 +486,7 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 /// # Optimization Rationale
 ///
 /// - **Primary Direction**: UUID → Key is the hot path in neighbor assignment
-/// - **Hash Function**: `FxHash` provides ~2-3x faster lookups than default hasher
+/// - **Hash Function**: `FxHash` provides ~2-3x faster lookups than default hasher in typical non-adversarial workloads
 /// - **Use Case**: Converting cell UUIDs to keys for `SlotMap` access
 /// - **Performance**: O(1) average case, eliminates `BiMap` overhead
 ///
@@ -522,7 +522,7 @@ pub type UuidToCellKeyMap = FastHashMap<Uuid, CellKey>;
 ///
 /// # Performance Benefits
 ///
-/// - **No UUID→Key lookups**: O(0) hash operations vs O(1) UUID→Key mapping
+/// - **Avoids UUID→Key lookups**: Eliminates extra hash table lookups vs UUID→Key mapping
 /// - **Direct `SlotMap` compatibility**: Keys can be used directly for data structure access
 /// - **Memory efficiency**: `CellKey` is typically smaller than `Uuid` (8 bytes vs 16 bytes)
 /// - **Cache friendly**: Better memory locality for key-based algorithms
@@ -553,8 +553,8 @@ pub type CellKeySet = FastHashSet<CellKey>;
 ///
 /// # Performance Benefits
 ///
-/// - **No UUID→Key lookups**: O(0) hash operations vs O(1) UUID→Key mapping
-/// - **Direct `SlotMap` compatibility**: Keys can be used directly for data structure access  
+/// - **Avoids UUID→Key lookups**: Eliminates extra hash table lookups vs UUID→Key mapping
+/// - **Direct `SlotMap` compatibility**: Keys can be used directly for data structure access
 /// - **Memory efficiency**: `VertexKey` is typically smaller than `Uuid` (8 bytes vs 16 bytes)
 /// - **Cache friendly**: Better memory locality for key-based algorithms
 ///
@@ -587,7 +587,7 @@ pub type VertexKeySet = FastHashSet<VertexKey>;
 /// - **Direct key access**: No intermediate UUID→Key mapping required
 /// - **`SlotMap` integration**: Keys align perfectly with internal data structure access patterns
 /// - **Memory efficiency**: Avoids storing redundant UUID→Key associations
-/// - **Algorithm optimization**: Enables O(0) key operations in hot paths
+/// - **Algorithm optimization**: Direct key operations eliminate extra lookups in hot paths
 ///
 /// # Use Cases
 ///
@@ -619,7 +619,7 @@ pub type KeyBasedCellMap<V> = FastHashMap<CellKey, V>;
 /// - **Direct key access**: No intermediate UUID→Key mapping required
 /// - **`SlotMap` integration**: Keys align perfectly with internal data structure access patterns
 /// - **Memory efficiency**: Avoids storing redundant UUID→Key associations
-/// - **Algorithm optimization**: Enables O(0) key operations in hot paths
+/// - **Algorithm optimization**: Direct key operations eliminate extra lookups in hot paths
 ///
 /// # Use Cases
 ///
@@ -742,7 +742,7 @@ pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
 /// use delaunay::core::triangulation_data_structure::CellKey;
 ///
 /// let set = fast_hash_set_with_capacity::<CellKey>(500);
-/// // Can insert up to ~375 CellKeys without rehashing, more memory efficient
+/// // Can insert up to ~375 CellKeys without rehashing, avoids UUID→Key lookups
 /// ```
 #[inline]
 #[must_use]
@@ -860,5 +860,62 @@ mod tests {
         let cell_map: KeyBasedCellMap<f64> = KeyBasedCellMap::default();
         assert!(cell_map.is_empty());
         assert_eq!(cell_map.len(), 0);
+    }
+
+    #[test]
+    fn test_phase1_key_based_roundtrip_operations() {
+        use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+        use slotmap::SlotMap;
+
+        // Create mock SlotMaps to generate real keys for testing
+        let mut cell_slots: SlotMap<CellKey, i32> = SlotMap::default();
+        let mut vertex_slots: SlotMap<VertexKey, i32> = SlotMap::default();
+
+        // Insert some dummy data to get real keys
+        let cell_key1 = cell_slots.insert(1);
+        let cell_key2 = cell_slots.insert(2);
+        let vertex_key1 = vertex_slots.insert(1);
+        let vertex_key2 = vertex_slots.insert(2);
+
+        // Test CellKeySet insert/contains roundtrip
+        let mut cell_set: CellKeySet = CellKeySet::default();
+        assert!(!cell_set.contains(&cell_key1));
+        cell_set.insert(cell_key1);
+        assert!(cell_set.contains(&cell_key1));
+        assert!(!cell_set.contains(&cell_key2));
+
+        // Test VertexKeySet insert/contains roundtrip
+        let mut vertex_set: VertexKeySet = VertexKeySet::default();
+        assert!(!vertex_set.contains(&vertex_key1));
+        vertex_set.insert(vertex_key1);
+        assert!(vertex_set.contains(&vertex_key1));
+        assert!(!vertex_set.contains(&vertex_key2));
+
+        // Test KeyBasedCellMap insert/get roundtrip
+        let mut cell_map: KeyBasedCellMap<String> = KeyBasedCellMap::default();
+        assert_eq!(cell_map.get(&cell_key1), None);
+        cell_map.insert(cell_key1, "cell_data".to_string());
+        assert_eq!(cell_map.get(&cell_key1), Some(&"cell_data".to_string()));
+        assert_eq!(cell_map.get(&cell_key2), None);
+
+        // Test KeyBasedVertexMap insert/get roundtrip
+        let mut vertex_map: KeyBasedVertexMap<i32> = KeyBasedVertexMap::default();
+        assert_eq!(vertex_map.get(&vertex_key1), None);
+        vertex_map.insert(vertex_key1, 42);
+        assert_eq!(vertex_map.get(&vertex_key1), Some(&42));
+        assert_eq!(vertex_map.get(&vertex_key2), None);
+
+        // Test KeyBasedNeighborMap insert/get roundtrip
+        let mut neighbor_map: KeyBasedNeighborMap = KeyBasedNeighborMap::default();
+        assert_eq!(neighbor_map.get(&cell_key1), None);
+        neighbor_map.insert(cell_key1, cell_key2);
+        assert_eq!(neighbor_map.get(&cell_key1), Some(&cell_key2));
+
+        // Test that collections have expected sizes
+        assert_eq!(cell_set.len(), 1);
+        assert_eq!(vertex_set.len(), 1);
+        assert_eq!(cell_map.len(), 1);
+        assert_eq!(vertex_map.len(), 1);
+        assert_eq!(neighbor_map.len(), 1);
     }
 }

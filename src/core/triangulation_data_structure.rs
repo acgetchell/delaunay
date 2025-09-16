@@ -2536,13 +2536,14 @@ where
         let mut unique_cells = FastHashMap::default();
         let mut duplicates = Vec::new();
 
-        for (cell_key, cell) in &self.cells {
+        for (cell_key, _cell) in &self.cells {
             // Phase 1: Use direct key-based method to avoid UUID→Key lookups
             let Ok(vertex_keys) = self.vertex_keys_for_cell_direct(cell_key) else {
                 #[cfg(debug_assertions)]
                 eprintln!(
-                    "debug: skipping cell {} due to missing vertex keys in duplicate validation",
-                    cell.uuid()
+                    "debug: skipping cell {:?} due to missing vertex keys in duplicate validation",
+                    self.cell_uuid_from_key(cell_key)
+                        .unwrap_or_else(uuid::Uuid::nil)
                 );
                 continue; // Skip cells with missing vertex keys
             };

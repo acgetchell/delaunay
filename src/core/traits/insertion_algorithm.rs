@@ -678,8 +678,9 @@ where
             // 2. OR it's a true boundary facet (only one cell total) that's bad
             if bad_count == 1 && (total_count == 2 || total_count == 1) {
                 // Store the bad cell key and facet index for later processing
-                let (bad_cell_key, facet_index) = bad_cells_sharing[0];
-                boundary_facet_specs.push((bad_cell_key, facet_index));
+                if let Some(&(bad_cell_key, facet_index)) = bad_cells_sharing.first() {
+                    boundary_facet_specs.push((bad_cell_key, facet_index));
+                }
             }
             // Skip facets that are:
             // - Internal to the cavity (bad_count > 1)
