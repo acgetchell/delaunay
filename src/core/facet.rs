@@ -118,6 +118,17 @@ pub enum FacetError {
         /// Details about the orientation computation failure.
         details: String,
     },
+    /// Invalid facet index for a cell.
+    #[error("Invalid facet index {index} for cell with {facet_count} facets")]
+    InvalidFacetIndex {
+        /// The invalid facet index.
+        index: u8,
+        /// The number of facets in the cell.
+        facet_count: usize,
+    },
+    /// Cell was not found in the triangulation.
+    #[error("Cell not found in triangulation (potential data corruption)")]
+    CellNotFoundInTriangulation,
 }
 
 // =============================================================================

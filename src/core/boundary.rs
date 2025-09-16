@@ -60,7 +60,10 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`FacetError`] if any boundary facet cannot be created from the cells.
+    /// Returns a [`FacetError`] if:
+    /// - Any boundary facet cannot be created from the cells
+    /// - A facet index is out of bounds (indicates data corruption)
+    /// - A referenced cell is not found in the triangulation (indicates data corruption)
     ///
     /// # Examples
     ///
@@ -111,24 +114,15 @@ where
                     if let Some(f) = facets.get(usize::from(facet_index)) {
                         boundary_facets.push(f.clone());
                     } else {
-                        debug_assert!(
-                            usize::from(facet_index) < facets.len(),
-                            "facet_index {} out of bounds for {} facets",
-                            facet_index,
-                            facets.len()
-                        );
-                        #[cfg(debug_assertions)]
-                        eprintln!(
-                            "boundary_facets: facet_index {facet_index:?} out of bounds for cell_id {cell_id:?}"
-                        );
+                        // Fail fast: invalid facet index indicates data corruption
+                        return Err(FacetError::InvalidFacetIndex {
+                            index: facet_index,
+                            facet_count: facets.len(),
+                        });
                     }
                 } else {
-                    debug_assert!(
-                        self.cells().contains_key(cell_id),
-                        "cell_id {cell_id:?} should exist in SlotMap"
-                    );
-                    #[cfg(debug_assertions)]
-                    eprintln!("boundary_facets: cell_id {cell_id:?} not found");
+                    // Fail fast: cell not found indicates data corruption
+                    return Err(FacetError::CellNotFoundInTriangulation);
                 }
             }
         }

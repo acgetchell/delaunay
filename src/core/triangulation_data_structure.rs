@@ -949,50 +949,7 @@ where
         cell_key
     }
 
-    /// Helper function to get vertex keys for a cell using the optimized UUID→Key mapping.
-    /// This provides efficient UUID→Key lookups in hot paths.
-    ///
-    /// # Arguments
-    ///
-    /// * `cell` - The cell whose vertex keys we need
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing a `Vec<VertexKey>` if all vertices are found in the mapping,
-    /// or a `FacetError` if any vertex is missing.
-    ///
-    /// # Performance
-    ///
-    /// This uses `FastHashMap` for O(1) UUID→Key lookups.
-    #[inline]
-    fn vertex_keys_for_cell(
-        &self,
-        cell: &Cell<T, U, V, D>,
-    ) -> Result<Vec<VertexKey>, super::facet::FacetError> {
-        let keys: Result<Vec<VertexKey>, _> = cell
-            .vertices()
-            .iter()
-            .map(|v| {
-                self.uuid_to_vertex_key
-                    .get(&v.uuid())
-                    .copied()
-                    .ok_or_else(|| super::facet::FacetError::VertexNotFound { uuid: v.uuid() })
-            })
-            .collect();
-
-        #[cfg(debug_assertions)]
-        if let Ok(ref k) = keys {
-            debug_assert_eq!(
-                k.len(),
-                cell.vertices().len(),
-                "Mapping drift detected: vertex count mismatch"
-            );
-        }
-
-        keys
-    }
-
-    /// **Phase 1 Migration**: Key-based version of `vertex_keys_for_cell` that works directly with `CellKey`.
+    /// **Phase 1 Migration**: Key-based helper that works directly with `CellKey`.
     ///
     /// This method eliminates UUID→Key lookups by working directly with keys, providing:
     /// - Zero UUID mapping lookups for cell access (O(1) `SlotMap` lookup instead of O(1) hash lookup)
@@ -1001,6 +958,9 @@ where
     ///
     /// Note: Currently still performs O(D) UUID→Key lookups for vertices. This will be
     /// optimized in Phase 2 when Cell stores vertex keys directly.
+    ///
+    /// TODO(Phase2): Migrate Cell to store `VertexKey` directly instead of Vertex with UUIDs
+    /// to eliminate these O(D) UUID→Key lookups. Track with issue (TBD).
     ///
     /// # Arguments
     ///
@@ -1849,7 +1809,7 @@ where
             fast_hash_map_with_capacity(self.cells.len() * (D + 1));
 
         for (cell_key, cell) in &self.cells {
-            let vertex_keys = self.vertex_keys_for_cell(cell).map_err(|err| {
+            let vertex_keys = self.vertex_keys_for_cell_direct(cell_key).map_err(|err| {
                 TriangulationValidationError::VertexKeyRetrievalFailed {
                     cell_id: cell.uuid(),
                     message: format!(
@@ -2036,7 +1996,7 @@ where
             fast_hash_map_with_capacity(self.vertices.len());
 
         for (cell_key, cell) in &self.cells {
-            let vertex_keys = self.vertex_keys_for_cell(cell)
+            let vertex_keys = self.vertex_keys_for_cell_direct(cell_key)
                 .map_err(|_e| TriangulationValidationError::InconsistentDataStructure {
                     message: format!("Failed to get vertex keys for cell {}: Vertex UUID not found in vertex mapping", cell.uuid()),
                 })?;
@@ -2097,7 +2057,7 @@ where
 
         // First pass: identify duplicate cells
         for (cell_key, cell) in &self.cells {
-            let Ok(mut vertex_keys) = self.vertex_keys_for_cell(cell) else {
+            let Ok(mut vertex_keys) = self.vertex_keys_for_cell_direct(cell_key) else {
                 #[cfg(debug_assertions)]
                 eprintln!(
                     "debug: skipping cell {} due to unresolved vertex keys",
@@ -2193,6 +2153,12 @@ where
     /// `FacetIndex` (u8) range. This constraint is enforced by debug assertions.
     #[must_use]
     pub fn build_facet_to_cells_hashmap(&self) -> FacetToCellsMap {
+        // Ensure facet indices fit in u8 range
+        debug_assert!(
+            D <= 254,
+            "Dimension D must be <= 254 to fit facet indices in u8"
+        );
+
         let mut facet_to_cells: FacetToCellsMap =
             fast_hash_map_with_capacity(self.cells.len() * (D + 1));
 
@@ -2258,6 +2224,12 @@ where
     pub fn try_build_facet_to_cells_hashmap(
         &self,
     ) -> Result<FacetToCellsMap, TriangulationValidationError> {
+        // Ensure facet indices fit in u8 range
+        debug_assert!(
+            D <= 254,
+            "Dimension D must be <= 254 to fit facet indices in u8"
+        );
+
         let mut facet_to_cells: FacetToCellsMap =
             fast_hash_map_with_capacity(self.cells.len() * (D + 1));
 
