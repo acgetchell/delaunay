@@ -471,8 +471,8 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`ConvexHullConstructionError::NumericCastFailed`] if numeric
-    /// conversion fails during centroid calculation or threshold computation.
+    /// Returns a [`ConvexHullConstructionError::CoordinateConversion`] if
+    /// coordinate conversion fails during centroid calculation or threshold computation.
     ///
     /// # Algorithm
     ///
@@ -537,8 +537,8 @@ where
         }
         // Add epsilon-based bound to avoid false positives from numeric noise
         // Use a small relative epsilon (1e-12 scale) to handle near-surface points
-        let epsilon_factor: T = T::from_f64(1e-12)
-            .or_else(|| T::from_f64(f64::EPSILON))
+        let epsilon_factor: T = NumCast::from(1e-12f64)
+            .or_else(|| NumCast::from(f64::EPSILON))
             .unwrap_or_else(T::zero);
         let adjusted_threshold = max_edge_sq + max_edge_sq * epsilon_factor;
 
@@ -1573,25 +1573,18 @@ mod tests {
             (Point::new([1.5, 1.5, 1.5]), "Beyond facet diameter"),
         ];
 
+        let mut flags = Vec::with_capacity(test_points.len());
         for (point, description) in &test_points {
             let is_visible =
                 ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
                     test_facet, point,
                 )
                 .unwrap();
+            flags.push(is_visible);
             let coords: [f64; 3] = (*point).into();
             println!("  Point {coords:?} ({description}) - Visible: {is_visible}");
         }
-
-        let visible_count = test_points
-            .iter()
-            .filter(|(point, _)| {
-                ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
-                    test_facet, point,
-                )
-                .unwrap()
-            })
-            .count();
+        let visible_count = flags.iter().filter(|&&v| v).count();
         let not_visible_count = test_points.len() - visible_count;
 
         // The new scale-adaptive approach should still distinguish between close and far points

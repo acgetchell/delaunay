@@ -6,7 +6,7 @@
 use super::{
     facet::{Facet, FacetError},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
-    triangulation_data_structure::{Tds, CellKey},
+    triangulation_data_structure::{CellKey, Tds},
     util::derive_facet_key_from_vertices,
 };
 use crate::core::collections::fast_hash_map_with_capacity;
@@ -621,8 +621,9 @@ mod tests {
         );
 
         // Build a map of facet keys to the cells that contain them for detailed verification
+        let dim_usize = usize::try_from(tds.dim().max(0)).unwrap_or(0);
         let mut facet_map: FastHashMap<u64, Vec<_>> =
-            fast_hash_map_with_capacity(tds.number_of_cells() * (tds.dim() as usize + 1));
+            fast_hash_map_with_capacity(tds.number_of_cells() * (dim_usize + 1));
         for (cell_key, cell) in tds.cells() {
             for facet in cell.facets().expect("Should get cell facets") {
                 let facet_vertices = facet.vertices();
