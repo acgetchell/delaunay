@@ -533,9 +533,8 @@ where
 
         // Add epsilon-based bound to avoid false positives from numeric noise
         // Use a small relative epsilon (1e-12 scale) to handle near-surface points
-        let epsilon_factor: T = num_traits::NumCast::from(1e-12f64)
-            .or_else(|| num_traits::NumCast::from(1e-6f64))
-            .unwrap_or_else(|| T::default_tolerance());
+        let epsilon_factor: T =
+            num_traits::NumCast::from(1e-12f64).unwrap_or_else(|| T::default_tolerance());
         let adjusted_threshold = max_edge_sq + max_edge_sq * epsilon_factor;
 
         Ok(distance_squared > adjusted_threshold)
@@ -1574,32 +1573,22 @@ mod tests {
             (Point::new([1.5, 1.5, 1.5]), "Beyond facet diameter"),
         ];
 
-        // Test each point and collect visibility results
-        let visibility_results: Vec<(Point<f64, 3>, &str, bool)> = test_points
-            .into_iter()
-            .map(|(point, description)| {
-                let is_visible =
-                    ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
-                        test_facet, &point,
-                    )
-                    .unwrap();
-
-                let coords: [f64; 3] = point.into();
-                println!("  Point {coords:?} ({description}) - Visible: {is_visible}");
-
-                (point, description, is_visible)
-            })
-            .collect();
-
-        // Count results using iterator patterns
-        let visible_count = visibility_results
-            .iter()
-            .filter(|(_, _, visible)| *visible)
-            .count();
-        let not_visible_count = visibility_results
-            .iter()
-            .filter(|(_, _, visible)| !*visible)
-            .count();
+        let mut visible_count = 0usize;
+        let mut not_visible_count = 0usize;
+        for (point, description) in test_points {
+            let is_visible =
+                ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
+                    test_facet, &point,
+                )
+                .unwrap();
+            let coords: [f64; 3] = point.into();
+            println!("  Point {coords:?} ({description}) - Visible: {is_visible}");
+            if is_visible {
+                visible_count += 1;
+            } else {
+                not_visible_count += 1;
+            }
+        }
 
         // The new scale-adaptive approach should still distinguish between close and far points
         // but the exact threshold is now based on the facet geometry
@@ -3598,10 +3587,8 @@ mod tests {
         );
 
         // Verify the cache Arc is the same (reused)
-        let cache_ptr1 = Arc::as_ptr(&cache1);
-        let cache_ptr2 = Arc::as_ptr(&cache2);
-        assert_eq!(
-            cache_ptr1, cache_ptr2,
+        assert!(
+            Arc::ptr_eq(&cache1, &cache2),
             "Cache Arc should be reused when generation matches"
         );
 
@@ -3619,9 +3606,8 @@ mod tests {
         );
 
         // But should be a different Arc instance
-        let cache_ptr3 = Arc::as_ptr(&cache3);
-        assert_ne!(
-            cache_ptr1, cache_ptr3,
+        assert!(
+            !Arc::ptr_eq(&cache1, &cache3),
             "Rebuilt cache should be a new Arc instance"
         );
 
@@ -3686,6 +3672,10 @@ mod tests {
         assert!(
             !cache.is_empty(),
             "Cache should contain facets from the triangulation"
+        );
+        assert!(
+            keys_found > 0,
+            "At least one hull facet key should be present in the cache"
         );
 
         // Test that helper methods work correctly together in visibility testing

@@ -88,14 +88,18 @@ where
 
         // Collect all facets that belong to only one cell
         for (_facet_key, cells) in facet_to_cells {
-            if cells.len() == 1 {
-                let cell_id = cells[0].0;
-                let facet_index = cells[0].1;
+            if cells.len() == 1
+                && let Some((cell_id, facet_index)) = cells.first().copied()
+            {
                 if let Some(cell) = self.cells().get(cell_id) {
                     let facets = cell.facets()?;
-                    let idx = usize::from(facet_index);
-                    debug_assert!(idx < facets.len(), "facet_index out of bounds");
-                    boundary_facets.push(facets[idx].clone());
+                    if let Some(f) = facets.get(usize::from(facet_index)) {
+                        boundary_facets.push(f.clone());
+                    } else {
+                        debug_assert!(false, "facet_index out of bounds");
+                    }
+                } else {
+                    debug_assert!(false, "cell_id not found in SlotMap");
                 }
             }
         }
@@ -147,6 +151,7 @@ where
     ///     }
     /// }
     /// ```
+    #[inline]
     fn is_boundary_facet(&self, facet: &Facet<T, U, V, D>) -> bool {
         let facet_to_cells = self.build_facet_to_cells_hashmap();
         self.is_boundary_facet_with_map(facet, &facet_to_cells)
@@ -253,7 +258,6 @@ where
             .count()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -413,7 +417,6 @@ mod tests {
 
         let facet_key = facet_key_result.unwrap();
 
-
         // Test that the same facet produces the same key (deterministic)
         let facet_vertices_2 = test_facet.vertices();
         let facet_key_2 = derive_facet_key_from_vertices(&facet_vertices_2, &tds).unwrap();
@@ -471,9 +474,11 @@ mod tests {
         );
 
         // All facets should be boundary facets
+        // Cache once
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
         let mut confirmed_boundary = 0;
         for boundary_facet in &boundary_facets {
-            if tds.is_boundary_facet(boundary_facet) {
+            if tds.is_boundary_facet_with_map(boundary_facet, &facet_to_cells) {
                 confirmed_boundary += 1;
             }
         }
