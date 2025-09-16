@@ -100,26 +100,31 @@ where
                 && let Some((cell_id, facet_index)) = cells.first().copied()
             {
                 if let Some(cell) = self.cells().get(cell_id) {
-                    // Check cache first before computing facets
-                    let facets = if let Some(cached_facets) = cell_facets_cache.get(&cell_id) {
-                        cached_facets
-                    } else {
-                        let computed_facets = cell.facets()?;
-                        cell_facets_cache.insert(cell_id, computed_facets);
-                        cell_facets_cache.get(&cell_id).unwrap() // Safe: just inserted
-                    };
+                    // Cache facets per cell to avoid repeated allocations
+                    cell_facets_cache
+                        .entry(cell_id)
+                        .or_insert_with(|| cell.facets().unwrap_or_default());
+                    let facets = &cell_facets_cache[&cell_id];
 
                     if let Some(f) = facets.get(usize::from(facet_index)) {
                         boundary_facets.push(f.clone());
                     } else {
-                        debug_assert!(false, "facet_index out of bounds");
+                        debug_assert!(
+                            usize::from(facet_index) < facets.len(),
+                            "facet_index {} out of bounds for {} facets",
+                            facet_index,
+                            facets.len()
+                        );
                         #[cfg(debug_assertions)]
                         eprintln!(
                             "boundary_facets: facet_index {facet_index:?} out of bounds for cell_id {cell_id:?}"
                         );
                     }
                 } else {
-                    debug_assert!(false, "cell_id not found in SlotMap");
+                    debug_assert!(
+                        self.cells().contains_key(cell_id),
+                        "cell_id {cell_id:?} should exist in SlotMap"
+                    );
                     #[cfg(debug_assertions)]
                     eprintln!("boundary_facets: cell_id {cell_id:?} not found");
                 }
@@ -221,22 +226,23 @@ where
     ///     }
     /// }
     /// ```
+    #[inline]
     fn is_boundary_facet_with_map(
         &self,
         facet: &Facet<T, U, V, D>,
         facet_to_cells: &crate::core::collections::FacetToCellsMap,
     ) -> bool {
         // Facet::vertices() should always return D vertices by construction
-        // Only check this invariant in debug builds to avoid branch in release
+        let vertices = facet.vertices();
         debug_assert_eq!(
-            facet.vertices().len(),
+            vertices.len(),
             D,
             "Invalid facet: expected {} vertices, got {}",
             D,
-            facet.vertices().len()
+            vertices.len()
         );
 
-        match derive_facet_key_from_vertices(&facet.vertices(), self) {
+        match derive_facet_key_from_vertices(&vertices, self) {
             Ok(facet_key) => facet_to_cells
                 .get(&facet_key)
                 .is_some_and(|cells| cells.len() == 1),
@@ -325,8 +331,11 @@ mod tests {
         );
 
         // All facets should be boundary facets
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
         assert!(
-            boundary_facets.iter().all(|f| tds.is_boundary_facet(f)),
+            boundary_facets
+                .iter()
+                .all(|f| tds.is_boundary_facet_with_map(f, &facet_to_cells)),
             "All facets should be boundary facets in single triangle"
         );
 
@@ -367,8 +376,11 @@ mod tests {
         );
 
         // All facets should be boundary facets
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
         assert!(
-            boundary_facets.iter().all(|f| tds.is_boundary_facet(f)),
+            boundary_facets
+                .iter()
+                .all(|f| tds.is_boundary_facet_with_map(f, &facet_to_cells)),
             "All facets should be boundary facets in single tetrahedron"
         );
 
@@ -717,7 +729,10 @@ mod tests {
                 for facet in cell.facets().expect("Should get cell facets") {
                     if !tds.is_boundary_facet(&facet) {
                         found_internal_facet = true;
-                        println!("Found internal facet: key = {}", facet.key());
+                        let facet_vertices = facet.vertices();
+                        let facet_key =
+                            derive_facet_key_from_vertices(&facet_vertices, &tds).unwrap_or(0); // Use 0 as fallback for debug output
+                        println!("Found internal facet: key = {facet_key}");
                         break;
                     }
                 }

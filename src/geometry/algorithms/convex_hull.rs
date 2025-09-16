@@ -525,13 +525,13 @@ where
                     diff[k] = ai[k] - bj[k];
                 }
                 let edge_sq = squared_norm(diff);
-                if max_edge_sq == T::zero() || edge_sq > max_edge_sq {
+                if max_edge_sq.is_zero() || edge_sq > max_edge_sq {
                     max_edge_sq = edge_sq;
                 }
             }
         }
 
-        if max_edge_sq == T::zero() {
+        if max_edge_sq.is_zero() {
             // Degenerate facet geometry; treat as not visible.
             return Ok(false);
         }
@@ -1594,8 +1594,8 @@ mod tests {
         // We expect that points very far from the facet centroid should be visible,
         // while points close to it should not be visible
         assert!(
-            visible_count > 0 || not_visible_count > 0,
-            "Scale-adaptive threshold should produce some classification"
+            visible_count > 0 && not_visible_count > 0,
+            "Should classify some points as visible and some as not visible"
         );
 
         println!("✓ Fallback visibility test scale-adaptive threshold behavior works correctly");
@@ -3520,7 +3520,7 @@ mod tests {
 
         let test_results: Vec<_> = (0..10)
             .map(|i| {
-                let x = <f64 as From<_>>::from(i).mul_add(0.1, 2.0);
+                let x = NumCast::from(i).unwrap_or(0.0f64).mul_add(0.1, 2.0);
                 let test_pt = Point::new([x, 2.0, 2.0]);
                 hull.is_facet_visible_from_point(facet, &test_pt, &tds)
             })

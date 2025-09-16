@@ -2081,13 +2081,13 @@ where
     /// Builds a `FacetToCellsMap` mapping facet keys to the cells and facet indices that contain them.
     ///
     /// This method iterates over all cells and their facets once, computes the canonical key
-    /// for each facet using `facet.key()`, and creates a mapping from facet keys to the cells
+    /// for each facet using vertex-based key derivation, and creates a mapping from facet keys to the cells
     /// that contain those facets along with the facet index within each cell.
     ///
     /// # Returns
     ///
     /// A `FacetToCellsMap` where:
-    /// - The key is the canonical facet key (u64) computed by `facet.key()`
+    /// - The key is the canonical facet key (u64) computed from the facet's vertices
     /// - The value is a vector of tuples containing:
     ///   - `CellKey`: The `SlotMap` key of the cell containing this facet
     ///   - `FacetIndex`: The index of this facet within the cell (0-based)
@@ -2992,8 +2992,10 @@ mod tests {
     use super::*;
     use crate::cell;
     use crate::core::{
-        collections::FastHashMap, traits::boundary_analysis::BoundaryAnalysis,
-        util::facets_are_adjacent, vertex::VertexBuilder,
+        collections::FastHashMap,
+        traits::boundary_analysis::BoundaryAnalysis,
+        util::{derive_facet_key_from_vertices, facets_are_adjacent},
+        vertex::VertexBuilder,
     };
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
     use crate::vertex;
@@ -5715,7 +5717,10 @@ mod tests {
         let mut facet_map: FastHashMap<u64, Vec<Uuid>> = FastHashMap::default();
         for cell in tds.cells.values() {
             for facet in cell.facets().expect("Should get cell facets") {
-                facet_map.entry(facet.key()).or_default().push(cell.uuid());
+                let facet_vertices = facet.vertices();
+                if let Ok(facet_key) = derive_facet_key_from_vertices(&facet_vertices, &tds) {
+                    facet_map.entry(facet_key).or_default().push(cell.uuid());
+                }
             }
         }
 
