@@ -5,7 +5,7 @@
 //! "No cavity boundary facets found" error.
 
 use crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE;
-use crate::core::collections::{FastHashMap, FastHashSet, SmallBuffer};
+use crate::core::collections::{CellKeySet, FastHashMap, FastHashSet, SmallBuffer};
 use crate::core::util::derive_facet_key_from_vertices;
 use std::marker::PhantomData;
 use std::ops::{AddAssign, Div, DivAssign, SubAssign};
@@ -520,7 +520,7 @@ where
             return Ok(boundary_facets);
         }
 
-        let bad_cell_set: FastHashSet<CellKey> = bad_cells.iter().copied().collect();
+        let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
 
         // Build facet-to-cells mapping with enhanced validation
         let facet_to_cells = self.build_validated_facet_mapping(tds)?;

@@ -77,6 +77,20 @@
 //! // Use domain-specific optimized collections
 //! let facet_map: FacetToCellsMap = FacetToCellsMap::default();
 //! ```
+//!
+//! ## Phase 1 Migration: Key-Based Internal Operations
+//!
+//! Phase 1 of the UUID-to-Key migration provides optimized collections for internal operations:
+//!
+//! ```rust
+//! use delaunay::core::collections::{CellKeySet, VertexKeySet, KeyBasedCellMap};
+//! use delaunay::core::triangulation_data_structure::{CellKey, VertexKey};
+//!
+//! // Phase 1: Direct key-based collections for internal algorithms
+//! let mut internal_cells: CellKeySet = CellKeySet::default();
+//! let mut internal_vertices: VertexKeySet = VertexKeySet::default();
+//! let mut key_mappings: KeyBasedCellMap<String> = KeyBasedCellMap::default();
+//! ```
 
 use fxhash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -158,12 +172,23 @@ pub type FastHashMap<K, V> = FxHashMap<K, V>;
 ///
 /// # Examples
 ///
+/// External API usage (UUID-based for compatibility):
 /// ```rust
 /// use delaunay::core::collections::FastHashSet;
 /// use uuid::Uuid;
 ///
 /// let mut set: FastHashSet<Uuid> = FastHashSet::default();
 /// set.insert(Uuid::new_v4());
+/// ```
+///
+/// **Phase 1**: Internal operations (key-based for performance):
+/// ```rust
+/// use delaunay::core::collections::{FastHashSet, CellKeySet};
+/// use delaunay::core::triangulation_data_structure::CellKey;
+///
+/// // For internal algorithms, prefer direct key-based collections
+/// let mut internal_set: CellKeySet = CellKeySet::default();
+/// // internal_set.insert(cell_key); // No UUID lookup needed
 /// ```
 pub type FastHashSet<T> = FxHashSet<T>;
 
@@ -486,6 +511,168 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 /// ```
 pub type UuidToCellKeyMap = FastHashMap<Uuid, CellKey>;
 
+// =============================================================================
+// PHASE 1 MIGRATION: KEY-BASED INTERNAL TYPES
+// =============================================================================
+
+/// **Phase 1 Migration**: Optimized set for `CellKey` collections in internal operations.
+///
+/// This eliminates UUID dependencies in internal algorithms by working directly with `SlotMap` keys.
+/// Provides the same performance benefits as `FastHashSet` but for direct key operations.
+///
+/// # Performance Benefits
+///
+/// - **No UUID→Key lookups**: O(0) hash operations vs O(1) UUID→Key mapping
+/// - **Direct `SlotMap` compatibility**: Keys can be used directly for data structure access
+/// - **Memory efficiency**: `CellKey` is typically smaller than `Uuid` (8 bytes vs 16 bytes)
+/// - **Cache friendly**: Better memory locality for key-based algorithms
+///
+/// # Use Cases
+///
+/// - Internal cell tracking during algorithms
+/// - Validation operations that work with cell keys
+/// - Temporary cell collections in geometric operations
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::CellKeySet;
+/// use delaunay::core::triangulation_data_structure::CellKey;
+///
+/// // Direct key-based operations (Phase 1 internal algorithms)
+/// let mut cell_set: CellKeySet = CellKeySet::default();
+/// // cell_key comes from SlotMap operations, no UUID lookups needed
+/// // cell_set.insert(cell_key);
+/// ```
+pub type CellKeySet = FastHashSet<CellKey>;
+
+/// **Phase 1 Migration**: Optimized set for `VertexKey` collections in internal operations.
+///
+/// This eliminates UUID dependencies in internal algorithms by working directly with `SlotMap` keys.
+/// Provides the same performance benefits as `FastHashSet` but for direct key operations.
+///
+/// # Performance Benefits
+///
+/// - **No UUID→Key lookups**: O(0) hash operations vs O(1) UUID→Key mapping
+/// - **Direct `SlotMap` compatibility**: Keys can be used directly for data structure access  
+/// - **Memory efficiency**: `VertexKey` is typically smaller than `Uuid` (8 bytes vs 16 bytes)
+/// - **Cache friendly**: Better memory locality for key-based algorithms
+///
+/// # Use Cases
+///
+/// - Internal vertex tracking during algorithms
+/// - Validation operations that work with vertex keys
+/// - Temporary vertex collections in geometric operations
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::VertexKeySet;
+/// use delaunay::core::triangulation_data_structure::VertexKey;
+///
+/// // Direct key-based operations (Phase 1 internal algorithms)
+/// let mut vertex_set: VertexKeySet = VertexKeySet::default();
+/// // vertex_key comes from SlotMap operations, no UUID lookups needed
+/// // vertex_set.insert(vertex_key);
+/// ```
+pub type VertexKeySet = FastHashSet<VertexKey>;
+
+/// **Phase 1 Migration**: Key-based mapping for internal cell operations.
+///
+/// This provides direct `CellKey` → Value mapping without requiring UUID lookups,
+/// optimizing internal algorithms that work with cell keys.
+///
+/// # Performance Benefits
+///
+/// - **Direct key access**: No intermediate UUID→Key mapping required
+/// - **`SlotMap` integration**: Keys align perfectly with internal data structure access patterns
+/// - **Memory efficiency**: Avoids storing redundant UUID→Key associations
+/// - **Algorithm optimization**: Enables O(0) key operations in hot paths
+///
+/// # Use Cases
+///
+/// - Internal cell metadata storage
+/// - Algorithm state tracking per cell
+/// - Temporary mappings during geometric operations
+/// - Validation data associated with specific cells
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::KeyBasedCellMap;
+/// use delaunay::core::triangulation_data_structure::CellKey;
+///
+/// // Direct key-based mapping (Phase 1 internal algorithms)
+/// let mut cell_data: KeyBasedCellMap<f64> = KeyBasedCellMap::default();
+/// // cell_key comes from SlotMap, value is algorithm-specific data
+/// // cell_data.insert(cell_key, 42.0);
+/// ```
+pub type KeyBasedCellMap<V> = FastHashMap<CellKey, V>;
+
+/// **Phase 1 Migration**: Key-based mapping for internal vertex operations.
+///
+/// This provides direct `VertexKey` → Value mapping without requiring UUID lookups,
+/// optimizing internal algorithms that work with vertex keys.
+///
+/// # Performance Benefits
+///
+/// - **Direct key access**: No intermediate UUID→Key mapping required
+/// - **`SlotMap` integration**: Keys align perfectly with internal data structure access patterns
+/// - **Memory efficiency**: Avoids storing redundant UUID→Key associations
+/// - **Algorithm optimization**: Enables O(0) key operations in hot paths
+///
+/// # Use Cases
+///
+/// - Internal vertex metadata storage
+/// - Algorithm state tracking per vertex
+/// - Temporary mappings during geometric operations
+/// - Validation data associated with specific vertices
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::KeyBasedVertexMap;
+/// use delaunay::core::triangulation_data_structure::VertexKey;
+///
+/// // Direct key-based mapping (Phase 1 internal algorithms)
+/// let mut vertex_data: KeyBasedVertexMap<String> = KeyBasedVertexMap::default();
+/// // vertex_key comes from SlotMap, value is algorithm-specific data
+/// // vertex_data.insert(vertex_key, "metadata".to_string());
+/// ```
+pub type KeyBasedVertexMap<V> = FastHashMap<VertexKey, V>;
+
+/// **Phase 1 Migration**: Optimized neighbor mapping using direct key relationships.
+///
+/// This replaces UUID-based neighbor mappings with direct key-to-key relationships,
+/// eliminating UUID lookups in neighbor assignment and traversal operations.
+///
+/// # Performance Benefits
+///
+/// - **No UUID lookups**: Direct key-to-key mapping eliminates hash table lookups
+/// - **`SlotMap` alignment**: Both keys and values work directly with internal data structures
+/// - **Memory efficiency**: Keys are typically smaller than UUIDs
+/// - **Cache optimization**: Better memory locality for neighbor traversals
+///
+/// # Use Cases
+///
+/// - Internal neighbor assignment algorithms
+/// - Topology validation operations
+/// - Graph traversal algorithms on the triangulation
+/// - Geometric operations requiring neighbor access
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::KeyBasedNeighborMap;
+/// use delaunay::core::triangulation_data_structure::{CellKey, VertexKey};
+///
+/// // Direct key-based neighbor mapping (Phase 1 internal algorithms)
+/// let mut neighbors: KeyBasedNeighborMap = KeyBasedNeighborMap::default();
+/// // Both cell_key and neighbor_key come from SlotMap operations
+/// // neighbors.insert(cell_key, neighbor_key);
+/// ```
+pub type KeyBasedNeighborMap = FastHashMap<CellKey, CellKey>;
+
 /// Size constant for batch point processing operations.
 /// 16 provides sufficient capacity for typical geometric algorithm batches.
 const BATCH_PROCESSING_BUFFER_SIZE: usize = 16;
@@ -540,12 +727,22 @@ pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
 ///
 /// # Examples
 ///
+/// External API usage (UUID-based):
 /// ```rust
 /// use delaunay::core::collections::fast_hash_set_with_capacity;
 /// use uuid::Uuid;
 ///
 /// let set = fast_hash_set_with_capacity::<Uuid>(500);
 /// // Can insert up to ~375 UUIDs without rehashing
+/// ```
+///
+/// **Phase 1**: Internal operations (key-based for better performance):
+/// ```rust
+/// use delaunay::core::collections::fast_hash_set_with_capacity;
+/// use delaunay::core::triangulation_data_structure::CellKey;
+///
+/// let set = fast_hash_set_with_capacity::<CellKey>(500);
+/// // Can insert up to ~375 CellKeys without rehashing, more memory efficient
 /// ```
 #[inline]
 #[must_use]
@@ -644,5 +841,24 @@ mod tests {
         let _cell_vertices: CellVerticesMap = CellVerticesMap::default();
 
         // Just test that they compile and can be instantiated
+    }
+
+    #[test]
+    fn test_phase1_key_based_types() {
+        // Test that Phase 1 key-based types compile and can be instantiated
+        let _cell_set: CellKeySet = CellKeySet::default();
+        let _vertex_set: VertexKeySet = VertexKeySet::default();
+        let _cell_map: KeyBasedCellMap<i32> = KeyBasedCellMap::default();
+        let _vertex_map: KeyBasedVertexMap<String> = KeyBasedVertexMap::default();
+        let _neighbor_map: KeyBasedNeighborMap = KeyBasedNeighborMap::default();
+
+        // Test basic operations work
+        let cell_set: CellKeySet = CellKeySet::default();
+        assert!(cell_set.is_empty());
+        assert_eq!(cell_set.len(), 0);
+
+        let cell_map: KeyBasedCellMap<f64> = KeyBasedCellMap::default();
+        assert!(cell_map.is_empty());
+        assert_eq!(cell_map.len(), 0);
     }
 }

@@ -4,7 +4,7 @@
 //! interface for different vertex insertion strategies, including the basic
 //! Bowyer-Watson algorithm and robust variants with enhanced numerical stability.
 
-use crate::core::collections::FastHashSet;
+use crate::core::collections::CellKeySet;
 use crate::core::{
     cell::CellBuilder,
     facet::Facet,
@@ -647,8 +647,7 @@ where
             return Ok(boundary_facets);
         }
 
-        let bad_cell_set: FastHashSet<crate::core::triangulation_data_structure::CellKey> =
-            bad_cells.iter().copied().collect();
+        let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
 
         // Use the canonical facet-to-cells map from TDS (already uses VertexKeys)
         let facet_to_cells = tds.build_facet_to_cells_hashmap();

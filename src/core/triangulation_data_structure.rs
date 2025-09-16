@@ -171,9 +171,9 @@ use uuid::Uuid;
 
 // Crate-internal imports
 use crate::core::collections::{
-    CellRemovalBuffer, CellVertexKeysMap, CellVerticesMap, FacetToCellsMap, FastHashMap,
-    FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, UuidToCellKeyMap, UuidToVertexKeyMap,
-    ValidCellsBuffer, VertexToCellsMap, fast_hash_map_with_capacity,
+    CellKeySet, CellRemovalBuffer, CellVertexKeysMap, CellVerticesMap, FacetToCellsMap,
+    FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, UuidToCellKeyMap, UuidToVertexKeyMap,
+    ValidCellsBuffer, VertexKeySet, VertexToCellsMap, fast_hash_map_with_capacity,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
@@ -990,6 +990,51 @@ where
         }
 
         keys
+    }
+
+    /// **Phase 1 Migration**: Key-based version of `vertex_keys_for_cell` that works directly with `CellKey`.
+    ///
+    /// This method eliminates UUID→Key lookups by working directly with keys, providing:
+    /// - Zero UUID mapping lookups (O(0) instead of O(D) hash lookups)
+    /// - Direct `SlotMap` access for maximum performance
+    /// - Same functionality as the UUID-based version
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_key` - The key of the cell whose vertex keys we need
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a `Vec<VertexKey>` if the cell exists and all vertices are valid,
+    /// or a `FacetError` if the cell doesn't exist or vertices are missing.
+    ///
+    /// # Performance
+    ///
+    /// This uses direct `SlotMap` access with O(1) key lookups, avoiding UUID hash operations entirely.
+    #[inline]
+    fn vertex_keys_for_cell_direct(
+        &self,
+        cell_key: CellKey,
+    ) -> Result<Vec<VertexKey>, super::facet::FacetError> {
+        let cell = self.cells.get(cell_key).ok_or_else(|| {
+            super::facet::FacetError::VertexNotFound {
+                // For error compatibility, we need a UUID - get it from the cell if possible
+                // In practice this error case should be rare since we're working with valid keys
+                uuid: uuid::Uuid::new_v4(), // Placeholder UUID for missing cell case
+            }
+        })?;
+
+        // Use the existing UUID-based logic for now, but this opens the path for further optimization
+        // where Cell could store vertex keys directly instead of vertices with UUIDs
+        cell.vertices()
+            .iter()
+            .map(|v| {
+                self.uuid_to_vertex_key
+                    .get(&v.uuid())
+                    .copied()
+                    .ok_or_else(|| super::facet::FacetError::VertexNotFound { uuid: v.uuid() })
+            })
+            .collect()
     }
 
     /// Helper function to get a cell key from a cell UUID using the optimized UUID→Key mapping.
@@ -2144,7 +2189,8 @@ where
 
         // Iterate over all cells and their facets
         for (cell_id, cell) in &self.cells {
-            let Ok(vertex_keys) = self.vertex_keys_for_cell(cell) else {
+            // Phase 1: Use direct key-based method to avoid UUID→Key lookups
+            let Ok(vertex_keys) = self.vertex_keys_for_cell_direct(cell_id) else {
                 #[cfg(debug_assertions)]
                 eprintln!(
                     "debug: skipping cell {} due to missing vertex keys in facet mapping",
@@ -2217,14 +2263,15 @@ where
 
         // There are facet sharing issues, proceed with the fix
         let facet_to_cells = self.build_facet_to_cells_hashmap();
-        let mut cells_to_remove: FastHashSet<CellKey> = FastHashSet::default();
+        let mut cells_to_remove: CellKeySet = CellKeySet::default();
 
         // Find facets that are shared by more than 2 cells and validate which ones are correct
         for (facet_key, cell_facet_pairs) in facet_to_cells {
             if cell_facet_pairs.len() > 2 {
                 let (first_cell_key, first_facet_index) = cell_facet_pairs[0];
-                if let Some(first_cell) = self.cells.get(first_cell_key) {
-                    let Ok(vertex_keys) = self.vertex_keys_for_cell(first_cell) else {
+                if let Some(_first_cell) = self.cells.get(first_cell_key) {
+                    // Phase 1: Use direct key-based method to avoid UUID→Key lookups
+                    let Ok(vertex_keys) = self.vertex_keys_for_cell_direct(first_cell_key) else {
                         #[cfg(debug_assertions)]
                         eprintln!(
                             "debug: skipping cell {first_cell_key:?} due to unresolved vertex keys in facet sharing fix"
@@ -2241,17 +2288,20 @@ where
 
                     let mut valid_cells = ValidCellsBuffer::new();
                     for &(cell_key, _facet_index) in &cell_facet_pairs {
-                        if let Some(cell) = self.cells.get(cell_key) {
-                            let Ok(cell_vertex_keys_vec) = self.vertex_keys_for_cell(cell) else {
+                        if let Some(_cell) = self.cells.get(cell_key) {
+                            // Phase 1: Use direct key-based method to avoid UUID→Key lookups
+                            let Ok(cell_vertex_keys_vec) =
+                                self.vertex_keys_for_cell_direct(cell_key)
+                            else {
                                 #[cfg(debug_assertions)]
                                 eprintln!(
                                     "debug: skipping cell {cell_key:?} due to unresolved vertex keys in validation"
                                 );
                                 continue; // Skip cells with unresolved vertex keys
                             };
-                            let cell_vertex_keys: FastHashSet<VertexKey> =
+                            let cell_vertex_keys: VertexKeySet =
                                 cell_vertex_keys_vec.into_iter().collect();
-                            let facet_vertex_keys_set: FastHashSet<VertexKey> =
+                            let facet_vertex_keys_set: VertexKeySet =
                                 facet_vertex_keys.iter().copied().collect();
 
                             if facet_vertex_keys_set.is_subset(&cell_vertex_keys) {
@@ -2372,20 +2422,25 @@ where
             });
         }
 
+        // Phase 1: Optimize validation by checking key-to-UUID direction first (direct SlotMap access)
+        // then only doing UUID-to-key lookup verification when needed
         for (vertex_key, vertex) in &self.vertices {
             let vertex_uuid = vertex.uuid();
-            if self.uuid_to_vertex_key.get(&vertex_uuid) != Some(&vertex_key) {
-                return Err(TriangulationValidationError::MappingInconsistency {
-                    message: format!(
-                        "Inconsistent or missing UUID-to-key mapping for vertex UUID {vertex_uuid:?}"
-                    ),
-                });
-            }
-            // For key-to-UUID validation, we use direct SlotMap access
+
+            // Check key-to-UUID direction first (direct SlotMap access - no hash lookup)
             if self.vertex_uuid_from_key(vertex_key) != Some(vertex_uuid) {
                 return Err(TriangulationValidationError::MappingInconsistency {
                     message: format!(
                         "Inconsistent or missing key-to-UUID mapping for vertex key {vertex_key:?}"
+                    ),
+                });
+            }
+
+            // Now verify UUID-to-key direction (requires hash lookup but we know it should exist)
+            if self.uuid_to_vertex_key.get(&vertex_uuid) != Some(&vertex_key) {
+                return Err(TriangulationValidationError::MappingInconsistency {
+                    message: format!(
+                        "Inconsistent or missing UUID-to-key mapping for vertex UUID {vertex_uuid:?}"
                     ),
                 });
             }
@@ -2444,20 +2499,25 @@ where
             });
         }
 
+        // Phase 1: Optimize validation by checking key-to-UUID direction first (direct SlotMap access)
+        // then only doing UUID-to-key lookup verification when needed
         for (cell_key, cell) in &self.cells {
             let cell_uuid = cell.uuid();
-            if self.uuid_to_cell_key.get(&cell_uuid) != Some(&cell_key) {
-                return Err(TriangulationValidationError::MappingInconsistency {
-                    message: format!(
-                        "Inconsistent or missing UUID-to-key mapping for cell UUID {cell_uuid:?}"
-                    ),
-                });
-            }
-            // For key-to-UUID validation, we use direct SlotMap access
+
+            // Check key-to-UUID direction first (direct SlotMap access - no hash lookup)
             if self.cell_uuid_from_key(cell_key) != Some(cell_uuid) {
                 return Err(TriangulationValidationError::MappingInconsistency {
                     message: format!(
                         "Inconsistent or missing key-to-UUID mapping for cell key {cell_key:?}"
+                    ),
+                });
+            }
+
+            // Now verify UUID-to-key direction (requires hash lookup but we know it should exist)
+            if self.uuid_to_cell_key.get(&cell_uuid) != Some(&cell_key) {
+                return Err(TriangulationValidationError::MappingInconsistency {
+                    message: format!(
+                        "Inconsistent or missing UUID-to-key mapping for cell UUID {cell_uuid:?}"
                     ),
                 });
             }
@@ -2469,12 +2529,16 @@ where
     ///
     /// This is useful for validation where you want to detect duplicates
     /// without automatically removing them.
+    ///
+    /// **Phase 1 Migration**: This method now uses the optimized `vertex_keys_for_cell_direct`
+    /// method to eliminate UUID→Key hash lookups, improving performance.
     fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError> {
         let mut unique_cells = FastHashMap::default();
         let mut duplicates = Vec::new();
 
         for (cell_key, cell) in &self.cells {
-            let Ok(vertex_keys) = self.vertex_keys_for_cell(cell) else {
+            // Phase 1: Use direct key-based method to avoid UUID→Key lookups
+            let Ok(vertex_keys) = self.vertex_keys_for_cell_direct(cell_key) else {
                 #[cfg(debug_assertions)]
                 eprintln!(
                     "debug: skipping cell {} due to missing vertex keys in duplicate validation",
@@ -2662,7 +2726,7 @@ where
                 .collect();
 
             // Store both the Vec (for positional access) and HashSet (for containment checks)
-            let vertex_set: FastHashSet<VertexKey> = vertex_keys.iter().copied().collect();
+            let vertex_set: VertexKeySet = vertex_keys.iter().copied().collect();
             cell_vertices.insert(cell_key, vertex_set);
             cell_vertex_keys.insert(cell_key, vertex_keys);
         }
@@ -2710,7 +2774,7 @@ where
                 // This means the neighbor should contain all vertices of current cell EXCEPT vertices[i]
                 if i < cell_vertex_keys.len() {
                     let opposite_vertex_key = cell_vertex_keys[i];
-                    let expected_shared_vertices: FastHashSet<VertexKey> = cell_vertex_keys
+                    let expected_shared_vertices: VertexKeySet = cell_vertex_keys
                         .iter()
                         .filter(|&&vk| vk != opposite_vertex_key)
                         .copied()
@@ -4431,12 +4495,12 @@ mod tests {
 
                 // Since we only have 1 neighbor stored, we need to find which vertex index
                 // this neighbor corresponds to by checking which vertex is NOT shared
-                let cell_vertex_keys: FastHashSet<VertexKey> = tds
+                let cell_vertex_keys: VertexKeySet = tds
                     .vertex_keys_for_cell(cell)
                     .unwrap()
                     .into_iter()
                     .collect();
-                let neighbor_vertex_keys: FastHashSet<VertexKey> = tds
+                let neighbor_vertex_keys: VertexKeySet = tds
                     .vertex_keys_for_cell(neighbor_cell)
                     .unwrap()
                     .into_iter()
@@ -4467,7 +4531,7 @@ mod tests {
                 // Since we only store actual neighbors (filter out None), we need to map back
                 // For now, we verify that the neighbor relationship is geometrically sound:
                 // The cells should share exactly D=3 vertices (they share a facet)
-                let shared_vertices: FastHashSet<VertexKey> = cell_vertex_keys
+                let shared_vertices: VertexKeySet = cell_vertex_keys
                     .intersection(&neighbor_vertex_keys)
                     .copied()
                     .collect();

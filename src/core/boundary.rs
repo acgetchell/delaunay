@@ -6,10 +6,10 @@
 use super::{
     facet::{Facet, FacetError},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
-    triangulation_data_structure::{CellKey, Tds},
+    triangulation_data_structure::Tds,
     util::derive_facet_key_from_vertices,
 };
-use crate::core::collections::fast_hash_map_with_capacity;
+use crate::core::collections::{KeyBasedCellMap, fast_hash_map_with_capacity};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use nalgebra::ComplexField;
 use serde::{Serialize, de::DeserializeOwned};
@@ -89,10 +89,8 @@ where
 
         // Per-call cache to avoid repeated cell.facets() allocations
         // when multiple boundary facets reference the same cell
-        let mut cell_facets_cache: crate::core::collections::FastHashMap<
-            CellKey,
-            Vec<Facet<T, U, V, D>>,
-        > = fast_hash_map_with_capacity(self.number_of_cells());
+        let mut cell_facets_cache: KeyBasedCellMap<Vec<Facet<T, U, V, D>>> =
+            fast_hash_map_with_capacity(self.number_of_cells());
 
         // Collect all facets that belong to only one cell
         for (_facet_key, cells) in facet_to_cells {
