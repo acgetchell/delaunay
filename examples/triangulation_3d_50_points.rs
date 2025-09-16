@@ -60,7 +60,7 @@ fn main() {
     let vertex_count = tds.number_of_vertices();
     println!("Generated {vertex_count} vertices");
     println!("First few vertices:");
-    for (i, (_key, vertex)) in tds.vertices.iter().take(10).enumerate() {
+    for (i, (_key, vertex)) in tds.vertices().iter().take(10).enumerate() {
         let coords: [f64; 3] = vertex.into();
         println!(
             "  v{:2}: [{:8.3}, {:8.3}, {:8.3}]",

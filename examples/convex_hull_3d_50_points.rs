@@ -63,7 +63,7 @@ fn main() {
     let vertex_count = tds.number_of_vertices();
     println!("Generated {vertex_count} vertices");
     println!("First few vertices:");
-    for (displayed, (_key, vertex)) in (&tds.vertices).into_iter().enumerate() {
+    for (displayed, (_key, vertex)) in tds.vertices().iter().enumerate() {
         if displayed >= 10 {
             break;
         }
@@ -206,7 +206,7 @@ fn test_point_containment(
     // Calculate centroid of triangulation vertices
     let mut centroid = [0.0f64; 3];
     let vertex_count = tds.number_of_vertices();
-    for (_, vertex) in &tds.vertices {
+    for (_, vertex) in tds.vertices() {
         let coords: [f64; 3] = vertex.into();
         for (i, &coord) in coords.iter().enumerate() {
             centroid[i] += coord;
@@ -239,7 +239,7 @@ fn test_point_containment(
     // Test 3: Sample triangulation vertices (should be on boundary or inside)
     println!("\n  Testing triangulation vertices:");
     let sample_vertices = std::cmp::min(3, vertex_count);
-    for (i, (_, vertex)) in tds.vertices.iter().enumerate().take(sample_vertices) {
+    for (i, (_, vertex)) in tds.vertices().iter().enumerate().take(sample_vertices) {
         let point: Point<f64, 3> = vertex.into();
         test_point_containment_single(
             &hull,

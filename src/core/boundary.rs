@@ -6,8 +6,10 @@
 use super::{
     facet::{Facet, FacetError},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
-    triangulation_data_structure::Tds,
+    triangulation_data_structure::{CellKey, Tds},
+    util::derive_facet_key_from_vertices,
 };
+use crate::core::collections::fast_hash_map_with_capacity;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use nalgebra::ComplexField;
 use serde::{Serialize, de::DeserializeOwned};
@@ -85,16 +87,46 @@ where
         // Upper bound on the number of boundary facets is the map size
         let mut boundary_facets = Vec::with_capacity(facet_to_cells.len());
 
+        // Per-call cache to avoid repeated cell.facets() allocations
+        // when multiple boundary facets reference the same cell
+        let mut cell_facets_cache: crate::core::collections::FastHashMap<
+            CellKey,
+            Vec<Facet<T, U, V, D>>,
+        > = fast_hash_map_with_capacity(self.number_of_cells());
+
         // Collect all facets that belong to only one cell
         for (_facet_key, cells) in facet_to_cells {
-            if cells.len() == 1 {
-                let cell_id = cells[0].0;
-                let facet_index = cells[0].1;
+            if cells.len() == 1
+                && let Some((cell_id, facet_index)) = cells.first().copied()
+            {
                 if let Some(cell) = self.cells().get(cell_id) {
-                    let facets = cell.facets()?;
-                    let idx = usize::from(facet_index);
-                    debug_assert!(idx < facets.len(), "facet_index out of bounds");
-                    boundary_facets.push(facets[idx].clone());
+                    // Cache facets per cell to avoid repeated allocations
+                    cell_facets_cache
+                        .entry(cell_id)
+                        .or_insert_with(|| cell.facets().unwrap_or_default());
+                    let facets = &cell_facets_cache[&cell_id];
+
+                    if let Some(f) = facets.get(usize::from(facet_index)) {
+                        boundary_facets.push(f.clone());
+                    } else {
+                        debug_assert!(
+                            usize::from(facet_index) < facets.len(),
+                            "facet_index {} out of bounds for {} facets",
+                            facet_index,
+                            facets.len()
+                        );
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "boundary_facets: facet_index {facet_index:?} out of bounds for cell_id {cell_id:?}"
+                        );
+                    }
+                } else {
+                    debug_assert!(
+                        self.cells().contains_key(cell_id),
+                        "cell_id {cell_id:?} should exist in SlotMap"
+                    );
+                    #[cfg(debug_assertions)]
+                    eprintln!("boundary_facets: cell_id {cell_id:?} not found");
                 }
             }
         }
@@ -105,6 +137,12 @@ where
     /// Checks if a specific facet is a boundary facet.
     ///
     /// A boundary facet is a facet that belongs to only one cell in the triangulation.
+    ///
+    /// # Performance Note
+    ///
+    /// This method rebuilds the facet-to-cells map on every call, which has O(N·F) complexity.
+    /// For checking multiple facets in hot paths, prefer using `is_boundary_facet_with_map()`
+    /// with a precomputed map to avoid recomputation.
     ///
     /// # Arguments
     ///
@@ -140,13 +178,79 @@ where
     ///     }
     /// }
     /// ```
+    #[inline]
     fn is_boundary_facet(&self, facet: &Facet<T, U, V, D>) -> bool {
-        // Build the facet-to-cells map to check if the facet belongs to only one cell
-        // Note: This recomputes the map per call; for repeated queries, compute once and reuse.
         let facet_to_cells = self.build_facet_to_cells_hashmap();
-        facet_to_cells
-            .get(&facet.key())
-            .is_some_and(|cells| cells.len() == 1)
+        self.is_boundary_facet_with_map(facet, &facet_to_cells)
+    }
+
+    /// Checks if a specific facet is a boundary facet using a precomputed facet map.
+    ///
+    /// This is an optimized version of `is_boundary_facet` that accepts a prebuilt
+    /// facet-to-cells map to avoid recomputation in tight loops.
+    ///
+    /// # Arguments
+    ///
+    /// * `facet` - The facet to check.
+    /// * `facet_to_cells` - Precomputed map from facet keys to cells containing them.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the facet is on the boundary (belongs to only one cell), `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// // Build the facet map once for multiple queries
+    /// let facet_to_cells = tds.build_facet_to_cells_hashmap();
+    ///
+    /// // Check multiple facets efficiently
+    /// if let Some(cell) = tds.cells().values().next() {
+    ///     if let Ok(facets) = cell.facets() {
+    ///         for facet in &facets {
+    ///             let is_boundary = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
+    ///             println!("Facet is boundary: {is_boundary}");
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    #[inline]
+    fn is_boundary_facet_with_map(
+        &self,
+        facet: &Facet<T, U, V, D>,
+        facet_to_cells: &crate::core::collections::FacetToCellsMap,
+    ) -> bool {
+        // Facet::vertices() should always return D vertices by construction
+        let vertices = facet.vertices();
+        debug_assert_eq!(
+            vertices.len(),
+            D,
+            "Invalid facet: expected {} vertices, got {}",
+            D,
+            vertices.len()
+        );
+
+        match derive_facet_key_from_vertices(&vertices, self) {
+            Ok(facet_key) => facet_to_cells
+                .get(&facet_key)
+                .is_some_and(|cells| cells.len() == 1),
+            Err(e) => {
+                debug_assert!(false, "derive_facet_key_from_vertices failed: {e:?}");
+                false
+            }
+        }
     }
 
     /// Returns the number of boundary facets in the triangulation.
@@ -188,11 +292,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::BoundaryAnalysis;
+    use crate::core::collections::{FastHashMap, fast_hash_map_with_capacity};
     use crate::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
+    use crate::core::util::derive_facet_key_from_vertices;
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
-    use std::collections::HashMap;
-    use uuid::Uuid;
 
     // =============================================================================
     // SINGLE SIMPLEX TESTS
@@ -227,12 +331,13 @@ mod tests {
         );
 
         // All facets should be boundary facets
-        for boundary_facet in &boundary_facets {
-            assert!(
-                tds.is_boundary_facet(boundary_facet),
-                "All facets should be boundary facets in single triangle"
-            );
-        }
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        assert!(
+            boundary_facets
+                .iter()
+                .all(|f| tds.is_boundary_facet_with_map(f, &facet_to_cells)),
+            "All facets should be boundary facets in single triangle"
+        );
 
         println!("✓ 2D triangle boundary analysis works correctly");
     }
@@ -271,14 +376,138 @@ mod tests {
         );
 
         // All facets should be boundary facets
-        for boundary_facet in &boundary_facets {
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        assert!(
+            boundary_facets
+                .iter()
+                .all(|f| tds.is_boundary_facet_with_map(f, &facet_to_cells)),
+            "All facets should be boundary facets in single tetrahedron"
+        );
+
+        println!("✓ 3D tetrahedron boundary analysis works correctly");
+    }
+
+    #[test]
+    fn test_is_boundary_facet_with_map_cached_version() {
+        // Test the cached version of is_boundary_facet for better performance in tight loops
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Build the facet map once for efficiency
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+
+        // Get all facets from the single tetrahedron
+        let cell = tds.cells().values().next().expect("Should have one cell");
+        let facets = cell.facets().expect("Should get facets from cell");
+
+        // Test that both methods give the same results
+        for facet in &facets {
+            let is_boundary_regular = tds.is_boundary_facet(facet);
+            let is_boundary_cached = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
+
+            assert_eq!(
+                is_boundary_regular, is_boundary_cached,
+                "Regular and cached methods should give same result"
+            );
+
+            // In a single tetrahedron, all facets are boundary facets
             assert!(
-                tds.is_boundary_facet(boundary_facet),
-                "All facets should be boundary facets in single tetrahedron"
+                is_boundary_cached,
+                "All facets in single tetrahedron should be boundary facets"
             );
         }
 
-        println!("✓ 3D tetrahedron boundary analysis works correctly");
+        println!("✓ Cached boundary facet method works correctly and matches regular method");
+    }
+
+    #[test]
+    fn test_derive_facet_key_from_vertices_integration() {
+        // Test derive_facet_key_from_vertices integration to ensure proper facet key computation
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Get a facet from the single tetrahedron
+        let cell = tds.cells().values().next().expect("Should have one cell");
+        let facets = cell.facets().expect("Should get facets from cell");
+        let test_facet = &facets[0];
+
+        // Test that the utility function returns Ok(key) for valid facets
+        let facet_vertices = test_facet.vertices();
+        let facet_key_result = derive_facet_key_from_vertices(&facet_vertices, &tds);
+        assert!(
+            facet_key_result.is_ok(),
+            "derive_facet_key_from_vertices should return Ok(key) for valid facet"
+        );
+
+        let facet_key = facet_key_result.unwrap();
+
+        // Test that the same facet produces the same key (deterministic)
+        let facet_vertices_2 = test_facet.vertices();
+        let facet_key_2 = derive_facet_key_from_vertices(&facet_vertices_2, &tds).unwrap();
+        assert_eq!(
+            facet_key, facet_key_2,
+            "Same facet should produce same key (deterministic)"
+        );
+
+        // Test consistency with build_facet_to_cells_hashmap
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        assert!(
+            facet_to_cells.contains_key(&facet_key),
+            "Key from utility function should exist in facet_to_cells map"
+        );
+
+        // Verify the facet is correctly identified as boundary using the computed key
+        let cells_for_facet = &facet_to_cells[&facet_key];
+        assert_eq!(
+            cells_for_facet.len(),
+            1,
+            "Facet in single tetrahedron should belong to exactly 1 cell"
+        );
+
+        // Additional verification: ensure the (cell_id, facet_index) from the map
+        // corresponds to test_facet by reconstructing and comparing keys
+        if let Some((cell_id, facet_index)) = cells_for_facet.first().copied() {
+            if let Some(mapped_cell) = tds.cells().get(cell_id) {
+                let mapped_facets = mapped_cell
+                    .facets()
+                    .expect("Should get facets from mapped cell");
+                if let Some(mapped_facet) = mapped_facets.get(usize::from(facet_index)) {
+                    let mapped_facet_vertices = mapped_facet.vertices();
+                    let mapped_facet_key =
+                        derive_facet_key_from_vertices(&mapped_facet_vertices, &tds)
+                            .expect("Should derive key from mapped facet");
+                    assert_eq!(
+                        facet_key, mapped_facet_key,
+                        "Facet key from test_facet should match key from (cell_id, facet_index) mapping"
+                    );
+
+                    // Verify the facets represent the same geometric entity
+                    assert_eq!(
+                        test_facet.key(),
+                        mapped_facet.key(),
+                        "test_facet and mapped facet should have the same facet key"
+                    );
+                } else {
+                    panic!("facet_index {facet_index} out of bounds for cell {cell_id:?}");
+                }
+            } else {
+                panic!("cell_id {cell_id:?} not found in triangulation");
+            }
+        }
+
+        println!("✓ derive_facet_key_from_vertices integration works correctly and consistently");
     }
 
     #[test]
@@ -312,12 +541,18 @@ mod tests {
         );
 
         // All facets should be boundary facets
+        // Cache once
+        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        let mut confirmed_boundary = 0;
         for boundary_facet in &boundary_facets {
-            assert!(
-                tds.is_boundary_facet(boundary_facet),
-                "All facets should be boundary facets in single 4D simplex"
-            );
+            if tds.is_boundary_facet_with_map(boundary_facet, &facet_to_cells) {
+                confirmed_boundary += 1;
+            }
         }
+        assert_eq!(
+            confirmed_boundary, 5,
+            "All facets should be boundary facets in single 4D simplex"
+        );
 
         println!("✓ 4D simplex boundary analysis works correctly");
     }
@@ -394,14 +629,19 @@ mod tests {
         assert_eq!(
             tds.number_of_boundary_facets(),
             6,
-            "Count should match the vector length"
+            "Count should match vector length"
         );
 
         // Build a map of facet keys to the cells that contain them for detailed verification
-        let mut facet_map: HashMap<u64, Vec<Uuid>> = HashMap::new();
-        for cell in tds.cells().values() {
+        let dim_usize = usize::try_from(tds.dim().max(0)).unwrap_or(0);
+        let mut facet_map: FastHashMap<u64, Vec<_>> =
+            fast_hash_map_with_capacity(tds.number_of_cells() * (dim_usize + 1));
+        for (cell_key, cell) in tds.cells() {
             for facet in cell.facets().expect("Should get cell facets") {
-                facet_map.entry(facet.key()).or_default().push(cell.uuid());
+                let facet_vertices = facet.vertices();
+                if let Ok(fk) = derive_facet_key_from_vertices(&facet_vertices, &tds) {
+                    facet_map.entry(fk).or_default().push(cell_key);
+                }
             }
         }
 
@@ -489,7 +729,10 @@ mod tests {
                 for facet in cell.facets().expect("Should get cell facets") {
                     if !tds.is_boundary_facet(&facet) {
                         found_internal_facet = true;
-                        println!("Found internal facet: key = {}", facet.key());
+                        let facet_vertices = facet.vertices();
+                        let facet_key =
+                            derive_facet_key_from_vertices(&facet_vertices, &tds).unwrap_or(0); // Use 0 as fallback for debug output
+                        println!("Found internal facet: key = {facet_key}");
                         break;
                     }
                 }
@@ -559,19 +802,12 @@ mod tests {
             );
 
             // Each facet from boundary_facets() should be identified as boundary by is_boundary_facet()
-            let mut boundary_facets_confirmed = 0;
             for facet in &boundary_facets {
                 assert!(
                     tds.is_boundary_facet(facet),
                     "Facet from boundary_facets() should be confirmed as boundary by is_boundary_facet()"
                 );
-                boundary_facets_confirmed += 1;
             }
-
-            assert_eq!(
-                boundary_facets_confirmed, boundary_count_from_vector,
-                "All facets should be confirmed as boundary"
-            );
 
             // Count boundary facets by checking each facet individually
             let mut boundary_count_from_individual_checks = 0;
@@ -597,8 +833,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "bench")]
     fn test_boundary_facets_large_triangulation() {
         // Test with a larger triangulation to ensure scalability
+        // This test is marked as benchmark-only due to its performance-sensitive nature
         use rand::Rng;
 
         let mut rng = rand::rng();
@@ -639,8 +877,6 @@ mod tests {
                     "Each facet from boundary_facets() should be confirmed as boundary"
                 );
             }
-
-            println!("  ✓ {boundary_count} boundary facets identified and verified");
 
             // Basic sanity checks
             assert!(
@@ -732,6 +968,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "bench")]
     fn test_boundary_analysis_performance_characteristics() {
         // Test that boundary analysis methods have reasonable performance characteristics
         use std::time::Instant;
@@ -817,6 +1054,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "bench")]
     fn benchmark_boundary_facets_performance() {
         use crate::core::algorithms::robust_bowyer_watson::RobustBoyerWatson;
         use crate::core::traits::insertion_algorithm::InsertionAlgorithm;

@@ -2,7 +2,9 @@ use crate::core::collections::{FacetToCellsMap, FastHashMap, SmallBuffer};
 use crate::core::facet::{Facet, FacetError};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
+use crate::core::traits::facet_cache::FacetCacheProvider;
 use crate::core::triangulation_data_structure::Tds;
+use crate::core::util::derive_facet_key_from_vertices;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::simplex_orientation;
 use crate::geometry::traits::coordinate::{
@@ -17,7 +19,7 @@ use ordered_float::OrderedFloat;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::iter::Sum;
-use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
+use std::ops::{AddAssign, Div, DivAssign, Sub, SubAssign};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -371,55 +373,12 @@ where
             });
         }
 
-        // Check if cache is stale and needs to be invalidated
-        let current_generation = tds.generation.load(Ordering::Relaxed);
-        let cached_generation = self.cached_generation.load(Ordering::Relaxed);
-
-        // Get or build the cached facet-to-cells mapping using ArcSwapOption
-        // If the TDS generation matches the cached generation, cache is current
-        let facet_to_cells_arc = if current_generation == cached_generation {
-            // Cache is current - load existing cache or build if it doesn't exist
-            self.facet_to_cells_cache.load_full().map_or_else(
-                || {
-                    // No cache exists yet - build and store it
-                    let new_cache = tds.build_facet_to_cells_hashmap();
-                    let new_cache_arc = Arc::new(new_cache);
-
-                    // Try to swap in the new cache (another thread might have done it already)
-                    // If another thread beat us to it, use their cache instead
-                    let none_ref: Option<Arc<FacetToCellsMap>> = None;
-                    let _old = self
-                        .facet_to_cells_cache
-                        .compare_and_swap(&none_ref, Some(new_cache_arc.clone()));
-                    // Load the current cache (could be ours or another thread's)
-                    self.facet_to_cells_cache
-                        .load_full()
-                        .unwrap_or(new_cache_arc)
-                },
-                |existing_cache| {
-                    // Cache exists and is current - use it
-                    existing_cache
-                },
-            )
-        } else {
-            // Cache is stale - need to invalidate and rebuild
-            let new_cache = tds.build_facet_to_cells_hashmap();
-            let new_cache_arc = Arc::new(new_cache);
-
-            // Atomically swap in the new cache
-            self.facet_to_cells_cache.store(Some(new_cache_arc.clone()));
-
-            // Update the generation snapshot
-            self.cached_generation
-                .store(current_generation, Ordering::Relaxed);
-
-            new_cache_arc
-        };
-
-        // No need for double as_ref() with ArcSwapOption
+        // Get or build the cached facet-to-cells mapping
+        let facet_to_cells_arc = self.get_or_build_facet_cache(tds);
         let facet_to_cells = facet_to_cells_arc.as_ref();
 
-        let facet_key = facet.key();
+        // Derive the facet key from vertices using the utility function
+        let facet_key = derive_facet_key_from_vertices(&facet_vertices, tds)?;
 
         let adjacent_cells = facet_to_cells
             .get(&facet_key)
@@ -497,7 +456,13 @@ where
     ///
     /// When geometric predicates fail due to degeneracy, this method provides
     /// a simple heuristic based on distance from the facet centroid. The threshold
-    /// is now scale-adaptive, based on the facet's diameter squared.
+    /// is scale-adaptive, based on the facet's diameter squared, with an epsilon-based
+    /// bound to prevent false positives from numeric noise near the hull surface.
+    ///
+    /// # Arguments
+    ///
+    /// * `facet` - The facet to test visibility against
+    /// * `point` - The point to test visibility from
     ///
     /// # Returns
     ///
@@ -506,8 +471,16 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`ConvexHullConstructionError::NumericCastFailed`] if numeric
-    /// conversion fails during centroid calculation or threshold computation.
+    /// Returns a [`ConvexHullConstructionError::CoordinateConversion`] if
+    /// coordinate conversion fails during centroid calculation or threshold computation.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Calculate the centroid of the facet vertices
+    /// 2. Compute the distance from the test point to the centroid
+    /// 3. Use the facet's diameter (max edge length) as a scale-adaptive threshold
+    /// 4. Add a small relative epsilon (1e-12 scale) to avoid false positives from numeric noise
+    /// 5. Return true if the distance exceeds the adjusted threshold (likely outside/visible)
     fn fallback_visibility_test(
         facet: &Facet<T, U, V, D>,
         point: &Point<T, D>,
@@ -552,12 +525,24 @@ where
                     diff[k] = ai[k] - bj[k];
                 }
                 let edge_sq = squared_norm(diff);
-                if max_edge_sq == T::zero() || edge_sq > max_edge_sq {
+                if max_edge_sq.is_zero() || edge_sq > max_edge_sq {
                     max_edge_sq = edge_sq;
                 }
             }
         }
-        Ok(distance_squared > max_edge_sq)
+
+        if max_edge_sq.is_zero() {
+            // Degenerate facet geometry; treat as not visible.
+            return Ok(false);
+        }
+        // Add epsilon-based bound to avoid false positives from numeric noise
+        // Use a small relative epsilon (1e-12 scale) to handle near-surface points
+        let epsilon_factor: T = NumCast::from(1e-12f64)
+            .or_else(|| NumCast::from(f64::EPSILON))
+            .unwrap_or_else(T::zero);
+        let adjusted_threshold = max_edge_sq + max_edge_sq * epsilon_factor;
+
+        Ok(distance_squared > adjusted_threshold)
     }
 
     /// Finds all hull facets visible from an external point
@@ -1107,6 +1092,26 @@ where
     }
 }
 
+// Implementation of FacetCacheProvider trait for ConvexHull
+// Reduced constraint set - removed ComplexField, From<f64>, f64: From<T>, and OrderedFloat bounds
+// which are not required by the trait or the implementation
+impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for ConvexHull<T, U, V, D>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    U: DataType + DeserializeOwned,
+    V: DataType + DeserializeOwned,
+    for<'a> &'a T: Div<T>,
+    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+{
+    fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
+        &self.facet_to_cells_cache
+    }
+
+    fn cached_generation(&self) -> &AtomicU64 {
+        self.cached_generation.as_ref()
+    }
+}
+
 impl<T, U, V, const D: usize> Default for ConvexHull<T, U, V, D>
 where
     T: CoordinateScalar,
@@ -1134,6 +1139,7 @@ pub type ConvexHull4D<T, U, V> = ConvexHull<T, U, V, 4>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::triangulation_data_structure::Tds;
     use crate::vertex;
 
@@ -1567,25 +1573,19 @@ mod tests {
             (Point::new([1.5, 1.5, 1.5]), "Beyond facet diameter"),
         ];
 
-        let mut visible_count = 0;
-        let mut not_visible_count = 0;
-
-        for (point, description) in test_points {
+        let mut flags = Vec::with_capacity(test_points.len());
+        for (point, description) in &test_points {
             let is_visible =
                 ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
-                    test_facet, &point,
+                    test_facet, point,
                 )
                 .unwrap();
-
-            let coords: [f64; 3] = point.into();
+            flags.push(is_visible);
+            let coords: [f64; 3] = (*point).into();
             println!("  Point {coords:?} ({description}) - Visible: {is_visible}");
-
-            if is_visible {
-                visible_count += 1;
-            } else {
-                not_visible_count += 1;
-            }
         }
+        let visible_count = flags.iter().filter(|&&v| v).count();
+        let not_visible_count = test_points.len() - visible_count;
 
         // The new scale-adaptive approach should still distinguish between close and far points
         // but the exact threshold is now based on the facet geometry
@@ -1594,8 +1594,8 @@ mod tests {
         // We expect that points very far from the facet centroid should be visible,
         // while points close to it should not be visible
         assert!(
-            visible_count > 0 || not_visible_count > 0,
-            "Scale-adaptive threshold should produce some classification"
+            visible_count > 0 && not_visible_count > 0,
+            "Should classify some points as visible and some as not visible"
         );
 
         println!("✓ Fallback visibility test scale-adaptive threshold behavior works correctly");
@@ -1677,14 +1677,14 @@ mod tests {
             })
             .collect();
 
-        // All results should be the same
+        // All results should be the same using iterator pattern
         let first_result = consistency_results[0];
-        for (i, &result) in consistency_results.iter().enumerate() {
-            assert_eq!(
-                result, first_result,
-                "Result {i} should be consistent with first result"
-            );
-        }
+        assert!(
+            consistency_results
+                .iter()
+                .all(|&result| result == first_result),
+            "All consistency results should match the first result"
+        );
 
         println!(
             "  Consistency test: all {} results were {}",
@@ -3520,7 +3520,8 @@ mod tests {
 
         let test_results: Vec<_> = (0..10)
             .map(|i| {
-                let test_pt = Point::new([<f64 as From<_>>::from(i).mul_add(0.1, 2.0), 2.0, 2.0]);
+                let x = NumCast::from(i).unwrap_or(0.0f64).mul_add(0.1, 2.0);
+                let test_pt = Point::new([x, 2.0, 2.0]);
                 hull.is_facet_visible_from_point(facet, &test_pt, &tds)
             })
             .collect();
@@ -3536,5 +3537,158 @@ mod tests {
         println!("  ✓ Thread safety test passed");
 
         println!("✓ All cache invalidation behavior tests passed successfully!");
+    }
+
+    #[test]
+    fn test_get_or_build_facet_cache() {
+        use std::sync::atomic::Ordering;
+
+        println!("Testing get_or_build_facet_cache method");
+
+        // Create a triangulation
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Initially, cache should be empty
+        let initial_cache = hull.facet_to_cells_cache.load();
+        assert!(initial_cache.is_none(), "Cache should be empty initially");
+
+        // First call should build the cache
+        println!("  Testing initial cache building...");
+        let cache1 = hull.get_or_build_facet_cache(&tds);
+        assert!(
+            !cache1.is_empty(),
+            "Cache should not be empty after building"
+        );
+
+        // Verify cache is now stored
+        let stored_cache = hull.facet_to_cells_cache.load();
+        assert!(
+            stored_cache.is_some(),
+            "Cache should be stored after building"
+        );
+
+        // Second call with same generation should reuse cache
+        println!("  Testing cache reuse with same generation...");
+        let cache2 = hull.get_or_build_facet_cache(&tds);
+        assert_eq!(
+            cache1.len(),
+            cache2.len(),
+            "Cache content should be identical on reuse"
+        );
+
+        // Verify the cache Arc is the same (reused)
+        assert!(
+            Arc::ptr_eq(&cache1, &cache2),
+            "Cache Arc should be reused when generation matches"
+        );
+
+        // Simulate TDS modification by changing generation
+        println!("  Testing cache invalidation with generation change...");
+        let old_generation = tds.generation.load(Ordering::Relaxed);
+        tds.generation.store(old_generation + 1, Ordering::Relaxed);
+
+        // Next call should rebuild cache
+        let cache3 = hull.get_or_build_facet_cache(&tds);
+        assert_eq!(
+            cache1.len(),
+            cache3.len(),
+            "Rebuilt cache should have same content"
+        );
+
+        // But should be a different Arc instance
+        assert!(
+            !Arc::ptr_eq(&cache1, &cache3),
+            "Rebuilt cache should be a new Arc instance"
+        );
+
+        // Verify generation was updated
+        let updated_generation = hull.cached_generation.load(Ordering::Relaxed);
+        let current_tds_generation = tds.generation.load(Ordering::Relaxed);
+        assert_eq!(
+            updated_generation, current_tds_generation,
+            "Hull generation should match TDS generation after rebuild"
+        );
+
+        println!("  ✓ Cache building, reuse, and invalidation working correctly");
+    }
+
+    #[test]
+    fn test_helper_methods_integration() {
+        println!("Testing integration between helper methods");
+
+        // Create a triangulation
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Test that cache contains keys derivable by the key derivation method
+        println!("  Testing cache-key derivation consistency...");
+        let cache = hull.get_or_build_facet_cache(&tds);
+
+        // For each facet in the hull, derive its key and check it exists in cache
+        let mut keys_found = 0usize;
+        for (i, facet) in hull.hull_facets.iter().enumerate() {
+            let facet_vertices = facet.vertices();
+
+            let derived_key_result = derive_facet_key_from_vertices(&facet_vertices, &tds);
+
+            if let Ok(derived_key) = derived_key_result {
+                if cache.contains_key(&derived_key) {
+                    keys_found += 1;
+                    println!("    Facet {i}: key {derived_key} found in cache ✓");
+                } else {
+                    println!("    Facet {i}: key {derived_key} NOT in cache (unexpected)");
+                }
+            } else {
+                println!(
+                    "    Facet {i}: key derivation failed: {:?}",
+                    derived_key_result.err()
+                );
+            }
+        }
+
+        println!(
+            "  Found {keys_found}/{} hull facet keys in cache",
+            hull.hull_facets.len()
+        );
+
+        // Cache should be non-empty (contains facets from the TDS)
+        assert!(
+            !cache.is_empty(),
+            "Cache should contain facets from the triangulation"
+        );
+        assert_eq!(
+            keys_found,
+            hull.hull_facets.len(),
+            "Every hull facet key should be present in the cache"
+        );
+
+        // Test that helper methods work correctly together in visibility testing
+        println!("  Testing helper methods in visibility context...");
+        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_facet = &hull.hull_facets[0];
+
+        let visibility_result = hull.is_facet_visible_from_point(test_facet, &test_point, &tds);
+        assert!(
+            visibility_result.is_ok(),
+            "Visibility test using helper methods should succeed"
+        );
+
+        println!("  Visibility result: {}", visibility_result.unwrap());
+        println!("  ✓ Integration between helper methods working correctly");
     }
 }

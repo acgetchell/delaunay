@@ -515,8 +515,8 @@ fn fallback_visibility_test(
     let distance_squared = squared_norm(diff_coords);
     
     // Simple threshold-based visibility
-    // Note: T::from_usize/T::from_f64 require num_traits::{FromPrimitive, Num}
-    let threshold = T::from_f64(1.0).unwrap_or_else(T::one);
+    // Note: NumCast::from requires num_traits::NumCast
+    let threshold = NumCast::from(1.0f64).unwrap_or_else(T::one);
     distance_squared > threshold
 }
 ```
