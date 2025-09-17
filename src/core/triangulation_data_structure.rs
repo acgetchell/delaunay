@@ -171,7 +171,7 @@ use uuid::Uuid;
 
 // Crate-internal imports
 use crate::core::collections::{
-    CellKeySet, CellRemovalBuffer, CellVertexKeysMap, CellVerticesMap, FacetToCellsMap,
+    CellKeySet, CellRemovalBuffer, CellVertexKeysMap, CellVerticesMap, Entry, FacetToCellsMap,
     FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, UuidToCellKeyMap, UuidToVertexKeyMap,
     ValidCellsBuffer, VertexKeySet, VertexToCellsMap, fast_hash_map_with_capacity,
 };
@@ -245,13 +245,22 @@ pub enum TriangulationConstructionError {
     #[error("Validation error during construction: {0}")]
     ValidationError(#[from] TriangulationValidationError),
     /// Attempted to insert an entity with a UUID that already exists.
-    #[error("Duplicate UUID: {entity_type} with UUID {uuid} already exists")]
+    #[error("Duplicate UUID: {entity:?} with UUID {uuid} already exists")]
     DuplicateUuid {
-        /// The type of entity (e.g., "vertex" or "cell").
-        entity_type: String,
+        /// The type of entity.
+        entity: EntityKind,
         /// The UUID that was duplicated.
         uuid: Uuid,
     },
+}
+
+/// Represents the type of entity in the triangulation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntityKind {
+    /// A vertex entity.
+    Vertex,
+    /// A cell entity.
+    Cell,
 }
 
 /// Errors that can occur during triangulation validation (post-construction).
@@ -291,9 +300,11 @@ pub enum TriangulationValidationError {
         /// The second cell UUID.
         cell2: Uuid,
     },
-    /// Vertex mapping inconsistency.
-    #[error("Vertex mapping inconsistency: {message}")]
+    /// Entity mapping inconsistency (vertex or cell).
+    #[error("{entity:?} mapping inconsistency: {message}")]
     MappingInconsistency {
+        /// The type of entity with the mapping issue.
+        entity: EntityKind,
         /// Description of the mapping inconsistency.
         message: String,
     },
@@ -909,17 +920,18 @@ where
     ) -> Result<VertexKey, TriangulationConstructionError> {
         let vertex_uuid = vertex.uuid();
 
-        // Check for duplicate UUID
-        if self.uuid_to_vertex_key.contains_key(&vertex_uuid) {
-            return Err(TriangulationConstructionError::DuplicateUuid {
-                entity_type: "vertex".to_string(),
+        // Use Entry API for atomic check-and-insert
+        match self.uuid_to_vertex_key.entry(vertex_uuid) {
+            Entry::Occupied(_) => Err(TriangulationConstructionError::DuplicateUuid {
+                entity: EntityKind::Vertex,
                 uuid: vertex_uuid,
-            });
+            }),
+            Entry::Vacant(e) => {
+                let vertex_key = self.vertices.insert(vertex);
+                e.insert(vertex_key);
+                Ok(vertex_key)
+            }
         }
-
-        let vertex_key = self.vertices.insert(vertex);
-        self.uuid_to_vertex_key.insert(vertex_uuid, vertex_key);
-        Ok(vertex_key)
     }
 
     /// Atomically inserts a cell and creates the UUID-to-key mapping.
@@ -954,17 +966,18 @@ where
     ) -> Result<CellKey, TriangulationConstructionError> {
         let cell_uuid = cell.uuid();
 
-        // Check for duplicate UUID
-        if self.uuid_to_cell_key.contains_key(&cell_uuid) {
-            return Err(TriangulationConstructionError::DuplicateUuid {
-                entity_type: "cell".to_string(),
+        // Use Entry API for atomic check-and-insert
+        match self.uuid_to_cell_key.entry(cell_uuid) {
+            Entry::Occupied(_) => Err(TriangulationConstructionError::DuplicateUuid {
+                entity: EntityKind::Cell,
                 uuid: cell_uuid,
-            });
+            }),
+            Entry::Vacant(e) => {
+                let cell_key = self.cells.insert(cell);
+                e.insert(cell_key);
+                Ok(cell_key)
+            }
         }
-
-        let cell_key = self.cells.insert(cell);
-        self.uuid_to_cell_key.insert(cell_uuid, cell_key);
-        Ok(cell_key)
     }
 
     /// **Phase 1 Migration**: Key-based helper that works directly with `CellKey`.
@@ -2013,10 +2026,11 @@ where
             fast_hash_map_with_capacity(self.vertices.len());
 
         for (cell_key, cell) in &self.cells {
-            let vertex_keys = self.vertex_keys_for_cell_direct(cell_key)
-                .map_err(|_e| TriangulationValidationError::InconsistentDataStructure {
-                    message: format!("Failed to get vertex keys for cell {}: Vertex UUID not found in vertex mapping", cell.uuid()),
-                })?;
+            let vertex_keys = self.vertex_keys_for_cell_direct(cell_key).map_err(|e| {
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Failed to get vertex keys for cell {}: {}", cell.uuid(), e),
+                }
+            })?;
             for &vertex_key in &vertex_keys {
                 vertex_to_cells
                     .entry(vertex_key)
@@ -2082,10 +2096,14 @@ where
             let mut vertex_keys = self.vertex_keys_for_cell_direct(cell_key)?;
             vertex_keys.sort_unstable();
 
-            if let Some(_existing_cell_key) = unique_cells.get(&vertex_keys) {
-                cells_to_remove.push(cell_key);
-            } else {
-                unique_cells.insert(vertex_keys, cell_key);
+            // Use Entry API for atomic check-and-insert
+            match unique_cells.entry(vertex_keys) {
+                Entry::Occupied(_) => {
+                    cells_to_remove.push(cell_key);
+                }
+                Entry::Vacant(e) => {
+                    e.insert(cell_key);
+                }
             }
         }
 
@@ -2240,9 +2258,10 @@ where
         }
 
         // Log warning if cells were skipped (useful for debugging data issues)
+        #[cfg(debug_assertions)]
         if skipped_cells > 0 {
             eprintln!(
-                "Warning: Skipped {skipped_cells} cell(s) during facet mapping due to missing vertex keys"
+                "debug: Skipped {skipped_cells} cell(s) during facet mapping due to missing vertex keys"
             );
         }
 
@@ -2405,12 +2424,14 @@ where
 
                     if valid_cells.len() > 2 {
                         // TODO: Improve cell retention criteria using geometric quality measures
-                        // Current approach: Sort to ensure deterministic selection by keeping cells with smallest keys
+                        // Current approach: Sort by CellKey to ensure deterministic selection
+                        // This guarantees reproducible behavior - the same cells are always removed
+                        // given the same input, which is critical for debugging and testing.
                         // Better approach would be to compute cell quality (volume, aspect ratio, etc.) and keep
                         // the two highest-quality cells. This would improve triangulation robustness.
                         // Track with issue: #86
-                        valid_cells.sort_unstable();
-                        // Remove all but the first two (smallest keys)
+                        valid_cells.sort_unstable(); // Deterministic ordering by CellKey
+                        // Remove all but the first two (smallest keys) - deterministic selection
                         for &cell_key in valid_cells.iter().skip(2) {
                             cells_to_remove.insert(cell_key);
                         }
@@ -2512,8 +2533,9 @@ where
     pub fn validate_vertex_mappings(&self) -> Result<(), TriangulationValidationError> {
         if self.uuid_to_vertex_key.len() != self.vertices.len() {
             return Err(TriangulationValidationError::MappingInconsistency {
+                entity: EntityKind::Vertex,
                 message: format!(
-                    "Number of vertex mapping entries ({}) doesn't match number of vertices ({})",
+                    "Number of mapping entries ({}) doesn't match number of vertices ({})",
                     self.uuid_to_vertex_key.len(),
                     self.vertices.len()
                 ),
@@ -2528,8 +2550,9 @@ where
             // Check key-to-UUID direction first (direct SlotMap access - no hash lookup)
             if self.vertex_uuid_from_key(vertex_key) != Some(vertex_uuid) {
                 return Err(TriangulationValidationError::MappingInconsistency {
+                    entity: EntityKind::Vertex,
                     message: format!(
-                        "Inconsistent or missing key-to-UUID mapping for vertex key {vertex_key:?}"
+                        "Inconsistent or missing key-to-UUID mapping for key {vertex_key:?}"
                     ),
                 });
             }
@@ -2537,8 +2560,9 @@ where
             // Now verify UUID-to-key direction (requires hash lookup but we know it should exist)
             if self.uuid_to_vertex_key.get(&vertex_uuid) != Some(&vertex_key) {
                 return Err(TriangulationValidationError::MappingInconsistency {
+                    entity: EntityKind::Vertex,
                     message: format!(
-                        "Inconsistent or missing UUID-to-key mapping for vertex UUID {vertex_uuid:?}"
+                        "Inconsistent or missing UUID-to-key mapping for UUID {vertex_uuid:?}"
                     ),
                 });
             }
@@ -2589,8 +2613,9 @@ where
     pub fn validate_cell_mappings(&self) -> Result<(), TriangulationValidationError> {
         if self.uuid_to_cell_key.len() != self.cells.len() {
             return Err(TriangulationValidationError::MappingInconsistency {
+                entity: EntityKind::Cell,
                 message: format!(
-                    "Number of cell mapping entries ({}) doesn't match number of cells ({})",
+                    "Number of mapping entries ({}) doesn't match number of cells ({})",
                     self.uuid_to_cell_key.len(),
                     self.cells.len()
                 ),
@@ -2605,8 +2630,9 @@ where
             // Check key-to-UUID direction first (direct SlotMap access - no hash lookup)
             if self.cell_uuid_from_key(cell_key) != Some(cell_uuid) {
                 return Err(TriangulationValidationError::MappingInconsistency {
+                    entity: EntityKind::Cell,
                     message: format!(
-                        "Inconsistent or missing key-to-UUID mapping for cell key {cell_key:?}"
+                        "Inconsistent or missing key-to-UUID mapping for key {cell_key:?}"
                     ),
                 });
             }
@@ -2614,8 +2640,9 @@ where
             // Now verify UUID-to-key direction (requires hash lookup but we know it should exist)
             if self.uuid_to_cell_key.get(&cell_uuid) != Some(&cell_key) {
                 return Err(TriangulationValidationError::MappingInconsistency {
+                    entity: EntityKind::Cell,
                     message: format!(
-                        "Inconsistent or missing UUID-to-key mapping for cell UUID {cell_uuid:?}"
+                        "Inconsistent or missing UUID-to-key mapping for UUID {cell_uuid:?}"
                     ),
                 });
             }
@@ -3785,7 +3812,9 @@ mod tests {
 
         assert_eq!(result_tds.number_of_cells(), 2); // One original, one duplicate
 
-        let dupes = result_tds.remove_duplicate_cells().unwrap();
+        let dupes = result_tds
+            .remove_duplicate_cells()
+            .expect("Failed to remove duplicate cells: data structure should be valid");
 
         assert_eq!(dupes, 1);
 
@@ -4079,7 +4108,7 @@ mod tests {
                 assert!(validation_result.is_err());
 
                 match validation_result.unwrap_err() {
-                    TriangulationValidationError::MappingInconsistency { message } => {
+                    TriangulationValidationError::MappingInconsistency { entity: _, message } => {
                         println!("Actual error message: {}", message);
                         // The test corrupts the uuid_to_cell_key mapping by:
                         // 1. Removing the original cell UUID mapping
@@ -4088,9 +4117,8 @@ mod tests {
                         // The mapping now maps: nil_uuid -> cell_key, but the cell has original_uuid.
                         // This triggers the "Inconsistent or missing UUID-to-key mapping" error at line 1837.
                         assert!(
-                            message.contains(
-                                "Inconsistent or missing UUID-to-key mapping for cell UUID"
-                            ),
+                            message
+                                .contains("Inconsistent or missing UUID-to-key mapping for UUID"),
                             "Expected UUID-to-key mapping error, got: {}",
                             message
                         );
@@ -4322,8 +4350,7 @@ mod tests {
         match result.unwrap_err() {
             TriangulationValidationError::InconsistentDataStructure { message } => {
                 assert!(
-                    message.contains("Vertex UUID")
-                        && message.contains("not found in vertex mapping"),
+                    message.contains("Vertex UUID") && message.contains("not found in mapping"),
                     "Error message should describe the vertex UUID not found issue, got: {}",
                     message
                 );
@@ -5357,7 +5384,9 @@ mod tests {
         assert_eq!(result.number_of_cells(), original_cell_count + 3);
 
         // Remove duplicates and capture the number removed
-        let duplicates_removed = result.remove_duplicate_cells().unwrap();
+        let duplicates_removed = result.remove_duplicate_cells().expect(
+            "Failed to remove duplicate cells: triangulation should be valid after construction",
+        );
 
         println!(
             "Successfully removed {} duplicate cells (original: {}, after adding: {}, final: {})",
@@ -6790,8 +6819,8 @@ mod tests {
 
         let result = tds.insert_vertex_with_mapping(duplicate_vertex);
         assert!(result.is_err());
-        if let Err(TriangulationConstructionError::DuplicateUuid { entity_type, uuid }) = result {
-            assert_eq!(entity_type, "vertex");
+        if let Err(TriangulationConstructionError::DuplicateUuid { entity, uuid }) = result {
+            assert_eq!(entity, EntityKind::Vertex);
             assert_eq!(uuid, vertex_uuid);
         } else {
             panic!("Expected DuplicateUuid error");

@@ -133,16 +133,23 @@ where
 
                     // Try to swap in the new cache (another thread might have done it already)
                     // If another thread beat us to it, use their cache instead
-                    let none_ref: Option<Arc<FacetToCellsMap>> = None;
-                    let _old = self
-                        .facet_cache()
-                        .compare_and_swap(&none_ref, Some(new_cache_arc.clone()));
-                    // Load the current cache (could be ours or another thread's)
-                    let cache = self.facet_cache().load_full().unwrap_or(new_cache_arc);
-                    // Record the generation snapshot that the cache corresponds to
-                    self.cached_generation()
-                        .store(current_generation, Ordering::Release);
-                    cache
+                    // Using rcu() for atomic read-modify-write operation
+                    let result = self.facet_cache().rcu(|old| {
+                        // Only update if it's still None
+                        old.as_ref().map_or_else(
+                            || Some(new_cache_arc.clone()),
+                            |existing| Some(existing.clone()),
+                        )
+                    });
+
+                    // If we were the ones who set it (result was None), update generation
+                    if result.is_none() {
+                        self.cached_generation()
+                            .store(current_generation, Ordering::Release);
+                    }
+
+                    // Return the cache (either ours or the existing one)
+                    self.facet_cache().load_full().unwrap_or(new_cache_arc)
                 },
                 |existing_cache| {
                     // Cache exists and is current - use it

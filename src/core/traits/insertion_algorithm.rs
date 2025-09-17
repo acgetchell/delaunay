@@ -4,7 +4,7 @@
 //! interface for different vertex insertion strategies, including the basic
 //! Bowyer-Watson algorithm and robust variants with enhanced numerical stability.
 
-use crate::core::collections::CellKeySet;
+use crate::core::collections::{CellKeySet, Entry};
 use crate::core::{
     cell::CellBuilder,
     facet::Facet,
@@ -1229,7 +1229,7 @@ where
 
         // Ensure all vertices are registered in the TDS vertex mapping
         for vertex in &vertices {
-            if !tds.uuid_to_vertex_key.contains_key(&vertex.uuid()) {
+            if let Entry::Vacant(_) = tds.uuid_to_vertex_key.entry(vertex.uuid()) {
                 tds.insert_vertex_with_mapping(*vertex).map_err(|e| {
                     TriangulationConstructionError::FailedToAddVertex {
                         message: format!("Failed to insert vertex: {e}"),
@@ -1525,7 +1525,7 @@ where
     /// * `tds` - Mutable reference to the triangulation data structure
     /// * `vertex` - The vertex to ensure is registered
     fn ensure_vertex_in_tds(tds: &mut Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) {
-        if !tds.uuid_to_vertex_key.contains_key(&vertex.uuid()) {
+        if let Entry::Vacant(_) = tds.uuid_to_vertex_key.entry(vertex.uuid()) {
             // Note: We silently ignore duplicate UUID errors here since we're checking first
             // If the check passes but insertion fails, it means concurrent modification
             // which shouldn't happen in single-threaded context

@@ -156,6 +156,23 @@ pub use uuid::Uuid;
 /// ```
 pub type FastHashMap<K, V> = FxHashMap<K, V>;
 
+/// Re-export the Entry enum for `FastHashMap`.
+/// This provides the Entry API for efficient check-and-insert operations.
+/// Since `FxHashMap` uses `std::collections::hash_map::Entry`, we re-export that.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::{FastHashMap, Entry};
+///
+/// let mut map: FastHashMap<String, String> = FastHashMap::default();
+/// match map.entry("key".to_string()) {
+///     Entry::Occupied(e) => println!("Already exists: {:?}", e.get()),
+///     Entry::Vacant(e) => { e.insert("value".to_string()); }
+/// }
+/// ```
+pub use std::collections::hash_map::Entry;
+
 /// Optimized `HashSet` type for performance-critical operations.
 /// Uses `FxHasher` for faster hashing in non-cryptographic contexts.
 ///
