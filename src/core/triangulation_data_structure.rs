@@ -941,6 +941,8 @@ where
             Entry::Vacant(e) => {
                 let vertex_key = self.vertices.insert(vertex);
                 e.insert(vertex_key);
+                // Topology changed; invalidate caches.
+                self.generation.fetch_add(1, Ordering::Relaxed);
                 Ok(vertex_key)
             }
         }
@@ -1020,6 +1022,8 @@ where
             Entry::Vacant(e) => {
                 let cell_key = self.cells.insert(cell);
                 e.insert(cell_key);
+                // Topology changed; invalidate caches.
+                self.generation.fetch_add(1, Ordering::Relaxed);
                 Ok(cell_key)
             }
         }
