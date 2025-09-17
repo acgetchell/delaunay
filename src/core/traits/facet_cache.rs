@@ -84,6 +84,33 @@ where
     /// Returns a reference to the cached generation counter.
     fn cached_generation(&self) -> &AtomicU64;
 
+    /// Helper method to build cache with RCU to minimize duplicate work under contention.
+    ///
+    /// This method uses Read-Copy-Update (RCU) pattern to ensure that only one thread
+    /// builds the cache even under high contention, avoiding duplicate work.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - The triangulation data structure to build the cache from
+    ///
+    /// # Returns
+    ///
+    /// The old cache value before update (if any), or `None` if no cache existed
+    fn build_cache_with_rcu(&self, tds: &Tds<T, U, V, D>) -> Option<Arc<FacetToCellsMap>> {
+        // We memoize the built cache outside the RCU closure to avoid recomputation
+        // if RCU needs to retry due to concurrent updates.
+        let mut built: Option<Arc<FacetToCellsMap>> = None;
+        self.facet_cache().rcu(|old| {
+            if let Some(existing) = old {
+                // Another thread built the cache while we were waiting
+                return Some(existing.clone());
+            }
+            // Build the cache only once, even if RCU retries
+            let arc = built.get_or_insert_with(|| Arc::new(tds.build_facet_to_cells_hashmap()));
+            Some(arc.clone())
+        })
+    }
+
     /// Gets or builds the facet-to-cells mapping cache with atomic updates.
     ///
     /// This method handles cache invalidation and thread-safe rebuilding of the
@@ -132,19 +159,7 @@ where
             self.facet_cache().load_full().map_or_else(
                 || {
                     // Build cache lazily inside RCU to minimize duplicate work under contention.
-                    // We memoize the built cache outside the RCU closure to avoid recomputation
-                    // if RCU needs to retry due to concurrent updates.
-                    let mut built: Option<Arc<FacetToCellsMap>> = None;
-                    let built_cache = self.facet_cache().rcu(|old| {
-                        if let Some(existing) = old {
-                            // Another thread built the cache while we were waiting
-                            return Some(existing.clone());
-                        }
-                        // Build the cache only once, even if RCU retries
-                        let arc = built
-                            .get_or_insert_with(|| Arc::new(tds.build_facet_to_cells_hashmap()));
-                        Some(arc.clone())
-                    });
+                    let built_cache = self.build_cache_with_rcu(tds);
 
                     // Update generation if we were the ones who built it
                     // Note: built_cache is the old value before our update
@@ -505,6 +520,127 @@ mod tests {
                 "Thread {thread_id} should get consistent cache size"
             );
         }
+    }
+
+    #[test]
+    fn test_build_cache_with_rcu() {
+        let provider = TestCacheProvider::new();
+        let tds = create_test_triangulation();
+
+        // Initial state: no cache
+        assert!(
+            provider.facet_cache().load().is_none(),
+            "Cache should be empty initially"
+        );
+
+        // First call to build_cache_with_rcu should build cache
+        let old_value = provider.build_cache_with_rcu(&tds);
+        assert!(
+            old_value.is_none(),
+            "Old value should be None on first build"
+        );
+
+        // Cache should now exist
+        let cached = provider.facet_cache().load_full();
+        assert!(
+            cached.is_some(),
+            "Cache should exist after build_cache_with_rcu"
+        );
+        let unwrapped_cache = cached.unwrap();
+        assert!(
+            !unwrapped_cache.is_empty(),
+            "Built cache should not be empty"
+        );
+
+        // Second call should return the existing cache as old value
+        let old_value2 = provider.build_cache_with_rcu(&tds);
+        assert!(
+            old_value2.is_some(),
+            "Old value should be Some on second build"
+        );
+
+        // The old value should be the same Arc as cache1
+        let old_arc = old_value2.unwrap();
+        assert_eq!(
+            Arc::as_ptr(&old_arc),
+            Arc::as_ptr(&unwrapped_cache),
+            "Old value should be the previously built cache"
+        );
+
+        // Final cache should still be the same (RCU detected existing)
+        let cached2 = provider.facet_cache().load_full().unwrap();
+        assert_eq!(
+            Arc::as_ptr(&cached2),
+            Arc::as_ptr(&unwrapped_cache),
+            "Cache should not be rebuilt when it already exists"
+        );
+    }
+
+    #[test]
+    fn test_build_cache_with_rcu_concurrent() {
+        use std::sync::Barrier;
+        use std::sync::atomic::AtomicUsize;
+
+        let provider = Arc::new(TestCacheProvider::new());
+        let tds = Arc::new(create_test_triangulation());
+        let barrier = Arc::new(Barrier::new(4));
+        let build_count = Arc::new(AtomicUsize::new(0));
+        let mut handles = vec![];
+
+        // Spawn multiple threads that try to build cache simultaneously
+        for i in 0..4 {
+            let provider_clone = provider.clone();
+            let tds_clone = tds.clone();
+            let barrier_clone = barrier.clone();
+            let build_count_clone = build_count.clone();
+
+            let handle = thread::spawn(move || {
+                // Wait for all threads to be ready
+                barrier_clone.wait();
+
+                // Each thread tries to build cache
+                let old_value = provider_clone.build_cache_with_rcu(&tds_clone);
+
+                // If old_value is None, this thread was the builder
+                if old_value.is_none() {
+                    build_count_clone.fetch_add(1, Ordering::Relaxed);
+                }
+
+                // Return thread ID and whether it built the cache
+                (i, old_value.is_none())
+            });
+
+            handles.push(handle);
+        }
+
+        // Collect results
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        // All threads should complete successfully
+        assert_eq!(results.len(), 4, "All threads should complete");
+
+        // Exactly one thread should have built the cache
+        let builders_count = results.iter().filter(|(_, built)| *built).count();
+        assert_eq!(
+            builders_count, 1,
+            "Exactly one thread should build the cache"
+        );
+        assert_eq!(
+            build_count.load(Ordering::Relaxed),
+            1,
+            "Build count should be 1"
+        );
+
+        // Final cache should exist and be consistent
+        let final_cache = provider.facet_cache().load_full();
+        assert!(
+            final_cache.is_some(),
+            "Cache should exist after concurrent builds"
+        );
+        assert!(
+            !final_cache.unwrap().is_empty(),
+            "Cache should not be empty"
+        );
     }
 
     #[test]

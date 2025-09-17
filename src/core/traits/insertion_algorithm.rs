@@ -1103,11 +1103,11 @@ where
         // First try boundary facets (most likely to work)
         for cells in facet_to_cells.values() {
             if cells.len() == 1 {
-                let Some(&(cell_key, facet_index)) = cells.first() else {
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                let &(cell_key, facet_index) = cells.first().ok_or_else(|| {
+                    TriangulationValidationError::InconsistentDataStructure {
                         message: "Boundary facet had no adjacent cell".to_string(),
-                    });
-                };
+                    }
+                })?;
                 let fi = <usize as From<_>>::from(facet_index);
                 if let Some(cell) = tds.cells().get(cell_key)
                     && let Ok(facets) = cell.facets()
@@ -1116,7 +1116,7 @@ where
                     let facet = &facets[fi];
 
                     // Try to create a cell from this facet and the vertex
-                    if Self::create_cell_from_facet_and_vertex(tds, facet, vertex) {
+                    if Self::create_cell_from_facet_and_vertex(tds, facet, vertex).is_ok() {
                         // Finalize the triangulation after insertion to fix any invalid states
                         Self::finalize_after_insertion(tds).map_err(|e| {
                             TriangulationValidationError::InconsistentDataStructure {
@@ -1149,7 +1149,7 @@ where
                     let facet = &facets[fi];
 
                     // Try to create a cell from this facet and the vertex
-                    if Self::create_cell_from_facet_and_vertex(tds, facet, vertex) {
+                    if Self::create_cell_from_facet_and_vertex(tds, facet, vertex).is_ok() {
                         // Finalize the triangulation after insertion to fix any invalid states
                         Self::finalize_after_insertion(tds).map_err(|e| {
                             TriangulationValidationError::InconsistentDataStructure {
@@ -1638,35 +1638,43 @@ where
     ///
     /// # Returns
     ///
-    /// `true` if the cell was successfully created, `false` otherwise.
+    /// `Ok(())` if the cell was successfully created, or an error describing the failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TriangulationValidationError` if:
+    /// - Vertex registration in TDS fails
+    /// - Cell building fails (e.g., degenerate geometry)
+    /// - Cell insertion fails (e.g., duplicate UUID)
     fn create_cell_from_facet_and_vertex(
         tds: &mut Tds<T, U, V, D>,
         facet: &Facet<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> bool
+    ) -> Result<(), TriangulationValidationError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         // Ensure the vertex is registered in the TDS vertex mapping
-        // If registration fails, we treat it as a failed cell creation
-        if Self::ensure_vertex_in_tds(tds, vertex).is_err() {
-            return false;
-        }
+        Self::ensure_vertex_in_tds(tds, vertex)?;
 
         let mut facet_vertices = facet.vertices();
         facet_vertices.push(*vertex);
 
-        CellBuilder::default()
+        let new_cell = CellBuilder::default()
             .vertices(facet_vertices)
             .build()
-            .is_ok_and(|new_cell| {
-                // The result of `insert_cell_with_mapping` is intentionally converted to bool here.
-                // If insertion fails due to duplicate UUID, we treat it as a failed cell creation
-                // (returns false). This is handled gracefully by the caller, which counts
-                // successful insertions and doesn't require all insertions to succeed.
-                tds.insert_cell_with_mapping(new_cell).is_ok()
-            })
+            .map_err(|e| TriangulationValidationError::FailedToCreateCell {
+                message: format!("Failed to build cell from facet and vertex: {e}"),
+            })?;
+
+        tds.insert_cell_with_mapping(new_cell).map_err(|e| {
+            TriangulationValidationError::InconsistentDataStructure {
+                message: format!("Failed to insert cell into TDS: {e}"),
+            }
+        })?;
+
+        Ok(())
     }
 
     /// Creates multiple cells from boundary facets and a vertex
@@ -1682,7 +1690,8 @@ where
     ///
     /// # Returns
     ///
-    /// The number of cells successfully created.
+    /// The number of cells successfully created. Note that some cells may fail
+    /// to be created due to geometric constraints, which is expected behavior.
     fn create_cells_from_boundary_facets(
         tds: &mut Tds<T, U, V, D>,
         boundary_facets: &[Facet<T, U, V, D>],
@@ -1694,7 +1703,9 @@ where
     {
         let mut cells_created = 0;
         for facet in boundary_facets {
-            if Self::create_cell_from_facet_and_vertex(tds, facet, vertex) {
+            // We intentionally ignore errors here as some facets may not be able
+            // to form valid cells with the given vertex (e.g., degenerate cases)
+            if Self::create_cell_from_facet_and_vertex(tds, facet, vertex).is_ok() {
                 cells_created += 1;
             }
         }
@@ -2128,7 +2139,7 @@ mod tests {
         // Create a new vertex that should form a valid cell with the facet
         let new_vertex = vertex!([0.5, 0.5, 1.5]);
 
-        let success =
+        let result =
             <IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
                 f64,
                 Option<()>,
@@ -2137,8 +2148,9 @@ mod tests {
             >>::create_cell_from_facet_and_vertex(&mut tds, test_facet, &new_vertex);
 
         assert!(
-            success,
-            "Should successfully create cell from valid facet and vertex"
+            result.is_ok(),
+            "Should successfully create cell from valid facet and vertex: {:?}",
+            result.err()
         );
         assert_eq!(
             tds.number_of_cells(),
@@ -2172,7 +2184,7 @@ mod tests {
         let facet_vertices = test_facet.vertices();
         let duplicate_vertex = facet_vertices[0]; // Use an existing facet vertex
 
-        let success =
+        let result =
             <IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
                 f64,
                 Option<()>,
@@ -2184,7 +2196,7 @@ mod tests {
 
         // This should fail because it would create a degenerate cell
         assert!(
-            !success,
+            result.is_err(),
             "Should fail to create cell with degenerate geometry"
         );
         assert_eq!(

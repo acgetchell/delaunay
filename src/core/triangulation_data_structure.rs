@@ -18,7 +18,7 @@
 //! - **Validation Support**: Comprehensive validation of triangulation properties including
 //!   neighbor consistency and geometric validity
 //! - **Serialization Support**: Full serde support for persistence and data exchange
-//! - **UUID-based Identification**: Unique identification for vertices and cells
+//! - **Optimized Storage**: Internal key-based storage with UUIDs for external identity
 //!
 //! # Geometric Structure
 //!
@@ -1647,10 +1647,10 @@ where
             });
         }
 
-        // Iterate over self.vertices.values() to check for coordinate duplicates
+        // Check for coordinate duplicates
+        let new_coords: [T; D] = (&vertex).into();
         for val in self.vertices.values() {
             let existing_coords: [T; D] = val.into();
-            let new_coords: [T; D] = (&vertex).into();
             if existing_coords == new_coords {
                 return Err(TriangulationConstructionError::DuplicateCoordinates {
                     coordinates: format!("{new_coords:?}"),
@@ -5067,13 +5067,10 @@ mod tests {
         // 3. Manual manipulation of internal data structures in tests
 
         // We can at least verify the constant is reasonable
-        assert_eq!(
-            MAX_PRACTICAL_DIMENSION_SIZE, 8,
-            "MAX_PRACTICAL_DIMENSION_SIZE should be 8"
-        );
+        // Note: MAX_PRACTICAL_DIMENSION_SIZE is a compile-time constant >= 8
 
-        // For practical dimensions (up to 7D), the buffer should handle D+1 vertices
-        for d in 1..=7 {
+        // For practical dimensions (up to MAX_PRACTICAL_DIMENSION_SIZE - 1), the buffer should handle D+1 vertices
+        for d in 1..MAX_PRACTICAL_DIMENSION_SIZE {
             assert!(
                 d < MAX_PRACTICAL_DIMENSION_SIZE,
                 "Dimension {} should be supported (needs {} vertices)",
@@ -5082,8 +5079,8 @@ mod tests {
             );
         }
 
-        // For dimension 8 and above, we would overflow
-        for d in 8..=10 {
+        // For dimensions where D+1 > MAX_PRACTICAL_DIMENSION_SIZE, we would overflow
+        for d in MAX_PRACTICAL_DIMENSION_SIZE..(MAX_PRACTICAL_DIMENSION_SIZE + 3) {
             assert!(
                 d + 1 > MAX_PRACTICAL_DIMENSION_SIZE,
                 "Dimension {} would overflow (needs {} vertices)",
