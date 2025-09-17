@@ -268,7 +268,7 @@ where
             hull_facets,
             facet_to_cells_cache: ArcSwapOption::empty(),
             // Snapshot the current TDS generation; do not share the AtomicU64
-            cached_generation: Arc::new(AtomicU64::new(tds.generation.load(Ordering::Relaxed))),
+            cached_generation: Arc::new(AtomicU64::new(tds.generation())),
         })
     }
 
@@ -401,6 +401,9 @@ where
         let cell_vertices = adjacent_cell.vertices();
         let mut inside_vertex = None;
 
+        // TODO(optimization): Consider using vertex keys instead of UUID comparison in this hot path.
+        // This would require storing vertex keys in Facet or passing them separately.
+        // Current UUID comparison adds overhead that could be avoided with direct key comparison.
         for cell_vertex in cell_vertices {
             let is_in_facet = facet_vertices
                 .iter()
@@ -1088,7 +1091,8 @@ where
         self.facet_to_cells_cache.store(None);
 
         // Reset only our snapshot to force rebuild on next access
-        self.cached_generation.store(0, Ordering::Relaxed);
+        // Use Release ordering to ensure consistency with Acquire loads by readers
+        self.cached_generation.store(0, Ordering::Release);
     }
 }
 
@@ -3341,22 +3345,20 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
         let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&tds).unwrap();
 
         // Get initial generation values
-        let initial_tds_generation = tds.generation.load(Ordering::Relaxed);
+        let initial_tds_generation = tds.generation();
         let initial_hull_generation = hull.cached_generation.load(Ordering::Relaxed);
 
         println!("  Initial TDS generation: {initial_tds_generation}");
         println!("  Initial hull cached generation: {initial_hull_generation}");
 
         // ConvexHull keeps an independent snapshot for staleness detection
-        assert!(
-            !std::ptr::eq(tds.generation.as_ref(), hull.cached_generation.as_ref()),
-            "ConvexHull should keep an independent generation snapshot"
-        );
+        // Since generation is now private, we can't compare pointers directly
+        // But we can verify they track independently by checking values
 
         // Verify initial generations match (hull starts with snapshot of TDS generation)
         assert_eq!(
@@ -3373,7 +3375,7 @@ mod tests {
         assert!(result1.is_ok(), "Initial visibility test should succeed");
 
         // Cache should now be built, generations should still match
-        let post_cache_tds_gen = tds.generation.load(Ordering::Relaxed);
+        let post_cache_tds_gen = tds.generation();
         let post_cache_hull_gen = hull.cached_generation.load(Ordering::Relaxed);
 
         println!(
@@ -3393,55 +3395,48 @@ mod tests {
 
         println!("  ✓ Cache successfully built and generations synchronized");
 
-        // Now simulate TDS modification by incrementing its generation counter
-        // This simulates what would happen when the TDS is actually modified
-        let old_generation = tds.generation.load(Ordering::Relaxed);
-        tds.generation.store(old_generation + 1, Ordering::Relaxed);
-
-        let modified_tds_gen = tds.generation.load(Ordering::Relaxed);
+        // Test TDS modification by adding a new vertex
+        println!("  Testing cache invalidation with TDS modification...");
+        let old_generation = tds.generation();
         let stale_hull_gen = hull.cached_generation.load(Ordering::Relaxed);
 
-        println!("  After TDS modification simulation:");
+        // Add a new vertex to the TDS - this will bump the generation
+        let new_vertex = vertex!([0.5, 0.5, 0.5]); // Interior point
+        tds.add(new_vertex).expect("Failed to add vertex to TDS");
+
+        let modified_tds_gen = tds.generation();
+        println!("  After TDS modification (added vertex):");
         println!("    TDS generation: {modified_tds_gen}");
         println!("    Hull cached generation: {stale_hull_gen}");
 
         // Hull snapshot is now stale relative to TDS
-        assert!(modified_tds_gen > stale_hull_gen);
-        assert_eq!(
-            modified_tds_gen,
-            old_generation + 1,
-            "Generation should be incremented"
+        assert!(
+            modified_tds_gen > old_generation,
+            "Generation should be incremented after adding vertex"
+        );
+        assert!(
+            modified_tds_gen > stale_hull_gen,
+            "TDS generation should be ahead of hull's cached generation"
         );
 
         println!("  ✓ Generation change correctly detected - hull snapshot is now stale");
 
         // Test cache invalidation and rebuild
         // Next visibility call should rebuild the cache due to stale snapshot
-        let hull_with_independent_generation = &hull;
-
-        let stale_gen = hull_with_independent_generation
-            .cached_generation
-            .load(Ordering::Relaxed);
-        println!("  Independent hull generation (stale): {stale_gen}");
-
-        // This visibility test should detect stale cache and rebuild it
         println!("  Testing cache invalidation with stale generation...");
-        let result2 =
-            hull_with_independent_generation.is_facet_visible_from_point(facet, &test_point, &tds);
+        let result2 = hull.is_facet_visible_from_point(facet, &test_point, &tds);
         assert!(
             result2.is_ok(),
             "Visibility test with stale cache should succeed"
         );
 
-        // After the visibility test, the independent hull's generation should be updated
-        let updated_independent_gen = hull_with_independent_generation
-            .cached_generation
-            .load(Ordering::Relaxed);
-        println!("  Independent hull generation after cache rebuild: {updated_independent_gen}");
+        // After the visibility test, the hull's generation should be updated
+        let updated_hull_gen = hull.cached_generation.load(Ordering::Relaxed);
+        println!("  Hull generation after cache rebuild: {updated_hull_gen}");
 
         assert_eq!(
-            updated_independent_gen, modified_tds_gen,
-            "Independent hull generation should be updated to match TDS after cache rebuild"
+            updated_hull_gen, modified_tds_gen,
+            "Hull generation should be updated to match TDS after cache rebuild"
         );
 
         println!("  ✓ Cache invalidation and rebuild working correctly");
@@ -3488,7 +3483,7 @@ mod tests {
 
         // Generation should be updated to current TDS generation
         let final_hull_gen = hull.cached_generation.load(Ordering::Relaxed);
-        let final_tds_gen = tds.generation.load(Ordering::Relaxed);
+        let final_tds_gen = tds.generation();
         assert_eq!(
             final_hull_gen, final_tds_gen,
             "Hull generation should match TDS generation after cache rebuild"
@@ -3499,21 +3494,18 @@ mod tests {
 
         println!("  ✓ Manual cache invalidation working correctly");
 
-        // Test that results are consistent across cache rebuilds
-        let result_before = result1.unwrap();
-        let result_after_invalidation = result2.unwrap();
-        let result_after_manual_invalidation = result3.unwrap();
+        // Note: We cannot compare visibility results before and after adding a vertex
+        // because the triangulation structure has changed. The added vertex creates
+        // new cells and potentially changes facet visibility.
+        // We can only verify that the visibility tests succeed.
+        println!("  All visibility tests succeeded with proper cache management");
 
-        assert_eq!(
-            result_before, result_after_invalidation,
-            "Visibility results should be consistent across cache rebuilds"
-        );
-        assert_eq!(
-            result_before, result_after_manual_invalidation,
-            "Visibility results should be consistent after manual cache invalidation"
-        );
+        // Verify that all visibility tests succeeded
+        assert!(result1.is_ok(), "First visibility test should succeed");
+        assert!(result2.is_ok(), "Second visibility test should succeed");
+        assert!(result3.is_ok(), "Third visibility test should succeed");
 
-        println!("  ✓ Visibility results consistent across all cache states");
+        println!("  ✓ Cache invalidation and rebuilding handled correctly");
 
         // Test concurrent access safety (basic test)
         println!("  Testing thread safety of cache operations...");
@@ -3541,8 +3533,6 @@ mod tests {
 
     #[test]
     fn test_get_or_build_facet_cache() {
-        use std::sync::atomic::Ordering;
-
         println!("Testing get_or_build_facet_cache method");
 
         // Create a triangulation
@@ -3552,7 +3542,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
         let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&tds).unwrap();
 
@@ -3590,18 +3580,26 @@ mod tests {
             "Cache Arc should be reused when generation matches"
         );
 
-        // Simulate TDS modification by changing generation
+        // Modify TDS by adding a vertex to trigger generation change
         println!("  Testing cache invalidation with generation change...");
-        let old_generation = tds.generation.load(Ordering::Relaxed);
-        tds.generation.store(old_generation + 1, Ordering::Relaxed);
+        let old_generation = tds.generation();
 
-        // Next call should rebuild cache
-        let cache3 = hull.get_or_build_facet_cache(&tds);
-        assert_eq!(
-            cache1.len(),
-            cache3.len(),
-            "Rebuilt cache should have same content"
+        // Add a new vertex to trigger generation bump
+        let new_vertex = vertex!([0.5, 0.5, 0.5]); // Interior point
+        tds.add(new_vertex).expect("Failed to add vertex");
+
+        let new_generation = tds.generation();
+        assert!(
+            new_generation > old_generation,
+            "Generation should increase after adding vertex"
         );
+
+        // Next call should rebuild cache due to generation change
+        let cache3 = hull.get_or_build_facet_cache(&tds);
+
+        // The cache content might be different since we added a vertex
+        // but it should be a valid cache
+        assert!(!cache3.is_empty(), "Rebuilt cache should not be empty");
 
         // But should be a different Arc instance
         assert!(
@@ -3611,9 +3609,8 @@ mod tests {
 
         // Verify generation was updated
         let updated_generation = hull.cached_generation.load(Ordering::Relaxed);
-        let current_tds_generation = tds.generation.load(Ordering::Relaxed);
         assert_eq!(
-            updated_generation, current_tds_generation,
+            updated_generation, new_generation,
             "Hull generation should match TDS generation after rebuild"
         );
 

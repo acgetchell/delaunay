@@ -6,13 +6,14 @@
 use super::{
     facet::{Facet, FacetError},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
-    triangulation_data_structure::{CellKey, Tds},
+    triangulation_data_structure::Tds,
     util::derive_facet_key_from_vertices,
 };
-use crate::core::collections::fast_hash_map_with_capacity;
+use crate::core::collections::{KeyBasedCellMap, fast_hash_map_with_capacity};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use nalgebra::ComplexField;
 use serde::{Serialize, de::DeserializeOwned};
+use std::collections::hash_map::Entry;
 use std::iter::Sum;
 use std::ops::{AddAssign, Div, SubAssign};
 
@@ -59,7 +60,10 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`FacetError`] if any boundary facet cannot be created from the cells.
+    /// Returns a [`FacetError`] if:
+    /// - Any boundary facet cannot be created from the cells
+    /// - A facet index is out of bounds (indicates data corruption)
+    /// - A referenced cell is not found in the triangulation (indicates data corruption)
     ///
     /// # Examples
     ///
@@ -89,44 +93,36 @@ where
 
         // Per-call cache to avoid repeated cell.facets() allocations
         // when multiple boundary facets reference the same cell
-        let mut cell_facets_cache: crate::core::collections::FastHashMap<
-            CellKey,
-            Vec<Facet<T, U, V, D>>,
-        > = fast_hash_map_with_capacity(self.number_of_cells());
+        let mut cell_facets_cache: KeyBasedCellMap<Vec<Facet<T, U, V, D>>> =
+            fast_hash_map_with_capacity(self.number_of_cells());
 
         // Collect all facets that belong to only one cell
         for (_facet_key, cells) in facet_to_cells {
-            if cells.len() == 1
-                && let Some((cell_id, facet_index)) = cells.first().copied()
-            {
+            if let [(cell_id, facet_index)] = cells.as_slice() {
+                // Bind dereferenced values once to avoid repetitive derefs
+                let (cell_id, facet_index) = (*cell_id, *facet_index);
                 if let Some(cell) = self.cells().get(cell_id) {
-                    // Cache facets per cell to avoid repeated allocations
-                    cell_facets_cache
-                        .entry(cell_id)
-                        .or_insert_with(|| cell.facets().unwrap_or_default());
-                    let facets = &cell_facets_cache[&cell_id];
+                    // Cache facets per cell to avoid repeated allocations, but propagate errors
+                    let facets = match cell_facets_cache.entry(cell_id) {
+                        Entry::Occupied(e) => e.into_mut(),
+                        Entry::Vacant(v) => {
+                            let computed = cell.facets()?; // propagate FacetError
+                            v.insert(computed)
+                        }
+                    };
 
                     if let Some(f) = facets.get(usize::from(facet_index)) {
                         boundary_facets.push(f.clone());
                     } else {
-                        debug_assert!(
-                            usize::from(facet_index) < facets.len(),
-                            "facet_index {} out of bounds for {} facets",
-                            facet_index,
-                            facets.len()
-                        );
-                        #[cfg(debug_assertions)]
-                        eprintln!(
-                            "boundary_facets: facet_index {facet_index:?} out of bounds for cell_id {cell_id:?}"
-                        );
+                        // Fail fast: invalid facet index indicates data corruption
+                        return Err(FacetError::InvalidFacetIndex {
+                            index: facet_index,
+                            facet_count: facets.len(),
+                        });
                     }
                 } else {
-                    debug_assert!(
-                        self.cells().contains_key(cell_id),
-                        "cell_id {cell_id:?} should exist in SlotMap"
-                    );
-                    #[cfg(debug_assertions)]
-                    eprintln!("boundary_facets: cell_id {cell_id:?} not found");
+                    // Fail fast: cell not found indicates data corruption
+                    return Err(FacetError::CellNotFoundInTriangulation);
                 }
             }
         }

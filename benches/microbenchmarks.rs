@@ -128,7 +128,7 @@ macro_rules! generate_dimensional_benchmarks {
                                     tds
                                 },
                                 |mut tds| {
-                                    let removed = tds.remove_duplicate_cells();
+                                    let removed = tds.remove_duplicate_cells().expect("remove_duplicate_cells failed");
                                     black_box((tds, removed));
                                 },
                             );
