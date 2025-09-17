@@ -118,6 +118,7 @@
     "derefs",
     "detekt",
     "docstrings",
+    "doctest",
     "dotenv",
     "downcasting",
     "dtolnay",

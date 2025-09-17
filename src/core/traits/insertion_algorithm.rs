@@ -22,7 +22,8 @@ use std::{
 };
 
 /// Error that can occur during bad cells detection
-#[derive(Debug, Clone)]
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BadCellsError {
     /// All cells were marked as bad, which is geometrically unusual and likely indicates
     /// the vertex should be inserted via hull extension instead
@@ -503,8 +504,12 @@ where
     {
         use crate::geometry::predicates::{InSphere, insphere};
 
+        // Preallocate buffer once to avoid repeated allocations
+        let mut vertex_points = Vec::with_capacity(D + 1);
+
         for cell in tds.cells().values() {
-            let mut vertex_points = Vec::new();
+            // Clear and reuse the buffer
+            vertex_points.clear();
             vertex_points.extend(cell.vertices().iter().map(|v| *v.point()));
 
             if let Ok(containment) = insphere(&vertex_points, *vertex.point())
@@ -567,7 +572,8 @@ where
         }
 
         // Calculate bounding box margins (10% expansion)
-        let margin_factor: T = cast(MARGIN_FACTOR).unwrap_or_else(T::zero);
+        // For integer types, cast(0.1) becomes 0, so we use default_tolerance as fallback
+        let margin_factor: T = cast(MARGIN_FACTOR).unwrap_or_else(|| T::default_tolerance());
         let mut expanded_min = [T::zero(); D];
         let mut expanded_max = [T::zero(); D];
 
@@ -641,7 +647,9 @@ where
             }
 
             cells_tested += 1;
-            let vertex_points: Vec<_> = cell.vertices().iter().map(|v| *v.point()).collect();
+            // Preallocate with exact capacity to avoid reallocation
+            let mut vertex_points = Vec::with_capacity(D + 1);
+            vertex_points.extend(cell.vertices().iter().map(|v| *v.point()));
 
             // Test circumsphere containment
             match insphere(&vertex_points, *vertex.point()) {
@@ -660,10 +668,10 @@ where
         }
 
         // Check for problematic conditions
-        if bad_cells.len() == tds.cells().len() && tds.cells().len() > 1 {
+        if cells_tested > 1 && bad_cells.len() == cells_tested {
             // All cells marked as bad - this is unusual and suggests hull extension is needed
             return Err(BadCellsError::AllCellsBad {
-                cell_count: tds.cells().len(),
+                cell_count: cells_tested,
                 degenerate_count,
             });
         }
@@ -722,15 +730,8 @@ where
 
         // Process each facet in the map to identify boundary facets
         for sharing_cells in facet_to_cells.values() {
-            // Count how many bad vs good cells share this facet
+            // Count how many bad vs good cells share this facet without allocation
             // Note: sharing_cells contains (CellKey, facet_index) pairs
-            let bad_cells_sharing: Vec<_> = sharing_cells
-                .iter()
-                .filter(|&&(cell_key, _)| bad_cell_set.contains(&cell_key))
-                .copied()
-                .collect();
-
-            let bad_count = bad_cells_sharing.len();
             let total_count = sharing_cells.len();
             #[cfg(debug_assertions)]
             debug_assert!(
@@ -738,12 +739,27 @@ where
                 "Facet shared by more than two cells (total_count = {total_count})"
             );
 
+            // Count bad cells and capture the single bad sharer if it exists
+            let mut bad_count = 0;
+            let mut single_bad_cell = None;
+            for &(cell_key, facet_index) in sharing_cells {
+                if bad_cell_set.contains(&cell_key) {
+                    bad_count += 1;
+                    if bad_count == 1 {
+                        single_bad_cell = Some((cell_key, facet_index));
+                    } else {
+                        // More than one bad cell, can short-circuit
+                        break;
+                    }
+                }
+            }
+
             // A facet is on the cavity boundary if:
             // 1. Exactly one bad cell uses it (boundary between bad and good)
             // 2. OR it's a true boundary facet (only one cell total) that's bad
             if bad_count == 1 && (total_count == 2 || total_count == 1) {
                 // Store the bad cell key and facet index for later processing
-                if let Some(&(bad_cell_key, facet_index)) = bad_cells_sharing.first() {
+                if let Some((bad_cell_key, facet_index)) = single_bad_cell {
                     boundary_facet_specs.push((bad_cell_key, facet_index));
                 }
             }
@@ -1022,7 +1038,9 @@ where
         // First try boundary facets (most likely to work)
         for cells in facet_to_cells.values() {
             if cells.len() == 1 {
-                let (cell_key, facet_index) = cells[0];
+                let &(cell_key, facet_index) = cells
+                    .first()
+                    .expect("boundary facet must have exactly one adjacent cell");
                 let fi = <usize as From<_>>::from(facet_index);
                 if let Some(cell) = tds.cells().get(cell_key)
                     && let Ok(facets) = cell.facets()
@@ -1212,7 +1230,11 @@ where
         // Ensure all vertices are registered in the TDS vertex mapping
         for vertex in &vertices {
             if !tds.uuid_to_vertex_key.contains_key(&vertex.uuid()) {
-                tds.insert_vertex_with_mapping(*vertex);
+                tds.insert_vertex_with_mapping(*vertex).map_err(|e| {
+                    TriangulationConstructionError::FailedToAddVertex {
+                        message: format!("Failed to insert vertex: {e}"),
+                    }
+                })?;
             }
         }
 
@@ -1223,7 +1245,11 @@ where
                 message: format!("Failed to create initial simplex: {e}"),
             })?;
 
-        tds.insert_cell_with_mapping(cell);
+        tds.insert_cell_with_mapping(cell).map_err(|e| {
+            TriangulationConstructionError::FailedToCreateCell {
+                message: format!("Failed to insert initial simplex cell: {e}"),
+            }
+        })?;
 
         Ok(())
     }
@@ -1321,7 +1347,9 @@ where
             .collect();
 
         for (_facet_key, cells) in boundary_facets {
-            let (cell_key, facet_index) = cells[0];
+            let &(cell_key, facet_index) = cells
+                .first()
+                .expect("boundary facet must have exactly one adjacent cell");
             if let Some(cell) = tds.cells().get(cell_key) {
                 if let Ok(facets) = cell.facets() {
                     if let Some(facet) = facets.get(<usize as From<_>>::from(facet_index)) {
@@ -1498,7 +1526,10 @@ where
     /// * `vertex` - The vertex to ensure is registered
     fn ensure_vertex_in_tds(tds: &mut Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) {
         if !tds.uuid_to_vertex_key.contains_key(&vertex.uuid()) {
-            tds.insert_vertex_with_mapping(*vertex);
+            // Note: We silently ignore duplicate UUID errors here since we're checking first
+            // If the check passes but insertion fails, it means concurrent modification
+            // which shouldn't happen in single-threaded context
+            let _ = tds.insert_vertex_with_mapping(*vertex);
         }
     }
 
@@ -1535,8 +1566,9 @@ where
             .vertices(facet_vertices)
             .build()
             .is_ok_and(|new_cell| {
-                tds.insert_cell_with_mapping(new_cell);
-                true
+                // We ignore the Result here - if insertion fails due to duplicate UUID,
+                // we treat it as a failed cell creation (returns false)
+                tds.insert_cell_with_mapping(new_cell).is_ok()
             })
     }
 
@@ -2195,6 +2227,15 @@ mod tests {
         let err3 = BadCellsError::NoCells;
         println!("  NoCells error: {err3}");
 
-        println!("✓ BadCellsError types work correctly");
+        // Test PartialEq implementation
+        let err1_clone = BadCellsError::AllCellsBad {
+            cell_count: 5,
+            degenerate_count: 2,
+        };
+        assert_eq!(err1, err1_clone, "Equal errors should compare as equal");
+        assert_ne!(err1, err2, "Different errors should not be equal");
+        assert_ne!(err2, err3, "Different error variants should not be equal");
+
+        println!("✓ BadCellsError types work correctly with equality");
     }
 }
