@@ -5,10 +5,15 @@
 //! "No cavity boundary facets found" error.
 
 use crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE;
-use crate::core::collections::{CellKeySet, FastHashMap, FastHashSet, SmallBuffer};
+use crate::core::collections::{
+    CellKeySet, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer,
+};
+use crate::core::traits::facet_cache::FacetCacheProvider;
 use crate::core::util::derive_facet_key_from_vertices;
+use arc_swap::ArcSwapOption;
 use std::marker::PhantomData;
 use std::ops::{AddAssign, Div, DivAssign, SubAssign};
+use std::sync::{Arc, atomic::AtomicU64};
 
 use crate::core::traits::insertion_algorithm::{
     InsertionAlgorithm, InsertionBuffers, InsertionInfo, InsertionStatistics, InsertionStrategy,
@@ -48,6 +53,10 @@ where
     buffers: InsertionBuffers<T, U, V, D>,
     /// Cached convex hull for hull extension
     hull: Option<ConvexHull<T, U, V, D>>,
+    /// Cache for facet-to-cells mapping
+    facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
+    /// Generation counter for cache invalidation
+    cached_generation: Arc<AtomicU64>,
     /// Phantom data to indicate that U and V types are used in method signatures
     _phantom: PhantomData<(U, V)>,
 }
@@ -106,6 +115,8 @@ where
             stats: InsertionStatistics::new(),
             buffers: InsertionBuffers::with_capacity(D * 10), // Scale capacity with dimension
             hull: None,
+            facet_to_cells_cache: ArcSwapOption::empty(),
+            cached_generation: Arc::new(AtomicU64::new(0)),
             _phantom: PhantomData,
         }
     }
@@ -134,6 +145,8 @@ where
             stats: InsertionStatistics::new(),
             buffers: InsertionBuffers::with_capacity(D * 10), // Scale capacity with dimension
             hull: None,
+            facet_to_cells_cache: ArcSwapOption::empty(),
+            cached_generation: Arc::new(AtomicU64::new(0)),
             _phantom: PhantomData,
         }
     }
@@ -162,6 +175,8 @@ where
             stats: InsertionStatistics::new(),
             buffers: InsertionBuffers::with_capacity(D * 10), // Scale capacity with dimension
             hull: None,
+            facet_to_cells_cache: ArcSwapOption::empty(),
+            cached_generation: Arc::new(AtomicU64::new(0)),
             _phantom: PhantomData,
         }
     }
@@ -709,13 +724,14 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
     ) -> Result<FastHashMap<u64, Vec<CellKey>>, TriangulationValidationError> {
-        // Reuse existing mapping from TDS to avoid recomputation
-        let tds_map = tds.build_facet_to_cells_hashmap();
+        // Use cached facet mapping to avoid recomputation
+        #[allow(deprecated)] // Will be migrated to proper error handling in Phase 3
+        let tds_map = self.get_or_build_facet_cache(tds);
 
         // Transform the TDS map into the required format with validation
         let facet_to_cells: FastHashMap<u64, Vec<CellKey>> = tds_map
-            .into_iter()
-            .map(|(facet_key, cell_facet_pairs)| {
+            .iter()
+            .map(|(&facet_key, cell_facet_pairs)| {
                 // Extract just the CellKeys, discarding facet indices
                 let mut cell_keys = Vec::with_capacity(cell_facet_pairs.len());
                 cell_keys.extend(cell_facet_pairs.iter().map(|(cell_key, _)| *cell_key));
@@ -830,10 +846,9 @@ where
 
         let mut visible_facets = Vec::new();
 
-        // Get all boundary facets (facets shared by exactly one cell)
-        // TODO: integrate FacetCacheProvider here once available:
-        // let facet_to_cells = self.get_or_build_facet_cache(&tds);
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        // Get all boundary facets (facets shared by exactly one cell) using cache
+        #[allow(deprecated)] // Will be migrated to proper error handling in Phase 3
+        let facet_to_cells = self.get_or_build_facet_cache(tds);
 
         let mut cell_facets_cache: KeyBasedCellMap<Vec<Facet<T, U, V, D>>> =
             fast_hash_map_with_capacity(tds.number_of_cells());
@@ -1127,6 +1142,31 @@ where
         };
 
         has_small_coords || has_large_coords || nearby_vertices > 3
+    }
+}
+
+impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for RobustBoyerWatson<T, U, V, D>
+where
+    T: CoordinateScalar
+        + ComplexField<RealField = T>
+        + AddAssign<T>
+        + SubAssign<T>
+        + Sum
+        + num_traits::NumCast
+        + From<f64>,
+    U: crate::core::traits::data_type::DataType + DeserializeOwned,
+    V: crate::core::traits::data_type::DataType + DeserializeOwned,
+    f64: From<T>,
+    for<'a> &'a T: std::ops::Div<T>,
+    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    ordered_float::OrderedFloat<f64>: From<T>,
+{
+    fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
+        &self.facet_to_cells_cache
+    }
+
+    fn cached_generation(&self) -> &AtomicU64 {
+        &self.cached_generation
     }
 }
 
@@ -1882,6 +1922,7 @@ mod tests {
             }
 
             // 3. All facets should be properly shared
+            #[allow(deprecated)] // Test verification - OK to use deprecated method
             let facet_to_cells = tds.build_facet_to_cells_hashmap();
             for (facet_key, cells) in &facet_to_cells {
                 assert!(
@@ -2071,5 +2112,132 @@ mod tests {
         }
 
         println!("✓ All create_perturbed_vertex error handling tests passed");
+    }
+
+    #[test]
+    fn test_facet_cache_provider_implementation() {
+        use std::sync::atomic::Ordering;
+
+        println!("Testing FacetCacheProvider implementation for RobustBoyerWatson");
+
+        // Create test triangulation
+        let points = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]),
+        ];
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&points).unwrap();
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Test 1: Initial cache state
+        assert!(
+            algorithm.facet_cache().load().is_none(),
+            "Cache should initially be empty"
+        );
+        assert_eq!(
+            algorithm.cached_generation().load(Ordering::Relaxed),
+            0,
+            "Initial generation should be 0"
+        );
+        println!("  ✓ Initial cache state verified");
+
+        // Test 2: Cache building on first access
+        let initial_generation = tds.generation();
+        let cache1 = algorithm.get_or_build_facet_cache(&tds);
+
+        assert!(
+            !cache1.is_empty(),
+            "Built cache should contain facet mappings"
+        );
+        assert_eq!(
+            algorithm.cached_generation().load(Ordering::Relaxed),
+            initial_generation,
+            "Cached generation should match TDS generation"
+        );
+        println!("  ✓ Cache builds correctly on first access");
+
+        // Test 3: Cache reuse on subsequent access (no TDS changes)
+        let cache2 = algorithm.get_or_build_facet_cache(&tds);
+        assert!(
+            Arc::ptr_eq(&cache1, &cache2),
+            "Same cache instance should be returned when TDS unchanged"
+        );
+        println!("  ✓ Cache correctly reused when TDS unchanged");
+
+        // Test 4: Cache invalidation after TDS modification
+        // Create a new triangulation with an additional vertex to simulate modification
+        let mut modified_points = points;
+        modified_points.push(vertex!([0.25, 0.25, 0.25]));
+        let tds_modified: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&modified_points).unwrap();
+
+        // Generation should be different for new TDS
+        let new_generation = tds_modified.generation();
+        // Note: Different TDS instances will have different generations
+
+        // Get cache for modified TDS - should be different
+        let cache3 = algorithm.get_or_build_facet_cache(&tds_modified);
+        assert!(
+            !Arc::ptr_eq(&cache1, &cache3),
+            "New cache instance should be created for different TDS"
+        );
+        assert_eq!(
+            algorithm.cached_generation().load(Ordering::Relaxed),
+            new_generation,
+            "Cached generation should be updated to new TDS generation"
+        );
+        println!("  ✓ Cache correctly built for modified TDS");
+
+        // Test 5: Manual cache invalidation
+        algorithm.invalidate_facet_cache();
+        assert!(
+            algorithm.facet_cache().load().is_none(),
+            "Cache should be empty after manual invalidation"
+        );
+        assert_eq!(
+            algorithm.cached_generation().load(Ordering::Relaxed),
+            0,
+            "Generation should reset to 0 after manual invalidation"
+        );
+        println!("  ✓ Manual cache invalidation works correctly");
+
+        // Test 6: Cache rebuilds after manual invalidation
+        let cache4 = algorithm.get_or_build_facet_cache(&tds_modified);
+        assert!(
+            !cache4.is_empty(),
+            "Cache should rebuild after manual invalidation"
+        );
+        assert_eq!(
+            algorithm.cached_generation().load(Ordering::Relaxed),
+            new_generation,
+            "Generation should be restored after rebuild"
+        );
+        println!("  ✓ Cache rebuilds correctly after manual invalidation");
+
+        // Test 7: Verify cache content correctness
+        #[allow(deprecated)] // Using for verification in test - cache is the recommended approach
+        let direct_map = tds_modified.build_facet_to_cells_hashmap();
+        assert_eq!(
+            cache4.len(),
+            direct_map.len(),
+            "Cached map should have same size as direct build"
+        );
+
+        for (facet_key, cells_in_cache) in cache4.iter() {
+            assert!(
+                direct_map.contains_key(facet_key),
+                "All cached facets should exist in direct map"
+            );
+            assert_eq!(
+                cells_in_cache.len(),
+                direct_map[facet_key].len(),
+                "Cell counts should match for facet {facet_key}"
+            );
+        }
+        println!("  ✓ Cache content matches direct build");
+
+        println!("✓ All FacetCacheProvider tests passed for RobustBoyerWatson");
     }
 }

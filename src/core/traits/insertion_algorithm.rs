@@ -802,6 +802,7 @@ where
         let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
 
         // Use the canonical facet-to-cells map from TDS (already uses VertexKeys)
+        #[allow(deprecated)] // TODO: Migrate to FacetCacheProvider in Phase 3
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
 
         // Track which boundary facets we need to create
@@ -1134,6 +1135,7 @@ where
         // Conservative fallback: try to connect to any existing boundary facet
         // This avoids creating invalid geometry by arbitrary vertex replacement
 
+        #[allow(deprecated)] // TODO: Migrate to FacetCacheProvider in Phase 3
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
 
         // First try boundary facets (most likely to work)
@@ -1444,6 +1446,7 @@ where
         let mut visible_facets = Vec::new();
 
         // Get all boundary facets (facets shared by exactly one cell)
+        #[allow(deprecated)] // TODO: Migrate to FacetCacheProvider in Phase 3
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
         let boundary_facets: Vec<_> = facet_to_cells
             .iter()
@@ -1923,6 +1926,7 @@ mod tests {
         let test_facet = &boundary_facets[0];
 
         // Find the cell adjacent to this boundary facet
+        #[allow(deprecated)] // Test code - OK to use deprecated method
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
 
         // Compute facet key using VertexKeys

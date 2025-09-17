@@ -87,6 +87,7 @@ where
     /// ```
     fn boundary_facets(&self) -> Result<Vec<Facet<T, U, V, D>>, FacetError> {
         // Build a map from facet keys to the cells that contain them
+        #[allow(deprecated)] // Will be migrated in Phase 3
         let facet_to_cells = self.build_facet_to_cells_hashmap();
         // Right-size the vector by counting boundary facets first
         let boundary_estimate = facet_to_cells.values().filter(|v| v.len() == 1).count();
@@ -177,6 +178,7 @@ where
     /// ```
     #[inline]
     fn is_boundary_facet(&self, facet: &Facet<T, U, V, D>) -> bool {
+        #[allow(deprecated)] // Will be migrated in Phase 3
         let facet_to_cells = self.build_facet_to_cells_hashmap();
         self.is_boundary_facet_with_map(facet, &facet_to_cells)
     }
@@ -280,6 +282,7 @@ where
     /// ```
     fn number_of_boundary_facets(&self) -> usize {
         // Count facets that belong to exactly one cell
+        #[allow(deprecated)] // Will be migrated in Phase 3
         self.build_facet_to_cells_hashmap()
             .values()
             .filter(|cells| cells.len() == 1)

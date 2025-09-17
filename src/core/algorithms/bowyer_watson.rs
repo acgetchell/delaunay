@@ -92,8 +92,10 @@
 //!   DOI: [10.1145/160985.161140](https://doi.org/10.1145/160985.161140)
 
 use crate::core::{
+    collections::FacetToCellsMap,
     traits::{
         data_type::DataType,
+        facet_cache::FacetCacheProvider,
         insertion_algorithm::{
             InsertionAlgorithm, InsertionBuffers, InsertionInfo, InsertionStatistics,
             InsertionStrategy,
@@ -103,11 +105,13 @@ use crate::core::{
     vertex::Vertex,
 };
 use crate::geometry::{algorithms::convex_hull::ConvexHull, traits::coordinate::CoordinateScalar};
+use arc_swap::ArcSwapOption;
 use num_traits::NumCast;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
+    sync::{Arc, atomic::AtomicU64},
 };
 
 // InsertionStrategy and InsertionInfo are now imported from traits::insertion_algorithm
@@ -132,6 +136,12 @@ where
 
     /// Cached convex hull for hull extension
     hull: Option<ConvexHull<T, U, V, D>>,
+
+    /// Cache for facet-to-cells mapping
+    facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
+
+    /// Generation counter for cache invalidation
+    cached_generation: Arc<AtomicU64>,
 }
 
 impl<T, U, V, const D: usize> IncrementalBoyerWatson<T, U, V, D>
@@ -166,6 +176,8 @@ where
             stats: InsertionStatistics::new(),
             buffers: InsertionBuffers::with_capacity(100),
             hull: None,
+            facet_to_cells_cache: ArcSwapOption::empty(),
+            cached_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -206,6 +218,23 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for IncrementalBoyerWatson<T, U, V, D>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    U: DataType + DeserializeOwned,
+    V: DataType + DeserializeOwned,
+    for<'a> &'a T: Div<T>,
+    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+{
+    fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
+        &self.facet_to_cells_cache
+    }
+
+    fn cached_generation(&self) -> &AtomicU64 {
+        &self.cached_generation
     }
 }
 
@@ -456,6 +485,7 @@ mod tests {
             // Detailed facet sharing analysis
             // TODO: Migrate to cache-backed path once Phase 3 lands.
             eprintln!("\n=== FACET SHARING ANALYSIS ===");
+            #[allow(deprecated)] // Test diagnostic - OK to use deprecated method
             let facet_to_cells = tds.build_facet_to_cells_hashmap();
 
             let mut invalid_sharing = 0;

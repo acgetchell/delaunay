@@ -221,6 +221,7 @@ where
                 );
 
                 // Fall back to the lenient TDS method as a last resort
+                #[allow(deprecated)] // Internal fallback - acceptable for graceful degradation
                 Arc::new(tds.build_facet_to_cells_hashmap())
             }
         }
@@ -876,6 +877,7 @@ mod tests {
         let provider_cache = provider.get_or_build_facet_cache(&tds);
 
         // Get reference cache directly from TDS
+        #[allow(deprecated)] // Used for verification in test
         let reference_cache = tds.build_facet_to_cells_hashmap();
 
         // Should have same size
