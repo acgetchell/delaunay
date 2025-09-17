@@ -5,7 +5,9 @@
 ### Primary References
 
 #### **[OPTIMIZATION_ROADMAP.md](./OPTIMIZATION_ROADMAP.md)** 🎯
+
 **The main optimization strategy document** - Start here!
+
 - Comprehensive 4-phase optimization plan
 - Current status: Phase 1 ✅ | Phase 2 🔄 95% | Phase 3-4 📋 Planned
 - Migration guides and performance targets
@@ -13,12 +15,16 @@
 ### Implementation Guides
 
 #### **[OPTIMIZING_BOWYER_WATSON.md](./OPTIMIZING_BOWYER_WATSON.md)** 📋
+
 FacetCacheProvider implementation plan (Phase 2 - pending)
+
 - Detailed implementation checklist
 - Expected 50-90% reduction in facet mapping computation
 
 #### **[vertex_uuid_iter_optimizations.md](./vertex_uuid_iter_optimizations.md)** ✅
+
 Zero-allocation UUID iteration optimization (COMPLETE)
+
 - Migration patterns and examples
 - Performance analysis (1.86x faster)
 - Detailed benchmarking methodology
@@ -26,13 +32,17 @@ Zero-allocation UUID iteration optimization (COMPLETE)
 ### Technical References
 
 #### **[numerical_robustness_guide.md](./numerical_robustness_guide.md)**
+
 Comprehensive guide to numerical stability in geometric computations
+
 - Predicates and error analysis
 - Robustness strategies
 - Implementation recommendations
 
 #### **[code_organization.md](./code_organization.md)**
+
 Project structure and module organization
+
 - Architecture overview
 - Module responsibilities
 - Design patterns used
@@ -40,13 +50,17 @@ Project structure and module organization
 ### Historical & Process Documentation
 
 #### **[optimization_recommendations.md](./optimization_recommendations.md)**
+
 Original optimization analysis with detailed code examples
+
 - Historical context of optimizations
 - Detailed implementation samples
 - Evolution of the optimization strategy
 
 #### **[RELEASING.md](./RELEASING.md)**
+
 Release process and versioning guidelines
+
 - Version numbering scheme
 - Release checklist
 - Publishing procedures

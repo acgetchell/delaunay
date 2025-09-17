@@ -19,6 +19,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 use approx::abs_diff_eq;
 use num_traits::{NumCast, One, Zero, cast};
 use serde::{Serialize, de::DeserializeOwned};
+use smallvec::SmallVec;
 use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
@@ -733,8 +734,11 @@ where
             // is equivalent to degenerate_count * 2 > total
             let total_cells = cells_tested.saturating_add(degenerate_count);
 
-            // This comparison logic currently only works for DEGENERATE_CELL_THRESHOLD = 0.5
-            // For other thresholds, we'd need different integer arithmetic
+            // NOTE: The integer arithmetic optimization below is specifically designed for
+            // DEGENERATE_CELL_THRESHOLD = 0.5. This avoids floating-point operations for
+            // the common 50% threshold case. To generalize for arbitrary rational thresholds,
+            // we would compare: degenerate_count * denominator > total * numerator
+            // For now, we detect the 0.5 case and optimize it; other values fall back to FP.
             if abs_diff_eq!(DEGENERATE_CELL_THRESHOLD, 0.5, epsilon = f64::EPSILON) {
                 // Use optimized integer arithmetic for 50% threshold
                 let threshold_exceeded = degenerate_count.saturating_mul(2) > total_cells;
@@ -802,8 +806,13 @@ where
         let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
 
         // Use the canonical facet-to-cells map from TDS (already uses VertexKeys)
-        #[allow(deprecated)] // TODO: Migrate to FacetCacheProvider in Phase 3
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        // Default trait implementation cannot access concrete type's cache,
+        // so we use try_build which returns Result
+        let facet_to_cells = tds.build_facet_to_cells_map().map_err(|e| {
+            TriangulationValidationError::InconsistentDataStructure {
+                message: format!("Failed to build facet-to-cells map: {e}"),
+            }
+        })?;
 
         // Track which boundary facets we need to create
         let mut boundary_facet_specs = Vec::new();
@@ -869,6 +878,9 @@ where
                 }
                 let opposite_vertex = cell.vertices()[facet_idx];
                 // Create the facet using the Cell and its opposite vertex
+                // TODO: Phase 3 optimization - avoid cloning full Cell when constructing Facet.
+                // Once we have lightweight Facet construction from (cell_key, facet_index),
+                // we can eliminate this clone to reduce allocations.
                 let facet = Facet::new(cell.clone(), opposite_vertex).map_err(|e| {
                     TriangulationValidationError::InconsistentDataStructure {
                         message: format!("Failed to construct boundary facet: {e}"),
@@ -1135,8 +1147,15 @@ where
         // Conservative fallback: try to connect to any existing boundary facet
         // This avoids creating invalid geometry by arbitrary vertex replacement
 
-        #[allow(deprecated)] // TODO: Migrate to FacetCacheProvider in Phase 3
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        // TODO: Use FacetCacheProvider if available in concrete implementation.
+        // Default trait implementation cannot access concrete type's cache,
+        // so we use try_build which returns Result. Concrete implementations
+        // that have FacetCacheProvider should override this to use get_or_build_facet_cache.
+        let facet_to_cells = tds.build_facet_to_cells_map().map_err(|e| {
+            TriangulationValidationError::InconsistentDataStructure {
+                message: format!("Failed to build facet-to-cells map: {e}"),
+            }
+        })?;
 
         // First try boundary facets (most likely to work)
         for cells in facet_to_cells.values() {
@@ -1446,8 +1465,15 @@ where
         let mut visible_facets = Vec::new();
 
         // Get all boundary facets (facets shared by exactly one cell)
-        #[allow(deprecated)] // TODO: Migrate to FacetCacheProvider in Phase 3
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        // TODO: Use FacetCacheProvider if available in concrete implementation.
+        // Default trait implementation cannot access concrete type's cache,
+        // so we use try_build which returns Result. Concrete implementations
+        // that have FacetCacheProvider should override this to use get_or_build_facet_cache.
+        let facet_to_cells = tds.build_facet_to_cells_map().map_err(|e| {
+            TriangulationValidationError::InconsistentDataStructure {
+                message: format!("Failed to build facet-to-cells map: {e}"),
+            }
+        })?;
         let boundary_facets: Vec<_> = facet_to_cells
             .iter()
             .filter(|(_, cells)| cells.len() == 1)
@@ -1536,11 +1562,12 @@ where
         };
 
         // Create test simplices for orientation comparison
-        let mut simplex_with_opposite: Vec<Point<T, D>> =
+        // Using SmallVec to avoid heap allocation for small simplices (D+1 points)
+        let mut simplex_with_opposite: SmallVec<[Point<T, D>; 8]> =
             facet_vertices.iter().map(|v| *v.point()).collect();
         simplex_with_opposite.push(*opposite_vertex.point());
 
-        let mut simplex_with_test: Vec<Point<T, D>> =
+        let mut simplex_with_test: SmallVec<[Point<T, D>; 8]> =
             facet_vertices.iter().map(|v| *v.point()).collect();
         simplex_with_test.push(*vertex.point());
 
@@ -1926,8 +1953,9 @@ mod tests {
         let test_facet = &boundary_facets[0];
 
         // Find the cell adjacent to this boundary facet
-        #[allow(deprecated)] // Test code - OK to use deprecated method
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        let facet_to_cells = tds
+            .build_facet_to_cells_map()
+            .expect("Should build facet map in test");
 
         // Compute facet key using VertexKeys
         let facet_vertices = test_facet.vertices();

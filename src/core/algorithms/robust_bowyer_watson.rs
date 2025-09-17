@@ -278,41 +278,43 @@ where
 
         if !bad_cells.is_empty() {
             // Try boundary facet detection using trait method with robust fallback
+            #[allow(clippy::collapsible_if)] // Can't collapse due to if-let chain guard limitations
             if let Ok(boundary_facets) =
                 self.find_cavity_boundary_facets_with_robust_fallback(tds, &bad_cells)
-                && !boundary_facets.is_empty()
             {
-                let cells_removed = bad_cells.len();
-                <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
+                if !boundary_facets.is_empty() {
+                    let cells_removed = bad_cells.len();
+                    <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
 
-                // Ensure vertex is in TDS - if this fails, propagate the error
-                <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
+                    // Ensure vertex is in TDS - if this fails, propagate the error
+                    <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
 
-                let cells_created =
-                    <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
-                        tds,
-                        &boundary_facets,
-                        vertex,
-                    );
+                    let cells_created =
+                        <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
+                            tds,
+                            &boundary_facets,
+                            vertex,
+                        );
 
-                // Maintain invariants after structural changes
-                <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
-                    |e| TriangulationValidationError::FinalizationFailed {
-                        message: format!(
-                            "Failed to finalize triangulation after robust cavity-based insertion \
-                                 (removed {cells_removed} cells, created {cells_created} cells). \
-                                 Underlying error: {e}"
-                        ),
-                    },
-                )?;
+                    // Maintain invariants after structural changes
+                    <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
+                        |e| TriangulationValidationError::FinalizationFailed {
+                            message: format!(
+                                "Failed to finalize triangulation after robust cavity-based insertion \
+                                     (removed {cells_removed} cells, created {cells_created} cells). \
+                                     Underlying error: {e}"
+                            ),
+                        },
+                    )?;
 
-                return Ok(InsertionInfo {
-                    strategy: InsertionStrategy::CavityBased,
-                    cells_removed,
-                    cells_created,
-                    success: true,
-                    degenerate_case_handled: false,
-                });
+                    return Ok(InsertionInfo {
+                        strategy: InsertionStrategy::CavityBased,
+                        cells_removed,
+                        cells_created,
+                        success: true,
+                        degenerate_case_handled: false,
+                    });
+                }
             }
         }
 
@@ -335,37 +337,39 @@ where
         [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     {
         // Use visibility detection with robust fallback
+        #[allow(clippy::collapsible_if)] // Can't collapse due to if-let chain guard limitations
         if let Ok(visible_facets) =
             self.find_visible_boundary_facets_with_robust_fallback(tds, vertex)
-            && !visible_facets.is_empty()
         {
-            // Ensure vertex is in TDS - if this fails, propagate the error
-            <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
+            if !visible_facets.is_empty() {
+                // Ensure vertex is in TDS - if this fails, propagate the error
+                <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
 
-            let cells_created =
-                <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
-                    tds,
-                    &visible_facets,
-                    vertex,
-                );
+                let cells_created =
+                    <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
+                        tds,
+                        &visible_facets,
+                        vertex,
+                    );
 
-            // Maintain invariants after structural changes
-            <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
-                |e| TriangulationValidationError::FinalizationFailed {
-                    message: format!(
-                        "Failed to finalize triangulation after robust hull extension insertion \
-                             (created {cells_created} cells). Underlying error: {e}"
-                    ),
-                },
-            )?;
+                // Maintain invariants after structural changes
+                <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
+                    |e| TriangulationValidationError::FinalizationFailed {
+                        message: format!(
+                            "Failed to finalize triangulation after robust hull extension insertion \
+                                 (created {cells_created} cells). Underlying error: {e}"
+                        ),
+                    },
+                )?;
 
-            return Ok(InsertionInfo {
-                strategy: InsertionStrategy::HullExtension,
-                cells_removed: 0,
-                cells_created,
-                success: true,
-                degenerate_case_handled: false,
-            });
+                return Ok(InsertionInfo {
+                    strategy: InsertionStrategy::HullExtension,
+                    cells_removed: 0,
+                    cells_created,
+                    success: true,
+                    degenerate_case_handled: false,
+                });
+            }
         }
 
         // If visibility detection fails, fall back to trait method
@@ -1203,6 +1207,8 @@ where
         self.stats.reset();
         self.buffers.clear_all();
         self.hull = None;
+        // Clear facet cache to prevent serving stale mappings across runs
+        self.invalidate_facet_cache();
     }
 
     fn determine_strategy(
@@ -1906,7 +1912,7 @@ mod tests {
 
             // 3. All facets should be properly shared
             #[allow(deprecated)] // Test verification - OK to use deprecated method
-            let facet_to_cells = tds.build_facet_to_cells_hashmap();
+            let facet_to_cells = tds.build_facet_to_cells_map_lenient();
             for (facet_key, cells) in &facet_to_cells {
                 assert!(
                     cells.len() <= 2,
@@ -2158,7 +2164,11 @@ mod tests {
 
         // Generation should be different for new TDS
         let new_generation = tds_modified.generation();
-        // Note: Different TDS instances will have different generations
+        // Note: Different TDS instances should have different generations
+        assert_ne!(
+            initial_generation, new_generation,
+            "Expected different generation between distinct TDS instances"
+        );
 
         // Get cache for modified TDS - should be different
         let cache3 = algorithm.get_or_build_facet_cache(&tds_modified);
@@ -2201,7 +2211,7 @@ mod tests {
 
         // Test 7: Verify cache content correctness
         #[allow(deprecated)] // Using for verification in test - cache is the recommended approach
-        let direct_map = tds_modified.build_facet_to_cells_hashmap();
+        let direct_map = tds_modified.build_facet_to_cells_map_lenient();
         assert_eq!(
             cache4.len(),
             direct_map.len(),

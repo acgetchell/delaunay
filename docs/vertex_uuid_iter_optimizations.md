@@ -5,7 +5,9 @@
 This document summarizes the optimization work completed to replace `vertex_uuids()` method calls with the more
 efficient `vertex_uuid_iter()` method throughout the delaunay codebase.
 
-**Note**: This optimization was part of the broader Phase 2 Key-Based Internal APIs work. While cells still store full `Vertex` objects (to be addressed in Phase 3), this iterator optimization provides immediate performance benefits by eliminating unnecessary Vec allocations.
+**Note**: This optimization was part of the broader Phase 2 Key-Based Internal APIs work. While cells still store full
+`Vertex` objects (to be addressed in Phase 3), this iterator optimization provides immediate performance benefits by
+eliminating unnecessary Vec allocations.
 
 ## Background
 
@@ -144,7 +146,7 @@ Some usages of `vertex_uuids()` were intentionally kept because:
 
 ## Relation to Phase 2 & Phase 3 Work
 
-This optimization complements the Phase 2 key-based internal APIs:
+This optimization complements the Phase 2 key-based internal APIs. For the complete optimization roadmap and details about all phases, see [OPTIMIZATION_ROADMAP.md](./OPTIMIZATION_ROADMAP.md).
 
 - **Phase 2 (COMPLETED)**: Added `vertex_keys_for_cell_direct()` to get vertex keys without UUID lookups
 - **This Work**: Optimized UUID iteration when UUIDs are still needed (e.g., for external APIs)

@@ -106,9 +106,10 @@ where
                 return Some(existing.clone());
             }
             // Build the cache only once, even if RCU retries
-            #[allow(deprecated)]
-            // Internal implementation detail - this trait is the recommended replacement
-            let arc = built.get_or_insert_with(|| Arc::new(tds.build_facet_to_cells_hashmap()));
+            // Use fallible builder; empty map is acceptable as a cache entry if construction fails
+            let arc = built.get_or_insert_with(|| {
+                Arc::new(tds.build_facet_to_cells_map().unwrap_or_default())
+            });
             Some(arc.clone())
         })
     }
@@ -171,13 +172,22 @@ where
                             .store(current_generation, Ordering::Release);
                     }
 
-                    // Return the cache; if concurrently invalidated, retry via slow path
+                    // Return the cache; if concurrently invalidated, retry via bounded loop
                     // Another thread could invalidate between RCU and load_full()
-                    self.facet_cache().load_full().unwrap_or_else(|| {
-                        // Generation may have changed; fall back to rebuild path
-                        // This handles the race where another thread invalidated after our RCU
-                        self.get_or_build_facet_cache(tds)
-                    })
+                    // Use bounded retry (max 3 attempts) to avoid potential deep recursion under high contention
+                    let mut retries = 0;
+                    loop {
+                        if let Some(cache) = self.facet_cache().load_full() {
+                            break cache;
+                        }
+                        if retries >= 3 {
+                            // Give up and build directly after too many retries
+                            break Arc::new(tds.build_facet_to_cells_map().unwrap_or_default());
+                        }
+                        // If concurrently invalidated, attempt RCU build again
+                        let _ = self.build_cache_with_rcu(tds);
+                        retries += 1;
+                    }
                 },
                 |existing_cache| {
                     // Cache exists and is current - use it
@@ -186,9 +196,8 @@ where
             )
         } else {
             // Cache is stale - need to invalidate and rebuild
-            #[allow(deprecated)]
-            // Internal implementation detail - this trait is the recommended replacement
-            let new_cache = tds.build_facet_to_cells_hashmap();
+            // Prefer fallible builder; empty map is acceptable as a cache entry if construction fails
+            let new_cache = tds.build_facet_to_cells_map().unwrap_or_default();
             let new_cache_arc = Arc::new(new_cache);
 
             // Atomically swap in the new cache.
@@ -758,7 +767,7 @@ mod tests {
 
         // Get reference cache directly from TDS
         #[allow(deprecated)] // Used for verification in test
-        let reference_cache = tds.build_facet_to_cells_hashmap();
+        let reference_cache = tds.build_facet_to_cells_map_lenient();
 
         // Should have same size
         assert_eq!(

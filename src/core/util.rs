@@ -1698,7 +1698,7 @@ mod tests {
 
         // Build the facet-to-cells cache
         let cache = tds
-            .try_build_facet_to_cells_hashmap()
+            .build_facet_to_cells_map()
             .expect("Should build facet map in test");
 
         // Test that our utility function produces keys that exist in the cache

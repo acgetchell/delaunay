@@ -179,7 +179,8 @@ where
     pub fn new() -> Self {
         Self {
             stats: InsertionStatistics::new(),
-            buffers: InsertionBuffers::with_capacity(100),
+            // Scale buffer capacity with dimension for better performance
+            buffers: InsertionBuffers::with_capacity(D * 10),
             hull: None,
             facet_to_cells_cache: ArcSwapOption::empty(),
             cached_generation: Arc::new(AtomicU64::new(0)),
@@ -239,7 +240,8 @@ where
     }
 
     fn cached_generation(&self) -> &AtomicU64 {
-        &self.cached_generation
+        // Return inner &AtomicU64 from Arc explicitly
+        self.cached_generation.as_ref()
     }
 }
 
@@ -337,6 +339,8 @@ where
         self.stats.reset();
         self.buffers.clear_all();
         self.hull = None;
+        // Clear facet cache to prevent serving stale mappings across runs
+        self.invalidate_facet_cache();
     }
 
     /// Update the cell creation counter
@@ -399,7 +403,7 @@ mod tests {
     /// Count boundary facets (shared by 1 cell)
     #[allow(deprecated)] // Test helper - deprecation doesn't apply to tests
     fn count_boundary_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
-        tds.build_facet_to_cells_hashmap()
+        tds.build_facet_to_cells_map_lenient()
             .values()
             .filter(|cells| cells.len() == 1)
             .count()
@@ -408,7 +412,7 @@ mod tests {
     /// Count internal facets (shared by 2 cells)
     #[allow(deprecated)] // Test helper - deprecation doesn't apply to tests
     fn count_internal_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
-        tds.build_facet_to_cells_hashmap()
+        tds.build_facet_to_cells_map_lenient()
             .values()
             .filter(|cells| cells.len() == 2)
             .count()
@@ -417,7 +421,7 @@ mod tests {
     /// Count invalid facets (shared by 3+ cells)
     #[allow(deprecated)] // Test helper - deprecation doesn't apply to tests
     fn count_invalid_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
-        tds.build_facet_to_cells_hashmap()
+        tds.build_facet_to_cells_map_lenient()
             .values()
             .filter(|cells| cells.len() > 2)
             .count()
@@ -483,7 +487,7 @@ mod tests {
             // Detailed facet sharing analysis
             eprintln!("\n=== FACET SHARING ANALYSIS ===");
             #[allow(deprecated)] // Test diagnostic - OK to use deprecated method
-            let facet_to_cells = tds.build_facet_to_cells_hashmap();
+            let facet_to_cells = tds.build_facet_to_cells_map_lenient();
 
             let mut invalid_sharing = 0;
             let mut boundary_facets = 0;
@@ -556,7 +560,7 @@ mod tests {
 
         // Critical issue detection
         #[allow(deprecated)] // Test diagnostic - OK to use deprecated method
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        let facet_to_cells = tds.build_facet_to_cells_map_lenient();
         let mut invalid_sharing = 0;
         let mut boundary_facets = 0;
 
@@ -624,7 +628,7 @@ mod tests {
 
         // Check facet sharing
         #[allow(deprecated)] // Test diagnostic - OK to use deprecated method
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        let facet_to_cells = tds.build_facet_to_cells_map_lenient();
         let boundary_count = facet_to_cells
             .values()
             .filter(|cells| cells.len() == 1)

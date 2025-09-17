@@ -3,7 +3,7 @@ use crate::core::facet::{Facet, FacetError};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::traits::facet_cache::FacetCacheProvider;
-use crate::core::triangulation_data_structure::Tds;
+use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
 use crate::core::util::derive_facet_key_from_vertices;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::simplex_orientation;
@@ -57,8 +57,8 @@ pub enum ConvexHullConstructionError {
     /// Failed to extract boundary facets from the triangulation.
     #[error("Failed to extract boundary facets from triangulation: {source}")]
     BoundaryFacetExtractionFailed {
-        /// The underlying facet error that caused the failure.
-        source: FacetError,
+        /// The underlying validation error that caused the failure.
+        source: TriangulationValidationError,
     },
     /// Failed to check facet visibility from a point.
     #[error("Failed to check facet visibility from point: {source}")]
