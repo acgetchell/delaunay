@@ -442,7 +442,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> InsertionStrategy
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + One + Zero + PartialEq + Div<Output = T>,
         for<'a> &'a T: Div<T>,
     {
         // Default implementation provides basic strategy determination
@@ -468,7 +468,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> InsertionStrategy
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + One + Zero + PartialEq + Div<Output = T>,
         for<'a> &'a T: Div<T>,
     {
         // If the triangulation is empty or has very few cells, use standard approach
@@ -523,9 +523,10 @@ where
             vertex_points.clear();
             vertex_points.extend(cell.vertices().iter().map(|v| *v.point()));
 
-            if let Ok(containment) = insphere(&vertex_points, *vertex.point())
-                && matches!(containment, InSphere::INSIDE)
-            {
+            if matches!(
+                insphere(&vertex_points, *vertex.point()),
+                Ok(InSphere::INSIDE)
+            ) {
                 return true;
             }
         }
@@ -547,7 +548,7 @@ where
     /// `true` if the vertex is likely exterior, `false` otherwise
     fn is_vertex_likely_exterior(tds: &Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) -> bool
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + One + Zero + PartialEq,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + One + Zero + PartialEq + Div<Output = T>,
     {
         // Get the vertex coordinates
         let vertex_coords: [T; D] = vertex.point().into();
@@ -583,22 +584,40 @@ where
         }
 
         // Calculate bounding box margins (10% expansion)
-        // For integer types, ensure at least 1 unit of margin
-        let margin_factor: T = cast(MARGIN_FACTOR).unwrap_or_else(|| {
-            // For integer types, use 1 as the minimum margin
-            T::one()
-        });
+        // Precompute 10 for integer division fallback
+        let ten: T = cast(10).unwrap_or_else(T::one);
         let mut expanded_min = [T::zero(); D];
         let mut expanded_max = [T::zero(); D];
 
         for i in 0..D {
             let range = max_coords[i] - min_coords[i];
-            let mut margin = range * margin_factor;
 
-            // Ensure at least 1 unit of margin for integer types
-            if margin == T::zero() && T::one() != T::zero() {
-                margin = T::one();
-            }
+            // For floats: use 10% expansion (0.1 * range)
+            // For integers: use range/10 with minimum of 1
+            // Note: cast::<f64, i32>(0.1) returns Some(0), not None!
+            let margin = cast::<f64, T>(MARGIN_FACTOR).map_or_else(
+                || {
+                    // Fallback: divide by 10 with minimum of 1
+                    let mut m = range / ten;
+                    if m == T::zero() {
+                        m = T::one();
+                    }
+                    m
+                },
+                |mf| {
+                    if mf == T::zero() {
+                        // Integer case: divide by 10, ensure at least 1 unit
+                        let mut m = range / ten;
+                        if m == T::zero() {
+                            m = T::one();
+                        }
+                        m
+                    } else {
+                        // Float case: multiply by margin factor
+                        range * mf
+                    }
+                },
+            );
 
             expanded_min[i] = min_coords[i] - margin;
             expanded_max[i] = max_coords[i] + margin;
@@ -793,11 +812,13 @@ where
             // Count how many bad vs good cells share this facet without allocation
             // Note: sharing_cells contains (CellKey, facet_index) pairs
             let total_count = sharing_cells.len();
-            #[cfg(debug_assertions)]
-            debug_assert!(
-                total_count <= 2,
-                "Facet shared by more than two cells (total_count = {total_count})"
-            );
+            if total_count > 2 {
+                return Err(TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Facet shared by more than two cells (total_count = {total_count})"
+                    ),
+                });
+            }
 
             // Count bad cells and capture the single bad sharer if it exists
             let mut bad_count = 0;
@@ -1781,6 +1802,7 @@ where
 mod tests {
     use super::*;
     use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
+    use crate::core::facet::FacetError;
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
     use crate::vertex;
 
@@ -2424,32 +2446,28 @@ mod tests {
         // Try to create a facet with the invalid vertex (not in the cell)
         // This should fail with CellDoesNotContainVertex
         let facet_result = Facet::new(valid_cell, invalid_vertex);
-        assert!(
-            facet_result.is_err(),
-            "Facet::new should fail with invalid vertex"
-        );
+
+        // Check that we get the specific error variant
+        match facet_result {
+            Err(FacetError::CellDoesNotContainVertex) => {
+                println!("  ✓ Got expected FacetError::CellDoesNotContainVertex");
+            }
+            Err(other) => {
+                panic!("Expected FacetError::CellDoesNotContainVertex, got: {other:?}");
+            }
+            Ok(_) => {
+                panic!("Expected Facet::new to fail with invalid vertex");
+            }
+        }
 
         // Now test that the error would be properly propagated in find_cavity_boundary_facets
-        // The updated code will convert FacetError to TriangulationValidationError
+        // The find_cavity_boundary_facets method converts FacetError to TriangulationValidationError
+        // with message format: "Failed to construct boundary facet: {original_error}"
 
-        // Simulate what find_cavity_boundary_facets does when it encounters an error
-        let error_message = match facet_result {
-            Err(e) => format!("Failed to construct boundary facet: {e}"),
-            Ok(_) => panic!("Expected Facet::new to fail"),
-        };
-
-        // Verify the error message format
-        assert!(
-            error_message.contains("Failed to construct boundary facet"),
-            "Error message should describe facet construction failure"
-        );
-        assert!(
-            error_message.contains("does not contain the vertex"),
-            "Error message should include the original Facet error"
-        );
-
-        println!("  Error message: {error_message}");
-        println!("✓ Facet::new errors are properly formatted for propagation");
+        // We can't directly test the TriangulationValidationError variant since it only has
+        // one variant (InconsistentDataStructure) with a message field, but we've verified
+        // the FacetError variant above
+        println!("✓ Facet::new error variant checking works correctly");
 
         // Test with actual bad cells to ensure the method properly handles errors
         let bad_cells = vec![cell_keys[0]];
@@ -2465,5 +2483,116 @@ mod tests {
         );
 
         println!("✓ find_cavity_boundary_facets works correctly with error propagation in place");
+    }
+
+    #[test]
+    fn test_integer_margin_calculation() {
+        use num_traits::{One, Zero, cast};
+        use std::ops::Div;
+
+        // Helper function that mirrors the ACTUAL logic in is_vertex_likely_exterior
+        fn calculate_margin<T>(range: T) -> T
+        where
+            T: Zero
+                + One
+                + Div<Output = T>
+                + PartialEq
+                + NumCast
+                + std::ops::Mul<Output = T>
+                + Copy,
+        {
+            let ten: T = cast(10).unwrap_or_else(T::one);
+
+            // This mirrors the actual fixed implementation logic
+            cast::<f64, T>(MARGIN_FACTOR).map_or_else(
+                || {
+                    // Fallback: divide by 10 with minimum of 1
+                    let mut m = range / ten;
+                    if m == T::zero() {
+                        m = T::one();
+                    }
+                    m
+                },
+                |mf| {
+                    if mf == T::zero() {
+                        // Integer case: divide by 10, ensure at least 1 unit
+                        let mut m = range / ten;
+                        if m == T::zero() {
+                            m = T::one();
+                        }
+                        m
+                    } else {
+                        // Float case: multiply by margin factor
+                        range * mf
+                    }
+                },
+            )
+        }
+
+        println!("Testing integer margin calculation for bounding box expansion");
+
+        // Test with integers - should use division by 10
+        let range_100: i32 = 100;
+        let margin_100 = calculate_margin(range_100);
+        assert_eq!(margin_100, 10, "100/10 should equal 10");
+        println!("  ✓ Integer range 100 -> margin {margin_100} (10% via division)");
+
+        let range_50: i32 = 50;
+        let margin_50 = calculate_margin(range_50);
+        assert_eq!(margin_50, 5, "50/10 should equal 5");
+        println!("  ✓ Integer range 50 -> margin {margin_50} (10% via division)");
+
+        // Test with small ranges - should ensure minimum of 1
+        let range_5: i32 = 5;
+        let margin_5 = calculate_margin(range_5);
+        assert_eq!(margin_5, 1, "5/10 rounds to 0, but minimum should be 1");
+        println!("  ✓ Integer range 5 -> margin {margin_5} (minimum of 1)");
+
+        let range_3: i32 = 3;
+        let margin_3 = calculate_margin(range_3);
+        assert_eq!(margin_3, 1, "3/10 rounds to 0, but minimum should be 1");
+        println!("  ✓ Integer range 3 -> margin {margin_3} (minimum of 1)");
+
+        // Test with zero range - should still return 1
+        let zero_range: i32 = 0;
+        let zero_margin = calculate_margin(zero_range);
+        assert_eq!(zero_margin, 1, "0/10 = 0, but minimum should be 1");
+        println!("  ✓ Integer range 0 -> margin {zero_margin} (minimum of 1)");
+
+        // Test with floating point - should use multiplication by 0.1
+        let range_100_f64: f64 = 100.0;
+        let margin_100_f64 = calculate_margin(range_100_f64);
+        assert!(
+            (margin_100_f64 - 10.0).abs() < 1e-10,
+            "100.0 * 0.1 should equal 10.0"
+        );
+        println!("  ✓ Float range 100.0 -> margin {margin_100_f64} (10% via multiplication)");
+
+        let range_5_f64: f64 = 5.0;
+        let margin_5_f64 = calculate_margin(range_5_f64);
+        assert!(
+            (margin_5_f64 - 0.5).abs() < 1e-10,
+            "5.0 * 0.1 should equal 0.5"
+        );
+        println!("  ✓ Float range 5.0 -> margin {margin_5_f64} (10% via multiplication)");
+
+        // Test that the fix prevents the 100% expansion bug
+        // Previously with the bug: margin_factor = 1 for integers, so margin = range * 1 = range
+        // Now with the fix: margin = range / 10 (with minimum 1)
+        let bug_test_range: i32 = 20;
+        let bug_test_margin = calculate_margin(bug_test_range);
+        assert_ne!(
+            bug_test_margin, bug_test_range,
+            "Margin should NOT equal the range (would be 100% expansion)"
+        );
+        assert_eq!(
+            bug_test_margin, 2,
+            "For range 20, margin should be 20/10 = 2, not 20"
+        );
+        println!(
+            "  ✓ Bug prevention check: range {bug_test_range} -> margin {bug_test_margin} (not {bug_test_range}, preventing 100% expansion)"
+        );
+
+        println!("✓ Integer margin calculation works correctly with ~10% expansion");
     }
 }

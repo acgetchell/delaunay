@@ -173,7 +173,7 @@ use uuid::Uuid;
 use crate::core::collections::{
     CellKeySet, CellRemovalBuffer, CellVertexKeysMap, CellVerticesMap, Entry, FacetToCellsMap,
     FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, UuidToCellKeyMap, UuidToVertexKeyMap,
-    ValidCellsBuffer, VertexKeySet, VertexToCellsMap, fast_hash_map_with_capacity,
+    ValidCellsBuffer, VertexKeyBuffer, VertexKeySet, VertexToCellsMap, fast_hash_map_with_capacity,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
@@ -471,7 +471,7 @@ where
     /// detect when they need to refresh.
     /// Uses `Arc<AtomicU64>` for thread-safe operations in concurrent contexts while allowing Clone.
     #[serde(skip)] // Skip serialization - generation is runtime-only
-    pub generation: Arc<AtomicU64>,
+    generation: Arc<AtomicU64>,
 }
 
 // =============================================================================
@@ -896,6 +896,35 @@ where
         &mut self.cells
     }
 
+    /// Increments the generation counter to invalidate dependent caches.
+    ///
+    /// This method should be called whenever the triangulation structure is modified
+    /// (vertices added, cells created/removed, etc.). It uses relaxed memory ordering
+    /// since it's just an invalidation counter.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe due to the use of `Arc<AtomicU64>`.
+    #[inline]
+    fn bump_generation(&self) {
+        // Relaxed is fine for an invalidation counter
+        self.generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Gets the current generation value.
+    ///
+    /// This can be used by external code to detect when the triangulation has changed.
+    /// The generation counter is incremented on any structural modification.
+    ///
+    /// # Returns
+    ///
+    /// The current generation counter value.
+    #[inline]
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
+    }
+
     /// Atomically inserts a vertex and creates the UUID-to-key mapping.
     ///
     /// This method ensures that both the vertex insertion and UUID mapping are
@@ -942,7 +971,7 @@ where
                 let vertex_key = self.vertices.insert(vertex);
                 e.insert(vertex_key);
                 // Topology changed; invalidate caches.
-                self.generation.fetch_add(1, Ordering::Relaxed);
+                self.bump_generation();
                 Ok(vertex_key)
             }
         }
@@ -1023,7 +1052,7 @@ where
                 let cell_key = self.cells.insert(cell);
                 e.insert(cell_key);
                 // Topology changed; invalidate caches.
-                self.generation.fetch_add(1, Ordering::Relaxed);
+                self.bump_generation();
                 Ok(cell_key)
             }
         }
@@ -1055,19 +1084,20 @@ where
     ///
     /// This uses direct `SlotMap` access with O(1) key lookup for the cell, though vertex
     /// lookups still require O(D) UUID→Key mappings until Phase 2.
+    /// Uses stack-allocated buffer for D ≤ 7 to avoid heap allocation in the hot path.
     #[inline]
     fn vertex_keys_for_cell_direct(
         &self,
         cell_key: CellKey,
-    ) -> Result<Vec<VertexKey>, TriangulationValidationError> {
+    ) -> Result<VertexKeyBuffer, TriangulationValidationError> {
         let cell = self.cells.get(cell_key).ok_or_else(|| {
             TriangulationValidationError::InconsistentDataStructure {
                 message: format!("Cell key {cell_key:?} not found in cells SlotMap"),
             }
         })?;
 
-        // Use exact D+1 capacity to avoid reallocation in hot path
-        let mut keys = Vec::with_capacity(D + 1);
+        // Use VertexKeyBuffer (SmallVec) to avoid heap allocation for D ≤ 7
+        let mut keys = VertexKeyBuffer::with_capacity(D + 1);
         for v in cell.vertices() {
             let key = self
                 .uuid_to_vertex_key
@@ -1648,6 +1678,13 @@ where
         }
 
         // Check for coordinate duplicates
+        // NOTE: This uses exact equality (==) for coordinates, which means:
+        // - Only bit-identical coordinates are considered duplicates
+        // - Near-duplicates (e.g., due to rounding) are allowed
+        // This is intentional to maintain strict geometric uniqueness.
+        // For applications requiring fuzzy matching, consider pre-processing
+        // vertices with quantization or using a spatial index.
+        // Time complexity: O(n) where n is the number of existing vertices.
         let new_coords: [T; D] = (&vertex).into();
         for val in self.vertices.values() {
             let existing_coords: [T; D] = val.into();
@@ -1692,7 +1729,7 @@ where
             self.assign_incident_cells()
                 .map_err(TriangulationConstructionError::ValidationError)?;
             // Topology changed; invalidate caches.
-            self.generation.fetch_add(1, Ordering::Relaxed);
+            self.bump_generation();
             return Ok(());
         }
 
@@ -1720,7 +1757,7 @@ where
         }
 
         // Increment generation counter to invalidate caches
-        self.generation.fetch_add(1, Ordering::Relaxed);
+        self.bump_generation();
 
         Ok(())
     }
@@ -2017,7 +2054,7 @@ where
         }
 
         // Topology changed; invalidate caches.
-        self.generation.fetch_add(1, Ordering::Relaxed);
+        self.bump_generation();
 
         Ok(())
     }
@@ -2070,7 +2107,7 @@ where
             cell.clear_neighbors();
         }
         // Topology changed; invalidate caches.
-        self.generation.fetch_add(1, Ordering::Relaxed);
+        self.bump_generation();
     }
 
     /// Assigns incident cells to vertices in the triangulation.
@@ -2211,7 +2248,7 @@ where
             self.assign_incident_cells()?;
 
             // Increment generation counter after topology changes
-            self.generation.fetch_add(1, Ordering::Relaxed);
+            self.bump_generation();
         }
         Ok(duplicate_count)
     }
@@ -2570,7 +2607,7 @@ where
         if actually_removed > 0 || duplicate_cells_removed > 0 {
             self.assign_neighbors()?;
             self.assign_incident_cells()?;
-            self.generation.fetch_add(1, Ordering::Relaxed);
+            self.bump_generation();
         }
 
         Ok(actually_removed + duplicate_cells_removed)
@@ -2945,7 +2982,7 @@ where
             // Store both the Vec (for positional access) and HashSet (for containment checks)
             let vertex_set: VertexKeySet = vertex_keys.iter().copied().collect();
             cell_vertices.insert(cell_key, vertex_set);
-            cell_vertex_keys.insert(cell_key, vertex_keys);
+            cell_vertex_keys.insert(cell_key, vertex_keys.to_vec());
         }
 
         for (cell_key, cell) in &self.cells {
@@ -3066,11 +3103,8 @@ where
 /// - The same set of cells (compared by vertex sets)
 /// - Consistent vertex and cell mappings
 ///
-/// **Note on NaN handling:** This implementation assumes that vertices with NaN coordinates
-/// are not allowed in the triangulation. NaN values in coordinates would cause undefined
-/// behavior during sorting and comparison. The triangulation should reject vertices with
-/// NaN coordinates at construction time. If NaN values are encountered during comparison,
-/// they are treated as equal to maintain reflexivity of the equality relation.
+/// **Note:** Vertices with NaN coordinates are rejected during construction; equality assumes no NaNs.
+/// The triangulation validates coordinates at construction time to ensure no NaN values are present.
 ///
 /// Note: Buffer fields are ignored since they are transient data structures.
 impl<T, U, V, const D: usize> PartialEq for Tds<T, U, V, D>
@@ -3096,8 +3130,6 @@ where
         let mut other_vertices: Vec<_> = other.vertices.values().collect();
 
         // Sort vertices by their coordinates for consistent comparison
-        // Note: unwrap_or(Equal) handles NaN cases by treating them as equal,
-        // but triangulations should reject NaN coordinates at construction
         self_vertices.sort_by(|a, b| {
             let a_coords: [T; D] = (*a).into();
             let b_coords: [T; D] = (*b).into();
