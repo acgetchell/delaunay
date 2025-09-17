@@ -1697,7 +1697,9 @@ mod tests {
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
         // Build the facet-to-cells cache
-        let cache = tds.build_facet_to_cells_hashmap();
+        let cache = tds
+            .try_build_facet_to_cells_hashmap()
+            .expect("Should build facet map in test");
 
         // Test that our utility function produces keys that exist in the cache
         let mut keys_found = 0;
