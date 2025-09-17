@@ -856,16 +856,31 @@ where
             if let Some(cell) = tds.cells().get(cell_key) {
                 // Convert facet_index (u8) to usize for array indexing
                 let facet_idx = <usize as From<u8>>::from(facet_index);
-                if facet_idx < cell.vertices().len() {
-                    let opposite_vertex = cell.vertices()[facet_idx];
-                    // Create the facet using the Cell and its opposite vertex
-                    let facet = Facet::new(cell.clone(), opposite_vertex).map_err(|e| {
-                        TriangulationValidationError::InconsistentDataStructure {
-                            message: format!("Failed to construct boundary facet: {e}"),
-                        }
-                    })?;
-                    boundary_facets.push(facet);
+                if facet_idx >= cell.vertices().len() {
+                    // Invalid facet index indicates TDS corruption - fail fast
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Facet index {} out of bounds (cell has {} vertices) while building cavity boundary",
+                            facet_idx,
+                            cell.vertices().len()
+                        ),
+                    });
                 }
+                let opposite_vertex = cell.vertices()[facet_idx];
+                // Create the facet using the Cell and its opposite vertex
+                let facet = Facet::new(cell.clone(), opposite_vertex).map_err(|e| {
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!("Failed to construct boundary facet: {e}"),
+                    }
+                })?;
+                boundary_facets.push(facet);
+            } else {
+                // Cell not found - this shouldn't happen if TDS is consistent
+                return Err(TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell with key {cell_key:?} not found while building cavity boundary"
+                    ),
+                });
             }
         }
 

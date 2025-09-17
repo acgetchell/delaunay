@@ -401,6 +401,9 @@ where
         let cell_vertices = adjacent_cell.vertices();
         let mut inside_vertex = None;
 
+        // TODO(optimization): Consider using vertex keys instead of UUID comparison in this hot path.
+        // This would require storing vertex keys in Facet or passing them separately.
+        // Current UUID comparison adds overhead that could be avoided with direct key comparison.
         for cell_vertex in cell_vertices {
             let is_in_facet = facet_vertices
                 .iter()
@@ -1088,7 +1091,8 @@ where
         self.facet_to_cells_cache.store(None);
 
         // Reset only our snapshot to force rebuild on next access
-        self.cached_generation.store(0, Ordering::Relaxed);
+        // Use Release ordering to ensure consistency with Acquire loads by readers
+        self.cached_generation.store(0, Ordering::Release);
     }
 }
 

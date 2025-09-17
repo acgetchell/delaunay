@@ -163,7 +163,8 @@ where
 
                     // Update generation if we were the ones who built it
                     // Note: built_cache is the old value before our update
-                    if built_cache.is_none() {
+                    // Only store generation if the cache is actually present to avoid stale store
+                    if built_cache.is_none() && self.facet_cache().load_full().is_some() {
                         self.cached_generation()
                             .store(current_generation, Ordering::Release);
                     }
