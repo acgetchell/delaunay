@@ -375,38 +375,39 @@ where
         [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     {
         // First try to find bad cells using the trait's method
-        let mut bad_cells = match InsertionAlgorithm::<T, U, V, D>::find_bad_cells(
-            self, tds, vertex,
-        ) {
-            Ok(cells) => cells,
-            Err(crate::core::traits::insertion_algorithm::BadCellsError::AllCellsBad {
-                ..
-            }) => {
-                // All cells marked as bad - try robust method to get a better result
-                self.robust_find_bad_cells(tds, vertex)
-            }
-            Err(
-                crate::core::traits::insertion_algorithm::BadCellsError::TooManyDegenerateCells {
+        let mut bad_cells =
+            match InsertionAlgorithm::<T, U, V, D>::find_bad_cells(self, tds, vertex) {
+                Ok(cells) => cells,
+                Err(crate::core::traits::insertion_algorithm::BadCellsError::AllCellsBad {
                     ..
-                },
-            ) => {
-                // Too many degenerate cells - try robust method as fallback
-                self.robust_find_bad_cells(tds, vertex)
-            }
-            Err(crate::core::traits::insertion_algorithm::BadCellsError::NoCells) => {
-                // No cells - return empty
-                return Vec::new();
-            }
-        };
+                }) => {
+                    // All cells marked as bad - try robust method to get a better result
+                    self.robust_find_bad_cells(tds, vertex)
+                }
+                Err(
+                    crate::core::traits::insertion_algorithm::BadCellsError::TooManyDegenerateCells(
+                        _,
+                    ),
+                ) => {
+                    // Too many degenerate cells - try robust method as fallback
+                    self.robust_find_bad_cells(tds, vertex)
+                }
+                Err(crate::core::traits::insertion_algorithm::BadCellsError::NoCells) => {
+                    // No cells - return empty
+                    return Vec::new();
+                }
+            };
 
         // If the standard method doesn't find any bad cells (likely a degenerate case)
         // or we're using the robust configuration, supplement with robust predicates
         if bad_cells.is_empty() || self.predicate_config.base_tolerance > T::default_tolerance() {
             let robust_bad_cells = self.robust_find_bad_cells(tds, vertex);
 
-            // Add any cells found by robust method that weren't found by the standard method
+            // Use a set for O(1) membership checking to avoid O(n²) complexity
+            let mut seen: CellKeySet = bad_cells.iter().copied().collect();
             for cell_key in robust_bad_cells {
-                if !bad_cells.contains(&cell_key) {
+                // Only add if not already present (insert returns true if new)
+                if seen.insert(cell_key) {
                     bad_cells.push(cell_key);
                 }
             }
@@ -840,7 +841,6 @@ where
             if let Some(cell) = tds.cells().get(cell_key) {
                 if let Ok(facets) = cell.facets() {
                     let idx = usize::from(facet_index);
-                    debug_assert!(idx < facets.len(), "facet_index out of bounds");
                     if idx < facets.len() {
                         let facet = &facets[idx];
 
@@ -848,6 +848,16 @@ where
                         if self.is_facet_visible_from_vertex_robust(tds, facet, vertex, cell_key) {
                             visible_facets.push(facet.clone());
                         }
+                    } else {
+                        // Fail fast on invalid facet index - indicates TDS corruption
+                        return Err(TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Facet index {} out of bounds (cell has {} facets) during visibility computation. \
+                                 This indicates triangulation data structure corruption.",
+                                idx,
+                                facets.len()
+                            ),
+                        });
                     }
                 } else {
                     return Err(TriangulationValidationError::InconsistentDataStructure {

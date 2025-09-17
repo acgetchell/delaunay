@@ -153,10 +153,13 @@ where
                             .store(current_generation, Ordering::Release);
                     }
 
-                    // Return the cache (guaranteed to exist now)
-                    self.facet_cache()
-                        .load_full()
-                        .expect("Cache must exist after RCU update")
+                    // Return the cache; if concurrently invalidated, retry via slow path
+                    // Another thread could invalidate between RCU and load_full()
+                    self.facet_cache().load_full().unwrap_or_else(|| {
+                        // Generation may have changed; fall back to rebuild path
+                        // This handles the race where another thread invalidated after our RCU
+                        self.get_or_build_facet_cache(tds)
+                    })
                 },
                 |existing_cache| {
                     // Cache exists and is current - use it

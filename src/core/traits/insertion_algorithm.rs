@@ -24,6 +24,35 @@ use std::{
     ops::{AddAssign, Div, SubAssign},
 };
 
+/// Error for too many degenerate cells case
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TooManyDegenerateCellsError {
+    /// Number of degenerate cells
+    pub degenerate_count: usize,
+    /// Total cells tested
+    pub total_tested: usize,
+}
+
+impl std::fmt::Display for TooManyDegenerateCellsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.total_tested == 0 {
+            write!(
+                f,
+                "All {} candidate cells were degenerate",
+                self.degenerate_count
+            )
+        } else {
+            write!(
+                f,
+                "Too many degenerate circumspheres ({}/{})",
+                self.degenerate_count, self.total_tested
+            )
+        }
+    }
+}
+
+impl std::error::Error for TooManyDegenerateCellsError {}
+
 /// Error that can occur during bad cells detection
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -40,17 +69,8 @@ pub enum BadCellsError {
         degenerate_count: usize,
     },
     /// Too many degenerate circumspheres to reliably detect bad cells
-    #[error("{}", if *.total_tested == 0 {
-        format!("All {} candidate cells were degenerate", *.degenerate_count)
-    } else {
-        format!("Too many degenerate circumspheres ({}/{})", *.degenerate_count, *.total_tested)
-    })]
-    TooManyDegenerateCells {
-        /// Number of degenerate cells
-        degenerate_count: usize,
-        /// Total cells tested
-        total_tested: usize,
-    },
+    #[error(transparent)]
+    TooManyDegenerateCells(TooManyDegenerateCellsError),
     /// No cells exist to test
     #[error("No cells exist to test")]
     NoCells,
@@ -499,12 +519,8 @@ where
         let mut vertex_points = Vec::with_capacity(D + 1);
 
         for cell in tds.cells().values() {
-            // Clear and reuse the buffer
+            // Clear and reuse the buffer - capacity is already preallocated
             vertex_points.clear();
-            // Reserve exact capacity if not already present (avoids growing)
-            if vertex_points.capacity() < D + 1 {
-                vertex_points.reserve_exact((D + 1).saturating_sub(vertex_points.capacity()));
-            }
             vertex_points.extend(cell.vertices().iter().map(|v| *v.point()));
 
             if let Ok(containment) = insphere(&vertex_points, *vertex.point())
@@ -685,10 +701,12 @@ where
         // Check if too many degenerate cells make results unreliable
         if cells_tested == 0 && degenerate_count > 0 {
             // All cells were degenerate (wrong vertex count)
-            return Err(BadCellsError::TooManyDegenerateCells {
-                degenerate_count,
-                total_tested: 0,
-            });
+            return Err(BadCellsError::TooManyDegenerateCells(
+                TooManyDegenerateCellsError {
+                    degenerate_count,
+                    total_tested: 0,
+                },
+            ));
         } else if cells_tested > 0 && degenerate_count > 0 {
             // Check if too many cells are degenerate (using DEGENERATE_CELL_THRESHOLD)
             // We use integer arithmetic to avoid floating point precision issues:
@@ -703,10 +721,12 @@ where
                 let threshold_exceeded = degenerate_count.saturating_mul(2) > total_cells;
 
                 if threshold_exceeded {
-                    return Err(BadCellsError::TooManyDegenerateCells {
-                        degenerate_count,
-                        total_tested: cells_tested,
-                    });
+                    return Err(BadCellsError::TooManyDegenerateCells(
+                        TooManyDegenerateCellsError {
+                            degenerate_count,
+                            total_tested: cells_tested,
+                        },
+                    ));
                 }
             } else {
                 // For non-0.5 thresholds, we must use floating point comparison
@@ -714,10 +734,12 @@ where
                 #[allow(clippy::cast_precision_loss)]
                 let degenerate_ratio = (degenerate_count as f64) / (total_cells as f64);
                 if degenerate_ratio > DEGENERATE_CELL_THRESHOLD {
-                    return Err(BadCellsError::TooManyDegenerateCells {
-                        degenerate_count,
-                        total_tested: cells_tested,
-                    });
+                    return Err(BadCellsError::TooManyDegenerateCells(
+                        TooManyDegenerateCellsError {
+                            degenerate_count,
+                            total_tested: cells_tested,
+                        },
+                    ));
                 }
             }
         }
@@ -916,11 +938,12 @@ where
                     ),
                 });
             }
-            Err(BadCellsError::TooManyDegenerateCells {
+            Err(BadCellsError::TooManyDegenerateCells(TooManyDegenerateCellsError {
                 degenerate_count,
-                total_tested,
-            }) => {
+                total_tested: cells_tested,
+            })) => {
                 // Too many degenerate cells - triangulation might be in bad state
+                let total_tested = cells_tested;
                 return Err(TriangulationValidationError::FailedToCreateCell {
                     message: format!(
                         "Cavity-based insertion failed: too many degenerate cells ({degenerate_count}/{total_tested})."
@@ -1398,11 +1421,22 @@ where
             };
             if let Some(cell) = tds.cells().get(cell_key) {
                 if let Ok(facets) = cell.facets() {
-                    if let Some(facet) = facets.get(<usize as From<_>>::from(facet_index)) {
+                    let idx = <usize as From<_>>::from(facet_index);
+                    if let Some(facet) = facets.get(idx) {
                         // Test visibility using proper orientation predicates
                         if Self::is_facet_visible_from_vertex_impl(tds, facet, vertex, cell_key) {
                             visible_facets.push(facet.clone());
                         }
+                    } else {
+                        // Fail fast on invalid facet index - indicates TDS corruption
+                        return Err(TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Facet index {} out of bounds (cell has {} facets) during visibility computation. \
+                                 This indicates triangulation data structure corruption.",
+                                idx,
+                                facets.len()
+                            ),
+                        });
                     }
                 } else {
                     return Err(TriangulationValidationError::InconsistentDataStructure {
@@ -2281,10 +2315,10 @@ mod tests {
         };
         println!("  AllCellsBad error: {err1}");
 
-        let err2 = BadCellsError::TooManyDegenerateCells {
+        let err2 = BadCellsError::TooManyDegenerateCells(TooManyDegenerateCellsError {
             degenerate_count: 3,
             total_tested: 5,
-        };
+        });
         println!("  TooManyDegenerateCells error: {err2}");
 
         let err3 = BadCellsError::NoCells;
@@ -2307,10 +2341,10 @@ mod tests {
         println!("Testing TooManyDegenerateCells error message formatting");
 
         // Test the error message when all cells are degenerate (total_tested == 0)
-        let error1 = BadCellsError::TooManyDegenerateCells {
+        let error1 = BadCellsError::TooManyDegenerateCells(TooManyDegenerateCellsError {
             degenerate_count: 5,
             total_tested: 0,
-        };
+        });
         let error_msg1 = format!("{error1}");
         assert!(
             error_msg1.contains("All 5 candidate cells were degenerate"),
@@ -2319,10 +2353,10 @@ mod tests {
         println!("  ✓ All-degenerate case message: {error_msg1}");
 
         // Test the error message when some cells are degenerate
-        let error2 = BadCellsError::TooManyDegenerateCells {
+        let error2 = BadCellsError::TooManyDegenerateCells(TooManyDegenerateCellsError {
             degenerate_count: 3,
             total_tested: 5,
-        };
+        });
         let error_msg2 = format!("{error2}");
         assert!(
             error_msg2.contains("Too many degenerate circumspheres (3/5)"),
@@ -2331,10 +2365,10 @@ mod tests {
         println!("  ✓ Partial degenerate case message: {error_msg2}");
 
         // Test edge case: single degenerate cell
-        let error3 = BadCellsError::TooManyDegenerateCells {
+        let error3 = BadCellsError::TooManyDegenerateCells(TooManyDegenerateCellsError {
             degenerate_count: 1,
             total_tested: 0,
-        };
+        });
         let error_msg3 = format!("{error3}");
         assert!(
             error_msg3.contains("All 1 candidate cells were degenerate"),
