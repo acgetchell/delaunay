@@ -102,6 +102,7 @@ where
     /// - **Cache hit**: O(1) - Returns cached mapping if TDS generation matches
     /// - **Cache miss**: O(cells × `facets_per_cell`) - Rebuilds and caches mapping
     /// - **Thread-safe**: Uses atomic operations for concurrent access
+    /// - **Contention**: Minimizes duplicate work by building cache lazily inside RCU
     ///
     /// # Examples
     ///
@@ -127,29 +128,30 @@ where
             // Cache is current - load existing cache or build if it doesn't exist
             self.facet_cache().load_full().map_or_else(
                 || {
-                    // No cache exists yet - build and store it
-                    let new_cache = tds.build_facet_to_cells_hashmap();
-                    let new_cache_arc = Arc::new(new_cache);
-
-                    // Try to swap in the new cache (another thread might have done it already)
-                    // If another thread beat us to it, use their cache instead
-                    // Using rcu() for atomic read-modify-write operation
-                    let result = self.facet_cache().rcu(|old| {
-                        // Only update if it's still None
+                    // Build cache lazily inside RCU to minimize duplicate work under contention.
+                    // Only the first thread to acquire the RCU lock will build the cache.
+                    let built_cache = self.facet_cache().rcu(|old| {
                         old.as_ref().map_or_else(
-                            || Some(new_cache_arc.clone()),
+                            || {
+                                // We're the first - build the cache now
+                                let new_cache = tds.build_facet_to_cells_hashmap();
+                                Some(Arc::new(new_cache))
+                            },
                             |existing| Some(existing.clone()),
                         )
                     });
 
-                    // If we were the ones who set it (result was None), update generation
-                    if result.is_none() {
+                    // Update generation if we were the ones who built it
+                    // Note: built_cache is the old value before our update
+                    if built_cache.is_none() {
                         self.cached_generation()
                             .store(current_generation, Ordering::Release);
                     }
 
-                    // Return the cache (either ours or the existing one)
-                    self.facet_cache().load_full().unwrap_or(new_cache_arc)
+                    // Return the cache (guaranteed to exist now)
+                    self.facet_cache()
+                        .load_full()
+                        .expect("Cache must exist after RCU update")
                 },
                 |existing_cache| {
                     // Cache exists and is current - use it
@@ -161,10 +163,16 @@ where
             let new_cache = tds.build_facet_to_cells_hashmap();
             let new_cache_arc = Arc::new(new_cache);
 
-            // Atomically swap in the new cache
-            self.facet_cache().store(Some(new_cache_arc.clone())); // ArcSwap ensures proper publication
+            // Atomically swap in the new cache.
+            // ORDERING: ArcSwap's store() uses SeqCst ordering, establishing a happens-before
+            // relationship with any subsequent loads. This ensures the new cache is visible
+            // to all threads before the generation update below.
+            self.facet_cache().store(Some(new_cache_arc.clone()));
 
-            // Update the generation snapshot
+            // Update the generation snapshot.
+            // ORDERING: The Release ordering here synchronizes with Acquire loads in future
+            // cache checks. Combined with the SeqCst store above, this ensures readers will
+            // see both the new cache and the updated generation consistently.
             self.cached_generation()
                 .store(current_generation, Ordering::Release);
 

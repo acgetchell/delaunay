@@ -658,37 +658,14 @@ pub type KeyBasedCellMap<V> = FastHashMap<CellKey, V>;
 /// ```
 pub type KeyBasedVertexMap<V> = FastHashMap<VertexKey, V>;
 
-/// **Phase 1 Migration**: Optimized neighbor mapping using direct key relationships.
-///
-/// This replaces UUID-based neighbor mappings with direct key-to-key relationships,
-/// eliminating UUID lookups in neighbor assignment and traversal operations.
-///
-/// # Performance Benefits
-///
-/// - **No UUID lookups**: Direct key-to-key mapping eliminates hash table lookups
-/// - **`SlotMap` alignment**: Both keys and values work directly with internal data structures
-/// - **Memory efficiency**: Keys are typically smaller than UUIDs
-/// - **Cache optimization**: Better memory locality for neighbor traversals
-///
-/// # Use Cases
-///
-/// - Internal neighbor assignment algorithms
-/// - Topology validation operations
-/// - Graph traversal algorithms on the triangulation
-/// - Geometric operations requiring neighbor access
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::core::collections::KeyBasedNeighborMap;
-/// use delaunay::core::triangulation_data_structure::{CellKey, VertexKey};
-///
-/// // Direct key-based neighbor mapping (Phase 1 internal algorithms)
-/// let mut neighbors: KeyBasedNeighborMap = KeyBasedNeighborMap::default();
-/// // Both cell_key and neighbor_key come from SlotMap operations
-/// // neighbors.insert(cell_key, neighbor_key);
-/// ```
-pub type KeyBasedNeighborMap = FastHashMap<CellKey, CellKey>;
+// NOTE: KeyBasedNeighborMap was removed as it was:
+// 1. Not used anywhere in the codebase
+// 2. Incorrectly defined as a 1:1 mapping when cells have D+1 neighbors
+// 3. Not needed for Phase 1 migration (which will modify Cell.neighbors directly)
+//
+// The actual neighbor storage is in Cell.neighbors: Option<Vec<Option<Uuid>>>
+// which will be changed to Option<Vec<Option<CellKey>>> in Phase 1.
+// CellNeighborsMap is used for temporary neighbor collections during algorithms.
 
 /// Size constant for batch point processing operations.
 /// 16 provides sufficient capacity for typical geometric algorithm batches.
@@ -867,7 +844,6 @@ mod tests {
         let _vertex_set: VertexKeySet = VertexKeySet::default();
         let _cell_map: KeyBasedCellMap<i32> = KeyBasedCellMap::default();
         let _vertex_map: KeyBasedVertexMap<String> = KeyBasedVertexMap::default();
-        let _neighbor_map: KeyBasedNeighborMap = KeyBasedNeighborMap::default();
 
         // Test basic operations work
         let cell_set: CellKeySet = CellKeySet::default();
@@ -925,17 +901,10 @@ mod tests {
         assert_eq!(vertex_map.get(&vertex_key1).copied(), Some(42));
         assert_eq!(vertex_map.get(&vertex_key2), None);
 
-        // Test KeyBasedNeighborMap insert/get roundtrip
-        let mut neighbor_map: KeyBasedNeighborMap = KeyBasedNeighborMap::default();
-        assert_eq!(neighbor_map.get(&cell_key1), None);
-        neighbor_map.insert(cell_key1, cell_key2);
-        assert_eq!(neighbor_map.get(&cell_key1), Some(&cell_key2));
-
         // Test that collections have expected sizes
         assert_eq!(cell_set.len(), 1);
         assert_eq!(vertex_set.len(), 1);
         assert_eq!(cell_map.len(), 1);
         assert_eq!(vertex_map.len(), 1);
-        assert_eq!(neighbor_map.len(), 1);
     }
 }

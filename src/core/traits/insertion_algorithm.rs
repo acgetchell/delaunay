@@ -23,10 +23,13 @@ use std::{
 
 /// Error that can occur during bad cells detection
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BadCellsError {
     /// All cells were marked as bad, which is geometrically unusual and likely indicates
     /// the vertex should be inserted via hull extension instead
+    #[error(
+        "All {cell_count} cells marked as bad ({degenerate_count} degenerate). Vertex likely needs hull extension."
+    )]
     AllCellsBad {
         /// Number of cells that were all marked as bad
         cell_count: usize,
@@ -34,6 +37,7 @@ pub enum BadCellsError {
         degenerate_count: usize,
     },
     /// Too many degenerate circumspheres to reliably detect bad cells
+    #[error("Too many degenerate circumspheres ({degenerate_count}/{total_tested})")]
     TooManyDegenerateCells {
         /// Number of degenerate cells
         degenerate_count: usize,
@@ -41,36 +45,9 @@ pub enum BadCellsError {
         total_tested: usize,
     },
     /// No cells exist to test
+    #[error("No cells exist to test")]
     NoCells,
 }
-
-impl std::fmt::Display for BadCellsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::AllCellsBad {
-                cell_count,
-                degenerate_count,
-            } => {
-                write!(
-                    f,
-                    "All {cell_count} cells marked as bad ({degenerate_count} degenerate). Vertex likely needs hull extension."
-                )
-            }
-            Self::TooManyDegenerateCells {
-                degenerate_count,
-                total_tested,
-            } => {
-                write!(
-                    f,
-                    "Too many degenerate circumspheres ({degenerate_count}/{total_tested})"
-                )
-            }
-            Self::NoCells => write!(f, "No cells exist to test"),
-        }
-    }
-}
-
-impl std::error::Error for BadCellsError {}
 
 /// Margin factor used for bounding box expansion in exterior vertex detection
 const MARGIN_FACTOR: f64 = 0.1;
@@ -638,17 +615,21 @@ where
         let mut bad_cells = Vec::new();
         let mut cells_tested = 0;
         let mut degenerate_count = 0;
+        // Preallocate vertex_points buffer outside the loop to avoid per-iteration allocations
+        let mut vertex_points = Vec::with_capacity(D + 1);
 
         // Only consider cells that have a valid circumsphere and strict containment
         for (cell_key, cell) in tds.cells() {
-            // Skip cells with insufficient vertices
-            if cell.vertices().len() < D + 1 {
+            let v_count = cell.vertices().len();
+            // Treat non-D+1 vertex counts as degenerate
+            if v_count != D + 1 {
+                degenerate_count += 1;
                 continue;
             }
 
             cells_tested += 1;
-            // Preallocate with exact capacity to avoid reallocation
-            let mut vertex_points = Vec::with_capacity(D + 1);
+            // Reuse buffer by clearing and repopulating
+            vertex_points.clear();
             vertex_points.extend(cell.vertices().iter().map(|v| *v.point()));
 
             // Test circumsphere containment
@@ -770,6 +751,7 @@ where
         }
 
         // Now create the actual Facet objects for the identified boundary facets
+        boundary_facets.reserve(boundary_facet_specs.len());
         for (cell_key, facet_index) in boundary_facet_specs {
             if let Some(cell) = tds.cells().get(cell_key) {
                 // Convert facet_index (u8) to usize for array indexing
@@ -1038,9 +1020,11 @@ where
         // First try boundary facets (most likely to work)
         for cells in facet_to_cells.values() {
             if cells.len() == 1 {
-                let &(cell_key, facet_index) = cells
-                    .first()
-                    .expect("boundary facet must have exactly one adjacent cell");
+                let Some(&(cell_key, facet_index)) = cells.first() else {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: "Boundary facet had no adjacent cell".to_string(),
+                    });
+                };
                 let fi = <usize as From<_>>::from(facet_index);
                 if let Some(cell) = tds.cells().get(cell_key)
                     && let Ok(facets) = cell.facets()
@@ -1347,9 +1331,11 @@ where
             .collect();
 
         for (_facet_key, cells) in boundary_facets {
-            let &(cell_key, facet_index) = cells
-                .first()
-                .expect("boundary facet must have exactly one adjacent cell");
+            let Some(&(cell_key, facet_index)) = cells.first() else {
+                return Err(TriangulationValidationError::InconsistentDataStructure {
+                    message: "Boundary facet had no adjacent cell".to_string(),
+                });
+            };
             if let Some(cell) = tds.cells().get(cell_key) {
                 if let Ok(facets) = cell.facets() {
                     if let Some(facet) = facets.get(<usize as From<_>>::from(facet_index)) {
@@ -1526,10 +1512,11 @@ where
     /// * `vertex` - The vertex to ensure is registered
     fn ensure_vertex_in_tds(tds: &mut Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) {
         if let Entry::Vacant(_) = tds.uuid_to_vertex_key.entry(vertex.uuid()) {
-            // Note: We silently ignore duplicate UUID errors here since we're checking first
-            // If the check passes but insertion fails, it means concurrent modification
-            // which shouldn't happen in single-threaded context
-            let _ = tds.insert_vertex_with_mapping(*vertex);
+            let res = tds.insert_vertex_with_mapping(*vertex);
+            debug_assert!(
+                res.is_ok(),
+                "insert_vertex_with_mapping unexpectedly failed: {res:?}"
+            );
         }
     }
 

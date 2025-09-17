@@ -252,6 +252,14 @@ pub enum TriangulationConstructionError {
         /// The UUID that was duplicated.
         uuid: Uuid,
     },
+    /// Attempted to insert a vertex with coordinates that already exist.
+    #[error(
+        "Duplicate coordinates: vertex with coordinates {coordinates} already exists in the triangulation"
+    )]
+    DuplicateCoordinates {
+        /// String representation of the duplicate coordinates.
+        coordinates: String,
+    },
 }
 
 /// Represents the type of entity in the triangulation.
@@ -1025,7 +1033,11 @@ where
                 .get(&v.uuid())
                 .copied()
                 .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
-                    message: format!("Vertex UUID {} not found in mapping", v.uuid()),
+                    message: format!(
+                        "Vertex UUID {} not found in vertex mapping (cell {})",
+                        v.uuid(),
+                        cell.uuid()
+                    ),
                 })?;
             keys.push(key);
         }
@@ -1500,7 +1512,7 @@ where
     ///
     /// tds.add(vertex1).unwrap();
     /// let result = tds.add(vertex2);
-    /// assert_eq!(result, Err("Vertex already exists!"));
+    /// assert!(result.is_err()); // Returns DuplicateCoordinates error
     /// ```
     ///
     /// Add multiple vertices with different coordinates:
@@ -1580,7 +1592,7 @@ where
     /// assert_eq!(tds.dim(), 3);
     /// assert!(tds.is_valid().is_ok());  // Triangulation remains valid
     /// ```
-    pub fn add(&mut self, vertex: Vertex<T, U, D>) -> Result<(), &'static str>
+    pub fn add(&mut self, vertex: Vertex<T, U, D>) -> Result<(), TriangulationConstructionError>
     where
         T: NumCast,
     {
@@ -1588,7 +1600,10 @@ where
 
         // Check if UUID already exists
         if self.uuid_to_vertex_key.contains_key(&uuid) {
-            return Err("Uuid already exists!");
+            return Err(TriangulationConstructionError::DuplicateUuid {
+                entity: EntityKind::Vertex,
+                uuid,
+            });
         }
 
         // Iterate over self.vertices.values() to check for coordinate duplicates
@@ -1596,7 +1611,9 @@ where
             let existing_coords: [T; D] = val.into();
             let new_coords: [T; D] = (&vertex).into();
             if existing_coords == new_coords {
-                return Err("Vertex already exists!");
+                return Err(TriangulationConstructionError::DuplicateCoordinates {
+                    coordinates: format!("{new_coords:?}"),
+                });
             }
         }
 
@@ -1620,7 +1637,9 @@ where
             let cell = CellBuilder::default()
                 .vertices(all_vertices)
                 .build()
-                .map_err(|_| "Failed to create initial cell from vertices")?;
+                .map_err(|e| TriangulationConstructionError::FailedToCreateCell {
+                    message: format!("Failed to create initial cell from vertices: {e}"),
+                })?;
 
             let cell_key = self.cells.insert(cell);
             let cell_uuid = self.cells[cell_key].uuid();
@@ -1628,7 +1647,7 @@ where
 
             // Assign incident cells to vertices
             self.assign_incident_cells()
-                .map_err(|_| "Failed to assign incident cells")?;
+                .map_err(TriangulationConstructionError::ValidationError)?;
             // Topology changed; invalidate caches.
             self.generation.fetch_add(1, Ordering::Relaxed);
             return Ok(());
@@ -1642,13 +1661,13 @@ where
             let mut algorithm = IncrementalBoyerWatson::new();
             algorithm
                 .insert_vertex(self, vertex)
-                .map_err(|_| "Failed to insert vertex into triangulation")?;
+                .map_err(TriangulationConstructionError::ValidationError)?;
 
             // Update neighbor relationships and incident cells
             self.assign_neighbors()
-                .map_err(|_| "Failed to assign neighbor relationships")?;
+                .map_err(TriangulationConstructionError::ValidationError)?;
             self.assign_incident_cells()
-                .map_err(|_| "Failed to assign incident cells")?;
+                .map_err(TriangulationConstructionError::ValidationError)?;
         }
 
         // Increment generation counter to invalidate caches
@@ -2211,6 +2230,7 @@ where
 
         // Preallocate facet_vertex_keys buffer outside the loops to avoid per-iteration allocations
         let mut facet_vertex_keys = Vec::with_capacity(D);
+        #[cfg(debug_assertions)]
         let mut skipped_cells = 0usize;
 
         // Iterate over all cells and their facets
@@ -2218,12 +2238,14 @@ where
             // Phase 1: Use direct key-based method to avoid UUID→Key lookups
             // Note: We skip cells with missing vertex keys for backwards compatibility
             let Ok(vertex_keys) = self.vertex_keys_for_cell_direct(cell_id) else {
-                skipped_cells += 1;
                 #[cfg(debug_assertions)]
-                eprintln!(
-                    "debug: skipping cell {} due to missing vertex keys in facet mapping",
-                    cell.uuid()
-                );
+                {
+                    skipped_cells += 1;
+                    eprintln!(
+                        "debug: skipping cell {} due to missing vertex keys in facet mapping",
+                        cell.uuid()
+                    );
+                }
                 continue; // Skip cells with missing vertex keys
             };
 
@@ -2240,13 +2262,15 @@ where
                 let Ok(facet_index_u8) = u8::try_from(i) else {
                     // Log warning about skipped facet in debug builds
                     #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Warning: Skipping facet index {} for cell {} - exceeds u8 range (D={} > 255)",
-                        i,
-                        cell.uuid(),
-                        D
-                    );
-                    skipped_cells += 1; // Count this as a skipped operation
+                    {
+                        eprintln!(
+                            "Warning: Skipping facet index {} for cell {} - exceeds u8 range (D={} > 255)",
+                            i,
+                            cell.uuid(),
+                            D
+                        );
+                        skipped_cells += 1; // Count this as a skipped operation
+                    }
                     continue;
                 };
 
@@ -3261,7 +3285,13 @@ mod tests {
         tds.add(vertex).unwrap();
 
         let result = tds.add(vertex);
-        assert_eq!(result, Err("Uuid already exists!"));
+        assert!(matches!(
+            result,
+            Err(TriangulationConstructionError::DuplicateUuid {
+                entity: EntityKind::Vertex,
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -4350,7 +4380,8 @@ mod tests {
         match result.unwrap_err() {
             TriangulationValidationError::InconsistentDataStructure { message } => {
                 assert!(
-                    message.contains("Vertex UUID") && message.contains("not found in mapping"),
+                    message.contains("Vertex UUID")
+                        && message.contains("not found in vertex mapping"),
                     "Error message should describe the vertex UUID not found issue, got: {}",
                     message
                 );
