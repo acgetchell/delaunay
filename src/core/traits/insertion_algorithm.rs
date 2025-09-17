@@ -4,7 +4,7 @@
 //! interface for different vertex insertion strategies, including the basic
 //! Bowyer-Watson algorithm and robust variants with enhanced numerical stability.
 
-use crate::core::collections::{CellKeySet, Entry};
+use crate::core::collections::CellKeySet;
 use crate::core::{
     cell::CellBuilder,
     facet::Facet,
@@ -1332,7 +1332,8 @@ where
 
         // Ensure all vertices are registered in the TDS vertex mapping
         for vertex in &vertices {
-            if let Entry::Vacant(_) = tds.uuid_to_vertex_key.entry(vertex.uuid()) {
+            // Use the public UUID-to-key lookup method to check if vertex exists
+            if tds.vertex_key_from_uuid(&vertex.uuid()).is_none() {
                 tds.insert_vertex_with_mapping(*vertex).map_err(|e| {
                     TriangulationConstructionError::FailedToAddVertex {
                         message: format!("Failed to insert vertex: {e}"),
@@ -1651,7 +1652,8 @@ where
         tds: &mut Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
     ) -> Result<(), TriangulationValidationError> {
-        if let Entry::Vacant(_) = tds.uuid_to_vertex_key.entry(vertex.uuid()) {
+        // Use the public UUID-to-key lookup method to check if vertex exists
+        if tds.vertex_key_from_uuid(&vertex.uuid()).is_none() {
             tds.insert_vertex_with_mapping(*vertex).map_err(|e| {
                 TriangulationValidationError::InconsistentDataStructure {
                     message: format!("Failed to insert vertex into TDS: {e}"),
@@ -1750,7 +1752,8 @@ where
 
     /// Removes bad cells from the triangulation
     ///
-    /// This is a shared utility method that removes cells and their UUID-to-key mapping entries.
+    /// This is a shared utility method that removes cells using the optimized
+    /// key-based batch removal method.
     ///
     /// # Arguments
     ///
@@ -1763,11 +1766,9 @@ where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
-        for &cell_key in bad_cells {
-            if let Some(cell) = tds.cells_mut().remove(cell_key) {
-                tds.uuid_to_cell_key.remove(&cell.uuid());
-            }
-        }
+        // Use the optimized batch removal method that handles UUID mapping
+        // and generation counter updates internally
+        tds.remove_cells_by_keys(bad_cells);
     }
 
     /// Finalizes the triangulation after insertion to ensure consistency

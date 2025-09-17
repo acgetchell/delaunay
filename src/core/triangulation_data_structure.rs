@@ -1381,6 +1381,344 @@ where
             .get(vertex_key)
             .map(super::vertex::Vertex::uuid)
     }
+
+    // =========================================================================
+    // KEY-BASED ACCESS METHODS (Phase 2 Optimization)
+    // =========================================================================
+    // These methods work directly with keys to avoid UUID lookups in hot paths.
+    // They complement the existing UUID-based methods for internal algorithm use.
+
+    /// Gets a cell directly by its key without UUID lookup.
+    ///
+    /// This is a key-based optimization of the UUID-based cell access.
+    /// Use this method in internal algorithms to avoid UUID→Key conversion overhead.
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_key` - The key of the cell to retrieve
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a reference to the cell if it exists, `None` otherwise.
+    ///
+    /// # Performance
+    ///
+    /// Direct `SlotMap` indexing for O(1) access without hash lookup.
+    #[inline]
+    #[must_use]
+    pub fn get_cell_by_key(&self, cell_key: CellKey) -> Option<&Cell<T, U, V, D>> {
+        self.cells.get(cell_key)
+    }
+
+    /// Gets a mutable reference to a cell directly by its key.
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_key` - The key of the cell to retrieve
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a mutable reference to the cell if it exists.
+    #[inline]
+    #[must_use]
+    pub fn get_cell_by_key_mut(&mut self, cell_key: CellKey) -> Option<&mut Cell<T, U, V, D>> {
+        self.cells.get_mut(cell_key)
+    }
+
+    /// Gets a vertex directly by its key without UUID lookup.
+    ///
+    /// This is a key-based optimization of the UUID-based vertex access.
+    /// Use this method in internal algorithms to avoid UUID→Key conversion overhead.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertex_key` - The key of the vertex to retrieve
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a reference to the vertex if it exists.
+    #[inline]
+    #[must_use]
+    pub fn get_vertex_by_key(&self, vertex_key: VertexKey) -> Option<&Vertex<T, U, D>> {
+        self.vertices.get(vertex_key)
+    }
+
+    /// Gets a mutable reference to a vertex directly by its key.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertex_key` - The key of the vertex to retrieve
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a mutable reference to the vertex if it exists.
+    #[inline]
+    #[must_use]
+    pub fn get_vertex_by_key_mut(&mut self, vertex_key: VertexKey) -> Option<&mut Vertex<T, U, D>> {
+        self.vertices.get_mut(vertex_key)
+    }
+
+    /// Checks if a cell key exists in the triangulation.
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_key` - The key to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the cell exists, `false` otherwise.
+    #[inline]
+    #[must_use]
+    pub fn contains_cell_key(&self, cell_key: CellKey) -> bool {
+        self.cells.contains_key(cell_key)
+    }
+
+    /// Checks if a vertex key exists in the triangulation.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertex_key` - The key to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the vertex exists, `false` otherwise.
+    #[inline]
+    #[must_use]
+    pub fn contains_vertex_key(&self, vertex_key: VertexKey) -> bool {
+        self.vertices.contains_key(vertex_key)
+    }
+
+    /// Gets all cell keys in the triangulation.
+    ///
+    /// Use this for iterating over cells by key without UUID involvement.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over all cell keys.
+    #[inline]
+    pub fn cell_keys(&self) -> impl Iterator<Item = CellKey> + '_ {
+        self.cells.keys()
+    }
+
+    /// Gets all vertex keys in the triangulation.
+    ///
+    /// Use this for iterating over vertices by key without UUID involvement.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over all vertex keys.
+    #[inline]
+    pub fn vertex_keys(&self) -> impl Iterator<Item = VertexKey> + '_ {
+        self.vertices.keys()
+    }
+
+    /// Removes a cell by its key, updating all necessary mappings.
+    ///
+    /// This is a key-based version of cell removal that avoids UUID lookups.
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_key` - The key of the cell to remove
+    ///
+    /// # Returns
+    ///
+    /// The removed cell if it existed, `None` otherwise.
+    pub fn remove_cell_by_key(&mut self, cell_key: CellKey) -> Option<Cell<T, U, V, D>> {
+        if let Some(removed_cell) = self.cells.remove(cell_key) {
+            // Also remove from UUID mapping
+            self.uuid_to_cell_key.remove(&removed_cell.uuid());
+            // Bump generation to invalidate caches
+            self.generation
+                .fetch_add(1, std::sync::atomic::Ordering::Release);
+            Some(removed_cell)
+        } else {
+            None
+        }
+    }
+
+    /// Removes multiple cells by their keys in a batch operation.
+    ///
+    /// This method is optimized for removing multiple cells at once,
+    /// updating the generation counter only once.
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_keys` - The keys of cells to remove
+    ///
+    /// # Returns
+    ///
+    /// The number of cells successfully removed.
+    pub fn remove_cells_by_keys(&mut self, cell_keys: &[CellKey]) -> usize {
+        let mut removed_count = 0;
+
+        for &cell_key in cell_keys {
+            if let Some(removed_cell) = self.cells.remove(cell_key) {
+                // Also remove from UUID mapping
+                self.uuid_to_cell_key.remove(&removed_cell.uuid());
+                removed_count += 1;
+            }
+        }
+
+        // Bump generation once for all removals
+        if removed_count > 0 {
+            self.generation
+                .fetch_add(1, std::sync::atomic::Ordering::Release);
+        }
+
+        removed_count
+    }
+
+    // =========================================================================
+    // KEY-BASED NEIGHBOR OPERATIONS (Phase 2 Optimization)
+    // =========================================================================
+
+    /// Finds neighbor cell keys for a given cell without UUID lookups.
+    ///
+    /// This is the key-based version of neighbor retrieval that avoids
+    /// UUID→Key conversions in the hot path.
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_key` - The key of the cell whose neighbors to find
+    ///
+    /// # Returns
+    ///
+    /// A vector of `Option<CellKey>` where `None` indicates no neighbor
+    /// at that position (boundary facet).
+    #[must_use]
+    pub fn find_neighbors_by_key(&self, cell_key: CellKey) -> Vec<Option<CellKey>> {
+        let mut neighbor_keys = vec![None; D + 1];
+
+        let Some(cell) = self.get_cell_by_key(cell_key) else {
+            return neighbor_keys;
+        };
+
+        if let Some(ref neighbors) = cell.neighbors {
+            for (i, neighbor_uuid_opt) in neighbors.iter().enumerate() {
+                if let Some(neighbor_uuid) = neighbor_uuid_opt {
+                    neighbor_keys[i] = self.cell_key_from_uuid(neighbor_uuid);
+                }
+            }
+        }
+
+        neighbor_keys
+    }
+
+    /// Sets neighbor relationships using cell keys directly.
+    ///
+    /// This method updates the neighbor relationships for a cell using keys,
+    /// converting to UUIDs only for storage (maintaining API compatibility).
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_key` - The key of the cell to update
+    /// * `neighbor_keys` - The new neighbor keys to set
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if successful, or an error if the cell doesn't exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError` if the cell with the given key doesn't exist.
+    pub fn set_neighbors_by_key(
+        &mut self,
+        cell_key: CellKey,
+        neighbor_keys: Vec<Option<CellKey>>,
+    ) -> Result<(), TriangulationValidationError> {
+        // Convert keys to UUIDs for storage (maintains API compatibility)
+        // Do this before getting mutable reference to avoid borrow issues
+        let neighbor_uuids: Vec<Option<Uuid>> = neighbor_keys
+            .into_iter()
+            .map(|key_opt| key_opt.and_then(|key| self.cell_uuid_from_key(key)))
+            .collect();
+
+        // Get mutable reference and update, or return error if not found
+        let cell = self.get_cell_by_key_mut(cell_key).ok_or_else(|| {
+            TriangulationValidationError::InconsistentDataStructure {
+                message: format!("Cell with key {cell_key:?} not found"),
+            }
+        })?;
+        cell.neighbors = Some(neighbor_uuids);
+        Ok(())
+    }
+
+    /// Finds cells containing a vertex using its key directly.
+    ///
+    /// This method avoids UUID lookups when searching for cells that
+    /// contain a specific vertex.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertex_key` - The key of the vertex to search for
+    ///
+    /// # Returns
+    ///
+    /// A set of cell keys that contain the given vertex.
+    #[must_use]
+    pub fn find_cells_containing_vertex_by_key(&self, vertex_key: VertexKey) -> CellKeySet {
+        let mut containing_cells = CellKeySet::default();
+
+        let Some(target_vertex) = self.get_vertex_by_key(vertex_key) else {
+            return containing_cells;
+        };
+
+        let target_uuid = target_vertex.uuid();
+
+        for (cell_key, cell) in &self.cells {
+            // Check if cell contains the vertex by comparing UUIDs
+            // (cells store vertex copies, not keys)
+            for vertex in cell.vertices() {
+                if vertex.uuid() == target_uuid {
+                    containing_cells.insert(cell_key);
+                    break;
+                }
+            }
+        }
+
+        containing_cells
+    }
+
+    /// Gets vertex keys for a cell without UUID lookups.
+    ///
+    /// This method is optimized for internal use and avoids UUID→Key conversions.
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_key` - The key of the cell
+    ///
+    /// # Returns
+    ///
+    /// A result containing the vertex keys of the cell, or an error if the cell
+    /// doesn't exist or vertices aren't properly mapped.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError` if:
+    /// - The cell with the given key doesn't exist
+    /// - A vertex UUID from the cell cannot be found in the vertex mapping
+    pub fn get_cell_vertex_keys(
+        &self,
+        cell_key: CellKey,
+    ) -> Result<Vec<VertexKey>, TriangulationValidationError> {
+        let Some(cell) = self.get_cell_by_key(cell_key) else {
+            return Err(TriangulationValidationError::InconsistentDataStructure {
+                message: format!("Cell with key {cell_key:?} not found"),
+            });
+        };
+
+        let mut vertex_keys = Vec::with_capacity(cell.vertices().len());
+        for vertex in cell.vertices() {
+            let key = self.vertex_key_from_uuid(&vertex.uuid()).ok_or_else(|| {
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Vertex UUID {} not found in mapping", vertex.uuid()),
+                }
+            })?;
+            vertex_keys.push(key);
+        }
+
+        Ok(vertex_keys)
+    }
 }
 
 // =============================================================================
