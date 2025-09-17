@@ -878,7 +878,7 @@ mod tests {
 
         // Get reference cache directly from TDS
         #[allow(deprecated)] // Used for verification in test
-        let reference_cache = tds.build_facet_to_cells_hashmap();
+        let reference_cache = tds.build_facet_to_cells_map_lenient();
 
         // Should have same size
         assert_eq!(

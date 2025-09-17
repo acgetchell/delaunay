@@ -64,11 +64,11 @@ use crate::core::collections::{FastHashMap, FastHashSet};
 
 ### Verification
 
-```bash
-✅ 690/690 tests passing
-✅ No clippy warnings
-✅ Documentation builds successfully
-```
+[![CI](https://github.com/acgetchell/delaunay/actions/workflows/ci.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/ci.yml)
+[![rust-clippy analyze](https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml)
+[![codecov](https://codecov.io/gh/acgetchell/delaunay/graph/badge.svg?token=WT7qZGT9bO)](https://codecov.io/gh/acgetchell/delaunay)
+
+See CI status badges above for current test and clippy status.
 
 ---
 
@@ -123,7 +123,8 @@ vertex_uuid_iter() -> impl ExactSizeIterator<Item = Uuid>
 - `assign_neighbors()` - Uses `vertex_keys_for_cell_direct()`
 - `assign_incident_cells()` - Direct key operations
 - `remove_duplicate_cells()` - Key-based duplicate detection
-- `build_facet_to_cells_hashmap()` - Optimized with keys
+- `build_facet_to_cells_map_lenient()` - Optimized with keys (deprecated lenient version)
+- `build_facet_to_cells_map()` - Strict version with error handling (preferred)
 - `validate_no_duplicate_cells()` - Key-based validation
 - `validate_cell_mappings()` - Direct SlotMap access first
 
@@ -145,11 +146,11 @@ vertex_uuid_iter() -> impl ExactSizeIterator<Item = Uuid>
 
 ### Completed: FacetCacheProvider Implementation
 
-- **Status**: ✅ IMPLEMENTED (January 2025)
+- **Status**: ✅ IMPLEMENTED (September 2025)
 - **Scope**: Added FacetCacheProvider trait to both Bowyer-Watson algorithms
 - **Impact**: 50-90% reduction in facet mapping computation time
 - **Location**: `src/core/algorithms/robust_bowyer_watson.rs` and `bowyer_watson.rs`
-- **Documentation**: Implementation guide in `docs/OPTIMIZING_BOWYER_WATSON.md`
+- **Documentation**: Implementation guide in `docs/OPTIMIZING_BOWYER_WATSON.md` (PR #86)
 
 ### Implementation Patterns
 
@@ -241,7 +242,7 @@ fn process_cell_neighbors_by_key(&self, cell_key: CellKey) {
 
 ### Status: Not Started
 
-### Target: Q1 2026
+### Target: Q3 2025
 
 ### Objective
 
@@ -566,8 +567,8 @@ type OptimizedTds<T, U, V, const D: usize> =
 ### Phase 2 Implementation Guides
 
 - `docs/OPTIMIZING_BOWYER_WATSON.md` - FacetCacheProvider implementation for Bowyer-Watson algorithms
-  - **Part of Phase 2** - Pending implementation
-  - **Impact**: 50-90% reduction in facet mapping computation time
+  - **Part of Phase 2** - ✅ IMPLEMENTED (September 2025)
+  - **Impact**: 50-90% reduction in facet mapping computation time achieved
   - **Rationale**: Eliminates redundant computation in hot paths
 
 ---

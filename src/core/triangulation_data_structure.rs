@@ -1518,6 +1518,15 @@ where
     ///
     /// This is a key-based version of cell removal that avoids UUID lookups.
     ///
+    /// # Safety Warning
+    ///
+    /// This method only removes the cell and updates the UUID→Key mapping.
+    /// It does NOT maintain topology consistency. The caller MUST:
+    /// 1. Call `assign_neighbors()` to rebuild neighbor relationships
+    /// 2. Call `assign_incident_cells()` to update vertex-cell associations
+    ///
+    /// Failure to do so will leave the triangulation in an inconsistent state.
+    ///
     /// # Arguments
     ///
     /// * `cell_key` - The key of the cell to remove
@@ -1529,9 +1538,8 @@ where
         if let Some(removed_cell) = self.cells.remove(cell_key) {
             // Also remove from UUID mapping
             self.uuid_to_cell_key.remove(&removed_cell.uuid());
-            // Bump generation to invalidate caches
-            self.generation
-                .fetch_add(1, std::sync::atomic::Ordering::Release);
+            // Topology changed; invalidate caches
+            self.bump_generation();
             Some(removed_cell)
         } else {
             None
@@ -1542,6 +1550,15 @@ where
     ///
     /// This method is optimized for removing multiple cells at once,
     /// updating the generation counter only once.
+    ///
+    /// # Safety Warning
+    ///
+    /// This method only removes the cells and updates the UUID→Key mappings.
+    /// It does NOT maintain topology consistency. The caller MUST:
+    /// 1. Call `assign_neighbors()` to rebuild neighbor relationships
+    /// 2. Call `assign_incident_cells()` to update vertex-cell associations
+    ///
+    /// Failure to do so will leave the triangulation in an inconsistent state.
     ///
     /// # Arguments
     ///
@@ -1563,8 +1580,7 @@ where
 
         // Bump generation once for all removals
         if removed_count > 0 {
-            self.generation
-                .fetch_add(1, std::sync::atomic::Ordering::Release);
+            self.bump_generation();
         }
 
         removed_count
@@ -1596,9 +1612,10 @@ where
         };
 
         if let Some(ref neighbors) = cell.neighbors {
-            for (i, neighbor_uuid_opt) in neighbors.iter().enumerate() {
+            // Use zip to avoid potential OOB if neighbors.len() > D+1 (malformed data)
+            for (slot, neighbor_uuid_opt) in neighbor_keys.iter_mut().zip(neighbors.iter()) {
                 if let Some(neighbor_uuid) = neighbor_uuid_opt {
-                    neighbor_keys[i] = self.cell_key_from_uuid(neighbor_uuid);
+                    *slot = self.cell_key_from_uuid(neighbor_uuid);
                 }
             }
         }
@@ -1610,19 +1627,23 @@ where
     ///
     /// This method updates the neighbor relationships for a cell using keys,
     /// converting to UUIDs only for storage (maintaining API compatibility).
+    /// The neighbor vector must have exactly D+1 elements to match the facet
+    /// positions of a D-dimensional simplex.
     ///
     /// # Arguments
     ///
     /// * `cell_key` - The key of the cell to update
-    /// * `neighbor_keys` - The new neighbor keys to set
+    /// * `neighbor_keys` - The new neighbor keys to set (must have length D+1)
     ///
     /// # Returns
     ///
-    /// `Ok(())` if successful, or an error if the cell doesn't exist.
+    /// `Ok(())` if successful, or an error if validation fails.
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if the cell with the given key doesn't exist.
+    /// Returns a `TriangulationValidationError` if:
+    /// - The cell with the given key doesn't exist
+    /// - The neighbor vector length is not D+1
     pub fn set_neighbors_by_key(
         &mut self,
         cell_key: CellKey,
@@ -1635,13 +1656,32 @@ where
             .map(|key_opt| key_opt.and_then(|key| self.cell_uuid_from_key(key)))
             .collect();
 
+        // Enforce positional semantics: neighbors.len() must be D+1
+        if neighbor_uuids.len() != D + 1 {
+            return Err(TriangulationValidationError::InvalidNeighbors {
+                message: format!(
+                    "Invalid neighbor vector length: got {}, expected {}",
+                    neighbor_uuids.len(),
+                    D + 1
+                ),
+            });
+        }
+
         // Get mutable reference and update, or return error if not found
         let cell = self.get_cell_by_key_mut(cell_key).ok_or_else(|| {
             TriangulationValidationError::InconsistentDataStructure {
                 message: format!("Cell with key {cell_key:?} not found"),
             }
         })?;
-        cell.neighbors = Some(neighbor_uuids);
+
+        // Normalize: if all neighbors are None, set cell.neighbors to None
+        // This matches the behavior of assign_neighbors()
+        if neighbor_uuids.iter().all(Option::is_none) {
+            cell.neighbors = None;
+        } else {
+            cell.neighbors = Some(neighbor_uuids);
+        }
+
         Ok(())
     }
 
@@ -1709,7 +1749,8 @@ where
             });
         };
 
-        let mut vertex_keys = Vec::with_capacity(cell.vertices().len());
+        // Pre-size to D+1 to reflect simplex invariant and avoid reallocation
+        let mut vertex_keys = Vec::with_capacity(D + 1);
         for vertex in cell.vertices() {
             let key = self.vertex_key_from_uuid(&vertex.uuid()).ok_or_else(|| {
                 TriangulationValidationError::InconsistentDataStructure {
@@ -2599,9 +2640,9 @@ where
 
     /// Builds a `FacetToCellsMap` mapping facet keys to the cells and facet indices that contain them.
     ///
-    /// This is a convenience method that calls `try_build_facet_to_cells_hashmap` and handles errors
-    /// by skipping cells with missing vertex keys. For correctness-critical code, prefer using
-    /// `try_build_facet_to_cells_hashmap` which propagates errors.
+    /// This is a lenient version that skips cells with missing vertex keys rather than
+    /// returning an error. For correctness-critical code, prefer using
+    /// `build_facet_to_cells_map` which propagates errors.
     ///
     /// # Returns
     ///
@@ -2614,7 +2655,7 @@ where
     /// # Note
     ///
     /// This method will skip cells with missing vertex keys and continue processing.
-    /// If you need to ensure all cells are processed, use `try_build_facet_to_cells_hashmap` instead.
+    /// If you need to ensure all cells are processed, use `build_facet_to_cells_map` instead.
     ///
     /// # Examples
     ///
@@ -2635,9 +2676,9 @@ where
     /// let vertices = Vertex::from_points(points);
     /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
     ///
-    /// // Build the facet-to-cells mapping (prefer try_build_facet_to_cells_hashmap or FacetCacheProvider)
+    /// // Build the facet-to-cells mapping (prefer build_facet_to_cells_map or FacetCacheProvider)
     /// #[allow(deprecated)]
-    /// let facet_map = tds.build_facet_to_cells_hashmap();
+    /// let facet_map = tds.build_facet_to_cells_map_lenient();
     ///
     /// // Each facet key should map to the cells that contain it
     /// for (facet_key, cell_facet_pairs) in &facet_map {
@@ -2662,23 +2703,19 @@ where
     ///
     /// # Note
     ///
-    /// Unlike `try_build_facet_to_cells_hashmap`, this method logs warnings but continues
+    /// Unlike `build_facet_to_cells_map`, this method logs warnings but continues
     /// processing when cells have missing vertex keys. For strict error handling that fails
-    /// on any missing data, use `try_build_facet_to_cells_hashmap` instead.
+    /// on any missing data, use `build_facet_to_cells_map` instead.
     ///
-    /// NOTE: Phase 2 optimization completed. This method will be deprecated in Phase 3.
-    /// Migration plan:
-    /// 1. Rename `try_build_facet_to_cells_hashmap` -> `build_facet_to_cells_hashmap` (returns Result)
-    /// 2. Rename this method -> `build_facet_to_cells_hashmap_lenient` (mark deprecated)
-    /// 3. Update all call sites to handle Result properly
-    /// 4. Remove deprecated method in next major version
-    ///    Track with issue: #85
+    /// NOTE: This method is deprecated and will be removed in v1.0.0.
+    /// Use `build_facet_to_cells_map` for strict error handling or
+    /// `FacetCacheProvider` trait methods for cached access.
     #[deprecated(
         since = "0.5.0",
-        note = "Use FacetCacheProvider trait methods (get_or_build_facet_cache) for cached access, or try_build_facet_to_cells_hashmap for direct computation. This method will be removed in v1.0.0."
+        note = "Use FacetCacheProvider trait methods (get_or_build_facet_cache) for cached access, or build_facet_to_cells_map for direct computation. This method will be removed in v1.0.0."
     )]
     #[must_use]
-    pub fn build_facet_to_cells_hashmap(&self) -> FacetToCellsMap {
+    pub fn build_facet_to_cells_map_lenient(&self) -> FacetToCellsMap {
         // Ensure facet indices fit in u8 range
         debug_assert!(
             D <= 255,
@@ -2754,11 +2791,9 @@ where
 
     /// Builds a `FacetToCellsMap` with strict error handling.
     ///
-    /// Unlike `build_facet_to_cells_hashmap`, this method returns an error if any cell
-    /// has missing vertex keys, ensuring complete and accurate facet topology information.
-    ///
-    /// NOTE: Phase 2 optimization completed. This will become the primary `build_facet_to_cells_hashmap` method in Phase 3.
-    /// See `build_facet_to_cells_hashmap` NOTE for migration plan.
+    /// This method returns an error if any cell has missing vertex keys, ensuring
+    /// complete and accurate facet topology information. This is the preferred method
+    /// for building facet-to-cells mappings.
     ///
     /// # Returns
     ///
@@ -2773,8 +2808,9 @@ where
     ///
     /// # Performance
     ///
-    /// Same as `build_facet_to_cells_hashmap`: O(N×F) time complexity.
-    pub fn try_build_facet_to_cells_hashmap(
+    /// O(N×F) time complexity where N is the number of cells and F is the
+    /// number of facets per cell (typically D+1 for D-dimensional cells).
+    pub fn build_facet_to_cells_map(
         &self,
     ) -> Result<FacetToCellsMap, TriangulationValidationError> {
         // Ensure facet indices fit in u8 range
@@ -2863,10 +2899,21 @@ where
         // Use try_build for strict error handling, but fall back to build if it fails
         // If strict build fails, use the lenient version for repair
         // This allows us to fix what we can even with partial data
-        let facet_to_cells = self.try_build_facet_to_cells_hashmap().unwrap_or_else(|_| {
-            #[allow(deprecated)] // Internal fallback for repair - lenient version needed
-            self.build_facet_to_cells_hashmap()
-        });
+        let facet_to_cells = self
+            .build_facet_to_cells_map()
+            .map_err(|e| {
+                // Log the error in debug builds for troubleshooting
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Warning: Strict facet map build failed during repair: {e}. \
+                     Falling back to lenient builder to attempt recovery."
+                );
+                e
+            })
+            .unwrap_or_else(|_| {
+                #[allow(deprecated)] // Internal fallback for repair - lenient version needed
+                self.build_facet_to_cells_map_lenient()
+            });
         let mut cells_to_remove: CellKeySet = CellKeySet::default();
 
         // Find facets that are shared by more than 2 cells and validate which ones are correct
@@ -3192,7 +3239,7 @@ where
     fn validate_facet_sharing(&self) -> Result<(), TriangulationValidationError> {
         // Build a map from facet keys to the cells that contain them
         // Use the strict version to ensure we catch any missing vertex keys
-        let facet_to_cells = self.try_build_facet_to_cells_hashmap()?;
+        let facet_to_cells = self.build_facet_to_cells_map()?;
 
         // Check for facets shared by more than 2 cells
         for (facet_key, cell_facet_pairs) in facet_to_cells {
@@ -5434,6 +5481,78 @@ mod tests {
     }
 
     #[test]
+    fn test_set_neighbors_by_key_validation() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Get the first cell key
+        let cell_key = tds.cells.keys().next().unwrap();
+
+        // Test 1: Valid neighbor vector with correct length (D+1 = 4 for 3D)
+        let valid_neighbors = vec![None, None, None, None];
+        assert!(tds.set_neighbors_by_key(cell_key, valid_neighbors).is_ok());
+
+        // Verify that all-None neighbors are normalized to None
+        assert!(tds.cells[cell_key].neighbors.is_none());
+
+        // Test 2: Invalid neighbor vector - too short
+        let short_neighbors = vec![None, None, None]; // Only 3 elements, need 4
+        let result = tds.set_neighbors_by_key(cell_key, short_neighbors);
+        assert!(result.is_err());
+        if let Err(TriangulationValidationError::InvalidNeighbors { message }) = result {
+            assert!(message.contains("Invalid neighbor vector length: got 3, expected 4"));
+        } else {
+            panic!("Expected InvalidNeighbors error for short vector");
+        }
+
+        // Test 3: Invalid neighbor vector - too long
+        let long_neighbors = vec![None, None, None, None, None]; // 5 elements, need 4
+        let result = tds.set_neighbors_by_key(cell_key, long_neighbors);
+        assert!(result.is_err());
+        if let Err(TriangulationValidationError::InvalidNeighbors { message }) = result {
+            assert!(message.contains("Invalid neighbor vector length: got 5, expected 4"));
+        } else {
+            panic!("Expected InvalidNeighbors error for long vector");
+        }
+
+        // Test 4: Non-existent cell key
+        let invalid_key = CellKey::default();
+        let neighbors = vec![None, None, None, None];
+        let result = tds.set_neighbors_by_key(invalid_key, neighbors);
+        assert!(result.is_err());
+        if let Err(TriangulationValidationError::InconsistentDataStructure { message }) = result {
+            assert!(message.contains("Cell with key"));
+            assert!(message.contains("not found"));
+        } else {
+            panic!("Expected InconsistentDataStructure error for invalid cell key");
+        }
+
+        // Test 5: Mixed Some/None neighbors are preserved
+        if tds.cells.len() > 1 {
+            let second_cell_key = tds.cells.keys().nth(1).unwrap();
+            let mixed_neighbors = vec![Some(second_cell_key), None, None, None];
+            assert!(tds.set_neighbors_by_key(cell_key, mixed_neighbors).is_ok());
+
+            // Verify the neighbors were set correctly (not normalized to None)
+            assert!(tds.cells[cell_key].neighbors.is_some());
+            if let Some(ref neighbors) = tds.cells[cell_key].neighbors {
+                // First neighbor should map to the second cell's UUID
+                assert!(neighbors[0].is_some());
+                assert!(neighbors[1].is_none());
+                assert!(neighbors[2].is_none());
+                assert!(neighbors[3].is_none());
+            }
+        }
+
+        println!("✓ set_neighbors_by_key validation tests passed");
+    }
+
+    #[test]
     fn test_assign_neighbors_buffer_overflow_guard() {
         use crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 
@@ -6511,7 +6630,8 @@ mod tests {
 
         // Also test the count method for efficiency
         assert_eq!(
-            tds.number_of_boundary_facets(),
+            tds.number_of_boundary_facets()
+                .expect("Should count boundary facets"),
             4,
             "Count of boundary facets should be 4"
         );
@@ -6563,7 +6683,8 @@ mod tests {
 
         // Test the count method
         assert_eq!(
-            tds.number_of_boundary_facets(),
+            tds.number_of_boundary_facets()
+                .expect("Should count boundary facets"),
             6,
             "Count should match the vector length"
         );
@@ -7326,6 +7447,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)] // This test comprehensively validates serialization/deserialization
     fn test_tds_serialization_deserialization() {
         // Create a triangulation with two adjacent tetrahedra sharing one facet
         // This is the same setup as line 3957 in test_is_boundary_facet
@@ -7346,7 +7468,12 @@ mod tests {
         );
         assert_eq!(original_tds.number_of_vertices(), 5);
         assert_eq!(original_tds.number_of_cells(), 2);
-        assert_eq!(original_tds.number_of_boundary_facets(), 6);
+        assert_eq!(
+            original_tds
+                .number_of_boundary_facets()
+                .expect("Should count boundary facets"),
+            6
+        );
 
         // Serialize the TDS to JSON
         let serialized =
@@ -7369,8 +7496,12 @@ mod tests {
         );
         assert_eq!(deserialized_tds.dim(), original_tds.dim());
         assert_eq!(
-            deserialized_tds.number_of_boundary_facets(),
-            original_tds.number_of_boundary_facets()
+            deserialized_tds
+                .number_of_boundary_facets()
+                .expect("Should count boundary facets"),
+            original_tds
+                .number_of_boundary_facets()
+                .expect("Should count boundary facets")
         );
 
         // Verify the deserialized triangulation is valid

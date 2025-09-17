@@ -6,7 +6,7 @@
 use super::{
     facet::{Facet, FacetError},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
-    triangulation_data_structure::Tds,
+    triangulation_data_structure::{Tds, TriangulationValidationError},
     util::derive_facet_key_from_vertices,
 };
 use crate::core::collections::{KeyBasedCellMap, fast_hash_map_with_capacity};
@@ -85,10 +85,10 @@ where
     /// let boundary_facets = tds.boundary_facets().unwrap();
     /// assert_eq!(boundary_facets.len(), 4);
     /// ```
-    fn boundary_facets(&self) -> Result<Vec<Facet<T, U, V, D>>, FacetError> {
+    fn boundary_facets(&self) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError> {
         // Build a map from facet keys to the cells that contain them
-        // Use try_build for strict error handling, fall back to empty map if error
-        let facet_to_cells = self.try_build_facet_to_cells_hashmap().unwrap_or_default();
+        // Use try_build for strict error handling, proper error propagation
+        let facet_to_cells = self.try_build_facet_to_cells_hashmap()?;
         // Right-size the vector by counting boundary facets first
         let boundary_estimate = facet_to_cells.values().filter(|v| v.len() == 1).count();
         let mut boundary_facets = Vec::with_capacity(boundary_estimate);
@@ -108,7 +108,7 @@ where
                     let facets = match cell_facets_cache.entry(cell_id) {
                         Entry::Occupied(e) => e.into_mut(),
                         Entry::Vacant(v) => {
-                            let computed = cell.facets()?; // propagate FacetError
+                            let computed = cell.facets()?; // propagate FacetError (auto-converted to TriangulationValidationError)
                             v.insert(computed)
                         }
                     };
@@ -117,14 +117,18 @@ where
                         boundary_facets.push(f.clone());
                     } else {
                         // Fail fast: invalid facet index indicates data corruption
-                        return Err(FacetError::InvalidFacetIndex {
-                            index: facet_index,
-                            facet_count: facets.len(),
-                        });
+                        return Err(TriangulationValidationError::FacetError(
+                            FacetError::InvalidFacetIndex {
+                                index: facet_index,
+                                facet_count: facets.len(),
+                            },
+                        ));
                     }
                 } else {
                     // Fail fast: cell not found indicates data corruption
-                    return Err(FacetError::CellNotFoundInTriangulation);
+                    return Err(TriangulationValidationError::FacetError(
+                        FacetError::CellNotFoundInTriangulation,
+                    ));
                 }
             }
         }
@@ -178,8 +182,10 @@ where
     /// ```
     #[inline]
     fn is_boundary_facet(&self, facet: &Facet<T, U, V, D>) -> bool {
-        // Use try_build for strict error handling, fall back to empty map if error
-        let facet_to_cells = self.try_build_facet_to_cells_hashmap().unwrap_or_default();
+        // Use try_build and return false if building fails (treat error as non-boundary)
+        let Ok(facet_to_cells) = self.build_facet_to_cells_map() else {
+            return false; // On error, treat as non-boundary
+        };
         self.is_boundary_facet_with_map(facet, &facet_to_cells)
     }
 
@@ -213,7 +219,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Build the facet map once for multiple queries
-    /// let facet_to_cells = tds.try_build_facet_to_cells_hashmap()
+    /// let facet_to_cells = tds.build_facet_to_cells_map()
     ///     .expect("Should build facet map");
     ///
     /// // Check multiple facets efficiently
@@ -256,12 +262,16 @@ where
 
     /// Returns the number of boundary facets in the triangulation.
     ///
-    /// This is a more efficient way to count boundary facets without creating
-    /// the full vector of facets.
+    /// This delegates to `boundary_facets()` for consistent error handling.
     ///
     /// # Returns
     ///
-    /// The number of boundary facets in the triangulation.
+    /// A `Result` containing the number of boundary facets in the triangulation,
+    /// or a `TriangulationValidationError` if the facet map cannot be built.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TriangulationValidationError`] if the facet-to-cells map cannot be built.
     ///
     /// # Examples
     ///
@@ -279,16 +289,11 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // A single tetrahedron has 4 boundary facets
-    /// assert_eq!(tds.number_of_boundary_facets(), 4);
+    /// assert_eq!(tds.number_of_boundary_facets().unwrap(), 4);
     /// ```
-    fn number_of_boundary_facets(&self) -> usize {
-        // Count facets that belong to exactly one cell
-        // Use try_build for strict error handling, fall back to empty map if error
-        self.try_build_facet_to_cells_hashmap()
-            .unwrap_or_default()
-            .values()
-            .filter(|cells| cells.len() == 1)
-            .count()
+    fn number_of_boundary_facets(&self) -> Result<usize, TriangulationValidationError> {
+        // Delegate to boundary_facets() for consistent error handling
+        self.boundary_facets().map(|v| v.len())
     }
 }
 
@@ -328,14 +333,15 @@ mod tests {
         );
 
         assert_eq!(
-            tds.number_of_boundary_facets(),
+            tds.number_of_boundary_facets()
+                .expect("Should get boundary facet count"),
             3,
             "Count should match vector length"
         );
 
         // All facets should be boundary facets
         let facet_to_cells = tds
-            .try_build_facet_to_cells_hashmap()
+            .build_facet_to_cells_map()
             .expect("Should build facet map in test");
         assert!(
             boundary_facets
@@ -375,14 +381,15 @@ mod tests {
         );
 
         assert_eq!(
-            tds.number_of_boundary_facets(),
+            tds.number_of_boundary_facets()
+                .expect("Should get boundary facet count"),
             4,
             "Count should match vector length"
         );
 
         // All facets should be boundary facets
         let facet_to_cells = tds
-            .try_build_facet_to_cells_hashmap()
+            .build_facet_to_cells_map()
             .expect("Should build facet map in test");
         assert!(
             boundary_facets
@@ -408,7 +415,7 @@ mod tests {
 
         // Build the facet map once for efficiency
         let facet_to_cells = tds
-            .try_build_facet_to_cells_hashmap()
+            .build_facet_to_cells_map()
             .expect("Should build facet map in test");
 
         // Get all facets from the single tetrahedron
@@ -470,17 +477,17 @@ mod tests {
             "Same facet should produce same key (deterministic)"
         );
 
-        // Test consistency with try_build_facet_to_cells_hashmap
-        let facet_to_cells = tds
-            .try_build_facet_to_cells_hashmap()
+        // Test consistency with build_facet_to_cells_map
+        let boundary_facets_from_map = tds
+            .build_facet_to_cells_map()
             .expect("Should build facet map in test");
         assert!(
-            facet_to_cells.contains_key(&facet_key),
+            boundary_facets_from_map.contains_key(&facet_key),
             "Key from utility function should exist in facet_to_cells map"
         );
 
         // Verify the facet is correctly identified as boundary using the computed key
-        let cells_for_facet = &facet_to_cells[&facet_key];
+        let cells_for_facet = &boundary_facets_from_map[&facet_key];
         assert_eq!(
             cells_for_facet.len(),
             1,
@@ -546,7 +553,8 @@ mod tests {
         );
 
         assert_eq!(
-            tds.number_of_boundary_facets(),
+            tds.number_of_boundary_facets()
+                .expect("Should count boundary facets"),
             5,
             "Count should match vector length"
         );
@@ -554,7 +562,7 @@ mod tests {
         // All facets should be boundary facets
         // Cache once
         let facet_to_cells = tds
-            .try_build_facet_to_cells_hashmap()
+            .build_facet_to_cells_map()
             .expect("Should build facet map in test");
         let mut confirmed_boundary = 0;
         for boundary_facet in &boundary_facets {
@@ -590,7 +598,8 @@ mod tests {
         );
 
         assert_eq!(
-            tds.number_of_boundary_facets(),
+            tds.number_of_boundary_facets()
+                .expect("Should count boundary facets"),
             0,
             "Count should be 0 for empty triangulation"
         );
@@ -640,7 +649,8 @@ mod tests {
 
         // Test the count method
         assert_eq!(
-            tds.number_of_boundary_facets(),
+            tds.number_of_boundary_facets()
+                .expect("Should count boundary facets"),
             6,
             "Count should match vector length"
         );
@@ -806,7 +816,9 @@ mod tests {
             let boundary_count_from_vector = boundary_facets.len();
 
             // Get count using the efficient counting method
-            let boundary_count_from_count = tds.number_of_boundary_facets();
+            let boundary_count_from_count = tds
+                .number_of_boundary_facets()
+                .expect("Should count boundary facets");
 
             // These should be equal
             assert_eq!(
@@ -874,7 +886,9 @@ mod tests {
 
         if tds.number_of_cells() > 0 {
             let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-            let boundary_count = tds.number_of_boundary_facets();
+            let boundary_count = tds
+                .number_of_boundary_facets()
+                .expect("Should count boundary facets");
 
             // Consistency check
             assert_eq!(
@@ -972,7 +986,12 @@ mod tests {
                 .len(),
             4
         ); // Should have 4 boundary facets
-        assert_eq!(tds_coplanar.number_of_boundary_facets(), 4);
+        assert_eq!(
+            tds_coplanar
+                .number_of_boundary_facets()
+                .expect("Should count boundary facets"),
+            4
+        );
 
         println!("✓ Edge cases handled correctly:");
         println!("  - Single point: correctly fails with InsufficientVertices");
@@ -1015,7 +1034,9 @@ mod tests {
 
             // Time number_of_boundary_facets() method
             let start = Instant::now();
-            let boundary_count = tds.number_of_boundary_facets();
+            let boundary_count = tds
+                .number_of_boundary_facets()
+                .expect("Should count boundary facets");
             let boundary_count_time = start.elapsed();
 
             // Time is_boundary_facet() for each boundary facet
@@ -1137,7 +1158,8 @@ mod tests {
                 "Points: {:3} | Cells: {:4} | Boundary Facets: {:4} | Avg Time: {:?}",
                 n_points,
                 tds.number_of_cells(),
-                tds.number_of_boundary_facets(),
+                tds.number_of_boundary_facets()
+                    .expect("Should count boundary facets"),
                 avg_time
             );
         }
