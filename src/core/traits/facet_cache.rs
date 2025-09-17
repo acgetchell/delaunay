@@ -106,6 +106,8 @@ where
                 return Some(existing.clone());
             }
             // Build the cache only once, even if RCU retries
+            #[allow(deprecated)]
+            // Internal implementation detail - this trait is the recommended replacement
             let arc = built.get_or_insert_with(|| Arc::new(tds.build_facet_to_cells_hashmap()));
             Some(arc.clone())
         })
@@ -184,6 +186,8 @@ where
             )
         } else {
             // Cache is stale - need to invalidate and rebuild
+            #[allow(deprecated)]
+            // Internal implementation detail - this trait is the recommended replacement
             let new_cache = tds.build_facet_to_cells_hashmap();
             let new_cache_arc = Arc::new(new_cache);
 
@@ -753,6 +757,7 @@ mod tests {
         let provider_cache = provider.get_or_build_facet_cache(&tds);
 
         // Get reference cache directly from TDS
+        #[allow(deprecated)] // Used for verification in test
         let reference_cache = tds.build_facet_to_cells_hashmap();
 
         // Should have same size

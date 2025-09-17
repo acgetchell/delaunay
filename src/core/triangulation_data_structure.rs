@@ -2631,7 +2631,8 @@ where
     /// let vertices = Vertex::from_points(points);
     /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
     ///
-    /// // Build the facet-to-cells mapping
+    /// // Build the facet-to-cells mapping (prefer try_build_facet_to_cells_hashmap or FacetCacheProvider)
+    /// #[allow(deprecated)]
     /// let facet_map = tds.build_facet_to_cells_hashmap();
     ///
     /// // Each facet key should map to the cells that contain it
@@ -2668,6 +2669,10 @@ where
     /// 3. Update all call sites to handle Result properly
     /// 4. Remove deprecated method in next major version
     ///    Track with issue: #85
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use FacetCacheProvider trait methods (get_or_build_facet_cache) for cached access, or try_build_facet_to_cells_hashmap for direct computation. This method will be removed in v1.0.0."
+    )]
     #[must_use]
     pub fn build_facet_to_cells_hashmap(&self) -> FacetToCellsMap {
         // Ensure facet indices fit in u8 range
@@ -2854,9 +2859,10 @@ where
         // Use try_build for strict error handling, but fall back to build if it fails
         // If strict build fails, use the lenient version for repair
         // This allows us to fix what we can even with partial data
-        let facet_to_cells = self
-            .try_build_facet_to_cells_hashmap()
-            .unwrap_or_else(|_| self.build_facet_to_cells_hashmap());
+        let facet_to_cells = self.try_build_facet_to_cells_hashmap().unwrap_or_else(|_| {
+            #[allow(deprecated)] // Internal fallback for repair - lenient version needed
+            self.build_facet_to_cells_hashmap()
+        });
         let mut cells_to_remove: CellKeySet = CellKeySet::default();
 
         // Find facets that are shared by more than 2 cells and validate which ones are correct

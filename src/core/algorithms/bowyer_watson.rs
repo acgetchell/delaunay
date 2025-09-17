@@ -92,8 +92,10 @@
 //!   DOI: [10.1145/160985.161140](https://doi.org/10.1145/160985.161140)
 
 use crate::core::{
+    collections::FacetToCellsMap,
     traits::{
         data_type::DataType,
+        facet_cache::FacetCacheProvider,
         insertion_algorithm::{
             InsertionAlgorithm, InsertionBuffers, InsertionInfo, InsertionStatistics,
             InsertionStrategy,
@@ -105,11 +107,13 @@ use crate::core::{
     vertex::Vertex,
 };
 use crate::geometry::{algorithms::convex_hull::ConvexHull, traits::coordinate::CoordinateScalar};
+use arc_swap::ArcSwapOption;
 use num_traits::NumCast;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
+    sync::{Arc, atomic::AtomicU64},
 };
 
 /// Result type for Bowyer-Watson operations
@@ -137,6 +141,12 @@ where
 
     /// Cached convex hull for hull extension
     hull: Option<ConvexHull<T, U, V, D>>,
+
+    /// Cache for facet-to-cells mapping
+    facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
+
+    /// Generation counter for cache invalidation
+    cached_generation: Arc<AtomicU64>,
 }
 
 impl<T, U, V, const D: usize> IncrementalBoyerWatson<T, U, V, D>
@@ -171,6 +181,8 @@ where
             stats: InsertionStatistics::new(),
             buffers: InsertionBuffers::with_capacity(100),
             hull: None,
+            facet_to_cells_cache: ArcSwapOption::empty(),
+            cached_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -211,6 +223,23 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for IncrementalBoyerWatson<T, U, V, D>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    U: DataType + DeserializeOwned,
+    V: DataType + DeserializeOwned,
+    for<'a> &'a T: Div<T>,
+    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+{
+    fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
+        &self.facet_to_cells_cache
+    }
+
+    fn cached_generation(&self) -> &AtomicU64 {
+        &self.cached_generation
     }
 }
 
@@ -368,6 +397,7 @@ mod tests {
     }
 
     /// Count boundary facets (shared by 1 cell)
+    #[allow(deprecated)] // Test helper - deprecation doesn't apply to tests
     fn count_boundary_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
         tds.build_facet_to_cells_hashmap()
             .values()
@@ -376,6 +406,7 @@ mod tests {
     }
 
     /// Count internal facets (shared by 2 cells)
+    #[allow(deprecated)] // Test helper - deprecation doesn't apply to tests
     fn count_internal_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
         tds.build_facet_to_cells_hashmap()
             .values()
@@ -384,6 +415,7 @@ mod tests {
     }
 
     /// Count invalid facets (shared by 3+ cells)
+    #[allow(deprecated)] // Test helper - deprecation doesn't apply to tests
     fn count_invalid_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
         tds.build_facet_to_cells_hashmap()
             .values()
@@ -450,6 +482,7 @@ mod tests {
 
             // Detailed facet sharing analysis
             eprintln!("\n=== FACET SHARING ANALYSIS ===");
+            #[allow(deprecated)] // Test diagnostic - OK to use deprecated method
             let facet_to_cells = tds.build_facet_to_cells_hashmap();
 
             let mut invalid_sharing = 0;
@@ -522,6 +555,7 @@ mod tests {
         }
 
         // Critical issue detection
+        #[allow(deprecated)] // Test diagnostic - OK to use deprecated method
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
         let mut invalid_sharing = 0;
         let mut boundary_facets = 0;
@@ -589,6 +623,7 @@ mod tests {
         println!("  Cells: {}", tds.number_of_cells());
 
         // Check facet sharing
+        #[allow(deprecated)] // Test diagnostic - OK to use deprecated method
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
         let boundary_count = facet_to_cells
             .values()
