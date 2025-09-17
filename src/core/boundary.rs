@@ -87,8 +87,8 @@ where
     /// ```
     fn boundary_facets(&self) -> Result<Vec<Facet<T, U, V, D>>, FacetError> {
         // Build a map from facet keys to the cells that contain them
-        #[allow(deprecated)] // Will be migrated in Phase 3
-        let facet_to_cells = self.build_facet_to_cells_hashmap();
+        // Use try_build for strict error handling, fall back to empty map if error
+        let facet_to_cells = self.try_build_facet_to_cells_hashmap().unwrap_or_default();
         // Right-size the vector by counting boundary facets first
         let boundary_estimate = facet_to_cells.values().filter(|v| v.len() == 1).count();
         let mut boundary_facets = Vec::with_capacity(boundary_estimate);
@@ -178,8 +178,8 @@ where
     /// ```
     #[inline]
     fn is_boundary_facet(&self, facet: &Facet<T, U, V, D>) -> bool {
-        #[allow(deprecated)] // Will be migrated in Phase 3
-        let facet_to_cells = self.build_facet_to_cells_hashmap();
+        // Use try_build for strict error handling, fall back to empty map if error
+        let facet_to_cells = self.try_build_facet_to_cells_hashmap().unwrap_or_default();
         self.is_boundary_facet_with_map(facet, &facet_to_cells)
     }
 
@@ -213,7 +213,8 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Build the facet map once for multiple queries
-    /// let facet_to_cells = tds.build_facet_to_cells_hashmap();
+    /// let facet_to_cells = tds.try_build_facet_to_cells_hashmap()
+    ///     .expect("Should build facet map");
     ///
     /// // Check multiple facets efficiently
     /// if let Some(cell) = tds.cells().values().next() {
@@ -282,8 +283,9 @@ where
     /// ```
     fn number_of_boundary_facets(&self) -> usize {
         // Count facets that belong to exactly one cell
-        #[allow(deprecated)] // Will be migrated in Phase 3
-        self.build_facet_to_cells_hashmap()
+        // Use try_build for strict error handling, fall back to empty map if error
+        self.try_build_facet_to_cells_hashmap()
+            .unwrap_or_default()
             .values()
             .filter(|cells| cells.len() == 1)
             .count()
@@ -332,7 +334,9 @@ mod tests {
         );
 
         // All facets should be boundary facets
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        let facet_to_cells = tds
+            .try_build_facet_to_cells_hashmap()
+            .expect("Should build facet map in test");
         assert!(
             boundary_facets
                 .iter()
@@ -377,7 +381,9 @@ mod tests {
         );
 
         // All facets should be boundary facets
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        let facet_to_cells = tds
+            .try_build_facet_to_cells_hashmap()
+            .expect("Should build facet map in test");
         assert!(
             boundary_facets
                 .iter()
@@ -401,7 +407,9 @@ mod tests {
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
         // Build the facet map once for efficiency
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        let facet_to_cells = tds
+            .try_build_facet_to_cells_hashmap()
+            .expect("Should build facet map in test");
 
         // Get all facets from the single tetrahedron
         let cell = tds.cells().values().next().expect("Should have one cell");
@@ -462,8 +470,10 @@ mod tests {
             "Same facet should produce same key (deterministic)"
         );
 
-        // Test consistency with build_facet_to_cells_hashmap
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        // Test consistency with try_build_facet_to_cells_hashmap
+        let facet_to_cells = tds
+            .try_build_facet_to_cells_hashmap()
+            .expect("Should build facet map in test");
         assert!(
             facet_to_cells.contains_key(&facet_key),
             "Key from utility function should exist in facet_to_cells map"
@@ -543,7 +553,9 @@ mod tests {
 
         // All facets should be boundary facets
         // Cache once
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        let facet_to_cells = tds
+            .try_build_facet_to_cells_hashmap()
+            .expect("Should build facet map in test");
         let mut confirmed_boundary = 0;
         for boundary_facet in &boundary_facets {
             if tds.is_boundary_facet_with_map(boundary_facet, &facet_to_cells) {

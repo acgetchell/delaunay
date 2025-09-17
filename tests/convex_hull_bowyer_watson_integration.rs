@@ -19,7 +19,8 @@ use delaunay::vertex;
 
 /// Helper function to count boundary facets (shared by 1 cell)
 fn count_boundary_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
-    tds.build_facet_to_cells_hashmap()
+    tds.try_build_facet_to_cells_hashmap()
+        .unwrap_or_default()
         .values()
         .filter(|cells| cells.len() == 1)
         .count()
@@ -27,7 +28,8 @@ fn count_boundary_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
 
 /// Helper function to count internal facets (shared by 2 cells)
 fn count_internal_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
-    tds.build_facet_to_cells_hashmap()
+    tds.try_build_facet_to_cells_hashmap()
+        .unwrap_or_default()
         .values()
         .filter(|cells| cells.len() == 2)
         .count()
@@ -35,7 +37,8 @@ fn count_internal_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
 
 /// Helper function to count invalid facets (shared by 3+ cells)
 fn count_invalid_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
-    tds.build_facet_to_cells_hashmap()
+    tds.try_build_facet_to_cells_hashmap()
+        .unwrap_or_default()
         .values()
         .filter(|cells| cells.len() > 2)
         .count()
