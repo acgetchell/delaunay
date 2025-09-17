@@ -269,7 +269,10 @@ where
             {
                 let cells_removed = bad_cells.len();
                 <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
-                <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex);
+
+                // Ensure vertex is in TDS - if this fails, propagate the error
+                <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
+
                 let cells_created =
                     <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
                         tds,
@@ -321,7 +324,9 @@ where
             self.find_visible_boundary_facets_with_robust_fallback(tds, vertex)
             && !visible_facets.is_empty()
         {
-            <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex);
+            // Ensure vertex is in TDS - if this fails, propagate the error
+            <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
+
             let cells_created =
                 <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
                     tds,
@@ -634,7 +639,7 @@ where
         }
 
         // Add the vertex to the TDS if it's not already there
-        <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex);
+        <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
 
         let cells_created =
             <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(

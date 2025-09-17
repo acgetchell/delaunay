@@ -903,6 +903,10 @@ where
     /// over separate `vertices_mut().insert()` + `uuid_to_vertex_key.insert()` calls
     /// which can leave the data structure in an inconsistent state if interrupted.
     ///
+    /// **Note:** This method does NOT check for duplicate coordinates. It only checks
+    /// for UUID uniqueness. For public API use where coordinate uniqueness is required,
+    /// prefer using the `add()` method instead, which enforces coordinate-uniqueness.
+    ///
     /// # Arguments
     ///
     /// * `vertex` - The vertex to insert
@@ -972,6 +976,34 @@ where
         &mut self,
         cell: Cell<T, U, V, D>,
     ) -> Result<CellKey, TriangulationConstructionError> {
+        // Validate structural invariants
+        if cell.vertices().len() != D + 1 {
+            return Err(TriangulationConstructionError::ValidationError(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell must have exactly {} vertices for {}-dimensional simplex, but has {}",
+                        D + 1,
+                        D,
+                        cell.vertices().len()
+                    ),
+                },
+            ));
+        }
+
+        // Verify all vertices exist in the triangulation
+        for vertex in cell.vertices() {
+            if !self.uuid_to_vertex_key.contains_key(&vertex.uuid()) {
+                return Err(TriangulationConstructionError::ValidationError(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell references vertex UUID {} that does not exist in the triangulation",
+                            vertex.uuid()
+                        ),
+                    },
+                ));
+            }
+        }
+
         let cell_uuid = cell.uuid();
 
         // Use Entry API for atomic check-and-insert
@@ -1656,6 +1688,12 @@ where
         // Case 3: Adding to existing triangulation - use IncrementalBoyerWatson
         if self.number_of_cells() > 0 {
             // Insert the vertex into the existing triangulation using the trait method
+            //
+            // IMPORTANT: The InsertionAlgorithm contract requires that the vertex
+            // must already exist in the TDS before calling insert_vertex().
+            // This is why we insert the vertex into self.vertices and self.uuid_to_vertex_key
+            // BEFORE calling algorithm.insert_vertex(). The algorithm operates on the
+            // reference to the vertex and expects it to be retrievable from the TDS.
             use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
             use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
             let mut algorithm = IncrementalBoyerWatson::new();
@@ -2102,10 +2140,16 @@ where
     ///
     /// Returns the number of duplicate cells that were removed.
     ///
+    /// After removing duplicate cells, this method rebuilds the topology
+    /// (neighbor relationships and incident cells) to maintain data structure
+    /// invariants and prevent stale references.
+    ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if vertex keys cannot be retrieved for any cell,
-    /// indicating data structure corruption.
+    /// Returns a `TriangulationValidationError` if:
+    /// - Vertex keys cannot be retrieved for any cell (data structure corruption)
+    /// - Neighbor assignment fails after cell removal
+    /// - Incident cell assignment fails after cell removal
     pub fn remove_duplicate_cells(&mut self) -> Result<usize, TriangulationValidationError> {
         let mut unique_cells = FastHashMap::default();
         let mut cells_to_remove = CellRemovalBuffer::new();
@@ -2137,6 +2181,13 @@ where
         }
 
         if duplicate_count > 0 {
+            // Rebuild topology to avoid stale references after cell removal
+            // This ensures vertices don't point to removed cells via incident_cell,
+            // and neighbor arrays don't reference removed keys
+            self.assign_neighbors()?;
+            self.assign_incident_cells()?;
+
+            // Increment generation counter after topology changes
             self.generation.fetch_add(1, Ordering::Relaxed);
         }
         Ok(duplicate_count)
@@ -2991,6 +3042,12 @@ where
 /// - The same set of cells (compared by vertex sets)
 /// - Consistent vertex and cell mappings
 ///
+/// **Note on NaN handling:** This implementation assumes that vertices with NaN coordinates
+/// are not allowed in the triangulation. NaN values in coordinates would cause undefined
+/// behavior during sorting and comparison. The triangulation should reject vertices with
+/// NaN coordinates at construction time. If NaN values are encountered during comparison,
+/// they are treated as equal to maintain reflexivity of the equality relation.
+///
 /// Note: Buffer fields are ignored since they are transient data structures.
 impl<T, U, V, const D: usize> PartialEq for Tds<T, U, V, D>
 where
@@ -3015,6 +3072,8 @@ where
         let mut other_vertices: Vec<_> = other.vertices.values().collect();
 
         // Sort vertices by their coordinates for consistent comparison
+        // Note: unwrap_or(Equal) handles NaN cases by treating them as equal,
+        // but triangulations should reject NaN coordinates at construction
         self_vertices.sort_by(|a, b| {
             let a_coords: [T; D] = (*a).into();
             let b_coords: [T; D] = (*b).into();
@@ -3852,6 +3911,91 @@ mod tests {
     }
 
     #[test]
+    fn test_remove_duplicate_cells_rebuilds_topology() {
+        // This test specifically verifies that topology is rebuilt after duplicate removal
+        // to prevent stale references
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+            Point::new([0.5, 0.5, 0.5]), // Interior point for more complex triangulation
+        ];
+        let vertices = Vertex::from_points(points);
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        // Get the current state of the triangulation
+        let original_cells = tds.number_of_cells();
+        assert!(original_cells > 1, "Need multiple cells for this test");
+
+        // Get vertices from the first cell to create a duplicate
+        let first_cell_key = tds.cells.keys().next().unwrap();
+        let first_cell = tds.cells.get(first_cell_key).unwrap();
+        let cell_vertices: Vec<_> = first_cell.vertices().to_vec();
+
+        // Create a new duplicate cell with the same vertices
+        let duplicate_cell = cell!(cell_vertices);
+        let duplicate_key = tds.cells.insert(duplicate_cell);
+        let duplicate_uuid = tds.cells[duplicate_key].uuid();
+        tds.uuid_to_cell_key.insert(duplicate_uuid, duplicate_key);
+
+        // Before removal, verify we have the duplicate
+        assert_eq!(tds.number_of_cells(), original_cells + 1);
+
+        // Remove duplicates - this should trigger topology rebuild
+        let removed_count = tds
+            .remove_duplicate_cells()
+            .expect("Should successfully remove duplicates and rebuild topology");
+
+        assert_eq!(
+            removed_count, 1,
+            "Should have removed exactly one duplicate"
+        );
+        assert_eq!(
+            tds.number_of_cells(),
+            original_cells,
+            "Should be back to original cell count"
+        );
+
+        // Verify topology integrity after removal
+        // 1. Check that all vertices have valid incident cells (no stale references)
+        for (vertex_key, vertex) in &tds.vertices {
+            if let Some(incident_cell_uuid) = vertex.incident_cell {
+                let cell_exists = tds.uuid_to_cell_key.contains_key(&incident_cell_uuid);
+                assert!(
+                    cell_exists,
+                    "Vertex {:?} has stale incident_cell reference {:?} after duplicate removal",
+                    vertex_key, incident_cell_uuid
+                );
+            }
+        }
+
+        // 2. Check that all cells have valid neighbor references (no stale references)
+        for (cell_key, cell) in &tds.cells {
+            if let Some(neighbors) = &cell.neighbors {
+                for (i, neighbor_uuid) in neighbors.iter().enumerate() {
+                    if let Some(neighbor_uuid) = neighbor_uuid {
+                        let neighbor_exists = tds.uuid_to_cell_key.contains_key(neighbor_uuid);
+                        assert!(
+                            neighbor_exists,
+                            "Cell {:?} has stale neighbor[{}] reference {:?} after duplicate removal",
+                            cell_key, i, neighbor_uuid
+                        );
+                    }
+                }
+            }
+        }
+
+        // 3. Verify the triangulation is still valid
+        assert!(
+            tds.is_valid().is_ok(),
+            "Triangulation should remain valid after duplicate removal and topology rebuild"
+        );
+
+        println!("✓ Topology successfully rebuilt after duplicate cell removal");
+    }
+
+    #[test]
     fn test_bowyer_watson_empty() {
         let points: Vec<Point<f64, 3>> = Vec::new();
         let vertices = Vertex::from_points(points);
@@ -4169,10 +4313,11 @@ mod tests {
 
     #[test]
     fn tds_small_triangulation() {
-        use rand::Rng;
+        use rand::{Rng, SeedableRng, rngs::StdRng};
 
+        // Use fixed seed for reproducible tests
+        let mut rng = StdRng::seed_from_u64(42);
         // Create a small number of random points in 3D
-        let mut rng = rand::rng();
         let points: Vec<Point<f64, 3>> = (0..10)
             .map(|_| {
                 Point::new([
@@ -5430,6 +5575,33 @@ mod tests {
         // Should be back to original count and have removed exactly 3 duplicates
         assert_eq!(result.number_of_cells(), original_cell_count);
         assert_eq!(duplicates_removed, 3);
+
+        // Verify that topology was rebuilt correctly after cell removal
+        // Check that all vertices have valid incident cells
+        for vertex in result.vertices.values() {
+            if let Some(incident_cell_uuid) = vertex.incident_cell {
+                // The incident cell should exist in the triangulation
+                assert!(
+                    result.uuid_to_cell_key.contains_key(&incident_cell_uuid),
+                    "Vertex has stale incident_cell reference to removed cell"
+                );
+            }
+        }
+
+        // Check that all neighbor references are valid
+        for cell in result.cells.values() {
+            if let Some(neighbors) = &cell.neighbors {
+                for neighbor in neighbors.iter().flatten() {
+                    // Each neighbor should exist in the triangulation
+                    assert!(
+                        result.uuid_to_cell_key.contains_key(neighbor),
+                        "Cell has stale neighbor reference to removed cell"
+                    );
+                }
+            }
+        }
+
+        println!("✓ Topology correctly rebuilt after removing duplicate cells");
     }
 
     #[test]
@@ -6899,17 +7071,25 @@ mod tests {
 
         // Since we can't easily set the UUID on a cell directly to test duplicate detection,
         // we'll test the general functionality by inserting additional cells
+        // First, we need to insert the vertices for the new cell
+        let new_vertices = vec![
+            vertex!([0.5, 0.5, 0.0]),
+            vertex!([1.5, 0.5, 0.0]),
+            vertex!([0.5, 1.5, 0.0]),
+            vertex!([0.5, 0.5, 1.0]),
+        ];
+
+        // Insert the new vertices into the triangulation
+        for vertex in &new_vertices {
+            tds.insert_vertex_with_mapping(*vertex).unwrap();
+        }
+
         let cell_for_duplicate_test = CellBuilder::default()
-            .vertices(vec![
-                vertex!([0.5, 0.5, 0.0]),
-                vertex!([1.5, 0.5, 0.0]),
-                vertex!([0.5, 1.5, 0.0]),
-                vertex!([0.5, 0.5, 1.0]),
-            ])
+            .vertices(new_vertices)
             .build()
             .unwrap();
 
-        // First insert this new cell
+        // Now insert this new cell
         let new_key = tds
             .insert_cell_with_mapping(cell_for_duplicate_test)
             .unwrap();

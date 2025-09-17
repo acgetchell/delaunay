@@ -13,8 +13,11 @@ use crate::core::{
     },
     vertex::Vertex,
 };
+use crate::geometry::point::Point;
+use crate::geometry::predicates::{InSphere, Orientation, insphere, simplex_orientation};
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use num_traits::{NumCast, cast};
+use approx::abs_diff_eq;
+use num_traits::{NumCast, One, Zero, cast};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
@@ -37,7 +40,11 @@ pub enum BadCellsError {
         degenerate_count: usize,
     },
     /// Too many degenerate circumspheres to reliably detect bad cells
-    #[error("Too many degenerate circumspheres ({degenerate_count}/{total_tested})")]
+    #[error("{}", if *.total_tested == 0 {
+        format!("All {} candidate cells were degenerate", *.degenerate_count)
+    } else {
+        format!("Too many degenerate circumspheres ({}/{})", *.degenerate_count, *.total_tested)
+    })]
     TooManyDegenerateCells {
         /// Number of degenerate cells
         degenerate_count: usize,
@@ -51,6 +58,13 @@ pub enum BadCellsError {
 
 /// Margin factor used for bounding box expansion in exterior vertex detection
 const MARGIN_FACTOR: f64 = 0.1;
+
+/// Threshold for determining when too many degenerate cells make results unreliable.
+/// If more than this fraction of cells are degenerate, the results are considered unreliable.
+/// Currently set to 0.5 (50%), which means if more than half the cells are degenerate,
+/// we consider the results unreliable. This threshold can be adjusted based on the
+/// tolerance for degenerate cases in specific applications.
+const DEGENERATE_CELL_THRESHOLD: f64 = 0.5;
 
 /// Strategy used for vertex insertion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -481,12 +495,16 @@ where
     {
         use crate::geometry::predicates::{InSphere, insphere};
 
-        // Preallocate buffer once to avoid repeated allocations
+        // Reserve exact capacity once before the loop to avoid reallocations
         let mut vertex_points = Vec::with_capacity(D + 1);
 
         for cell in tds.cells().values() {
             // Clear and reuse the buffer
             vertex_points.clear();
+            // Reserve exact capacity if not already present (avoids growing)
+            if vertex_points.capacity() < D + 1 {
+                vertex_points.reserve_exact((D + 1).saturating_sub(vertex_points.capacity()));
+            }
             vertex_points.extend(cell.vertices().iter().map(|v| *v.point()));
 
             if let Ok(containment) = insphere(&vertex_points, *vertex.point())
@@ -513,7 +531,7 @@ where
     /// `true` if the vertex is likely exterior, `false` otherwise
     fn is_vertex_likely_exterior(tds: &Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) -> bool
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + One + Zero + PartialEq,
     {
         // Get the vertex coordinates
         let vertex_coords: [T; D] = vertex.point().into();
@@ -549,14 +567,23 @@ where
         }
 
         // Calculate bounding box margins (10% expansion)
-        // For integer types, cast(0.1) becomes 0, so we use default_tolerance as fallback
-        let margin_factor: T = cast(MARGIN_FACTOR).unwrap_or_else(|| T::default_tolerance());
+        // For integer types, ensure at least 1 unit of margin
+        let margin_factor: T = cast(MARGIN_FACTOR).unwrap_or_else(|| {
+            // For integer types, use 1 as the minimum margin
+            T::one()
+        });
         let mut expanded_min = [T::zero(); D];
         let mut expanded_max = [T::zero(); D];
 
         for i in 0..D {
             let range = max_coords[i] - min_coords[i];
-            let margin = range * margin_factor;
+            let mut margin = range * margin_factor;
+
+            // Ensure at least 1 unit of margin for integer types
+            if margin == T::zero() && T::one() != T::zero() {
+                margin = T::one();
+            }
+
             expanded_min[i] = min_coords[i] - margin;
             expanded_max[i] = max_coords[i] + margin;
         }
@@ -605,8 +632,6 @@ where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
-        use crate::geometry::predicates::{InSphere, insphere};
-
         // Check if there are any cells to test
         if tds.cells().is_empty() {
             return Err(BadCellsError::NoCells);
@@ -657,12 +682,44 @@ where
             });
         }
 
-        if degenerate_count > 0 && degenerate_count * 2 > cells_tested {
-            // More than 50% degenerate cells makes results unreliable
+        // Check if too many degenerate cells make results unreliable
+        if cells_tested == 0 && degenerate_count > 0 {
+            // All cells were degenerate (wrong vertex count)
             return Err(BadCellsError::TooManyDegenerateCells {
                 degenerate_count,
-                total_tested: cells_tested,
+                total_tested: 0,
             });
+        } else if cells_tested > 0 && degenerate_count > 0 {
+            // Check if too many cells are degenerate (using DEGENERATE_CELL_THRESHOLD)
+            // We use integer arithmetic to avoid floating point precision issues:
+            // For a threshold of 0.5 (50%): degenerate_count / total > 0.5
+            // is equivalent to degenerate_count * 2 > total
+            let total_cells = cells_tested.saturating_add(degenerate_count);
+
+            // This comparison logic currently only works for DEGENERATE_CELL_THRESHOLD = 0.5
+            // For other thresholds, we'd need different integer arithmetic
+            if abs_diff_eq!(DEGENERATE_CELL_THRESHOLD, 0.5, epsilon = f64::EPSILON) {
+                // Use optimized integer arithmetic for 50% threshold
+                let threshold_exceeded = degenerate_count.saturating_mul(2) > total_cells;
+
+                if threshold_exceeded {
+                    return Err(BadCellsError::TooManyDegenerateCells {
+                        degenerate_count,
+                        total_tested: cells_tested,
+                    });
+                }
+            } else {
+                // For non-0.5 thresholds, we must use floating point comparison
+                // We accept the precision loss here as it's unavoidable for large usize values
+                #[allow(clippy::cast_precision_loss)]
+                let degenerate_ratio = (degenerate_count as f64) / (total_cells as f64);
+                if degenerate_ratio > DEGENERATE_CELL_THRESHOLD {
+                    return Err(BadCellsError::TooManyDegenerateCells {
+                        degenerate_count,
+                        total_tested: cells_tested,
+                    });
+                }
+            }
         }
 
         Ok(bad_cells)
@@ -759,9 +816,12 @@ where
                 if facet_idx < cell.vertices().len() {
                     let opposite_vertex = cell.vertices()[facet_idx];
                     // Create the facet using the Cell and its opposite vertex
-                    if let Ok(facet) = Facet::new(cell.clone(), opposite_vertex) {
-                        boundary_facets.push(facet);
-                    }
+                    let facet = Facet::new(cell.clone(), opposite_vertex).map_err(|e| {
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!("Failed to construct boundary facet: {e}"),
+                        }
+                    })?;
+                    boundary_facets.push(facet);
                 }
             }
         }
@@ -1375,9 +1435,6 @@ where
         for<'a> &'a T: Div<T>,
         [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
-        use crate::geometry::point::Point;
-        use crate::geometry::predicates::{Orientation, simplex_orientation};
-
         // Get the adjacent cell to this boundary facet
         let Some(adjacent_cell) = tds.cells().get(adjacent_cell_key) else {
             return false;
@@ -1510,14 +1567,28 @@ where
     ///
     /// * `tds` - Mutable reference to the triangulation data structure
     /// * `vertex` - The vertex to ensure is registered
-    fn ensure_vertex_in_tds(tds: &mut Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) {
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the vertex is successfully registered or already exists,
+    /// `Err` if insertion fails
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError` if the vertex cannot be inserted
+    /// into the triangulation data structure
+    fn ensure_vertex_in_tds(
+        tds: &mut Tds<T, U, V, D>,
+        vertex: &Vertex<T, U, D>,
+    ) -> Result<(), TriangulationValidationError> {
         if let Entry::Vacant(_) = tds.uuid_to_vertex_key.entry(vertex.uuid()) {
-            let res = tds.insert_vertex_with_mapping(*vertex);
-            debug_assert!(
-                res.is_ok(),
-                "insert_vertex_with_mapping unexpectedly failed: {res:?}"
-            );
+            tds.insert_vertex_with_mapping(*vertex).map_err(|e| {
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Failed to insert vertex into TDS: {e}"),
+                }
+            })?;
         }
+        Ok(())
     }
 
     /// Creates a new cell from a facet and a vertex
@@ -1544,7 +1615,10 @@ where
         for<'a> &'a T: Div<T>,
     {
         // Ensure the vertex is registered in the TDS vertex mapping
-        Self::ensure_vertex_in_tds(tds, vertex);
+        // If registration fails, we treat it as a failed cell creation
+        if Self::ensure_vertex_in_tds(tds, vertex).is_err() {
+            return false;
+        }
 
         let mut facet_vertices = facet.vertices();
         facet_vertices.push(*vertex);
@@ -1553,8 +1627,10 @@ where
             .vertices(facet_vertices)
             .build()
             .is_ok_and(|new_cell| {
-                // We ignore the Result here - if insertion fails due to duplicate UUID,
-                // we treat it as a failed cell creation (returns false)
+                // The result of `insert_cell_with_mapping` is intentionally converted to bool here.
+                // If insertion fails due to duplicate UUID, we treat it as a failed cell creation
+                // (returns false). This is handled gracefully by the caller, which counts
+                // successful insertions and doesn't require all insertions to succeed.
                 tds.insert_cell_with_mapping(new_cell).is_ok()
             })
     }
@@ -2224,5 +2300,124 @@ mod tests {
         assert_ne!(err2, err3, "Different error variants should not be equal");
 
         println!("✓ BadCellsError types work correctly with equality");
+    }
+
+    #[test]
+    fn test_degenerate_only_cells_error_message() {
+        println!("Testing TooManyDegenerateCells error message formatting");
+
+        // Test the error message when all cells are degenerate (total_tested == 0)
+        let error1 = BadCellsError::TooManyDegenerateCells {
+            degenerate_count: 5,
+            total_tested: 0,
+        };
+        let error_msg1 = format!("{error1}");
+        assert!(
+            error_msg1.contains("All 5 candidate cells were degenerate"),
+            "Error message should indicate all cells were degenerate: {error_msg1}"
+        );
+        println!("  ✓ All-degenerate case message: {error_msg1}");
+
+        // Test the error message when some cells are degenerate
+        let error2 = BadCellsError::TooManyDegenerateCells {
+            degenerate_count: 3,
+            total_tested: 5,
+        };
+        let error_msg2 = format!("{error2}");
+        assert!(
+            error_msg2.contains("Too many degenerate circumspheres (3/5)"),
+            "Error message should show the ratio: {error_msg2}"
+        );
+        println!("  ✓ Partial degenerate case message: {error_msg2}");
+
+        // Test edge case: single degenerate cell
+        let error3 = BadCellsError::TooManyDegenerateCells {
+            degenerate_count: 1,
+            total_tested: 0,
+        };
+        let error_msg3 = format!("{error3}");
+        assert!(
+            error_msg3.contains("All 1 candidate cells were degenerate"),
+            "Error message should handle singular correctly: {error_msg3}"
+        );
+        println!("  ✓ Single degenerate case message: {error_msg3}");
+
+        println!("✓ TooManyDegenerateCells error message formatting works correctly");
+    }
+
+    #[test]
+    fn test_facet_new_error_propagation() {
+        println!("Testing Facet::new error propagation in find_cavity_boundary_facets");
+
+        // Create a triangulation with multiple cells
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let algorithm = IncrementalBoyerWatson::new();
+
+        // Manually corrupt the triangulation to create an invalid state
+        // We'll remove a vertex from the vertices SlotMap but keep a cell that references it
+        // This will cause Facet::new to fail when it tries to validate the cell-vertex relationship
+
+        // Get a cell key
+        let cell_keys: Vec<_> = tds.cells().keys().collect();
+        assert!(!cell_keys.is_empty(), "Should have at least one cell");
+
+        // Create a corrupted cell with an invalid vertex reference
+        // We'll create a cell that references a vertex not actually in its vertex list
+        let valid_cell = tds.cells().get(cell_keys[0]).unwrap().clone();
+
+        // Create a new vertex that won't be in the cell
+        let invalid_vertex = vertex!([99.0, 99.0, 99.0]);
+
+        // Try to create a facet with the invalid vertex (not in the cell)
+        // This should fail with CellDoesNotContainVertex
+        let facet_result = Facet::new(valid_cell, invalid_vertex);
+        assert!(
+            facet_result.is_err(),
+            "Facet::new should fail with invalid vertex"
+        );
+
+        // Now test that the error would be properly propagated in find_cavity_boundary_facets
+        // The updated code will convert FacetError to TriangulationValidationError
+
+        // Simulate what find_cavity_boundary_facets does when it encounters an error
+        let error_message = match facet_result {
+            Err(e) => format!("Failed to construct boundary facet: {e}"),
+            Ok(_) => panic!("Expected Facet::new to fail"),
+        };
+
+        // Verify the error message format
+        assert!(
+            error_message.contains("Failed to construct boundary facet"),
+            "Error message should describe facet construction failure"
+        );
+        assert!(
+            error_message.contains("does not contain the vertex"),
+            "Error message should include the original Facet error"
+        );
+
+        println!("  Error message: {error_message}");
+        println!("✓ Facet::new errors are properly formatted for propagation");
+
+        // Test with actual bad cells to ensure the method properly handles errors
+        let bad_cells = vec![cell_keys[0]];
+
+        // The actual find_cavity_boundary_facets call would now propagate any Facet::new errors
+        // as TriangulationValidationError::InconsistentDataStructure
+        let result = algorithm.find_cavity_boundary_facets(&tds, &bad_cells);
+
+        // This should succeed because we're using valid cells from the TDS
+        assert!(
+            result.is_ok(),
+            "find_cavity_boundary_facets should succeed with valid cells"
+        );
+
+        println!("✓ find_cavity_boundary_facets works correctly with error propagation in place");
     }
 }

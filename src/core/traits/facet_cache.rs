@@ -119,6 +119,9 @@ where
         use std::sync::atomic::Ordering;
 
         // Check if cache is stale and needs to be invalidated
+        // ORDERING: Acquire loads here synchronize with Release stores to ensure
+        // we see both the cache and generation updates from writers consistently.
+        // This prevents torn reads where we might see a new cache with old generation.
         let current_generation = tds.generation.load(Ordering::Acquire);
         let cached_generation = self.cached_generation().load(Ordering::Acquire);
 
@@ -129,16 +132,18 @@ where
             self.facet_cache().load_full().map_or_else(
                 || {
                     // Build cache lazily inside RCU to minimize duplicate work under contention.
-                    // Only the first thread to acquire the RCU lock will build the cache.
+                    // We memoize the built cache outside the RCU closure to avoid recomputation
+                    // if RCU needs to retry due to concurrent updates.
+                    let mut built: Option<Arc<FacetToCellsMap>> = None;
                     let built_cache = self.facet_cache().rcu(|old| {
-                        old.as_ref().map_or_else(
-                            || {
-                                // We're the first - build the cache now
-                                let new_cache = tds.build_facet_to_cells_hashmap();
-                                Some(Arc::new(new_cache))
-                            },
-                            |existing| Some(existing.clone()),
-                        )
+                        if let Some(existing) = old {
+                            // Another thread built the cache while we were waiting
+                            return Some(existing.clone());
+                        }
+                        // Build the cache only once, even if RCU retries
+                        let arc = built
+                            .get_or_insert_with(|| Arc::new(tds.build_facet_to_cells_hashmap()));
+                        Some(arc.clone())
                     });
 
                     // Update generation if we were the ones who built it
@@ -199,9 +204,13 @@ where
         use std::sync::atomic::Ordering;
 
         // Clear the cache - next access will rebuild
+        // ORDERING: The SeqCst store from ArcSwap ensures this None is visible
+        // before the generation reset below. If future refactors relax the ordering,
+        // an explicit fence would be needed to maintain the happens-before relationship.
         self.facet_cache().store(None);
 
         // Reset generation to force rebuild
+        // ORDERING: Release ensures the None store above is visible before this update.
         self.cached_generation().store(0, Ordering::Release);
     }
 }
