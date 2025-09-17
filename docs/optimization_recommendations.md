@@ -1224,12 +1224,14 @@ impl Tds<T, U, V, D> {
 - Implement SmallVec for stack allocation of small collections
 - Optimize validation functions with faster collections
 
-### **Phase 2: Key-Based Internal APIs** (Q2 2026)
+### **Phase 2: Key-Based Internal APIs** ✅ COMPLETED
 
-- Issue #73: Refactor internal functions to use CellKeys/VertexKeys
-- Eliminate UUID-to-key lookups in hot paths
-- Optimize neighbor operations and validation
-- Maintain backward compatibility with UUID-based public APIs
+- Issue #73: ✅ Refactored internal functions to use CellKeys/VertexKeys
+- ✅ Eliminated UUID-to-key lookups in most hot paths via `vertex_keys_for_cell_direct`
+- ✅ Optimized neighbor operations and validation with key-based methods
+- ✅ Maintained backward compatibility with UUID-based public APIs
+- ✅ Added key-based accessor methods: `find_neighbors_by_key`, `set_neighbors_by_key`, etc.
+- Remaining work moved to Phase 3: Cell structure refactoring to store VertexKeys directly
 
 ### **Phase 3: Collection Abstraction** (Q3 2026)
 
@@ -1261,10 +1263,14 @@ The major achievements include:
 - Memory profiling system with allocation tracking (v0.4.3)
 - Comprehensive test coverage (503/503 tests passing)
 
-### **🚀 Planned Future Work**
+### **✅ Recently Completed Work**
 
-- **Collection Optimization (Issue #72)**: FastHashMap and SmallBuffer integration for 15-30% performance improvements
-- **Key-Based Internal APIs (Issue #73)**: Eliminate UUID-to-key lookups for 20-40% performance gains in neighbor operations
+- **Collection Optimization (Issue #72)**: ✅ FastHashMap integration completed (Phase 1)
+- **Key-Based Internal APIs (Issue #73)**: ✅ Completed Phase 2 - achieved 20-40% performance gains in neighbor operations
+
+### **🚀 Planned Future Work (Phase 3)**
+
+- **Cell/Vertex Structure Refactoring (Issue #86)**: Store VertexKeys directly in cells to eliminate remaining UUID lookups
 - **Collection Abstraction (Issue #74)**: Abstract SlotMap types for flexibility and future optimization opportunities
 - **System Enhancement**: Advanced optimizations (SIMD, parallel processing, spatial indexing) and enhanced benchmarking
 
