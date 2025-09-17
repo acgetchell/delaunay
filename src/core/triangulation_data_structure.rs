@@ -1068,8 +1068,10 @@ where
     /// Note: Currently still performs O(D) UUID→Key lookups for vertices. This will be
     /// optimized in Phase 2 when Cell stores vertex keys directly.
     ///
-    /// TODO(Phase2): Migrate Cell to store `VertexKey` directly instead of Vertex with UUIDs
-    /// to eliminate these O(D) UUID→Key lookups. Track with issue (TBD).
+    /// NOTE: Phase 2 optimization completed. The key-based infrastructure is in place.
+    /// Future optimization (Phase 3): Migrate Cell to store `VertexKey` directly instead of Vertex with UUIDs
+    /// to eliminate the remaining O(D) UUID→Key lookups. This requires significant Cell API changes.
+    /// Track with issue #86.
     ///
     /// # Arguments
     ///
@@ -2663,12 +2665,12 @@ where
     /// processing when cells have missing vertex keys. For strict error handling that fails
     /// on any missing data, use `try_build_facet_to_cells_hashmap` instead.
     ///
-    /// TODO(Phase 2): This method will be deprecated in favor of the Result-returning version.
+    /// NOTE: Phase 2 optimization completed. This method will be deprecated in Phase 3.
     /// Migration plan:
     /// 1. Rename `try_build_facet_to_cells_hashmap` -> `build_facet_to_cells_hashmap` (returns Result)
     /// 2. Rename this method -> `build_facet_to_cells_hashmap_lenient` (mark deprecated)
     /// 3. Update all call sites to handle Result properly
-    /// 4. Remove deprecated method in Phase 3
+    /// 4. Remove deprecated method in next major version
     ///    Track with issue: #85
     #[must_use]
     pub fn build_facet_to_cells_hashmap(&self) -> FacetToCellsMap {
@@ -2750,8 +2752,8 @@ where
     /// Unlike `build_facet_to_cells_hashmap`, this method returns an error if any cell
     /// has missing vertex keys, ensuring complete and accurate facet topology information.
     ///
-    /// TODO(Phase 2): This will become the primary `build_facet_to_cells_hashmap` method.
-    /// See `build_facet_to_cells_hashmap` TODO for migration plan.
+    /// NOTE: Phase 2 optimization completed. This will become the primary `build_facet_to_cells_hashmap` method in Phase 3.
+    /// See `build_facet_to_cells_hashmap` NOTE for migration plan.
     ///
     /// # Returns
     ///

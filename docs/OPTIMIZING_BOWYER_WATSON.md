@@ -1,10 +1,20 @@
 # Optimizing Bowyer-Watson Algorithms with FacetCacheProvider
 
+## Status: 📋 PHASE 2 - PENDING IMPLEMENTATION
+
 ## Overview
 
-This document analyzes opportunities to optimize the Bowyer-Watson algorithm implementations by leveraging the existing
+**Part of Phase 2: Key-Based Internal APIs Optimization**
+
+This document provides a detailed implementation plan for optimizing the Bowyer-Watson algorithm implementations by leveraging the existing
 `FacetCacheProvider` trait for facet-to-cells mapping cache management. Currently, only the `ConvexHull` struct implements
 this trait, while both Bowyer-Watson algorithms repeatedly rebuild expensive facet mappings.
+
+**Rationale for Phase 2**: This optimization eliminates redundant computation in hot paths (facet mapping rebuilds),
+which aligns with Phase 2's goal of optimizing internal operations and eliminating unnecessary lookups/computations.
+
+**NOTE**: This optimization has not been implemented yet. See TODO comments at:
+- `src/core/algorithms/robust_bowyer_watson.rs:834-835`
 
 ## Current State Analysis
 
