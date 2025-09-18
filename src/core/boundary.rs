@@ -172,18 +172,18 @@ where
     ///     if let Ok(facets) = cell.facets() {
     ///         if let Some(facet) = facets.first() {
     ///             // In a single tetrahedron, all facets are boundary facets
-    ///             assert!(tds.is_boundary_facet(facet));
+    ///             assert!(tds.is_boundary_facet(facet).unwrap());
     ///         }
     ///     }
     /// }
     /// ```
     #[inline]
-    fn is_boundary_facet(&self, facet: &Facet<T, U, V, D>) -> bool {
-        // Use try_build and return false if building fails (treat error as non-boundary)
-        let Ok(facet_to_cells) = self.build_facet_to_cells_map() else {
-            return false; // On error, treat as non-boundary
-        };
-        self.is_boundary_facet_with_map(facet, &facet_to_cells)
+    fn is_boundary_facet(
+        &self,
+        facet: &Facet<T, U, V, D>,
+    ) -> Result<bool, TriangulationValidationError> {
+        let facet_to_cells = self.build_facet_to_cells_map()?;
+        Ok(self.is_boundary_facet_with_map(facet, &facet_to_cells))
     }
 
     /// Checks if a specific facet is a boundary facet using a precomputed facet map.
@@ -420,7 +420,9 @@ mod tests {
 
         // Test that both methods give the same results
         for facet in &facets {
-            let is_boundary_regular = tds.is_boundary_facet(facet);
+            let is_boundary_regular = tds
+                .is_boundary_facet(facet)
+                .expect("Should not fail to check boundary facet");
             let is_boundary_cached = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
 
             assert_eq!(
@@ -638,7 +640,8 @@ mod tests {
         // Test that all facets from boundary_facets() are indeed boundary facets
         for boundary_facet in &boundary_facets {
             assert!(
-                tds.is_boundary_facet(boundary_facet),
+                tds.is_boundary_facet(boundary_facet)
+                    .expect("Should not fail to check boundary facet"),
                 "All facets from boundary_facets() should be boundary facets"
             );
         }
@@ -689,7 +692,10 @@ mod tests {
         let mut found_internal_facet = false;
         for cell in tds.cells().values() {
             for facet in cell.facets().expect("Should get cell facets") {
-                if !tds.is_boundary_facet(&facet) {
+                if !tds
+                    .is_boundary_facet(&facet)
+                    .expect("Should not fail to check boundary facet")
+                {
                     found_internal_facet = true;
                     break;
                 }
@@ -737,7 +743,8 @@ mod tests {
             // Test each boundary facet
             for boundary_facet in &boundary_facets {
                 assert!(
-                    tds.is_boundary_facet(boundary_facet),
+                    tds.is_boundary_facet(boundary_facet)
+                        .expect("Should not fail to check boundary facet"),
                     "Facet from boundary_facets() should be identified as boundary"
                 );
             }
@@ -746,7 +753,10 @@ mod tests {
             let mut found_internal_facet = false;
             for cell in tds.cells().values() {
                 for facet in cell.facets().expect("Should get cell facets") {
-                    if !tds.is_boundary_facet(&facet) {
+                    if !tds
+                        .is_boundary_facet(&facet)
+                        .expect("Should not fail to check boundary facet")
+                    {
                         found_internal_facet = true;
                         let facet_vertices = facet.vertices();
                         let facet_key =
@@ -825,7 +835,8 @@ mod tests {
             // Each facet from boundary_facets() should be identified as boundary by is_boundary_facet()
             for facet in &boundary_facets {
                 assert!(
-                    tds.is_boundary_facet(facet),
+                    tds.is_boundary_facet(facet)
+                        .expect("Should not fail to check boundary facet"),
                     "Facet from boundary_facets() should be confirmed as boundary by is_boundary_facet()"
                 );
             }
@@ -834,7 +845,10 @@ mod tests {
             let mut boundary_count_from_individual_checks = 0;
             for cell in tds.cells().values() {
                 for facet in cell.facets().expect("Should get cell facets") {
-                    if tds.is_boundary_facet(&facet) {
+                    if tds
+                        .is_boundary_facet(&facet)
+                        .expect("Should not fail to check boundary facet")
+                    {
                         boundary_count_from_individual_checks += 1;
                     }
                 }
@@ -896,7 +910,8 @@ mod tests {
             // Each boundary facet should be confirmed by is_boundary_facet()
             for facet in &boundary_facets {
                 assert!(
-                    tds.is_boundary_facet(facet),
+                    tds.is_boundary_facet(facet)
+                        .expect("Should not fail to check boundary facet"),
                     "Each facet from boundary_facets() should be confirmed as boundary"
                 );
             }
@@ -1039,7 +1054,10 @@ mod tests {
             let start = Instant::now();
             let mut confirmed_boundary = 0;
             for facet in &boundary_facets {
-                if tds.is_boundary_facet(facet) {
+                if tds
+                    .is_boundary_facet(facet)
+                    .expect("Should not fail to check boundary facet")
+                {
                     confirmed_boundary += 1;
                 }
             }

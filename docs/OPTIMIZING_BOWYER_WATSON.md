@@ -351,11 +351,22 @@ Validate concurrent access patterns if algorithms are used in multi-threaded con
 
 ## Compatibility
 
-### Backward Compatibility
+### Breaking API Changes
 
-- **Fully backward compatible** - No changes to public APIs
-- **Internal optimization only** - All existing code continues to work
-- **Optional usage** - Algorithms can still call TDS methods directly if needed
+⚠️ **This optimization includes breaking changes to boundary analysis APIs:**
+
+- **`BoundaryAnalysis::boundary_facets()`** - Now returns
+  `Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>`
+  instead of `Result<Vec<Facet<T, U, V, D>>, FacetError>`
+- **`BoundaryAnalysis::number_of_boundary_facets()`** - Now returns `Result<usize, TriangulationValidationError>` instead of `usize`
+- **`BoundaryAnalysis::is_boundary_facet()`** - Now returns `Result<bool, TriangulationValidationError>` instead of `bool`
+- **Facet map builder** - `build_facet_to_cells_map()` now returns `Result<FacetToCellsMap, TriangulationValidationError>` for better error handling
+
+**Migration Guide:**
+
+- Wrap existing calls with `.unwrap()` or `.expect()` for quick migration
+- Add proper error handling using `?` operator or `match` statements for robust applications
+- Error types are now consistent across boundary analysis APIs
 
 ### Dependencies
 

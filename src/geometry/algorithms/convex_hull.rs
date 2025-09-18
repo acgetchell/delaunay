@@ -303,10 +303,10 @@ where
     ///
     /// `true` if the facet is visible from the point, `false` otherwise
     ///
-    /// # Panics
+    /// # Note
     ///
-    /// Panics if the cached facet-to-cells mapping is unexpectedly `None` when it should exist.
-    /// This indicates an internal error in cache management.
+    /// This method uses cached facet-to-cells mapping for optimal performance. The cache is
+    /// automatically built if it doesn't exist or has been invalidated.
     ///
     /// # Errors
     ///
@@ -391,30 +391,34 @@ where
         }
 
         let (cell_key, _facet_index) = adjacent_cells[0];
-        let adjacent_cell = tds
-            .cells()
-            .get(cell_key)
-            .ok_or(FacetError::AdjacentCellNotFound)?;
 
         // Find the vertex in the adjacent cell that is NOT part of the facet
         // This is the "opposite" or "inside" vertex
-        let cell_vertices = adjacent_cell.vertices();
-        let mut inside_vertex = None;
+        // Optimization: Use vertex keys instead of UUID comparison for better performance
+        let cell_vertex_keys = tds
+            .get_cell_vertex_keys(cell_key)
+            .map_err(|_| FacetError::AdjacentCellNotFound)?;
 
-        // TODO(optimization): Consider using vertex keys instead of UUID comparison in this hot path.
-        // This would require storing vertex keys in Facet or passing them separately.
-        // Current UUID comparison adds overhead that could be avoided with direct key comparison.
-        for cell_vertex in cell_vertices {
-            let is_in_facet = facet_vertices
-                .iter()
-                .any(|fv| fv.uuid() == cell_vertex.uuid());
-            if !is_in_facet {
-                inside_vertex = Some(cell_vertex);
-                break;
-            }
-        }
+        // Get vertex keys for facet vertices (convert UUIDs to keys once)
+        let facet_vertex_keys: Result<Vec<_>, _> = facet_vertices
+            .iter()
+            .map(|v| {
+                tds.vertex_key_from_uuid(&v.uuid())
+                    .ok_or(FacetError::InsideVertexNotFound)
+            })
+            .collect();
+        let facet_vertex_keys = facet_vertex_keys?;
 
-        let inside_vertex = inside_vertex.ok_or(FacetError::InsideVertexNotFound)?;
+        // Find the cell vertex key that's not in the facet
+        let inside_vertex_key = cell_vertex_keys
+            .iter()
+            .find(|&&cell_key| !facet_vertex_keys.contains(&cell_key))
+            .ok_or(FacetError::InsideVertexNotFound)?;
+
+        // Get the actual vertex from the key
+        let inside_vertex = tds
+            .get_vertex_by_key(*inside_vertex_key)
+            .ok_or(FacetError::InsideVertexNotFound)?;
 
         // Create test simplices to compare orientations
         let facet_points: Vec<Point<T, D>> = facet_vertices.iter().map(|v| *v.point()).collect();

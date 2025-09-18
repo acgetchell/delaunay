@@ -184,7 +184,7 @@ use num_traits::cast::NumCast;
 use super::{
     cell::{Cell, CellBuilder, CellValidationError},
     facet::facet_key_from_vertex_keys,
-    traits::data_type::DataType,
+    traits::{data_type::DataType, insertion_algorithm::InsertionError},
     vertex::Vertex,
 };
 
@@ -1066,12 +1066,12 @@ where
     /// - Same functionality as the UUID-based version
     ///
     /// Note: Currently still performs O(D) UUID→Key lookups for vertices. This will be
-    /// optimized in Phase 2 when Cell stores vertex keys directly.
+    /// optimized in Phase 3 when Cell stores vertex keys directly.
     ///
     /// NOTE: Phase 2 optimization completed. The key-based infrastructure is in place.
     /// Future optimization (Phase 3): Migrate Cell to store `VertexKey` directly instead of Vertex with UUIDs
     /// to eliminate the remaining O(D) UUID→Key lookups. This requires significant Cell API changes.
-    /// Track with issue #86.
+    /// Track progress in future development cycles.
     ///
     /// # Arguments
     ///
@@ -1649,12 +1649,24 @@ where
         cell_key: CellKey,
         neighbor_keys: Vec<Option<CellKey>>,
     ) -> Result<(), TriangulationValidationError> {
-        // Convert keys to UUIDs for storage (maintains API compatibility)
-        // Do this before getting mutable reference to avoid borrow issues
-        let neighbor_uuids: Vec<Option<Uuid>> = neighbor_keys
-            .into_iter()
-            .map(|key_opt| key_opt.and_then(|key| self.cell_uuid_from_key(key)))
-            .collect();
+        // Convert keys to UUIDs for storage; error on unknown keys to avoid silent drops
+        let mut neighbor_uuids: Vec<Option<Uuid>> = Vec::with_capacity(D + 1);
+        for (i, key_opt) in neighbor_keys.into_iter().enumerate() {
+            match key_opt {
+                Some(k) => {
+                    if let Some(u) = self.cell_uuid_from_key(k) {
+                        neighbor_uuids.push(Some(u));
+                    } else {
+                        return Err(TriangulationValidationError::InvalidNeighbors {
+                            message: format!(
+                                "Neighbor at position {i} references unknown cell key {k:?}"
+                            ),
+                        });
+                    }
+                }
+                None => neighbor_uuids.push(None),
+            }
+        }
 
         // Enforce positional semantics: neighbors.len() must be D+1
         if neighbor_uuids.len() != D + 1 {
@@ -1682,6 +1694,8 @@ where
             cell.neighbors = Some(neighbor_uuids);
         }
 
+        // Topology changed; invalidate caches
+        self.bump_generation();
         Ok(())
     }
 
@@ -1721,9 +1735,10 @@ where
         containing_cells
     }
 
-    /// Gets vertex keys for a cell without UUID lookups.
+    /// Gets vertex keys for a cell via UUID→Key mapping.
     ///
-    /// This method is optimized for internal use and avoids UUID→Key conversions.
+    /// This method avoids per-cell UUID lookups by resolving vertex keys through
+    /// the internal UUID→Key mapping once per vertex.
     ///
     /// # Arguments
     ///
@@ -2126,9 +2141,12 @@ where
             use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
             use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
             let mut algorithm = IncrementalBoyerWatson::new();
-            algorithm
-                .insert_vertex(self, vertex)
-                .map_err(TriangulationConstructionError::ValidationError)?;
+            algorithm.insert_vertex(self, vertex).map_err(|e| match e {
+                InsertionError::TriangulationConstruction(tc_err) => tc_err,
+                other => TriangulationConstructionError::FailedToAddVertex {
+                    message: format!("Vertex insertion failed: {other}"),
+                },
+            })?;
 
             // Update neighbor relationships and incident cells
             self.assign_neighbors()
@@ -5475,6 +5493,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_set_neighbors_by_key_validation() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5542,6 +5561,31 @@ mod tests {
                 assert!(neighbors[3].is_none());
             }
         }
+
+        // Test 6: Invalid neighbor key -> error (addresses feedback to test the new error handling)
+        let bogus_key = CellKey::default(); // This key won't exist in the TDS
+        let invalid_neighbors = vec![Some(bogus_key), None, None, None];
+        let result = tds.set_neighbors_by_key(cell_key, invalid_neighbors);
+        assert!(result.is_err());
+        if let Err(TriangulationValidationError::InvalidNeighbors { message }) = result {
+            assert!(message.contains("references unknown cell key"));
+            assert!(message.contains("position 0"));
+        } else {
+            panic!("Expected InvalidNeighbors error for invalid neighbor key");
+        }
+
+        // Test 7: Generation bump check (addresses feedback to verify cache invalidation)
+        let before_generation = tds.generation();
+        let success_neighbors = vec![None, None, None, None];
+        assert!(
+            tds.set_neighbors_by_key(cell_key, success_neighbors)
+                .is_ok()
+        );
+        let after_generation = tds.generation();
+        assert!(
+            after_generation > before_generation,
+            "Generation should be bumped after successful neighbor update to invalidate caches"
+        );
 
         println!("✓ set_neighbors_by_key validation tests passed");
     }
@@ -6670,7 +6714,8 @@ mod tests {
         // Test that all facets from boundary_facets() are indeed boundary facets
         for boundary_facet in &boundary_facets {
             assert!(
-                tds.is_boundary_facet(boundary_facet),
+                tds.is_boundary_facet(boundary_facet)
+                    .expect("Should not fail to check boundary facet"),
                 "All facets from boundary_facets() should be boundary facets"
             );
         }
