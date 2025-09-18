@@ -97,8 +97,8 @@ use crate::core::{
         data_type::DataType,
         facet_cache::FacetCacheProvider,
         insertion_algorithm::{
-            InsertionAlgorithm, InsertionBuffers, InsertionInfo, InsertionStatistics,
-            InsertionStrategy,
+            InsertionAlgorithm, InsertionBuffers, InsertionError, InsertionInfo,
+            InsertionStatistics, InsertionStrategy,
         },
     },
     triangulation_data_structure::{Tds, TriangulationValidationError},
@@ -254,7 +254,7 @@ where
         &mut self,
         tds: &mut Tds<T, U, V, D>,
         vertex: Vertex<T, U, D>,
-    ) -> Result<InsertionInfo, TriangulationValidationError> {
+    ) -> Result<InsertionInfo, InsertionError> {
         // Determine insertion strategy
         let strategy = self.determine_insertion_strategy(tds, &vertex);
 

@@ -101,7 +101,14 @@ where
     ///
     /// # Returns
     ///
-    /// `true` if the facet is on the boundary (belongs to only one cell), `false` otherwise.
+    /// `Ok(true)` if the facet is on the boundary (belongs to only one cell),
+    /// `Ok(false)` if it's an interior facet (belongs to two cells).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TriangulationValidationError)` if:
+    /// - Building the facet-to-cells mapping fails due to data structure inconsistencies
+    /// - The triangulation contains invalid cells or corrupted vertex mappings
     ///
     /// # Examples
     ///
@@ -123,11 +130,14 @@ where
     ///     let facets = cell.facets().expect("Failed to get facets from cell");
     ///     if let Some(facet) = facets.first() {
     ///         // In a single tetrahedron, all facets are boundary facets
-    ///         assert!(tds.is_boundary_facet(facet));
+    ///         assert!(tds.is_boundary_facet(facet).unwrap());
     ///     }
     /// }
     /// ```
-    fn is_boundary_facet(&self, facet: &Facet<T, U, V, D>) -> bool;
+    fn is_boundary_facet(
+        &self,
+        facet: &Facet<T, U, V, D>,
+    ) -> Result<bool, TriangulationValidationError>;
 
     /// Checks if a specific facet is a boundary facet using a precomputed facet map.
     ///
@@ -160,8 +170,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Build the facet map once for multiple queries (efficient for batch operations)
-    /// #[allow(deprecated)]
-    /// let facet_to_cells = tds.build_facet_to_cells_map_lenient();
+    /// let facet_to_cells = tds.build_facet_to_cells_map().expect("facet map should build");
     ///
     /// // Check multiple facets efficiently using the cached map
     /// if let Some(cell) = tds.cells().values().next() {
