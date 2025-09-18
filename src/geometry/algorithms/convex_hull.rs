@@ -374,6 +374,7 @@ where
         }
 
         // Get or build the cached facet-to-cells mapping
+        #[allow(deprecated)] // TODO: Migrate to try_get_or_build_facet_cache in Phase 2
         let facet_to_cells_arc = self.get_or_build_facet_cache(tds);
         let facet_to_cells = facet_to_cells_arc.as_ref();
 
@@ -3532,6 +3533,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // Test uses deprecated method intentionally for backward compatibility
     fn test_get_or_build_facet_cache() {
         println!("Testing get_or_build_facet_cache method");
 
@@ -3618,6 +3620,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // Test uses deprecated method intentionally for integration testing
     fn test_helper_methods_integration() {
         println!("Testing integration between helper methods");
 

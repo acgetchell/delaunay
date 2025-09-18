@@ -717,10 +717,8 @@ where
             .into_iter()
             .map(|(facet_key, cell_facet_pairs)| {
                 // Extract just the CellKeys, discarding facet indices
-                let mut cell_keys: Vec<CellKey> = cell_facet_pairs
-                    .iter()
-                    .map(|(cell_key, _)| *cell_key)
-                    .collect();
+                let mut cell_keys = Vec::with_capacity(cell_facet_pairs.len());
+                cell_keys.extend(cell_facet_pairs.iter().map(|(cell_key, _)| *cell_key));
 
                 // Defensively deduplicate cell keys in case build_facet_to_cells_hashmap()
                 // ever yields duplicate (cell_key, idx) pairs per facet
@@ -828,6 +826,8 @@ where
         ordered_float::OrderedFloat<f64>: From<T>,
         [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     {
+        use crate::core::collections::{KeyBasedCellMap, fast_hash_map_with_capacity};
+
         let mut visible_facets = Vec::new();
 
         // Get all boundary facets (facets shared by exactly one cell)
@@ -835,34 +835,44 @@ where
         // let facet_to_cells = self.get_or_build_facet_cache(&tds);
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
 
+        let mut cell_facets_cache: KeyBasedCellMap<Vec<Facet<T, U, V, D>>> =
+            fast_hash_map_with_capacity(tds.number_of_cells());
+
         // Directly iterate over filtered boundary facets without collecting into a temporary Vec
         for (_facet_key, cells) in facet_to_cells.iter().filter(|(_, cells)| cells.len() == 1) {
             let (cell_key, facet_index) = cells[0];
             if let Some(cell) = tds.cells().get(cell_key) {
-                if let Ok(facets) = cell.facets() {
-                    let idx = usize::from(facet_index);
-                    if idx < facets.len() {
-                        let facet = &facets[idx];
+                let facets = match cell_facets_cache.entry(cell_key) {
+                    std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                        let computed = cell.facets().map_err(|_| {
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message:
+                                    "Failed to get facets from cell during visibility computation"
+                                        .to_string(),
+                            }
+                        })?;
+                        v.insert(computed)
+                    }
+                };
 
-                        // Test visibility using robust orientation predicates with fallback
-                        if self.is_facet_visible_from_vertex_robust(tds, facet, vertex, cell_key) {
-                            visible_facets.push(facet.clone());
-                        }
-                    } else {
-                        // Fail fast on invalid facet index - indicates TDS corruption
-                        return Err(TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Facet index {} out of bounds (cell has {} facets) during visibility computation. \
-                                 This indicates triangulation data structure corruption.",
-                                idx,
-                                facets.len()
-                            ),
-                        });
+                let idx = usize::from(facet_index);
+                if idx < facets.len() {
+                    let facet = &facets[idx];
+
+                    // Test visibility using robust orientation predicates with fallback
+                    if self.is_facet_visible_from_vertex_robust(tds, facet, vertex, cell_key) {
+                        visible_facets.push(facet.clone());
                     }
                 } else {
+                    // Fail fast on invalid facet index - indicates TDS corruption
                     return Err(TriangulationValidationError::InconsistentDataStructure {
-                        message: "Failed to get facets from cell during visibility computation"
-                            .to_string(),
+                        message: format!(
+                            "Facet index {} out of bounds (cell has {} facets) during visibility computation. \
+                             This indicates triangulation data structure corruption.",
+                            idx,
+                            facets.len()
+                        ),
                     });
                 }
             } else {
@@ -1286,7 +1296,12 @@ mod tests {
         let problematic_vertex = vertex!([0.5, 0.5, 1e-15]);
 
         let result = algorithm.insert_vertex(&mut tds, problematic_vertex);
-        assert!(result.is_ok() || result.is_err()); // Should handle gracefully
+        // Should handle gracefully: either succeed or leave TDS valid on failure
+        assert!(
+            tds.is_valid().is_ok(),
+            "TDS must remain valid after attempt: {:?}",
+            result.err()
+        );
     }
 
     #[test]

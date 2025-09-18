@@ -99,9 +99,7 @@ use crate::core::{
             InsertionStrategy,
         },
     },
-    triangulation_data_structure::{
-        Tds, TriangulationConstructionError, TriangulationValidationError,
-    },
+    triangulation_data_structure::{Tds, TriangulationValidationError},
     vertex::Vertex,
 };
 use crate::geometry::{algorithms::convex_hull::ConvexHull, traits::coordinate::CoordinateScalar};
@@ -111,9 +109,6 @@ use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
 };
-
-/// Result type for Bowyer-Watson operations
-pub type BoyerWatsonResult<T> = Result<T, TriangulationConstructionError>;
 
 // InsertionStrategy and InsertionInfo are now imported from traits::insertion_algorithm
 
@@ -368,6 +363,9 @@ mod tests {
     }
 
     /// Count boundary facets (shared by 1 cell)
+    ///
+    /// TODO: Migrate to cache-backed path once Phase 3 lands.
+    /// Should use `self.try_get_or_build_facet_cache(&tds)?` instead of direct TDS call.
     fn count_boundary_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
         tds.build_facet_to_cells_hashmap()
             .values()
@@ -376,6 +374,9 @@ mod tests {
     }
 
     /// Count internal facets (shared by 2 cells)
+    ///
+    /// TODO: Migrate to cache-backed path once Phase 3 lands.
+    /// Should use `self.try_get_or_build_facet_cache(&tds)?` instead of direct TDS call.
     fn count_internal_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
         tds.build_facet_to_cells_hashmap()
             .values()
@@ -384,6 +385,9 @@ mod tests {
     }
 
     /// Count invalid facets (shared by 3+ cells)
+    ///
+    /// TODO: Migrate to cache-backed path once Phase 3 lands.
+    /// Should use `self.try_get_or_build_facet_cache(&tds)?` instead of direct TDS call.
     fn count_invalid_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
         tds.build_facet_to_cells_hashmap()
             .values()
@@ -415,6 +419,7 @@ mod tests {
         }
 
         let vertices = Vertex::from_points(points);
+        // TODO: Migrate to cache-backed path once Phase 3 lands.
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
         #[cfg(debug_assertions)]
@@ -449,6 +454,7 @@ mod tests {
             }
 
             // Detailed facet sharing analysis
+            // TODO: Migrate to cache-backed path once Phase 3 lands.
             eprintln!("\n=== FACET SHARING ANALYSIS ===");
             let facet_to_cells = tds.build_facet_to_cells_hashmap();
 
@@ -522,6 +528,7 @@ mod tests {
         }
 
         // Critical issue detection
+        // TODO: Migrate to cache-backed path once Phase 3 lands.
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
         let mut invalid_sharing = 0;
         let mut boundary_facets = 0;
@@ -551,6 +558,7 @@ mod tests {
 
         #[cfg(debug_assertions)]
         {
+            // TODO: Migrate to cache-backed path once Phase 3 lands.
             if issues.is_empty() {
                 eprintln!("\n✅ All triangulation invariants appear to be satisfied");
             } else {
@@ -589,6 +597,7 @@ mod tests {
         println!("  Cells: {}", tds.number_of_cells());
 
         // Check facet sharing
+        // TODO: Migrate to cache-backed path once Phase 3 lands.
         let facet_to_cells = tds.build_facet_to_cells_hashmap();
         let boundary_count = facet_to_cells
             .values()

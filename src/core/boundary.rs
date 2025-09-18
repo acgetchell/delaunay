@@ -55,7 +55,7 @@ where
     ///
     /// # Returns
     ///
-    /// A `Result<Vec<Facet<T, U, V, D>>, FacetError>` containing all boundary facets in the triangulation.
+    /// A `Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>` containing all boundary facets in the triangulation.
     /// The facets are returned in no particular order.
     ///
     /// # Errors
@@ -88,8 +88,9 @@ where
     fn boundary_facets(&self) -> Result<Vec<Facet<T, U, V, D>>, FacetError> {
         // Build a map from facet keys to the cells that contain them
         let facet_to_cells = self.build_facet_to_cells_hashmap();
-        // Upper bound on the number of boundary facets is the map size
-        let mut boundary_facets = Vec::with_capacity(facet_to_cells.len());
+        // Right-size the vector by counting boundary facets first
+        let boundary_estimate = facet_to_cells.values().filter(|v| v.len() == 1).count();
+        let mut boundary_facets = Vec::with_capacity(boundary_estimate);
 
         // Per-call cache to avoid repeated cell.facets() allocations
         // when multiple boundary facets reference the same cell
@@ -244,6 +245,7 @@ where
                 .is_some_and(|cells| cells.len() == 1),
             Err(e) => {
                 debug_assert!(false, "derive_facet_key_from_vertices failed: {e:?}");
+                // Option: flip to logging + false, or plumb a Result in the non-cached path.
                 false
             }
         }

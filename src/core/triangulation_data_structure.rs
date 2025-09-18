@@ -1077,13 +1077,13 @@ where
     ///
     /// # Returns
     ///
-    /// A `Result` containing a `Vec<VertexKey>` if the cell exists and all vertices are valid,
+    /// A `Result` containing a `VertexKeyBuffer` if the cell exists and all vertices are valid,
     /// or a `TriangulationValidationError` if the cell doesn't exist or vertices are missing.
     ///
     /// # Performance
     ///
     /// This uses direct `SlotMap` access with O(1) key lookup for the cell, though vertex
-    /// lookups still require O(D) UUID→Key mappings until Phase 2.
+    /// lookups still require O(D) UUID→Key mappings until Phase 3.
     /// Uses stack-allocated buffer for D ≤ 7 to avoid heap allocation in the hot path.
     #[inline]
     fn vertex_keys_for_cell_direct(
@@ -1855,6 +1855,10 @@ where
     /// function to compute unique keys for facets. Two cells are considered neighbors if they share
     /// exactly one facet (which contains D vertices for a D-dimensional triangulation).
     ///
+    /// **Note**: For safer topology manipulation, consider using a wrapper function like
+    /// `remove_cell_and_rebuild_topology()` that automatically calls `assign_neighbors()` and
+    /// `assign_incident_cells()` to maintain triangulation invariants when removing cells.
+    ///
     /// # Semantic Constraint
     ///
     /// **Critical**: This method enforces the geometric constraint that `cell.neighbors[i]` is the
@@ -2520,6 +2524,7 @@ where
         let mut cells_to_remove: CellKeySet = CellKeySet::default();
 
         // Find facets that are shared by more than 2 cells and validate which ones are correct
+        #[allow(unused_variables)] // facet_key used in debug_assertions
         for (facet_key, cell_facet_pairs) in facet_to_cells {
             if cell_facet_pairs.len() > 2 {
                 let (first_cell_key, first_facet_index) = cell_facet_pairs[0];
@@ -2577,6 +2582,7 @@ where
                         let total_cells = cell_facet_pairs.len();
                         let removed_count = total_cells - valid_cells.len().min(2);
                         if removed_count > 0 {
+                            #[cfg(debug_assertions)]
                             eprintln!(
                                 "Warning: Facet {} was shared by {} cells, removing {} invalid cells (keeping {} valid)",
                                 facet_key,

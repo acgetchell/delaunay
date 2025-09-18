@@ -338,11 +338,12 @@ Validate concurrent access patterns if algorithms are used in multi-threaded con
 
 ## Compatibility
 
-### Backward Compatibility
+### API Compatibility
 
-- **Fully backward compatible** - No changes to public APIs
-- **Internal optimization only** - All existing code continues to work
-- **Optional usage** - Algorithms can still call TDS methods directly if needed
+- **Core algorithms unchanged** - Main insertion and triangulation APIs remain the same
+- **Internal optimization focus** - Most changes are to internal caching mechanisms
+- **Specialized APIs affected** - Some boundary analysis methods may have updated signatures
+- **Migration support** - Clear upgrade path for affected boundary analysis code
 
 ### Dependencies
 
@@ -357,10 +358,10 @@ bottleneck in the current algorithm implementations.
 
 The changes are:
 
-- **Backward compatible** - No API changes required
 - **Low complexity** - Mostly adding fields and implementing a simple trait
 - **High impact** - Significant performance improvements for common use cases
 - **Well-tested pattern** - Already validated in the ConvexHull implementation
+- **Minimal API impact** - Core algorithm APIs unchanged, only affects specialized boundary analysis methods
 
 This optimization should be prioritized as it will immediately benefit all users of the Bowyer-Watson algorithms,
 particularly those working with large triangulations or performing extensive boundary analysis operations.

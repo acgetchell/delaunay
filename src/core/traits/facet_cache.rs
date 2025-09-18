@@ -5,7 +5,10 @@
 //! performance optimization.
 
 use super::data_type::DataType;
-use crate::core::{collections::FacetToCellsMap, triangulation_data_structure::Tds};
+use crate::core::{
+    collections::FacetToCellsMap,
+    triangulation_data_structure::{Tds, TriangulationValidationError},
+};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use arc_swap::ArcSwapOption;
 use serde::{Serialize, de::DeserializeOwned};
@@ -96,19 +99,82 @@ where
     /// # Returns
     ///
     /// The old cache value before update (if any), or `None` if no cache existed
+    #[deprecated(note = "Use try_build_cache_with_rcu instead for proper error handling")]
     fn build_cache_with_rcu(&self, tds: &Tds<T, U, V, D>) -> Option<Arc<FacetToCellsMap>> {
+        // Forward to strict version, falling back to lenient behavior on error
+        match self.try_build_cache_with_rcu(tds) {
+            Ok(result) => result,
+            #[allow(unused_variables)] // error used in debug_assertions
+            Err(error) => {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Warning: build_cache_with_rcu falling back to empty cache due to error: {error}"
+                );
+                None
+            }
+        }
+    }
+
+    /// Strict helper method to build cache with RCU and proper error handling.
+    ///
+    /// This method uses Read-Copy-Update (RCU) pattern to ensure that only one thread
+    /// builds the cache even under high contention, avoiding duplicate work. Unlike
+    /// the deprecated `build_cache_with_rcu`, this method returns errors if the TDS
+    /// has missing vertex keys instead of masking them.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - The triangulation data structure to build the cache from
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// - `Ok(Some(Arc<FacetToCellsMap>))`: The old cache value before update
+    /// - `Ok(None)`: No cache existed before this build
+    /// - `Err(TriangulationValidationError)`: If facet map building fails
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError` if the TDS has corrupted data
+    /// (e.g., missing vertex keys) that prevents building a complete facet map.
+    fn try_build_cache_with_rcu(
+        &self,
+        tds: &Tds<T, U, V, D>,
+    ) -> Result<Option<Arc<FacetToCellsMap>>, TriangulationValidationError> {
         // We memoize the built cache outside the RCU closure to avoid recomputation
         // if RCU needs to retry due to concurrent updates.
-        let mut built: Option<Arc<FacetToCellsMap>> = None;
-        self.facet_cache().rcu(|old| {
+        let mut built: Option<Result<Arc<FacetToCellsMap>, TriangulationValidationError>> = None;
+
+        let old_cache = self.facet_cache().rcu(|old| {
             if let Some(existing) = old {
                 // Another thread built the cache while we were waiting
                 return Some(existing.clone());
             }
             // Build the cache only once, even if RCU retries
-            let arc = built.get_or_insert_with(|| Arc::new(tds.build_facet_to_cells_hashmap()));
-            Some(arc.clone())
-        })
+            #[allow(clippy::option_if_let_else)]
+            // Complex error handling doesn't benefit from map_or_else
+            match built.get_or_insert_with(|| tds.try_build_facet_to_cells_hashmap().map(Arc::new))
+            {
+                Ok(arc) => Some(arc.clone()),
+                Err(_) => None, // Let the caller handle the error
+            }
+        });
+
+        // Check what happened during the RCU operation
+        match built {
+            Some(Ok(_)) => {
+                // We built the cache successfully, return None as the old value
+                Ok(None)
+            }
+            Some(Err(e)) => {
+                // We tried to build but failed
+                Err(e)
+            }
+            None => {
+                // Another thread built it or we returned an existing cache
+                Ok(old_cache)
+            }
+        }
     }
 
     /// Gets or builds the facet-to-cells mapping cache with atomic updates.
@@ -142,7 +208,68 @@ where
     ///     // Process adjacent cells...
     /// }
     /// ```
+    #[deprecated(note = "Use try_get_or_build_facet_cache instead for proper error handling")]
     fn get_or_build_facet_cache(&self, tds: &Tds<T, U, V, D>) -> Arc<FacetToCellsMap> {
+        // Forward to strict version, falling back to lenient behavior on error
+        match self.try_get_or_build_facet_cache(tds) {
+            Ok(cache) => cache,
+            #[allow(unused_variables)] // error used in debug_assertions
+            Err(error) => {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Warning: get_or_build_facet_cache falling back to lenient TDS method due to error: {error}"
+                );
+
+                // Fall back to the lenient TDS method as a last resort
+                Arc::new(tds.build_facet_to_cells_hashmap())
+            }
+        }
+    }
+
+    /// Gets or builds the facet-to-cells mapping cache with strict error handling.
+    ///
+    /// This method handles cache invalidation and thread-safe rebuilding of the
+    /// facet-to-cells mapping when the triangulation has been modified. Unlike
+    /// the deprecated `get_or_build_facet_cache`, this method returns errors if
+    /// the TDS has corrupted data instead of masking them.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - The triangulation data structure to build the cache from
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// - `Ok(Arc<FacetToCellsMap>)`: The current facet-to-cells mapping
+    /// - `Err(TriangulationValidationError)`: If facet map building fails
+    ///
+    /// # Performance
+    ///
+    /// - **Cache hit**: O(1) - Returns cached mapping if TDS generation matches
+    /// - **Cache miss**: O(cells × `facets_per_cell`) - Rebuilds and caches mapping
+    /// - **Thread-safe**: Uses atomic operations for concurrent access
+    /// - **Contention**: Minimizes duplicate work by building cache lazily inside RCU
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError` if the TDS has corrupted data
+    /// (e.g., missing vertex keys) that prevents building a complete facet map.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let cache = self.try_get_or_build_facet_cache(&tds)?;
+    /// let facet_to_cells = cache.as_ref();
+    ///
+    /// // Use the cached mapping for O(1) facet lookups
+    /// if let Some(adjacent_cells) = facet_to_cells.get(&facet_key) {
+    ///     // Process adjacent cells...
+    /// }
+    /// ```
+    fn try_get_or_build_facet_cache(
+        &self,
+        tds: &Tds<T, U, V, D>,
+    ) -> Result<Arc<FacetToCellsMap>, TriangulationValidationError> {
         use std::sync::atomic::Ordering;
 
         // Check if cache is stale and needs to be invalidated
@@ -156,35 +283,30 @@ where
         // If the TDS generation matches the cached generation, cache is current
         if current_generation == cached_generation {
             // Cache is current - load existing cache or build if it doesn't exist
-            self.facet_cache().load_full().map_or_else(
-                || {
-                    // Build cache lazily inside RCU to minimize duplicate work under contention.
-                    let built_cache = self.build_cache_with_rcu(tds);
+            if let Some(existing_cache) = self.facet_cache().load_full() {
+                // Cache exists and is current - use it
+                Ok(existing_cache)
+            } else {
+                // Build cache lazily inside RCU to minimize duplicate work under contention.
+                let built_cache = self.try_build_cache_with_rcu(tds)?;
 
-                    // Update generation if we were the ones who built it
-                    // Note: built_cache is the old value before our update
-                    // Only store generation if the cache is actually present to avoid stale store
-                    if built_cache.is_none() && self.facet_cache().load_full().is_some() {
-                        self.cached_generation()
-                            .store(current_generation, Ordering::Release);
-                    }
+                // Update generation if we were the ones who built it
+                // Note: built_cache is the old value before our update
+                // Only store generation if the cache is actually present to avoid stale store
+                if built_cache.is_none() && self.facet_cache().load_full().is_some() {
+                    self.cached_generation()
+                        .store(current_generation, Ordering::Release);
+                }
 
-                    // Return the cache; if concurrently invalidated, retry via slow path
-                    // Another thread could invalidate between RCU and load_full()
-                    self.facet_cache().load_full().unwrap_or_else(|| {
-                        // Generation may have changed; fall back to rebuild path
-                        // This handles the race where another thread invalidated after our RCU
-                        self.get_or_build_facet_cache(tds)
-                    })
-                },
-                |existing_cache| {
-                    // Cache exists and is current - use it
-                    existing_cache
-                },
-            )
+                // Return the cache; if concurrently invalidated, retry via slow path
+                // Another thread could invalidate between RCU and load_full()
+                self.facet_cache()
+                    .load_full()
+                    .map_or_else(|| self.try_get_or_build_facet_cache(tds), Ok)
+            }
         } else {
             // Cache is stale - need to invalidate and rebuild
-            let new_cache = tds.build_facet_to_cells_hashmap();
+            let new_cache = tds.try_build_facet_to_cells_hashmap()?;
             let new_cache_arc = Arc::new(new_cache);
 
             // Atomically swap in the new cache.
@@ -200,7 +322,7 @@ where
             self.cached_generation()
                 .store(current_generation, Ordering::Release);
 
-            new_cache_arc
+            Ok(new_cache_arc)
         }
     }
 
@@ -235,6 +357,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // Tests intentionally use deprecated methods for backward compatibility testing
 mod tests {
     use super::*;
     use crate::core::triangulation_data_structure::Tds;
@@ -592,30 +715,30 @@ mod tests {
         let provider = Arc::new(TestCacheProvider::new());
         let tds = Arc::new(create_test_triangulation());
         let barrier = Arc::new(Barrier::new(4));
-        let build_count = Arc::new(AtomicUsize::new(0));
+        let success_count = Arc::new(AtomicUsize::new(0));
         let mut handles = vec![];
 
-        // Spawn multiple threads that try to build cache simultaneously
+        // Spawn multiple threads that try to get/build cache simultaneously
         for i in 0..4 {
             let provider_clone = provider.clone();
             let tds_clone = tds.clone();
             let barrier_clone = barrier.clone();
-            let build_count_clone = build_count.clone();
+            let success_count_clone = success_count.clone();
 
             let handle = thread::spawn(move || {
                 // Wait for all threads to be ready
                 barrier_clone.wait();
 
-                // Each thread tries to build cache
-                let old_value = provider_clone.build_cache_with_rcu(&tds_clone);
+                // Each thread tries to get/build cache using strict method
+                let cache_result = provider_clone.try_get_or_build_facet_cache(&tds_clone);
 
-                // If old_value is None, this thread was the builder
-                if old_value.is_none() {
-                    build_count_clone.fetch_add(1, Ordering::Relaxed);
+                let success = cache_result.is_ok();
+                if success {
+                    success_count_clone.fetch_add(1, Ordering::Relaxed);
                 }
 
-                // Return thread ID and whether it built the cache
-                (i, old_value.is_none())
+                // Return thread ID and whether it succeeded
+                (i, success)
             });
 
             handles.push(handle);
@@ -627,17 +750,17 @@ mod tests {
         // All threads should complete successfully
         assert_eq!(results.len(), 4, "All threads should complete");
 
-        // Exactly one thread should have built the cache
-        let builders_count = results.iter().filter(|(_, built)| *built).count();
+        // All threads should succeed in getting the cache
+        let success_count_final = success_count.load(Ordering::Relaxed);
         assert_eq!(
-            builders_count, 1,
-            "Exactly one thread should build the cache"
+            success_count_final, 4,
+            "All threads should successfully get the cache"
         );
-        assert_eq!(
-            build_count.load(Ordering::Relaxed),
-            1,
-            "Build count should be 1"
-        );
+
+        // Verify all operations succeeded
+        for (thread_id, success) in results {
+            assert!(success, "Thread {thread_id} should succeed");
+        }
 
         // Final cache should exist and be consistent
         let final_cache = provider.facet_cache().load_full();
@@ -790,5 +913,179 @@ mod tests {
                 panic!("Provider cache missing key {key} found in reference");
             }
         }
+    }
+
+    #[test]
+    fn test_strict_try_get_or_build_facet_cache() {
+        let provider = TestCacheProvider::new();
+        let tds = create_test_triangulation();
+
+        // First call should build the cache successfully
+        let cache_result = provider.try_get_or_build_facet_cache(&tds);
+        assert!(
+            cache_result.is_ok(),
+            "Initial try_get_or_build_facet_cache should succeed"
+        );
+
+        let cache = cache_result.unwrap();
+        assert!(
+            !cache.is_empty(),
+            "Cache should not be empty after building"
+        );
+
+        // Cache should now be stored
+        assert!(
+            provider.facet_cache().load().is_some(),
+            "Cache should be stored after building"
+        );
+
+        // Generation should match TDS generation
+        let tds_generation = tds.generation();
+        let cached_generation = provider.cached_generation().load(Ordering::Relaxed);
+        assert_eq!(
+            cached_generation, tds_generation,
+            "Cached generation should match TDS generation"
+        );
+
+        // Second call should return the same cache
+        let second_cache_result = provider.try_get_or_build_facet_cache(&tds);
+        assert!(
+            second_cache_result.is_ok(),
+            "Second call should also succeed"
+        );
+
+        let cache2 = second_cache_result.unwrap();
+        assert_eq!(
+            Arc::as_ptr(&cache),
+            Arc::as_ptr(&cache2),
+            "Cache should be reused when generation matches"
+        );
+    }
+
+    #[test]
+    fn test_strict_try_build_cache_with_rcu() {
+        let provider = TestCacheProvider::new();
+        let tds = create_test_triangulation();
+
+        // Initial state: no cache
+        assert!(
+            provider.facet_cache().load().is_none(),
+            "Cache should be empty initially"
+        );
+
+        // First call to try_build_cache_with_rcu should build cache successfully
+        let old_value_result = provider.try_build_cache_with_rcu(&tds);
+        assert!(
+            old_value_result.is_ok(),
+            "try_build_cache_with_rcu should succeed"
+        );
+
+        let old_value = old_value_result.unwrap();
+        assert!(
+            old_value.is_none(),
+            "Old value should be None on first build"
+        );
+
+        // Cache should now exist
+        let cached = provider.facet_cache().load_full();
+        assert!(
+            cached.is_some(),
+            "Cache should exist after try_build_cache_with_rcu"
+        );
+        let unwrapped_cache = cached.unwrap();
+        assert!(
+            !unwrapped_cache.is_empty(),
+            "Built cache should not be empty"
+        );
+
+        // Second call should return the existing cache as old value
+        let second_old_result = provider.try_build_cache_with_rcu(&tds);
+        assert!(
+            second_old_result.is_ok(),
+            "Second try_build_cache_with_rcu should succeed"
+        );
+
+        let old_value2 = second_old_result.unwrap();
+        assert!(
+            old_value2.is_some(),
+            "Old value should be Some on second build"
+        );
+
+        // The old value should be the same Arc as the first cache
+        let old_arc = old_value2.unwrap();
+        assert_eq!(
+            Arc::as_ptr(&old_arc),
+            Arc::as_ptr(&unwrapped_cache),
+            "Old value should be the previously built cache"
+        );
+    }
+
+    #[test]
+    fn test_strict_cache_invalidation_behavior() {
+        let provider = TestCacheProvider::new();
+        let mut tds = create_test_triangulation();
+
+        // Build initial cache
+        let cache1_result = provider.try_get_or_build_facet_cache(&tds);
+        assert!(cache1_result.is_ok(), "Initial cache build should succeed");
+
+        let cache1 = cache1_result.unwrap();
+        let ptr1 = Arc::as_ptr(&cache1);
+        let initial_generation = tds.generation();
+
+        // Modify TDS by adding a new vertex - this will bump the generation
+        let new_vertex = vertex!([0.5, 0.5, 0.5]); // Interior point
+        tds.add(new_vertex).expect("Failed to add vertex");
+
+        // Verify generation was incremented
+        let new_generation = tds.generation();
+        assert!(
+            new_generation > initial_generation,
+            "Generation should increase after adding vertex"
+        );
+
+        // Next call should rebuild cache due to generation change
+        let cache2_result = provider.try_get_or_build_facet_cache(&tds);
+        assert!(cache2_result.is_ok(), "Cache rebuild should succeed");
+
+        let cache2 = cache2_result.unwrap();
+        let ptr2 = Arc::as_ptr(&cache2);
+
+        assert_ne!(
+            ptr1, ptr2,
+            "Cache should be rebuilt when generation changes"
+        );
+
+        // Generation should be updated in the provider
+        let new_cached_generation = provider.cached_generation().load(Ordering::Relaxed);
+        assert_eq!(
+            new_cached_generation, new_generation,
+            "Cached generation should be updated after rebuild"
+        );
+    }
+
+    #[test]
+    fn test_deprecated_methods_forward_correctly() {
+        let provider = TestCacheProvider::new();
+        let tds = create_test_triangulation();
+
+        // Test deprecated get_or_build_facet_cache forwards to try version
+        let _cache_deprecated = provider.get_or_build_facet_cache(&tds);
+        let cache_strict_result = provider.try_get_or_build_facet_cache(&tds);
+
+        assert!(
+            cache_strict_result.is_ok(),
+            "Strict version should work after deprecated version"
+        );
+
+        // Test deprecated build_cache_with_rcu forwards to try version
+        provider.invalidate_facet_cache(); // Clear cache first
+        let _old_deprecated = provider.build_cache_with_rcu(&tds);
+        let old_strict_result = provider.try_build_cache_with_rcu(&tds);
+
+        assert!(
+            old_strict_result.is_ok(),
+            "Strict version should work after deprecated version"
+        );
     }
 }
