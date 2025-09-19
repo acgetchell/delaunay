@@ -735,9 +735,10 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
     ) -> Result<FastHashMap<u64, Vec<CellKey>>, InsertionError> {
-        // Use cached facet mapping to avoid recomputation
-        #[allow(deprecated)] // Will be migrated to proper error handling in Phase 3
-        let tds_map = self.get_or_build_facet_cache(tds);
+        // Use cached facet mapping to avoid recomputation with proper error handling
+        let tds_map = self
+            .try_get_or_build_facet_cache(tds)
+            .map_err(InsertionError::TriangulationState)?;
 
         // Transform the TDS map into the required format with validation
         let facet_to_cells: FastHashMap<u64, Vec<CellKey>> = tds_map
@@ -860,9 +861,10 @@ where
 
         let mut visible_facets = Vec::new();
 
-        // Get all boundary facets (facets shared by exactly one cell) using cache
-        #[allow(deprecated)] // Will be migrated to proper error handling in Phase 3
-        let facet_to_cells = self.get_or_build_facet_cache(tds);
+        // Get all boundary facets (facets shared by exactly one cell) using cache with proper error handling
+        let facet_to_cells = self
+            .try_get_or_build_facet_cache(tds)
+            .map_err(InsertionError::TriangulationState)?;
 
         let mut cell_facets_cache: KeyBasedCellMap<Vec<Facet<T, U, V, D>>> =
             fast_hash_map_with_capacity(tds.number_of_cells());
@@ -2137,6 +2139,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // Test explicitly verifies deprecated method compatibility
     fn test_facet_cache_provider_implementation() {
         use std::sync::atomic::Ordering;
 
@@ -2359,6 +2362,7 @@ mod tests {
     // =============================================================================
 
     #[test]
+    #[allow(deprecated)] // Test verifies deprecated method compatibility
     fn test_fallback_recovery_mechanisms() {
         println!("Testing fallback and recovery mechanisms...");
 
@@ -2521,6 +2525,7 @@ mod tests {
     // =============================================================================
 
     #[test]
+    #[allow(deprecated)] // Test verifies deprecated method compatibility
     fn test_comprehensive_algorithm_paths() {
         println!("Testing comprehensive algorithm paths...");
 
@@ -2607,6 +2612,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // Test verifies deprecated method compatibility
     fn test_boundary_condition_validation() {
         println!("Testing boundary condition validation...");
 
@@ -2867,6 +2873,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // Test verifies deprecated method compatibility
     fn test_cache_invalidation_and_recovery() {
         let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
         let vertices = vec![
