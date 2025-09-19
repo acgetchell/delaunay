@@ -88,7 +88,7 @@ where
     fn boundary_facets(&self) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError> {
         // Build a map from facet keys to the cells that contain them
         // Use try_build for strict error handling, proper error propagation
-        let facet_to_cells = self.try_build_facet_to_cells_hashmap()?;
+        let facet_to_cells = self.build_facet_to_cells_map()?;
         // Right-size the vector by counting boundary facets first
         let boundary_estimate = facet_to_cells.values().filter(|v| v.len() == 1).count();
         let mut boundary_facets = Vec::with_capacity(boundary_estimate);

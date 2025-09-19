@@ -885,7 +885,6 @@ where
                     }
                 };
 
-<<<<<<< HEAD
                 let idx = usize::from(facet_index);
                 if idx < facets.len() {
                     let facet = &facets[idx];
@@ -896,40 +895,16 @@ where
                     }
                 } else {
                     // Fail fast on invalid facet index - indicates TDS corruption
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Facet index {} out of bounds (cell has {} facets) during visibility computation. \
-                             This indicates triangulation data structure corruption.",
-                            idx,
-                            facets.len()
-                        ),
-                    });
-=======
-                        // Test visibility using robust orientation predicates with fallback
-                        if self.is_facet_visible_from_vertex_robust(tds, facet, vertex, cell_key) {
-                            visible_facets.push(facet.clone());
-                        }
-                    } else {
-                        // Fail fast on invalid facet index - indicates TDS corruption
-                        return Err(InsertionError::TriangulationState(
-                            TriangulationValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Facet index {} out of bounds (cell has {} facets) during visibility computation. \
-                                     This indicates triangulation data structure corruption.",
-                                    idx,
-                                    facets.len()
-                                ),
-                            },
-                        ));
-                    }
-                } else {
                     return Err(InsertionError::TriangulationState(
                         TriangulationValidationError::InconsistentDataStructure {
-                            message: "Failed to get facets from cell during visibility computation"
-                                .to_string(),
+                            message: format!(
+                                "Facet index {} out of bounds (cell has {} facets) during visibility computation. \
+                                 This indicates triangulation data structure corruption.",
+                                idx,
+                                facets.len()
+                            ),
                         },
                     ));
->>>>>>> e41a9b9 (Changed: Improves triangulation error handling and robustness)
                 }
             } else {
                 return Err(InsertionError::TriangulationState(

@@ -151,10 +151,9 @@ where
                 return Some(existing.clone());
             }
             // Build the cache only once, even if RCU retries
-<<<<<<< HEAD
             #[allow(clippy::option_if_let_else)]
             // Complex error handling doesn't benefit from map_or_else
-            match built.get_or_insert_with(|| tds.try_build_facet_to_cells_hashmap().map(Arc::new))
+            match built.get_or_insert_with(|| tds.build_facet_to_cells_map().map(Arc::new))
             {
                 Ok(arc) => Some(arc.clone()),
                 Err(_) => None, // Let the caller handle the error
@@ -176,24 +175,6 @@ where
                 Ok(old_cache)
             }
         }
-=======
-            // Use fallible builder; empty map is acceptable as a cache entry if construction fails
-            let arc = built.get_or_insert_with(|| {
-                #[cfg(debug_assertions)]
-                {
-                    Arc::new(
-                        tds.build_facet_to_cells_map()
-                            .expect("facet map must build in cache"),
-                    )
-                }
-                #[cfg(not(debug_assertions))]
-                {
-                    Arc::new(tds.build_facet_to_cells_map().unwrap_or_default())
-                }
-            });
-            Some(arc.clone())
-        })
->>>>>>> e41a9b9 (Changed: Improves triangulation error handling and robustness)
     }
 
     /// Gets or builds the facet-to-cells mapping cache with atomic updates.
@@ -241,7 +222,7 @@ where
 
                 // Fall back to the lenient TDS method as a last resort
                 #[allow(deprecated)] // Internal fallback - acceptable for graceful degradation
-                Arc::new(tds.build_facet_to_cells_hashmap())
+                Arc::new(tds.build_facet_to_cells_map_lenient())
             }
         }
     }
@@ -318,7 +299,6 @@ where
                         .store(current_generation, Ordering::Release);
                 }
 
-<<<<<<< HEAD
                 // Return the cache; if concurrently invalidated, retry via slow path
                 // Another thread could invalidate between RCU and load_full()
                 self.facet_cache()
@@ -327,48 +307,7 @@ where
             }
         } else {
             // Cache is stale - need to invalidate and rebuild
-            let new_cache = tds.try_build_facet_to_cells_hashmap()?;
-=======
-                    // Return the cache; if concurrently invalidated, retry via bounded loop
-                    // Another thread could invalidate between RCU and load_full()
-                    // Use bounded retry (max 3 attempts) to avoid potential deep recursion under high contention
-                    let mut retries = 0;
-                    loop {
-                        if let Some(cache) = self.facet_cache().load_full() {
-                            break cache;
-                        }
-                        #[allow(clippy::manual_assert)]
-                        if retries >= 3 {
-                            // Give up after too many retries; in debug, fail fast
-                            #[cfg(debug_assertions)]
-                            {
-                                panic!("facet map rebuild failed after retries");
-                            }
-                            #[cfg(not(debug_assertions))]
-                            {
-                                break Arc::new(tds.build_facet_to_cells_map().unwrap_or_default());
-                            }
-                        }
-                        // If concurrently invalidated, attempt RCU build again
-                        let _ = self.build_cache_with_rcu(tds);
-                        retries += 1;
-                    }
-                },
-                |existing_cache| {
-                    // Cache exists and is current - use it
-                    existing_cache
-                },
-            )
-        } else {
-            // Cache is stale - need to invalidate and rebuild
-            // Prefer fallible builder; empty map is acceptable as a cache entry if construction fails
-            #[cfg(debug_assertions)]
-            let new_cache = tds
-                .build_facet_to_cells_map()
-                .expect("facet map must build in cache");
-            #[cfg(not(debug_assertions))]
-            let new_cache = tds.build_facet_to_cells_map().unwrap_or_default();
->>>>>>> e41a9b9 (Changed: Improves triangulation error handling and robustness)
+            let new_cache = tds.build_facet_to_cells_map()?;
             let new_cache_arc = Arc::new(new_cache);
 
             // Atomically swap in the new cache.
