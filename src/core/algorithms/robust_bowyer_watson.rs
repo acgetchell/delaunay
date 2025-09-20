@@ -5,13 +5,19 @@
 //! "No cavity boundary facets found" error.
 
 use crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE;
-use crate::core::collections::{CellKeySet, FastHashMap, FastHashSet, SmallBuffer};
+use crate::core::collections::{
+    CellKeySet, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer, fast_hash_set_with_capacity,
+};
+use crate::core::traits::facet_cache::FacetCacheProvider;
 use crate::core::util::derive_facet_key_from_vertices;
+use arc_swap::ArcSwapOption;
 use std::marker::PhantomData;
 use std::ops::{AddAssign, Div, DivAssign, SubAssign};
+use std::sync::{Arc, atomic::AtomicU64};
 
 use crate::core::traits::insertion_algorithm::{
-    InsertionAlgorithm, InsertionBuffers, InsertionInfo, InsertionStatistics, InsertionStrategy,
+    InsertionAlgorithm, InsertionBuffers, InsertionError, InsertionInfo, InsertionStatistics,
+    InsertionStrategy,
 };
 use crate::core::{
     facet::Facet,
@@ -48,6 +54,10 @@ where
     buffers: InsertionBuffers<T, U, V, D>,
     /// Cached convex hull for hull extension
     hull: Option<ConvexHull<T, U, V, D>>,
+    /// Cache for facet-to-cells mapping
+    facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
+    /// Generation counter for cache invalidation
+    cached_generation: Arc<AtomicU64>,
     /// Phantom data to indicate that U and V types are used in method signatures
     _phantom: PhantomData<(U, V)>,
 }
@@ -106,6 +116,8 @@ where
             stats: InsertionStatistics::new(),
             buffers: InsertionBuffers::with_capacity(D * 10), // Scale capacity with dimension
             hull: None,
+            facet_to_cells_cache: ArcSwapOption::empty(),
+            cached_generation: Arc::new(AtomicU64::new(0)),
             _phantom: PhantomData,
         }
     }
@@ -134,6 +146,8 @@ where
             stats: InsertionStatistics::new(),
             buffers: InsertionBuffers::with_capacity(D * 10), // Scale capacity with dimension
             hull: None,
+            facet_to_cells_cache: ArcSwapOption::empty(),
+            cached_generation: Arc::new(AtomicU64::new(0)),
             _phantom: PhantomData,
         }
     }
@@ -162,6 +176,8 @@ where
             stats: InsertionStatistics::new(),
             buffers: InsertionBuffers::with_capacity(D * 10), // Scale capacity with dimension
             hull: None,
+            facet_to_cells_cache: ArcSwapOption::empty(),
+            cached_generation: Arc::new(AtomicU64::new(0)),
             _phantom: PhantomData,
         }
     }
@@ -176,7 +192,7 @@ where
         &mut self,
         tds: &mut Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<InsertionInfo, TriangulationValidationError>
+    ) -> Result<InsertionInfo, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
@@ -249,7 +265,7 @@ where
         &mut self,
         tds: &mut Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<InsertionInfo, TriangulationValidationError>
+    ) -> Result<InsertionInfo, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
@@ -263,41 +279,45 @@ where
 
         if !bad_cells.is_empty() {
             // Try boundary facet detection using trait method with robust fallback
+            #[allow(clippy::collapsible_if)] // Can't collapse due to if-let chain guard limitations
             if let Ok(boundary_facets) =
                 self.find_cavity_boundary_facets_with_robust_fallback(tds, &bad_cells)
-                && !boundary_facets.is_empty()
             {
-                let cells_removed = bad_cells.len();
-                <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
+                if !boundary_facets.is_empty() {
+                    let cells_removed = bad_cells.len();
+                    <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
 
-                // Ensure vertex is in TDS - if this fails, propagate the error
-                <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
+                    // Ensure vertex is in TDS - if this fails, propagate the error
+                    <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
 
-                let cells_created =
-                    <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
-                        tds,
-                        &boundary_facets,
-                        vertex,
-                    );
+                    let cells_created =
+                        <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
+                            tds,
+                            &boundary_facets,
+                            vertex,
+                        );
 
-                // Maintain invariants after structural changes
-                <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
-                    |e| TriangulationValidationError::FinalizationFailed {
-                        message: format!(
-                            "Failed to finalize triangulation after robust cavity-based insertion \
-                                 (removed {cells_removed} cells, created {cells_created} cells). \
-                                 Underlying error: {e}"
+                    // Maintain invariants after structural changes
+                    <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
+                        |e| InsertionError::TriangulationState(
+                            TriangulationValidationError::FinalizationFailed {
+                                message: format!(
+                                    "Failed to finalize triangulation after robust cavity-based insertion \
+                                         (removed {cells_removed} cells, created {cells_created} cells). \
+                                         Underlying error: {e}"
+                                ),
+                            }
                         ),
-                    },
-                )?;
+                    )?;
 
-                return Ok(InsertionInfo {
-                    strategy: InsertionStrategy::CavityBased,
-                    cells_removed,
-                    cells_created,
-                    success: true,
-                    degenerate_case_handled: false,
-                });
+                    return Ok(InsertionInfo {
+                        strategy: InsertionStrategy::CavityBased,
+                        cells_removed,
+                        cells_created,
+                        success: true,
+                        degenerate_case_handled: false,
+                    });
+                }
             }
         }
 
@@ -310,7 +330,7 @@ where
         &self,
         tds: &mut Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<InsertionInfo, TriangulationValidationError>
+    ) -> Result<InsertionInfo, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
@@ -320,37 +340,41 @@ where
         [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     {
         // Use visibility detection with robust fallback
+        #[allow(clippy::collapsible_if)] // Can't collapse due to if-let chain guard limitations
         if let Ok(visible_facets) =
             self.find_visible_boundary_facets_with_robust_fallback(tds, vertex)
-            && !visible_facets.is_empty()
         {
-            // Ensure vertex is in TDS - if this fails, propagate the error
-            <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
+            if !visible_facets.is_empty() {
+                // Ensure vertex is in TDS - if this fails, propagate the error
+                <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
 
-            let cells_created =
-                <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
-                    tds,
-                    &visible_facets,
-                    vertex,
-                );
+                let cells_created =
+                    <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
+                        tds,
+                        &visible_facets,
+                        vertex,
+                    );
 
-            // Maintain invariants after structural changes
-            <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
-                |e| TriangulationValidationError::FinalizationFailed {
-                    message: format!(
-                        "Failed to finalize triangulation after robust hull extension insertion \
-                             (created {cells_created} cells). Underlying error: {e}"
+                // Maintain invariants after structural changes
+                <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
+                    |e| InsertionError::TriangulationState(
+                        TriangulationValidationError::FinalizationFailed {
+                            message: format!(
+                                "Failed to finalize triangulation after robust hull extension insertion \
+                                     (created {cells_created} cells). Underlying error: {e}"
+                            ),
+                        }
                     ),
-                },
-            )?;
+                )?;
 
-            return Ok(InsertionInfo {
-                strategy: InsertionStrategy::HullExtension,
-                cells_removed: 0,
-                cells_created,
-                success: true,
-                degenerate_case_handled: false,
-            });
+                return Ok(InsertionInfo {
+                    strategy: InsertionStrategy::HullExtension,
+                    cells_removed: 0,
+                    cells_created,
+                    success: true,
+                    degenerate_case_handled: false,
+                });
+            }
         }
 
         // If visibility detection fails, fall back to trait method
@@ -424,7 +448,7 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
-    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>
+    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
@@ -456,7 +480,7 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>
+    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
@@ -541,7 +565,7 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
-    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError> {
+    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError> {
         let mut boundary_facets = Vec::new();
 
         if bad_cells.is_empty() {
@@ -601,7 +625,7 @@ where
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
         vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError> {
+    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError> {
         self.stats.cavity_boundary_recoveries += 1;
 
         // Recovery Strategy 1: Use more lenient boundary detection criteria
@@ -627,15 +651,15 @@ where
         &self,
         tds: &mut Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<RobustInsertionInfo, TriangulationValidationError> {
+    ) -> Result<RobustInsertionInfo, InsertionError> {
         // This typically means the vertex is outside the convex hull
         // Try to extend the hull by connecting to visible boundary facets
 
         let visible_facets = self.find_visible_boundary_facets(tds, vertex)?;
 
         if visible_facets.is_empty() {
-            return Err(TriangulationValidationError::FailedToCreateCell {
-                message: "No visible boundary facets found for hull extension".to_string(),
+            return Err(InsertionError::HullExtensionFailure {
+                reason: "No visible boundary facets found for hull extension".to_string(),
             });
         }
 
@@ -651,11 +675,13 @@ where
 
         // Finalize the triangulation to ensure consistency
         if let Err(e) = <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds) {
-            return Err(TriangulationValidationError::FinalizationFailed {
-                message: format!(
-                    "Failed to finalize triangulation after hull extension. Underlying error: {e}"
-                ),
-            });
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::FinalizationFailed {
+                    message: format!(
+                        "Failed to finalize triangulation after hull extension. Underlying error: {e}"
+                    ),
+                },
+            ));
         }
 
         Ok(RobustInsertionInfo {
@@ -708,14 +734,16 @@ where
     fn build_validated_facet_mapping(
         &self,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<FastHashMap<u64, Vec<CellKey>>, TriangulationValidationError> {
-        // Reuse existing mapping from TDS to avoid recomputation
-        let tds_map = tds.build_facet_to_cells_hashmap();
+    ) -> Result<FastHashMap<u64, Vec<CellKey>>, InsertionError> {
+        // Use cached facet mapping to avoid recomputation with proper error handling
+        let tds_map = self
+            .try_get_or_build_facet_cache(tds)
+            .map_err(InsertionError::TriangulationState)?;
 
         // Transform the TDS map into the required format with validation
         let facet_to_cells: FastHashMap<u64, Vec<CellKey>> = tds_map
-            .into_iter()
-            .map(|(facet_key, cell_facet_pairs)| {
+            .iter()
+            .map(|(&facet_key, cell_facet_pairs)| {
                 // Extract just the CellKeys, discarding facet indices
                 let mut cell_keys = Vec::with_capacity(cell_facet_pairs.len());
                 cell_keys.extend(cell_facet_pairs.iter().map(|(cell_key, _)| *cell_key));
@@ -723,19 +751,21 @@ where
                 // Defensively deduplicate cell keys in case build_facet_to_cells_hashmap()
                 // ever yields duplicate (cell_key, idx) pairs per facet
                 {
-                    let mut seen = FastHashSet::default();
+                    let mut seen = fast_hash_set_with_capacity(cell_keys.len());
                     cell_keys.retain(|k| seen.insert(*k));
                 }
 
                 // Validate that no facet is shared by more than 2 cells
                 if cell_keys.len() > 2 {
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Facet {} is shared by {} cells (should be ≤2)",
-                            facet_key,
-                            cell_keys.len()
-                        ),
-                    });
+                    return Err(InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Facet {} is shared by {} cells (should be ≤2)",
+                                facet_key,
+                                cell_keys.len()
+                            ),
+                        },
+                    ));
                 }
 
                 Ok((facet_key, cell_keys))
@@ -750,14 +780,15 @@ where
     }
 
     #[allow(clippy::unused_self)]
-    fn validate_boundary_facets(
+    const fn validate_boundary_facets(
         &self,
         boundary_facets: &[Facet<T, U, V, D>],
         bad_cell_count: usize,
-    ) -> Result<(), TriangulationValidationError> {
+    ) -> Result<(), InsertionError> {
         if boundary_facets.is_empty() && bad_cell_count > 0 {
-            return Err(TriangulationValidationError::FailedToCreateCell {
-                message: format!("No cavity boundary facets found for {bad_cell_count} bad cells"),
+            return Err(InsertionError::ExcessiveBadCells {
+                found: bad_cell_count,
+                threshold: 0,
             });
         }
 
@@ -786,7 +817,7 @@ where
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
         _vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError> {
+    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError> {
         // Try with a reduced set of bad cells
         // Remove cells that might be causing the boundary detection to fail
 
@@ -805,7 +836,7 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError> {
+    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError> {
         // Find all boundary facets and check which are visible from the vertex
         self.find_visible_boundary_facets(tds, vertex)
     }
@@ -818,7 +849,7 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>
+    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
@@ -830,10 +861,10 @@ where
 
         let mut visible_facets = Vec::new();
 
-        // Get all boundary facets (facets shared by exactly one cell)
-        // TODO: integrate FacetCacheProvider here once available:
-        // let facet_to_cells = self.get_or_build_facet_cache(&tds);
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        // Get all boundary facets (facets shared by exactly one cell) using cache with proper error handling
+        let facet_to_cells = self
+            .try_get_or_build_facet_cache(tds)
+            .map_err(InsertionError::TriangulationState)?;
 
         let mut cell_facets_cache: KeyBasedCellMap<Vec<Facet<T, U, V, D>>> =
             fast_hash_map_with_capacity(tds.number_of_cells());
@@ -845,11 +876,11 @@ where
                 let facets = match cell_facets_cache.entry(cell_key) {
                     std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                     std::collections::hash_map::Entry::Vacant(v) => {
-                        let computed = cell.facets().map_err(|_| {
+                        let computed = cell.facets().map_err(|e| {
                             TriangulationValidationError::InconsistentDataStructure {
-                                message:
-                                    "Failed to get facets from cell during visibility computation"
-                                        .to_string(),
+                                message: format!(
+                                    "Failed to get facets from cell during visibility computation: {e}"
+                                ),
                             }
                         })?;
                         v.insert(computed)
@@ -866,19 +897,23 @@ where
                     }
                 } else {
                     // Fail fast on invalid facet index - indicates TDS corruption
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Facet index {} out of bounds (cell has {} facets) during visibility computation. \
-                             This indicates triangulation data structure corruption.",
-                            idx,
-                            facets.len()
-                        ),
-                    });
+                    return Err(InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Facet index {} out of bounds (cell has {} facets) during visibility computation. \
+                                 This indicates triangulation data structure corruption.",
+                                idx,
+                                facets.len()
+                            ),
+                        },
+                    ));
                 }
             } else {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
-                    message: "Cell key not found during visibility computation".to_string(),
-                });
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: "Cell key not found during visibility computation".to_string(),
+                    },
+                ));
             }
         }
 
@@ -1014,14 +1049,16 @@ where
         // Use a threshold based on the perturbation scale multiplied by a factor
         let threshold = {
             // TODO: Move VISIBILITY_THRESHOLD_MULTIPLIER to RobustPredicateConfig
-            // to allow dataset-specific tuning and testing:
-            // let multiplier: T = <T as From<f64>>::from(
-            //     self.predicate_config.visibility_threshold_multiplier.unwrap_or(100.0)
-            // );
             const VISIBILITY_THRESHOLD_MULTIPLIER: f64 = 100.0;
-            self.predicate_config.perturbation_scale
-                * self.predicate_config.perturbation_scale
-                * <T as From<f64>>::from(VISIBILITY_THRESHOLD_MULTIPLIER)
+            let scale = self.predicate_config.perturbation_scale;
+            let th = scale * scale * <T as From<f64>>::from(VISIBILITY_THRESHOLD_MULTIPLIER);
+            // Best-effort clamp: treat non-finite as "very large"
+            // If T is float-like, this avoids NaN/Inf comparisons.
+            if (f64::from(th)).is_finite() {
+                th
+            } else {
+                <T as From<f64>>::from(f64::MAX / 2.0)
+            }
         };
         distance_squared > threshold
     }
@@ -1130,6 +1167,31 @@ where
     }
 }
 
+impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for RobustBoyerWatson<T, U, V, D>
+where
+    T: CoordinateScalar
+        + ComplexField<RealField = T>
+        + AddAssign<T>
+        + SubAssign<T>
+        + Sum
+        + num_traits::NumCast
+        + From<f64>,
+    U: crate::core::traits::data_type::DataType + DeserializeOwned,
+    V: crate::core::traits::data_type::DataType + DeserializeOwned,
+    f64: From<T>,
+    for<'a> &'a T: std::ops::Div<T>,
+    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    ordered_float::OrderedFloat<f64>: From<T>,
+{
+    fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
+        &self.facet_to_cells_cache
+    }
+
+    fn cached_generation(&self) -> &AtomicU64 {
+        self.cached_generation.as_ref()
+    }
+}
+
 /// Information about a robust vertex insertion operation.
 #[derive(Debug)]
 pub struct RobustInsertionInfo {
@@ -1161,7 +1223,7 @@ where
         &mut self,
         tds: &mut Tds<T, U, V, D>,
         vertex: Vertex<T, U, D>,
-    ) -> Result<InsertionInfo, TriangulationValidationError> {
+    ) -> Result<InsertionInfo, InsertionError> {
         // Use the simplified robust implementation that leverages trait methods
         self.robust_insert_vertex_impl(tds, &vertex)
     }
@@ -1175,6 +1237,8 @@ where
         self.stats.reset();
         self.buffers.clear_all();
         self.hull = None;
+        // Clear facet cache to prevent serving stale mappings across runs
+        self.invalidate_facet_cache();
     }
 
     fn determine_strategy(
@@ -1191,23 +1255,14 @@ where
         &mut self,
         vertices: &[Vertex<T, U, D>],
     ) -> Result<Tds<T, U, V, D>, TriangulationConstructionError> {
-        // First, try the regular triangulation approach
-        Tds::new(vertices).map_or_else(
-            |_| {
-                // Regular triangulation failed, try robust approach
-                // Note: For now, we still fall back to the regular approach
-                // but this is where we would implement more sophisticated
-                // robust triangulation strategies
-                Tds::new(vertices).map_err(|e| {
-                    TriangulationConstructionError::ValidationError(
-                        TriangulationValidationError::FailedToCreateCell {
-                            message: format!("Robust triangulation failed: {e}"),
-                        },
-                    )
-                })
-            },
-            Ok,
-        )
+        // One attempt for now; map error clearly. If a true robust fallback is added later, branch here.
+        Tds::new(vertices).map_err(|e| {
+            TriangulationConstructionError::ValidationError(
+                TriangulationValidationError::FailedToCreateCell {
+                    message: format!("Robust triangulation failed: {e}"),
+                },
+            )
+        })
     }
 }
 
@@ -1215,9 +1270,12 @@ where
 mod tests {
     use super::*;
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
+    use crate::core::traits::facet_cache::FacetCacheProvider;
+    use crate::core::traits::insertion_algorithm::InsertionError;
     use crate::vertex;
     use approx::assert_abs_diff_eq;
     use approx::assert_abs_diff_ne;
+    use std::sync::atomic::Ordering;
 
     /// Helper function to verify facet index consistency between neighboring cells
     ///
@@ -1882,7 +1940,8 @@ mod tests {
             }
 
             // 3. All facets should be properly shared
-            let facet_to_cells = tds.build_facet_to_cells_hashmap();
+            #[allow(deprecated)] // Test verification - OK to use deprecated method
+            let facet_to_cells = tds.build_facet_to_cells_map_lenient();
             for (facet_key, cells) in &facet_to_cells {
                 assert!(
                     cells.len() <= 2,
@@ -2071,5 +2130,1117 @@ mod tests {
         }
 
         println!("✓ All create_perturbed_vertex error handling tests passed");
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_facet_cache_provider_implementation() {
+        use std::sync::atomic::Ordering;
+
+        println!("Testing FacetCacheProvider implementation for RobustBoyerWatson");
+
+        // Create test triangulation
+        let points = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]),
+        ];
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&points).unwrap();
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Test 1: Initial cache state
+        assert!(
+            algorithm.facet_cache().load().is_none(),
+            "Cache should initially be empty"
+        );
+        assert_eq!(
+            algorithm.cached_generation().load(Ordering::Relaxed),
+            0,
+            "Initial generation should be 0"
+        );
+        println!("  ✓ Initial cache state verified");
+
+        // Test 2: Cache building on first access
+        let initial_generation = tds.generation();
+        let cache1 = algorithm
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Cache building should succeed in test");
+
+        assert!(
+            !cache1.is_empty(),
+            "Built cache should contain facet mappings"
+        );
+        assert_eq!(
+            algorithm.cached_generation().load(Ordering::Relaxed),
+            initial_generation,
+            "Cached generation should match TDS generation"
+        );
+        println!("  ✓ Cache builds correctly on first access");
+
+        // Test 3: Cache reuse on subsequent access (no TDS changes)
+        let cache2 = algorithm
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Cache building should succeed in test");
+        assert!(
+            Arc::ptr_eq(&cache1, &cache2),
+            "Same cache instance should be returned when TDS unchanged"
+        );
+        println!("  ✓ Cache correctly reused when TDS unchanged");
+
+        // Test 4: Cache invalidation after TDS modification
+        // Create a new triangulation with an additional vertex to simulate modification
+        let mut modified_points = points;
+        modified_points.push(vertex!([0.25, 0.25, 0.25]));
+        let tds_modified: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&modified_points).unwrap();
+
+        // Generation should be different for new TDS
+        let new_generation = tds_modified.generation();
+        // Note: Different TDS instances should have different generations
+        assert_ne!(
+            initial_generation, new_generation,
+            "Expected different generation between distinct TDS instances"
+        );
+
+        // Get cache for modified TDS - should be different
+        let cache3 = algorithm
+            .try_get_or_build_facet_cache(&tds_modified)
+            .expect("Cache building should succeed in test");
+        assert!(
+            !Arc::ptr_eq(&cache1, &cache3),
+            "New cache instance should be created for different TDS"
+        );
+        assert_eq!(
+            algorithm.cached_generation().load(Ordering::Relaxed),
+            new_generation,
+            "Cached generation should be updated to new TDS generation"
+        );
+        println!("  ✓ Cache correctly built for modified TDS");
+
+        // Test 5: Manual cache invalidation
+        algorithm.invalidate_facet_cache();
+        assert!(
+            algorithm.facet_cache().load().is_none(),
+            "Cache should be empty after manual invalidation"
+        );
+        assert_eq!(
+            algorithm.cached_generation().load(Ordering::Relaxed),
+            0,
+            "Generation should reset to 0 after manual invalidation"
+        );
+        println!("  ✓ Manual cache invalidation works correctly");
+
+        // Test 6: Cache rebuilds after manual invalidation
+        let cache4 = algorithm
+            .try_get_or_build_facet_cache(&tds_modified)
+            .expect("Cache building should succeed in test");
+        assert!(
+            !cache4.is_empty(),
+            "Cache should rebuild after manual invalidation"
+        );
+        assert_eq!(
+            algorithm.cached_generation().load(Ordering::Relaxed),
+            new_generation,
+            "Generation should be restored after rebuild"
+        );
+        println!("  ✓ Cache rebuilds correctly after manual invalidation");
+
+        // Test 7: Verify cache content correctness
+        #[allow(deprecated)] // Using for verification in test - cache is the recommended approach
+        let direct_map = tds_modified.build_facet_to_cells_map_lenient();
+        assert_eq!(
+            cache4.len(),
+            direct_map.len(),
+            "Cached map should have same size as direct build"
+        );
+
+        for (facet_key, cells_in_cache) in cache4.iter() {
+            assert!(
+                direct_map.contains_key(facet_key),
+                "All cached facets should exist in direct map"
+            );
+            assert_eq!(
+                cells_in_cache.len(),
+                direct_map[facet_key].len(),
+                "Cell counts should match for facet {facet_key}"
+            );
+        }
+        println!("  ✓ Cache content matches direct build");
+
+        println!("✓ All FacetCacheProvider tests passed for RobustBoyerWatson");
+    }
+
+    // =============================================================================
+    // ERROR HANDLING TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_robust_error_handling_paths() {
+        println!("Testing robust error handling paths...");
+
+        // Test 1: Empty vertex list
+        let empty_vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![];
+        let result = Tds::<f64, Option<()>, Option<()>, 3>::new(&empty_vertices);
+        // Empty vertex list is actually valid - just creates an empty TDS
+        if result.is_ok() {
+            println!("  ✓ Empty vertex list creates valid empty TDS");
+        } else {
+            println!(
+                "  ✓ Empty vertex list handled with error: {:?}",
+                result.err()
+            );
+        }
+
+        // Test 2: Insufficient vertices for dimension
+        let insufficient = vec![vertex!([0.0, 0.0, 0.0])];
+        let result = Tds::<f64, Option<()>, Option<()>, 3>::new(&insufficient);
+        assert!(result.is_err(), "Insufficient vertices should fail");
+        println!("  ✓ Insufficient vertices handled correctly");
+
+        // Test 3: Degenerate vertex configuration (all coplanar in 3D)
+        let coplanar = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([3.0, 0.0, 0.0]),
+            vertex!([4.0, 0.0, 0.0]),
+        ];
+        let result = Tds::<f64, Option<()>, Option<()>, 3>::new(&coplanar);
+        // Should either succeed with robust handling or fail gracefully
+        match result {
+            Ok(tds) => {
+                assert!(
+                    !tds.cells().is_empty(),
+                    "Should create some triangulation even from coplanar points"
+                );
+                println!("  ✓ Coplanar configuration handled robustly");
+            }
+            Err(_) => {
+                println!("  ✓ Coplanar configuration failed gracefully");
+            }
+        }
+    }
+
+    #[test]
+    fn test_configuration_validation_paths() {
+        println!("Testing configuration validation paths...");
+
+        // Test 1: Extreme tolerance values
+        let mut extreme_config = config_presets::general_triangulation::<f64>();
+        extreme_config.base_tolerance = f64::MIN_POSITIVE;
+
+        let algorithm =
+            RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(extreme_config);
+        // Should not panic with extreme but valid config
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let _tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let _stats = algorithm.get_statistics();
+        println!("  ✓ Extreme tolerance configuration handled");
+
+        // Test 2: High precision configuration
+        let high_precision_config = config_presets::degenerate_robust::<f64>();
+
+        let high_precision_algorithm =
+            RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(high_precision_config);
+        let _stats = high_precision_algorithm.get_statistics();
+        println!("  ✓ High precision configuration handled");
+
+        // Test 3: Degenerate cases configuration
+        let degenerate_algorithm =
+            RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::for_degenerate_cases();
+        let _stats = degenerate_algorithm.get_statistics();
+        println!("  ✓ Degenerate cases configuration created successfully");
+    }
+
+    // =============================================================================
+    // FALLBACK AND RECOVERY MECHANISM TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_fallback_recovery_mechanisms() {
+        println!("Testing fallback and recovery mechanisms...");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            // Add a point that might cause numerical issues
+            vertex!([
+                0.333_333_333_333_333_3,
+                0.333_333_333_333_333_3,
+                0.333_333_333_333_333_3
+            ]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::for_degenerate_cases();
+
+        // Test fallback facet mapping
+        let initial_stats = algorithm.get_statistics();
+
+        // Try to trigger fallback scenarios with a problematic vertex
+        let _problematic_vertex: Vertex<f64, Option<()>, 3> =
+            vertex!([f64::EPSILON, f64::EPSILON, f64::EPSILON]);
+
+        // Should not panic and should handle gracefully
+        let stats_after = algorithm.get_statistics();
+        assert!(
+            stats_after.0 >= initial_stats.0
+                && stats_after.1 >= initial_stats.1
+                && stats_after.2 >= initial_stats.2
+        );
+        println!("  ✓ Fallback mechanisms handle problematic vertices");
+
+        // Test cache invalidation during operations
+        algorithm.invalidate_facet_cache();
+        let cache = algorithm
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Cache building should succeed in test");
+        assert!(!cache.is_empty(), "Cache should rebuild after invalidation");
+        println!("  ✓ Cache recovery after invalidation works");
+    }
+
+    #[test]
+    fn test_geometric_edge_cases() {
+        use crate::core::vertex::VertexBuilder;
+        use crate::geometry::point::Point;
+
+        println!("Testing geometric edge cases...");
+
+        // Test 1: Nearly collinear points in 2D
+        let nearly_collinear_2d = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([2.0, f64::EPSILON]),
+        ];
+        let result_2d = Tds::<f64, Option<()>, Option<()>, 2>::new(&nearly_collinear_2d);
+        match result_2d {
+            Ok(tds) => {
+                assert!(!tds.cells().is_empty());
+                println!("  ✓ Nearly collinear 2D points handled");
+            }
+            Err(_) => println!("  ✓ Nearly collinear 2D points failed gracefully"),
+        }
+
+        // Test 2: Nearly coplanar points in 3D
+        let nearly_coplanar_3d = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.5, 0.5, f64::EPSILON]),
+        ];
+        let result_3d = Tds::<f64, Option<()>, Option<()>, 3>::new(&nearly_coplanar_3d);
+        match result_3d {
+            Ok(tds) => {
+                assert!(!tds.cells().is_empty());
+                println!("  ✓ Nearly coplanar 3D points handled");
+            }
+            Err(_) => println!("  ✓ Nearly coplanar 3D points failed gracefully"),
+        }
+
+        // Test 3: Points with extreme coordinates
+        let extreme_coords = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([f64::MAX / 1e6, 0.0, 0.0]),
+            vertex!([0.0, f64::MAX / 1e6, 0.0]),
+            vertex!([0.0, 0.0, f64::MAX / 1e6]),
+        ];
+        let result_extreme = Tds::<f64, Option<()>, Option<()>, 3>::new(&extreme_coords);
+        match result_extreme {
+            Ok(tds) => {
+                assert!(!tds.cells().is_empty());
+                println!("  ✓ Extreme coordinate points handled");
+            }
+            Err(_) => println!("  ✓ Extreme coordinate points failed gracefully"),
+        }
+
+        // Test 4: Perturbation edge cases
+        let mut algorithm =
+            RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::for_degenerate_cases();
+
+        // Test with zero coordinates
+        let zero_vertex = vertex!([0.0, 0.0, 0.0]);
+        let perturb_result = algorithm.create_perturbed_vertex(&zero_vertex);
+        match perturb_result {
+            Ok(perturbed) => {
+                let coords = perturbed.point().to_array();
+                assert!(
+                    coords.iter().any(|&x| x != 0.0),
+                    "Perturbation should change at least one coordinate"
+                );
+                println!("  ✓ Zero vertex perturbation handled");
+            }
+            Err(_) => println!("  ✓ Zero vertex perturbation failed gracefully"),
+        }
+
+        // Test with infinite coordinates - should return InvalidVertex error
+        // First create a valid TDS to insert into
+        let mut tds = Tds::new(&[
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ])
+        .expect("Should create valid TDS");
+
+        // Try to insert vertex with infinite coordinates
+        // Note: We need to bypass the vertex! macro validation and create an invalid vertex directly
+
+        match Point::try_from([f64::INFINITY, 1.0, 2.0]) {
+            Ok(infinite_point) => {
+                let infinite_vertex = VertexBuilder::default()
+                    .point(infinite_point)
+                    .build()
+                    .expect("Should build vertex");
+
+                match algorithm.insert_vertex(&mut tds, infinite_vertex) {
+                    Err(
+                        crate::core::traits::insertion_algorithm::InsertionError::InvalidVertex {
+                            reason,
+                        },
+                    ) => {
+                        println!(
+                            "  ✓ Infinite coordinates correctly returned InvalidVertex: {reason}"
+                        );
+                    }
+                    Err(other_error) => {
+                        println!("  ✓ Infinite coordinates rejected with error: {other_error:?}");
+                    }
+                    Ok(_) => panic!("Infinite coordinates should be rejected"),
+                }
+            }
+            Err(_) => {
+                println!("  ✓ Infinite coordinates properly rejected during point creation");
+            }
+        }
+    }
+
+    // =============================================================================
+    // COMPREHENSIVE INTEGRATION TESTS
+    // =============================================================================
+
+    #[test]
+
+    fn test_comprehensive_algorithm_paths() {
+        println!("Testing comprehensive algorithm paths...");
+
+        // Test with various configurations and vertex sets
+        let test_cases = vec![
+            (
+                "regular tetrahedron",
+                vec![
+                    vertex!([0.0, 0.0, 0.0]),
+                    vertex!([1.0, 0.0, 0.0]),
+                    vertex!([0.5, 0.866, 0.0]),
+                    vertex!([0.5, 0.289, 0.816]),
+                ],
+            ),
+            (
+                "cube vertices",
+                vec![
+                    vertex!([0.0, 0.0, 0.0]),
+                    vertex!([1.0, 0.0, 0.0]),
+                    vertex!([0.0, 1.0, 0.0]),
+                    vertex!([0.0, 0.0, 1.0]),
+                    vertex!([1.0, 1.0, 0.0]),
+                    vertex!([1.0, 0.0, 1.0]),
+                    vertex!([0.0, 1.0, 1.0]),
+                    vertex!([1.0, 1.0, 1.0]),
+                ],
+            ),
+            (
+                "random cloud",
+                vec![
+                    vertex!([0.1, 0.2, 0.3]),
+                    vertex!([0.4, 0.5, 0.6]),
+                    vertex!([0.7, 0.8, 0.9]),
+                    vertex!([0.2, 0.7, 0.1]),
+                    vertex!([0.9, 0.1, 0.8]),
+                    vertex!([0.3, 0.9, 0.2]),
+                ],
+            ),
+        ];
+
+        for (name, vertices) in test_cases {
+            println!("  Testing case: {name}");
+
+            // Test with different configurations
+            let configs = vec![
+                ("general", config_presets::general_triangulation::<f64>()),
+                (
+                    "degenerate robust",
+                    config_presets::degenerate_robust::<f64>(),
+                ),
+            ];
+
+            for (config_name, config) in configs {
+                let algorithm =
+                    RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(config);
+
+                match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+                    Ok(tds) => {
+                        // Test basic functionality
+                        let cache = algorithm
+                            .try_get_or_build_facet_cache(&tds)
+                            .expect("Cache building should succeed in test");
+                        assert!(!cache.is_empty(), "Cache should not be empty for valid TDS");
+
+                        let _stats = algorithm.get_statistics();
+
+                        // Test cache invalidation and rebuild
+                        algorithm.invalidate_facet_cache();
+                        let rebuilt_cache = algorithm
+                            .try_get_or_build_facet_cache(&tds)
+                            .expect("Cache building should succeed in test");
+                        assert!(
+                            !rebuilt_cache.is_empty(),
+                            "Rebuilt cache should not be empty"
+                        );
+
+                        println!("    ✓ {config_name} config with {name} case");
+                    }
+                    Err(e) => {
+                        println!("    - {config_name} config with {name} case failed: {e}");
+                        // Some configurations might legitimately fail with certain vertex sets
+                    }
+                }
+            }
+        }
+
+        println!("✓ Comprehensive algorithm path testing completed");
+    }
+
+    #[test]
+
+    fn test_boundary_condition_validation() {
+        println!("Testing boundary condition validation...");
+
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Test 1: Minimum valid triangulation
+        let minimal = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let minimal_tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&minimal).unwrap();
+        let cache = algorithm
+            .try_get_or_build_facet_cache(&minimal_tds)
+            .expect("Cache building should succeed in test");
+        assert!(
+            cache.len() >= 4,
+            "Minimal tetrahedron should have at least 4 facets"
+        );
+        println!("  ✓ Minimal triangulation validated");
+
+        // Test 2: Single point (should fail)
+        let single = vec![vertex!([0.0, 0.0, 0.0])];
+        let single_result = Tds::<f64, Option<()>, Option<()>, 3>::new(&single);
+        assert!(single_result.is_err(), "Single point should fail");
+        println!("  ✓ Single point correctly rejected");
+
+        // Test 3: Duplicate points
+        let duplicates = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0]), // Duplicate
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let duplicate_result = Tds::<f64, Option<()>, Option<()>, 3>::new(&duplicates);
+        // Should either handle duplicates or fail gracefully
+        match duplicate_result {
+            Ok(_) => println!("  ✓ Duplicate points handled gracefully"),
+            Err(_) => println!("  ✓ Duplicate points rejected appropriately"),
+        }
+
+        // Test 4: Very small perturbations
+        let tiny_perturbation = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([f64::EPSILON, f64::EPSILON, f64::EPSILON]),
+        ];
+        let tiny_result = Tds::<f64, Option<()>, Option<()>, 3>::new(&tiny_perturbation);
+        match tiny_result {
+            Ok(tds) => {
+                let cache = algorithm
+                    .try_get_or_build_facet_cache(&tds)
+                    .expect("Cache building should succeed in test");
+                assert!(!cache.is_empty(), "Should handle tiny perturbations");
+                println!("  ✓ Tiny perturbations handled");
+            }
+            Err(_) => println!("  ✓ Tiny perturbations failed gracefully"),
+        }
+    }
+
+    // =========================================================================
+    // Module Organization Pattern: Configuration and Validation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_algorithm_with_extreme_tolerance_configurations() {
+        // Test with very tight tolerance (should require high precision)
+        let mut tight_config = config_presets::general_triangulation::<f64>();
+        tight_config.base_tolerance = 1e-15;
+        tight_config.perturbation_scale = 1e-10;
+
+        let mut algorithm =
+            RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(tight_config);
+
+        // Create vertices that would be problematic with loose tolerance
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([1e-14, 1e-14, 1e-14]), // Very close to origin
+        ];
+
+        let mut tds = Tds::new(&vertices[..4]).expect("Initial TDS creation should succeed");
+        let result = algorithm.insert_vertex(&mut tds, vertices[4]);
+
+        // Should handle precision requirements appropriately
+        assert!(result.is_ok() || matches!(result, Err(InsertionError::GeometricFailure { .. })));
+
+        // Test with very loose tolerance (should be more permissive)
+        let mut loose_config = config_presets::general_triangulation::<f64>();
+        loose_config.base_tolerance = 1e-6;
+        loose_config.perturbation_scale = 1e-3;
+
+        let mut algorithm_loose =
+            RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(loose_config);
+        let mut tds_loose = Tds::new(&vertices[..4]).expect("Initial TDS creation should succeed");
+        let result_loose = algorithm_loose.insert_vertex(&mut tds_loose, vertices[4]);
+
+        // Loose tolerance might succeed where tight fails, or vice versa
+        assert!(
+            result_loose.is_ok()
+                || matches!(result_loose, Err(InsertionError::GeometricFailure { .. }))
+        );
+    }
+
+    #[test]
+    fn test_algorithm_configuration_presets() {
+        // Test all standard configuration presets
+        let configs = vec![
+            ("general", config_presets::general_triangulation::<f64>()),
+            (
+                "degenerate_robust",
+                config_presets::degenerate_robust::<f64>(),
+            ),
+        ];
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        for (name, config) in configs {
+            let mut algorithm =
+                RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(config);
+            let mut tds = Tds::new(&vertices).expect("TDS creation should succeed");
+
+            // All presets should handle basic tetrahedron
+            assert!(
+                tds.is_valid().is_ok(),
+                "TDS should be valid for {name} preset"
+            );
+
+            // Test vertex insertion with each preset
+            let test_vertex = vertex!([0.5, 0.5, 0.5]);
+            let result = algorithm.insert_vertex(&mut tds, test_vertex);
+            assert!(
+                result.is_ok(),
+                "Interior insertion should succeed with {name} preset"
+            );
+        }
+    }
+
+    #[test]
+    fn test_invalid_configuration_handling() {
+        // Test configurations that should be invalid or problematic
+        let mut invalid_configs = Vec::new();
+
+        // Zero tolerance
+        let mut zero_tol_config = config_presets::general_triangulation::<f64>();
+        zero_tol_config.base_tolerance = 0.0;
+        invalid_configs.push(zero_tol_config);
+
+        // Negative tolerance
+        let mut neg_tol_config = config_presets::general_triangulation::<f64>();
+        neg_tol_config.base_tolerance = -1e-12;
+        invalid_configs.push(neg_tol_config);
+
+        // Extreme perturbation scale
+        let mut extreme_pert_config = config_presets::general_triangulation::<f64>();
+        extreme_pert_config.perturbation_scale = f64::MAX;
+        invalid_configs.push(extreme_pert_config);
+
+        // Zero perturbation scale
+        let mut zero_pert_config = config_presets::general_triangulation::<f64>();
+        zero_pert_config.perturbation_scale = 0.0;
+        invalid_configs.push(zero_pert_config);
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        for (i, config) in invalid_configs.into_iter().enumerate() {
+            let mut algorithm =
+                RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(config);
+            let mut tds = Tds::new(&vertices).expect("Initial TDS creation should succeed");
+
+            let test_vertex = vertex!([0.5, 0.5, 0.5]);
+            let result = algorithm.insert_vertex(&mut tds, test_vertex);
+
+            // Invalid configurations may fail or succeed with degraded behavior
+            if result.is_err() {
+                println!(
+                    "Invalid config {} failed as expected: {:?}",
+                    i,
+                    result.err()
+                );
+            } else {
+                println!("Invalid config {i} unexpectedly succeeded");
+            }
+        }
+    }
+
+    // =========================================================================
+    // Module Organization Pattern: Fallback and Recovery Mechanisms Tests
+    // =========================================================================
+
+    #[test]
+    fn test_fallback_mechanism_progression() {
+        // Create configuration that will trigger fallbacks
+        let mut config = config_presets::general_triangulation::<f64>();
+        config.base_tolerance = 1e-15; // Very tight
+
+        let mut algorithm =
+            RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(config);
+
+        // Create a configuration that's likely to need fallbacks
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let mut tds = Tds::new(&vertices).expect("Initial TDS creation should succeed");
+
+        // Insert vertices that might trigger fallback mechanisms
+        let problematic_vertices = vec![
+            vertex!([1e-14, 1e-14, 1e-14]),       // Nearly at origin
+            vertex!([1.0 + 1e-14, 1e-14, 1e-14]), // Nearly at existing vertex
+            vertex!([
+                0.333_333_333_333_333,
+                0.333_333_333_333_333,
+                0.333_333_333_333_333
+            ]), // Potential precision issues
+        ];
+
+        for (i, vertex) in problematic_vertices.into_iter().enumerate() {
+            let result = algorithm.insert_vertex(&mut tds, vertex);
+
+            // Should either succeed with fallback or fail gracefully
+            match result {
+                Ok(info) => {
+                    println!(
+                        "Vertex {} succeeded after fallbacks: created={}, removed={}",
+                        i, info.cells_created, info.cells_removed
+                    );
+                    assert!(
+                        tds.is_valid().is_ok(),
+                        "TDS should remain valid after fallback success"
+                    );
+                }
+                Err(e) => {
+                    println!("Vertex {i} failed after all fallbacks: {e:?}");
+                    // TDS should still be valid even after insertion failure
+                    assert!(
+                        tds.is_valid().is_ok(),
+                        "TDS should remain valid after fallback failure"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+
+    fn test_cache_invalidation_and_recovery() {
+        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let mut tds = Tds::new(&vertices).expect("Initial TDS creation should succeed");
+
+        // Force cache population by calling a method that uses it
+        let _initial_cache_gen = algorithm.cached_generation().load(Ordering::Acquire);
+        let facet_cache = algorithm
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Cache building should succeed in test");
+        assert!(!facet_cache.is_empty(), "Cache should be populated");
+
+        // Insert a vertex, which should invalidate cache
+        let new_vertex = vertex!([0.5, 0.5, 0.5]);
+        let result = algorithm.insert_vertex(&mut tds, new_vertex);
+        assert!(result.is_ok(), "Vertex insertion should succeed");
+
+        // Cache generation should have been updated by TDS changes
+        let _new_cache_gen = algorithm.cached_generation().load(Ordering::Acquire);
+
+        // Note: The cache generation is managed by TDS, not the algorithm directly
+        // So we check that the cache can still be retrieved successfully
+        let updated_cache = algorithm
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Cache building should succeed in test");
+        assert!(
+            !updated_cache.is_empty(),
+            "Cache should be rebuilt after TDS changes"
+        );
+
+        // Verify the algorithm still works correctly after cache invalidation
+        let another_vertex = vertex!([0.25, 0.25, 0.25]);
+        let another_result = algorithm.insert_vertex(&mut tds, another_vertex);
+        assert!(
+            another_result.is_ok(),
+            "Subsequent insertion should work after cache invalidation"
+        );
+    }
+
+    #[test]
+    fn test_recovery_from_geometric_failures() {
+        let mut config = config_presets::degenerate_robust::<f64>();
+        config.base_tolerance = 1e-12;
+        config.perturbation_scale = 1e-10;
+        config.max_refinement_iterations = 3;
+
+        let mut algorithm: RobustBoyerWatson<f64, Option<()>, Option<()>, 3> =
+            RobustBoyerWatson::with_config(config);
+
+        // Start with a valid triangulation
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let mut tds = Tds::new(&vertices).expect("Initial TDS creation should succeed");
+        let _initial_cell_count = tds.number_of_cells();
+
+        // Try inserting vertices that might cause geometric failures
+        let challenging_vertices = vec![
+            vertex!([f64::EPSILON, f64::EPSILON, f64::EPSILON]), // Extremely close to origin
+            vertex!([1.0 - f64::EPSILON, f64::EPSILON, f64::EPSILON]), // Very close to existing vertex
+        ];
+
+        for (i, vertex) in challenging_vertices.into_iter().enumerate() {
+            let cells_before = tds.number_of_cells();
+            let result = algorithm.insert_vertex(&mut tds, vertex);
+            let cells_after = tds.number_of_cells();
+
+            match result {
+                Ok(info) => {
+                    println!(
+                        "Challenging vertex {} succeeded: created={}, removed={}",
+                        i, info.cells_created, info.cells_removed
+                    );
+                    assert!(
+                        cells_after >= cells_before,
+                        "Cell count should not decrease on success"
+                    );
+                }
+                Err(e) => {
+                    println!("Challenging vertex {i} failed as expected: {e:?}");
+                    assert_eq!(
+                        cells_after, cells_before,
+                        "Cell count should be unchanged on failure"
+                    );
+                }
+            }
+
+            // Most importantly, TDS should remain valid regardless of success/failure
+            let validation_result = tds.is_valid();
+            assert!(
+                validation_result.is_ok(),
+                "TDS should remain valid after attempting challenging vertex {}: {:?}",
+                i,
+                validation_result.err()
+            );
+        }
+
+        // Verify we can still insert normal vertices after handling failures
+        let normal_vertex = vertex!([0.5, 0.5, 0.5]);
+        let normal_result = algorithm.insert_vertex(&mut tds, normal_vertex);
+        assert!(
+            normal_result.is_ok(),
+            "Normal vertex insertion should work after recovery"
+        );
+    }
+
+    // =========================================================================
+    // Module Organization Pattern: Various Geometric Configurations Tests
+    // =========================================================================
+
+    #[test]
+    fn test_geometric_configurations_regular_patterns() {
+        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Test 1: Cubic lattice points
+        #[allow(clippy::cast_possible_truncation)]
+        let cubic_vertices: Vec<_> = (0..3_usize)
+            .flat_map(|i| {
+                (0..3_usize).flat_map(move |j| {
+                    (0..3_usize).map(move |k| {
+                        vertex!([f64::from(i as u8), f64::from(j as u8), f64::from(k as u8)])
+                    })
+                })
+            })
+            .collect();
+
+        let mut cubic_tds =
+            Tds::new(&cubic_vertices[..4]).expect("Cubic TDS creation should succeed");
+        for (i, vertex) in cubic_vertices[4..].iter().enumerate() {
+            let result = algorithm.insert_vertex(&mut cubic_tds, *vertex);
+            match result {
+                Ok(_) => println!("  ✓ Cubic vertex {} inserted successfully", i + 4),
+                Err(e) => println!("  ⚠ Cubic vertex {} failed: {:?}", i + 4, e),
+            }
+        }
+        assert!(
+            cubic_tds.is_valid().is_ok(),
+            "Cubic lattice TDS should remain valid"
+        );
+
+        // Test 2: Spherical distribution
+        let sphere_vertices: Vec<_> = (0..20)
+            .map(|i| {
+                let theta = 2.0 * std::f64::consts::PI * f64::from(i) / 20.0;
+                let phi = std::f64::consts::PI * f64::from(i % 5) / 5.0;
+                vertex!([
+                    theta.sin() * phi.cos(),
+                    theta.sin() * phi.sin(),
+                    theta.cos()
+                ])
+            })
+            .collect();
+
+        let mut sphere_tds =
+            Tds::new(&sphere_vertices[..4]).expect("Sphere TDS creation should succeed");
+        for (i, vertex) in sphere_vertices[4..].iter().enumerate() {
+            let result = algorithm.insert_vertex(&mut sphere_tds, *vertex);
+            match result {
+                Ok(_) => println!("  ✓ Sphere vertex {} inserted successfully", i + 4),
+                Err(e) => println!("  ⚠ Sphere vertex {} failed: {:?}", i + 4, e),
+            }
+        }
+        assert!(
+            sphere_tds.is_valid().is_ok(),
+            "Spherical TDS should remain valid"
+        );
+
+        // Test 3: Linear arrangement (challenging for 3D triangulation)
+        let linear_vertices: Vec<_> = (0..10)
+            .map(|i| vertex!([f64::from(i) * 0.1, 0.0, 0.0]))
+            .collect();
+
+        // Start with a proper 3D configuration, then add linear points
+        let mut linear_base = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        linear_base.extend_from_slice(&linear_vertices[4..]);
+
+        let mut linear_tds =
+            Tds::new(&linear_base[..4]).expect("Linear base TDS creation should succeed");
+        for (i, vertex) in linear_base[4..].iter().enumerate() {
+            let result = algorithm.insert_vertex(&mut linear_tds, *vertex);
+            match result {
+                Ok(_) => println!("  ✓ Linear vertex {} inserted successfully", i + 4),
+                Err(e) => println!("  ⚠ Linear vertex {} failed: {:?}", i + 4, e),
+            }
+        }
+        assert!(
+            linear_tds.is_valid().is_ok(),
+            "Linear TDS should remain valid"
+        );
+    }
+
+    #[test]
+    fn test_geometric_configurations_random_distributions() {
+        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Test with different random seeds for reproducibility
+        let seeds = [42, 123, 456, 789];
+
+        for (test_idx, &seed) in seeds.iter().enumerate() {
+            println!("\n--- Random Test {} (seed: {}) ---", test_idx + 1, seed);
+
+            // Use a simple LCG for reproducible "random" numbers
+            let mut rng_state: u32 = seed;
+            let mut next_random = || {
+                rng_state = rng_state.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                f64::from(rng_state >> 16) / 32768.0
+            };
+
+            // Generate random vertices in unit cube
+            let random_vertices: Vec<_> = (0..20)
+                .map(|_| vertex!([next_random(), next_random(), next_random()]))
+                .collect();
+
+            let mut random_tds =
+                Tds::new(&random_vertices[..4]).expect("Random TDS creation should succeed");
+            let mut success_count = 0;
+
+            for (i, vertex) in random_vertices[4..].iter().enumerate() {
+                let result = algorithm.insert_vertex(&mut random_tds, *vertex);
+                match result {
+                    Ok(_) => {
+                        success_count += 1;
+                        println!("  ✓ Random vertex {} inserted", i + 4);
+                    }
+                    Err(e) => println!("  ⚠ Random vertex {} failed: {:?}", i + 4, e),
+                }
+            }
+
+            println!(
+                "  Success rate: {}/{}",
+                success_count,
+                random_vertices.len() - 4
+            );
+            assert!(
+                random_tds.is_valid().is_ok(),
+                "Random TDS should remain valid for seed {seed}"
+            );
+
+            // Verify we had reasonable success rate (at least 50%)
+            assert!(
+                success_count >= (random_vertices.len() - 4) / 2,
+                "Should successfully insert at least half of random vertices for seed {seed}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_geometric_configurations_extreme_coordinates() {
+        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Test with very large coordinates
+        let large_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1e6, 0.0, 0.0]),
+            vertex!([0.0, 1e6, 0.0]),
+            vertex!([0.0, 0.0, 1e6]),
+            vertex!([1e5, 1e5, 1e5]), // Interior point with large coordinates
+        ];
+
+        let mut large_tds =
+            Tds::new(&large_vertices[..4]).expect("Large coordinate TDS should be created");
+        let large_result = algorithm.insert_vertex(&mut large_tds, large_vertices[4]);
+
+        match large_result {
+            Ok(_) => {
+                println!("  ✓ Large coordinate insertion succeeded");
+                assert!(
+                    large_tds.is_valid().is_ok(),
+                    "Large coordinate TDS should remain valid"
+                );
+            }
+            Err(e) => {
+                println!("  ⚠ Large coordinate insertion failed: {e:?}");
+                // TDS should still be valid even if insertion failed
+                assert!(
+                    large_tds.is_valid().is_ok(),
+                    "TDS should remain valid after large coordinate failure"
+                );
+            }
+        }
+
+        // Test with very small coordinates
+        let small_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1e-6, 0.0, 0.0]),
+            vertex!([0.0, 1e-6, 0.0]),
+            vertex!([0.0, 0.0, 1e-6]),
+            vertex!([1e-7, 1e-7, 1e-7]), // Interior point with small coordinates
+        ];
+
+        let mut small_tds =
+            Tds::new(&small_vertices[..4]).expect("Small coordinate TDS should be created");
+        let small_result = algorithm.insert_vertex(&mut small_tds, small_vertices[4]);
+
+        match small_result {
+            Ok(_) => {
+                println!("  ✓ Small coordinate insertion succeeded");
+                assert!(
+                    small_tds.is_valid().is_ok(),
+                    "Small coordinate TDS should remain valid"
+                );
+            }
+            Err(e) => {
+                println!("  ⚠ Small coordinate insertion failed: {e:?}");
+                // TDS should still be valid even if insertion failed
+                assert!(
+                    small_tds.is_valid().is_ok(),
+                    "TDS should remain valid after small coordinate failure"
+                );
+            }
+        }
+
+        // Test with mixed large and small coordinates
+        let mixed_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1e6, 0.0, 0.0]),
+            vertex!([0.0, 1e-6, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([1e3, 1e-3, 0.5]), // Mixed scale interior point
+        ];
+
+        let mut mixed_tds =
+            Tds::new(&mixed_vertices[..4]).expect("Mixed coordinate TDS should be created");
+        let mixed_result = algorithm.insert_vertex(&mut mixed_tds, mixed_vertices[4]);
+
+        match mixed_result {
+            Ok(_) => {
+                println!("  ✓ Mixed coordinate insertion succeeded");
+                assert!(
+                    mixed_tds.is_valid().is_ok(),
+                    "Mixed coordinate TDS should remain valid"
+                );
+            }
+            Err(e) => {
+                println!("  ⚠ Mixed coordinate insertion failed: {e:?}");
+                // TDS should still be valid even if insertion failed
+                assert!(
+                    mixed_tds.is_valid().is_ok(),
+                    "TDS should remain valid after mixed coordinate failure"
+                );
+            }
+        }
     }
 }

@@ -100,6 +100,18 @@ pub enum FacetError {
     /// Facet was not found in the triangulation.
     #[error("Facet not found in triangulation")]
     FacetNotFoundInTriangulation,
+    /// Facet key was not found in the cache during lookup.
+    #[error(
+        "Facet key {facet_key:016x} not found in cache with {cache_size} entries - possible invariant violation or key derivation mismatch. Vertex UUIDs: {vertex_uuids:?}"
+    )]
+    FacetKeyNotFoundInCache {
+        /// The facet key that was not found.
+        facet_key: u64,
+        /// The number of entries in the cache.
+        cache_size: usize,
+        /// The vertex UUIDs that generated the facet key.
+        vertex_uuids: Vec<uuid::Uuid>,
+    },
     /// Expected exactly one adjacent cell for boundary facet.
     #[error("Expected exactly 1 adjacent cell for boundary facet, found {found}")]
     InvalidAdjacentCellCount {

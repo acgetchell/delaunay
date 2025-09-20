@@ -17,35 +17,33 @@ use delaunay::core::{
 };
 use delaunay::vertex;
 
-/// Helper function to count boundary facets (shared by 1 cell)
-fn count_boundary_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
-    tds.build_facet_to_cells_hashmap()
-        .values()
-        .filter(|cells| cells.len() == 1)
-        .count()
-}
+/// Helper function to analyze facet sharing from a single map computation
+/// Returns (`boundary_count`, `internal_count`, `invalid_count`)
+fn analyze_facet_sharing(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> (usize, usize, usize) {
+    let facet_to_cells = tds
+        .build_facet_to_cells_map()
+        .expect("facet map should build successfully in integration test");
 
-/// Helper function to count internal facets (shared by 2 cells)
-fn count_internal_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
-    tds.build_facet_to_cells_hashmap()
-        .values()
-        .filter(|cells| cells.len() == 2)
-        .count()
-}
+    let mut boundary_count = 0;
+    let mut internal_count = 0;
+    let mut invalid_count = 0;
 
-/// Helper function to count invalid facets (shared by 3+ cells)
-fn count_invalid_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
-    tds.build_facet_to_cells_hashmap()
-        .values()
-        .filter(|cells| cells.len() > 2)
-        .count()
+    for cells in facet_to_cells.values() {
+        match cells.len() {
+            1 => boundary_count += 1,
+            2 => internal_count += 1,
+            n if n > 2 => invalid_count += 1,
+            _ => {} // 0 cells should not happen in a valid triangulation
+        }
+    }
+
+    (boundary_count, internal_count, invalid_count)
 }
 
 /// Helper function to analyze triangulation state
 fn analyze_triangulation_state(tds: &Tds<f64, Option<()>, Option<()>, 3>, label: &str) {
-    let boundary_count = count_boundary_facets(tds);
-    let internal_count = count_internal_facets(tds);
-    let invalid_count = count_invalid_facets(tds);
+    // Use the optimized function that computes the map once
+    let (boundary_count, internal_count, invalid_count) = analyze_facet_sharing(tds);
 
     println!(
         "  {} - Vertices: {}, Cells: {}",
@@ -80,7 +78,6 @@ fn test_basic_hull_extension_execution() {
         "Initial tetrahedron should be valid"
     );
 
-    let _initial_boundary_count = count_boundary_facets(&tds);
     let initial_cell_count = tds.number_of_cells();
 
     // Add a vertex that should trigger hull extension
@@ -125,9 +122,9 @@ fn test_basic_hull_extension_execution() {
             );
 
             // Verify no invalid facet sharing
-            let invalid_facets = count_invalid_facets(&tds);
+            let (_, _, invalid_count) = analyze_facet_sharing(&tds);
             assert_eq!(
-                invalid_facets, 0,
+                invalid_count, 0,
                 "Should have no invalid facets after hull extension"
             );
 
@@ -206,9 +203,9 @@ fn test_multiple_hull_extensions() {
                 );
 
                 // Verify no invalid facet sharing
-                let invalid_facets = count_invalid_facets(&tds);
+                let (_, _, invalid_count) = analyze_facet_sharing(&tds);
                 assert_eq!(
-                    invalid_facets,
+                    invalid_count,
                     0,
                     "Should have no invalid facets after hull extension {}",
                     i + 1
@@ -341,9 +338,9 @@ fn test_mixed_insertion_strategies() {
                 );
 
                 // Verify no invalid facet sharing
-                let invalid_facets = count_invalid_facets(&tds);
+                let (_, _, invalid_count) = analyze_facet_sharing(&tds);
                 assert_eq!(
-                    invalid_facets,
+                    invalid_count,
                     0,
                     "Should have no invalid facets after insertion {}",
                     i + 1
@@ -482,9 +479,8 @@ fn test_triangulation_validity_after_hull_extensions() {
         "Initial tetrahedron should be valid"
     );
 
-    let initial_boundary_count = count_boundary_facets(&tds);
-    let initial_internal_count = count_internal_facets(&tds);
-    let initial_invalid_count = count_invalid_facets(&tds);
+    let (initial_boundary_count, initial_internal_count, initial_invalid_count) =
+        analyze_facet_sharing(&tds);
 
     println!("Initial state:");
     println!("  Boundary facets: {initial_boundary_count}");
@@ -537,9 +533,7 @@ fn test_triangulation_validity_after_hull_extensions() {
                 }
 
                 // Check facet sharing invariants
-                let boundary_count = count_boundary_facets(&tds);
-                let internal_count = count_internal_facets(&tds);
-                let invalid_count = count_invalid_facets(&tds);
+                let (boundary_count, internal_count, invalid_count) = analyze_facet_sharing(&tds);
 
                 println!("  Post-insertion state:");
                 println!("    Boundary facets: {boundary_count}");
@@ -582,9 +576,8 @@ fn test_triangulation_validity_after_hull_extensions() {
         Ok(()) => {
             println!("✅ Final triangulation is valid");
 
-            let final_boundary_count = count_boundary_facets(&tds);
-            let final_internal_count = count_internal_facets(&tds);
-            let final_invalid_count = count_invalid_facets(&tds);
+            let (final_boundary_count, final_internal_count, final_invalid_count) =
+                analyze_facet_sharing(&tds);
 
             println!("Final statistics:");
             println!("  Total vertices: {}", tds.number_of_vertices());

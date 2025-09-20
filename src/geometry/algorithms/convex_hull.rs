@@ -3,8 +3,9 @@ use crate::core::facet::{Facet, FacetError};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::traits::facet_cache::FacetCacheProvider;
-use crate::core::triangulation_data_structure::Tds;
+use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
 use crate::core::util::derive_facet_key_from_vertices;
+use crate::core::vertex::Vertex;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::simplex_orientation;
 use crate::geometry::traits::coordinate::{
@@ -25,6 +26,9 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 use thiserror::Error;
+
+// Import Orientation for predicates
+use crate::geometry::predicates::Orientation;
 
 // =============================================================================
 // ERROR TYPES
@@ -57,8 +61,8 @@ pub enum ConvexHullConstructionError {
     /// Failed to extract boundary facets from the triangulation.
     #[error("Failed to extract boundary facets from triangulation: {source}")]
     BoundaryFacetExtractionFailed {
-        /// The underlying facet error that caused the failure.
-        source: FacetError,
+        /// The underlying validation error that caused the failure.
+        source: TriangulationValidationError,
     },
     /// Failed to check facet visibility from a point.
     #[error("Failed to check facet visibility from point: {source}")]
@@ -93,6 +97,20 @@ pub enum ConvexHullConstructionError {
     /// Coordinate conversion error occurred during geometric computations.
     #[error("Coordinate conversion error: {0}")]
     CoordinateConversion(#[from] CoordinateConversionError),
+    /// Failed to build facet cache during convex hull operations.
+    #[error("Failed to build facet cache: {source}")]
+    FacetCacheBuildFailed {
+        /// The underlying triangulation validation error.
+        #[source]
+        source: TriangulationValidationError,
+    },
+    /// Failed to resolve adjacent cell vertices for visibility testing.
+    #[error("Failed to resolve adjacent cell: {source}")]
+    AdjacentCellResolutionFailed {
+        /// The underlying triangulation validation error.
+        #[source]
+        source: TriangulationValidationError,
+    },
 }
 
 // =============================================================================
@@ -303,20 +321,17 @@ where
     ///
     /// `true` if the facet is visible from the point, `false` otherwise
     ///
-    /// # Panics
+    /// # Note
     ///
-    /// Panics if the cached facet-to-cells mapping is unexpectedly `None` when it should exist.
-    /// This indicates an internal error in cache management.
+    /// This method uses cached facet-to-cells mapping for optimal performance. The cache is
+    /// automatically built if it doesn't exist or has been invalidated.
     ///
     /// # Errors
     ///
-    /// Returns a [`FacetError`] if:
-    /// - The facet doesn't have the expected number of vertices ([`FacetError::InsufficientVertices`])
-    /// - The facet is not found in the triangulation ([`FacetError::FacetNotFoundInTriangulation`])
-    /// - The facet has an invalid number of adjacent cells ([`FacetError::InvalidAdjacentCellCount`])
-    /// - The adjacent cell cannot be found ([`FacetError::AdjacentCellNotFound`])
-    /// - The inside vertex cannot be found ([`FacetError::InsideVertexNotFound`])
-    /// - Geometric predicates fail ([`FacetError::OrientationComputationFailed`])
+    /// Returns a [`ConvexHullConstructionError`] if:
+    /// - The facet cache cannot be built ([`ConvexHullConstructionError::FacetCacheBuildFailed`])
+    /// - Adjacent cell resolution fails ([`ConvexHullConstructionError::AdjacentCellResolutionFailed`])
+    /// - Facet visibility check fails ([`ConvexHullConstructionError::VisibilityCheckFailed`])
     ///
     /// # Examples
     ///
@@ -359,63 +374,93 @@ where
         facet: &Facet<T, U, V, D>,
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<bool, FacetError> {
-        use crate::geometry::predicates::Orientation;
-
+    ) -> Result<bool, ConvexHullConstructionError> {
         // Get the vertices that make up this facet
         let facet_vertices = facet.vertices();
 
         if facet_vertices.len() != D {
-            return Err(FacetError::InsufficientVertices {
-                expected: D,
-                actual: facet_vertices.len(),
-                dimension: D,
+            return Err(ConvexHullConstructionError::VisibilityCheckFailed {
+                source: FacetError::InsufficientVertices {
+                    expected: D,
+                    actual: facet_vertices.len(),
+                    dimension: D,
+                },
             });
         }
 
         // Get or build the cached facet-to-cells mapping
-        #[allow(deprecated)] // TODO: Migrate to try_get_or_build_facet_cache in Phase 2
-        let facet_to_cells_arc = self.get_or_build_facet_cache(tds);
+        // Use strict error handling for facet cache access
+        let facet_to_cells_arc = self
+            .try_get_or_build_facet_cache(tds)
+            .map_err(|source| ConvexHullConstructionError::FacetCacheBuildFailed { source })?;
         let facet_to_cells = facet_to_cells_arc.as_ref();
 
         // Derive the facet key from vertices using the utility function
-        let facet_key = derive_facet_key_from_vertices(&facet_vertices, tds)?;
+        let facet_key = derive_facet_key_from_vertices(&facet_vertices, tds)
+            .map_err(|source| ConvexHullConstructionError::VisibilityCheckFailed { source })?;
 
-        let adjacent_cells = facet_to_cells
-            .get(&facet_key)
-            .ok_or(FacetError::FacetNotFoundInTriangulation)?;
+        let adjacent_cells = facet_to_cells.get(&facet_key).ok_or_else(|| {
+            // Collect vertex UUIDs for enhanced error reporting
+            let vertex_uuids: Vec<uuid::Uuid> = facet_vertices.iter().map(Vertex::uuid).collect();
+            ConvexHullConstructionError::VisibilityCheckFailed {
+                source: FacetError::FacetKeyNotFoundInCache {
+                    facet_key,
+                    cache_size: facet_to_cells.len(),
+                    vertex_uuids,
+                },
+            }
+        })?;
 
         if adjacent_cells.len() != 1 {
-            return Err(FacetError::InvalidAdjacentCellCount {
-                found: adjacent_cells.len(),
+            return Err(ConvexHullConstructionError::VisibilityCheckFailed {
+                source: FacetError::InvalidAdjacentCellCount {
+                    found: adjacent_cells.len(),
+                },
             });
         }
 
         let (cell_key, _facet_index) = adjacent_cells[0];
-        let adjacent_cell = tds
-            .cells()
-            .get(cell_key)
-            .ok_or(FacetError::AdjacentCellNotFound)?;
 
         // Find the vertex in the adjacent cell that is NOT part of the facet
         // This is the "opposite" or "inside" vertex
-        let cell_vertices = adjacent_cell.vertices();
-        let mut inside_vertex = None;
+        // Optimization: Use vertex keys instead of UUID comparison for better performance
+        let cell_vertex_keys = tds.get_cell_vertex_keys(cell_key).map_err(|source| {
+            ConvexHullConstructionError::AdjacentCellResolutionFailed { source }
+        })?;
 
-        // TODO(optimization): Consider using vertex keys instead of UUID comparison in this hot path.
-        // This would require storing vertex keys in Facet or passing them separately.
-        // Current UUID comparison adds overhead that could be avoided with direct key comparison.
-        for cell_vertex in cell_vertices {
-            let is_in_facet = facet_vertices
-                .iter()
-                .any(|fv| fv.uuid() == cell_vertex.uuid());
-            if !is_in_facet {
-                inside_vertex = Some(cell_vertex);
-                break;
-            }
-        }
+        // Get vertex keys for facet vertices (convert UUIDs to keys once)
+        let facet_vertex_keys: Result<Vec<_>, _> = facet_vertices
+            .iter()
+            .map(|v| {
+                tds.vertex_key_from_uuid(&v.uuid()).ok_or(
+                    ConvexHullConstructionError::VisibilityCheckFailed {
+                        source: FacetError::InsideVertexNotFound,
+                    },
+                )
+            })
+            .collect();
+        let facet_vertex_keys = facet_vertex_keys?;
 
-        let inside_vertex = inside_vertex.ok_or(FacetError::InsideVertexNotFound)?;
+        // Find the cell vertex key that's not in the facet
+        // Optimized: Use a sorted merge-like approach to avoid O(D²) contains() calls
+        // Since both lists are small (D and D+1 elements), we can sort and scan efficiently
+        let mut sorted_facet_keys = facet_vertex_keys;
+        sorted_facet_keys.sort_unstable();
+
+        let inside_vertex_key = cell_vertex_keys
+            .iter()
+            .find(|&&cell_key| sorted_facet_keys.binary_search(&cell_key).is_err())
+            .copied()
+            .ok_or(ConvexHullConstructionError::VisibilityCheckFailed {
+                source: FacetError::InsideVertexNotFound,
+            })?;
+
+        // Get the actual vertex from the key
+        let inside_vertex = tds.get_vertex_by_key(inside_vertex_key).ok_or(
+            ConvexHullConstructionError::VisibilityCheckFailed {
+                source: FacetError::InsideVertexNotFound,
+            },
+        )?;
 
         // Create test simplices to compare orientations
         let facet_points: Vec<Point<T, D>> = facet_vertices.iter().map(|v| *v.point()).collect();
@@ -430,13 +475,17 @@ where
 
         // Get orientations using geometric predicates
         let orientation_inside = simplex_orientation(&simplex_with_inside).map_err(|e| {
-            FacetError::OrientationComputationFailed {
-                details: format!("Failed to compute orientation with inside vertex: {e}"),
+            ConvexHullConstructionError::VisibilityCheckFailed {
+                source: FacetError::OrientationComputationFailed {
+                    details: format!("Failed to compute orientation with inside vertex: {e}"),
+                },
             }
         })?;
         let orientation_test = simplex_orientation(&simplex_with_test).map_err(|e| {
-            FacetError::OrientationComputationFailed {
-                details: format!("Failed to compute orientation with test point: {e}"),
+            ConvexHullConstructionError::VisibilityCheckFailed {
+                source: FacetError::OrientationComputationFailed {
+                    details: format!("Failed to compute orientation with test point: {e}"),
+                },
             }
         })?;
 
@@ -446,11 +495,7 @@ where
             | (Orientation::POSITIVE, Orientation::NEGATIVE) => Ok(true),
             (Orientation::DEGENERATE, _) | (_, Orientation::DEGENERATE) => {
                 // Degenerate case - fall back to distance heuristic
-                Self::fallback_visibility_test(facet, point).map_err(|e| {
-                    FacetError::OrientationComputationFailed {
-                        details: format!("Fallback visibility test failed: {e}"),
-                    }
-                })
+                Self::fallback_visibility_test(facet, point)
             }
             _ => Ok(false), // Same orientation = same side = not visible
         }
@@ -562,7 +607,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`FacetError`] if the visibility test fails for any facet.
+    /// Returns a [`ConvexHullConstructionError`] if the visibility test fails for any facet.
     ///
     /// # Examples
     ///
@@ -598,7 +643,7 @@ where
         &self,
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<Vec<usize>, FacetError> {
+    ) -> Result<Vec<usize>, ConvexHullConstructionError> {
         let mut visible_facets = Vec::new();
 
         for (index, facet) in self.hull_facets.iter().enumerate() {
@@ -665,9 +710,7 @@ where
     where
         T: PartialOrd + Copy,
     {
-        let visible_facets = self
-            .find_visible_facets(point, tds)
-            .map_err(|source| ConvexHullConstructionError::VisibilityCheckFailed { source })?;
+        let visible_facets = self.find_visible_facets(point, tds)?;
 
         if visible_facets.is_empty() {
             return Ok(None);
@@ -733,7 +776,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`FacetError`] if the visibility test fails for any facet.
+    /// Returns a [`ConvexHullConstructionError`] if the visibility test fails for any facet.
     ///
     /// # Examples
     ///
@@ -767,7 +810,7 @@ where
         &self,
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<bool, FacetError> {
+    ) -> Result<bool, ConvexHullConstructionError> {
         let visible_facets = self.find_visible_facets(point, tds)?;
         Ok(!visible_facets.is_empty())
     }
@@ -1145,8 +1188,10 @@ pub type ConvexHull4D<T, U, V> = ConvexHull<T, U, V, 4>;
 mod tests {
     use super::*;
     use crate::core::traits::facet_cache::FacetCacheProvider;
-    use crate::core::triangulation_data_structure::Tds;
+    use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
     use crate::vertex;
+    use std::error::Error;
+    use std::thread;
 
     #[test]
     fn test_convex_hull_2d_creation() {
@@ -3335,8 +3380,6 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     #[test]
     fn test_cache_invalidation_behavior() {
-        use std::sync::atomic::Ordering;
-
         println!("Testing cache invalidation behavior in ConvexHull");
 
         // Create initial triangulation
@@ -3352,7 +3395,7 @@ mod tests {
 
         // Get initial generation values
         let initial_tds_generation = tds.generation();
-        let initial_hull_generation = hull.cached_generation.load(Ordering::Relaxed);
+        let initial_hull_generation = hull.cached_generation.load(Ordering::Acquire);
 
         println!("  Initial TDS generation: {initial_tds_generation}");
         println!("  Initial hull cached generation: {initial_hull_generation}");
@@ -3377,7 +3420,7 @@ mod tests {
 
         // Cache should now be built, generations should still match
         let post_cache_tds_gen = tds.generation();
-        let post_cache_hull_gen = hull.cached_generation.load(Ordering::Relaxed);
+        let post_cache_hull_gen = hull.cached_generation.load(Ordering::Acquire);
 
         println!(
             "  After cache build - TDS gen: {post_cache_tds_gen}, Hull gen: {post_cache_hull_gen}"
@@ -3399,7 +3442,7 @@ mod tests {
         // Test TDS modification by adding a new vertex
         println!("  Testing cache invalidation with TDS modification...");
         let old_generation = tds.generation();
-        let stale_hull_gen = hull.cached_generation.load(Ordering::Relaxed);
+        let stale_hull_gen = hull.cached_generation.load(Ordering::Acquire);
 
         // Add a new vertex to the TDS - this will bump the generation
         let new_vertex = vertex!([0.5, 0.5, 0.5]); // Interior point
@@ -3432,7 +3475,7 @@ mod tests {
         );
 
         // After the visibility test, the hull's generation should be updated
-        let updated_hull_gen = hull.cached_generation.load(Ordering::Relaxed);
+        let updated_hull_gen = hull.cached_generation.load(Ordering::Acquire);
         println!("  Hull generation after cache rebuild: {updated_hull_gen}");
 
         assert_eq!(
@@ -3446,7 +3489,7 @@ mod tests {
         println!("  Testing manual cache invalidation...");
 
         // Store current generation
-        let pre_invalidation_gen = hull.cached_generation.load(Ordering::Relaxed);
+        let pre_invalidation_gen = hull.cached_generation.load(Ordering::Acquire);
 
         // Manually invalidate cache
         hull.invalidate_cache();
@@ -3459,7 +3502,7 @@ mod tests {
         );
 
         // Check that generation was reset to 0
-        let post_invalidation_gen = hull.cached_generation.load(Ordering::Relaxed);
+        let post_invalidation_gen = hull.cached_generation.load(Ordering::Acquire);
         assert_eq!(
             post_invalidation_gen, 0,
             "Generation should be reset to 0 after manual invalidation"
@@ -3483,7 +3526,7 @@ mod tests {
         );
 
         // Generation should be updated to current TDS generation
-        let final_hull_gen = hull.cached_generation.load(Ordering::Relaxed);
+        let final_hull_gen = hull.cached_generation.load(Ordering::Acquire);
         let final_tds_gen = tds.generation();
         assert_eq!(
             final_hull_gen, final_tds_gen,
@@ -3610,7 +3653,7 @@ mod tests {
         );
 
         // Verify generation was updated
-        let updated_generation = hull.cached_generation.load(Ordering::Relaxed);
+        let updated_generation = hull.cached_generation.load(Ordering::Acquire);
         assert_eq!(
             updated_generation, new_generation,
             "Hull generation should match TDS generation after rebuild"
@@ -3690,5 +3733,605 @@ mod tests {
 
         println!("  Visibility result: {}", visibility_result.unwrap());
         println!("  ✓ Integration between helper methods working correctly");
+    }
+
+    #[test]
+    fn test_facet_cache_build_failed_error() {
+        println!("Testing FacetCacheBuildFailed error path");
+
+        // This test is challenging because we need to trigger a TriangulationValidationError
+        // during facet cache building. In practice, this is rare with valid TDS objects.
+        // We'll test the error propagation pattern by verifying the error types are properly
+        // connected and that the method signature returns the right error type.
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Test that normal cache building succeeds and returns the right error type
+        let test_facet = &hull.hull_facets[0];
+        let test_point = Point::new([2.0, 2.0, 2.0]);
+
+        // Call the method that should propagate TriangulationValidationError as FacetCacheBuildFailed
+        let result = hull.is_facet_visible_from_point(test_facet, &test_point, &tds);
+
+        // In the normal case, this should succeed
+        assert!(
+            result.is_ok(),
+            "Normal visibility test should succeed, got error: {:?}",
+            result.err()
+        );
+
+        // Verify that the method returns ConvexHullConstructionError (not FacetError)
+        // This ensures our error hierarchy changes are properly implemented
+        match result {
+            Ok(_) => println!("  ✓ Normal case succeeded as expected"),
+            Err(e) => {
+                // If there is an error, verify it's the right type
+                println!("  Error type verification: {e:?}");
+                // The fact that it compiles with ConvexHullConstructionError shows the type is correct
+            }
+        }
+
+        // Test that the error propagation chain is intact by using a method that
+        // calls try_get_or_build_facet_cache internally
+        let visibility_result = hull.find_visible_facets(&test_point, &tds);
+        assert!(
+            visibility_result.is_ok(),
+            "find_visible_facets should succeed in normal case"
+        );
+
+        println!("  ✓ FacetCacheBuildFailed error path properly configured");
+        println!(
+            "  Note: Actual cache build failure requires corrupted TDS, which is hard to create in tests"
+        );
+    }
+
+    #[test]
+    fn test_nearest_facet_equidistant_cases() {
+        println!("Testing find_nearest_visible_facet with equidistant facets");
+
+        // Create a symmetric triangulation where multiple facets might be equidistant
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]), // Origin
+            vertex!([1.0, 0.0, 0.0]), // X axis
+            vertex!([0.0, 1.0, 0.0]), // Y axis
+            vertex!([0.0, 0.0, 1.0]), // Z axis
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        println!("  Testing with point equidistant from multiple facets...");
+
+        // Point at (1,1,1) should be roughly equidistant from all facets
+        let equidistant_point = Point::new([1.0, 1.0, 1.0]);
+        let nearest_result = hull.find_nearest_visible_facet(&equidistant_point, &tds);
+
+        match nearest_result {
+            Ok(Some(facet_index)) => {
+                assert!(
+                    facet_index < hull.facet_count(),
+                    "Returned facet index should be valid"
+                );
+                println!("  ✓ Found nearest facet at index: {facet_index}");
+
+                // Verify the facet is actually visible
+                let selected_facet = &hull.hull_facets[facet_index];
+                let is_visible =
+                    hull.is_facet_visible_from_point(selected_facet, &equidistant_point, &tds);
+                assert!(
+                    is_visible.unwrap_or(false),
+                    "Selected nearest facet should be visible from the test point"
+                );
+            }
+            Ok(None) => {
+                println!("  No visible facets found (point might be inside)");
+                // Verify this is correct by checking if point is actually inside
+                let is_outside = hull.is_point_outside(&equidistant_point, &tds).unwrap();
+                assert!(
+                    !is_outside,
+                    "If no facets are visible, point should be inside the hull"
+                );
+            }
+            Err(e) => {
+                panic!("find_nearest_visible_facet failed with error: {e:?}");
+            }
+        }
+
+        println!("  Testing with point clearly outside...");
+
+        // Point clearly outside should always find a nearest facet
+        let far_point = Point::new([10.0, 10.0, 10.0]);
+        let far_result = hull.find_nearest_visible_facet(&far_point, &tds);
+
+        match far_result {
+            Ok(Some(facet_index)) => {
+                assert!(facet_index < hull.facet_count());
+                println!("  ✓ Found nearest facet for far point at index: {facet_index}");
+            }
+            Ok(None) => {
+                panic!("Far outside point should always see some facets");
+            }
+            Err(e) => {
+                panic!("find_nearest_visible_facet failed for far point: {e:?}");
+            }
+        }
+
+        println!("  Testing with point clearly inside...");
+
+        // Point clearly inside should see no facets
+        let inside_point = Point::new([0.1, 0.1, 0.1]);
+        let inside_result = hull.find_nearest_visible_facet(&inside_point, &tds);
+
+        match inside_result {
+            Ok(None) => {
+                println!("  ✓ Inside point correctly sees no facets");
+            }
+            Ok(Some(facet_index)) => {
+                // This might happen due to numerical precision - verify it's reasonable
+                println!(
+                    "  Inside point unexpectedly sees facet {facet_index} (may be due to precision)"
+                );
+                assert!(facet_index < hull.facet_count());
+            }
+            Err(e) => {
+                panic!("find_nearest_visible_facet failed for inside point: {e:?}");
+            }
+        }
+
+        println!("  ✓ Equidistant facet selection working correctly");
+    }
+
+    #[test]
+    fn test_concurrent_cache_access_patterns() {
+        println!("Testing concurrent cache access patterns");
+
+        // Create a triangulation
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Share the hull and TDS across threads
+        let hull = Arc::new(hull);
+        let tds = Arc::new(tds);
+
+        println!("  Testing concurrent cache building...");
+
+        // Spawn multiple threads that will try to build/access the cache concurrently
+        let mut handles = vec![];
+
+        for thread_id in 0..4 {
+            let hull_clone = Arc::clone(&hull);
+            let tds_clone = Arc::clone(&tds);
+
+            let handle = thread::spawn(move || {
+                // Each thread tries to use methods that require the cache
+                let thread_offset: f64 = NumCast::from(thread_id).unwrap();
+                let test_point = Point::new([2.0 + thread_offset, 2.0, 2.0]);
+
+                // This will internally call try_get_or_build_facet_cache
+                let visible_facets = hull_clone.find_visible_facets(&test_point, &tds_clone)?;
+
+                // This should also work
+                let is_outside = hull_clone.is_point_outside(&test_point, &tds_clone)?;
+
+                // Return some data to verify thread completed successfully
+                Ok::<_, ConvexHullConstructionError>((visible_facets.len(), is_outside, thread_id))
+            });
+
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete and collect results
+        let mut results = Vec::new();
+        for handle in handles {
+            let result = handle.join().expect("Thread should not panic");
+            match result {
+                Ok((facet_count, is_outside, thread_id)) => {
+                    println!(
+                        "    Thread {thread_id}: {facet_count} visible facets, outside: {is_outside}"
+                    );
+                    results.push((facet_count, is_outside, thread_id));
+                }
+                Err(e) => {
+                    panic!("Thread failed with error: {e:?}");
+                }
+            }
+        }
+
+        // Verify all threads got reasonable results
+        assert_eq!(results.len(), 4, "All threads should complete successfully");
+
+        // All threads should agree that outside points are outside
+        for (facet_count, is_outside, thread_id) in &results {
+            assert!(
+                *is_outside,
+                "Thread {thread_id} should detect point as outside"
+            );
+            assert!(
+                *facet_count > 0,
+                "Thread {thread_id} should see some visible facets"
+            );
+        }
+
+        println!("  Testing cache consistency after concurrent access...");
+
+        // Verify cache is in a consistent state after concurrent access
+        let cache = hull.try_get_or_build_facet_cache(&tds).unwrap();
+        assert!(
+            !cache.is_empty(),
+            "Cache should be populated after concurrent access"
+        );
+
+        // Test a few operations to make sure everything still works
+        let test_point = Point::new([1.5, 1.5, 1.5]);
+        let final_result = hull.find_visible_facets(&test_point, &tds);
+        assert!(
+            final_result.is_ok(),
+            "Operations should work normally after concurrent access"
+        );
+
+        println!("  ✓ Concurrent cache access working correctly");
+        println!("  Note: This test verifies basic thread safety, not high-contention scenarios");
+    }
+
+    #[test]
+    fn test_invalidate_cache_behavior() {
+        println!("Testing cache invalidation behavior");
+
+        // Create a triangulation
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Build initial cache
+        println!("  Building initial cache...");
+        let initial_cache = hull.try_get_or_build_facet_cache(&tds).unwrap();
+        assert!(
+            !initial_cache.is_empty(),
+            "Initial cache should not be empty"
+        );
+
+        // Verify cache is stored
+        let stored_cache = hull.facet_to_cells_cache.load();
+        assert!(stored_cache.is_some(), "Cache should be stored");
+
+        // Check initial generation
+        let initial_gen = hull.cached_generation.load(Ordering::Acquire);
+        let expected_gen = tds.generation();
+        assert_eq!(
+            initial_gen, expected_gen,
+            "Initial cached generation should match TDS generation"
+        );
+
+        // Manually invalidate cache
+        println!("  Manually invalidating cache...");
+        hull.invalidate_cache();
+
+        // Verify cache is cleared
+        let cleared_cache = hull.facet_to_cells_cache.load();
+        assert!(
+            cleared_cache.is_none(),
+            "Cache should be cleared after invalidation"
+        );
+
+        // Verify generation is reset
+        let reset_gen = hull.cached_generation.load(Ordering::Acquire);
+        assert_eq!(
+            reset_gen, 0,
+            "Generation should be reset to 0 after invalidation"
+        );
+
+        // Rebuild cache after invalidation
+        println!("  Rebuilding cache after invalidation...");
+        let rebuilt_cache = hull.try_get_or_build_facet_cache(&tds).unwrap();
+        assert!(
+            !rebuilt_cache.is_empty(),
+            "Rebuilt cache should not be empty"
+        );
+
+        // Verify cache is stored again
+        let restored_cache = hull.facet_to_cells_cache.load();
+        assert!(
+            restored_cache.is_some(),
+            "Cache should be restored after rebuild"
+        );
+
+        // Generation should be updated to TDS generation
+        let final_gen = hull.cached_generation.load(Ordering::Acquire);
+        let tds_gen = tds.generation();
+        assert_eq!(
+            final_gen, tds_gen,
+            "Generation should match TDS generation after rebuild"
+        );
+
+        // Verify functionality still works after invalidation/rebuild cycle
+        println!("  Testing functionality after invalidation/rebuild...");
+        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let visible_facets = hull.find_visible_facets(&test_point, &tds);
+        assert!(
+            visible_facets.is_ok(),
+            "Visibility testing should work after invalidation/rebuild"
+        );
+
+        let facets_found = visible_facets.unwrap();
+        assert!(
+            !facets_found.is_empty(),
+            "Outside point should see visible facets after rebuild"
+        );
+
+        println!("  ✓ Cache invalidation and rebuild working correctly");
+    }
+
+    #[test]
+    fn test_error_propagation_chain() {
+        println!("Testing complete error propagation chain");
+
+        // Create a valid setup
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        println!("  Testing error types are properly propagated...");
+
+        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_facet = &hull.hull_facets[0];
+
+        // Test is_facet_visible_from_point returns ConvexHullConstructionError
+        let visibility_result = hull.is_facet_visible_from_point(test_facet, &test_point, &tds);
+        match visibility_result {
+            Ok(visible) => {
+                println!("    is_facet_visible_from_point: Ok({visible})");
+            }
+            Err(e) => {
+                println!("    is_facet_visible_from_point error: {e:?}");
+                // Verify it's the right error type by matching on variants
+                match e {
+                    ConvexHullConstructionError::FacetCacheBuildFailed { source: _ } => {
+                        println!("      ✓ FacetCacheBuildFailed variant present");
+                    }
+                    ConvexHullConstructionError::VisibilityCheckFailed { source: _ } => {
+                        println!("      ✓ VisibilityCheckFailed variant present");
+                    }
+                    _ => {
+                        println!("      Unexpected error variant: {e:?}");
+                    }
+                }
+            }
+        }
+
+        // Test find_visible_facets also returns ConvexHullConstructionError
+        let facets_result = hull.find_visible_facets(&test_point, &tds);
+        assert!(
+            facets_result.is_ok(),
+            "find_visible_facets should succeed in normal case"
+        );
+
+        // Test is_point_outside also returns ConvexHullConstructionError
+        let outside_result = hull.is_point_outside(&test_point, &tds);
+        assert!(
+            outside_result.is_ok(),
+            "is_point_outside should succeed in normal case"
+        );
+
+        // Test find_nearest_visible_facet returns ConvexHullConstructionError
+        let nearest_result = hull.find_nearest_visible_facet(&test_point, &tds);
+        assert!(
+            nearest_result.is_ok(),
+            "find_nearest_visible_facet should succeed in normal case"
+        );
+
+        println!("  ✓ Error propagation chain correctly implemented");
+        println!("  ✓ All methods return ConvexHullConstructionError as expected");
+    }
+
+    #[test]
+    fn test_adjacent_cell_resolution_failed_error() {
+        println!("Testing AdjacentCellResolutionFailed error variant");
+
+        // Create a simple triangulation to test with
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Test normal case to verify the error type is available
+        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_facet = &hull.hull_facets[0];
+
+        // This should succeed in normal cases
+        let visibility_result = hull.is_facet_visible_from_point(test_facet, &test_point, &tds);
+        assert!(
+            visibility_result.is_ok(),
+            "Visibility check should succeed with valid TDS"
+        );
+
+        // Verify that the AdjacentCellResolutionFailed error variant exists
+        // by creating a synthetic error (we can't easily trigger the actual error path
+        // with a valid TDS, but we can verify the error type is properly defined)
+        let synthetic_error = ConvexHullConstructionError::AdjacentCellResolutionFailed {
+            source: TriangulationValidationError::InconsistentDataStructure {
+                message: "Test error for adjacent cell resolution".to_string(),
+            },
+        };
+
+        // Verify the error can be created and displayed properly
+        let error_message = format!("{synthetic_error}");
+        assert!(
+            error_message.contains("Failed to resolve adjacent cell"),
+            "Error message should contain expected text: {error_message}"
+        );
+
+        // Verify the source error is accessible
+        let source = synthetic_error.source();
+        assert!(
+            source.is_some(),
+            "AdjacentCellResolutionFailed should have a source error"
+        );
+
+        println!("  ✓ AdjacentCellResolutionFailed error variant properly implemented");
+        println!("  ✓ Error preserves underlying TriangulationValidationError as source");
+        println!("  ✓ Error display format correct: {error_message}");
+    }
+
+    #[test]
+    fn test_enhanced_facet_key_error_information() {
+        println!("Testing enhanced facet key error information");
+
+        // Create example UUIDs for testing
+        let uuid1 = uuid::Uuid::new_v4();
+        let uuid2 = uuid::Uuid::new_v4();
+        let uuid3 = uuid::Uuid::new_v4();
+        let vertex_uuids = vec![uuid1, uuid2, uuid3];
+
+        // Create the enhanced error with detailed information
+        let facet_key = 0x1234_5678_90ab_cdef_u64;
+        let cache_size = 42;
+        let enhanced_error = FacetError::FacetKeyNotFoundInCache {
+            facet_key,
+            cache_size,
+            vertex_uuids: vertex_uuids.clone(),
+        };
+
+        println!("  Testing error message format...");
+        let error_message = format!("{enhanced_error}");
+
+        // Verify the error message contains expected components
+        assert!(
+            error_message.contains(&format!("{facet_key:016x}")),
+            "Error message should contain facet key in hex format: {error_message}"
+        );
+        assert!(
+            error_message.contains(&cache_size.to_string()),
+            "Error message should contain cache size: {error_message}"
+        );
+        assert!(
+            error_message.contains("invariant violation"),
+            "Error message should mention invariant violation: {error_message}"
+        );
+        assert!(
+            error_message.contains("key derivation mismatch"),
+            "Error message should mention key derivation mismatch: {error_message}"
+        );
+
+        println!("    Enhanced error message: {error_message}");
+
+        println!("  Testing error debug format...");
+        let debug_message = format!("{enhanced_error:?}");
+        assert!(
+            debug_message.contains("FacetKeyNotFoundInCache"),
+            "Debug format should contain variant name: {debug_message}"
+        );
+
+        // Verify UUIDs are included (check for at least one)
+        let uuid_found = vertex_uuids
+            .iter()
+            .any(|uuid| debug_message.contains(&uuid.to_string()));
+        assert!(
+            uuid_found,
+            "Debug format should contain vertex UUIDs: {debug_message}"
+        );
+
+        println!("    Debug representation: {debug_message}");
+
+        println!("  Testing error comparison and cloning...");
+
+        // Test Clone
+        let cloned_error = enhanced_error.clone();
+        assert_eq!(
+            enhanced_error, cloned_error,
+            "Cloned error should be equal to original"
+        );
+
+        // Test PartialEq with different values
+        let different_error = FacetError::FacetKeyNotFoundInCache {
+            facet_key: 0xdead_beef_cafe_babe,
+            cache_size: 100,
+            vertex_uuids: vec![uuid::Uuid::new_v4()],
+        };
+        assert_ne!(
+            enhanced_error, different_error,
+            "Different errors should not be equal"
+        );
+
+        println!("  Testing integration with ConvexHullConstructionError...");
+
+        // Wrap in the higher-level error
+        let construction_error = ConvexHullConstructionError::VisibilityCheckFailed {
+            source: enhanced_error,
+        };
+
+        let construction_message = format!("{construction_error}");
+        assert!(
+            construction_message.contains("Failed to check facet visibility from point"),
+            "Construction error should contain visibility check message: {construction_message}"
+        );
+
+        // Verify error source chain
+        let source_error = construction_error.source();
+        assert!(
+            source_error.is_some(),
+            "Construction error should have a source"
+        );
+
+        if let Some(source) = source_error {
+            let source_message = format!("{source}");
+            assert!(
+                source_message.contains(&format!("{facet_key:016x}")),
+                "Source error should contain facet key: {source_message}"
+            );
+        }
+
+        println!("    Construction error message: {construction_message}");
+
+        println!("  Testing backward compatibility...");
+
+        // Verify the old error variant still exists and works
+        let old_error = FacetError::FacetNotFoundInTriangulation;
+        let old_message = format!("{old_error}");
+        assert!(
+            old_message.contains("Facet not found in triangulation"),
+            "Old error variant should still work: {old_message}"
+        );
+
+        println!("    Old error message: {old_message}");
+
+        println!("  ✓ Enhanced facet key error information working correctly");
+        println!("  ✓ Error provides detailed diagnostic information including:");
+        println!("    - Facet key in hex format for debugging");
+        println!("    - Cache size for context");
+        println!("    - Vertex UUIDs that generated the key");
+        println!("    - Actionable error message suggesting possible causes");
+        println!("  ✓ Backward compatibility maintained with existing error variants");
     }
 }

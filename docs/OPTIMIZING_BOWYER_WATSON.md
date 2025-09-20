@@ -1,18 +1,31 @@
 # Optimizing Bowyer-Watson Algorithms with FacetCacheProvider
 
+## Status: ✅ PHASE 2 - IMPLEMENTED (September 2025)
+
 ## Overview
 
-This document analyzes opportunities to optimize the Bowyer-Watson algorithm implementations by leveraging the existing
-`FacetCacheProvider` trait for facet-to-cells mapping cache management. Currently, only the `ConvexHull` struct implements
-this trait, while both Bowyer-Watson algorithms repeatedly rebuild expensive facet mappings.
+### Part of Phase 2: Key-Based Internal APIs Optimization (COMPLETED)
 
-## Current State Analysis
+This document describes the completed implementation of FacetCacheProvider optimization for the Bowyer-Watson algorithms.
+The optimization was successfully implemented in September 2025 as part of PR #86, eliminating redundant facet-to-cells
+mapping computations in hot paths.
 
-### ✅ Already Using `FacetCacheProvider`
+**Rationale for Phase 2**: This optimization eliminates redundant computation in hot paths (facet mapping rebuilds),
+which aligns with Phase 2's goal of optimizing internal operations and eliminating unnecessary lookups/computations.
+
+**Implementation Status**: ✅ COMPLETED in September 2025
+
+- Implementation locations: `src/core/algorithms/robust_bowyer_watson.rs` and `src/core/algorithms/bowyer_watson.rs`
+
+## Implementation Results
+
+### ✅ Algorithms Now Using `FacetCacheProvider`
 
 - **`ConvexHull`** - Properly implements and uses the caching trait for optimal performance during visibility testing operations
+- **`IncrementalBoyerWatson`** - ✅ IMPLEMENTED - Caching eliminates redundant facet mappings  
+- **`RobustBoyerWatson`** - ✅ IMPLEMENTED - Caching optimizes fallback strategies
 
-### ❌ Missing Opportunities
+### Previous Issues (Now Resolved)
 
 #### 1. Bowyer-Watson Algorithm Implementations
 
@@ -63,7 +76,7 @@ Both `IncrementalBoyerWatson` and `RobustBoyerWatson` algorithms repeatedly call
 3. **Test suites**: Diagnostic functions perform many boundary analyses per test
 4. **Robust insertion algorithms**: Multiple fallback strategies require repeated facet mapping access
 
-## Implementation Plan
+## Implementation Details (Completed)
 
 ### Phase 1: Add Caching Infrastructure
 
@@ -280,33 +293,33 @@ Validate concurrent access patterns if algorithms are used in multi-threaded con
 
 ### Core Changes
 
-- [ ] Add caching fields to `IncrementalBoyerWatson` struct
-- [ ] Add caching fields to `RobustBoyerWatson` struct
-- [ ] Update all constructors for both algorithms
-- [ ] Implement `FacetCacheProvider` for `IncrementalBoyerWatson`
-- [ ] Implement `FacetCacheProvider` for `RobustBoyerWatson`
+- [✓] Add caching fields to `IncrementalBoyerWatson` struct
+- [✓] Add caching fields to `RobustBoyerWatson` struct
+- [✓] Update all constructors for both algorithms
+- [✓] Implement `FacetCacheProvider` for `IncrementalBoyerWatson`
+- [✓] Implement `FacetCacheProvider` for `RobustBoyerWatson`
 
 ### Method Updates
 
-- [ ] Update `count_boundary_facets()` in IncrementalBoyerWatson
-- [ ] Update `count_internal_facets()` in IncrementalBoyerWatson
-- [ ] Update `count_invalid_facets()` in IncrementalBoyerWatson
-- [ ] Update `build_validated_facet_mapping()` in RobustBoyerWatson
-- [ ] Update `find_visible_boundary_facets()` in RobustBoyerWatson
-- [ ] Review and update any other methods using `build_facet_to_cells_hashmap()`
+- [N/A] Update `count_boundary_facets()` in IncrementalBoyerWatson (test helper only)
+- [N/A] Update `count_internal_facets()` in IncrementalBoyerWatson (test helper only)
+- [N/A] Update `count_invalid_facets()` in IncrementalBoyerWatson (test helper only)
+- [✓] Update `build_validated_facet_mapping()` in RobustBoyerWatson
+- [✓] Update `find_visible_boundary_facets()` in RobustBoyerWatson
+- [✓] Review and update any other methods using `build_facet_to_cells_hashmap()`
 
 ### Testing
 
-- [ ] Add unit tests for cache behavior
-- [ ] Add performance benchmarks
-- [ ] Update existing tests to work with cached implementations
-- [ ] Add thread safety tests (if applicable)
+- [✓] Add unit tests for cache behavior
+- [ ] Add performance benchmarks (future work)
+- [✓] Update existing tests to work with cached implementations
+- [✓] Add thread safety tests (if applicable)
 
 ### Documentation
 
-- [ ] Update algorithm documentation
-- [ ] Add examples of efficient boundary analysis patterns
-- [ ] Document cache management best practices
+- [✓] Update algorithm documentation
+- [✓] Add examples of efficient boundary analysis patterns
+- [✓] Document cache management best practices
 
 ## Expected Benefits
 
@@ -338,12 +351,22 @@ Validate concurrent access patterns if algorithms are used in multi-threaded con
 
 ## Compatibility
 
-### API Compatibility
+### Breaking API Changes
 
-- **Core algorithms unchanged** - Main insertion and triangulation APIs remain the same
-- **Internal optimization focus** - Most changes are to internal caching mechanisms
-- **Specialized APIs affected** - Some boundary analysis methods may have updated signatures
-- **Migration support** - Clear upgrade path for affected boundary analysis code
+⚠️ **This optimization includes breaking changes to boundary analysis APIs:**
+
+- **`BoundaryAnalysis::boundary_facets()`** - Now returns
+  `Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>`
+  instead of `Result<Vec<Facet<T, U, V, D>>, FacetError>`
+- **`BoundaryAnalysis::number_of_boundary_facets()`** - Now returns `Result<usize, TriangulationValidationError>` instead of `usize`
+- **`BoundaryAnalysis::is_boundary_facet()`** - Now returns `Result<bool, TriangulationValidationError>` instead of `bool`
+- **Facet map builder** - `build_facet_to_cells_map()` now returns `Result<FacetToCellsMap, TriangulationValidationError>` for better error handling
+
+**Migration Guide:**
+
+- Wrap existing calls with `.unwrap()` or `.expect()` for quick migration
+- Add proper error handling using `?` operator or `match` statements for robust applications
+- Error types are now consistent across boundary analysis APIs
 
 ### Dependencies
 

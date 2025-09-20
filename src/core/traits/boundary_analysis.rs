@@ -1,8 +1,8 @@
 //! Boundary analysis trait for triangulation data structures.
 
 use crate::core::{
-    facet::{Facet, FacetError},
-    traits::data_type::DataType,
+    facet::Facet, traits::data_type::DataType,
+    triangulation_data_structure::TriangulationValidationError,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use nalgebra::ComplexField;
@@ -38,7 +38,7 @@ use std::ops::{AddAssign, Div, SubAssign};
 /// assert_eq!(boundary_facets.len(), 4); // Tetrahedron has 4 boundary faces
 ///
 /// let count = tds.number_of_boundary_facets();
-/// assert_eq!(count, 4);
+/// assert_eq!(count, Ok(4));
 /// ```
 pub trait BoundaryAnalysis<T, U, V, const D: usize>
 where
@@ -63,12 +63,12 @@ where
     ///
     /// # Returns
     ///
-    /// A `Result<Vec<Facet<T, U, V, D>>, FacetError>` containing all boundary facets in the triangulation.
+    /// A `Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>` containing all boundary facets in the triangulation.
     /// The facets are returned in no particular order.
     ///
     /// # Errors
     ///
-    /// Returns a [`FacetError`] if any boundary facet cannot be created from the cells.
+    /// Returns a [`TriangulationValidationError`] if any boundary facet cannot be created from the cells.
     ///
     /// # Examples
     ///
@@ -89,7 +89,7 @@ where
     /// let boundary_facets = tds.boundary_facets().expect("Failed to get boundary facets");
     /// assert_eq!(boundary_facets.len(), 4);
     /// ```
-    fn boundary_facets(&self) -> Result<Vec<Facet<T, U, V, D>>, FacetError>;
+    fn boundary_facets(&self) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>;
 
     /// Checks if a specific facet is a boundary facet.
     ///
@@ -101,7 +101,14 @@ where
     ///
     /// # Returns
     ///
-    /// `true` if the facet is on the boundary (belongs to only one cell), `false` otherwise.
+    /// `Ok(true)` if the facet is on the boundary (belongs to only one cell),
+    /// `Ok(false)` if it's an interior facet (belongs to two cells).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TriangulationValidationError)` if:
+    /// - Building the facet-to-cells mapping fails due to data structure inconsistencies
+    /// - The triangulation contains invalid cells or corrupted vertex mappings
     ///
     /// # Examples
     ///
@@ -123,11 +130,14 @@ where
     ///     let facets = cell.facets().expect("Failed to get facets from cell");
     ///     if let Some(facet) = facets.first() {
     ///         // In a single tetrahedron, all facets are boundary facets
-    ///         assert!(tds.is_boundary_facet(facet));
+    ///         assert!(tds.is_boundary_facet(facet).unwrap());
     ///     }
     /// }
     /// ```
-    fn is_boundary_facet(&self, facet: &Facet<T, U, V, D>) -> bool;
+    fn is_boundary_facet(
+        &self,
+        facet: &Facet<T, U, V, D>,
+    ) -> Result<bool, TriangulationValidationError>;
 
     /// Checks if a specific facet is a boundary facet using a precomputed facet map.
     ///
@@ -138,7 +148,7 @@ where
     ///
     /// * `facet` - The facet to check.
     /// * `facet_to_cells` - Precomputed map from facet keys to cells containing them.
-    ///   Obtain this by calling [`build_facet_to_cells_hashmap`] on the triangulation.
+    ///   Obtain this by calling [`build_facet_to_cells_map`] on the triangulation.
     ///
     /// # Returns
     ///
@@ -160,7 +170,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Build the facet map once for multiple queries (efficient for batch operations)
-    /// let facet_to_cells = tds.build_facet_to_cells_hashmap();
+    /// let facet_to_cells = tds.build_facet_to_cells_map().expect("facet map should build");
     ///
     /// // Check multiple facets efficiently using the cached map
     /// if let Some(cell) = tds.cells().values().next() {
@@ -174,7 +184,7 @@ where
     /// }
     /// ```
     ///
-    /// [`build_facet_to_cells_hashmap`]: crate::core::triangulation_data_structure::Tds::build_facet_to_cells_hashmap
+    /// [`build_facet_to_cells_map`]: crate::core::triangulation_data_structure::Tds::build_facet_to_cells_map
     fn is_boundary_facet_with_map(
         &self,
         facet: &Facet<T, U, V, D>,
@@ -183,12 +193,16 @@ where
 
     /// Returns the number of boundary facets in the triangulation.
     ///
-    /// This is a more efficient way to count boundary facets without creating
-    /// the full vector of facets.
+    /// This delegates to `boundary_facets()` for consistent error handling.
     ///
     /// # Returns
     ///
-    /// The number of boundary facets in the triangulation.
+    /// A `Result` containing the number of boundary facets in the triangulation,
+    /// or a `TriangulationValidationError` if the facet map cannot be built.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TriangulationValidationError`] if the facet-to-cells map cannot be built.
     ///
     /// # Examples
     ///
@@ -206,7 +220,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // A single tetrahedron has 4 boundary facets
-    /// assert_eq!(tds.number_of_boundary_facets(), 4);
+    /// assert_eq!(tds.number_of_boundary_facets().unwrap(), 4);
     /// ```
-    fn number_of_boundary_facets(&self) -> usize;
+    fn number_of_boundary_facets(&self) -> Result<usize, TriangulationValidationError>;
 }

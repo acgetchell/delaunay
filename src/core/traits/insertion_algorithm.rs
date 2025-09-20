@@ -4,7 +4,7 @@
 //! interface for different vertex insertion strategies, including the basic
 //! Bowyer-Watson algorithm and robust variants with enhanced numerical stability.
 
-use crate::core::collections::{CellKeySet, Entry};
+use crate::core::collections::CellKeySet;
 use crate::core::{
     cell::CellBuilder,
     facet::Facet,
@@ -19,6 +19,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 use approx::abs_diff_eq;
 use num_traits::{NumCast, One, Zero, cast};
 use serde::{Serialize, de::DeserializeOwned};
+use smallvec::SmallVec;
 use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
@@ -74,6 +75,136 @@ pub enum BadCellsError {
     /// No cells exist to test
     #[error("No cells exist to test")]
     NoCells,
+}
+
+/// Comprehensive error type for vertex insertion operations
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum InsertionError {
+    /// Geometric predicates failed to determine vertex placement
+    #[error("Geometric failure during {strategy_attempted:?} insertion: {message}")]
+    GeometricFailure {
+        /// Description of the geometric failure
+        message: String,
+        /// The insertion strategy that was being attempted when the failure occurred
+        strategy_attempted: InsertionStrategy,
+    },
+
+    /// All attempted fallback strategies were exhausted
+    #[error("All {attempts} fallback strategies exhausted. Last error: {last_error}")]
+    FallbacksExhausted {
+        /// Number of fallback attempts that were tried
+        attempts: usize,
+        /// Description of the last error encountered before giving up
+        last_error: String,
+    },
+
+    /// The triangulation data structure is in an invalid state
+    #[error("Triangulation validation error: {0}")]
+    TriangulationState(#[from] TriangulationValidationError),
+
+    /// Error during triangulation construction
+    #[error("Triangulation construction error: {0}")]
+    TriangulationConstruction(
+        #[from] crate::core::triangulation_data_structure::TriangulationConstructionError,
+    ),
+
+    /// Vertex is degenerate (e.g., duplicate or invalid coordinates)
+    #[error("Invalid vertex: {reason}")]
+    InvalidVertex {
+        /// Description of why the vertex is invalid
+        reason: String,
+    },
+
+    /// Too many bad cells found during cavity detection
+    #[error("Excessive bad cells found: {found} (threshold: {threshold})")]
+    ExcessiveBadCells {
+        /// Number of bad cells that were found
+        found: usize,
+        /// Maximum threshold for bad cells that was exceeded
+        threshold: usize,
+    },
+
+    /// Numerical precision issues prevented successful insertion
+    #[error(
+        "Precision failure (tolerance: {tolerance}, perturbation attempts: {perturbation_attempts})"
+    )]
+    PrecisionFailure {
+        /// The tolerance level that was used when the precision failure occurred
+        tolerance: f64,
+        /// Number of perturbation attempts that were made before giving up
+        perturbation_attempts: usize,
+    },
+
+    /// Hull extension failed for exterior vertex
+    #[error("Hull extension failure: {reason}")]
+    HullExtensionFailure {
+        /// Description of why the hull extension failed
+        reason: String,
+    },
+
+    /// Bad cells detection failed
+    #[error("Bad cells detection error: {0}")]
+    BadCellsDetection(#[from] BadCellsError),
+
+    /// Vertex validation error
+    #[error("Vertex validation error: {0}")]
+    VertexValidation(#[from] crate::core::vertex::VertexValidationError),
+}
+
+impl InsertionError {
+    /// Create a geometric failure error
+    pub fn geometric_failure(message: impl Into<String>, strategy: InsertionStrategy) -> Self {
+        Self::GeometricFailure {
+            message: message.into(),
+            strategy_attempted: strategy,
+        }
+    }
+
+    /// Create an invalid vertex error
+    pub fn invalid_vertex(reason: impl Into<String>) -> Self {
+        Self::InvalidVertex {
+            reason: reason.into(),
+        }
+    }
+
+    /// Create a precision failure error
+    #[must_use]
+    pub const fn precision_failure(tolerance: f64, perturbation_attempts: usize) -> Self {
+        Self::PrecisionFailure {
+            tolerance,
+            perturbation_attempts,
+        }
+    }
+
+    /// Create a hull extension failure error
+    pub fn hull_extension_failure(reason: impl Into<String>) -> Self {
+        Self::HullExtensionFailure {
+            reason: reason.into(),
+        }
+    }
+
+    /// Check if the error indicates a recoverable geometric issue
+    #[must_use]
+    pub const fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            Self::GeometricFailure { .. }
+                | Self::PrecisionFailure { .. }
+                | Self::BadCellsDetection(_)
+        )
+    }
+
+    /// Get the insertion strategy that was attempted when this error occurred
+    #[must_use]
+    pub const fn attempted_strategy(&self) -> Option<InsertionStrategy> {
+        match self {
+            Self::GeometricFailure {
+                strategy_attempted, ..
+            } => Some(*strategy_attempted),
+            _ => None,
+        }
+    }
 }
 
 /// Margin factor used for bounding box expansion in exterior vertex detection
@@ -374,7 +505,7 @@ where
         &mut self,
         tds: &mut Tds<T, U, V, D>,
         vertex: Vertex<T, U, D>,
-    ) -> Result<InsertionInfo, TriangulationValidationError>;
+    ) -> Result<InsertionInfo, InsertionError>;
 
     /// Get statistics about the insertion algorithm's performance
     ///
@@ -733,8 +864,11 @@ where
             // is equivalent to degenerate_count * 2 > total
             let total_cells = cells_tested.saturating_add(degenerate_count);
 
-            // This comparison logic currently only works for DEGENERATE_CELL_THRESHOLD = 0.5
-            // For other thresholds, we'd need different integer arithmetic
+            // NOTE: The integer arithmetic optimization below is specifically designed for
+            // DEGENERATE_CELL_THRESHOLD = 0.5. This avoids floating-point operations for
+            // the common 50% threshold case. To generalize for arbitrary rational thresholds,
+            // we would compare: degenerate_count * denominator > total * numerator
+            // For now, we detect the 0.5 case and optimize it; other values fall back to FP.
             if abs_diff_eq!(DEGENERATE_CELL_THRESHOLD, 0.5, epsilon = f64::EPSILON) {
                 // Use optimized integer arithmetic for 50% threshold
                 let threshold_exceeded = degenerate_count.saturating_mul(2) > total_cells;
@@ -788,7 +922,7 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         bad_cells: &[crate::core::triangulation_data_structure::CellKey],
-    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>
+    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
@@ -802,7 +936,17 @@ where
         let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
 
         // Use the canonical facet-to-cells map from TDS (already uses VertexKeys)
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        // Default trait implementation cannot access concrete type's cache,
+        // so we use try_build which returns Result.
+        //
+        // Performance note: Concrete implementations that also implement FacetCacheProvider
+        // should override this method to use get_or_build_facet_cache() for better performance
+        // in hot paths where this method is called repeatedly.
+        let facet_to_cells = tds.build_facet_to_cells_map().map_err(|e| {
+            TriangulationValidationError::InconsistentDataStructure {
+                message: format!("Failed to build facet-to-cells map: {e}"),
+            }
+        })?;
 
         // Track which boundary facets we need to create
         let mut boundary_facet_specs = Vec::new();
@@ -813,11 +957,13 @@ where
             // Note: sharing_cells contains (CellKey, facet_index) pairs
             let total_count = sharing_cells.len();
             if total_count > 2 {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Facet shared by more than two cells (total_count = {total_count})"
-                    ),
-                });
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Facet shared by more than two cells (total_count = {total_count})"
+                        ),
+                    },
+                ));
             }
 
             // Count bad cells and capture the single bad sharer if it exists
@@ -858,16 +1004,21 @@ where
                 let facet_idx = <usize as From<u8>>::from(facet_index);
                 if facet_idx >= cell.vertices().len() {
                     // Invalid facet index indicates TDS corruption - fail fast
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Facet index {} out of bounds (cell has {} vertices) while building cavity boundary",
-                            facet_idx,
-                            cell.vertices().len()
-                        ),
-                    });
+                    return Err(InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Facet index {} out of bounds (cell has {} vertices) while building cavity boundary",
+                                facet_idx,
+                                cell.vertices().len()
+                            ),
+                        },
+                    ));
                 }
                 let opposite_vertex = cell.vertices()[facet_idx];
                 // Create the facet using the Cell and its opposite vertex
+                // TODO: Optimize Facet construction to avoid Cell cloning (allocation reduction)
+                // Consider lightweight Facet construction from (cell_key, facet_index) parameters
+                // to eliminate this allocation in insertion hot paths.
                 let facet = Facet::new(cell.clone(), opposite_vertex).map_err(|e| {
                     TriangulationValidationError::InconsistentDataStructure {
                         message: format!("Failed to construct boundary facet: {e}"),
@@ -876,22 +1027,26 @@ where
                 boundary_facets.push(facet);
             } else {
                 // Cell not found - this shouldn't happen if TDS is consistent
-                return Err(TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Cell with key {cell_key:?} not found while building cavity boundary"
-                    ),
-                });
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell with key {cell_key:?} not found while building cavity boundary"
+                        ),
+                    },
+                ));
             }
         }
 
         // Validation: ensure we have a reasonable number of boundary facets
         if boundary_facets.is_empty() && !bad_cells.is_empty() {
-            return Err(TriangulationValidationError::FailedToCreateCell {
-                message: format!(
-                    "No cavity boundary facets found for {} bad cells. This indicates a topological error.",
-                    bad_cells.len()
-                ),
-            });
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::FailedToCreateCell {
+                    message: format!(
+                        "No cavity boundary facets found for {} bad cells. This indicates a topological error.",
+                        bad_cells.len()
+                    ),
+                },
+            ));
         }
 
         Ok(boundary_facets)
@@ -954,7 +1109,7 @@ where
         &mut self,
         tds: &mut Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<InsertionInfo, TriangulationValidationError>
+    ) -> Result<InsertionInfo, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
@@ -967,12 +1122,14 @@ where
                 degenerate_count,
             }) => {
                 // All cells marked as bad - need hull extension instead
-                return Err(TriangulationValidationError::FailedToCreateCell {
-                    message: format!(
-                        "Cavity-based insertion failed: all {cell_count} cells marked as bad ({degenerate_count} degenerate). \
-                         Vertex likely needs hull extension."
-                    ),
-                });
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::FailedToCreateCell {
+                        message: format!(
+                            "Cavity-based insertion failed: all {cell_count} cells marked as bad ({degenerate_count} degenerate). \
+                             Vertex likely needs hull extension."
+                        ),
+                    },
+                ));
             }
             Err(BadCellsError::TooManyDegenerateCells(TooManyDegenerateCellsError {
                 degenerate_count,
@@ -980,35 +1137,44 @@ where
             })) => {
                 // Too many degenerate cells - triangulation might be in bad state
                 let total_tested = cells_tested;
-                return Err(TriangulationValidationError::FailedToCreateCell {
-                    message: format!(
-                        "Cavity-based insertion failed: too many degenerate cells ({degenerate_count}/{total_tested})."
-                    ),
-                });
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::FailedToCreateCell {
+                        message: format!(
+                            "Cavity-based insertion failed: too many degenerate cells ({degenerate_count}/{total_tested})."
+                        ),
+                    },
+                ));
             }
             Err(BadCellsError::NoCells) => {
                 // No cells to test - triangulation is empty
-                return Err(TriangulationValidationError::FailedToCreateCell {
-                    message: "Cavity-based insertion failed: no cells exist in triangulation."
-                        .to_string(),
-                });
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::FailedToCreateCell {
+                        message: "Cavity-based insertion failed: no cells exist in triangulation."
+                            .to_string(),
+                    },
+                ));
             }
         };
 
         if bad_cells.is_empty() {
             // No bad cells found - this method is not applicable
-            return Err(TriangulationValidationError::FailedToCreateCell {
-                message: "Cavity-based insertion failed: no bad cells found for vertex".to_string(),
-            });
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::FailedToCreateCell {
+                    message: "Cavity-based insertion failed: no bad cells found for vertex"
+                        .to_string(),
+                },
+            ));
         }
 
         // Find boundary facets of the cavity
         let boundary_facets = self.find_cavity_boundary_facets(tds, &bad_cells)?;
 
         if boundary_facets.is_empty() {
-            return Err(TriangulationValidationError::FailedToCreateCell {
-                message: "No boundary facets found for cavity insertion".to_string(),
-            });
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::FailedToCreateCell {
+                    message: "No boundary facets found for cavity insertion".to_string(),
+                },
+            ));
         }
 
         let cells_removed = bad_cells.len();
@@ -1061,7 +1227,7 @@ where
         &self,
         tds: &mut Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<InsertionInfo, TriangulationValidationError>
+    ) -> Result<InsertionInfo, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
@@ -1072,11 +1238,13 @@ where
 
         if visible_facets.is_empty() {
             // No visible facets - this method is not applicable
-            return Err(TriangulationValidationError::FailedToCreateCell {
-                message:
-                    "Hull extension insertion failed: no visible boundary facets found for vertex"
-                        .to_string(),
-            });
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::FailedToCreateCell {
+                    message:
+                        "Hull extension insertion failed: no visible boundary facets found for vertex"
+                            .to_string(),
+                }
+            ));
         }
 
         // Create new cells from visible facets
@@ -1125,7 +1293,7 @@ where
         &self,
         tds: &mut Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<InsertionInfo, TriangulationValidationError>
+    ) -> Result<InsertionInfo, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
@@ -1134,15 +1302,25 @@ where
         // Conservative fallback: try to connect to any existing boundary facet
         // This avoids creating invalid geometry by arbitrary vertex replacement
 
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        // Performance note: Concrete implementations that also implement FacetCacheProvider
+        // should override this method to use get_or_build_facet_cache() to avoid O(N·F)
+        // rebuilds in difficult fallback cases. Default trait implementation uses direct
+        // build since it cannot access concrete type's cache.
+        let facet_to_cells = tds.build_facet_to_cells_map().map_err(|e| {
+            TriangulationValidationError::InconsistentDataStructure {
+                message: format!("Failed to build facet-to-cells map: {e}"),
+            }
+        })?;
 
         // First try boundary facets (most likely to work)
         for cells in facet_to_cells.values() {
             if cells.len() == 1 {
                 let &(cell_key, facet_index) = cells.first().ok_or_else(|| {
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: "Boundary facet had no adjacent cell".to_string(),
-                    }
+                    InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: "Boundary facet had no adjacent cell".to_string(),
+                        },
+                    )
                 })?;
                 let fi = <usize as From<_>>::from(facet_index);
                 if let Some(cell) = tds.cells().get(cell_key)
@@ -1209,12 +1387,14 @@ where
 
         // If we can't find any boundary facet to connect to, the vertex might be
         // in a degenerate position or the triangulation might be corrupted
-        Err(TriangulationValidationError::FailedToCreateCell {
-            message: format!(
-                "Fallback insertion failed: could not connect vertex {:?} to any boundary facet",
-                vertex.point()
-            ),
-        })
+        Err(InsertionError::TriangulationState(
+            TriangulationValidationError::FailedToCreateCell {
+                message: format!(
+                    "Fallback insertion failed: could not connect vertex {:?} to any boundary facet",
+                    vertex.point()
+                ),
+            },
+        ))
     }
 
     /// Triangulate a complete set of vertices
@@ -1280,8 +1460,12 @@ where
 
         // Step 2: Insert remaining vertices incrementally
         for vertex in remaining_vertices {
-            self.insert_vertex(tds, *vertex)
-                .map_err(TriangulationConstructionError::ValidationError)?;
+            self.insert_vertex(tds, *vertex).map_err(|e| match e {
+                InsertionError::TriangulationConstruction(tc_err) => tc_err,
+                other => TriangulationConstructionError::FailedToAddVertex {
+                    message: format!("Vertex insertion failed during triangulation: {other}"),
+                },
+            })?;
         }
 
         // Step 3: Finalize the triangulation
@@ -1332,7 +1516,8 @@ where
 
         // Ensure all vertices are registered in the TDS vertex mapping
         for vertex in &vertices {
-            if let Entry::Vacant(_) = tds.uuid_to_vertex_key.entry(vertex.uuid()) {
+            // Use the public UUID-to-key lookup method to check if vertex exists
+            if tds.vertex_key_from_uuid(&vertex.uuid()).is_none() {
                 tds.insert_vertex_with_mapping(*vertex).map_err(|e| {
                     TriangulationConstructionError::FailedToAddVertex {
                         message: format!("Failed to insert vertex: {e}"),
@@ -1434,7 +1619,7 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>
+    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
@@ -1443,7 +1628,15 @@ where
         let mut visible_facets = Vec::new();
 
         // Get all boundary facets (facets shared by exactly one cell)
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        // TODO: Use FacetCacheProvider if available in concrete implementation.
+        // Default trait implementation cannot access concrete type's cache,
+        // so we use try_build which returns Result. Concrete implementations
+        // that have FacetCacheProvider should override this to use get_or_build_facet_cache.
+        let facet_to_cells = tds.build_facet_to_cells_map().map_err(|e| {
+            TriangulationValidationError::InconsistentDataStructure {
+                message: format!("Failed to build facet-to-cells map: {e}"),
+            }
+        })?;
         let boundary_facets: Vec<_> = facet_to_cells
             .iter()
             .filter(|(_, cells)| cells.len() == 1)
@@ -1451,9 +1644,11 @@ where
 
         for (_facet_key, cells) in boundary_facets {
             let Some(&(cell_key, facet_index)) = cells.first() else {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
-                    message: "Boundary facet had no adjacent cell".to_string(),
-                });
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: "Boundary facet had no adjacent cell".to_string(),
+                    },
+                ));
             };
             if let Some(cell) = tds.cells().get(cell_key) {
                 if let Ok(facets) = cell.facets() {
@@ -1465,25 +1660,31 @@ where
                         }
                     } else {
                         // Fail fast on invalid facet index - indicates TDS corruption
-                        return Err(TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Facet index {} out of bounds (cell has {} facets) during visibility computation. \
-                                 This indicates triangulation data structure corruption.",
-                                idx,
-                                facets.len()
-                            ),
-                        });
+                        return Err(InsertionError::TriangulationState(
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Facet index {} out of bounds (cell has {} facets) during visibility computation. \
+                                     This indicates triangulation data structure corruption.",
+                                    idx,
+                                    facets.len()
+                                ),
+                            },
+                        ));
                     }
                 } else {
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
-                        message: "Failed to get facets from cell during visibility computation"
-                            .to_string(),
-                    });
+                    return Err(InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: "Failed to get facets from cell during visibility computation"
+                                .to_string(),
+                        },
+                    ));
                 }
             } else {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
-                    message: "Cell key not found during visibility computation".to_string(),
-                });
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: "Cell key not found during visibility computation".to_string(),
+                    },
+                ));
             }
         }
 
@@ -1532,11 +1733,12 @@ where
         };
 
         // Create test simplices for orientation comparison
-        let mut simplex_with_opposite: Vec<Point<T, D>> =
+        // Using SmallVec to avoid heap allocation for small simplices (D+1 points)
+        let mut simplex_with_opposite: SmallVec<[Point<T, D>; 8]> =
             facet_vertices.iter().map(|v| *v.point()).collect();
         simplex_with_opposite.push(*opposite_vertex.point());
 
-        let mut simplex_with_test: Vec<Point<T, D>> =
+        let mut simplex_with_test: SmallVec<[Point<T, D>; 8]> =
             facet_vertices.iter().map(|v| *v.point()).collect();
         simplex_with_test.push(*vertex.point());
 
@@ -1651,7 +1853,8 @@ where
         tds: &mut Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
     ) -> Result<(), TriangulationValidationError> {
-        if let Entry::Vacant(_) = tds.uuid_to_vertex_key.entry(vertex.uuid()) {
+        // Use the public UUID-to-key lookup method to check if vertex exists
+        if tds.vertex_key_from_uuid(&vertex.uuid()).is_none() {
             tds.insert_vertex_with_mapping(*vertex).map_err(|e| {
                 TriangulationValidationError::InconsistentDataStructure {
                     message: format!("Failed to insert vertex into TDS: {e}"),
@@ -1750,7 +1953,8 @@ where
 
     /// Removes bad cells from the triangulation
     ///
-    /// This is a shared utility method that removes cells and their UUID-to-key mapping entries.
+    /// This is a shared utility method that removes cells using the optimized
+    /// key-based batch removal method.
     ///
     /// # Arguments
     ///
@@ -1763,11 +1967,9 @@ where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
-        for &cell_key in bad_cells {
-            if let Some(cell) = tds.cells_mut().remove(cell_key) {
-                tds.uuid_to_cell_key.remove(&cell.uuid());
-            }
-        }
+        // Use the optimized batch removal method that handles UUID mapping
+        // and generation counter updates internally
+        tds.remove_cells_by_keys(bad_cells);
     }
 
     /// Finalizes the triangulation after insertion to ensure consistency
@@ -1922,7 +2124,9 @@ mod tests {
         let test_facet = &boundary_facets[0];
 
         // Find the cell adjacent to this boundary facet
-        let facet_to_cells = tds.build_facet_to_cells_hashmap();
+        let facet_to_cells = tds
+            .build_facet_to_cells_map()
+            .expect("Should build facet map in test");
 
         // Compute facet key using VertexKeys
         let facet_vertices = test_facet.vertices();

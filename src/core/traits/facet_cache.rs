@@ -153,8 +153,7 @@ where
             // Build the cache only once, even if RCU retries
             #[allow(clippy::option_if_let_else)]
             // Complex error handling doesn't benefit from map_or_else
-            match built.get_or_insert_with(|| tds.try_build_facet_to_cells_hashmap().map(Arc::new))
-            {
+            match built.get_or_insert_with(|| tds.build_facet_to_cells_map().map(Arc::new)) {
                 Ok(arc) => Some(arc.clone()),
                 Err(_) => None, // Let the caller handle the error
             }
@@ -221,7 +220,8 @@ where
                 );
 
                 // Fall back to the lenient TDS method as a last resort
-                Arc::new(tds.build_facet_to_cells_hashmap())
+                #[allow(deprecated)] // Internal fallback - acceptable for graceful degradation
+                Arc::new(tds.build_facet_to_cells_map_lenient())
             }
         }
     }
@@ -306,7 +306,7 @@ where
             }
         } else {
             // Cache is stale - need to invalidate and rebuild
-            let new_cache = tds.try_build_facet_to_cells_hashmap()?;
+            let new_cache = tds.build_facet_to_cells_map()?;
             let new_cache_arc = Arc::new(new_cache);
 
             // Atomically swap in the new cache.
@@ -876,7 +876,8 @@ mod tests {
         let provider_cache = provider.get_or_build_facet_cache(&tds);
 
         // Get reference cache directly from TDS
-        let reference_cache = tds.build_facet_to_cells_hashmap();
+        #[allow(deprecated)] // Used for verification in test
+        let reference_cache = tds.build_facet_to_cells_map_lenient();
 
         // Should have same size
         assert_eq!(
