@@ -36,7 +36,7 @@ jobs:
   comprehensive-profiling:
     name: Comprehensive Performance Profiling
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # 2 hours timeout for comprehensive profiling
+    timeout-minutes: 360  # 6 hours timeout for comprehensive profiling
 
     steps:
       - name: Checkout code
