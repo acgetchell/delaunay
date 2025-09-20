@@ -6,7 +6,7 @@
 
 use crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use crate::core::collections::{
-    CellKeySet, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer,
+    CellKeySet, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer, fast_hash_set_with_capacity,
 };
 use crate::core::traits::facet_cache::FacetCacheProvider;
 use crate::core::util::derive_facet_key_from_vertices;
@@ -751,7 +751,7 @@ where
                 // Defensively deduplicate cell keys in case build_facet_to_cells_hashmap()
                 // ever yields duplicate (cell_key, idx) pairs per facet
                 {
-                    let mut seen = FastHashSet::default();
+                    let mut seen = fast_hash_set_with_capacity(cell_keys.len());
                     cell_keys.retain(|k| seen.insert(*k));
                 }
 
@@ -876,11 +876,11 @@ where
                 let facets = match cell_facets_cache.entry(cell_key) {
                     std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                     std::collections::hash_map::Entry::Vacant(v) => {
-                        let computed = cell.facets().map_err(|_| {
+                        let computed = cell.facets().map_err(|e| {
                             TriangulationValidationError::InconsistentDataStructure {
-                                message:
-                                    "Failed to get facets from cell during visibility computation"
-                                        .to_string(),
+                                message: format!(
+                                    "Failed to get facets from cell during visibility computation: {e}"
+                                ),
                             }
                         })?;
                         v.insert(computed)
@@ -1049,14 +1049,16 @@ where
         // Use a threshold based on the perturbation scale multiplied by a factor
         let threshold = {
             // TODO: Move VISIBILITY_THRESHOLD_MULTIPLIER to RobustPredicateConfig
-            // to allow dataset-specific tuning and testing:
-            // let multiplier: T = <T as From<f64>>::from(
-            //     self.predicate_config.visibility_threshold_multiplier.unwrap_or(100.0)
-            // );
             const VISIBILITY_THRESHOLD_MULTIPLIER: f64 = 100.0;
-            self.predicate_config.perturbation_scale
-                * self.predicate_config.perturbation_scale
-                * <T as From<f64>>::from(VISIBILITY_THRESHOLD_MULTIPLIER)
+            let scale = self.predicate_config.perturbation_scale;
+            let th = scale * scale * <T as From<f64>>::from(VISIBILITY_THRESHOLD_MULTIPLIER);
+            // Best-effort clamp: treat non-finite as "very large"
+            // If T is float-like, this avoids NaN/Inf comparisons.
+            if (f64::from(th)).is_finite() {
+                th
+            } else {
+                <T as From<f64>>::from(f64::MAX / 2.0)
+            }
         };
         distance_squared > threshold
     }
@@ -1253,23 +1255,14 @@ where
         &mut self,
         vertices: &[Vertex<T, U, D>],
     ) -> Result<Tds<T, U, V, D>, TriangulationConstructionError> {
-        // First, try the regular triangulation approach
-        Tds::new(vertices).map_or_else(
-            |_| {
-                // Regular triangulation failed, try robust approach
-                // Note: For now, we still fall back to the regular approach
-                // but this is where we would implement more sophisticated
-                // robust triangulation strategies
-                Tds::new(vertices).map_err(|e| {
-                    TriangulationConstructionError::ValidationError(
-                        TriangulationValidationError::FailedToCreateCell {
-                            message: format!("Robust triangulation failed: {e}"),
-                        },
-                    )
-                })
-            },
-            Ok,
-        )
+        // One attempt for now; map error clearly. If a true robust fallback is added later, branch here.
+        Tds::new(vertices).map_err(|e| {
+            TriangulationConstructionError::ValidationError(
+                TriangulationValidationError::FailedToCreateCell {
+                    message: format!("Robust triangulation failed: {e}"),
+                },
+            )
+        })
     }
 }
 
@@ -1277,6 +1270,7 @@ where
 mod tests {
     use super::*;
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
+    use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::traits::insertion_algorithm::InsertionError;
     use crate::vertex;
     use approx::assert_abs_diff_eq;
