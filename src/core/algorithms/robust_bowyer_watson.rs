@@ -2139,6 +2139,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn test_facet_cache_provider_implementation() {
         use std::sync::atomic::Ordering;
 
