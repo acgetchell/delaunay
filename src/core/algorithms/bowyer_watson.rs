@@ -101,7 +101,7 @@ use crate::core::{
             InsertionStatistics, InsertionStrategy,
         },
     },
-    triangulation_data_structure::{Tds, TriangulationConstructionError},
+    triangulation_data_structure::Tds,
     vertex::Vertex,
 };
 use crate::geometry::{algorithms::convex_hull::ConvexHull, traits::coordinate::CoordinateScalar};

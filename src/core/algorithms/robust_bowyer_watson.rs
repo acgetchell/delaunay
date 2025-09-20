@@ -2170,7 +2170,9 @@ mod tests {
 
         // Test 2: Cache building on first access
         let initial_generation = tds.generation();
-        let cache1 = algorithm.get_or_build_facet_cache(&tds);
+        let cache1 = algorithm
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Cache building should succeed in test");
 
         assert!(
             !cache1.is_empty(),
@@ -2184,7 +2186,9 @@ mod tests {
         println!("  ✓ Cache builds correctly on first access");
 
         // Test 3: Cache reuse on subsequent access (no TDS changes)
-        let cache2 = algorithm.get_or_build_facet_cache(&tds);
+        let cache2 = algorithm
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Cache building should succeed in test");
         assert!(
             Arc::ptr_eq(&cache1, &cache2),
             "Same cache instance should be returned when TDS unchanged"
@@ -2206,7 +2210,9 @@ mod tests {
         );
 
         // Get cache for modified TDS - should be different
-        let cache3 = algorithm.get_or_build_facet_cache(&tds_modified);
+        let cache3 = algorithm
+            .try_get_or_build_facet_cache(&tds_modified)
+            .expect("Cache building should succeed in test");
         assert!(
             !Arc::ptr_eq(&cache1, &cache3),
             "New cache instance should be created for different TDS"
@@ -2232,7 +2238,9 @@ mod tests {
         println!("  ✓ Manual cache invalidation works correctly");
 
         // Test 6: Cache rebuilds after manual invalidation
-        let cache4 = algorithm.get_or_build_facet_cache(&tds_modified);
+        let cache4 = algorithm
+            .try_get_or_build_facet_cache(&tds_modified)
+            .expect("Cache building should succeed in test");
         assert!(
             !cache4.is_empty(),
             "Cache should rebuild after manual invalidation"
@@ -2398,7 +2406,9 @@ mod tests {
 
         // Test cache invalidation during operations
         algorithm.invalidate_facet_cache();
-        let cache = algorithm.get_or_build_facet_cache(&tds);
+        let cache = algorithm
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Cache building should succeed in test");
         assert!(!cache.is_empty(), "Cache should rebuild after invalidation");
         println!("  ✓ Cache recovery after invalidation works");
     }
@@ -2583,14 +2593,18 @@ mod tests {
                 match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
                     Ok(tds) => {
                         // Test basic functionality
-                        let cache = algorithm.get_or_build_facet_cache(&tds);
+                        let cache = algorithm
+                            .try_get_or_build_facet_cache(&tds)
+                            .expect("Cache building should succeed in test");
                         assert!(!cache.is_empty(), "Cache should not be empty for valid TDS");
 
                         let _stats = algorithm.get_statistics();
 
                         // Test cache invalidation and rebuild
                         algorithm.invalidate_facet_cache();
-                        let rebuilt_cache = algorithm.get_or_build_facet_cache(&tds);
+                        let rebuilt_cache = algorithm
+                            .try_get_or_build_facet_cache(&tds)
+                            .expect("Cache building should succeed in test");
                         assert!(
                             !rebuilt_cache.is_empty(),
                             "Rebuilt cache should not be empty"
@@ -2624,7 +2638,9 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let minimal_tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&minimal).unwrap();
-        let cache = algorithm.get_or_build_facet_cache(&minimal_tds);
+        let cache = algorithm
+            .try_get_or_build_facet_cache(&minimal_tds)
+            .expect("Cache building should succeed in test");
         assert!(
             cache.len() >= 4,
             "Minimal tetrahedron should have at least 4 facets"
@@ -2663,7 +2679,9 @@ mod tests {
         let tiny_result = Tds::<f64, Option<()>, Option<()>, 3>::new(&tiny_perturbation);
         match tiny_result {
             Ok(tds) => {
-                let cache = algorithm.get_or_build_facet_cache(&tds);
+                let cache = algorithm
+                    .try_get_or_build_facet_cache(&tds)
+                    .expect("Cache building should succeed in test");
                 assert!(!cache.is_empty(), "Should handle tiny perturbations");
                 println!("  ✓ Tiny perturbations handled");
             }
@@ -2885,7 +2903,9 @@ mod tests {
 
         // Force cache population by calling a method that uses it
         let _initial_cache_gen = algorithm.cached_generation().load(Ordering::Acquire);
-        let facet_cache = algorithm.get_or_build_facet_cache(&tds);
+        let facet_cache = algorithm
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Cache building should succeed in test");
         assert!(!facet_cache.is_empty(), "Cache should be populated");
 
         // Insert a vertex, which should invalidate cache
@@ -2898,7 +2918,9 @@ mod tests {
 
         // Note: The cache generation is managed by TDS, not the algorithm directly
         // So we check that the cache can still be retrieved successfully
-        let updated_cache = algorithm.get_or_build_facet_cache(&tds);
+        let updated_cache = algorithm
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Cache building should succeed in test");
         assert!(
             !updated_cache.is_empty(),
             "Cache should be rebuilt after TDS changes"
