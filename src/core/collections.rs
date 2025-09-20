@@ -825,6 +825,14 @@ mod tests {
 
         let buffer = small_buffer_with_capacity_8::<i32>(5);
         assert!(buffer.capacity() >= 5);
+
+        // Test small_buffer_with_capacity_2 (line 776-777)
+        let buffer_2 = small_buffer_with_capacity_2::<String>(3);
+        assert!(buffer_2.capacity() >= 3);
+
+        // Test small_buffer_with_capacity_16 (line 782-783)
+        let buffer_16 = small_buffer_with_capacity_16::<i64>(10);
+        assert!(buffer_16.capacity() >= 10);
     }
 
     #[test]
@@ -906,5 +914,41 @@ mod tests {
         assert_eq!(vertex_set.len(), 1);
         assert_eq!(cell_map.len(), 1);
         assert_eq!(vertex_map.len(), 1);
+    }
+
+    #[test]
+    fn test_small_buffer_utility_functions_comprehensive() {
+        // Test small_buffer_with_capacity_2 function (covers lines 776-777)
+        let buffer2 = small_buffer_with_capacity_2::<i32>(10);
+        assert!(
+            buffer2.capacity() >= 10,
+            "Buffer2 should have capacity >= 10"
+        );
+
+        // Test small_buffer_with_capacity_16 function (covers lines 782-783)
+        let buffer16 = small_buffer_with_capacity_16::<String>(25);
+        assert!(
+            buffer16.capacity() >= 25,
+            "Buffer16 should have capacity >= 25"
+        );
+
+        // Test that the functions return the correct buffer types
+        let mut test_buffer2: SmallBuffer<f64, 2> = small_buffer_with_capacity_2(3);
+        test_buffer2.push(1.0);
+        test_buffer2.push(2.0);
+        assert_eq!(test_buffer2.len(), 2);
+
+        let mut test_buffer16: SmallBuffer<char, 16> = small_buffer_with_capacity_16(5);
+        test_buffer16.push('a');
+        test_buffer16.push('b');
+        assert_eq!(test_buffer16.len(), 2);
+
+        // Verify the functions work with different types
+        let _buffer2_str: SmallBuffer<String, 2> = small_buffer_with_capacity_2(1);
+        let _buffer16_int: SmallBuffer<i64, 16> = small_buffer_with_capacity_16(100);
+
+        // Functions should work with zero capacity too
+        let _buffer2_zero = small_buffer_with_capacity_2::<u8>(0);
+        let _buffer16_zero = small_buffer_with_capacity_16::<u32>(0);
     }
 }

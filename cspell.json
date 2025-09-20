@@ -206,6 +206,7 @@
     "rawpointer",
     "readlines",
     "redef",
+    "repr",
     "retriangulation",
     "rngs",
     "rstrip",

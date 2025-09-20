@@ -9,7 +9,7 @@
 //! - **Generic Coordinate Support**: Works with any floating-point type (`f32`, `f64`, etc.)
 //!   that implements the `CoordinateScalar` trait
 //! - **Unique Identification**: Each vertex has a UUID for consistent identification
-//! - **Optional Data Storage**: Supports attaching user data of any type `U` that implements [`DataType`](crate::core::traits::DataType)
+//! - **Optional Data Storage**: Supports attaching user data of any type `U` that implements [`DataType`]
 //! - **Incident Cell Tracking**: Maintains references to containing cells
 //! - **Serialization Support**: Full serde support for persistence
 //! - **Builder Pattern**: Convenient vertex construction using `VertexBuilder`

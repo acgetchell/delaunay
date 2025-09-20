@@ -1,45 +1,17 @@
 //! General helper utilities
 
 use serde::{Serialize, de::DeserializeOwned};
-use slotmap::SlotMap;
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::core::facet::Facet;
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
-use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
-use num_traits::cast::{NumCast, cast};
+use crate::geometry::traits::coordinate::CoordinateScalar;
 
 // =============================================================================
 // TYPES
 // =============================================================================
-
-/// Specifies which extreme coordinates to find.
-///
-/// This enum provides a more semantic alternative to using `Ordering`
-/// for specifying whether to find minimum or maximum coordinates.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExtremeType {
-    /// Find the minimum coordinates across all dimensions.
-    Minimum,
-    /// Find the maximum coordinates across all dimensions.
-    Maximum,
-}
-
-// =============================================================================
-// ERROR TYPES
-// =============================================================================
-
-/// Errors that can occur when finding extreme coordinates.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ExtremeCoordinatesError {
-    /// The vertices `SlotMap` is empty.
-    #[error("Cannot find extreme coordinates: vertices SlotMap is empty")]
-    EmptyVertices,
-}
 
 /// Errors that can occur during UUID validation.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -52,39 +24,6 @@ pub enum UuidValidationError {
     InvalidVersion {
         /// The version number that was found.
         found: usize,
-    },
-}
-
-/// Errors that can occur during supercell creation.
-#[derive(Clone, Debug, Error, PartialEq)]
-pub enum SuperCellError {
-    /// The dimension D must be greater than 0.
-    #[error("Invalid dimension: D must be greater than 0, but got {dimension}")]
-    InvalidDimension {
-        /// The invalid dimension value that was provided.
-        dimension: usize,
-    },
-    /// The radius must be greater than 0 to avoid degeneracies.
-    #[error(
-        "Invalid radius: radius must be greater than 0 to avoid degeneracies, but got {radius}"
-    )]
-    InvalidRadius {
-        /// The invalid radius value that was provided.
-        radius: f64,
-    },
-    /// Failed to convert dimension D to f64 for calculations.
-    #[error("Failed to convert dimension {dimension} to f64 for calculations")]
-    DimensionConversionFailed {
-        /// The dimension that failed to convert.
-        dimension: usize,
-    },
-    /// Failed to convert a coordinate value during supercell construction.
-    #[error(
-        "Failed to convert coordinate value {value} from f64 to target type during supercell construction"
-    )]
-    CoordinateConversionFailed {
-        /// The f64 value that failed to convert.
-        value: f64,
     },
 }
 
@@ -154,94 +93,6 @@ pub const fn validate_uuid(uuid: &Uuid) -> Result<(), UuidValidationError> {
 #[must_use]
 pub fn make_uuid() -> Uuid {
     Uuid::new_v4()
-}
-
-/// Find the extreme coordinates (minimum or maximum) across all vertices in a `SlotMap`.
-///
-/// This function takes a `SlotMap` of vertices and returns the minimum or maximum
-/// coordinates based on the specified extreme type. This works directly with `SlotMap`
-/// to provide efficient coordinate finding in performance-critical contexts.
-///
-/// # Arguments
-///
-/// * `vertices` - A `SlotMap` containing Vertex objects
-/// * `extreme_type` - Specifies whether to find minimum or maximum coordinates
-///
-/// # Returns
-///
-/// Returns `Ok([T; D])` containing the minimum or maximum coordinate for each dimension,
-/// or an error if the vertices `SlotMap` is empty.
-///
-/// # Errors
-///
-/// Returns `ExtremeCoordinatesError::EmptyVertices` if the vertices `SlotMap` is empty.
-///
-/// # Panics
-///
-/// This function should not panic under normal circumstances as the empty `SlotMap`
-/// case is handled by returning an error.
-///
-/// # Example
-///
-/// ```
-/// use delaunay::core::util::{find_extreme_coordinates, ExtremeType, ExtremeCoordinatesError};
-/// use delaunay::core::vertex::Vertex;
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use slotmap::{SlotMap, DefaultKey};
-///
-/// let points = vec![
-///     Point::new([-1.0, 2.0, 3.0]),
-///     Point::new([4.0, -5.0, 6.0]),
-///     Point::new([7.0, 8.0, -9.0]),
-/// ];
-/// let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(points);
-/// let mut slotmap: SlotMap<DefaultKey, Vertex<f64, Option<()>, 3>> = SlotMap::new();
-/// for vertex in vertices {
-///     slotmap.insert(vertex);
-/// }
-/// let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
-/// # use approx::assert_relative_eq;
-/// assert_relative_eq!(min_coords.as_slice(), [-1.0, -5.0, -9.0].as_slice(), epsilon = 1e-9);
-///
-/// // Error case with empty SlotMap
-/// let empty_slotmap: SlotMap<DefaultKey, Vertex<f64, Option<()>, 3>> = SlotMap::new();
-/// let result = find_extreme_coordinates(&empty_slotmap, ExtremeType::Minimum);
-/// assert!(matches!(result, Err(ExtremeCoordinatesError::EmptyVertices)));
-/// ```
-pub fn find_extreme_coordinates<K, T, U, const D: usize>(
-    vertices: &SlotMap<K, Vertex<T, U, D>>,
-    extreme_type: ExtremeType,
-) -> Result<[T; D], ExtremeCoordinatesError>
-where
-    K: slotmap::Key,
-    T: CoordinateScalar,
-    U: DataType,
-    [T; D]: Default + DeserializeOwned + Serialize + Sized,
-{
-    let mut iter = vertices.values();
-    let first_vertex = iter.next().ok_or(ExtremeCoordinatesError::EmptyVertices)?;
-    let mut extreme_coords: [T; D] = first_vertex.into();
-
-    for vertex in iter {
-        let vertex_coords: [T; D] = vertex.into();
-        for (i, coord) in vertex_coords.iter().enumerate() {
-            match extreme_type {
-                ExtremeType::Minimum => {
-                    if *coord < extreme_coords[i] {
-                        extreme_coords[i] = *coord;
-                    }
-                }
-                ExtremeType::Maximum => {
-                    if *coord > extreme_coords[i] {
-                        extreme_coords[i] = *coord;
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(extreme_coords)
 }
 
 /// Checks if two facets are adjacent by comparing their vertex sets.
@@ -388,150 +239,6 @@ where
             indices[j] = indices[j - 1] + 1;
         }
     }
-}
-
-// =============================================================================
-// SUPERCELL SIMPLEX CREATION
-// =============================================================================
-
-/// Creates a well-formed simplex centered at the given point with the given radius.
-///
-/// This utility function generates a proper non-degenerate simplex (e.g., triangle for 2D,
-/// tetrahedron for 3D, 4-simplex for 4D, etc.) that can be used as a supercell in
-/// triangulation algorithms. The simplex is constructed so that vertices are positioned
-/// strategically around the provided center to ensure geometric validity and avoid degeneracies.
-///
-/// # Arguments
-///
-/// * `center` - The center point coordinates for the simplex
-/// * `radius` - The radius (half the size) of the simplex from center to vertices
-///
-/// # Returns
-///
-/// Returns `Ok(Vec<Point<T, D>>)` containing the vertices of the simplex on success.
-/// For D-dimensional space, returns D+1 vertices forming a valid D-simplex.
-/// Returns `Err(SuperCellError)` if an error occurs during construction.
-///
-/// # Type Parameters
-///
-/// * `T` - The coordinate scalar type (e.g., f64, f32)
-/// * `D` - The dimension of the space
-///
-/// # Errors
-///
-/// Returns `SuperCellError::InvalidDimension` if D is 0.
-/// Returns `SuperCellError::InvalidRadius` if radius is not positive.
-/// Returns `SuperCellError::DimensionConversionFailed` if converting D to f64 fails.
-/// Returns `SuperCellError::CoordinateConversionFailed` if coordinate conversion fails.
-///
-/// # Examples
-///
-/// ```
-/// use delaunay::core::util::create_supercell_simplex;
-/// use delaunay::geometry::point::Point;
-///
-/// // Create a 3D tetrahedron centered at origin with radius 10.0
-/// let center = [0.0f64; 3];
-/// let radius = 10.0f64;
-/// let simplex_points = create_supercell_simplex(&center, radius).unwrap();
-/// assert_eq!(simplex_points.len(), 4); // Tetrahedron has 4 vertices
-///
-/// // Create a 2D triangle
-/// let center_2d = [5.0f64, 5.0f64];
-/// let simplex_2d = create_supercell_simplex(&center_2d, 3.0f64).unwrap();
-/// assert_eq!(simplex_2d.len(), 3); // Triangle has 3 vertices
-///
-/// // Create a 4D 4-simplex
-/// let center_4d = [0.0f64; 4];
-/// let simplex_4d = create_supercell_simplex(&center_4d, 5.0f64).unwrap();
-/// assert_eq!(simplex_4d.len(), 5); // 4-simplex has 5 vertices
-///
-/// // Error handling example
-/// let center_invalid = [0.0f64; 0]; // This won't compile due to const generic
-/// // But if dimension could be 0:
-/// // let result = create_supercell_simplex(&center_invalid, 1.0);
-/// // assert!(result.is_err());
-/// ```
-///
-/// # Algorithm Details
-///
-/// Uses a generic construction that works for all dimensions D ≥ 1:
-/// - Creates D+1 vertices using a systematic approach that ensures good vertex separation
-/// - Uses dimension-aware offsets to avoid degeneracies and ensure non-coplanar vertices
-/// - Distributes vertices with varying offset patterns to guarantee geometric validity
-///
-/// The resulting simplex is guaranteed to be non-degenerate and suitable for
-/// use as a bounding supercell in triangulation algorithms across all dimensions.
-pub fn create_supercell_simplex<T, const D: usize>(
-    center: &[T; D],
-    radius: T,
-) -> Result<Vec<Point<T, D>>, SuperCellError>
-where
-    T: CoordinateScalar + NumCast,
-    f64: From<T>,
-    [T; D]: Default + DeserializeOwned + Serialize + Copy + Sized,
-{
-    // Validate dimension
-    if D == 0 {
-        return Err(SuperCellError::InvalidDimension { dimension: D });
-    }
-
-    // Convert radius to f64 for validation and calculations
-    let radius_f64: f64 = radius.into();
-
-    // Validate radius
-    if radius_f64 <= 0.0 {
-        return Err(SuperCellError::InvalidRadius { radius: radius_f64 });
-    }
-
-    // Convert dimension to f64 for calculations
-    let d_f64: f64 = cast(D).ok_or(SuperCellError::DimensionConversionFailed { dimension: D })?;
-
-    // Initialize result vector
-    let mut points = Vec::new();
-    points.reserve_exact(D + 1);
-
-    // Use a generic construction that works well for all dimensions
-    // This creates D+1 vertices that are guaranteed to be non-degenerate
-    // by using dimension-aware offsets that ensure good vertex separation.
-
-    // Use a scaling factor to ensure good separation across all dimensions
-    let scale = radius_f64 * 2.0; // Use 2x radius for better separation
-
-    for vertex_idx in 0..=D {
-        let mut coords = [T::default(); D];
-
-        for coord_idx in 0..D {
-            let center_f64: f64 = center[coord_idx].into();
-
-            // Create a pattern that distributes vertices well in D-space
-            // This construction ensures non-degeneracy by using varying offset patterns
-            let offset = match coord_idx.cmp(&vertex_idx) {
-                std::cmp::Ordering::Less => {
-                    // Negative offset for earlier dimensions - creates good separation
-                    -scale / d_f64
-                }
-                std::cmp::Ordering::Equal => {
-                    // Positive offset for the main dimension - creates the vertex position
-                    scale
-                }
-                std::cmp::Ordering::Greater => {
-                    // Small positive offset for later dimensions - maintains non-degeneracy
-                    scale / (2.0 * d_f64)
-                }
-            };
-
-            let final_coordinate = center_f64 + offset;
-            coords[coord_idx] =
-                cast(final_coordinate).ok_or(SuperCellError::CoordinateConversionFailed {
-                    value: final_coordinate,
-                })?;
-        }
-
-        points.push(Point::new(coords));
-    }
-
-    Ok(points)
 }
 
 // =============================================================================
@@ -764,30 +471,9 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
-    use approx::assert_relative_eq;
-    use slotmap::{DefaultKey, SlotMap};
     use uuid::Uuid;
 
     use super::*;
-
-    // =============================================================================
-    // TEST HELPERS
-    // =============================================================================
-
-    fn create_vertex_slotmap<T, U, const D: usize>(
-        vertices: Vec<Vertex<T, U, D>>,
-    ) -> SlotMap<DefaultKey, Vertex<T, U, D>>
-    where
-        T: CoordinateScalar,
-        U: DataType,
-        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    {
-        let mut slotmap = SlotMap::new();
-        for vertex in vertices {
-            slotmap.insert(vertex);
-        }
-        slotmap
-    }
 
     // =============================================================================
     // UUID UTILITIES TESTS
@@ -903,302 +589,6 @@ mod tests {
         let error5 = UuidValidationError::InvalidVersion { found: 3 };
         assert_ne!(error3, error5);
         assert_ne!(error1, error3);
-    }
-
-    // =============================================================================
-    // EXTREME COORDINATES ERROR TESTS
-    // =============================================================================
-
-    #[test]
-    fn test_extreme_coordinates_error_display() {
-        let error = ExtremeCoordinatesError::EmptyVertices;
-        let error_string = format!("{error}");
-        assert!(error_string.contains("Cannot find extreme coordinates"));
-        assert!(error_string.contains("vertices SlotMap is empty"));
-    }
-
-    #[test]
-    fn test_extreme_coordinates_error_equality() {
-        let error1 = ExtremeCoordinatesError::EmptyVertices;
-        let error2 = ExtremeCoordinatesError::EmptyVertices;
-        assert_eq!(error1, error2);
-    }
-
-    #[test]
-    fn test_extreme_coordinates_error_debug() {
-        let error = ExtremeCoordinatesError::EmptyVertices;
-        let debug_string = format!("{error:?}");
-        assert!(debug_string.contains("EmptyVertices"));
-    }
-
-    #[test]
-    fn test_find_extreme_coordinates_returns_proper_error() {
-        // Test that find_extreme_coordinates returns the correct error type
-        let empty_slotmap: SlotMap<DefaultKey, crate::core::vertex::Vertex<f64, Option<()>, 3>> =
-            SlotMap::new();
-        let result = find_extreme_coordinates(&empty_slotmap, ExtremeType::Minimum);
-
-        assert!(result.is_err());
-        assert!(matches!(
-            result,
-            Err(ExtremeCoordinatesError::EmptyVertices)
-        ));
-    }
-
-    // =============================================================================
-    // COORDINATE UTILITIES TESTS
-    // =============================================================================
-
-    #[test]
-    fn utilities_find_extreme_coordinates_min_max() {
-        let points = vec![
-            Point::new([-1.0, 2.0, 3.0]),
-            Point::new([4.0, -5.0, 6.0]),
-            Point::new([7.0, 8.0, -9.0]),
-        ];
-        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 3>> =
-            crate::core::vertex::Vertex::from_points(points);
-        let slotmap = create_vertex_slotmap(vertices);
-
-        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
-
-        assert_relative_eq!(
-            min_coords.as_slice(),
-            [-1.0, -5.0, -9.0].as_slice(),
-            epsilon = 1e-9
-        );
-        assert_relative_eq!(
-            max_coords.as_slice(),
-            [7.0, 8.0, 6.0].as_slice(),
-            epsilon = 1e-9
-        );
-
-        // Human readable output for cargo test -- --nocapture
-        println!("min_coords = {min_coords:?}");
-        println!("max_coords = {max_coords:?}");
-    }
-
-    #[test]
-    fn utilities_find_extreme_coordinates_single_point() {
-        let points = vec![Point::new([5.0, -3.0, 7.0])];
-        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 3>> =
-            crate::core::vertex::Vertex::from_points(points);
-        let slotmap = create_vertex_slotmap(vertices);
-
-        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
-
-        // With single point, min and max should be the same
-        assert_relative_eq!(
-            min_coords.as_slice(),
-            [5.0, -3.0, 7.0].as_slice(),
-            epsilon = 1e-9
-        );
-        assert_relative_eq!(
-            max_coords.as_slice(),
-            [5.0, -3.0, 7.0].as_slice(),
-            epsilon = 1e-9
-        );
-    }
-
-    #[test]
-    fn utilities_find_extreme_coordinates_equal_ordering() {
-        let points = vec![Point::new([1.0, 2.0, 3.0]), Point::new([4.0, 5.0, 6.0])];
-        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 3>> =
-            crate::core::vertex::Vertex::from_points(points);
-        let slotmap = create_vertex_slotmap(vertices);
-
-        // Test with minimum (equivalent to the old behavior)
-        let coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
-        assert!(approx::relative_eq!(
-            coords.as_slice(),
-            [1.0, 2.0, 3.0].as_slice(),
-            epsilon = 1e-9
-        ));
-    }
-
-    #[test]
-    fn utilities_find_extreme_coordinates_2d() {
-        let points = vec![
-            Point::new([1.0, 4.0]),
-            Point::new([3.0, 2.0]),
-            Point::new([2.0, 5.0]),
-        ];
-        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 2>> =
-            crate::core::vertex::Vertex::from_points(points);
-        let slotmap = create_vertex_slotmap(vertices);
-
-        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
-
-        assert_relative_eq!(min_coords.as_slice(), [1.0, 2.0].as_slice(), epsilon = 1e-9);
-        assert_relative_eq!(max_coords.as_slice(), [3.0, 5.0].as_slice(), epsilon = 1e-9);
-    }
-
-    #[test]
-    fn utilities_find_extreme_coordinates_1d() {
-        let points = vec![Point::new([10.0]), Point::new([-5.0]), Point::new([3.0])];
-        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 1>> =
-            crate::core::vertex::Vertex::from_points(points);
-        let slotmap = create_vertex_slotmap(vertices);
-
-        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
-
-        assert_relative_eq!(min_coords.as_slice(), [-5.0].as_slice(), epsilon = 1e-9);
-        assert_relative_eq!(max_coords.as_slice(), [10.0].as_slice(), epsilon = 1e-9);
-    }
-
-    #[test]
-    fn utilities_find_extreme_coordinates_with_typed_data() {
-        let points = vec![
-            Point::new([1.0, 2.0, 3.0]),
-            Point::new([4.0, -1.0, 2.0]),
-            Point::new([-2.0, 5.0, 1.0]),
-        ];
-        let vertices: Vec<crate::core::vertex::Vertex<f64, i32, 3>> = points
-            .into_iter()
-            .enumerate()
-            .map(|(i, point)| {
-                vertex!(
-                    point.to_array(),
-                    i32::try_from(i).expect("Index out of bounds")
-                )
-            })
-            .collect();
-        let slotmap = create_vertex_slotmap(vertices);
-
-        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
-
-        assert_relative_eq!(
-            min_coords.as_slice(),
-            [-2.0, -1.0, 1.0].as_slice(),
-            epsilon = 1e-9
-        );
-        assert_relative_eq!(
-            max_coords.as_slice(),
-            [4.0, 5.0, 3.0].as_slice(),
-            epsilon = 1e-9
-        );
-    }
-
-    #[test]
-    fn utilities_find_extreme_coordinates_identical_points() {
-        let points = vec![
-            Point::new([2.0, 3.0, 4.0]),
-            Point::new([2.0, 3.0, 4.0]),
-            Point::new([2.0, 3.0, 4.0]),
-        ];
-        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 3>> =
-            crate::core::vertex::Vertex::from_points(points);
-        let slotmap = create_vertex_slotmap(vertices);
-
-        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
-
-        // All points are identical, so min and max should be the same
-        assert_relative_eq!(
-            min_coords.as_slice(),
-            [2.0, 3.0, 4.0].as_slice(),
-            epsilon = 1e-9
-        );
-        assert_relative_eq!(
-            max_coords.as_slice(),
-            [2.0, 3.0, 4.0].as_slice(),
-            epsilon = 1e-9
-        );
-    }
-
-    #[test]
-    fn utilities_find_extreme_coordinates_large_numbers() {
-        let points = vec![
-            Point::new([1e6, -1e6, 1e12]),
-            Point::new([-1e9, 1e3, -1e15]),
-            Point::new([1e15, 1e9, 1e6]),
-        ];
-        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 3>> =
-            crate::core::vertex::Vertex::from_points(points);
-        let slotmap = create_vertex_slotmap(vertices);
-
-        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
-
-        assert_relative_eq!(
-            min_coords.as_slice(),
-            [-1e9, -1e6, -1e15].as_slice(),
-            epsilon = 1e-9
-        );
-        assert_relative_eq!(
-            max_coords.as_slice(),
-            [1e15, 1e9, 1e12].as_slice(),
-            epsilon = 1e-9
-        );
-    }
-
-    #[test]
-    fn utilities_find_extreme_coordinates_with_f32() {
-        // Test with f32 type to ensure generic type coverage
-        let points = vec![
-            Point::new([1.5f32, 2.5f32, 3.5f32]),
-            Point::new([0.5f32, 4.5f32, 1.5f32]),
-            Point::new([2.5f32, 1.5f32, 2.5f32]),
-        ];
-        let vertices: Vec<crate::core::vertex::Vertex<f32, Option<()>, 3>> =
-            crate::core::vertex::Vertex::from_points(points);
-        let slotmap = create_vertex_slotmap(vertices);
-
-        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
-
-        assert_relative_eq!(
-            min_coords.as_slice(),
-            [0.5f32, 1.5f32, 1.5f32].as_slice(),
-            epsilon = 1e-6
-        );
-        assert_relative_eq!(
-            max_coords.as_slice(),
-            [2.5f32, 4.5f32, 3.5f32].as_slice(),
-            epsilon = 1e-6
-        );
-    }
-
-    #[test]
-    fn utilities_find_extreme_coordinates_empty_error_message() {
-        // Test that the correct error message is returned for empty slotmap
-        let empty_slotmap: SlotMap<DefaultKey, crate::core::vertex::Vertex<f64, Option<()>, 3>> =
-            SlotMap::new();
-        let result = find_extreme_coordinates(&empty_slotmap, ExtremeType::Minimum);
-
-        assert!(result.is_err());
-        let error_message = result.unwrap_err().to_string();
-        assert!(error_message.contains("Cannot find extreme coordinates"));
-        assert!(error_message.contains("vertices SlotMap is empty"));
-    }
-
-    #[test]
-    fn utilities_find_extreme_coordinates_ordering() {
-        // Test SlotMap ordering and insertion behavior
-        let points = vec![Point::new([1.0, 2.0, 3.0]), Point::new([4.0, 1.0, 2.0])];
-        let vertices: Vec<crate::core::vertex::Vertex<f64, Option<()>, 3>> =
-            crate::core::vertex::Vertex::from_points(points);
-
-        let slotmap = create_vertex_slotmap(vertices);
-
-        let min_coords = find_extreme_coordinates(&slotmap, ExtremeType::Minimum).unwrap();
-        let max_coords = find_extreme_coordinates(&slotmap, ExtremeType::Maximum).unwrap();
-
-        assert_relative_eq!(
-            min_coords.as_slice(),
-            [1.0, 1.0, 2.0].as_slice(),
-            epsilon = 1e-9
-        );
-        assert_relative_eq!(
-            max_coords.as_slice(),
-            [4.0, 2.0, 3.0].as_slice(),
-            epsilon = 1e-9
-        );
     }
 
     // =============================================================================
@@ -1417,14 +807,72 @@ mod tests {
         assert_eq!(combinations_3.len(), 4);
         assert!(combinations_3.contains(&vec![vertices[0], vertices[1], vertices[2]]));
 
-        // Edge case: k=0
+        // Edge case: k=0 (covers line 205-207)
         let combinations_0 = generate_combinations(&vertices, 0);
         assert_eq!(combinations_0.len(), 1);
         assert!(combinations_0[0].is_empty());
 
-        // Edge case: k > len
+        // Edge case: k > len (covers line 210-211)
         let combinations_5 = generate_combinations(&vertices, 5);
         assert!(combinations_5.is_empty());
+
+        // Edge case: k == len (covers line 214-216)
+        let combinations_4 = generate_combinations(&vertices, 4);
+        assert_eq!(combinations_4.len(), 1);
+        assert_eq!(combinations_4[0], vertices);
+
+        // Test single vertex combinations (k=1)
+        let combinations_1 = generate_combinations(&vertices, 1);
+        assert_eq!(combinations_1.len(), 4);
+        assert!(combinations_1.contains(&vec![vertices[0]]));
+        assert!(combinations_1.contains(&vec![vertices[1]]));
+        assert!(combinations_1.contains(&vec![vertices[2]]));
+        assert!(combinations_1.contains(&vec![vertices[3]]));
+    }
+
+    #[test]
+    fn test_generate_combinations_comprehensive() {
+        // Test with different sizes to exercise all code paths
+
+        // Small case: 3 vertices, choose 2 (covers loop termination paths)
+        let small_vertices: Vec<Vertex<f64, Option<()>, 1>> =
+            vec![vertex!([1.0]), vertex!([2.0]), vertex!([3.0])];
+        let combinations_small = generate_combinations(&small_vertices, 2);
+        assert_eq!(combinations_small.len(), 3);
+
+        // Test the iterative combination algorithm paths (lines 220-242)
+        let large_vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![
+            vertex!([1.0]),
+            vertex!([2.0]),
+            vertex!([3.0]),
+            vertex!([4.0]),
+            vertex!([5.0]),
+        ];
+
+        // Choose 3 from 5 vertices - this will exercise the inner loops
+        let combinations_large = generate_combinations(&large_vertices, 3);
+        assert_eq!(combinations_large.len(), 10); // C(5,3) = 10
+
+        // Verify some specific combinations exist
+        assert!(combinations_large.contains(&vec![
+            large_vertices[0],
+            large_vertices[1],
+            large_vertices[2]
+        ]));
+        assert!(combinations_large.contains(&vec![
+            large_vertices[2],
+            large_vertices[3],
+            large_vertices[4]
+        ]));
+
+        // Test edge case with empty input
+        let empty_vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![];
+        let combinations_empty = generate_combinations(&empty_vertices, 1);
+        assert!(combinations_empty.is_empty());
+
+        let combinations_empty_k0 = generate_combinations(&empty_vertices, 0);
+        assert_eq!(combinations_empty_k0.len(), 1);
+        assert!(combinations_empty_k0[0].is_empty());
     }
 
     // =============================================================================

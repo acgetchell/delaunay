@@ -18,6 +18,7 @@
 /__pycache__/
 **/__pycache__/
 .cspellcache
+coverage_report/tarpaulin-report.*
 
 # Python packaging artifacts
 *.egg-info/
