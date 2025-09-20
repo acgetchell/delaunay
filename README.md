@@ -67,6 +67,8 @@ cargo run --example triangulation_3d_50_points
 cargo run --example convex_hull_3d_50_points
 cargo run --example into_from_conversions
 cargo run --example point_comparison_and_hashing
+cargo run --example memory_analysis
+cargo run --example zero_allocation_iterator_demo
 ```
 
 ## 📋 Examples
@@ -77,6 +79,10 @@ The `examples/` directory contains several demonstrations:
 - **`convex_hull_3d_50_points`**: 3D convex hull extraction and analysis with performance benchmarks
 - **`into_from_conversions`**: Demonstrates Into/From trait conversions and utilities
 - **`point_comparison_and_hashing`**: Demonstrates point comparison and hashing behavior
+- **`memory_analysis`**: Memory usage analysis for triangulations across dimensions with allocation tracking
+- **`zero_allocation_iterator_demo`**: Performance comparison between allocation and zero-allocation iterators
+
+For detailed documentation, sample output, and usage instructions for each example, see [examples/README.md](examples/README.md).
 
 For comprehensive guidelines on development environment setup,
 testing, benchmarking, performance analysis, and development workflow, please see [CONTRIBUTING.md](CONTRIBUTING.md).

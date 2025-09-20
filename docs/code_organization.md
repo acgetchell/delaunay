@@ -42,6 +42,7 @@ delaunay/
 │   │   ├── traits/                               # Core traits for data types and algorithms
 │   │   │   ├── boundary_analysis.rs              # Boundary analysis traits
 │   │   │   ├── data_type.rs                      # DataType trait definitions
+│   │   │   ├── facet_cache.rs                    # FacetCacheProvider trait for performance optimization
 │   │   │   └── insertion_algorithm.rs            # Insertion algorithm traits
 │   │   ├── boundary.rs                           # Boundary analysis and facet detection
 │   │   ├── cell.rs                               # Cell (simplex) implementation
@@ -67,7 +68,8 @@ delaunay/
 │   ├── into_from_conversions.rs                  # Into/From trait conversion examples
 │   ├── memory_analysis.rs                        # Memory usage analysis example with allocation counting
 │   ├── point_comparison_and_hashing.rs           # Point operations examples
-│   └── triangulation_3d_50_points.rs             # 3D triangulation example
+│   ├── triangulation_3d_50_points.rs             # 3D triangulation example
+│   └── zero_allocation_iterator_demo.rs          # Zero-allocation iterator performance demonstration
 ├── benches/                                      # Performance benchmarks
 │   ├── README.md                                 # Benchmarking guide and usage instructions
 │   ├── PERFORMANCE_RESULTS.md                    # Auto-generated performance results and analysis
@@ -95,7 +97,11 @@ delaunay/
 │   ├── code_organization.md                      # Code organization patterns (this file)
 │   ├── numerical_robustness_guide.md             # Numerical robustness and stability guide
 │   ├── optimization_recommendations.md           # Performance optimization guide
-│   └── RELEASING.md                              # Release process documentation
+│   ├── OPTIMIZATION_ROADMAP.md                   # Comprehensive 4-phase optimization strategy (primary reference)
+│   ├── OPTIMIZING_BOWYER_WATSON.md               # FacetCacheProvider implementation guide (Phase 2 - completed v0.4.4)
+│   ├── README.md                                 # Documentation index and navigation guide
+│   ├── RELEASING.md                              # Release process documentation
+│   └── vertex_uuid_iter_optimizations.md         # Zero-allocation UUID iteration optimization guide
 ├── scripts/                                      # Development and CI scripts
 │   ├── tests/                                    # Python utility tests
 │   │   ├── __init__.py                           # Test package initialization
@@ -237,7 +243,7 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality i
 - `collections.rs` - Optimized collection types and utilities
 - `boundary.rs` - Boundary detection and analysis
 - `algorithms/` - Bowyer-Watson implementations (standard and robust)
-- `traits/` - Core trait definitions
+- `traits/` - Core trait definitions including FacetCacheProvider for performance optimization
 
 **`src/geometry/`** - Geometric algorithms and predicates:
 
@@ -249,7 +255,8 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality i
 
 #### Development Infrastructure
 
-- **`examples/`** - Usage demos and trait examples, including memory profiling (see: [examples/memory_analysis.rs](../examples/README.md#memory-analysis-example))
+- **`examples/`** - Usage demos and trait examples, including memory profiling
+  (see: [examples/memory_analysis.rs](../examples/README.md#memory-analysis-example)) and zero-allocation iterator demonstrations
 - **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage) and memory allocation tracking
   (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite))
 - **`tests/`** - Integration tests, debugging utilities, regression testing, allocation profiling tools
@@ -276,21 +283,33 @@ The project structure reflects several key architectural decisions:
 5. **Memory Profiling**: Comprehensive allocation tracking with `count-allocations` feature for detailed memory analysis
 6. **Performance Analysis (opt-in)**: `bench` feature for timing-based tests and ergonomics checks; distinct from CI-driven regression detection in item 4
 7. **Academic Integration**: Strong support for research use with comprehensive citations and references
-8. **Cross-Platform Development**: Modern Python tooling alongside traditional Rust development
-9. **Quality Assurance**: Multiple layers of automated quality control and testing
+8. **High-Performance Optimizations**: Phase 1-2 optimizations completed in v0.4.4 with significant performance gains
+9. **Cross-Platform Development**: Modern Python tooling alongside traditional Rust development
+10. **Quality Assurance**: Multiple layers of automated quality control and testing
 
 This structure supports both library users (through examples and documentation) and contributors (through comprehensive
 development tooling and clear architectural guidance).
 
 #### Memory Profiling System
 
-Version 0.4.3 introduces comprehensive memory profiling capabilities:
+Version 0.4.4 includes comprehensive memory profiling capabilities:
 
 - **Allocation Tracking**: Optional `count-allocations` feature using the `allocation-counter` crate
 - **Memory Benchmarks**: Dedicated benchmarks for memory scaling analysis (`memory_scaling.rs`, `triangulation_vs_hull_memory.rs`)
 - **Profiling Examples**: `memory_analysis.rs` demonstrates allocation counting across different operations
 - **Integration Testing**: `allocation_api.rs` provides utilities for testing memory usage in various scenarios
 - **CI Integration**: Automated profiling benchmarks with detailed allocation reports
+
+#### Performance Optimization System (v0.4.4)
+
+Version 0.4.4 completes Phase 1-2 of the comprehensive optimization roadmap:
+
+- **Collection Optimization** (Phase 1): FxHasher-based collections for 2-3x faster hash operations
+- **Key-Based Internal APIs** (Phase 2): Direct SlotMap key operations eliminating UUID lookups
+- **FacetCacheProvider**: 50-90% reduction in facet mapping computation time
+- **Zero-Allocation Iterators**: 1.86x faster iteration with `vertex_uuid_iter()`
+- **Thread Safety**: RCU-based caching for concurrent operations
+- **Enhanced Error Handling**: Comprehensive `InsertionError` enum for robust algorithms
 
 ---
 
