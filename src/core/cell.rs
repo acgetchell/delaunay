@@ -47,13 +47,22 @@ use super::{
     util::{UuidValidationError, make_uuid, validate_uuid},
     vertex::{Vertex, VertexValidationError},
 };
-use crate::core::collections::FastHashMap;
+use crate::core::collections::{FastHashMap, FastHashSet};
 use crate::geometry::{
     point::Point,
     traits::coordinate::{CoordinateConversionError, CoordinateScalar},
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::{fmt::Debug, hash::Hash, iter::Sum};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{self, DeserializeOwned, IgnoredAny, MapAccess, Visitor},
+};
+use std::{
+    cmp,
+    fmt::{self, Debug},
+    hash::{Hash, Hasher},
+    iter::Sum,
+    marker::PhantomData,
+};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -273,11 +282,8 @@ where
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
     where
-        De: serde::Deserializer<'de>,
+        De: Deserializer<'de>,
     {
-        use serde::de::{self, MapAccess, Visitor};
-        use std::fmt;
-
         struct CellVisitor<T, U, V, const D: usize>
         where
             T: CoordinateScalar,
@@ -285,7 +291,7 @@ where
             V: DataType,
             [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
         {
-            _phantom: std::marker::PhantomData<(T, U, V)>,
+            _phantom: PhantomData<(T, U, V)>,
         }
 
         impl<'de, T, U, V, const D: usize> Visitor<'de> for CellVisitor<T, U, V, D>
@@ -337,7 +343,7 @@ where
                             data = Some(map.next_value()?);
                         }
                         _ => {
-                            let _ = map.next_value::<serde::de::IgnoredAny>()?;
+                            let _ = map.next_value::<IgnoredAny>()?;
                         }
                     }
                 }
@@ -361,7 +367,7 @@ where
             "Cell",
             FIELDS,
             CellVisitor {
-                _phantom: std::marker::PhantomData,
+                _phantom: PhantomData,
             },
         )
     }
@@ -381,8 +387,6 @@ where
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     fn validate(&self) -> Result<(), CellValidationError> {
-        use std::collections::HashSet;
-
         let vertices =
             self.vertices
                 .as_ref()
@@ -402,7 +406,7 @@ where
         }
 
         // Check for duplicate vertices using Vertex equality (consistent with is_valid)
-        let mut seen_vertices = HashSet::new();
+        let mut seen_vertices = FastHashSet::default();
         for vertex in vertices {
             if !seen_vertices.insert(vertex) {
                 return Err(CellValidationError::DuplicateVertices);
@@ -912,7 +916,7 @@ where
         validate_uuid(&self.uuid)?;
 
         // Check if all vertices are distinct from one another
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = FastHashSet::default();
         if !self.vertices.iter().all(|vertex| seen.insert(*vertex)) {
             return Err(CellValidationError::DuplicateVertices);
         }
@@ -1084,7 +1088,7 @@ where
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         sorted_vertices::<T, U, D>(&self.vertices)
             .partial_cmp(&sorted_vertices::<T, U, D>(&other.vertices))
     }
@@ -1119,7 +1123,7 @@ where
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     Point<T, D>: Hash, // Add this bound to ensure Point implements Hash
 {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash sorted vertices for consistent ordering - this matches PartialEq behavior
         for vertex in &sorted_vertices::<T, U, D>(&self.vertices) {
             vertex.hash(state);
@@ -1142,12 +1146,13 @@ mod tests {
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::geometry::util::{circumcenter, circumradius, circumradius_with_center};
     use approx::assert_relative_eq;
+    use std::{cmp, collections::hash_map::DefaultHasher, hash::Hasher};
 
     // Type aliases for commonly used types to reduce repetition
     type TestCell3D = Cell<f64, Option<()>, Option<()>, 3>;
     type TestCell2D = Cell<f64, Option<()>, Option<()>, 2>;
-    type TestVertex3D = crate::core::vertex::Vertex<f64, Option<()>, 3>;
-    type TestVertex2D = crate::core::vertex::Vertex<f64, Option<()>, 2>;
+    type TestVertex3D = Vertex<f64, Option<()>, 3>;
+    type TestVertex2D = Vertex<f64, Option<()>, 2>;
 
     // =============================================================================
     // HELPER FUNCTIONS
@@ -1162,7 +1167,7 @@ mod tests {
         T: CoordinateScalar,
         U: DataType,
         V: DataType,
-        [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
     {
         assert_eq!(cell.number_of_vertices(), expected_vertices);
         assert_eq!(cell.dim(), expected_dim);
@@ -1367,9 +1372,6 @@ mod tests {
 
     #[test]
     fn cell_hash() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         let vertex1 = vertex!([0.0, 0.0, 1.0]);
         let vertex2 = vertex!([0.0, 1.0, 0.0]);
         let vertex3 = vertex!([1.0, 0.0, 0.0]);
@@ -1395,10 +1397,6 @@ mod tests {
 
     #[test]
     fn cell_hash_with_neighbors_and_data() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        use uuid::Uuid;
-
         let vertex1 = vertex!([0.0, 0.0, 1.0]);
         let vertex2 = vertex!([0.0, 1.0, 0.0]);
         let vertex3 = vertex!([1.0, 0.0, 0.0]);
@@ -1431,10 +1429,6 @@ mod tests {
 
     #[test]
     fn cell_hash_distinct_neighbors() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        use uuid::Uuid;
-
         let vertex1 = vertex!([0.0, 0.0, 1.0]);
         let vertex2 = vertex!([0.0, 1.0, 0.0]);
         let vertex3 = vertex!([1.0, 0.0, 0.0]);
@@ -1466,9 +1460,6 @@ mod tests {
 
     #[test]
     fn cell_hash_distinct_data() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         let vertex1 = vertex!([0.0, 0.0, 1.0]);
         let vertex2 = vertex!([0.0, 1.0, 0.0]);
         let vertex3 = vertex!([1.0, 0.0, 0.0]);
@@ -1494,9 +1485,6 @@ mod tests {
 
     #[test]
     fn cell_hash_different_vertices() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         let vertex1 = vertex!([0.0, 0.0, 1.0]);
         let vertex2 = vertex!([0.0, 1.0, 0.0]);
         let vertex3 = vertex!([1.0, 0.0, 0.0]);
@@ -1569,8 +1557,8 @@ mod tests {
             cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
         // Test that equal cells are not less than each other
-        assert_ne!(cell1.partial_cmp(&cell2), Some(std::cmp::Ordering::Less));
-        assert_ne!(cell2.partial_cmp(&cell1), Some(std::cmp::Ordering::Less));
+        assert_ne!(cell1.partial_cmp(&cell2), Some(cmp::Ordering::Less));
+        assert_ne!(cell2.partial_cmp(&cell1), Some(cmp::Ordering::Less));
         assert!(cell1 <= cell2);
         assert!(cell2 <= cell1);
         assert!(cell1 >= cell2);

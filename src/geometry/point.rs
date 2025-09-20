@@ -25,10 +25,15 @@ use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar, CoordinateValidationError,
 };
 use num_traits::cast;
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, Error, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
+use std::any;
+use std::cmp::Ordering;
 use std::convert::TryFrom;
+use std::f64;
+use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 
 // =============================================================================
 // POINT STRUCT DEFINITION
@@ -151,15 +156,15 @@ impl<T, const D: usize> PartialOrd for Point<T, D>
 where
     T: CoordinateScalar,
 {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         // Perform lexicographic comparison using ordered comparison for each coordinate
         for (a, b) in self.coords.iter().zip(other.coords.iter()) {
             match a.ordered_partial_cmp(b) {
-                Some(std::cmp::Ordering::Equal) => {}
+                Some(Ordering::Equal) => {}
                 other_ordering => return other_ordering,
             }
         }
-        Some(std::cmp::Ordering::Equal)
+        Some(Ordering::Equal)
     }
 }
 
@@ -220,10 +225,6 @@ where
     where
         DE: serde::Deserializer<'de>,
     {
-        use serde::de::{Error, SeqAccess, Visitor};
-        use std::fmt;
-        use std::marker::PhantomData;
-
         struct ArrayVisitor<T, const D: usize>(PhantomData<T>);
 
         impl<'de, T, const D: usize> Visitor<'de> for ArrayVisitor<T, D>
@@ -254,7 +255,7 @@ where
                         serde_json::Value::Number(n) => {
                             // Handle regular numeric values
                             n.as_f64()
-                                .and_then(|f| num_traits::cast::cast::<f64, T>(f))
+                                .and_then(|f| cast::cast::<f64, T>(f))
                                 .ok_or_else(|| Error::custom("Invalid numeric value"))?
                         }
                         serde_json::Value::String(s) => {
@@ -304,7 +305,7 @@ where
 /// cast into the target type, or if a non-finite value is encountered post-cast.
 impl<T, U, const D: usize> TryFrom<[T; D]> for Point<U, D>
 where
-    T: cast::NumCast + std::fmt::Debug,
+    T: cast::NumCast + fmt::Debug,
     U: CoordinateScalar + cast::NumCast,
 {
     type Error = CoordinateConversionError;
@@ -320,8 +321,8 @@ where
                 cast::cast(c).ok_or_else(|| CoordinateConversionError::ConversionFailed {
                     coordinate_index: i,
                     coordinate_value: c_debug,
-                    from_type: std::any::type_name::<T>(),
-                    to_type: std::any::type_name::<U>(),
+                    from_type: any::type_name::<T>(),
+                    to_type: any::type_name::<U>(),
                 })?;
             // Validate finiteness after cast
             if !v.is_finite_generic() {
@@ -378,10 +379,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::collections::FastHashMap;
     use approx::assert_relative_eq;
+    use std::cmp::Ordering;
     use std::collections::hash_map::DefaultHasher;
     use std::collections::{HashMap, HashSet};
     use std::hash::{Hash, Hasher};
+    use std::mem;
 
     // Helper function to get hash value for any hashable type
     fn get_hash<T: Hash>(value: &T) -> u64 {
@@ -530,7 +534,7 @@ mod tests {
     #[test]
     fn point_from_array_f32_to_f64() {
         let coords = [1.5f32, 2.5f32, 3.5f32, 4.5f32];
-        let point: Point<f64, 4> = Point::new(coords.map(std::convert::Into::into));
+        let point: Point<f64, 4> = Point::new(coords.map(Into::into));
 
         let result_coords = point.to_array();
         assert_relative_eq!(
@@ -568,7 +572,7 @@ mod tests {
 
         // Test conversion from f32 to f64 (safe upcast)
         let coords_f32 = [1.5f32, 2.5f32];
-        let point_f64: Point<f64, 2> = Point::new(coords_f32.map(std::convert::Into::into));
+        let point_f64: Point<f64, 2> = Point::new(coords_f32.map(Into::into));
         let result_f64 = point_f64.to_array();
         assert_relative_eq!(
             result_f64.as_slice(),
@@ -583,9 +587,6 @@ mod tests {
 
     #[test]
     fn point_hash() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         let point1 = Point::new([1.0, 2.0, 3.0]);
         let point2 = Point::new([1.0, 2.0, 3.0]);
         let point3 = Point::new([1.0, 2.0, 4.0]);
@@ -606,9 +607,7 @@ mod tests {
 
     #[test]
     fn point_hash_in_hashmap() {
-        use std::collections::HashMap;
-
-        let mut map: HashMap<Point<f64, 2>, i32> = HashMap::new();
+        let mut map: FastHashMap<Point<f64, 2>, i32> = FastHashMap::default();
 
         let point1 = Point::new([1.0, 2.0]);
         let point2 = Point::new([3.0, 4.0]);
@@ -805,8 +804,6 @@ mod tests {
 
     #[test]
     fn point_ordering_edge_cases() {
-        use std::cmp::Ordering;
-
         let point1 = Point::new([1.0, 2.0]);
         let point2 = Point::new([1.0, 2.0]);
 
@@ -821,8 +818,6 @@ mod tests {
 
     #[test]
     fn point_hash_f32() {
-        use std::collections::HashMap;
-
         let mut map: HashMap<Point<f32, 2>, i32> = HashMap::new();
 
         let point1 = Point::new([1.5f32, 2.5f32]);
@@ -1040,9 +1035,6 @@ mod tests {
 
     #[test]
     fn point_nan_hash_consistency() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         // Test that OrderedFloat provides consistent hashing for NaN values
         // Note: Equality comparison treats all NaN values as equivalent
         // Hashing uses OrderedFloat which treats all NaN values as equivalent
@@ -1074,9 +1066,6 @@ mod tests {
 
     #[test]
     fn point_infinity_hash_consistency() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         // Test that OrderedFloat provides consistent hashing for infinity values
         let point_pos_inf1 = Point::new([f64::INFINITY, 2.0]);
         let point_pos_inf2 = Point::new([f64::INFINITY, 2.0]);
@@ -1108,8 +1097,6 @@ mod tests {
 
     #[test]
     fn point_nan_infinity_hash_consistency() {
-        use std::collections::HashMap;
-
         // Test that points with NaN can be used as HashMap keys
         let mut map: HashMap<Point<f64, 2>, i32> = HashMap::new();
 
@@ -1458,8 +1445,8 @@ mod tests {
         assert_eq!(point_20d, point_20d_copy);
 
         // Test with 30D points
-        let coords_30d_a = [std::f64::consts::PI; 30];
-        let coords_30d_b = [std::f64::consts::PI; 30];
+        let coords_30d_a = [f64::consts::PI; 30];
+        let coords_30d_b = [f64::consts::PI; 30];
         let point_30d_a = Point::new(coords_30d_a);
         let point_30d_b = Point::new(coords_30d_b);
         assert_eq!(point_30d_a, point_30d_b);
@@ -1516,8 +1503,6 @@ mod tests {
 
     #[test]
     fn point_partial_ord_comprehensive() {
-        use std::cmp::Ordering;
-
         // Test lexicographic ordering in detail
         let point_a = Point::new([1.0, 2.0, 3.0]);
         let point_b = Point::new([1.0, 2.0, 4.0]); // Greater in last coordinate
@@ -1563,8 +1548,6 @@ mod tests {
 
     #[test]
     fn point_partial_ord_special_values() {
-        use std::cmp::Ordering;
-
         // Test NaN vs NaN comparison (should be Some(Equal) with OrderedCmp)
         let point_nan1 = Point::new([f64::NAN, 1.0]);
         let point_nan2 = Point::new([f64::NAN, 1.0]);
@@ -1649,8 +1632,6 @@ mod tests {
 
     #[test]
     fn point_memory_layout_and_size() {
-        use std::mem;
-
         // Test that Point has the expected memory layout
         // Point should be the same size as its coordinate array
 
@@ -1849,7 +1830,7 @@ mod tests {
 
         // Test conversion from array reference
         let coords_ref = &[1.0f32, 2.0f32, 3.0f32];
-        let point_from_ref: Point<f64, 3> = Point::new(coords_ref.map(std::convert::Into::into));
+        let point_from_ref: Point<f64, 3> = Point::new(coords_ref.map(Into::into));
         assert_relative_eq!(
             point_from_ref.to_array().as_slice(),
             [1.0f64, 2.0f64, 3.0f64].as_slice()
@@ -1924,9 +1905,6 @@ mod tests {
 
     #[test]
     fn point_hash_special_values() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         // Test for NaN
         let point_nan1 = Point::new([f64::NAN, 2.0]);
         let point_nan2 = Point::new([f64::NAN, 2.0]);
@@ -1978,8 +1956,6 @@ mod tests {
 
     #[test]
     fn point_hashmap_special_values() {
-        use std::collections::HashMap;
-
         let mut map: HashMap<Point<f64, 2>, &str> = HashMap::new();
 
         let point_nan = Point::new([f64::NAN, 2.0]);
@@ -2003,8 +1979,6 @@ mod tests {
 
     #[test]
     fn point_hashset_special_values() {
-        use std::collections::HashSet;
-
         let mut set: HashSet<Point<f64, 2>> = HashSet::new();
 
         set.insert(Point::new([f64::NAN, 2.0]));
@@ -2023,8 +1997,6 @@ mod tests {
 
     #[test]
     fn point_hash_distribution_basic() {
-        use std::collections::HashSet;
-
         // Test that different points generally produce different hashes
         // (This is a probabilistic test, not a guarantee)
 
@@ -2221,8 +2193,6 @@ mod tests {
 
     #[test]
     fn point_hashmap_with_special_values() {
-        use std::collections::HashMap;
-
         let mut point_map: HashMap<Point<f64, 3>, &str> = HashMap::new();
 
         // Insert points with various special values
@@ -2266,8 +2236,6 @@ mod tests {
 
     #[test]
     fn point_hashset_with_special_values() {
-        use std::collections::HashSet;
-
         let mut point_set: HashSet<Point<f64, 2>> = HashSet::new();
 
         // Add various points including duplicates with special values
@@ -2719,7 +2687,7 @@ mod tests {
         assert_eq!(copied.dim(), cloned.dim());
 
         // Test that point can be used in collections requiring Hash + Eq
-        let mut set = std::collections::HashSet::new();
+        let mut set = HashSet::new();
         set.insert(point);
         assert!(set.contains(&point));
     }

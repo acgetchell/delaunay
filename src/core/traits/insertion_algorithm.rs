@@ -4,7 +4,7 @@
 //! interface for different vertex insertion strategies, including the basic
 //! Bowyer-Watson algorithm and robust variants with enhanced numerical stability.
 
-use crate::core::collections::CellKeySet;
+use crate::core::collections::{CellKeySet, SmallBuffer};
 use crate::core::{
     cell::CellBuilder,
     facet::Facet,
@@ -387,13 +387,13 @@ where
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     /// Buffer for storing bad cell keys during cavity detection
-    pub bad_cells_buffer: Vec<crate::core::triangulation_data_structure::CellKey>,
+    pub bad_cells_buffer: SmallBuffer<crate::core::triangulation_data_structure::CellKey, 16>,
     /// Buffer for storing boundary facets during cavity boundary detection
-    pub boundary_facets_buffer: Vec<Facet<T, U, V, D>>,
+    pub boundary_facets_buffer: SmallBuffer<Facet<T, U, V, D>, 8>,
     /// Buffer for storing vertex points during geometric computations
-    pub vertex_points_buffer: Vec<crate::geometry::point::Point<T, D>>,
+    pub vertex_points_buffer: SmallBuffer<crate::geometry::point::Point<T, D>, 16>,
     /// Buffer for storing visible boundary facets
-    pub visible_facets_buffer: Vec<Facet<T, U, V, D>>,
+    pub visible_facets_buffer: SmallBuffer<Facet<T, U, V, D>, 8>,
 }
 
 impl<T, U, V, const D: usize> Default for InsertionBuffers<T, U, V, D>
@@ -417,12 +417,12 @@ where
 {
     /// Create new empty buffers
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            bad_cells_buffer: Vec::new(),
-            boundary_facets_buffer: Vec::new(),
-            vertex_points_buffer: Vec::new(),
-            visible_facets_buffer: Vec::new(),
+            bad_cells_buffer: SmallBuffer::new(),
+            boundary_facets_buffer: SmallBuffer::new(),
+            vertex_points_buffer: SmallBuffer::new(),
+            visible_facets_buffer: SmallBuffer::new(),
         }
     }
 
@@ -430,10 +430,10 @@ where
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            bad_cells_buffer: Vec::with_capacity(capacity),
-            boundary_facets_buffer: Vec::with_capacity(capacity),
-            vertex_points_buffer: Vec::with_capacity(capacity * (D + 1)), // More points per operation
-            visible_facets_buffer: Vec::with_capacity(capacity / 2), // Typically fewer visible facets
+            bad_cells_buffer: SmallBuffer::with_capacity(capacity),
+            boundary_facets_buffer: SmallBuffer::with_capacity(capacity),
+            vertex_points_buffer: SmallBuffer::with_capacity(capacity * (D + 1)), // More points per operation
+            visible_facets_buffer: SmallBuffer::with_capacity(capacity / 2), // Typically fewer visible facets
         }
     }
 
@@ -448,13 +448,13 @@ where
     /// Prepare the bad cells buffer and return a mutable reference
     pub fn prepare_bad_cells_buffer(
         &mut self,
-    ) -> &mut Vec<crate::core::triangulation_data_structure::CellKey> {
+    ) -> &mut SmallBuffer<crate::core::triangulation_data_structure::CellKey, 16> {
         self.bad_cells_buffer.clear();
         &mut self.bad_cells_buffer
     }
 
     /// Prepare the boundary facets buffer and return a mutable reference
-    pub fn prepare_boundary_facets_buffer(&mut self) -> &mut Vec<Facet<T, U, V, D>> {
+    pub fn prepare_boundary_facets_buffer(&mut self) -> &mut SmallBuffer<Facet<T, U, V, D>, 8> {
         self.boundary_facets_buffer.clear();
         &mut self.boundary_facets_buffer
     }
@@ -462,13 +462,13 @@ where
     /// Prepare the vertex points buffer and return a mutable reference
     pub fn prepare_vertex_points_buffer(
         &mut self,
-    ) -> &mut Vec<crate::geometry::point::Point<T, D>> {
+    ) -> &mut SmallBuffer<crate::geometry::point::Point<T, D>, 16> {
         self.vertex_points_buffer.clear();
         &mut self.vertex_points_buffer
     }
 
     /// Prepare the visible facets buffer and return a mutable reference
-    pub fn prepare_visible_facets_buffer(&mut self) -> &mut Vec<Facet<T, U, V, D>> {
+    pub fn prepare_visible_facets_buffer(&mut self) -> &mut SmallBuffer<Facet<T, U, V, D>, 8> {
         self.visible_facets_buffer.clear();
         &mut self.visible_facets_buffer
     }

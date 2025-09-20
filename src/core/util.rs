@@ -293,9 +293,9 @@ where
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     // This works because Vertex implements `Eq` and `Hash`
-    use std::collections::HashSet;
-    let vertices1: HashSet<_> = facet1.vertices().into_iter().collect();
-    let vertices2: HashSet<_> = facet2.vertices().into_iter().collect();
+    use crate::core::collections::FastHashSet;
+    let vertices1: FastHashSet<_> = facet1.vertices().into_iter().collect();
+    let vertices2: FastHashSet<_> = facet2.vertices().into_iter().collect();
 
     vertices1 == vertices2
 }

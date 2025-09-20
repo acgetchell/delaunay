@@ -154,17 +154,23 @@
 // =============================================================================
 
 // Standard library imports
-use std::cmp::min;
-use std::fmt::Debug;
-use std::iter::Sum;
-use std::ops::{AddAssign, Div, SubAssign};
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    cmp::{Ordering as CmpOrdering, min},
+    fmt::{self, Debug},
+    iter::Sum,
+    marker::PhantomData,
+    ops::{AddAssign, Div, SubAssign},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 // External crate imports
-use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{self, DeserializeOwned, MapAccess, Visitor},
+};
 use slotmap::{SlotMap, new_key_type};
 use thiserror::Error;
 use uuid::Uuid;
@@ -182,9 +188,13 @@ use num_traits::cast::NumCast;
 
 // Parent module imports
 use super::{
+    algorithms::bowyer_watson::IncrementalBoyerWatson,
     cell::{Cell, CellBuilder, CellValidationError},
     facet::facet_key_from_vertex_keys,
-    traits::{data_type::DataType, insertion_algorithm::InsertionError},
+    traits::{
+        data_type::DataType,
+        insertion_algorithm::{InsertionAlgorithm, InsertionError},
+    },
     vertex::Vertex,
 };
 
@@ -2138,8 +2148,6 @@ where
             // This is why we insert the vertex into self.vertices and self.uuid_to_vertex_key
             // BEFORE calling algorithm.insert_vertex(). The algorithm operates on the
             // reference to the vertex and expects it to be retrievable from the TDS.
-            use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
-            use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
             let mut algorithm = IncrementalBoyerWatson::new();
             algorithm.insert_vertex(self, vertex).map_err(|e| match e {
                 InsertionError::TriangulationConstruction(tc_err) => tc_err,
@@ -2217,9 +2225,6 @@ where
     where
         T: NumCast,
     {
-        use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
-        use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
-
         let vertices: Vec<_> = self.vertices.values().copied().collect();
         if vertices.is_empty() {
             return Ok(());
@@ -3552,7 +3557,7 @@ where
             let b_coords: [T; D] = (*b).into();
             a_coords
                 .partial_cmp(&b_coords)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .unwrap_or(CmpOrdering::Equal)
         });
 
         other_vertices.sort_by(|a, b| {
@@ -3560,7 +3565,7 @@ where
             let b_coords: [T; D] = (*b).into();
             a_coords
                 .partial_cmp(&b_coords)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .unwrap_or(CmpOrdering::Equal)
         });
 
         // Compare sorted vertex lists
@@ -3629,10 +3634,6 @@ where
     where
         D2: Deserializer<'de>,
     {
-        use serde::de::{self, MapAccess, Visitor};
-        use std::fmt;
-        use std::marker::PhantomData;
-
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "snake_case")]
         enum Field {
