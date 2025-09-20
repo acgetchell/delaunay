@@ -3243,4 +3243,271 @@ mod tests {
             }
         }
     }
+
+    /// Test the Default trait implementation path (lines 77-79)
+    #[test]
+    fn test_default_implementation_path() {
+        let algorithm: RobustBoyerWatson<f64, Option<()>, Option<()>, 3> =
+            RobustBoyerWatson::default();
+        let (processed, created, removed) = algorithm.get_statistics();
+        assert_eq!(processed, 0);
+        assert_eq!(created, 0);
+        assert_eq!(removed, 0);
+    }
+
+    /// Test `vertex_needs_robust_handling` heuristics (lines 1108-1166)
+    #[test]
+    fn test_vertex_needs_robust_handling() {
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Create a TDS for testing
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+
+        // Test vertex with small coordinates (should trigger robust handling)
+        let small_vertex = vertex!([1e-15, 1e-15, 1e-15]);
+        let needs_robust_small = algorithm.vertex_needs_robust_handling(&tds, &small_vertex);
+        assert!(
+            needs_robust_small,
+            "Very small coordinates should need robust handling"
+        );
+
+        // Test vertex with large coordinates (should trigger robust handling)
+        let large_vertex = vertex!([1e10, 1e10, 1e10]);
+        let needs_robust_large = algorithm.vertex_needs_robust_handling(&tds, &large_vertex);
+        assert!(
+            needs_robust_large,
+            "Very large coordinates should need robust handling"
+        );
+
+        // Test vertex with normal coordinates (might not need robust handling)
+        let normal_vertex = vertex!([0.5, 0.5, 0.5]);
+        let _needs_robust_normal = algorithm.vertex_needs_robust_handling(&tds, &normal_vertex);
+        // Don't assert specific result as it depends on proximity to other vertices
+    }
+
+    /// Test `build_validated_facet_mapping` error paths (lines 734-776)
+    #[test]
+    fn test_build_validated_facet_mapping() {
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Create a valid TDS
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+
+        // Test validated facet mapping build
+        let result = algorithm.build_validated_facet_mapping(&tds);
+        assert!(
+            result.is_ok(),
+            "Should build valid facet mapping for well-formed TDS"
+        );
+
+        let facet_mapping = result.unwrap();
+        assert!(
+            !facet_mapping.is_empty(),
+            "Facet mapping should not be empty"
+        );
+
+        // Verify that no facet is shared by more than 2 cells
+        for (facet_key, cells) in &facet_mapping {
+            assert!(
+                cells.len() <= 2,
+                "Facet {} should be shared by at most 2 cells, found {}",
+                facet_key,
+                cells.len()
+            );
+        }
+    }
+
+    /// Test `validate_boundary_facets` error conditions (lines 788-796)
+    #[test]
+    fn test_validate_boundary_facets() {
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Test with empty boundary facets but non-zero bad cell count (should error)
+        let empty_facets = vec![];
+        let result = algorithm.validate_boundary_facets(&empty_facets, 3);
+        assert!(
+            result.is_err(),
+            "Should error when no boundary facets found but bad cells exist"
+        );
+
+        match result.err().unwrap() {
+            InsertionError::ExcessiveBadCells { found, threshold } => {
+                assert_eq!(found, 3);
+                assert_eq!(threshold, 0);
+            }
+            other => panic!("Expected ExcessiveBadCells error, got {other:?}"),
+        }
+
+        // Test with boundary facets present (should succeed)
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let boundary_facets = tds.boundary_facets().unwrap();
+
+        let result = algorithm.validate_boundary_facets(&boundary_facets, 1);
+        assert!(result.is_ok(), "Should succeed with valid boundary facets");
+    }
+
+    /// Test error handling in `robust_find_bad_cells` when predicates fail (lines 544-556)
+    #[test]
+    fn test_robust_find_bad_cells_predicate_failure() {
+        // Use extreme configuration that might cause predicate failures
+        let mut extreme_config = config_presets::general_triangulation::<f64>();
+        extreme_config.base_tolerance = f64::MAX; // Extreme tolerance
+
+        let algorithm =
+            RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(extreme_config);
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+
+        // Test with extreme coordinates that might cause predicate computation issues
+        // Use the most extreme valid values to test robustness
+        let extreme_vertex = vertex!([f64::MAX, f64::MIN_POSITIVE, f64::MIN]);
+
+        // Should handle gracefully even with extreme input
+        let extreme_bad_cells = algorithm.robust_find_bad_cells(&tds, &extreme_vertex);
+        println!(
+            "Found {} bad cells with extreme coordinates (handled gracefully)",
+            extreme_bad_cells.len()
+        );
+
+        // Test with coordinates very close to zero that might cause precision issues
+        let tiny_vertex = vertex!([f64::EPSILON, f64::EPSILON * 2.0, f64::EPSILON * 3.0]);
+        let tiny_bad_cells = algorithm.robust_find_bad_cells(&tds, &tiny_vertex);
+        println!(
+            "Found {} bad cells with tiny coordinates",
+            tiny_bad_cells.len()
+        );
+    }
+
+    /// Test error paths in `find_visible_boundary_facets` (lines 912-917)
+    #[test]
+    fn test_find_visible_boundary_facets_error_paths() {
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+
+        // Test with a normal exterior vertex (should work)
+        let exterior_vertex = vertex!([5.0, 5.0, 5.0]);
+        let result = algorithm.find_visible_boundary_facets(&tds, &exterior_vertex);
+
+        match result {
+            Ok(facets) => {
+                println!("Found {} visible boundary facets", facets.len());
+                // For an exterior point, we should find some visible facets
+                assert!(
+                    !facets.is_empty(),
+                    "Should find visible facets for exterior point"
+                );
+            }
+            Err(InsertionError::TriangulationState(validation_error)) => {
+                // This tests the error handling path
+                println!("Visibility detection failed with validation error: {validation_error:?}");
+            }
+            Err(other) => {
+                panic!("Unexpected error type: {other:?}");
+            }
+        }
+    }
+
+    /// Test `is_facet_visible_from_vertex_robust` degenerate handling (lines 999-1004)
+    #[test]
+    fn test_is_facet_visible_degenerate_handling() {
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+
+        // Get a boundary facet
+        let boundary_facets = tds.boundary_facets().unwrap();
+        assert!(!boundary_facets.is_empty());
+        let test_facet = &boundary_facets[0];
+
+        // Get the adjacent cell key for this facet
+        let facet_to_cells = algorithm.try_get_or_build_facet_cache(&tds).unwrap();
+        let mut adjacent_cell_key = None;
+
+        for (_, cells_with_facets) in facet_to_cells.iter() {
+            if cells_with_facets.len() == 1 {
+                // Boundary facet
+                adjacent_cell_key = Some(cells_with_facets[0].0);
+                break;
+            }
+        }
+
+        let adjacent_cell_key = adjacent_cell_key.expect("Should find adjacent cell");
+
+        // Test with a point that might cause degenerate orientation results
+        let degenerate_vertex = vertex!([0.5, 0.5, 0.5]); // Point at center of tetrahedron
+
+        // This should exercise the fallback visibility heuristic path
+        let is_visible = algorithm.is_facet_visible_from_vertex_robust(
+            &tds,
+            test_facet,
+            &degenerate_vertex,
+            adjacent_cell_key,
+        );
+
+        println!("Degenerate visibility test result: {is_visible}");
+        // Don't assert specific result since it depends on geometry, just ensure it doesn't panic
+    }
+
+    /// Test `safe_usize_to_scalar` conversion in `fallback_visibility_heuristic` (lines 1032-1034)
+    #[test]
+    fn test_fallback_visibility_safe_conversion() {
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Create a facet with a very large number of vertices to test conversion edge case
+        // Note: This is artificial since real facets in 3D have exactly 3 vertices
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let boundary_facets = tds.boundary_facets().unwrap();
+
+        let test_vertex = vertex!([10.0, 10.0, 10.0]);
+
+        // Test the fallback visibility heuristic with a normal facet
+        for facet in boundary_facets {
+            let is_visible = algorithm.fallback_visibility_heuristic(&facet, &test_vertex);
+            println!("Fallback visibility for far point: {is_visible}");
+            // Should typically be true for a far point, but mainly testing no panic
+        }
+    }
 }

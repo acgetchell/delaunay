@@ -673,7 +673,46 @@ mod tests {
     use crate::core::util::{UuidValidationError, make_uuid};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
-    use approx::assert_relative_eq;
+    use approx::{assert_abs_diff_eq, assert_relative_eq};
+    use serde::{Deserialize, Serialize};
+    use std::collections::{HashMap, HashSet};
+
+    // Test enum for demonstrating vertex data usage
+    #[repr(u8)]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    enum PointType {
+        Origin = 0,
+        Boundary = 1,
+        Interior = 2,
+        Corner = 3,
+    }
+
+    impl Serialize for PointType {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            serializer.serialize_u8(*self as u8)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for PointType {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let value = u8::deserialize(deserializer)?;
+            match value {
+                0 => Ok(Self::Origin),
+                1 => Ok(Self::Boundary),
+                2 => Ok(Self::Interior),
+                3 => Ok(Self::Corner),
+                _ => Err(serde::de::Error::custom(format!(
+                    "Invalid PointType: {value}"
+                ))),
+            }
+        }
+    }
 
     // =============================================================================
     // HELPER FUNCTIONS
@@ -1591,40 +1630,38 @@ mod tests {
     fn vertex_string_data_usage_examples() {
         // This test demonstrates what works and what doesn't work with string data in vertices.
         // Note: String data has limitations due to the DataType trait requirements and lifetime complexities.
-        
+
         // =====================================================================
         // DEMONSTRATE THE FUNDAMENTAL ISSUE
         // =====================================================================
-        
+
         // The following would NOT compile because String doesn't implement Copy:
         // let vertex_string: Vertex<f64, String, 2> = vertex!([1.0, 2.0], "test".to_string());
         // Error: String doesn't implement Copy trait required by DataType
-        
+
         // The following would also cause lifetime issues in real usage:
         // let vertex_str: Vertex<f64, &str, 2> = vertex!([1.0, 2.0], "test");
         // While this compiles, it has severe lifetime limitations in practice
-        
+
         // =====================================================================
         // PRACTICAL ALTERNATIVE: Use numeric IDs with external lookup
         // =====================================================================
-        
-        use std::collections::HashMap;
-        
+
         // Create a lookup table for string labels - this is the recommended approach
         let mut label_lookup: HashMap<u32, String> = HashMap::new();
         label_lookup.insert(0, "center".to_string());
         label_lookup.insert(1, "corner".to_string());
         label_lookup.insert(2, "edge_midpoint".to_string());
         label_lookup.insert(3, "boundary_point".to_string());
-        
+
         // Use numeric IDs in vertices - this works perfectly and is efficient
         let vertices_with_ids: Vec<Vertex<f64, u32, 2>> = vec![
-            vertex!([0.5, 0.5], 0u32),  // center
-            vertex!([1.0, 1.0], 1u32),  // corner
-            vertex!([0.5, 1.0], 2u32),  // edge_midpoint
-            vertex!([0.0, 0.5], 3u32),  // boundary_point
+            vertex!([0.5, 0.5], 0u32), // center
+            vertex!([1.0, 1.0], 1u32), // corner
+            vertex!([0.5, 1.0], 2u32), // edge_midpoint
+            vertex!([0.0, 0.5], 3u32), // boundary_point
         ];
-        
+
         // Verify we can retrieve the labels
         for (i, v) in vertices_with_ids.iter().enumerate() {
             let label_id = v.data.unwrap();
@@ -1637,84 +1674,50 @@ mod tests {
                 _ => unreachable!(),
             }
         }
-        
+
         // Test that these vertices work with all normal operations
         assert_eq!(vertices_with_ids.len(), 4);
-        assert_eq!(vertices_with_ids[0].point().to_array(), [0.5, 0.5]);
+        let coords = vertices_with_ids[0].point().to_array();
+        assert_abs_diff_eq!(coords[0], 0.5, epsilon = f64::EPSILON);
+        assert_abs_diff_eq!(coords[1], 0.5, epsilon = f64::EPSILON);
         assert_eq!(vertices_with_ids[1].data.unwrap(), 1u32);
-        
+
         // Test hashing and equality (works because u32 implements all required traits)
-        use std::collections::HashSet;
         let vertex_set: HashSet<Vertex<f64, u32, 2>> = vertices_with_ids.iter().copied().collect();
         assert_eq!(vertex_set.len(), 4);
-        
+
         // =====================================================================
         // OTHER COPY-ABLE ALTERNATIVES FOR LABELS
         // =====================================================================
-        
+
         // Alternative 1: Use character codes
         let vertices_with_chars: Vec<Vertex<f64, char, 2>> = vec![
             vertex!([0.0, 0.0], 'A'),
             vertex!([1.0, 0.0], 'B'),
             vertex!([0.0, 1.0], 'C'),
         ];
-        
+
         for (i, v) in vertices_with_chars.iter().enumerate() {
-            let expected_char = char::from(b'A' + i as u8);
+            let expected_char = char::from(b'A' + u8::try_from(i).expect("Index should fit in u8"));
             assert_eq!(v.data.unwrap(), expected_char);
         }
-        
+
         // Alternative 2: Use small integer codes with enum mapping
-        #[repr(u8)]
-        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-        enum PointType {
-            Origin = 0,
-            Boundary = 1,
-            Interior = 2,
-            Corner = 3,
-        }
-        
-        // Implement required traits for PointType to work with DataType
-        use serde::{Deserialize, Serialize};
-        impl Serialize for PointType {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: serde::Serializer,
-            {
-                serializer.serialize_u8(*self as u8)
-            }
-        }
-        
-        impl<'de> Deserialize<'de> for PointType {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-            where
-                D: serde::Deserializer<'de>,
-            {
-                let value = u8::deserialize(deserializer)?;
-                match value {
-                    0 => Ok(PointType::Origin),
-                    1 => Ok(PointType::Boundary),
-                    2 => Ok(PointType::Interior), 
-                    3 => Ok(PointType::Corner),
-                    _ => Err(serde::de::Error::custom(format!("Invalid PointType: {}", value))),
-                }
-            }
-        }
-        
+
         let vertices_with_enums: Vec<Vertex<f64, PointType, 2>> = vec![
             vertex!([0.0, 0.0], PointType::Origin),
             vertex!([1.0, 0.0], PointType::Corner),
             vertex!([0.5, 0.5], PointType::Interior),
         ];
-        
+
         assert_eq!(vertices_with_enums[0].data.unwrap(), PointType::Origin);
         assert_eq!(vertices_with_enums[1].data.unwrap(), PointType::Corner);
         assert_eq!(vertices_with_enums[2].data.unwrap(), PointType::Interior);
-        
+
         // =====================================================================
         // SUMMARY OF STRING DATA LIMITATIONS
         // =====================================================================
-        
+
         // 1. String doesn't work because it doesn't implement Copy
         // 2. &str has complex lifetime issues that make it impractical
         // 3. &'static str could work but only for compile-time constants
@@ -1728,8 +1731,6 @@ mod tests {
     #[test]
     fn vertex_hash_with_copy_data() {
         // Test hashing with Copy data
-        use std::collections::HashMap;
-
         let vertex1: Vertex<f64, u16, 2> = vertex!([1.0, 2.0], 999u16);
 
         let vertex2: Vertex<f64, i32, 2> = vertex!([3.0, 4.0], 42);

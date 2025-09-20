@@ -2021,7 +2021,10 @@ mod tests {
     use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
     use crate::core::facet::FacetError;
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
+    use crate::geometry::point::Point;
+    use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
+    use approx::assert_abs_diff_eq;
 
     #[test]
     fn test_find_visible_boundary_facets_exterior_vertex() {
@@ -2813,5 +2816,427 @@ mod tests {
         );
 
         println!("✓ Integer margin calculation works correctly with ~10% expansion");
+    }
+
+    /// Test error handling in `InsertionError` creation and classification
+    #[test]
+    fn test_insertion_error_creation_and_classification() {
+        // Test geometric failure error creation
+        let geom_error = InsertionError::geometric_failure(
+            "Test geometric failure",
+            InsertionStrategy::CavityBased,
+        );
+
+        match geom_error {
+            InsertionError::GeometricFailure {
+                message,
+                strategy_attempted,
+            } => {
+                assert_eq!(message, "Test geometric failure");
+                assert_eq!(strategy_attempted, InsertionStrategy::CavityBased);
+            }
+            _ => panic!("Expected GeometricFailure variant"),
+        }
+
+        // Test invalid vertex error creation
+        let invalid_vertex_error = InsertionError::invalid_vertex("Duplicate coordinates");
+        match invalid_vertex_error {
+            InsertionError::InvalidVertex { reason } => {
+                assert_eq!(reason, "Duplicate coordinates");
+            }
+            _ => panic!("Expected InvalidVertex variant"),
+        }
+
+        // Test precision failure error creation
+        let precision_error = InsertionError::precision_failure(1e-15, 5);
+        match precision_error {
+            InsertionError::PrecisionFailure {
+                tolerance,
+                perturbation_attempts,
+            } => {
+                assert_abs_diff_eq!(tolerance, 1e-15, epsilon = f64::EPSILON);
+                assert_eq!(perturbation_attempts, 5);
+            }
+            _ => panic!("Expected PrecisionFailure variant"),
+        }
+
+        // Test hull extension failure
+        let hull_error = InsertionError::hull_extension_failure("No visible facets");
+        match hull_error {
+            InsertionError::HullExtensionFailure { reason } => {
+                assert_eq!(reason, "No visible facets");
+            }
+            _ => panic!("Expected HullExtensionFailure variant"),
+        }
+    }
+
+    /// Test `InsertionError` recoverability classification
+    #[test]
+    fn test_insertion_error_recoverability() {
+        // Recoverable errors
+        let geometric_error =
+            InsertionError::geometric_failure("Test", InsertionStrategy::Standard);
+        assert!(geometric_error.is_recoverable());
+
+        let precision_error = InsertionError::precision_failure(1e-10, 3);
+        assert!(precision_error.is_recoverable());
+
+        let bad_cells_error = InsertionError::BadCellsDetection(
+            BadCellsError::TooManyDegenerateCells(TooManyDegenerateCellsError {
+                degenerate_count: 10,
+                total_tested: 15,
+            }),
+        );
+        assert!(bad_cells_error.is_recoverable());
+
+        // Non-recoverable errors
+        let invalid_vertex_error = InsertionError::invalid_vertex("Invalid coordinates");
+        assert!(!invalid_vertex_error.is_recoverable());
+
+        let hull_error = InsertionError::hull_extension_failure("No visible facets");
+        assert!(!hull_error.is_recoverable());
+    }
+
+    /// Test `InsertionError` strategy extraction
+    #[test]
+    fn test_insertion_error_strategy_extraction() {
+        // Error with strategy information
+        let geometric_error =
+            InsertionError::geometric_failure("Test", InsertionStrategy::HullExtension);
+        assert_eq!(
+            geometric_error.attempted_strategy(),
+            Some(InsertionStrategy::HullExtension)
+        );
+
+        // Error without strategy information
+        let invalid_vertex_error = InsertionError::invalid_vertex("Test");
+        assert_eq!(invalid_vertex_error.attempted_strategy(), None);
+    }
+
+    /// Test `TooManyDegenerateCellsError` display formatting
+    #[test]
+    fn test_too_many_degenerate_cells_error_display() {
+        // Test with total_tested = 0
+        let error_zero_total = TooManyDegenerateCellsError {
+            degenerate_count: 5,
+            total_tested: 0,
+        };
+        let display_zero = format!("{error_zero_total}");
+        assert!(display_zero.contains("All 5 candidate cells were degenerate"));
+
+        // Test with total_tested > 0
+        let error_with_total = TooManyDegenerateCellsError {
+            degenerate_count: 8,
+            total_tested: 12,
+        };
+        let display_with_total = format!("{error_with_total}");
+        assert!(display_with_total.contains("Too many degenerate circumspheres (8/12)"));
+    }
+
+    /// Test `InsertionStatistics` comprehensive functionality
+    #[test]
+    fn test_insertion_statistics_comprehensive() {
+        let mut stats = InsertionStatistics::new();
+
+        // Test initial state
+        assert_eq!(stats.vertices_processed, 0);
+        assert_eq!(stats.total_cells_created, 0);
+        assert_eq!(stats.total_cells_removed, 0);
+        assert_eq!(stats.fallback_strategies_used, 0);
+        assert_abs_diff_eq!(
+            stats.cavity_boundary_success_rate(),
+            1.0,
+            epsilon = f64::EPSILON
+        ); // No attempts = 100%
+        assert_abs_diff_eq!(stats.fallback_usage_rate(), 0.0, epsilon = f64::EPSILON);
+
+        // Test recording various insertion types
+        let cavity_info = InsertionInfo {
+            strategy: InsertionStrategy::CavityBased,
+            cells_removed: 3,
+            cells_created: 5,
+            success: true,
+            degenerate_case_handled: false,
+        };
+        stats.record_vertex_insertion(&cavity_info);
+
+        let hull_info = InsertionInfo {
+            strategy: InsertionStrategy::HullExtension,
+            cells_removed: 0,
+            cells_created: 2,
+            success: true,
+            degenerate_case_handled: true,
+        };
+        stats.record_vertex_insertion(&hull_info);
+
+        let fallback_info = InsertionInfo {
+            strategy: InsertionStrategy::Fallback,
+            cells_removed: 1,
+            cells_created: 2,
+            success: true,
+            degenerate_case_handled: false,
+        };
+        stats.record_vertex_insertion(&fallback_info);
+
+        // Verify statistics
+        assert_eq!(stats.vertices_processed, 3);
+        assert_eq!(stats.total_cells_created, 9); // 5 + 2 + 2
+        assert_eq!(stats.total_cells_removed, 4); // 3 + 0 + 1
+        assert_eq!(stats.hull_extensions, 1);
+        assert_eq!(stats.fallback_strategies_used, 1);
+        assert_eq!(stats.degenerate_cases_handled, 1);
+
+        // Test manual recording methods
+        stats.record_fallback_usage();
+        assert_eq!(stats.fallback_strategies_used, 2);
+
+        stats.record_cavity_boundary_failure();
+        assert_eq!(stats.cavity_boundary_failures, 1);
+
+        stats.record_cavity_boundary_recovery();
+        assert_eq!(stats.cavity_boundary_recoveries, 1);
+
+        // Test success rate calculations
+        let success_rate = stats.cavity_boundary_success_rate();
+        let expected_rate = (3.0 - 1.0) / 3.0; // (processed - failures) / processed
+        assert_abs_diff_eq!(success_rate, expected_rate, epsilon = f64::EPSILON);
+
+        let fallback_rate = stats.fallback_usage_rate();
+        let expected_fallback_rate = 2.0 / 3.0; // fallbacks / processed
+        assert_abs_diff_eq!(
+            fallback_rate,
+            expected_fallback_rate,
+            epsilon = f64::EPSILON
+        );
+
+        // Test basic tuple conversion
+        let (processed, created, removed) = stats.as_basic_tuple();
+        assert_eq!(processed, 3);
+        assert_eq!(created, 9);
+        assert_eq!(removed, 4);
+
+        // Test reset
+        stats.reset();
+        assert_eq!(stats.vertices_processed, 0);
+        assert_eq!(stats.total_cells_created, 0);
+        assert_eq!(stats.fallback_strategies_used, 0);
+    }
+
+    /// Test `InsertionBuffers` functionality
+    #[test]
+    fn test_insertion_buffers_functionality() {
+        let mut buffers = InsertionBuffers::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Test initial state
+        assert_eq!(buffers.bad_cells_buffer.len(), 0);
+        assert_eq!(buffers.boundary_facets_buffer.len(), 0);
+        assert_eq!(buffers.vertex_points_buffer.len(), 0);
+        assert_eq!(buffers.visible_facets_buffer.len(), 0);
+
+        // Test with_capacity constructor
+        let buffers_with_capacity =
+            InsertionBuffers::<f64, Option<()>, Option<()>, 3>::with_capacity(10);
+        assert!(buffers_with_capacity.bad_cells_buffer.capacity() >= 10);
+        assert!(buffers_with_capacity.boundary_facets_buffer.capacity() >= 10);
+        assert!(buffers_with_capacity.vertex_points_buffer.capacity() >= 40); // 10 * (3 + 1)
+        assert!(buffers_with_capacity.visible_facets_buffer.capacity() >= 5); // 10 / 2
+
+        // Test buffer preparation methods
+        let bad_cells_buf = buffers.prepare_bad_cells_buffer();
+        bad_cells_buf.push(crate::core::triangulation_data_structure::CellKey::default());
+        assert_eq!(buffers.bad_cells_buffer.len(), 1);
+
+        // Prepare boundary buffer - this only clears its own buffer, not others
+        let boundary_buf = buffers.prepare_boundary_facets_buffer();
+        assert_eq!(boundary_buf.len(), 0);
+        assert_eq!(buffers.bad_cells_buffer.len(), 1); // Should still have the item
+
+        // Preparing bad cells buffer again should clear it
+        buffers.prepare_bad_cells_buffer();
+        assert_eq!(buffers.bad_cells_buffer.len(), 0); // Now it should be cleared
+
+        let vertex_points_buf = buffers.prepare_vertex_points_buffer();
+        assert_eq!(vertex_points_buf.len(), 0);
+
+        let visible_buf = buffers.prepare_visible_facets_buffer();
+        assert_eq!(visible_buf.len(), 0);
+
+        // Test clear_all
+        buffers
+            .bad_cells_buffer
+            .push(crate::core::triangulation_data_structure::CellKey::default());
+        buffers
+            .vertex_points_buffer
+            .push(Point::new([1.0, 2.0, 3.0]));
+
+        buffers.clear_all();
+        assert_eq!(buffers.bad_cells_buffer.len(), 0);
+        assert_eq!(buffers.vertex_points_buffer.len(), 0);
+    }
+
+    /// Test `BadCellsError` variants and display
+    #[test]
+    fn test_bad_cells_error_variants() {
+        // Test AllCellsBad variant
+        let all_bad_error = BadCellsError::AllCellsBad {
+            cell_count: 10,
+            degenerate_count: 3,
+        };
+        let all_bad_display = format!("{all_bad_error}");
+        assert!(all_bad_display.contains("All 10 cells marked as bad"));
+        assert!(all_bad_display.contains("3 degenerate"));
+
+        // Test TooManyDegenerateCells variant
+        let too_many_degenerate =
+            BadCellsError::TooManyDegenerateCells(TooManyDegenerateCellsError {
+                degenerate_count: 8,
+                total_tested: 10,
+            });
+        let too_many_display = format!("{too_many_degenerate}");
+        assert!(too_many_display.contains("Too many degenerate circumspheres (8/10)"));
+
+        // Test NoCells variant
+        let no_cells_error = BadCellsError::NoCells;
+        let no_cells_display = format!("{no_cells_error}");
+        assert!(no_cells_display.contains("No cells exist to test"));
+    }
+
+    /// Test `cavity_boundary_success_rate` edge cases
+    #[test]
+    fn test_cavity_boundary_success_rate_edge_cases() {
+        let mut stats = InsertionStatistics::new();
+
+        // Test with zero processed vertices
+        assert_abs_diff_eq!(
+            stats.cavity_boundary_success_rate(),
+            1.0,
+            epsilon = f64::EPSILON
+        );
+
+        // Test with failures >= processed (saturating subtraction)
+        stats.vertices_processed = 3;
+        stats.cavity_boundary_failures = 5; // More failures than processed
+
+        let success_rate = stats.cavity_boundary_success_rate();
+        assert_abs_diff_eq!(success_rate, 0.0, epsilon = f64::EPSILON); // Should saturate to 0
+
+        // Test with exact match
+        stats.cavity_boundary_failures = 3;
+        let exact_match_rate = stats.cavity_boundary_success_rate();
+        assert_abs_diff_eq!(exact_match_rate, 0.0, epsilon = f64::EPSILON);
+
+        // Test precision with underflow protection
+        stats.vertices_processed = 1;
+        stats.cavity_boundary_failures = 0;
+        let single_success_rate = stats.cavity_boundary_success_rate();
+        assert_abs_diff_eq!(single_success_rate, 1.0, epsilon = f64::EPSILON);
+    }
+
+    /// Test error path when `find_bad_cells` returns errors - comprehensive
+    #[test]
+    fn test_find_bad_cells_error_cases_comprehensive() {
+        let mut algorithm = IncrementalBoyerWatson::new();
+
+        // Create minimal TDS
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Test with extreme coordinates that might cause numerical issues in predicates
+        let problematic_vertex = vertex!([f64::MAX / 1000.0, f64::MAX / 1000.0, f64::MAX / 1000.0]);
+
+        // This should handle extreme coordinates gracefully or return appropriate error
+        let result = algorithm.find_bad_cells(&tds, &problematic_vertex);
+
+        match result {
+            Err(
+                BadCellsError::NoCells
+                | BadCellsError::AllCellsBad { .. }
+                | BadCellsError::TooManyDegenerateCells(_),
+            )
+            | Ok(_) => {
+                // All these cases are valid - main test is that we don't panic with extreme input
+            }
+        }
+
+        // The main test is that we don't panic with invalid input
+    }
+
+    /// Test `create_cell_from_facet_and_vertex` error cases - additional scenarios
+    #[test]
+    fn test_create_cell_from_facet_and_vertex_failure_additional() {
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ])
+        .unwrap();
+
+        let boundary_facets = tds.boundary_facets().unwrap();
+        let test_facet = &boundary_facets[0];
+
+        // Try to create cell with vertex that would create degenerate cell
+        let degenerate_vertex = vertex!([0.0, 0.0, 0.0]); // Same as existing vertex
+
+        let result =
+            <IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
+                f64,
+                Option<()>,
+                Option<()>,
+                3,
+            >>::create_cell_from_facet_and_vertex(
+                &mut tds, test_facet, &degenerate_vertex
+            );
+
+        // This should either succeed (if handled gracefully) or fail with appropriate error
+        match result {
+            Ok(()) => {
+                // If it succeeds, verify TDS is still valid
+                assert!(tds.is_valid().is_ok());
+            }
+            Err(e) => {
+                // If it fails, verify it's an appropriate error type
+                println!("Expected error for degenerate cell creation: {e:?}");
+            }
+        }
+    }
+
+    /// Test `facet_new_error_propagation` - comprehensive coverage
+    #[test]
+    fn test_facet_new_error_propagation_comprehensive() {
+        // This test verifies that errors from Facet::new are properly propagated
+        // through the insertion algorithm error handling paths
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let _algorithm = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Get boundary facet
+        let boundary_facets = tds.boundary_facets().unwrap();
+        let test_facet = &boundary_facets[0];
+
+        // Test vertex that might cause facet creation issues
+        let test_vertex = vertex!([10.0, 10.0, 10.0]);
+
+        // The actual error paths depend on the specific implementation,
+        // but we're testing that errors are handled gracefully
+        let _ = <IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
+            f64,
+            Option<()>,
+            Option<()>,
+            3,
+        >>::create_cell_from_facet_and_vertex(&mut tds, test_facet, &test_vertex);
+
+        // Main goal is ensuring no panics occur during error handling
     }
 }

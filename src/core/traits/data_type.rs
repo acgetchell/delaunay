@@ -39,20 +39,20 @@ use std::{fmt::Debug, hash::Hash};
 /// // - () (unit type for no data)
 /// // - Custom Copy enums with serde support
 /// ```
-/// 
+///
 /// # String Data Limitations
-/// 
+///
 /// **String types have significant limitations:**
 /// - `String` doesn't work (doesn't implement `Copy`)
 /// - `&str` has complex lifetime issues that make it impractical
 /// - `&'static str` works but only for compile-time constants
-/// 
+///
 /// **Recommended alternatives for string-like data:**
-/// - Numeric IDs with external HashMap lookup (most flexible)
+/// - Numeric IDs with external `HashMap` lookup (most flexible)
 /// - Character codes (`char` type for single characters)
 /// - Custom Copy enums for predefined categories
 /// - Fixed-size byte arrays for very short strings
-/// 
+///
 /// See the `vertex_string_data_usage_examples` test for detailed examples.
 pub trait DataType:
     Copy + Eq + Hash + Ord + PartialEq + PartialOrd + Debug + Serialize + DeserializeOwned
