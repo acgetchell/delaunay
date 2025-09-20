@@ -101,7 +101,7 @@ use crate::core::{
             InsertionStatistics, InsertionStrategy,
         },
     },
-    triangulation_data_structure::Tds,
+    triangulation_data_structure::{Tds, TriangulationConstructionError},
     vertex::Vertex,
 };
 use crate::geometry::{algorithms::convex_hull::ConvexHull, traits::coordinate::CoordinateScalar};
@@ -396,10 +396,7 @@ mod tests {
     }
 
     /// Count boundary facets (shared by 1 cell)
-    ///
-    /// TODO: Migrate to cache-backed path once Phase 3 lands.
-    /// Should use `self.try_get_or_build_facet_cache(&tds)?` instead of direct TDS call.
-    #[allow(deprecated)] // Test helper function - will be migrated in Phase 3
+    #[allow(deprecated)] // Test helper - deprecation doesn't apply to tests
     fn count_boundary_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
         tds.build_facet_to_cells_map_lenient()
             .values()
@@ -408,10 +405,7 @@ mod tests {
     }
 
     /// Count internal facets (shared by 2 cells)
-    ///
-    /// TODO: Migrate to cache-backed path once Phase 3 lands.
-    /// Should use `self.try_get_or_build_facet_cache(&tds)?` instead of direct TDS call.
-    #[allow(deprecated)] // Test helper function - will be migrated in Phase 3
+    #[allow(deprecated)] // Test helper - deprecation doesn't apply to tests
     fn count_internal_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
         tds.build_facet_to_cells_map_lenient()
             .values()
@@ -420,10 +414,7 @@ mod tests {
     }
 
     /// Count invalid facets (shared by 3+ cells)
-    ///
-    /// TODO: Migrate to cache-backed path once Phase 3 lands.
-    /// Should use `self.try_get_or_build_facet_cache(&tds)?` instead of direct TDS call.
-    #[allow(deprecated)] // Test helper function - will be migrated in Phase 3
+    #[allow(deprecated)] // Test helper - deprecation doesn't apply to tests
     fn count_invalid_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
         tds.build_facet_to_cells_map_lenient()
             .values()
@@ -565,8 +556,8 @@ mod tests {
         }
 
         // Critical issue detection
-        // TODO: Migrate to cache-backed path once Phase 3 lands.
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap_or_default();
+        #[allow(deprecated)] // Test diagnostic - OK to use deprecated method
+        let facet_to_cells = tds.build_facet_to_cells_map_lenient();
         let mut invalid_sharing = 0;
         let mut boundary_facets = 0;
 
@@ -634,8 +625,8 @@ mod tests {
         println!("  Cells: {}", tds.number_of_cells());
 
         // Check facet sharing
-        // TODO: Migrate to cache-backed path once Phase 3 lands.
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap_or_default();
+        #[allow(deprecated)] // Test diagnostic - OK to use deprecated method
+        let facet_to_cells = tds.build_facet_to_cells_map_lenient();
         let boundary_count = facet_to_cells
             .values()
             .filter(|cells| cells.len() == 1)

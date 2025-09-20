@@ -2139,7 +2139,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)] // Test explicitly verifies deprecated method compatibility
     fn test_facet_cache_provider_implementation() {
         use std::sync::atomic::Ordering;
 
@@ -2362,7 +2361,6 @@ mod tests {
     // =============================================================================
 
     #[test]
-    #[allow(deprecated)] // Test verifies deprecated method compatibility
     fn test_fallback_recovery_mechanisms() {
         println!("Testing fallback and recovery mechanisms...");
 
@@ -2525,7 +2523,7 @@ mod tests {
     // =============================================================================
 
     #[test]
-    #[allow(deprecated)] // Test verifies deprecated method compatibility
+
     fn test_comprehensive_algorithm_paths() {
         println!("Testing comprehensive algorithm paths...");
 
@@ -2612,7 +2610,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)] // Test verifies deprecated method compatibility
+
     fn test_boundary_condition_validation() {
         println!("Testing boundary condition validation...");
 
@@ -2873,7 +2871,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)] // Test verifies deprecated method compatibility
+
     fn test_cache_invalidation_and_recovery() {
         let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
         let vertices = vec![
