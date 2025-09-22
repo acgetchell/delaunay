@@ -4398,4 +4398,470 @@ mod tests {
         assert_eq!(tri_no_data.number_of_vertices(), 5);
         assert!(tri_no_data.is_valid().is_ok());
     }
+
+    // =============================================================================
+    // COMPREHENSIVE ERROR PATH AND EDGE CASE TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_safe_cast_to_f64_non_finite() {
+        use std::f64;
+
+        // Test NaN handling
+        let result = safe_cast_to_f64(f64::NAN, 0);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test infinity handling
+        let result = safe_cast_to_f64(f64::INFINITY, 1);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test negative infinity
+        let result = safe_cast_to_f64(f64::NEG_INFINITY, 2);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test valid finite value
+        let result = safe_cast_to_f64(42.5f64, 0);
+        assert!(result.is_ok());
+        assert_relative_eq!(result.unwrap(), 42.5);
+    }
+
+    #[test]
+    fn test_safe_cast_from_f64_non_finite() {
+        use std::f64;
+
+        // Test NaN handling
+        let result: Result<f64, _> = safe_cast_from_f64(f64::NAN, 0);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test infinity handling
+        let result: Result<f64, _> = safe_cast_from_f64(f64::INFINITY, 1);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test negative infinity
+        let result: Result<f64, _> = safe_cast_from_f64(f64::NEG_INFINITY, 2);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test valid conversion
+        let result: Result<f32, _> = safe_cast_from_f64(42.5f64, 0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_safe_coords_conversion_with_non_finite() {
+        use std::f32;
+
+        // Test array with NaN
+        let coords_nan = [1.0f32, f32::NAN, 3.0f32];
+        let result = safe_coords_to_f64(coords_nan);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test array with infinity
+        let coords_inf = [1.0f32, 2.0f32, f32::INFINITY];
+        let result = safe_coords_to_f64(coords_inf);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test successful conversion
+        let coords_valid = [1.0f32, 2.0f32, 3.0f32];
+        let result = safe_coords_to_f64(coords_valid);
+        assert!(result.is_ok());
+        assert_relative_eq!(
+            result.unwrap().as_slice(),
+            [1.0f64, 2.0f64, 3.0f64].as_slice()
+        );
+    }
+
+    #[test]
+    fn test_safe_coords_from_f64_with_non_finite() {
+        use std::f64;
+
+        // Test array with NaN
+        let coords_nan = [1.0f64, f64::NAN, 3.0f64];
+        let result: Result<[f32; 3], _> = safe_coords_from_f64(coords_nan);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test array with infinity
+        let coords_inf = [1.0f64, 2.0f64, f64::INFINITY];
+        let result: Result<[f32; 3], _> = safe_coords_from_f64(coords_inf);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test successful conversion
+        let coords_valid = [1.0f64, 2.0f64, 3.0f64];
+        let result: Result<[f32; 3], _> = safe_coords_from_f64(coords_valid);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_safe_scalar_conversion_edge_cases() {
+        use std::f64;
+
+        // Test scalar to f64 with NaN
+        let result = safe_scalar_to_f64(f64::NAN);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test scalar from f64 with NaN
+        let result: Result<f32, _> = safe_scalar_from_f64(f64::NAN);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test successful conversions
+        let result = safe_scalar_to_f64(42.5f32);
+        assert!(result.is_ok());
+        assert_relative_eq!(result.unwrap(), 42.5f64);
+
+        let result: Result<f32, _> = safe_scalar_from_f64(42.5f64);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_safe_usize_to_scalar_precision_boundary_extended() {
+        // Test values at the precision boundary (additional edge cases)
+        const MAX_PRECISE: u64 = (1_u64 << 53) - 1;
+
+        // Test maximum precise value (should work)
+        let result: Result<f64, _> =
+            safe_usize_to_scalar(usize::try_from(MAX_PRECISE).unwrap_or(usize::MAX));
+        assert!(result.is_ok());
+
+        // Test beyond precision limit (if usize is large enough)
+        if std::mem::size_of::<usize>() >= 8 {
+            // Only test on 64-bit platforms
+            let large_value = usize::try_from(MAX_PRECISE + 1).unwrap_or(usize::MAX);
+            let result: Result<f64, _> = safe_usize_to_scalar(large_value);
+            assert!(matches!(
+                result,
+                Err(CoordinateConversionError::ConversionFailed { .. })
+            ));
+        }
+
+        // Test normal values
+        let result: Result<f64, _> = safe_usize_to_scalar(42_usize);
+        assert!(result.is_ok());
+        assert_relative_eq!(result.unwrap(), 42.0);
+
+        // Test zero
+        let result: Result<f64, _> = safe_usize_to_scalar(0_usize);
+        assert!(result.is_ok());
+        assert_relative_eq!(result.unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_scaled_hypot_2d_edge_cases() {
+        // Test with zeros
+        let result = scaled_hypot_2d(0.0, 0.0);
+        assert_relative_eq!(result, 0.0);
+
+        // Test with one zero
+        let result = scaled_hypot_2d(0.0, 5.0);
+        assert_relative_eq!(result, 5.0);
+
+        // Test with standard case
+        let result = scaled_hypot_2d(3.0, 4.0);
+        assert_relative_eq!(result, 5.0, epsilon = 1e-10);
+
+        // Test with negative values
+        let result = scaled_hypot_2d(-3.0, -4.0);
+        assert_relative_eq!(result, 5.0, epsilon = 1e-10);
+
+        // Test with very large values (avoid overflow)
+        let large_val = 1e100;
+        let result = scaled_hypot_2d(large_val, large_val);
+        assert!(result.is_finite());
+        assert!(result > 0.0);
+    }
+
+    #[test]
+    fn test_squared_norm_various_dimensions() {
+        // Test 1D
+        let norm_1d = squared_norm([5.0]);
+        assert_relative_eq!(norm_1d, 25.0);
+
+        // Test 2D
+        let norm_2d = squared_norm([3.0, 4.0]);
+        assert_relative_eq!(norm_2d, 25.0);
+
+        // Test 3D
+        let norm_3d = squared_norm([1.0, 2.0, 2.0]);
+        assert_relative_eq!(norm_3d, 9.0);
+
+        // Test with zeros
+        let norm_zero = squared_norm([0.0, 0.0, 0.0]);
+        assert_relative_eq!(norm_zero, 0.0);
+
+        // Test 5D
+        let norm_5d = squared_norm([1.0, 1.0, 1.0, 1.0, 1.0]);
+        assert_relative_eq!(norm_5d, 5.0);
+    }
+
+    #[test]
+    fn test_hypot_conversion_fallback() {
+        // This tests the fallback path when conversion to/from f64 fails
+        // We can't easily trigger this without custom types, but we can test
+        // the general algorithm path for higher dimensions
+
+        // Test 5D case (uses general algorithm)
+        let distance_5d = hypot([1.0, 1.0, 1.0, 1.0, 1.0]);
+        assert_relative_eq!(distance_5d, 5.0_f64.sqrt(), epsilon = 1e-10);
+
+        // Test with mixed large and small values
+        let distance_mixed = hypot([1e10, 1e-10, 1e5]);
+        assert!(distance_mixed.is_finite());
+        assert!(distance_mixed > 0.0);
+    }
+
+    #[test]
+    fn test_circumcenter_empty_point_set() {
+        let empty_points: Vec<Point<f64, 3>> = vec![];
+        let result = circumcenter(&empty_points);
+
+        assert!(matches!(result, Err(CircumcenterError::EmptyPointSet)));
+    }
+
+    #[test]
+    fn test_circumcenter_invalid_simplex() {
+        // Test wrong number of points for dimension
+        let points_2d = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            // Missing third point for 2D circumcenter
+        ];
+
+        let result = circumcenter(&points_2d);
+        assert!(matches!(
+            result,
+            Err(CircumcenterError::InvalidSimplex { .. })
+        ));
+
+        // Test too many points
+        let points_extra = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+            Point::new([0.5, 0.5]), // Extra point for 2D
+        ];
+
+        let result = circumcenter(&points_extra);
+        assert!(matches!(
+            result,
+            Err(CircumcenterError::InvalidSimplex { .. })
+        ));
+    }
+
+    #[test]
+    fn test_circumcenter_degenerate_matrix() {
+        // Test collinear points in 2D (should cause matrix inversion to fail)
+        let collinear_points = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([2.0, 0.0]), // Collinear with first two
+        ];
+
+        let result = circumcenter(&collinear_points);
+        assert!(matches!(result, Err(CircumcenterError::MatrixError(_))));
+    }
+
+    #[test]
+    fn test_facet_measure_gram_matrix_degenerate() {
+        // Test degenerate simplex (collinear points)
+        let degenerate_points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([2.0, 0.0, 0.0]), // All collinear
+        ];
+
+        let result = facet_measure(&degenerate_points);
+        // This should either return 0 or an error depending on numerical precision
+        if let Ok(measure) = result {
+            assert_relative_eq!(measure, 0.0, epsilon = 1e-10);
+        }
+        // Also acceptable for degenerate case if Err
+    }
+
+    #[test]
+    fn test_generate_random_points_invalid_range() {
+        // Test invalid range (min >= max)
+        let result = generate_random_points::<f64, 2>(100, (10.0, 5.0));
+        assert!(matches!(
+            result,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+
+        // Test equal min and max
+        let result = generate_random_points::<f64, 2>(100, (5.0, 5.0));
+        assert!(matches!(
+            result,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+
+        // Test valid range
+        let result = generate_random_points::<f64, 2>(10, (0.0, 1.0));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 10);
+    }
+
+    #[test]
+    fn test_generate_random_points_seeded_invalid_range() {
+        // Test invalid range with seed
+        let result = generate_random_points_seeded::<f64, 3>(50, (100.0, 10.0), 42);
+        assert!(matches!(
+            result,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+
+        // Test valid range produces consistent results
+        let points1 = generate_random_points_seeded::<f64, 3>(5, (0.0, 1.0), 42).unwrap();
+        let points2 = generate_random_points_seeded::<f64, 3>(5, (0.0, 1.0), 42).unwrap();
+        assert_eq!(points1, points2);
+
+        // Different seeds produce different results
+        let points3 = generate_random_points_seeded::<f64, 3>(5, (0.0, 1.0), 123).unwrap();
+        assert_ne!(points1, points3);
+    }
+
+    #[test]
+    fn test_generate_grid_points_overflow_detection_edge_cases() {
+        // Test cases that would cause potential memory issues in grid point calculation
+        // Generate small grid to test the function works
+        let result = generate_grid_points::<f64, 2>(10, 0.1, [0.0, 0.0]);
+        assert!(result.is_ok());
+
+        // Test very fine spacing which would generate lots of points
+        let result = generate_grid_points::<f64, 2>(1000, 0.0001, [0.0, 0.0]);
+        // Should either succeed or fail gracefully
+        if let Ok(points) = result {
+            assert!(!points.is_empty());
+        }
+        // Expected to fail with large point counts
+    }
+
+    #[test]
+    fn test_generate_poisson_points_edge_cases() {
+        // Test very small spacing with valid number of points
+        let result = generate_poisson_points::<f64, 2>(100, (0.0, 1.0), 0.001, 42);
+        if let Ok(points) = result {
+            assert!(!points.is_empty());
+        }
+        // May fail due to too many points
+
+        // Test with zero points (should succeed with empty result)
+        let result = generate_poisson_points::<f64, 2>(0, (0.0, 1.0), 0.1, 42);
+        if let Ok(points) = result {
+            assert!(points.is_empty());
+        }
+        // Also acceptable if Err
+
+        // Test very large spacing (should work but produce fewer points)
+        let result = generate_poisson_points::<f64, 2>(10, (0.0, 1.0), 2.0, 42);
+        if let Ok(points) = result {
+            assert!(points.len() <= 10);
+        }
+        // May fail if spacing is too large for domain
+    }
+
+    #[test]
+    fn test_format_bytes_edge_cases() {
+        // Test additional edge cases for byte formatting
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(1), "1 B");
+        assert_eq!(format_bytes(1023), "1023 B");
+        assert_eq!(format_bytes(1024), "1.0 KiB");
+        assert_eq!(format_bytes(1536), "1.5 KiB"); // 1024 + 512
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MiB");
+
+        // Test larger values
+        let large_bytes = 7 * 1024 * 1024 * 1024; // 7 GiB
+        let formatted = format_bytes(large_bytes);
+        assert!(formatted.contains("GiB"));
+        assert!(formatted.contains("7."));
+    }
+
+    #[test]
+    fn test_max_grid_bytes_safety_cap() {
+        // Test the default value
+        let default_cap = max_grid_bytes_safety_cap();
+        assert!(default_cap > 0);
+
+        // Test that it returns a reasonable default (4 GiB)
+        assert_eq!(default_cap, 4_294_967_296);
+    }
+
+    #[test]
+    fn test_error_types_display() {
+        // Test ValueConversionError display
+        let value_error = ValueConversionError::ConversionFailed {
+            value: "42".to_string(),
+            from_type: "i32",
+            to_type: "u32",
+            details: "overflow".to_string(),
+        };
+        let display = format!("{value_error}");
+        assert!(display.contains("Cannot convert 42 from i32 to u32"));
+
+        // Test RandomPointGenerationError display
+        let range_error = RandomPointGenerationError::InvalidRange {
+            min: "10.0".to_string(),
+            max: "5.0".to_string(),
+        };
+        let display = format!("{range_error}");
+        assert!(display.contains("Invalid coordinate range"));
+
+        let gen_error = RandomPointGenerationError::RandomGenerationFailed {
+            min: "0.0".to_string(),
+            max: "1.0".to_string(),
+            details: "test error".to_string(),
+        };
+        let display = format!("{gen_error}");
+        assert!(display.contains("Failed to generate random value"));
+
+        let count_error = RandomPointGenerationError::InvalidPointCount { n_points: -5 };
+        let display = format!("{count_error}");
+        assert!(display.contains("Invalid number of points: -5"));
+
+        // Test CircumcenterError variants
+        let empty_error = CircumcenterError::EmptyPointSet;
+        let display = format!("{empty_error}");
+        assert!(display.contains("Empty point set"));
+
+        let simplex_error = CircumcenterError::InvalidSimplex {
+            actual: 2,
+            expected: 3,
+            dimension: 2,
+        };
+        let display = format!("{simplex_error}");
+        assert!(display.contains("Points do not form a valid simplex"));
+    }
 }

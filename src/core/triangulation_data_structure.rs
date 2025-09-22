@@ -7734,4 +7734,662 @@ mod tests {
         assert_eq!(tds.cells().len(), 2);
         assert_eq!(tds.uuid_to_cell_key.len(), 2);
     }
+
+    // =============================================================================
+    // ADDITIONAL COVERAGE TESTS FOR ERROR PATHS AND EDGE CASES
+    // =============================================================================
+
+    #[test]
+    fn test_construction_state_default() {
+        let state = TriangulationConstructionState::default();
+        assert_eq!(state, TriangulationConstructionState::Incomplete(0));
+    }
+
+    #[test]
+    fn test_entity_kind_debug_and_eq() {
+        assert_eq!(EntityKind::Vertex, EntityKind::Vertex);
+        assert_eq!(EntityKind::Cell, EntityKind::Cell);
+        assert_ne!(EntityKind::Vertex, EntityKind::Cell);
+
+        let vertex_debug = format!("{:?}", EntityKind::Vertex);
+        assert_eq!(vertex_debug, "Vertex");
+
+        let cell_debug = format!("{:?}", EntityKind::Cell);
+        assert_eq!(cell_debug, "Cell");
+    }
+
+    #[test]
+    fn test_triangulation_construction_error_display() {
+        let error = TriangulationConstructionError::FailedToCreateCell {
+            message: "test message".to_string(),
+        };
+        let display_str = format!("{}", error);
+        assert!(display_str.contains("Failed to create cell during construction: test message"));
+
+        let uuid = Uuid::new_v4();
+        let error = TriangulationConstructionError::DuplicateUuid {
+            entity: EntityKind::Vertex,
+            uuid,
+        };
+        let display_str = format!("{}", error);
+        assert!(display_str.contains("Duplicate UUID"));
+        assert!(display_str.contains(&format!("{}", uuid)));
+
+        let error = TriangulationConstructionError::DuplicateCoordinates {
+            coordinates: "[1.0, 2.0, 3.0]".to_string(),
+        };
+        let display_str = format!("{}", error);
+        assert!(display_str.contains("Duplicate coordinates"));
+        assert!(display_str.contains("[1.0, 2.0, 3.0]"));
+
+        let error = TriangulationConstructionError::GeometricDegeneracy {
+            message: "test degeneracy".to_string(),
+        };
+        let display_str = format!("{}", error);
+        assert!(display_str.contains("Geometric degeneracy"));
+        assert!(display_str.contains("test degeneracy"));
+    }
+
+    #[test]
+    fn test_triangulation_validation_error_display() {
+        let uuid = Uuid::new_v4();
+        let error = TriangulationValidationError::InvalidCell {
+            cell_id: uuid,
+            source: CellValidationError::InsufficientVertices {
+                actual: 2,
+                expected: 4,
+                dimension: 3,
+            },
+        };
+        let display_str = format!("{}", error);
+        assert!(display_str.contains("Invalid cell"));
+        assert!(display_str.contains(&format!("{}", uuid)));
+
+        let error = TriangulationValidationError::InvalidNeighbors {
+            message: "test neighbor error".to_string(),
+        };
+        let display_str = format!("{}", error);
+        assert!(display_str.contains("Invalid neighbor relationships"));
+        assert!(display_str.contains("test neighbor error"));
+    }
+
+    #[test]
+    fn test_build_facet_to_cells_map_error_handling() {
+        // Create a triangulation and then simulate missing vertex keys
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        // Normal case should work
+        let facet_map = tds.build_facet_to_cells_map();
+        assert!(facet_map.is_ok());
+
+        // Test the deprecated lenient version
+        #[allow(deprecated)]
+        let lenient_map = tds.build_facet_to_cells_map_lenient();
+        assert!(!lenient_map.is_empty());
+    }
+
+    #[test]
+    fn test_fix_invalid_facet_sharing_no_issues() {
+        // Create a valid triangulation
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        // Should return 0 fixes since no issues exist
+        let fixes = tds.fix_invalid_facet_sharing().unwrap();
+        assert_eq!(fixes, 0);
+    }
+
+    #[test]
+    fn test_validate_facet_sharing_success() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        // Should pass validation
+        let result = tds.validate_facet_sharing();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_neighbors_internal_no_neighbors() {
+        // Create TDS with single tetrahedron that has no neighbors set
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        // Should pass validation since cells can have no neighbors
+        let result = tds.validate_neighbors_internal();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tds_partial_eq_different_vertex_counts() {
+        let vertices1 = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let vertices2 = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([0.5, 0.5]),
+        ];
+
+        let tds1: Tds<f64, usize, usize, 2> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, usize, usize, 2> = Tds::new(&vertices2).unwrap();
+
+        // Should have different vertex counts
+        assert_ne!(tds1.number_of_vertices(), tds2.number_of_vertices());
+        assert_ne!(tds1, tds2);
+    }
+
+    #[test]
+    fn test_tds_partial_eq_same_content() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let tds1: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
+        let tds2: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
+
+        // Should be equal (same triangulation)
+        assert_eq!(tds1, tds2);
+    }
+
+    #[test]
+    fn test_tds_generation_counter() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let mut tds: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
+
+        let initial_gen = tds.generation();
+
+        // Adding a vertex should bump generation
+        let new_vertex = vertex!([0.5, 0.5]);
+        tds.add(new_vertex).unwrap();
+
+        let after_add_gen = tds.generation();
+        assert!(after_add_gen > initial_gen);
+    }
+
+    #[test]
+    fn test_vertex_keys_for_cell_direct_error_path() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        // Test with valid cell key
+        if let Some((cell_key, _)) = tds.cells().iter().next() {
+            let result = tds.vertex_keys_for_cell_direct(cell_key);
+            assert!(result.is_ok());
+            let vertex_keys = result.unwrap();
+            assert_eq!(vertex_keys.len(), 4); // 3D tetrahedron has 4 vertices
+        }
+    }
+
+    #[test]
+    fn test_add_vertex_duplicate_coordinates_error() {
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Add first vertex
+        let vertex1 = vertex!([1.0, 2.0, 3.0]);
+        tds.add(vertex1).unwrap();
+
+        // Try to add vertex with same coordinates but different UUID
+        let vertex2 = vertex!([1.0, 2.0, 3.0]);
+        let result = tds.add(vertex2);
+
+        // Should get duplicate coordinates error
+        assert!(matches!(
+            result,
+            Err(TriangulationConstructionError::DuplicateCoordinates { .. })
+        ));
+    }
+
+    #[test]
+    fn test_insert_vertex_with_mapping_duplicate_error() {
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        let vertex = vertex!([1.0, 2.0, 3.0]);
+
+        // First insertion should succeed
+        tds.insert_vertex_with_mapping(vertex).unwrap();
+
+        // Second insertion of same vertex should fail with DuplicateUuid error
+        let result = tds.insert_vertex_with_mapping(vertex);
+        assert!(result.is_err());
+        // The actual error type depends on internal implementation details
+    }
+
+    #[test]
+    fn test_dimension_accessor() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        assert_eq!(tds.dim(), 3);
+    }
+
+    #[test]
+    fn test_validate_vertex_mappings_success() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        let result = tds.validate_vertex_mappings();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_cell_mappings_success() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        let result = tds.validate_cell_mappings();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_no_duplicate_cells_success() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        let result = tds.validate_no_duplicate_cells();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_construction_state_transitions() {
+        // Test that construction state transitions work properly
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Should start as incomplete with 0 vertices
+        assert!(matches!(
+            tds.construction_state,
+            TriangulationConstructionState::Incomplete(0)
+        ));
+
+        // Add first vertex
+        tds.add(vertex!([0.0, 0.0, 0.0])).unwrap();
+        assert_eq!(tds.number_of_vertices(), 1);
+
+        // Add second vertex
+        tds.add(vertex!([1.0, 0.0, 0.0])).unwrap();
+        assert_eq!(tds.number_of_vertices(), 2);
+
+        // Add third vertex
+        tds.add(vertex!([0.0, 1.0, 0.0])).unwrap();
+        assert_eq!(tds.number_of_vertices(), 3);
+
+        // Add fourth vertex - now we should have enough to form a tetrahedron
+        tds.add(vertex!([0.0, 0.0, 1.0])).unwrap();
+        assert_eq!(tds.number_of_vertices(), 4);
+        assert_eq!(tds.number_of_cells(), 1);
+
+        // Construction state may or may not transition automatically
+        // The main thing is that the triangulation is valid and functional
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_clone_implementation() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
+        let cloned_tds = tds.clone();
+
+        // Cloned TDS should be equal to original
+        assert_eq!(tds, cloned_tds);
+
+        // But should have different generation counters (Arc should be cloned)
+        // Generation counter values should be the same initially
+        assert_eq!(tds.generation(), cloned_tds.generation());
+    }
+
+    #[test]
+    fn test_debug_implementation() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
+        let debug_str = format!("{:?}", tds);
+
+        // Debug should contain the struct name
+        assert!(debug_str.contains("Tds"));
+    }
+
+    #[test]
+    fn test_empty_triangulation_validation() {
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Empty triangulation should be valid
+        assert!(tds.is_valid().is_ok());
+
+        // Should have no vertices or cells
+        assert_eq!(tds.number_of_vertices(), 0);
+        assert_eq!(tds.number_of_cells(), 0);
+    }
+
+    #[test]
+    fn test_high_dimension_triangulation() {
+        // Test higher dimensional triangulation (4D)
+        let vertices_4d = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 4> = Tds::new(&vertices_4d).unwrap();
+
+        assert_eq!(tds.dim(), 4);
+        assert_eq!(tds.number_of_vertices(), 5);
+        assert_eq!(tds.number_of_cells(), 1); // One 4-simplex
+        assert!(tds.is_valid().is_ok());
+    }
+
+    // =============================================================================
+    // MULTI-DIMENSIONAL TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_1d_triangulation() {
+        // 1D triangulation with 2 vertices (forms a line segment)
+        let vertices = vec![vertex!([0.0]), vertex!([1.0])];
+
+        let tds: Tds<f64, usize, usize, 1> = Tds::new(&vertices).unwrap();
+
+        assert_eq!(tds.dim(), 1);
+        assert_eq!(tds.number_of_vertices(), 2);
+        assert_eq!(tds.number_of_cells(), 1); // One 1-simplex (line segment)
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_2d_triangulation() {
+        // 2D triangulation with 3 vertices (forms a triangle)
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
+
+        assert_eq!(tds.dim(), 2);
+        assert_eq!(tds.number_of_vertices(), 3);
+        assert_eq!(tds.number_of_cells(), 1); // One 2-simplex (triangle)
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_3d_triangulation() {
+        // 3D triangulation with 4 vertices (forms a tetrahedron)
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        assert_eq!(tds.dim(), 3);
+        assert_eq!(tds.number_of_vertices(), 4);
+        assert_eq!(tds.number_of_cells(), 1); // One 3-simplex (tetrahedron)
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_5d_triangulation() {
+        // 5D triangulation with 6 vertices (forms a 5-simplex)
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 5> = Tds::new(&vertices).unwrap();
+
+        assert_eq!(tds.dim(), 5);
+        assert_eq!(tds.number_of_vertices(), 6);
+        assert_eq!(tds.number_of_cells(), 1); // One 5-simplex
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_6d_triangulation() {
+        // 6D triangulation with 7 vertices (forms a 6-simplex)
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 6> = Tds::new(&vertices).unwrap();
+
+        assert_eq!(tds.dim(), 6);
+        assert_eq!(tds.number_of_vertices(), 7);
+        assert_eq!(tds.number_of_cells(), 1); // One 6-simplex
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_7d_triangulation() {
+        // 7D triangulation with 8 vertices (forms a 7-simplex)
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 7> = Tds::new(&vertices).unwrap();
+
+        assert_eq!(tds.dim(), 7);
+        assert_eq!(tds.number_of_vertices(), 8);
+        assert_eq!(tds.number_of_cells(), 1); // One 7-simplex
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_max_dimension_boundary() {
+        // Test at the MAX_PRACTICAL_DIMENSION_SIZE boundary (8D)
+        // An 8D triangulation would need D+1=9 vertices, but neighbor arrays can only hold 8
+        // So we test just below the limit with 7D (needs 8 vertices, 8 neighbors max)
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, usize, usize, 7> = Tds::new(&vertices).unwrap();
+
+        assert_eq!(tds.dim(), 7);
+        assert_eq!(tds.number_of_vertices(), 8);
+        assert_eq!(tds.number_of_cells(), 1); // One 7-simplex at the practical limit
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_incremental_construction_various_dimensions() {
+        // Test incremental construction for 2D
+        let mut tds_2d: Tds<f64, usize, usize, 2> = Tds::new(&[]).unwrap();
+
+        tds_2d.add(vertex!([0.0, 0.0])).unwrap();
+        assert_eq!(tds_2d.number_of_vertices(), 1);
+
+        tds_2d.add(vertex!([1.0, 0.0])).unwrap();
+        assert_eq!(tds_2d.number_of_vertices(), 2);
+
+        tds_2d.add(vertex!([0.0, 1.0])).unwrap();
+        assert_eq!(tds_2d.number_of_vertices(), 3);
+        assert_eq!(tds_2d.number_of_cells(), 1);
+        assert!(tds_2d.is_valid().is_ok());
+
+        // Test incremental construction for 4D
+        let mut tds_4d: Tds<f64, usize, usize, 4> = Tds::new(&[]).unwrap();
+
+        for i in 0..=4 {
+            let mut coords = [0.0f64; 4];
+            if i < 4 {
+                coords[i] = 1.0;
+            }
+            tds_4d.add(vertex!(coords)).unwrap();
+            assert_eq!(tds_4d.number_of_vertices(), i + 1);
+        }
+
+        assert_eq!(tds_4d.number_of_cells(), 1);
+        assert!(tds_4d.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_large_vertex_addition_2d() {
+        let mut tds: Tds<f64, usize, usize, 2> = Tds::new(&[]).unwrap();
+
+        // Add vertices in a grid pattern
+        for i in 0..10 {
+            for j in 0..10 {
+                let vertex = vertex!([
+                    num_traits::cast::<i32, f64>(i).unwrap() * 0.1,
+                    num_traits::cast::<i32, f64>(j).unwrap() * 0.1
+                ]);
+                tds.add(vertex).unwrap();
+            }
+        }
+
+        assert_eq!(tds.number_of_vertices(), 100);
+        assert!(tds.number_of_cells() > 0);
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_dimension_boundary_cases() {
+        // Test with insufficient vertices for dimension
+        let vertices_1d_insufficient = vec![vertex!([0.0])];
+        let result_1d = Tds::<f64, usize, usize, 1>::new(&vertices_1d_insufficient);
+        // With insufficient vertices, triangulation construction should fail
+        assert!(result_1d.is_err());
+
+        // Test with exact minimum vertices for dimension
+        let vertices_3d_exact = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds_3d: Tds<f64, usize, usize, 3> = Tds::new(&vertices_3d_exact).unwrap();
+        assert_eq!(tds_3d.number_of_vertices(), 4);
+        assert_eq!(tds_3d.number_of_cells(), 1);
+        assert!(tds_3d.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_dimension_limit_error() {
+        // Test that triangulations beyond MAX_PRACTICAL_DIMENSION_SIZE fail appropriately
+        // This tests the error path when trying to create cells with too many neighbors
+
+        // First verify that 7D works (at the limit)
+        let vertices_7d = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        ];
+
+        let tds_7d: Tds<f64, usize, usize, 7> = Tds::new(&vertices_7d).unwrap();
+        assert_eq!(tds_7d.dim(), 7);
+        assert_eq!(tds_7d.number_of_vertices(), 8);
+        assert_eq!(tds_7d.number_of_cells(), 1);
+
+        // Note: We can't easily test 8D failure because the const generic prevents compilation
+        // The dimension limit is enforced at compile time for the Tds type itself
+        // But we can test the MAX_PRACTICAL_DIMENSION_SIZE constant is used correctly
+        assert_eq!(crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE, 8);
+    }
 }

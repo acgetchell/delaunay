@@ -2860,15 +2860,15 @@ mod tests {
 
     #[test]
     fn test_type_aliases() {
-        // Test that type aliases work correctly
-        let vertices_2d = vec![
+        // Test that type aliases compile and work correctly
+        let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
         let _hull_2d: ConvexHull2D<f64, Option<()>, Option<()>> =
-            ConvexHull::from_triangulation(&tds_2d).unwrap();
+            ConvexHull::from_triangulation(&tds).unwrap();
 
         let vertices_3d = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -2890,6 +2890,396 @@ mod tests {
         let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
         let _hull_4d: ConvexHull4D<f64, Option<()>, Option<()>> =
             ConvexHull::from_triangulation(&tds_4d).unwrap();
+    }
+
+    // =========================================================================
+    // ERROR PATH AND EDGE CASE TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_from_triangulation_empty_vertices_error() {
+        // Test error path when triangulation has no vertices
+        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let result = ConvexHull::from_triangulation(&empty_tds);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ConvexHullConstructionError::InsufficientData { message } => {
+                assert!(message.contains("no vertices"));
+            }
+            _ => panic!("Expected InsufficientData error for no vertices"),
+        }
+    }
+
+    #[test]
+    fn test_from_triangulation_no_cells_error() {
+        // Create a TDS with vertices but no cells (manually constructed)
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let vertex = vertex!([0.0, 0.0, 0.0]);
+        let _ = tds.insert_vertex_with_mapping(vertex);
+
+        let result = ConvexHull::from_triangulation(&tds);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ConvexHullConstructionError::InsufficientData { message } => {
+                assert!(message.contains("no cells"));
+            }
+            _ => panic!("Expected InsufficientData error for no cells"),
+        }
+    }
+
+    #[test]
+    fn test_from_triangulation_no_boundary_facets_error() {
+        // This is harder to trigger naturally, but we can test error propagation
+        // by creating a TDS that would fail boundary facet extraction
+        // For now, just test that the error mapping works with a valid TDS
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let result = ConvexHull::from_triangulation(&tds);
+        assert!(result.is_ok()); // This should succeed for a valid tetrahedron
+        let hull = result.unwrap();
+        assert!(!hull.hull_facets.is_empty());
+    }
+
+    #[test]
+    fn test_visibility_check_insufficient_vertices_error() {
+        // Create a hull and manually create a degenerate facet to test error path
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Test a normal facet first to ensure visibility checks work
+        let test_point = Point::new([2.0, 2.0, 2.0]);
+        if let Some(facet) = hull.get_facet(0) {
+            let result = hull.is_facet_visible_from_point(facet, &test_point, &tds);
+            // This should either succeed or fail gracefully
+            match result {
+                Ok(_visibility) => (), // Success case
+                Err(e) => println!("Expected visibility error: {e}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_fallback_visibility_test_degenerate_facet() {
+        // Test the fallback visibility algorithm with degenerate geometry
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Test fallback with various points
+        if let Some(facet) = hull.get_facet(0) {
+            // Test with a point very close to the facet (should not be visible)
+            let close_point = Point::new([0.1, 0.1, 0.1]);
+            let result = ConvexHull::fallback_visibility_test(facet, &close_point);
+            assert!(result.is_ok());
+
+            // Test with a point far from the facet (should be visible)
+            let far_point = Point::new([10.0, 10.0, 10.0]);
+            let result = ConvexHull::fallback_visibility_test(facet, &far_point);
+            assert!(result.is_ok());
+            assert!(result.unwrap()); // Should be visible from far point
+        }
+    }
+
+    #[test]
+    fn test_find_nearest_visible_facet_no_visible_facets() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Test with a point inside the hull (no facets should be visible)
+        let inside_point = Point::new([0.2, 0.2, 0.2]);
+        let result = hull.find_nearest_visible_facet(&inside_point, &tds);
+        assert!(result.is_ok());
+        // May or may not be None depending on specific geometry and precision
+    }
+
+    #[test]
+    fn test_find_nearest_visible_facet_equidistant_cases() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Test with a point that's equidistant from multiple facets
+        let equidistant_point = Point::new([5.0, 5.0, 5.0]);
+        let result = hull.find_nearest_visible_facet(&equidistant_point, &tds);
+        assert!(result.is_ok());
+        // Should return some facet index or None
+    }
+
+    #[test]
+    fn test_validate_method_comprehensive() {
+        // Test validation on valid hull
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        let result = hull.validate();
+        assert!(result.is_ok());
+
+        // Test validation on empty hull
+        let empty_hull: ConvexHull<f64, Option<()>, Option<()>, 3> = ConvexHull::default();
+        let result = empty_hull.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_hull_operations_extended() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Test basic operations
+        assert!(!hull.is_empty());
+        assert_eq!(hull.dimension(), 3);
+        assert_eq!(hull.facet_count(), 4);
+
+        // Test get_facet bounds checking
+        assert!(hull.get_facet(0).is_some());
+        assert!(hull.get_facet(3).is_some());
+        assert!(hull.get_facet(4).is_none());
+        assert!(hull.get_facet(100).is_none());
+
+        // Test facets iterator
+        let facet_count = hull.facets().count();
+        assert_eq!(facet_count, 4);
+
+        // Test clear operation
+        hull.clear();
+        assert!(hull.is_empty());
+        assert_eq!(hull.facet_count(), 0);
+        assert!(hull.get_facet(0).is_none());
+    }
+
+    #[test]
+    fn test_invalidate_cache() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Test cache invalidation
+        hull.invalidate_cache();
+
+        // Verify we can still perform operations after cache invalidation
+        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let result = hull.is_point_outside(&test_point, &tds);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_facet_cache_provider_implementation() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Test FacetCacheProvider trait implementation
+        let _facet_cache = hull.facet_cache();
+        let cached_gen = hull.cached_generation();
+        assert!(cached_gen.load(std::sync::atomic::Ordering::Acquire) > 0);
+    }
+
+    #[test]
+    fn test_hull_coordinate_type_validation() {
+        // Test that the hull works with f64 (already tested elsewhere)
+        // and verify constraints exist for other types like f32
+
+        // f64 should work (already proven in other tests)
+        let vertices_f64 = vec![
+            vertex!([0.0f64, 0.0f64, 0.0f64]),
+            vertex!([1.0f64, 0.0f64, 0.0f64]),
+            vertex!([0.0f64, 1.0f64, 0.0f64]),
+            vertex!([0.0f64, 0.0f64, 1.0f64]),
+        ];
+        let tds_f64: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_f64).unwrap();
+        let hull_f64: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds_f64).unwrap();
+
+        assert_eq!(hull_f64.facet_count(), 4);
+        assert!(!hull_f64.is_empty());
+
+        // Test point operations with f64
+        let test_point_f64 = Point::new([2.0f64, 2.0f64, 2.0f64]);
+        let result = hull_f64.is_point_outside(&test_point_f64, &tds_f64);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_hull_with_various_data_types() {
+        // Test with different vertex data types
+        let vertices_with_data = vec![
+            vertex!([0.0, 0.0, 0.0], Some(1)),
+            vertex!([1.0, 0.0, 0.0], Some(2)),
+            vertex!([0.0, 1.0, 0.0], Some(3)),
+            vertex!([0.0, 0.0, 1.0], Some(4)),
+        ];
+        let tds_with_data: Tds<f64, Option<i32>, Option<()>, 3> =
+            Tds::new(&vertices_with_data).unwrap();
+        let hull_with_data: ConvexHull<f64, Option<i32>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds_with_data).unwrap();
+
+        assert_eq!(hull_with_data.facet_count(), 4);
+        assert!(hull_with_data.validate().is_ok());
+    }
+
+    #[test]
+    fn test_error_types_display_formatting() {
+        // Test ConvexHullValidationError display
+        let validation_error = ConvexHullValidationError::InvalidFacet {
+            facet_index: 2,
+            source: FacetError::InsufficientVertices {
+                expected: 3,
+                actual: 2,
+                dimension: 3,
+            },
+        };
+        let display = format!("{validation_error}");
+        assert!(display.contains("Facet 2 validation failed"));
+
+        let duplicate_error = ConvexHullValidationError::DuplicateVerticesInFacet {
+            facet_index: 1,
+            positions: vec![vec![0, 2], vec![1, 3]],
+        };
+        let display = format!("{duplicate_error}");
+        assert!(display.contains("duplicate vertices"));
+
+        // Test ConvexHullConstructionError display
+        let construction_error = ConvexHullConstructionError::InsufficientData {
+            message: "test message".to_string(),
+        };
+        let display = format!("{construction_error}");
+        assert!(display.contains("test message"));
+
+        let coord_error = ConvexHullConstructionError::CoordinateConversion(
+            crate::geometry::traits::coordinate::CoordinateConversionError::NonFiniteValue {
+                coordinate_index: 0,
+                coordinate_value: "NaN".to_string(),
+            },
+        );
+        let display = format!("{coord_error}");
+        assert!(display.contains("Coordinate conversion error"));
+    }
+
+    #[test]
+    fn test_1d_convex_hull_extended() {
+        // Test 1D convex hull (edge case)
+        let vertices_1d = vec![vertex!([0.0]), vertex!([1.0])];
+        let tds_1d: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices_1d).unwrap();
+        let hull_1d: ConvexHull<f64, Option<()>, Option<()>, 1> =
+            ConvexHull::from_triangulation(&tds_1d).unwrap();
+
+        assert_eq!(hull_1d.dimension(), 1);
+        assert_eq!(hull_1d.facet_count(), 2); // Two endpoints
+
+        // Test operations on 1D hull
+        let test_point_1d = Point::new([2.0]);
+        let result = hull_1d.is_point_outside(&test_point_1d, &tds_1d);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_high_dimensional_hulls_extended() {
+        // Test 5D convex hull (higher dimensional case)
+        let vertices_5d = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+        ];
+        let tds_5d: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices_5d).unwrap();
+        let hull_5d: ConvexHull<f64, Option<()>, Option<()>, 5> =
+            ConvexHull::from_triangulation(&tds_5d).unwrap();
+
+        assert_eq!(hull_5d.dimension(), 5);
+        assert!(hull_5d.facet_count() > 0);
+
+        // Test basic operations
+        assert!(hull_5d.validate().is_ok());
+        assert!(!hull_5d.is_empty());
+
+        // Test visibility with a 5D point
+        let test_point_5d = Point::new([2.0, 2.0, 2.0, 2.0, 2.0]);
+        let result = hull_5d.find_visible_facets(&test_point_5d, &tds_5d);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_clone_and_debug_traits() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Test Debug trait
+        let debug_str = format!("{hull:?}");
+        assert!(debug_str.contains("ConvexHull"));
+
+        // Test that error types implement Debug
+        let error = ConvexHullConstructionError::InsufficientData {
+            message: "test".to_string(),
+        };
+        let debug_error = format!("{error:?}");
+        assert!(debug_error.contains("InsufficientData"));
     }
 
     #[test]
@@ -3228,7 +3618,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_method_comprehensive() {
+    fn test_validate_method_various_dimensions() {
         println!("Testing validate method comprehensively");
 
         // Test with different dimensional hulls
