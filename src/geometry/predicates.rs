@@ -598,7 +598,7 @@ where
 
     // The sign interpretation depends on both orientation and dimension parity
     // For the lifted matrix formulation, even and odd dimensions have opposite sign conventions
-    let dimension_is_even = D % 2 == 0;
+    let dimension_is_even = D.is_multiple_of(2);
 
     match orientation {
         Orientation::DEGENERATE => {

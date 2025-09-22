@@ -1,6 +1,6 @@
 [toolchain]
 # Pin to MSRV as specified in Cargo.toml
-channel = "1.89.0"
+channel = "1.90.0"
 
 # Essential components for development
 components = [
