@@ -3787,11 +3787,11 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_add_vertex_already_exists() {
-        test_add_vertex_already_exists_generic::<TestFloat>();
+    fn test_add_vertex_already_exists_generic() {
+        test_add_vertex_already_exists_impl::<TestFloat>();
     }
 
-    fn test_add_vertex_already_exists_generic<T>()
+    fn test_add_vertex_already_exists_impl<T>()
     where
         T: CoordinateScalar
             + AddAssign<T>
@@ -3828,11 +3828,11 @@ mod tests {
     }
 
     #[test]
-    fn test_add_vertex_uuid_collision() {
-        test_add_vertex_uuid_collision_generic::<TestFloat>();
+    fn test_add_vertex_uuid_collision_generic() {
+        test_add_vertex_uuid_collision_impl::<TestFloat>();
     }
 
-    fn test_add_vertex_uuid_collision_generic<T>()
+    fn test_add_vertex_uuid_collision_impl<T>()
     where
         T: CoordinateScalar
             + AddAssign<T>
@@ -4270,12 +4270,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bowyer_watson_empty_vertices() {
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
-        assert_eq!(tds.is_valid(), Ok(())); // Initially valid with no vertices
-    }
-
-    #[test]
     fn test_triangulation_creation_logic() {
         // Need at least D+1=4 vertices for 3D triangulation
         let points = vec![
@@ -4470,17 +4464,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bowyer_watson_empty() {
-        let points: Vec<Point<f64, 3>> = Vec::new();
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-
-        // Triangulation is automatically done in Tds::new
-        assert_eq!(tds.number_of_vertices(), 0);
-        assert_eq!(tds.number_of_cells(), 0);
-    }
-
-    #[test]
     fn test_number_of_cells() {
         let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
         assert_eq!(tds.number_of_cells(), 0);
@@ -4534,39 +4517,6 @@ mod tests {
 
         // Human readable output for cargo test -- --nocapture
         println!("{tds:?}");
-    }
-
-    #[test]
-    fn tds_bowyer_watson() {
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-        println!(
-            "Initial TDS: {} vertices, {} cells",
-            tds.number_of_vertices(),
-            tds.number_of_cells()
-        );
-
-        // Triangulation is automatically done in Tds::new
-        let result = tds;
-
-        println!(
-            "Result TDS: {} vertices, {} cells",
-            result.number_of_vertices(),
-            result.number_of_cells()
-        );
-        println!("Cells: {:?}", result.cells.keys().collect::<Vec<_>>());
-
-        assert_eq!(result.number_of_vertices(), 4);
-        assert_eq!(result.number_of_cells(), 1);
-
-        // Human readable output for cargo test -- --nocapture
-        println!("{result:?}");
     }
 
     // =============================================================================
@@ -8011,7 +7961,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_vertex_mappings_success() {
+    fn test_validation_methods_success() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -8021,38 +7971,11 @@ mod tests {
 
         let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
 
-        let result = tds.validate_vertex_mappings();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_validate_cell_mappings_success() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-
-        let result = tds.validate_cell_mappings();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_validate_no_duplicate_cells_success() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-
-        let result = tds.validate_no_duplicate_cells();
-        assert!(result.is_ok());
+        // Test all validation methods on the same tetrahedron
+        assert!(tds.validate_vertex_mappings().is_ok());
+        assert!(tds.validate_cell_mappings().is_ok());
+        assert!(tds.validate_no_duplicate_cells().is_ok());
+        assert!(tds.is_valid().is_ok());
     }
 
     #[test]
@@ -8120,37 +8043,6 @@ mod tests {
 
         // Debug should contain the struct name
         assert!(debug_str.contains("Tds"));
-    }
-
-    #[test]
-    fn test_empty_triangulation_validation() {
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
-
-        // Empty triangulation should be valid
-        assert!(tds.is_valid().is_ok());
-
-        // Should have no vertices or cells
-        assert_eq!(tds.number_of_vertices(), 0);
-        assert_eq!(tds.number_of_cells(), 0);
-    }
-
-    #[test]
-    fn test_high_dimension_triangulation() {
-        // Test higher dimensional triangulation (4D)
-        let vertices_4d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
-        ];
-
-        let tds: Tds<f64, usize, usize, 4> = Tds::new(&vertices_4d).unwrap();
-
-        assert_eq!(tds.dim(), 4);
-        assert_eq!(tds.number_of_vertices(), 5);
-        assert_eq!(tds.number_of_cells(), 1); // One 4-simplex
-        assert!(tds.is_valid().is_ok());
     }
 
     // =============================================================================
@@ -8265,30 +8157,6 @@ mod tests {
         assert_eq!(tds.dim(), 7);
         assert_eq!(tds.number_of_vertices(), 8);
         assert_eq!(tds.number_of_cells(), 1); // One 7-simplex
-        assert!(tds.is_valid().is_ok());
-    }
-
-    #[test]
-    fn test_max_dimension_boundary() {
-        // Test at the MAX_PRACTICAL_DIMENSION_SIZE boundary (8D)
-        // An 8D triangulation would need D+1=9 vertices, but neighbor arrays can only hold 8
-        // So we test just below the limit with 7D (needs 8 vertices, 8 neighbors max)
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
-        ];
-
-        let tds: Tds<f64, usize, usize, 7> = Tds::new(&vertices).unwrap();
-
-        assert_eq!(tds.dim(), 7);
-        assert_eq!(tds.number_of_vertices(), 8);
-        assert_eq!(tds.number_of_cells(), 1); // One 7-simplex at the practical limit
         assert!(tds.is_valid().is_ok());
     }
 

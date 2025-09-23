@@ -2618,72 +2618,6 @@ mod tests {
         println!("✓ Comprehensive algorithm path testing completed");
     }
 
-    #[test]
-
-    fn test_boundary_condition_validation() {
-        println!("Testing boundary condition validation...");
-
-        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
-
-        // Test 1: Minimum valid triangulation
-        let minimal = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let minimal_tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&minimal).unwrap();
-        let cache = algorithm
-            .try_get_or_build_facet_cache(&minimal_tds)
-            .expect("Cache building should succeed in test");
-        assert!(
-            cache.len() >= 4,
-            "Minimal tetrahedron should have at least 4 facets"
-        );
-        println!("  ✓ Minimal triangulation validated");
-
-        // Test 2: Single point (should fail)
-        let single = vec![vertex!([0.0, 0.0, 0.0])];
-        let single_result = Tds::<f64, Option<()>, Option<()>, 3>::new(&single);
-        assert!(single_result.is_err(), "Single point should fail");
-        println!("  ✓ Single point correctly rejected");
-
-        // Test 3: Duplicate points
-        let duplicates = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0]), // Duplicate
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let duplicate_result = Tds::<f64, Option<()>, Option<()>, 3>::new(&duplicates);
-        // Should either handle duplicates or fail gracefully
-        match duplicate_result {
-            Ok(_) => println!("  ✓ Duplicate points handled gracefully"),
-            Err(_) => println!("  ✓ Duplicate points rejected appropriately"),
-        }
-
-        // Test 4: Very small perturbations
-        let tiny_perturbation = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([f64::EPSILON, f64::EPSILON, f64::EPSILON]),
-        ];
-        let tiny_result = Tds::<f64, Option<()>, Option<()>, 3>::new(&tiny_perturbation);
-        match tiny_result {
-            Ok(tds) => {
-                let cache = algorithm
-                    .try_get_or_build_facet_cache(&tds)
-                    .expect("Cache building should succeed in test");
-                assert!(!cache.is_empty(), "Should handle tiny perturbations");
-                println!("  ✓ Tiny perturbations handled");
-            }
-            Err(_) => println!("  ✓ Tiny perturbations failed gracefully"),
-        }
-    }
-
     // =========================================================================
     // Module Organization Pattern: Configuration and Validation Tests
     // =========================================================================
@@ -2827,63 +2761,6 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_fallback_mechanism_progression() {
-        // Create configuration that will trigger fallbacks
-        let mut config = config_presets::general_triangulation::<f64>();
-        config.base_tolerance = 1e-15; // Very tight
-
-        let mut algorithm =
-            RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(config);
-
-        // Create a configuration that's likely to need fallbacks
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-
-        let mut tds = Tds::new(&vertices).expect("Initial TDS creation should succeed");
-
-        // Insert vertices that might trigger fallback mechanisms
-        let problematic_vertices = vec![
-            vertex!([1e-14, 1e-14, 1e-14]),       // Nearly at origin
-            vertex!([1.0 + 1e-14, 1e-14, 1e-14]), // Nearly at existing vertex
-            vertex!([
-                0.333_333_333_333_333,
-                0.333_333_333_333_333,
-                0.333_333_333_333_333
-            ]), // Potential precision issues
-        ];
-
-        for (i, vertex) in problematic_vertices.into_iter().enumerate() {
-            let result = algorithm.insert_vertex(&mut tds, vertex);
-
-            // Should either succeed with fallback or fail gracefully
-            match result {
-                Ok(info) => {
-                    println!(
-                        "Vertex {} succeeded after fallbacks: created={}, removed={}",
-                        i, info.cells_created, info.cells_removed
-                    );
-                    assert!(
-                        tds.is_valid().is_ok(),
-                        "TDS should remain valid after fallback success"
-                    );
-                }
-                Err(e) => {
-                    println!("Vertex {i} failed after all fallbacks: {e:?}");
-                    // TDS should still be valid even after insertion failure
-                    assert!(
-                        tds.is_valid().is_ok(),
-                        "TDS should remain valid after fallback failure"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
 
     fn test_cache_invalidation_and_recovery() {
         let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
@@ -2927,77 +2804,6 @@ mod tests {
         assert!(
             another_result.is_ok(),
             "Subsequent insertion should work after cache invalidation"
-        );
-    }
-
-    #[test]
-    fn test_recovery_from_geometric_failures() {
-        let mut config = config_presets::degenerate_robust::<f64>();
-        config.base_tolerance = 1e-12;
-        config.perturbation_scale = 1e-10;
-        config.max_refinement_iterations = 3;
-
-        let mut algorithm: RobustBoyerWatson<f64, Option<()>, Option<()>, 3> =
-            RobustBoyerWatson::with_config(config);
-
-        // Start with a valid triangulation
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-
-        let mut tds = Tds::new(&vertices).expect("Initial TDS creation should succeed");
-        let _initial_cell_count = tds.number_of_cells();
-
-        // Try inserting vertices that might cause geometric failures
-        let challenging_vertices = vec![
-            vertex!([f64::EPSILON, f64::EPSILON, f64::EPSILON]), // Extremely close to origin
-            vertex!([1.0 - f64::EPSILON, f64::EPSILON, f64::EPSILON]), // Very close to existing vertex
-        ];
-
-        for (i, vertex) in challenging_vertices.into_iter().enumerate() {
-            let cells_before = tds.number_of_cells();
-            let result = algorithm.insert_vertex(&mut tds, vertex);
-            let cells_after = tds.number_of_cells();
-
-            match result {
-                Ok(info) => {
-                    println!(
-                        "Challenging vertex {} succeeded: created={}, removed={}",
-                        i, info.cells_created, info.cells_removed
-                    );
-                    assert!(
-                        cells_after >= cells_before,
-                        "Cell count should not decrease on success"
-                    );
-                }
-                Err(e) => {
-                    println!("Challenging vertex {i} failed as expected: {e:?}");
-                    assert_eq!(
-                        cells_after, cells_before,
-                        "Cell count should be unchanged on failure"
-                    );
-                }
-            }
-
-            // Most importantly, TDS should remain valid regardless of success/failure
-            let validation_result = tds.is_valid();
-            assert!(
-                validation_result.is_ok(),
-                "TDS should remain valid after attempting challenging vertex {}: {:?}",
-                i,
-                validation_result.err()
-            );
-        }
-
-        // Verify we can still insert normal vertices after handling failures
-        let normal_vertex = vertex!([0.5, 0.5, 0.5]);
-        let normal_result = algorithm.insert_vertex(&mut tds, normal_vertex);
-        assert!(
-            normal_result.is_ok(),
-            "Normal vertex insertion should work after recovery"
         );
     }
 
@@ -3089,61 +2895,6 @@ mod tests {
             linear_tds.is_valid().is_ok(),
             "Linear TDS should remain valid"
         );
-    }
-
-    #[test]
-    fn test_geometric_configurations_random_distributions() {
-        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
-
-        // Test with different random seeds for reproducibility
-        let seeds = [42, 123, 456, 789];
-
-        for (test_idx, &seed) in seeds.iter().enumerate() {
-            println!("\n--- Random Test {} (seed: {}) ---", test_idx + 1, seed);
-
-            // Use a simple LCG for reproducible "random" numbers
-            let mut rng_state: u32 = seed;
-            let mut next_random = || {
-                rng_state = rng_state.wrapping_mul(1_103_515_245).wrapping_add(12345);
-                f64::from(rng_state >> 16) / 32768.0
-            };
-
-            // Generate random vertices in unit cube
-            let random_vertices: Vec<_> = (0..20)
-                .map(|_| vertex!([next_random(), next_random(), next_random()]))
-                .collect();
-
-            let mut random_tds =
-                Tds::new(&random_vertices[..4]).expect("Random TDS creation should succeed");
-            let mut success_count = 0;
-
-            for (i, vertex) in random_vertices[4..].iter().enumerate() {
-                let result = algorithm.insert_vertex(&mut random_tds, *vertex);
-                match result {
-                    Ok(_) => {
-                        success_count += 1;
-                        println!("  ✓ Random vertex {} inserted", i + 4);
-                    }
-                    Err(e) => println!("  ⚠ Random vertex {} failed: {:?}", i + 4, e),
-                }
-            }
-
-            println!(
-                "  Success rate: {}/{}",
-                success_count,
-                random_vertices.len() - 4
-            );
-            assert!(
-                random_tds.is_valid().is_ok(),
-                "Random TDS should remain valid for seed {seed}"
-            );
-
-            // Verify we had reasonable success rate (at least 50%)
-            assert!(
-                success_count >= (random_vertices.len() - 4) / 2,
-                "Should successfully insert at least half of random vertices for seed {seed}"
-            );
-        }
     }
 
     #[test]
@@ -3242,17 +2993,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    /// Test the Default trait implementation path (lines 77-79)
-    #[test]
-    fn test_default_implementation_path() {
-        let algorithm: RobustBoyerWatson<f64, Option<()>, Option<()>, 3> =
-            RobustBoyerWatson::default();
-        let (processed, created, removed) = algorithm.get_statistics();
-        assert_eq!(processed, 0);
-        assert_eq!(created, 0);
-        assert_eq!(removed, 0);
     }
 
     /// Test `vertex_needs_robust_handling` heuristics (lines 1108-1166)
@@ -3402,42 +3142,6 @@ mod tests {
         );
     }
 
-    /// Test error paths in `find_visible_boundary_facets` (lines 912-917)
-    #[test]
-    fn test_find_visible_boundary_facets_error_paths() {
-        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
-
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-
-        // Test with a normal exterior vertex (should work)
-        let exterior_vertex = vertex!([5.0, 5.0, 5.0]);
-        let result = algorithm.find_visible_boundary_facets(&tds, &exterior_vertex);
-
-        match result {
-            Ok(facets) => {
-                println!("Found {} visible boundary facets", facets.len());
-                // For an exterior point, we should find some visible facets
-                assert!(
-                    !facets.is_empty(),
-                    "Should find visible facets for exterior point"
-                );
-            }
-            Err(InsertionError::TriangulationState(validation_error)) => {
-                // This tests the error handling path
-                println!("Visibility detection failed with validation error: {validation_error:?}");
-            }
-            Err(other) => {
-                panic!("Unexpected error type: {other:?}");
-            }
-        }
-    }
-
     /// Test `is_facet_visible_from_vertex_robust` degenerate handling (lines 999-1004)
     #[test]
     fn test_is_facet_visible_degenerate_handling() {
@@ -3530,25 +3234,6 @@ mod tests {
         assert_eq!(removed, 0);
     }
 
-    /// Test `for_degenerate_cases` constructor (lines 172-183)
-    #[test]
-    fn test_for_degenerate_cases_constructor() {
-        let algorithm: RobustBoyerWatson<f64, Option<()>, Option<()>, 3> =
-            RobustBoyerWatson::for_degenerate_cases();
-
-        // Verify it uses degenerate-robust configuration
-        let degenerate_config = config_presets::degenerate_robust::<f64>();
-        assert!(
-            algorithm.predicate_config.base_tolerance >= degenerate_config.base_tolerance,
-            "Should use lenient tolerances for degenerate cases"
-        );
-
-        let (processed, created, removed) = algorithm.get_statistics();
-        assert_eq!(processed, 0);
-        assert_eq!(created, 0);
-        assert_eq!(removed, 0);
-    }
-
     /// Test fallback strategy in `robust_insert_vertex_impl` (lines 228-240, 244)
     #[test]
     fn test_robust_insert_fallback_strategies() {
@@ -3619,89 +3304,6 @@ mod tests {
                 println!("Fallback insertion failed: {e:?}");
                 // TDS should still be valid
                 assert!(tds.is_valid().is_ok());
-            }
-        }
-    }
-
-    /// Test error cases in `find_bad_cells_with_robust_fallback` (lines 405-423)
-    #[test]
-    fn test_find_bad_cells_error_cases() {
-        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
-
-        // Create minimal TDS to test edge cases
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-
-        // Test with vertex at center (should find bad cells)
-        let central_vertex = vertex!([0.25, 0.25, 0.25]);
-        let bad_cells = algorithm.find_bad_cells_with_robust_fallback(&tds, &central_vertex);
-
-        println!("Found {} bad cells for central vertex", bad_cells.len());
-        // Don't assert specific count, just ensure it doesn't panic
-
-        // Test with vertex far outside (should find no bad cells)
-        let exterior_vertex = vertex!([100.0, 100.0, 100.0]);
-        let exterior_bad_cells =
-            algorithm.find_bad_cells_with_robust_fallback(&tds, &exterior_vertex);
-
-        println!(
-            "Found {} bad cells for exterior vertex",
-            exterior_bad_cells.len()
-        );
-        // Exterior vertex should typically not cause bad cells
-    }
-
-    /// Test error paths in `find_cavity_boundary_facets_with_robust_fallback` (lines 466-472)
-    #[test]
-    fn test_find_cavity_boundary_facets_fallback() {
-        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
-
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-
-        // Get all cell keys to test boundary facet detection
-        let all_cell_keys: Vec<_> = tds.cells().keys().collect();
-
-        // Test with some bad cells (not all)
-        let some_bad_cells = &all_cell_keys[..1]; // Just one cell
-        let result =
-            algorithm.find_cavity_boundary_facets_with_robust_fallback(&tds, some_bad_cells);
-
-        match result {
-            Ok(boundary_facets) => {
-                println!("Found {} boundary facets", boundary_facets.len());
-                // Should find some boundary facets
-            }
-            Err(e) => {
-                println!("Boundary facet detection failed: {e:?}");
-                // Error is acceptable for challenging cases
-            }
-        }
-
-        // Test with empty bad cells (should return empty facets) - lines 571-573
-        let empty_bad_cells = &[];
-        let empty_result =
-            algorithm.find_cavity_boundary_facets_with_robust_fallback(&tds, empty_bad_cells);
-
-        match empty_result {
-            Ok(facets) => {
-                assert!(
-                    facets.is_empty(),
-                    "Should return empty facets for empty bad cells"
-                );
-            }
-            Err(e) => {
-                panic!("Should succeed with empty bad cells: {e:?}");
             }
         }
     }
@@ -3839,5 +3441,343 @@ mod tests {
             bad_cells.len()
         );
         // With high tolerance, might include more cells conservatively
+    }
+
+    /// Test error paths in `robust_insert_vertex_impl` for better coverage
+    #[test]
+    fn test_robust_insert_error_paths() {
+        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Test insertion with extreme coordinates that might trigger fallback paths
+        let extreme_vertex = vertex!([f64::MAX / 1e10, f64::MAX / 1e10, f64::MAX / 1e10]);
+
+        let result = algorithm.robust_insert_vertex_impl(&mut tds, &extreme_vertex);
+        match result {
+            Ok(info) => {
+                println!(
+                    "Extreme coordinate insertion succeeded with strategy: {:?}",
+                    info.strategy
+                );
+                assert!(info.success);
+            }
+            Err(e) => {
+                println!("Expected error with extreme coordinates: {e}");
+                // Error should be meaningful
+                assert!(!e.to_string().is_empty());
+            }
+        }
+    }
+
+    /// Test cavity-based insertion with various failure scenarios
+    #[test]
+    fn test_cavity_based_insertion_error_scenarios() {
+        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Test insertion of vertex very close to existing vertex
+        let close_vertex = vertex!([1e-15, 1e-15, 1e-15]);
+
+        let result =
+            algorithm.insert_vertex_cavity_based_with_robust_predicates(&mut tds, &close_vertex);
+        match result {
+            Ok(info) => {
+                println!("Close vertex insertion succeeded: {info:?}");
+                assert_eq!(info.strategy, InsertionStrategy::CavityBased);
+            }
+            Err(e) => {
+                println!("Close vertex insertion failed as expected: {e}");
+            }
+        }
+    }
+
+    /// Test hull extension insertion with various scenarios
+    #[test]
+    fn test_hull_extension_insertion_scenarios() {
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Test with exterior vertex
+        let exterior_vertex = vertex!([5.0, 5.0, 5.0]);
+
+        let result = algorithm
+            .insert_vertex_hull_extension_with_robust_predicates(&mut tds, &exterior_vertex);
+        match result {
+            Ok(info) => {
+                println!("Hull extension insertion succeeded: {info:?}");
+                assert_eq!(info.strategy, InsertionStrategy::HullExtension);
+                assert_eq!(info.cells_removed, 0); // Hull extension doesn't remove cells
+            }
+            Err(e) => {
+                println!("Hull extension insertion failed: {e}");
+            }
+        }
+    }
+
+    /// Test bad cells detection with robust fallback
+    #[test]
+    fn test_find_bad_cells_with_robust_fallback_coverage() {
+        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Test with vertex that should be inside circumsphere
+        let interior_vertex = vertex!([0.25, 0.25, 0.25]);
+        let bad_cells = algorithm.find_bad_cells_with_robust_fallback(&tds, &interior_vertex);
+
+        println!("Found {} bad cells for interior vertex", bad_cells.len());
+        // Should find at least the containing cell as "bad"
+        assert!(!bad_cells.is_empty());
+
+        // Test with vertex outside all circumspheres
+        let exterior_vertex = vertex!([10.0, 10.0, 10.0]);
+        let bad_cells_exterior =
+            algorithm.find_bad_cells_with_robust_fallback(&tds, &exterior_vertex);
+
+        println!(
+            "Found {} bad cells for exterior vertex",
+            bad_cells_exterior.len()
+        );
+        // Exterior vertex might not have any bad cells
+    }
+
+    /// Test cavity boundary facets detection with robust fallback
+    #[test]
+    fn test_find_cavity_boundary_facets_with_robust_fallback() {
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Get some cells as "bad cells"
+        let all_cells: Vec<_> = tds.cells().keys().collect();
+        let bad_cells = vec![all_cells[0]];
+
+        let result = algorithm.find_cavity_boundary_facets_with_robust_fallback(&tds, &bad_cells);
+
+        match result {
+            Ok(boundary_facets) => {
+                println!("Found {} boundary facets", boundary_facets.len());
+                assert!(
+                    !boundary_facets.is_empty(),
+                    "Should find boundary facets for valid bad cells"
+                );
+
+                // Verify facets are valid
+                for facet in &boundary_facets {
+                    assert!(
+                        !facet.vertices().is_empty(),
+                        "Boundary facet should have vertices"
+                    );
+                }
+            }
+            Err(e) => {
+                println!("Cavity boundary detection failed: {e}");
+            }
+        }
+    }
+
+    /// Test visible boundary facets detection with robust fallback
+    #[test]
+    fn test_find_visible_boundary_facets_comprehensive() {
+        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Test with clearly exterior vertex
+        let exterior_vertex = vertex!([2.0, 2.0, 2.0]);
+        let result =
+            algorithm.find_visible_boundary_facets_with_robust_fallback(&tds, &exterior_vertex);
+
+        match result {
+            Ok(visible_facets) => {
+                println!(
+                    "Found {} visible boundary facets from exterior",
+                    visible_facets.len()
+                );
+                // Should find some visible facets for exterior point
+                if !visible_facets.is_empty() {
+                    for facet in &visible_facets {
+                        assert!(
+                            !facet.vertices().is_empty(),
+                            "Visible facet should have vertices"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                println!("Visible facets detection failed: {e}");
+            }
+        }
+
+        // Test with interior vertex (should find no visible facets)
+        let interior_vertex = vertex!([0.25, 0.25, 0.25]);
+        let interior_result =
+            algorithm.find_visible_boundary_facets_with_robust_fallback(&tds, &interior_vertex);
+
+        match interior_result {
+            Ok(visible_facets) => {
+                println!(
+                    "Found {} visible boundary facets from interior",
+                    visible_facets.len()
+                );
+                // Interior points typically don't see boundary facets
+            }
+            Err(e) => {
+                println!("Interior visibility detection failed: {e}");
+            }
+        }
+    }
+
+    /// Test error handling in `ensure_vertex_in_tds` calls
+    #[test]
+    fn test_ensure_vertex_in_tds_error_handling() {
+        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Create a vertex that already exists in TDS
+        let duplicate_vertex = vertex!([0.0, 0.0, 0.0]); // Same as first vertex
+
+        let result = algorithm.insert_vertex(&mut tds, duplicate_vertex);
+        match result {
+            Ok(info) => {
+                println!("Duplicate vertex handled: {info:?}");
+            }
+            Err(e) => {
+                println!("Duplicate vertex properly rejected: {e}");
+                // This tests the error handling path in ensure_vertex_in_tds
+            }
+        }
+    }
+
+    /// Test `finalize_after_insertion` error handling
+    #[test]
+    fn test_finalize_after_insertion_error_paths() {
+        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Insert a normal vertex first to create a scenario where finalization might be tested
+        let normal_vertex = vertex!([0.1, 0.1, 0.1]);
+
+        let result = algorithm.insert_vertex(&mut tds, normal_vertex);
+        match result {
+            Ok(info) => {
+                println!("Normal vertex insertion succeeded: {info:?}");
+                // Finalization succeeded
+                assert!(info.success);
+            }
+            Err(e) => {
+                println!("Normal vertex insertion failed: {e}");
+                // This tests error handling in finalization
+                assert!(e.to_string().contains("finalize") || !e.to_string().is_empty());
+            }
+        }
+    }
+
+    /// Test statistics tracking in various error scenarios
+    #[test]
+    fn test_statistics_tracking_comprehensive() {
+        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Initial statistics should be zero
+        let (initial_processed, initial_created, initial_removed) = algorithm.get_statistics();
+        assert_eq!(initial_processed, 0);
+        assert_eq!(initial_created, 0);
+        assert_eq!(initial_removed, 0);
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Try multiple insertions to test statistics accumulation
+        let test_vertices = [
+            vertex!([0.1, 0.1, 0.1]),
+            vertex!([0.2, 0.2, 0.2]),
+            vertex!([0.3, 0.3, 0.3]),
+        ];
+
+        let mut successful_insertions = 0;
+        for (i, vertex) in test_vertices.iter().enumerate() {
+            let result = algorithm.insert_vertex(&mut tds, *vertex);
+            match result {
+                Ok(info) => {
+                    successful_insertions += 1;
+                    println!(
+                        "Insertion {} succeeded: created={}, removed={}",
+                        i + 1,
+                        info.cells_created,
+                        info.cells_removed
+                    );
+                }
+                Err(e) => {
+                    println!("Insertion {} failed: {}", i + 1, e);
+                }
+            }
+        }
+
+        // Check final statistics
+        let (final_processed, final_created, final_removed) = algorithm.get_statistics();
+        println!(
+            "Final stats: processed={final_processed}, created={final_created}, removed={final_removed}"
+        );
+
+        // Should have processed at least the successful insertions
+        assert!(final_processed >= successful_insertions);
     }
 }

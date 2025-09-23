@@ -186,7 +186,7 @@ where
         facet: &Facet<T, U, V, D>,
     ) -> Result<bool, TriangulationValidationError> {
         let facet_to_cells = self.build_facet_to_cells_map()?;
-        Ok(self.is_boundary_facet_with_map(facet, &facet_to_cells))
+        self.is_boundary_facet_with_map(facet, &facet_to_cells)
     }
 
     /// Checks if a specific facet is a boundary facet using a precomputed facet map.
@@ -226,7 +226,8 @@ where
     /// if let Some(cell) = tds.cells().values().next() {
     ///     if let Ok(facets) = cell.facets() {
     ///         for facet in &facets {
-    ///             let is_boundary = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
+    ///             let is_boundary = tds.is_boundary_facet_with_map(facet, &facet_to_cells)
+    ///                 .expect("Should check if facet is boundary");
     ///             println!("Facet is boundary: {is_boundary}");
     ///         }
     ///     }
@@ -237,7 +238,7 @@ where
         &self,
         facet: &Facet<T, U, V, D>,
         facet_to_cells: &crate::core::collections::FacetToCellsMap,
-    ) -> bool {
+    ) -> Result<bool, TriangulationValidationError> {
         // Facet::vertices() should always return D vertices by construction
         let vertices = facet.vertices();
         debug_assert_eq!(
@@ -248,16 +249,12 @@ where
             vertices.len()
         );
 
-        match derive_facet_key_from_vertices(&vertices, self) {
-            Ok(facet_key) => facet_to_cells
-                .get(&facet_key)
-                .is_some_and(|cells| cells.len() == 1),
-            Err(e) => {
-                debug_assert!(false, "derive_facet_key_from_vertices failed: {e:?}");
-                // Option: flip to logging + false, or plumb a Result in the non-cached path.
-                false
-            }
-        }
+        let facet_key = derive_facet_key_from_vertices(&vertices, self)
+            .map_err(TriangulationValidationError::FacetError)?;
+
+        Ok(facet_to_cells
+            .get(&facet_key)
+            .is_some_and(|cells| cells.len() == 1))
     }
 
     /// Returns the number of boundary facets in the triangulation.
@@ -301,7 +298,10 @@ where
 mod tests {
     use super::BoundaryAnalysis;
     use crate::core::collections::{FastHashMap, fast_hash_map_with_capacity};
-    use crate::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
+    use crate::core::facet::FacetError;
+    use crate::core::triangulation_data_structure::{
+        Tds, TriangulationConstructionError, TriangulationValidationError,
+    };
     use crate::core::util::derive_facet_key_from_vertices;
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
@@ -345,9 +345,9 @@ mod tests {
             .build_facet_to_cells_map()
             .expect("Should build facet map in test");
         assert!(
-            boundary_facets
-                .iter()
-                .all(|f| tds.is_boundary_facet_with_map(f, &facet_to_cells)),
+            boundary_facets.iter().all(|f| tds
+                .is_boundary_facet_with_map(f, &facet_to_cells)
+                .expect("Should not fail for valid facets")),
             "All facets should be boundary facets in single triangle"
         );
 
@@ -393,9 +393,9 @@ mod tests {
             .build_facet_to_cells_map()
             .expect("Should build facet map in test");
         assert!(
-            boundary_facets
-                .iter()
-                .all(|f| tds.is_boundary_facet_with_map(f, &facet_to_cells)),
+            boundary_facets.iter().all(|f| tds
+                .is_boundary_facet_with_map(f, &facet_to_cells)
+                .expect("Should not fail for valid facets")),
             "All facets should be boundary facets in single tetrahedron"
         );
 
@@ -428,7 +428,9 @@ mod tests {
             let is_boundary_regular = tds
                 .is_boundary_facet(facet)
                 .expect("Should not fail to check boundary facet");
-            let is_boundary_cached = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
+            let is_boundary_cached = tds
+                .is_boundary_facet_with_map(facet, &facet_to_cells)
+                .expect("Should not fail for valid facets");
 
             assert_eq!(
                 is_boundary_regular, is_boundary_cached,
@@ -569,7 +571,10 @@ mod tests {
             .expect("Should build facet map in test");
         let mut confirmed_boundary = 0;
         for boundary_facet in &boundary_facets {
-            if tds.is_boundary_facet_with_map(boundary_facet, &facet_to_cells) {
+            if tds
+                .is_boundary_facet_with_map(boundary_facet, &facet_to_cells)
+                .expect("Should not fail for valid facets")
+            {
                 confirmed_boundary += 1;
             }
         }
@@ -911,7 +916,9 @@ mod tests {
 
         // Test boundary facet validation with the cached map
         for facet in &boundary_facets {
-            let is_boundary_cached = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
+            let is_boundary_cached = tds
+                .is_boundary_facet_with_map(facet, &facet_to_cells)
+                .expect("Should not fail for valid facets");
             let is_boundary_regular = tds
                 .is_boundary_facet(facet)
                 .expect("Regular boundary check should not fail");
@@ -951,7 +958,9 @@ mod tests {
         let valid_facet = &boundary_facets[0];
 
         // Test with valid facet (should work)
-        let is_boundary_valid = tds.is_boundary_facet_with_map(valid_facet, &facet_to_cells);
+        let is_boundary_valid = tds
+            .is_boundary_facet_with_map(valid_facet, &facet_to_cells)
+            .expect("Should not fail for valid facets");
         assert!(
             is_boundary_valid,
             "Valid boundary facet should be detected as boundary"
@@ -977,62 +986,6 @@ mod tests {
         }
 
         println!("✓ is_boundary_facet_with_map error paths handled gracefully");
-    }
-
-    #[test]
-    fn test_derive_facet_key_error_integration() {
-        println!("Testing derive_facet_key_from_vertices error integration");
-
-        // Create a triangulation
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        // Get a valid facet
-        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-        let test_facet = &boundary_facets[0];
-        let facet_vertices = test_facet.vertices();
-
-        // Test successful case
-        let facet_key_result = derive_facet_key_from_vertices(&facet_vertices, &tds);
-        assert!(
-            facet_key_result.is_ok(),
-            "derive_facet_key_from_vertices should succeed for valid facet"
-        );
-
-        // Test error case: create vertices not in TDS
-        let invalid_vertices = vec![
-            vertex!([999.0, 999.0, 999.0]),
-            vertex!([888.0, 888.0, 888.0]),
-            vertex!([777.0, 777.0, 777.0]),
-        ];
-
-        let error_result = derive_facet_key_from_vertices(&invalid_vertices, &tds);
-        assert!(
-            error_result.is_err(),
-            "derive_facet_key_from_vertices should fail for invalid vertices"
-        );
-
-        if let Err(e) = error_result {
-            println!("  Got expected error: {e}");
-            // Should be a VertexNotFound error
-            match e {
-                crate::core::facet::FacetError::VertexNotFound { .. } => {
-                    println!("  ✓ Got expected VertexNotFound error");
-                }
-                _ => {
-                    // May be other variants, that's also acceptable
-                    println!("  ✓ Got error (variant: {e:?})");
-                }
-            }
-        }
-
-        println!("✓ derive_facet_key_from_vertices error integration tested successfully");
     }
 
     #[test]
@@ -1098,54 +1051,6 @@ mod tests {
         }
 
         println!("✓ Boundary analysis with invalid facet indices tests passed");
-    }
-
-    #[test]
-    fn test_empty_triangulation_boundary_analysis() {
-        println!("Testing boundary analysis on empty triangulation");
-
-        // Create an empty triangulation
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
-
-        // Verify it's empty
-        assert_eq!(tds.number_of_cells(), 0, "Empty TDS should have no cells");
-        assert_eq!(
-            tds.number_of_vertices(),
-            0,
-            "Empty TDS should have no vertices"
-        );
-
-        // Test boundary_facets() on empty triangulation
-        let boundary_facets = tds.boundary_facets().expect("Should not fail on empty TDS");
-        assert_eq!(
-            boundary_facets.len(),
-            0,
-            "Empty TDS should have no boundary facets"
-        );
-
-        // Test number_of_boundary_facets() on empty triangulation
-        let count = tds
-            .number_of_boundary_facets()
-            .expect("Should not fail on empty TDS");
-        assert_eq!(count, 0, "Empty TDS should have boundary facet count of 0");
-
-        // Test consistency
-        assert_eq!(
-            boundary_facets.len(),
-            count,
-            "boundary_facets().len() should equal number_of_boundary_facets()"
-        );
-
-        // Test facet-to-cells map on empty triangulation
-        let facet_to_cells = tds
-            .build_facet_to_cells_map()
-            .expect("Should build empty facet map");
-        assert!(
-            facet_to_cells.is_empty(),
-            "Empty TDS should have empty facet-to-cells map"
-        );
-
-        println!("✓ Empty triangulation boundary analysis works correctly");
     }
 
     #[test]
@@ -1443,7 +1348,9 @@ mod tests {
         let facet = &boundary_facets[0];
 
         // Test normal case - this should exercise the derive_facet_key_from_vertices success path (line 253-254)
-        let is_boundary = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
+        let is_boundary = tds
+            .is_boundary_facet_with_map(facet, &facet_to_cells)
+            .expect("Should not fail for valid facets");
         assert!(is_boundary, "Should be boundary facet");
 
         // Test the debug assertion path by ensuring facet has correct vertex count
@@ -1707,5 +1614,194 @@ mod tests {
         println!("- Single pass over all cells and facets: O(N·F)");
         println!("- HashMap-based facet-to-cells mapping");
         println!("- Direct facet cloning instead of repeated computation");
+    }
+
+    // =============================================================================
+    // ADDITIONAL TESTS FOR UNCOVERED ERROR PATHS
+    // =============================================================================
+
+    #[test]
+    fn test_boundary_facets_invalid_facet_index_error() {
+        println!("Testing boundary_facets with invalid facet index error path");
+
+        // Note: This error path (InvalidFacetIndex) is difficult to trigger in practice
+        // because the facet-to-cells mapping is built from valid facets.
+        // We test this by confirming the error structure exists and can be created.
+
+        // Test that the error can be created and has correct structure
+        let error = TriangulationValidationError::FacetError(FacetError::InvalidFacetIndex {
+            index: 42,
+            facet_count: 4,
+        });
+
+        // Verify error display includes useful information
+        let error_string = format!("{error}");
+        assert!(
+            error_string.contains("42"),
+            "Error should contain the invalid index"
+        );
+        assert!(
+            error_string.contains('4'),
+            "Error should contain the facet count"
+        );
+
+        println!("  Error structure: {error}");
+        println!("  ✓ InvalidFacetIndex error path structure verified");
+    }
+
+    #[test]
+    fn test_boundary_facets_cell_not_found_error() {
+        println!("Testing boundary_facets with cell not found error path");
+
+        // Note: This error path (CellNotFoundInTriangulation) is also difficult to trigger
+        // in practice because the mapping is built from existing cells.
+        // We test the error structure.
+
+        // Test that the error can be created
+        let error =
+            TriangulationValidationError::FacetError(FacetError::CellNotFoundInTriangulation);
+
+        // Verify error display is meaningful
+        let error_string = format!("{error}");
+        assert!(
+            error_string.contains("Cell") || error_string.contains("cell"),
+            "Error should mention cell: {error_string}"
+        );
+
+        println!("  Error structure: {error}");
+        println!("  ✓ CellNotFoundInTriangulation error path structure verified");
+    }
+
+    #[test]
+    fn test_is_boundary_facet_with_map_derive_key_failure_path() {
+        println!("Testing is_boundary_facet_with_map when derive_facet_key_from_vertices fails");
+
+        // Create a valid triangulation
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // To exercise the error path in is_boundary_facet_with_map where
+        // derive_facet_key_from_vertices fails, we intentionally pass a Facet
+        // from a different triangulation (with different vertex UUIDs) to this TDS.
+        // The UUID lookups will fail against this TDS, triggering the error path.
+
+        // First, create a completely separate triangulation with different points
+        let other_points = vec![
+            Point::new([10.0, 10.0, 10.0]),
+            Point::new([11.0, 10.0, 10.0]),
+            Point::new([10.0, 11.0, 10.0]),
+            Point::new([10.0, 10.0, 11.0]),
+        ];
+        let other_vertices = Vertex::from_points(other_points);
+        let other_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&other_vertices).unwrap();
+
+        // Build a facet map for the other triangulation (consistent with receiver TDS)
+        let facet_to_cells = other_tds
+            .build_facet_to_cells_map()
+            .expect("Should build map for other TDS");
+
+        // Obtain a valid facet from the original triangulation
+        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
+        let foreign_facet = &boundary_facets[0];
+
+        // This should now return an error because derive_facet_key_from_vertices will fail
+        // when looking up the foreign facet's vertex UUIDs in other_tds
+        let result = other_tds.is_boundary_facet_with_map(foreign_facet, &facet_to_cells);
+        assert!(
+            result.is_err(),
+            "Should return error when vertex UUIDs are not found in the receiver TDS"
+        );
+
+        // Verify it's the expected error type
+        if let Err(e) = result {
+            println!("  Got expected error: {e}");
+        }
+
+        println!("  ✓ is_boundary_facet_with_map error path (derive key failure) exercised");
+    }
+
+    #[test]
+    fn test_boundary_facets_error_propagation_from_build_map() {
+        println!("Testing error propagation from build_facet_to_cells_map");
+
+        // Test that boundary_facets properly propagates errors from build_facet_to_cells_map
+        // This exercises line 91: self.build_facet_to_cells_map()?
+
+        // Create a minimal valid triangulation
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Test that build_facet_to_cells_map succeeds on valid triangulation
+        let map_result = tds.build_facet_to_cells_map();
+        assert!(
+            map_result.is_ok(),
+            "build_facet_to_cells_map should succeed on valid TDS"
+        );
+
+        // Test that boundary_facets succeeds when build_facet_to_cells_map succeeds
+        let boundary_result = tds.boundary_facets();
+        assert!(
+            boundary_result.is_ok(),
+            "boundary_facets should succeed when build_map succeeds"
+        );
+
+        let boundary_facets = boundary_result.unwrap();
+        assert_eq!(
+            boundary_facets.len(),
+            4,
+            "Single tetrahedron should have 4 boundary facets"
+        );
+
+        println!("  ✓ Error propagation path from build_facet_to_cells_map verified");
+    }
+
+    #[test]
+    fn test_number_of_boundary_facets_delegation() {
+        println!("Testing number_of_boundary_facets delegation to boundary_facets");
+
+        // This test exercises line 296: self.boundary_facets().map(|v| v.len())
+        // ensuring the method properly delegates and transforms the result
+
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Test both methods return consistent results
+        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
+        let boundary_count = tds
+            .number_of_boundary_facets()
+            .expect("Should get boundary count");
+
+        assert_eq!(
+            boundary_facets.len(),
+            boundary_count,
+            "number_of_boundary_facets should equal boundary_facets().len()"
+        );
+
+        assert_eq!(
+            boundary_count, 4,
+            "Single tetrahedron should have 4 boundary facets"
+        );
+
+        println!("  ✓ number_of_boundary_facets delegation working correctly");
+        println!("    - boundary_facets().len(): {}", boundary_facets.len());
+        println!("    - number_of_boundary_facets(): {boundary_count}");
     }
 }

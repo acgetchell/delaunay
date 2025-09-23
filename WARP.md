@@ -150,6 +150,10 @@ cargo build
 cargo test --lib --verbose
 cargo test --doc --verbose
 
+# Test coverage analysis (excludes benchmarks, examples, and integration tests)
+cargo tarpaulin --exclude-files 'benches/**' --exclude-files 'examples/**' --exclude-files 'tests/**' --out Html --output-dir target/tarpaulin
+# View coverage report: open target/tarpaulin/tarpaulin-report.html
+
 # Integration tests (comprehensive)
 cargo test --release  # Run all tests in release mode for performance
 cargo test --test circumsphere_debug_tools -- --nocapture  # Debug tools with output
