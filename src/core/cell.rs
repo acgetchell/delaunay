@@ -48,10 +48,7 @@ use super::{
     vertex::{Vertex, VertexValidationError},
 };
 use crate::core::collections::{FastHashMap, FastHashSet};
-use crate::geometry::{
-    point::Point,
-    traits::coordinate::{CoordinateConversionError, CoordinateScalar},
-};
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, DeserializeOwned, IgnoredAny, MapAccess, Visitor},
@@ -686,10 +683,10 @@ where
     /// let vertex4: Vertex<f64, i32, 3> = vertex!([1.0, 1.0, 1.0], 2);
     /// let vertices = vec![vertex1, vertex2, vertex3, vertex4];
     /// let cell: Cell<f64, i32, i32, 3> = cell!(vertices, 42);
-    /// assert!(cell.contains_vertex(vertex1));
+    /// assert!(cell.contains_vertex(&vertex1));
     /// ```
-    pub fn contains_vertex(&self, vertex: Vertex<T, U, D>) -> bool {
-        self.vertices.contains(&vertex)
+    pub fn contains_vertex(&self, vertex: &Vertex<T, U, D>) -> bool {
+        self.vertices.contains(vertex)
     }
 
     /// The function `contains_vertex_of` checks if the [Cell] contains any [Vertex] of a given [Cell].
@@ -986,9 +983,8 @@ where
     ///
     /// This method requires the coordinate type `T` to implement additional traits
     /// beyond the basic `Cell` requirements:
-    /// - `Clone + ComplexField<RealField = T> + PartialEq + PartialOrd + Sum`: Required for
+    /// - `Clone + PartialEq + PartialOrd + Sum`: Required for
     ///   geometric computations and facet creation operations.
-    /// - `f64: From<T>`: Enables conversion to `f64` for numerical operations.
     ///
     /// # Returns
     ///
@@ -1121,7 +1117,7 @@ where
     U: DataType,
     V: DataType,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
-    Point<T, D>: Hash, // Add this bound to ensure Point implements Hash
+    Vertex<T, U, D>: Hash,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash sorted vertices for consistent ordering - this matches PartialEq behavior
@@ -1596,10 +1592,10 @@ mod tests {
         let vertex4 = vertex!([1.0, 1.0, 1.0], 2);
         let cell: Cell<f64, i32, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
-        assert!(cell.contains_vertex(vertex1));
-        assert!(cell.contains_vertex(vertex2));
-        assert!(cell.contains_vertex(vertex3));
-        assert!(cell.contains_vertex(vertex4));
+        assert!(cell.contains_vertex(&vertex1));
+        assert!(cell.contains_vertex(&vertex2));
+        assert!(cell.contains_vertex(&vertex3));
+        assert!(cell.contains_vertex(&vertex4));
 
         // Human readable output for cargo test -- --nocapture
         println!("Cell: {cell:?}");
@@ -2227,7 +2223,7 @@ mod tests {
         let cell: Cell<f64, Option<()>, Option<()>, 3> =
             cell!(vec![vertex1, vertex2, vertex3, vertex4]);
 
-        assert!(!cell.contains_vertex(vertex_outside));
+        assert!(!cell.contains_vertex(&vertex_outside));
     }
 
     #[test]
@@ -2408,11 +2404,11 @@ mod tests {
             .expect("Failed to create cell from facet and vertex");
 
         // Verify the new cell contains the original facet vertices plus the new vertex
-        assert!(new_cell.contains_vertex(vertex1));
-        assert!(new_cell.contains_vertex(vertex2));
-        assert!(new_cell.contains_vertex(vertex3));
-        assert!(new_cell.contains_vertex(new_vertex));
-        assert!(!new_cell.contains_vertex(vertex4)); // Should not contain the removed vertex
+        assert!(new_cell.contains_vertex(&vertex1));
+        assert!(new_cell.contains_vertex(&vertex2));
+        assert!(new_cell.contains_vertex(&vertex3));
+        assert!(new_cell.contains_vertex(&new_vertex));
+        assert!(!new_cell.contains_vertex(&vertex4)); // Should not contain the removed vertex
         assert_eq!(new_cell.number_of_vertices(), 4);
         assert_eq!(new_cell.dim(), 3);
     }
@@ -2452,11 +2448,11 @@ mod tests {
 
         let new_cell = valid_result.unwrap();
         assert!(
-            new_cell.contains_vertex(new_vertex),
+            new_cell.contains_vertex(&new_vertex),
             "New cell should contain the new vertex"
         );
         assert!(
-            !new_cell.contains_vertex(vertex4),
+            !new_cell.contains_vertex(&vertex4),
             "New cell should not contain the removed vertex"
         );
         assert_eq!(

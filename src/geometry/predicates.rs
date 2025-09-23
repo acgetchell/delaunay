@@ -653,6 +653,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(unnameable_test_items)]
 mod tests {
     use super::*;
     use crate::prelude::circumradius;

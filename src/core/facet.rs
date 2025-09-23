@@ -148,6 +148,16 @@ pub enum FacetError {
     /// Cell was not found in the triangulation.
     #[error("Cell not found in triangulation (potential data corruption)")]
     CellNotFoundInTriangulation,
+    /// Facet has invalid multiplicity (should be 1 for boundary or 2 for internal).
+    #[error(
+        "Facet with key {facet_key:016x} has invalid multiplicity {found}, expected 1 (boundary) or 2 (internal)"
+    )]
+    InvalidFacetMultiplicity {
+        /// The facet key with invalid multiplicity.
+        facet_key: u64,
+        /// The actual multiplicity found.
+        found: usize,
+    },
 }
 
 // =============================================================================
@@ -312,7 +322,7 @@ where
     /// assert_eq!(facet.cell(), &cell);
     /// ```
     pub fn new(cell: Cell<T, U, V, D>, vertex: Vertex<T, U, D>) -> Result<Self, FacetError> {
-        if !cell.contains_vertex(vertex) {
+        if !cell.contains_vertex(&vertex) {
             return Err(FacetError::CellDoesNotContainVertex);
         }
 

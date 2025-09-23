@@ -10,6 +10,7 @@ components = [
     "rust-docs",       # Local documentation
     "rust-std",        # Standard library
     "rust-src",        # Source code (helpful for IDEs)
+    "rust-analyzer",   # Language server for IDE support
 ]
 
 # Target the platforms you support (adjust as needed)

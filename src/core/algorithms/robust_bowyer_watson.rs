@@ -932,7 +932,12 @@ where
         adjacent_cell_key: crate::core::triangulation_data_structure::CellKey,
     ) -> bool
     where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
+        T: AddAssign<T>
+            + ComplexField<RealField = T>
+            + SubAssign<T>
+            + Sum
+            + From<f64>
+            + DivAssign<T>,
         f64: From<T>,
         for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
@@ -1015,7 +1020,7 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> bool
     where
-        T: DivAssign<T>,
+        T: DivAssign<T> + AddAssign<T> + std::ops::Sub<Output = T> + std::ops::Mul<Output = T>,
     {
         let facet_vertices = facet.vertices();
 
@@ -1277,6 +1282,14 @@ mod tests {
     use approx::assert_abs_diff_ne;
     use std::sync::atomic::Ordering;
 
+    // Conditional debug output macro for tests - reduces noisy CI logs
+    macro_rules! debug_println {
+        ($($arg:tt)*) => {
+            #[cfg(feature = "test-debug")]
+            println!($($arg)*);
+        };
+    }
+
     /// Helper function to verify facet index consistency between neighboring cells
     ///
     /// This method checks that the shared facet key computed from both cells'
@@ -1364,7 +1377,7 @@ mod tests {
 
     #[test]
     fn test_no_double_counting_statistics() {
-        println!("Testing that robust vertex insertion statistics are not double counted");
+        debug_println!("Testing that robust vertex insertion statistics are not double counted");
 
         let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
@@ -1381,7 +1394,7 @@ mod tests {
         let (insertions_after_initial, created_after_initial, removed_after_initial) =
             algorithm.get_statistics();
 
-        println!("After initial tetrahedron:");
+        debug_println!("After initial tetrahedron:");
         println!("  Insertions: {insertions_after_initial}");
         println!("  Cells created: {created_after_initial}");
         println!("  Cells removed: {removed_after_initial}");
@@ -2898,6 +2911,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(unused_variables)]
     fn test_geometric_configurations_extreme_coordinates() {
         let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
@@ -2916,14 +2930,14 @@ mod tests {
 
         match large_result {
             Ok(_) => {
-                println!("  ✓ Large coordinate insertion succeeded");
+                debug_println!("  ✓ Large coordinate insertion succeeded");
                 assert!(
                     large_tds.is_valid().is_ok(),
                     "Large coordinate TDS should remain valid"
                 );
             }
             Err(e) => {
-                println!("  ⚠ Large coordinate insertion failed: {e:?}");
+                debug_println!("  ⚠ Large coordinate insertion failed: {e:?}");
                 // TDS should still be valid even if insertion failed
                 assert!(
                     large_tds.is_valid().is_ok(),
@@ -2947,14 +2961,14 @@ mod tests {
 
         match small_result {
             Ok(_) => {
-                println!("  ✓ Small coordinate insertion succeeded");
+                debug_println!("  ✓ Small coordinate insertion succeeded");
                 assert!(
                     small_tds.is_valid().is_ok(),
                     "Small coordinate TDS should remain valid"
                 );
             }
             Err(e) => {
-                println!("  ⚠ Small coordinate insertion failed: {e:?}");
+                debug_println!("  ⚠ Small coordinate insertion failed: {e:?}");
                 // TDS should still be valid even if insertion failed
                 assert!(
                     small_tds.is_valid().is_ok(),
@@ -2978,14 +2992,14 @@ mod tests {
 
         match mixed_result {
             Ok(_) => {
-                println!("  ✓ Mixed coordinate insertion succeeded");
+                debug_println!("  ✓ Mixed coordinate insertion succeeded");
                 assert!(
                     mixed_tds.is_valid().is_ok(),
                     "Mixed coordinate TDS should remain valid"
                 );
             }
             Err(e) => {
-                println!("  ⚠ Mixed coordinate insertion failed: {e:?}");
+                debug_println!("  ⚠ Mixed coordinate insertion failed: {e:?}");
                 // TDS should still be valid even if insertion failed
                 assert!(
                     mixed_tds.is_valid().is_ok(),
@@ -3106,6 +3120,7 @@ mod tests {
 
     /// Test error handling in `robust_find_bad_cells` when predicates fail (lines 544-556)
     #[test]
+    #[allow(unused_variables)]
     fn test_robust_find_bad_cells_predicate_failure() {
         // Use extreme configuration that might cause predicate failures
         let mut extreme_config = config_presets::general_triangulation::<f64>();
@@ -3128,7 +3143,7 @@ mod tests {
 
         // Should handle gracefully even with extreme input
         let extreme_bad_cells = algorithm.robust_find_bad_cells(&tds, &extreme_vertex);
-        println!(
+        debug_println!(
             "Found {} bad cells with extreme coordinates (handled gracefully)",
             extreme_bad_cells.len()
         );
@@ -3136,7 +3151,7 @@ mod tests {
         // Test with coordinates very close to zero that might cause precision issues
         let tiny_vertex = vertex!([f64::EPSILON, f64::EPSILON * 2.0, f64::EPSILON * 3.0]);
         let tiny_bad_cells = algorithm.robust_find_bad_cells(&tds, &tiny_vertex);
-        println!(
+        debug_println!(
             "Found {} bad cells with tiny coordinates",
             tiny_bad_cells.len()
         );
@@ -3144,6 +3159,7 @@ mod tests {
 
     /// Test `is_facet_visible_from_vertex_robust` degenerate handling (lines 999-1004)
     #[test]
+    #[allow(unused_variables)]
     fn test_is_facet_visible_degenerate_handling() {
         let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
@@ -3162,17 +3178,12 @@ mod tests {
 
         // Get the adjacent cell key for this facet
         let facet_to_cells = algorithm.try_get_or_build_facet_cache(&tds).unwrap();
-        let mut adjacent_cell_key = None;
-
-        for (_, cells_with_facets) in facet_to_cells.iter() {
-            if cells_with_facets.len() == 1 {
-                // Boundary facet
-                adjacent_cell_key = Some(cells_with_facets[0].0);
-                break;
-            }
-        }
-
-        let adjacent_cell_key = adjacent_cell_key.expect("Should find adjacent cell");
+        let key = derive_facet_key_from_vertices(&test_facet.vertices(), &tds)
+            .expect("Should derive facet key");
+        let adjacent_cell_key = facet_to_cells
+            .get(&key)
+            .and_then(|cells| (cells.len() == 1).then_some(cells[0].0))
+            .expect("Should find adjacent cell for test facet");
 
         // Test with a point that might cause degenerate orientation results
         let degenerate_vertex = vertex!([0.5, 0.5, 0.5]); // Point at center of tetrahedron
@@ -3185,7 +3196,7 @@ mod tests {
             adjacent_cell_key,
         );
 
-        println!("Degenerate visibility test result: {is_visible}");
+        debug_println!("Degenerate visibility test result: {is_visible}");
         // Don't assert specific result since it depends on geometry, just ensure it doesn't panic
     }
 

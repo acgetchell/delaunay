@@ -1,6 +1,6 @@
 # Test Coverage Report
 
-Generated on 2025-09-22 using `cargo tarpaulin` (Updated after convex hull comprehensive test additions)
+Generated on 2025-09-22 using `cargo tarpaulin` with doctests enabled (Updated after convex hull comprehensive test additions)
 
 ## Overall Coverage
 

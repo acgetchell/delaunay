@@ -60,6 +60,7 @@ jobs:
           # - XML output: --out Xml
           # - Output directory: --output-dir coverage
           # - Exclusions: --exclude-files "benches/*" "examples/*"
+          # - Doctests: --doc (includes doctests in coverage)
           # - All features: --all-features
           # - Workspace: --workspace
           # - Timeout: --timeout 120
@@ -71,6 +72,7 @@ jobs:
             --out Xml \
             --output-dir coverage \
             --exclude-files "benches/*" "examples/*" \
+            --doc \
             --all-features \
             --workspace \
             --timeout 120 \

@@ -43,6 +43,7 @@ pastey = "0.1"
 [features]
 count-allocations = ["allocation-counter"]
 bench = []  # Enable benchmark-style tests and performance analysis
+test-debug = []  # Enable verbose debug output in tests for development
 
 [[bench]]
 name = "circumsphere_containment"

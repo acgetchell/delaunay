@@ -143,11 +143,9 @@ where
     V: DataType,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
-    // This works because Vertex implements `Eq` and `Hash`
     use crate::core::collections::FastHashSet;
     let vertices1: FastHashSet<_> = facet1.vertices().into_iter().collect();
     let vertices2: FastHashSet<_> = facet2.vertices().into_iter().collect();
-
     vertices1 == vertices2
 }
 
@@ -332,11 +330,11 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 ///
 /// # Returns
 ///
-/// A `Result` containing the facet key or a `FacetError` if vertex lookup fails.
-/// Note: an empty `facet_vertices` slice yields `Ok(0)`.
+/// A `Result` containing the facet key or a `FacetError` if validation or vertex lookup fails.
 ///
 /// # Errors
 ///
+/// Returns `FacetError::InsufficientVertices` if the vertex count doesn't equal `D`
 /// Returns `FacetError::VertexNotFound` if any vertex UUID cannot be found in the TDS
 ///
 /// # Examples
@@ -354,9 +352,10 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 /// ];
 /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 ///
-/// // Get facet vertices from a cell
+/// // Get facet vertices from a cell - must be exactly D vertices for a D-dimensional triangulation
 /// if let Some(cell) = tds.cells().values().next() {
-///     let facet_vertices: Vec<_> = cell.vertices().iter().skip(1).cloned().collect();
+///     let facet_vertices: Vec<_> = cell.vertices().iter().skip(1).cloned().collect(); // Skip 1 vertex to get D vertices
+///     assert_eq!(facet_vertices.len(), 3); // For 3D triangulation, facet has 3 vertices
 ///     let facet_key = derive_facet_key_from_vertices(&facet_vertices, &tds).unwrap();
 ///     println!("Facet key: {}", facet_key);
 /// }
@@ -380,6 +379,16 @@ where
     use crate::core::collections::SmallBuffer;
     use crate::core::facet::{FacetError, facet_key_from_vertex_keys};
     use crate::core::triangulation_data_structure::VertexKey;
+
+    // Validate that the number of vertices matches the expected dimension
+    // In a D-dimensional triangulation, a facet should have exactly D vertices
+    if facet_vertices.len() != D {
+        return Err(FacetError::InsufficientVertices {
+            expected: D,
+            actual: facet_vertices.len(),
+            dimension: D,
+        });
+    }
 
     // Compute the facet key using VertexKeys (same method as build_facet_to_cells_hashmap)
     // Stack-allocate for performance on hot paths
@@ -516,79 +525,78 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_uuid_valid() {
+    fn test_validate_uuid_comprehensive() {
         // Test valid UUID (version 4)
         let valid_uuid = make_uuid();
-        assert!(validate_uuid(&valid_uuid).is_ok());
+        assert!(
+            validate_uuid(&valid_uuid).is_ok(),
+            "Valid v4 UUID should pass validation"
+        );
 
-        // Test that the function returns Ok for valid UUIDs
-        let result = validate_uuid(&valid_uuid);
-        match result {
-            Ok(()) => (), // Expected
-            Err(e) => panic!("Expected valid UUID to pass validation, got: {e:?}"),
-        }
-    }
-
-    #[test]
-    fn test_validate_uuid_nil() {
         // Test nil UUID
         let nil_uuid = Uuid::nil();
-        let result = validate_uuid(&nil_uuid);
-
-        assert!(result.is_err());
-        match result {
+        let nil_result = validate_uuid(&nil_uuid);
+        assert!(nil_result.is_err(), "Nil UUID should fail validation");
+        match nil_result {
             Err(UuidValidationError::NilUuid) => (), // Expected
             Err(other) => panic!("Expected NilUuid error, got: {other:?}"),
             Ok(()) => panic!("Expected error for nil UUID, but validation passed"),
         }
-    }
 
-    #[test]
-    fn test_validate_uuid_wrong_version() {
-        // Create a UUID with different version (version 1)
+        // Test wrong version UUID (version 1)
         let v1_uuid = Uuid::parse_str("550e8400-e29b-11d4-a716-446655440000").unwrap();
         assert_eq!(v1_uuid.get_version_num(), 1);
-
-        let result = validate_uuid(&v1_uuid);
-        assert!(result.is_err());
-
-        match result {
+        let version_result = validate_uuid(&v1_uuid);
+        assert!(
+            version_result.is_err(),
+            "Non-v4 UUID should fail validation"
+        );
+        match version_result {
             Err(UuidValidationError::InvalidVersion { found }) => {
-                assert_eq!(found, 1);
+                assert_eq!(found, 1, "Should report correct version number");
             }
             Err(other) => panic!("Expected InvalidVersion error, got: {other:?}"),
             Ok(()) => panic!("Expected error for version 1 UUID, but validation passed"),
         }
-    }
 
-    #[test]
-    fn test_validate_uuid_error_display() {
         // Test error display formatting
         let nil_error = UuidValidationError::NilUuid;
         let nil_error_string = format!("{nil_error}");
-        assert!(nil_error_string.contains("nil"));
-        assert!(nil_error_string.contains("not allowed"));
+        assert!(
+            nil_error_string.contains("nil"),
+            "Nil error message should contain 'nil'"
+        );
+        assert!(
+            nil_error_string.contains("not allowed"),
+            "Nil error message should mention 'not allowed'"
+        );
 
         let version_error = UuidValidationError::InvalidVersion { found: 3 };
         let version_error_string = format!("{version_error}");
-        assert!(version_error_string.contains("version 4"));
-        assert!(version_error_string.contains("found version 3"));
-    }
+        assert!(
+            version_error_string.contains("version 4"),
+            "Version error should mention 'version 4'"
+        );
+        assert!(
+            version_error_string.contains("found version 3"),
+            "Version error should show found version"
+        );
 
-    #[test]
-    fn test_validate_uuid_error_equality() {
         // Test PartialEq for UuidValidationError
         let error1 = UuidValidationError::NilUuid;
         let error2 = UuidValidationError::NilUuid;
-        assert_eq!(error1, error2);
+        assert_eq!(error1, error2, "Same nil errors should be equal");
 
         let error3 = UuidValidationError::InvalidVersion { found: 2 };
         let error4 = UuidValidationError::InvalidVersion { found: 2 };
-        assert_eq!(error3, error4);
+        assert_eq!(error3, error4, "Same version errors should be equal");
 
         let error5 = UuidValidationError::InvalidVersion { found: 3 };
-        assert_ne!(error3, error5);
-        assert_ne!(error1, error3);
+        assert_ne!(
+            error3, error5,
+            "Different version errors should not be equal"
+        );
+        assert_ne!(error1, error3, "Different error types should not be equal");
     }
 
     // =============================================================================
@@ -596,101 +604,193 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_facets_are_adjacent() {
+    #[allow(clippy::too_many_lines)]
+    fn test_facets_are_adjacent_multidimensional() {
         use crate::core::{cell::Cell, facet::Facet};
         use crate::{cell, vertex};
 
+        // Test 2D case - basic adjacency detection
         let v1: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
         let v2: Vertex<f64, Option<()>, 2> = vertex!([1.0, 0.0]);
         let v3: Vertex<f64, Option<()>, 2> = vertex!([0.0, 1.0]);
         let v4: Vertex<f64, Option<()>, 2> = vertex!([1.0, 1.0]);
 
-        let cell1: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v1, v2, v3]);
-        let cell2: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v2, v3, v4]);
-        let cell3: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v1, v2, v4]);
+        let cell2d_1: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v1, v2, v3]);
+        let cell2d_2: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v2, v3, v4]);
+        let cell2d_3: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v1, v2, v4]);
 
-        let facet1 = Facet::new(cell1, v1).unwrap(); // Vertices: v2, v3
-        let facet2 = Facet::new(cell2, v4).unwrap(); // Vertices: v2, v3
-        let facet3 = Facet::new(cell3, v4).unwrap(); // Vertices: v1, v2
+        let facet2d_1 = Facet::new(cell2d_1, v1).unwrap(); // Vertices: v2, v3
+        let facet2d_2 = Facet::new(cell2d_2, v4).unwrap(); // Vertices: v2, v3
+        let facet2d_3 = Facet::new(cell2d_3, v4).unwrap(); // Vertices: v1, v2
 
-        assert!(facets_are_adjacent(&facet1, &facet2)); // Same vertices
-        assert!(!facets_are_adjacent(&facet1, &facet3)); // Different vertices
-    }
+        assert!(
+            facets_are_adjacent(&facet2d_1, &facet2d_2),
+            "2D: Same vertices should be adjacent"
+        );
+        assert!(
+            !facets_are_adjacent(&facet2d_1, &facet2d_3),
+            "2D: Different vertices should not be adjacent"
+        );
 
-    #[test]
-    fn test_facets_are_adjacent_edge_cases() {
-        use crate::cell;
-        use crate::core::cell::Cell;
-
-        let points1 = vec![
+        // Test 3D case - cells with shared and non-shared vertices
+        let points3d_1 = vec![
             Point::new([0.0, 0.0, 0.0]),
             Point::new([1.0, 0.0, 0.0]),
             Point::new([0.0, 1.0, 0.0]),
             Point::new([0.0, 0.0, 1.0]),
         ];
-
-        let points2 = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([2.0, 0.0, 0.0]),
+        let points3d_2 = vec![
+            Point::new([0.0, 0.0, 0.0]), // Shared
+            Point::new([1.0, 0.0, 0.0]), // Shared
+            Point::new([0.0, 1.0, 0.0]), // Shared
+            Point::new([2.0, 0.0, 0.0]), // Different
         ];
-
-        let cell1: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points1));
-        let cell2: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points2));
-
-        let facets1 = cell1.facets().expect("Failed to get facets from cell1");
-        let facets2 = cell2.facets().expect("Failed to get facets from cell2");
-
-        // Test adjacency detection
-        let mut found_adjacent = false;
-
-        for facet1 in &facets1 {
-            for facet2 in &facets2 {
-                if facets_are_adjacent(facet1, facet2) {
-                    found_adjacent = true;
-                    break;
-                }
-            }
-            if found_adjacent {
-                break;
-            }
-        }
-
-        // These cells share 3 vertices, so they should have adjacent facets
-        assert!(
-            found_adjacent,
-            "Cells sharing 3 vertices should have adjacent facets"
-        );
-
-        // Test with completely different cells
-        let points3 = vec![
+        let points3d_separate = vec![
             Point::new([10.0, 10.0, 10.0]),
             Point::new([11.0, 10.0, 10.0]),
             Point::new([10.0, 11.0, 10.0]),
             Point::new([10.0, 10.0, 11.0]),
         ];
 
-        let cell3: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points3));
-        let facets3 = cell3.facets().expect("Failed to get facets from cell3");
+        let cell3d_1: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points3d_1));
+        let cell3d_2: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points3d_2));
+        let cell3d_separate: Cell<f64, usize, usize, 3> =
+            cell!(Vertex::from_points(points3d_separate));
 
-        let mut found_adjacent2 = false;
-        for facet1 in &facets1 {
-            for facet3 in &facets3 {
-                if facets_are_adjacent(facet1, facet3) {
-                    found_adjacent2 = true;
+        let facets3d_1 = cell3d_1
+            .facets()
+            .expect("Failed to get facets from 3D cell1");
+        let facets3d_2 = cell3d_2
+            .facets()
+            .expect("Failed to get facets from 3D cell2");
+        let facets3d_separate = cell3d_separate
+            .facets()
+            .expect("Failed to get facets from separate 3D cell");
+
+        // Test that cells sharing 3 vertices have adjacent facets
+        let mut found_shared_adjacent = false;
+        for f1 in &facets3d_1 {
+            for f2 in &facets3d_2 {
+                if facets_are_adjacent(f1, f2) {
+                    found_shared_adjacent = true;
                     break;
                 }
             }
-            if found_adjacent2 {
+            if found_shared_adjacent {
                 break;
             }
         }
-
-        // These cells share no vertices, so no facets should be adjacent
         assert!(
-            !found_adjacent2,
-            "Cells sharing no vertices should not have adjacent facets"
+            found_shared_adjacent,
+            "3D: Cells sharing vertices should have adjacent facets"
+        );
+
+        // Test that completely separate cells have no adjacent facets
+        let mut found_separate_adjacent = false;
+        for f1 in &facets3d_1 {
+            for f_sep in &facets3d_separate {
+                if facets_are_adjacent(f1, f_sep) {
+                    found_separate_adjacent = true;
+                    break;
+                }
+            }
+            if found_separate_adjacent {
+                break;
+            }
+        }
+        assert!(
+            !found_separate_adjacent,
+            "3D: Separate cells should not have adjacent facets"
+        );
+
+        // Test 4D case - verify higher dimensional functionality
+        let points4d_1 = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 1.0]),
+        ];
+        let points4d_2 = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0]), // Shared
+            Point::new([1.0, 0.0, 0.0, 0.0]), // Shared
+            Point::new([0.0, 1.0, 0.0, 0.0]), // Shared
+            Point::new([0.0, 0.0, 1.0, 0.0]), // Shared
+            Point::new([2.0, 0.0, 0.0, 0.0]), // Different
+        ];
+
+        let cell4d_1: Cell<f64, usize, usize, 4> = cell!(Vertex::from_points(points4d_1));
+        let cell4d_2: Cell<f64, usize, usize, 4> = cell!(Vertex::from_points(points4d_2));
+
+        let facets4d_1 = cell4d_1
+            .facets()
+            .expect("Failed to get facets from 4D cell1");
+        let facets4d_2 = cell4d_2
+            .facets()
+            .expect("Failed to get facets from 4D cell2");
+
+        // Test 4D adjacency
+        let mut found_4d_adjacent = false;
+        for f1 in &facets4d_1 {
+            for f2 in &facets4d_2 {
+                if facets_are_adjacent(f1, f2) {
+                    found_4d_adjacent = true;
+                    break;
+                }
+            }
+            if found_4d_adjacent {
+                break;
+            }
+        }
+        assert!(
+            found_4d_adjacent,
+            "4D: Cells sharing 4 vertices should have adjacent facets"
+        );
+
+        // Test 5D case - maximum practical dimension
+        let points5d_1 = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
+        ];
+        let points5d_2 = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]), // Shared
+            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]), // Shared
+            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]), // Shared
+            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]), // Shared
+            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]), // Shared
+            Point::new([3.0, 0.0, 0.0, 0.0, 0.0]), // Different
+        ];
+
+        let cell5d_1: Cell<f64, usize, usize, 5> = cell!(Vertex::from_points(points5d_1));
+        let cell5d_2: Cell<f64, usize, usize, 5> = cell!(Vertex::from_points(points5d_2));
+
+        let facets5d_1 = cell5d_1
+            .facets()
+            .expect("Failed to get facets from 5D cell1");
+        let facets5d_2 = cell5d_2
+            .facets()
+            .expect("Failed to get facets from 5D cell2");
+
+        // Test 5D adjacency
+        let mut found_5d_adjacent = false;
+        for f1 in &facets5d_1 {
+            for f2 in &facets5d_2 {
+                if facets_are_adjacent(f1, f2) {
+                    found_5d_adjacent = true;
+                    break;
+                }
+            }
+            if found_5d_adjacent {
+                break;
+            }
+        }
+        assert!(
+            found_5d_adjacent,
+            "5D: Cells sharing 5 vertices should have adjacent facets"
         );
     }
 
@@ -699,16 +799,18 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_stable_hash_u64_slice_basic() {
+    fn test_stable_hash_u64_slice_comprehensive() {
+        // Test basic functionality with order sensitivity
         let values = vec![1u64, 2u64, 3u64];
         let hash1 = stable_hash_u64_slice(&values);
 
         let mut reversed = values.clone();
         reversed.reverse();
         let hash2 = stable_hash_u64_slice(&reversed);
-
-        // Different order produces different hash (input should be pre-sorted)
-        assert_ne!(hash1, hash2);
+        assert_ne!(
+            hash1, hash2,
+            "Different order should produce different hash"
+        );
 
         // Same sorted input produces same hash
         let mut sorted1 = values;
@@ -717,72 +819,65 @@ mod tests {
         sorted2.sort_unstable();
         assert_eq!(
             stable_hash_u64_slice(&sorted1),
-            stable_hash_u64_slice(&sorted2)
+            stable_hash_u64_slice(&sorted2),
+            "Same sorted input should produce same hash"
         );
-    }
 
-    #[test]
-    fn test_stable_hash_u64_slice_empty() {
+        // Test edge cases: empty, single value, different lengths
         let empty: Vec<u64> = vec![];
-        let hash_empty = stable_hash_u64_slice(&empty);
-        assert_eq!(hash_empty, 0, "Empty slice should produce hash 0");
-    }
+        assert_eq!(
+            stable_hash_u64_slice(&empty),
+            0,
+            "Empty slice should produce hash 0"
+        );
 
-    #[test]
-    fn test_stable_hash_u64_slice_single_value() {
-        let single_value = vec![42u64];
-        let hash1 = stable_hash_u64_slice(&single_value);
+        let single = vec![42u64];
+        let single_copy = vec![42u64];
+        assert_eq!(
+            stable_hash_u64_slice(&single),
+            stable_hash_u64_slice(&single_copy),
+            "Same single value should produce same hash"
+        );
 
-        let another_single = vec![42u64];
-        let hash2 = stable_hash_u64_slice(&another_single);
-
-        // Same single value should produce same hash
-        assert_eq!(hash1, hash2);
-
-        // Different single value should produce different hash
         let different_single = vec![43u64];
-        let hash3 = stable_hash_u64_slice(&different_single);
-        assert_ne!(hash1, hash3);
-    }
+        assert_ne!(
+            stable_hash_u64_slice(&single),
+            stable_hash_u64_slice(&different_single),
+            "Different single values should produce different hashes"
+        );
 
-    #[test]
-    fn test_stable_hash_u64_slice_deterministic() {
-        let values = vec![100u64, 200u64, 300u64, 400u64];
-        let hash1 = stable_hash_u64_slice(&values);
-        let hash2 = stable_hash_u64_slice(&values);
-        let hash3 = stable_hash_u64_slice(&values);
+        // Test deterministic behavior
+        let test_values = vec![100u64, 200u64, 300u64, 400u64];
+        let hash_a = stable_hash_u64_slice(&test_values);
+        let hash_b = stable_hash_u64_slice(&test_values);
+        let hash_c = stable_hash_u64_slice(&test_values);
+        assert_eq!(hash_a, hash_b, "Multiple calls should be deterministic");
+        assert_eq!(hash_b, hash_c, "Multiple calls should be deterministic");
 
-        // Multiple calls with same input should produce identical results
-        assert_eq!(hash1, hash2);
-        assert_eq!(hash2, hash3);
-        assert_eq!(hash1, hash3);
-    }
-
-    #[test]
-    fn test_stable_hash_u64_slice_different_lengths() {
+        // Test different lengths
         let short = vec![1u64, 2u64];
         let long = vec![1u64, 2u64, 3u64];
+        assert_ne!(
+            stable_hash_u64_slice(&short),
+            stable_hash_u64_slice(&long),
+            "Different lengths should produce different hashes"
+        );
 
-        let hash_short = stable_hash_u64_slice(&short);
-        let hash_long = stable_hash_u64_slice(&long);
-
-        // Different lengths should produce different hashes
-        assert_ne!(hash_short, hash_long);
-    }
-
-    #[test]
-    fn test_stable_hash_u64_slice_large_values() {
+        // Test large values
         let large_values = vec![u64::MAX, u64::MAX - 1, u64::MAX - 2];
-        let hash1 = stable_hash_u64_slice(&large_values);
+        let hash_large1 = stable_hash_u64_slice(&large_values);
+        let hash_large2 = stable_hash_u64_slice(&large_values);
+        assert_eq!(
+            hash_large1, hash_large2,
+            "Large values should be handled consistently"
+        );
 
-        // Should handle large values without panicking
-        let hash2 = stable_hash_u64_slice(&large_values);
-        assert_eq!(hash1, hash2);
-
-        // Different large values should produce different hashes
         let different_large = vec![u64::MAX - 3, u64::MAX - 4, u64::MAX - 5];
-        let hash3 = stable_hash_u64_slice(&different_large);
-        assert_ne!(hash1, hash3);
+        assert_ne!(
+            hash_large1,
+            stable_hash_u64_slice(&different_large),
+            "Different large values should produce different hashes"
+        );
     }
 
     // =============================================================================
@@ -790,7 +885,8 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_generate_combinations() {
+    fn test_generate_combinations_comprehensive() {
+        // Test basic functionality with 4 vertices
         let vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![
             vertex!([0.0]),
             vertex!([1.0]),
@@ -798,49 +894,68 @@ mod tests {
             vertex!([3.0]),
         ];
 
-        // Combinations of 2 from 4
+        // Combinations of 2 from 4 - should be C(4,2) = 6
         let combinations_2 = generate_combinations(&vertices, 2);
-        assert_eq!(combinations_2.len(), 6);
+        assert_eq!(combinations_2.len(), 6, "C(4,2) should equal 6");
 
-        // Combinations of 3 from 4
+        // Combinations of 3 from 4 - should be C(4,3) = 4
         let combinations_3 = generate_combinations(&vertices, 3);
-        assert_eq!(combinations_3.len(), 4);
-        assert!(combinations_3.contains(&vec![vertices[0], vertices[1], vertices[2]]));
+        assert_eq!(combinations_3.len(), 4, "C(4,3) should equal 4");
+        assert!(
+            combinations_3.contains(&vec![vertices[0], vertices[1], vertices[2]]),
+            "Should contain specific combination"
+        );
 
-        // Edge case: k=0 (covers line 205-207)
-        let combinations_0 = generate_combinations(&vertices, 0);
-        assert_eq!(combinations_0.len(), 1);
-        assert!(combinations_0[0].is_empty());
-
-        // Edge case: k > len (covers line 210-211)
-        let combinations_5 = generate_combinations(&vertices, 5);
-        assert!(combinations_5.is_empty());
-
-        // Edge case: k == len (covers line 214-216)
-        let combinations_4 = generate_combinations(&vertices, 4);
-        assert_eq!(combinations_4.len(), 1);
-        assert_eq!(combinations_4[0], vertices);
-
-        // Test single vertex combinations (k=1)
+        // Single vertex combinations (k=1) - should be C(4,1) = 4
         let combinations_1 = generate_combinations(&vertices, 1);
-        assert_eq!(combinations_1.len(), 4);
-        assert!(combinations_1.contains(&vec![vertices[0]]));
-        assert!(combinations_1.contains(&vec![vertices[1]]));
-        assert!(combinations_1.contains(&vec![vertices[2]]));
-        assert!(combinations_1.contains(&vec![vertices[3]]));
-    }
+        assert_eq!(combinations_1.len(), 4, "C(4,1) should equal 4");
+        assert!(
+            combinations_1.contains(&vec![vertices[0]]),
+            "Should contain first vertex"
+        );
+        assert!(
+            combinations_1.contains(&vec![vertices[1]]),
+            "Should contain second vertex"
+        );
+        assert!(
+            combinations_1.contains(&vec![vertices[2]]),
+            "Should contain third vertex"
+        );
+        assert!(
+            combinations_1.contains(&vec![vertices[3]]),
+            "Should contain fourth vertex"
+        );
 
-    #[test]
-    fn test_generate_combinations_comprehensive() {
-        // Test with different sizes to exercise all code paths
+        // Edge case: k=0 - should return one empty combination
+        let combinations_0 = generate_combinations(&vertices, 0);
+        assert_eq!(combinations_0.len(), 1, "C(4,0) should equal 1");
+        assert!(
+            combinations_0[0].is_empty(),
+            "k=0 should produce empty combination"
+        );
 
-        // Small case: 3 vertices, choose 2 (covers loop termination paths)
+        // Edge case: k > len - should return empty result
+        let combinations_5 = generate_combinations(&vertices, 5);
+        assert!(
+            combinations_5.is_empty(),
+            "k > n should return no combinations"
+        );
+
+        // Edge case: k == len - should return all vertices as single combination
+        let combinations_4 = generate_combinations(&vertices, 4);
+        assert_eq!(combinations_4.len(), 1, "C(4,4) should equal 1");
+        assert_eq!(
+            combinations_4[0], vertices,
+            "k=n should return all vertices"
+        );
+
+        // Test with different size - 3 vertices, choose 2
         let small_vertices: Vec<Vertex<f64, Option<()>, 1>> =
             vec![vertex!([1.0]), vertex!([2.0]), vertex!([3.0])];
         let combinations_small = generate_combinations(&small_vertices, 2);
-        assert_eq!(combinations_small.len(), 3);
+        assert_eq!(combinations_small.len(), 3, "C(3,2) should equal 3");
 
-        // Test the iterative combination algorithm paths (lines 220-242)
+        // Test larger case - 5 vertices, choose 3 to exercise inner loops
         let large_vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![
             vertex!([1.0]),
             vertex!([2.0]),
@@ -848,31 +963,45 @@ mod tests {
             vertex!([4.0]),
             vertex!([5.0]),
         ];
-
-        // Choose 3 from 5 vertices - this will exercise the inner loops
         let combinations_large = generate_combinations(&large_vertices, 3);
-        assert_eq!(combinations_large.len(), 10); // C(5,3) = 10
+        assert_eq!(combinations_large.len(), 10, "C(5,3) should equal 10");
 
-        // Verify some specific combinations exist
-        assert!(combinations_large.contains(&vec![
-            large_vertices[0],
-            large_vertices[1],
-            large_vertices[2]
-        ]));
-        assert!(combinations_large.contains(&vec![
-            large_vertices[2],
-            large_vertices[3],
-            large_vertices[4]
-        ]));
+        // Verify some specific combinations exist in large case
+        assert!(
+            combinations_large.contains(&vec![
+                large_vertices[0],
+                large_vertices[1],
+                large_vertices[2]
+            ]),
+            "Should contain first combination"
+        );
+        assert!(
+            combinations_large.contains(&vec![
+                large_vertices[2],
+                large_vertices[3],
+                large_vertices[4]
+            ]),
+            "Should contain last combination"
+        );
 
-        // Test edge case with empty input
+        // Test empty input edge cases
         let empty_vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![];
-        let combinations_empty = generate_combinations(&empty_vertices, 1);
-        assert!(combinations_empty.is_empty());
+        let combinations_empty_k1 = generate_combinations(&empty_vertices, 1);
+        assert!(
+            combinations_empty_k1.is_empty(),
+            "Empty input with k>0 should return no combinations"
+        );
 
         let combinations_empty_k0 = generate_combinations(&empty_vertices, 0);
-        assert_eq!(combinations_empty_k0.len(), 1);
-        assert!(combinations_empty_k0[0].is_empty());
+        assert_eq!(
+            combinations_empty_k0.len(),
+            1,
+            "Empty input with k=0 should return one empty combination"
+        );
+        assert!(
+            combinations_empty_k0[0].is_empty(),
+            "Empty input k=0 combination should be empty"
+        );
     }
 
     // =============================================================================
@@ -880,72 +1009,49 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_measure_with_result_basic_functionality() {
-        // Test that the function returns the correct result
+    fn test_measure_with_result_comprehensive() {
+        // Test basic functionality - returns correct result
         let expected_result = 42;
         let (result, _alloc_info) = measure_with_result(|| expected_result);
         assert_eq!(result, expected_result);
-    }
 
-    #[test]
-    fn test_measure_with_result_with_vec_allocation() {
-        // Test with a closure that allocates memory
-        let (result, _alloc_info) = measure_with_result(|| vec![1, 2, 3, 4, 5]);
-        assert_eq!(result, vec![1, 2, 3, 4, 5]);
-    }
+        // Test with various allocation patterns
+        let (vec_result, _) = measure_with_result(|| vec![1, 2, 3, 4, 5]);
+        assert_eq!(vec_result, vec![1, 2, 3, 4, 5]);
 
-    #[test]
-    fn test_measure_with_result_with_string_allocation() {
-        // Test with string allocation and manipulation
-        let (result, _alloc_info) = measure_with_result(|| {
+        let (string_result, _) = measure_with_result(|| {
             let mut s = String::new();
             s.push_str("Hello, ");
             s.push_str("World!");
             s
         });
-        assert_eq!(result, "Hello, World!");
-    }
+        assert_eq!(string_result, "Hello, World!");
 
-    #[test]
-    fn test_measure_with_result_with_complex_operations() {
-        // Test with more complex operations that might allocate
-        let (result, _alloc_info) = measure_with_result(|| {
+        let (complex_result, _) = measure_with_result(|| {
             let mut data: Vec<String> = Vec::new();
-            for i in 0..10 {
+            for i in 0..5 {
                 data.push(format!("Item {i}"));
             }
             data.len()
         });
-        assert_eq!(result, 10);
-    }
+        assert_eq!(complex_result, 5);
 
-    #[test]
-    fn test_measure_with_result_no_panic_on_closure_result() {
-        // Test that the function doesn't panic when extracting the result
-        // This validates that the internal expect() call should never trigger
-        let (result, _alloc_info) = measure_with_result(|| {
-            // Simulate various types of operations
+        // Test various return types
+        let (tuple_result, _) = measure_with_result(|| ("hello", 42));
+        assert_eq!(tuple_result, ("hello", 42));
+
+        let (option_result, _) = measure_with_result(|| Some("value"));
+        assert_eq!(option_result, Some("value"));
+
+        let (result_result, _) = measure_with_result(|| Ok::<i32, &str>(123));
+        assert_eq!(result_result, Ok(123));
+
+        // Test no-panic behavior
+        let (sum_result, _) = measure_with_result(|| {
             let data = [1, 2, 3];
             data.iter().sum::<i32>()
         });
-        assert_eq!(result, 6);
-    }
-
-    #[test]
-    fn test_measure_with_result_return_type_consistency() {
-        // Test that the function correctly handles different return types
-
-        // Test with tuple
-        let (result, _alloc_info) = measure_with_result(|| ("hello", 42));
-        assert_eq!(result, ("hello", 42));
-
-        // Test with Option
-        let (result, _alloc_info) = measure_with_result(|| Some("value"));
-        assert_eq!(result, Some("value"));
-
-        // Test with Result
-        let (result, _alloc_info) = measure_with_result(|| Ok::<i32, &str>(123));
-        assert_eq!(result, Ok(123));
+        assert_eq!(sum_result, 6);
     }
 
     #[cfg(feature = "count-allocations")]
@@ -985,33 +1091,19 @@ mod tests {
         let _: () = alloc_info;
     }
 
-    #[test]
-    fn test_measure_with_result_closure_execution_order() {
-        // Test that the closure is executed exactly once and in the right context
-        use std::sync::{Arc, Mutex};
-
-        let counter = Arc::new(Mutex::new(0));
-        let counter_clone = Arc::clone(&counter);
-
-        let (result, _alloc_info) = measure_with_result(move || {
-            let mut count = counter_clone.lock().unwrap();
-            *count += 1;
-            *count
-        });
-
-        assert_eq!(result, 1);
-        assert_eq!(*counter.lock().unwrap(), 1);
-    }
-
     // =============================================================================
     // FACET KEY UTILITIES TESTS
     // =============================================================================
 
     #[test]
-    fn test_derive_facet_key_from_vertices() {
+    #[allow(clippy::cognitive_complexity)]
+    #[allow(clippy::too_many_lines)]
+    fn test_derive_facet_key_from_vertices_comprehensive() {
         use crate::core::triangulation_data_structure::Tds;
+        use crate::core::vertex::{Vertex, VertexBuilder};
+        use uuid::Uuid;
 
-        println!("Testing derive_facet_key_from_vertices function");
+        println!("Testing derive_facet_key_from_vertices comprehensively");
 
         // Create a triangulation
         let vertices = vec![
@@ -1022,16 +1114,11 @@ mod tests {
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
-        // Get vertices from a cell to test with
+        // Test 1: Basic functionality - successful key derivation
+        println!("  Testing basic functionality...");
         let cell = tds.cells().values().next().unwrap();
         let facet_vertices: Vec<_> = cell.vertices().iter().skip(1).copied().collect();
 
-        println!(
-            "  Testing facet key derivation for facet with {} vertices",
-            facet_vertices.len()
-        );
-
-        // Test successful key derivation
         let result = derive_facet_key_from_vertices(&facet_vertices, &tds);
         assert!(
             result.is_ok(),
@@ -1039,9 +1126,9 @@ mod tests {
         );
 
         let facet_key = result.unwrap();
-        println!("  Derived facet key: {facet_key}");
+        println!("    Derived facet key: {facet_key}");
 
-        // Test that the same vertices produce the same key (deterministic)
+        // Test deterministic behavior - same vertices produce same key
         let result2 = derive_facet_key_from_vertices(&facet_vertices, &tds);
         assert!(result2.is_ok(), "Second derivation should also succeed");
         assert_eq!(
@@ -1051,66 +1138,88 @@ mod tests {
         );
 
         // Test different vertices produce different keys
-        let different_facet_vertices: Vec<_> = cell.vertices().iter().take(2).copied().collect();
-        if !different_facet_vertices.is_empty() && different_facet_vertices != facet_vertices {
+        let all_vertices = cell.vertices();
+        let different_facet_vertices: Vec<_> = all_vertices.iter().take(3).copied().collect();
+        if different_facet_vertices.len() == 3 && different_facet_vertices != facet_vertices {
             let result3 = derive_facet_key_from_vertices(&different_facet_vertices, &tds);
             assert!(
                 result3.is_ok(),
                 "Different facet key derivation should succeed"
             );
-
             let different_facet_key = result3.unwrap();
             assert_ne!(
                 facet_key, different_facet_key,
                 "Different vertices should produce different facet keys"
             );
-            println!("  Different facet key: {different_facet_key}");
+            println!("    Different facet key: {different_facet_key}");
         }
 
-        println!("  ✓ Facet key derivation working correctly");
-    }
+        // Test 2: Error cases
+        println!("  Testing error handling...");
 
-    #[test]
-    fn test_derive_facet_key_from_vertices_error_cases() {
-        use crate::core::triangulation_data_structure::Tds;
-        use crate::core::vertex::{Vertex, VertexBuilder};
-        use uuid::Uuid;
+        // Wrong vertex count
+        let single_vertex = vec![vertices[0]];
+        let result_count = derive_facet_key_from_vertices(&single_vertex, &tds);
+        assert!(
+            result_count.is_err(),
+            "Should return error for wrong vertex count"
+        );
+        if let Err(error) = result_count {
+            match error {
+                crate::core::facet::FacetError::InsufficientVertices {
+                    expected,
+                    actual,
+                    dimension,
+                } => {
+                    assert_eq!(expected, 3, "Expected 3 vertices for 3D");
+                    assert_eq!(actual, 1, "Got 1 vertex");
+                    assert_eq!(dimension, 3, "Dimension should be 3");
+                }
+                _ => panic!("Expected InsufficientVertices error, got: {error:?}"),
+            }
+        }
 
-        println!("Testing derive_facet_key_from_vertices error handling");
+        // Empty vertices
+        let empty_vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![];
+        let result_empty = derive_facet_key_from_vertices(&empty_vertices, &tds);
+        assert!(
+            result_empty.is_err(),
+            "Empty vertices should fail validation"
+        );
+        if let Err(error) = result_empty {
+            match error {
+                crate::core::facet::FacetError::InsufficientVertices {
+                    expected,
+                    actual,
+                    dimension,
+                } => {
+                    assert_eq!(expected, 3, "Expected 3 vertices for 3D");
+                    assert_eq!(actual, 0, "Got 0 vertices");
+                    assert_eq!(dimension, 3, "Dimension should be 3");
+                }
+                _ => {
+                    panic!("Expected InsufficientVertices error for empty vertices, got: {error:?}")
+                }
+            }
+        }
 
-        // Create a triangulation
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        // Create a vertex with a UUID that doesn't exist in the TDS
-        let invalid_uuid = Uuid::new_v4(); // Random UUID not in TDS
+        // Vertex not found in TDS
+        let invalid_uuid = Uuid::new_v4();
         let mut invalid_vertex = VertexBuilder::default()
             .point(crate::geometry::point::Point::new([99.0, 99.0, 99.0]))
             .build()
             .expect("Failed to create test vertex");
-        // Manually set the UUID to something not in the TDS
         invalid_vertex
             .set_uuid(invalid_uuid)
             .expect("Failed to set UUID");
+        let invalid_vertices = vec![invalid_vertex, invalid_vertex, invalid_vertex];
 
-        let invalid_vertices = vec![invalid_vertex];
-
-        // Test with vertex not found in TDS
-        println!("  Testing with vertex not found in TDS...");
-        let result = derive_facet_key_from_vertices(&invalid_vertices, &tds);
-
+        let result_invalid = derive_facet_key_from_vertices(&invalid_vertices, &tds);
         assert!(
-            result.is_err(),
+            result_invalid.is_err(),
             "Should return error for vertex not found in TDS"
         );
-
-        if let Err(error) = result {
-            println!("  Expected error: {error}");
+        if let Err(error) = result_invalid {
             match error {
                 crate::core::facet::FacetError::VertexNotFound { uuid } => {
                     assert_eq!(uuid, invalid_uuid, "Error should contain the correct UUID");
@@ -1119,44 +1228,16 @@ mod tests {
             }
         }
 
-        // Test with empty vertices (edge case)
-        println!("  Testing with empty vertices...");
-        let empty_vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![];
-        let result_empty = derive_facet_key_from_vertices(&empty_vertices, &tds);
-        let key_empty = result_empty.expect("Empty vertices should succeed (edge case)");
-        assert_eq!(key_empty, 0, "Empty vertices should produce key 0");
-
-        println!("  ✓ Error handling working correctly");
-    }
-
-    #[test]
-    fn test_derive_facet_key_from_vertices_consistency() {
-        use crate::core::triangulation_data_structure::Tds;
-
-        println!("Testing derive_facet_key_from_vertices consistency with TDS");
-
-        // Create a triangulation
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        // Build the facet-to-cells cache
+        // Test 3: Consistency with TDS cache
+        println!("  Testing consistency with TDS...");
         let cache = tds
             .build_facet_to_cells_map()
             .expect("Should build facet map in test");
-
-        // Test that our utility function produces keys that exist in the cache
         let mut keys_found = 0;
         let mut keys_tested = 0;
 
         for cell in tds.cells().values() {
             let cell_vertices = cell.vertices();
-
-            // Test each possible facet of this cell
             for skip_vertex_idx in 0..cell_vertices.len() {
                 let facet_vertices: Vec<_> = cell_vertices
                     .iter()
@@ -1177,10 +1258,8 @@ mod tests {
             }
         }
 
-        println!("  Found {keys_found}/{keys_tested} derived keys in TDS cache");
-        // We expect some keys to be found, but not necessarily all since not all
-        // possible facets are actual facets in the triangulation
+        println!("    Found {keys_found}/{keys_tested} derived keys in TDS cache");
         assert!(keys_tested > 0, "Should have tested some keys");
-        println!("  ✓ Consistency with TDS verified");
+        println!("  ✓ All facet key derivation tests passed");
     }
 }

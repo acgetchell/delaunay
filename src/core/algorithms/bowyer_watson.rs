@@ -121,7 +121,7 @@ use std::{
 /// This struct provides a clean interface for constructing Delaunay triangulations
 /// using the incremental Bowyer-Watson algorithm. It operates on triangulation
 /// data structures and maintains the Delaunay property throughout construction.
-pub struct IncrementalBoyerWatson<T, U, V, const D: usize>
+pub struct IncrementalBowyerWatson<T, U, V, const D: usize>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -144,7 +144,17 @@ where
     cached_generation: Arc<AtomicU64>,
 }
 
-impl<T, U, V, const D: usize> IncrementalBoyerWatson<T, U, V, D>
+/// Deprecated alias for backward compatibility.
+///
+/// # Deprecated
+/// Use [`IncrementalBowyerWatson`] instead. This alias will be removed in a future version.
+#[deprecated(
+    since = "0.5.0",
+    note = "Use `IncrementalBowyerWatson` instead (correct spelling)"
+)]
+pub type IncrementalBoyerWatson<T, U, V, const D: usize> = IncrementalBowyerWatson<T, U, V, D>;
+
+impl<T, U, V, const D: usize> IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
     U: DataType + DeserializeOwned,
@@ -157,12 +167,12 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
+    /// use delaunay::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
     /// use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
     ///
     /// // Create a new 3D Bowyer-Watson algorithm instance
-    /// let algorithm: IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> =
-    ///     IncrementalBoyerWatson::new();
+    /// let algorithm: IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> =
+    ///     IncrementalBowyerWatson::new();
     ///
     /// // Verify initial statistics using the trait method
     /// let (insertions, created, removed) = algorithm.get_statistics();
@@ -201,7 +211,7 @@ where
         T: NumCast,
     {
         // Check if vertex is inside any existing cell's circumsphere
-        if self.is_vertex_interior(tds, vertex) {
+        if <Self as InsertionAlgorithm<T, U, V, D>>::is_vertex_interior(self, tds, vertex) {
             InsertionStrategy::CavityBased
         } else {
             InsertionStrategy::HullExtension
@@ -209,7 +219,7 @@ where
     }
 }
 
-impl<T, U, V, const D: usize> Default for IncrementalBoyerWatson<T, U, V, D>
+impl<T, U, V, const D: usize> Default for IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
     U: DataType + DeserializeOwned,
@@ -222,7 +232,7 @@ where
     }
 }
 
-impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for IncrementalBoyerWatson<T, U, V, D>
+impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType + DeserializeOwned,
@@ -241,7 +251,7 @@ where
 }
 
 // Implementation of the InsertionAlgorithm trait
-impl<T, U, V, const D: usize> InsertionAlgorithm<T, U, V, D> for IncrementalBoyerWatson<T, U, V, D>
+impl<T, U, V, const D: usize> InsertionAlgorithm<T, U, V, D> for IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType + DeserializeOwned,
@@ -765,7 +775,7 @@ mod tests {
         analyze_triangulation(&tds, "initial");
 
         // Test the algorithm components step by step
-        let mut algorithm = IncrementalBoyerWatson::new();
+        let mut algorithm = IncrementalBowyerWatson::new();
         let new_vertex = vertex!([0.5, 0.5, 2.0]);
 
         println!("\nTesting vertex insertion algorithm...");
@@ -776,7 +786,7 @@ mod tests {
 
         // Step 2: Test bad cell detection (now using trait method)
         let bad_cells =
-            match <IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
+            match <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
                 f64,
                 Option<()>,
                 Option<()>,
@@ -913,7 +923,7 @@ mod tests {
             vertex!([0.0, 0.0, 2.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let algorithm = IncrementalBoyerWatson::new();
+        let algorithm = IncrementalBowyerWatson::new();
 
         // Test interior vertex (inside the tetrahedron)
         let interior_vertex = vertex!([0.4, 0.4, 0.4]);
@@ -948,7 +958,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let algorithm = IncrementalBoyerWatson::new();
+        let algorithm = IncrementalBowyerWatson::new();
 
         // Test exterior vertices in different directions
         let exterior_vertices = vec![
@@ -983,14 +993,14 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let _algorithm = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let _algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Add some additional complexity to the triangulation
         // (In a real scenario, this would be done through the Bowyer-Watson process)
 
         // Test finalization using trait method
         let result =
-            <IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
+            <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
                 f64,
                 Option<()>,
                 Option<()>,
@@ -1015,7 +1025,7 @@ mod tests {
     fn test_statistics_and_reset_functionality() {
         println!("Testing statistics tracking and reset functionality");
 
-        let mut algorithm = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Initial statistics should be zero
         let (insertions, created, removed) = algorithm.get_statistics();
@@ -1048,7 +1058,7 @@ mod tests {
     fn test_algorithm_buffers_are_reused() {
         println!("Testing that algorithm buffers are properly reused");
 
-        let _algorithm = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let _algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Create test triangulation
         let vertices = vec![
@@ -1096,8 +1106,9 @@ mod tests {
         println!("Testing Default trait implementation");
 
         // Test that Default::default() creates the same instance as new()
-        let algorithm_new = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
-        let algorithm_default = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::default();
+        let algorithm_new = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm_default =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::default();
 
         // Both should have the same initial statistics
         let (insertions_new, created_new, removed_new) = algorithm_new.get_statistics();
@@ -1129,7 +1140,7 @@ mod tests {
     fn test_simple_double_counting_fix() {
         println!("Testing simple case for double counting fix");
 
-        let mut algorithm = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Create a basic triangulation with exactly 4 vertices (minimum for 3D)
         let vertices = vec![
@@ -1187,7 +1198,7 @@ mod tests {
     fn test_insertion_strategy_standard_branch() {
         println!("Testing InsertionStrategy::Standard branch coverage");
 
-        let mut algorithm = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Create a simple triangulation with 4 vertices (tetrahedron)
         let vertices = vec![
@@ -1225,7 +1236,7 @@ mod tests {
     fn test_facet_cache_provider_methods() {
         println!("Testing FacetCacheProvider trait implementation");
 
-        let algorithm = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Test facet_cache() method
         let cache_ref = algorithm.facet_cache();
@@ -1243,7 +1254,7 @@ mod tests {
     fn test_insertion_algorithm_trait_methods() {
         println!("Testing InsertionAlgorithm trait method implementations");
 
-        let mut algorithm = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Test increment_cells_created
         let initial_stats = algorithm.get_statistics();
@@ -1303,7 +1314,7 @@ mod tests {
     fn test_error_handling_in_insertion() {
         println!("Testing error handling paths in insertion algorithm");
 
-        let mut algorithm = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Create a minimal triangulation
         let vertices = vec![

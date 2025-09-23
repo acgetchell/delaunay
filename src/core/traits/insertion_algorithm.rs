@@ -379,6 +379,7 @@ impl InsertionStatistics {
 /// Instead of allocating new vectors on each operation, algorithms can
 /// reuse these pre-allocated buffers.
 #[derive(Debug)]
+#[allow(clippy::struct_field_names)]
 pub struct InsertionBuffers<T, U, V, const D: usize>
 where
     T: CoordinateScalar,
@@ -387,13 +388,13 @@ where
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
 {
     /// Buffer for storing bad cell keys during cavity detection
-    pub bad_cells_buffer: SmallBuffer<crate::core::triangulation_data_structure::CellKey, 16>,
+    bad_cells_buffer: SmallBuffer<crate::core::triangulation_data_structure::CellKey, 16>,
     /// Buffer for storing boundary facets during cavity boundary detection
-    pub boundary_facets_buffer: SmallBuffer<Facet<T, U, V, D>, 8>,
+    boundary_facets_buffer: SmallBuffer<Facet<T, U, V, D>, 8>,
     /// Buffer for storing vertex points during geometric computations
-    pub vertex_points_buffer: SmallBuffer<crate::geometry::point::Point<T, D>, 16>,
+    vertex_points_buffer: SmallBuffer<crate::geometry::point::Point<T, D>, 16>,
     /// Buffer for storing visible boundary facets
-    pub visible_facets_buffer: SmallBuffer<Facet<T, U, V, D>, 8>,
+    visible_facets_buffer: SmallBuffer<Facet<T, U, V, D>, 8>,
 }
 
 impl<T, U, V, const D: usize> Default for InsertionBuffers<T, U, V, D>
@@ -433,7 +434,7 @@ where
             bad_cells_buffer: SmallBuffer::with_capacity(capacity),
             boundary_facets_buffer: SmallBuffer::with_capacity(capacity),
             vertex_points_buffer: SmallBuffer::with_capacity(capacity * (D + 1)), // More points per operation
-            visible_facets_buffer: SmallBuffer::with_capacity(capacity / 2), // Typically fewer visible facets
+            visible_facets_buffer: SmallBuffer::with_capacity(core::cmp::max(1, capacity / 2)), // Guard against zero capacity for tiny inputs
         }
     }
 
@@ -471,6 +472,115 @@ where
     pub fn prepare_visible_facets_buffer(&mut self) -> &mut SmallBuffer<Facet<T, U, V, D>, 8> {
         self.visible_facets_buffer.clear();
         &mut self.visible_facets_buffer
+    }
+
+    // =========== ACCESSOR METHODS ===========
+    // These methods provide controlled access to private buffers for backward compatibility
+
+    /// Get a reference to the bad cells buffer
+    #[must_use]
+    pub const fn bad_cells_buffer(
+        &self,
+    ) -> &SmallBuffer<crate::core::triangulation_data_structure::CellKey, 16> {
+        &self.bad_cells_buffer
+    }
+
+    /// Get a mutable reference to the bad cells buffer
+    pub const fn bad_cells_buffer_mut(
+        &mut self,
+    ) -> &mut SmallBuffer<crate::core::triangulation_data_structure::CellKey, 16> {
+        &mut self.bad_cells_buffer
+    }
+
+    /// Get a reference to the boundary facets buffer
+    #[must_use]
+    pub const fn boundary_facets_buffer(&self) -> &SmallBuffer<Facet<T, U, V, D>, 8> {
+        &self.boundary_facets_buffer
+    }
+
+    /// Get a mutable reference to the boundary facets buffer
+    pub const fn boundary_facets_buffer_mut(&mut self) -> &mut SmallBuffer<Facet<T, U, V, D>, 8> {
+        &mut self.boundary_facets_buffer
+    }
+
+    /// Get a reference to the vertex points buffer
+    #[must_use]
+    pub const fn vertex_points_buffer(
+        &self,
+    ) -> &SmallBuffer<crate::geometry::point::Point<T, D>, 16> {
+        &self.vertex_points_buffer
+    }
+
+    /// Get a mutable reference to the vertex points buffer
+    pub const fn vertex_points_buffer_mut(
+        &mut self,
+    ) -> &mut SmallBuffer<crate::geometry::point::Point<T, D>, 16> {
+        &mut self.vertex_points_buffer
+    }
+
+    /// Get a reference to the visible facets buffer
+    #[must_use]
+    pub const fn visible_facets_buffer(&self) -> &SmallBuffer<Facet<T, U, V, D>, 8> {
+        &self.visible_facets_buffer
+    }
+
+    /// Get a mutable reference to the visible facets buffer
+    pub const fn visible_facets_buffer_mut(&mut self) -> &mut SmallBuffer<Facet<T, U, V, D>, 8> {
+        &mut self.visible_facets_buffer
+    }
+
+    // =========== COMPATIBILITY HELPERS ===========
+    // These methods ease migration for external code that may have used direct field access
+
+    /// Extract the bad cells as a Vec for compatibility with previous Vec-based APIs
+    #[must_use]
+    pub fn bad_cells_as_vec(&self) -> Vec<crate::core::triangulation_data_structure::CellKey> {
+        self.bad_cells_buffer.iter().copied().collect()
+    }
+
+    /// Set bad cells from a Vec for compatibility with previous Vec-based APIs
+    pub fn set_bad_cells_from_vec(
+        &mut self,
+        vec: Vec<crate::core::triangulation_data_structure::CellKey>,
+    ) {
+        self.bad_cells_buffer.clear();
+        self.bad_cells_buffer.extend(vec);
+    }
+
+    /// Extract the boundary facets as a Vec for compatibility with previous Vec-based APIs
+    #[must_use]
+    pub fn boundary_facets_as_vec(&self) -> Vec<Facet<T, U, V, D>> {
+        self.boundary_facets_buffer.iter().cloned().collect()
+    }
+
+    /// Set boundary facets from a Vec for compatibility with previous Vec-based APIs
+    pub fn set_boundary_facets_from_vec(&mut self, vec: Vec<Facet<T, U, V, D>>) {
+        self.boundary_facets_buffer.clear();
+        self.boundary_facets_buffer.extend(vec);
+    }
+
+    /// Extract the vertex points as a Vec for compatibility with previous Vec-based APIs
+    #[must_use]
+    pub fn vertex_points_as_vec(&self) -> Vec<crate::geometry::point::Point<T, D>> {
+        self.vertex_points_buffer.iter().copied().collect()
+    }
+
+    /// Set vertex points from a Vec for compatibility with previous Vec-based APIs
+    pub fn set_vertex_points_from_vec(&mut self, vec: Vec<crate::geometry::point::Point<T, D>>) {
+        self.vertex_points_buffer.clear();
+        self.vertex_points_buffer.extend(vec);
+    }
+
+    /// Extract the visible facets as a Vec for compatibility with previous Vec-based APIs
+    #[must_use]
+    pub fn visible_facets_as_vec(&self) -> Vec<Facet<T, U, V, D>> {
+        self.visible_facets_buffer.iter().cloned().collect()
+    }
+
+    /// Set visible facets from a Vec for compatibility with previous Vec-based APIs
+    pub fn set_visible_facets_from_vec(&mut self, vec: Vec<Facet<T, U, V, D>>) {
+        self.visible_facets_buffer.clear();
+        self.visible_facets_buffer.extend(vec);
     }
 }
 
@@ -803,7 +913,7 @@ where
             return Err(BadCellsError::NoCells);
         }
 
-        let mut bad_cells = Vec::new();
+        let mut bad_cells = Vec::with_capacity(tds.number_of_cells());
         let mut cells_tested = 0;
         let mut degenerate_count = 0;
         // Preallocate vertex_points buffer outside the loop to avoid per-iteration allocations
@@ -1066,14 +1176,19 @@ where
     ///
     /// # Returns
     ///
-    /// `true` if the facet is visible from the vertex, `false` otherwise
+    /// `Ok(true)` if the facet is visible from the vertex, `Ok(false)` if not visible,
+    /// or an error if topology validation fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the triangulation topology is inconsistent or corrupted.
     fn is_facet_visible_from_vertex(
         &self,
         tds: &Tds<T, U, V, D>,
         facet: &Facet<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
         adjacent_cell_key: crate::core::triangulation_data_structure::CellKey,
-    ) -> bool
+    ) -> Result<bool, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
@@ -1655,8 +1770,17 @@ where
                     let idx = <usize as From<_>>::from(facet_index);
                     if let Some(facet) = facets.get(idx) {
                         // Test visibility using proper orientation predicates
-                        if Self::is_facet_visible_from_vertex_impl(tds, facet, vertex, cell_key) {
-                            visible_facets.push(facet.clone());
+                        match self.is_facet_visible_from_vertex(tds, facet, vertex, cell_key) {
+                            Ok(true) => {
+                                visible_facets.push(facet.clone());
+                            }
+                            Ok(false) => {
+                                // Facet is not visible, continue to next
+                            }
+                            Err(e) => {
+                                // Propagate topology errors for proper error handling
+                                return Err(e);
+                            }
                         }
                     } else {
                         // Fail fast on invalid facet index - indicates TDS corruption
@@ -1695,12 +1819,18 @@ where
     ///
     /// This is separated into its own method to allow for different visibility testing strategies
     /// across algorithm implementations while providing a common default.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The adjacent cell cannot be found in the TDS
+    /// - The topology is inconsistent (no opposite vertex found)
     fn is_facet_visible_from_vertex_impl(
         tds: &Tds<T, U, V, D>,
         facet: &Facet<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
         adjacent_cell_key: crate::core::triangulation_data_structure::CellKey,
-    ) -> bool
+    ) -> Result<bool, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
@@ -1708,7 +1838,13 @@ where
     {
         // Get the adjacent cell to this boundary facet
         let Some(adjacent_cell) = tds.cells().get(adjacent_cell_key) else {
-            return false;
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Adjacent cell {adjacent_cell_key:?} not found during visibility test. This indicates TDS corruption."
+                    ),
+                },
+            ));
         };
 
         // Find the vertex in the adjacent cell that is NOT part of the facet
@@ -1728,8 +1864,15 @@ where
         }
 
         let Some(opposite_vertex) = opposite_vertex else {
-            // Could not find opposite vertex - something is wrong with the topology
-            return false;
+            // Could not find opposite vertex - topology is inconsistent
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Facet lacked opposite vertex for cell {adjacent_cell_key:?}. This indicates potential TDS corruption \
+                         where the facet vertices do not form a proper (D-1)-face of the adjacent D-cell."
+                    ),
+                },
+            ));
         };
 
         // Create test simplices for orientation comparison
@@ -1750,18 +1893,19 @@ where
             (Ok(ori_opp), Ok(ori_test)) => {
                 // Facet is visible if the orientations are different
                 // (vertices are on opposite sides of the hyperplane)
-                match (ori_opp, ori_test) {
+                let is_visible = match (ori_opp, ori_test) {
                     (Orientation::NEGATIVE, Orientation::POSITIVE)
                     | (Orientation::POSITIVE, Orientation::NEGATIVE) => true,
                     (Orientation::DEGENERATE, _)
                     | (_, Orientation::DEGENERATE)
                     | (Orientation::NEGATIVE, Orientation::NEGATIVE)
                     | (Orientation::POSITIVE, Orientation::POSITIVE) => false, // Same orientation = same side = not visible
-                }
+                };
+                Ok(is_visible)
             }
             _ => {
                 // Orientation computation failed - conservative fallback
-                false
+                Ok(false)
             }
         }
     }
@@ -2018,7 +2162,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::algorithms::bowyer_watson::IncrementalBoyerWatson;
+    use crate::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
     use crate::core::facet::{FacetError, facet_key_from_vertex_keys};
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
     use crate::geometry::point::Point;
@@ -2038,7 +2182,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let algorithm = IncrementalBoyerWatson::new();
+        let algorithm = IncrementalBowyerWatson::new();
 
         // Test exterior vertex that should see some facets
         let exterior_vertex = vertex!([2.0, 0.0, 0.0]);
@@ -2082,7 +2226,7 @@ mod tests {
             vertex!([0.0, 0.0, 2.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let algorithm = IncrementalBoyerWatson::new();
+        let algorithm = IncrementalBowyerWatson::new();
 
         // Test interior vertex that should not see any facets from outside
         let interior_vertex = vertex!([0.4, 0.4, 0.4]);
@@ -2161,7 +2305,7 @@ mod tests {
 
         for (test_vertex, description) in test_positions {
             let is_visible =
-                <IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
+                <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
                     f64,
                     Option<()>,
                     Option<()>,
@@ -2173,7 +2317,10 @@ mod tests {
                     adjacent_cell_key,
                 );
 
-            println!("  {description} - Facet visible: {is_visible}");
+            match is_visible {
+                Ok(visible) => println!("  {description} - Facet visible: {visible}"),
+                Err(e) => println!("  {description} - Visibility error: {e}"),
+            }
             // Note: We don't assert specific visibility results here because they depend
             // on the specific geometry and orientation of the facet, but the function
             // should not panic and should return a boolean result.
@@ -2194,7 +2341,7 @@ mod tests {
             vertex!([0.0, 0.0, 2.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let mut algorithm = IncrementalBoyerWatson::new();
+        let mut algorithm = IncrementalBowyerWatson::new();
 
         // Test with interior vertex that should violate Delaunay property
         let interior_vertex = vertex!([0.5, 0.5, 0.5]);
@@ -2228,7 +2375,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let mut algorithm = IncrementalBoyerWatson::new();
+        let mut algorithm = IncrementalBowyerWatson::new();
 
         // Test with exterior vertex that should not violate circumsphere
         let exterior_vertex = vertex!([3.0, 0.0, 0.0]);
@@ -2259,7 +2406,7 @@ mod tests {
             vertex!([1.0, 1.0, 1.0]), // Additional vertex to create more cells
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let mut algorithm = IncrementalBoyerWatson::new();
+        let mut algorithm = IncrementalBowyerWatson::new();
 
         // Test vertex very close to existing vertex
         let close_vertex = vertex!([0.001, 0.0, 0.0]);
@@ -2303,7 +2450,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let algorithm = IncrementalBoyerWatson::new();
+        let algorithm = IncrementalBowyerWatson::new();
 
         // Get the single cell as a "bad cell"
         let cell_keys: Vec<_> = tds.cells().keys().collect();
@@ -2345,7 +2492,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let algorithm = IncrementalBoyerWatson::new();
+        let algorithm = IncrementalBowyerWatson::new();
 
         let bad_cells = vec![]; // Empty list
         let boundary_facets = algorithm
@@ -2384,7 +2531,7 @@ mod tests {
         let new_vertex = vertex!([0.5, 0.5, 1.5]);
 
         let result =
-            <IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
+            <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
                 f64,
                 Option<()>,
                 Option<()>,
@@ -2429,7 +2576,7 @@ mod tests {
         let duplicate_vertex = facet_vertices[0]; // Use an existing facet vertex
 
         let result =
-            <IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
+            <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
                 f64,
                 Option<()>,
                 Option<()>,
@@ -2548,7 +2695,7 @@ mod tests {
 
         // Create an empty triangulation to test NoCells error
         let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
-        let mut algorithm = IncrementalBoyerWatson::new();
+        let mut algorithm = IncrementalBowyerWatson::new();
         let vertex = vertex!([0.25, 0.25, 0.25]);
 
         match algorithm.find_bad_cells(&empty_tds, &vertex) {
@@ -2648,7 +2795,7 @@ mod tests {
             vertex!([0.5, 0.5, 0.5]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let algorithm = IncrementalBoyerWatson::new();
+        let algorithm = IncrementalBowyerWatson::new();
 
         // Manually corrupt the triangulation to create an invalid state
         // We'll remove a vertex from the vertices SlotMap but keep a cell that references it
@@ -3135,7 +3282,7 @@ mod tests {
     /// Test error path when `find_bad_cells` returns errors - comprehensive
     #[test]
     fn test_find_bad_cells_error_cases_comprehensive() {
-        let mut algorithm = IncrementalBoyerWatson::new();
+        let mut algorithm = IncrementalBowyerWatson::new();
 
         // Create minimal TDS
         let vertices = vec![
@@ -3184,7 +3331,7 @@ mod tests {
         let degenerate_vertex = vertex!([0.0, 0.0, 0.0]); // Same as existing vertex
 
         let result =
-            <IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
+            <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
                 f64,
                 Option<()>,
                 Option<()>,
@@ -3219,7 +3366,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let _algorithm = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let _algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Get boundary facet
         let boundary_facets = tds.boundary_facets().unwrap();
@@ -3230,7 +3377,7 @@ mod tests {
 
         // The actual error paths depend on the specific implementation,
         // but we're testing that errors are handled gracefully
-        let _ = <IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
+        let _ = <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
             f64,
             Option<()>,
             Option<()>,
@@ -3363,7 +3510,7 @@ mod tests {
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
         let strategy =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::determine_strategy_default(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::determine_strategy_default(
                 &empty_tds,
                 &test_vertex,
             );
@@ -3390,7 +3537,7 @@ mod tests {
         );
 
         let strategy =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::determine_strategy_default(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::determine_strategy_default(
                 &single_cell_tds,
                 &test_vertex,
             );
@@ -3415,7 +3562,7 @@ mod tests {
         // Test exterior vertex (far outside bounding box)
         let far_exterior_vertex = vertex!([10.0, 10.0, 10.0]);
         let is_exterior =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
                 &multi_cell_tds,
                 &far_exterior_vertex,
             );
@@ -3428,7 +3575,7 @@ mod tests {
         // Test interior vertex (well inside bounding box)
         let interior_vertex = vertex!([0.5, 0.5, 0.5]);
         let is_exterior =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
                 &multi_cell_tds,
                 &interior_vertex,
             );
@@ -3442,7 +3589,7 @@ mod tests {
         // Bounding box is [0,2] x [0,2] x [0,2], expanded by 10% margin becomes [-0.2,2.2] x [-0.2,2.2] x [-0.2,2.2]
         let boundary_vertex = vertex!([2.3, 1.0, 1.0]); // Just outside expanded boundary
         let is_exterior =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
                 &multi_cell_tds,
                 &boundary_vertex,
             );
@@ -3455,7 +3602,7 @@ mod tests {
         // Test vertex just inside expanded boundary
         let inside_boundary_vertex = vertex!([1.8, 1.0, 1.0]); // Well inside original boundary
         let is_exterior =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
                 &multi_cell_tds,
                 &inside_boundary_vertex,
             );
@@ -3469,7 +3616,7 @@ mod tests {
 
         // Test complete strategy determination with exterior vertex
         let exterior_strategy =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::determine_strategy_default(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::determine_strategy_default(
                 &multi_cell_tds,
                 &far_exterior_vertex,
             );
@@ -3482,7 +3629,7 @@ mod tests {
 
         // Test complete strategy determination with interior vertex
         let interior_strategy =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::determine_strategy_default(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::determine_strategy_default(
                 &multi_cell_tds,
                 &interior_vertex,
             );
@@ -3509,7 +3656,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let mut algorithm = IncrementalBoyerWatson::new();
+        let mut algorithm = IncrementalBowyerWatson::new();
 
         // Test insert_vertex_cavity_based with exterior vertex (should fail)
         let exterior_vertex = vertex!([10.0, 10.0, 10.0]);
@@ -3574,7 +3721,7 @@ mod tests {
 
         // Create an empty TDS to simulate corruption scenarios
         let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
-        let mut algorithm = IncrementalBoyerWatson::new();
+        let mut algorithm = IncrementalBowyerWatson::new();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
         // Test cavity-based insertion with empty TDS
@@ -3639,7 +3786,7 @@ mod tests {
     fn test_triangulation_creation_and_finalization() {
         println!("Testing triangulation creation and finalization methods");
 
-        let mut algorithm = IncrementalBoyerWatson::new();
+        let mut algorithm = IncrementalBowyerWatson::new();
 
         // Test triangulate with insufficient vertices
         let insufficient_vertices = vec![
@@ -3717,7 +3864,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
         ];
         let result =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::create_initial_simplex(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_initial_simplex(
                 &mut tds,
                 too_few_vertices,
             );
@@ -3738,7 +3885,7 @@ mod tests {
             vertex!([1.0, 1.0, 1.0]), // Extra vertex
         ];
         let result =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::create_initial_simplex(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_initial_simplex(
                 &mut tds,
                 too_many_vertices,
             );
@@ -3758,7 +3905,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let result =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::create_initial_simplex(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_initial_simplex(
                 &mut tds,
                 correct_vertices,
             );
@@ -3798,7 +3945,7 @@ mod tests {
 
         // Test finalization on a valid TDS
         let result =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_triangulation(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_triangulation(
                 &mut tds,
             );
         assert!(
@@ -3810,7 +3957,7 @@ mod tests {
         // Test finalization on empty TDS (should handle gracefully)
         let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
         let result =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_triangulation(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_triangulation(
                 &mut empty_tds,
             );
 
@@ -3836,10 +3983,11 @@ mod tests {
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
         // Test successful vertex insertion
-        let result = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::ensure_vertex_in_tds(
-            &mut tds,
-            &test_vertex,
-        );
+        let result =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::ensure_vertex_in_tds(
+                &mut tds,
+                &test_vertex,
+            );
         assert!(
             result.is_ok(),
             "ensure_vertex_in_tds should succeed for valid vertex"
@@ -3851,10 +3999,11 @@ mod tests {
         println!("  ✓ ensure_vertex_in_tds works correctly");
 
         // Test duplicate vertex insertion (should not fail)
-        let result = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::ensure_vertex_in_tds(
-            &mut tds,
-            &test_vertex,
-        );
+        let result =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::ensure_vertex_in_tds(
+                &mut tds,
+                &test_vertex,
+            );
         assert!(
             result.is_ok(),
             "ensure_vertex_in_tds should handle duplicate vertices gracefully"
@@ -3886,7 +4035,7 @@ mod tests {
         let new_vertex = vertex!([2.0, 2.0, 2.0]);
 
         // Test successful cell creation
-        let cells_created = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_boundary_facets(
+        let cells_created = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_boundary_facets(
             &mut tds,
             &boundary_facets,
             &new_vertex,
@@ -3902,7 +4051,7 @@ mod tests {
         // Test with empty boundary facets (should create no cells)
         let empty_facets: Vec<Facet<f64, Option<()>, Option<()>, 3>> = vec![];
         let another_vertex = vertex!([3.0, 3.0, 3.0]);
-        let cells_created = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_boundary_facets(
+        let cells_created = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_boundary_facets(
             &mut tds,
             &empty_facets,
             &another_vertex,
@@ -3932,7 +4081,7 @@ mod tests {
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
         let result =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_after_insertion(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_after_insertion(
                 &mut tds,
             );
         assert!(
@@ -3944,7 +4093,7 @@ mod tests {
         // Test with empty TDS (should handle gracefully)
         let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
         let result =
-            IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_after_insertion(
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_after_insertion(
                 &mut empty_tds,
             );
 
@@ -3984,7 +4133,7 @@ mod tests {
         );
 
         // Test cell removal
-        IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::remove_bad_cells(
+        IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::remove_bad_cells(
             &mut tds, &cell_keys,
         );
 
@@ -3998,7 +4147,7 @@ mod tests {
         // Test removal with empty list (should do nothing)
         let empty_keys: Vec<crate::core::triangulation_data_structure::CellKey> = vec![];
         let cell_count_before = tds.number_of_cells();
-        IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::remove_bad_cells(
+        IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::remove_bad_cells(
             &mut tds,
             &empty_keys,
         );
@@ -4017,7 +4166,7 @@ mod tests {
     fn test_visibility_computation_edge_cases() {
         println!("Testing visibility computation edge cases");
 
-        let algorithm = IncrementalBoyerWatson::new();
+        let algorithm = IncrementalBowyerWatson::new();
 
         // Test find_visible_boundary_facets with empty TDS
         let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
@@ -4049,10 +4198,12 @@ mod tests {
             .find_visible_boundary_facets(&tds, &exterior_vertex)
             .expect("Should find visible facets for exterior vertex");
 
-        // Should find at least some visible facets for an exterior vertex
+        // Should find a reasonable number of visible facets for an exterior vertex
+        // For a tetrahedron, we can see at most 4 facets from any exterior point
         assert!(
-            !visible_facets.is_empty() || visible_facets.is_empty(), // Either case is geometrically valid
-            "Visibility computation should complete without errors"
+            visible_facets.len() <= 4,
+            "Cannot see more than 4 facets from a tetrahedron, got {}",
+            visible_facets.len()
         );
         println!(
             "  ✓ Exterior vertex visibility: {} facets",
@@ -4126,33 +4277,46 @@ mod tests {
 
         // Test with vertex at same position as facet vertex (degenerate case)
         let coplanar_vertex = facet_vertices[0]; // Same as existing facet vertex
-        let is_visible = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
+        let is_visible = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
             &tds,
             test_facet,
             &coplanar_vertex,
             adjacent_cell_key,
         );
-        println!("  ✓ Coplanar vertex visibility: {is_visible}");
+        match is_visible {
+            Ok(visible) => println!("  ✓ Coplanar vertex visibility: {visible}"),
+            Err(e) => {
+                println!(
+                    "  ✓ Coplanar vertex visibility error (expected for degenerate case): {e}"
+                );
+            }
+        }
 
         // Test with extreme coordinates
         let extreme_vertex = vertex!([f64::MAX / 1000.0, 0.0, 0.0]);
-        let is_visible = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
+        let is_visible = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
             &tds,
             test_facet,
             &extreme_vertex,
             adjacent_cell_key,
         );
-        println!("  ✓ Extreme coordinate vertex visibility: {is_visible}");
+        match is_visible {
+            Ok(visible) => println!("  ✓ Extreme coordinate vertex visibility: {visible}"),
+            Err(e) => println!("  ✓ Extreme coordinate vertex visibility error: {e}"),
+        }
 
         // Test with vertex very close to facet plane
         let close_vertex = vertex!([0.001, 0.001, 0.001]);
-        let is_visible = IncrementalBoyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
+        let is_visible = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
             &tds,
             test_facet,
             &close_vertex,
             adjacent_cell_key,
         );
-        println!("  ✓ Close-to-facet vertex visibility: {is_visible}");
+        match is_visible {
+            Ok(visible) => println!("  ✓ Close-to-facet vertex visibility: {visible}"),
+            Err(e) => println!("  ✓ Close-to-facet vertex visibility error: {e}"),
+        }
 
         println!("✓ Facet visibility degenerate cases handled correctly");
     }
@@ -4169,7 +4333,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let algorithm = IncrementalBoyerWatson::new();
+        let algorithm = IncrementalBowyerWatson::new();
 
         // Test is_vertex_interior method edge cases
         let interior_test_vertex = vertex!([0.25, 0.25, 0.25]);
@@ -4193,7 +4357,7 @@ mod tests {
     fn test_bad_cells_detection_comprehensive_scenarios() {
         println!("Testing bad cells detection comprehensive scenarios");
 
-        let mut algorithm = IncrementalBoyerWatson::new();
+        let mut algorithm = IncrementalBowyerWatson::new();
 
         // Test NoCells error with empty TDS
         let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
@@ -4432,8 +4596,8 @@ mod tests {
     fn test_new_triangulation_method_comprehensive() {
         println!("Testing new_triangulation method comprehensive scenarios");
 
-        let mut algorithm: IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> =
-            IncrementalBoyerWatson::new();
+        let mut algorithm: IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> =
+            IncrementalBowyerWatson::new();
 
         // Test with empty vertex set
         let empty_vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![];
@@ -4536,8 +4700,8 @@ mod tests {
     fn test_new_triangulation_degenerate_cases() {
         println!("Testing new_triangulation with degenerate and edge case vertices");
 
-        let mut algorithm: IncrementalBoyerWatson<f64, Option<()>, Option<()>, 3> =
-            IncrementalBoyerWatson::new();
+        let mut algorithm: IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> =
+            IncrementalBowyerWatson::new();
 
         // Test with duplicate vertices
         let duplicate_vertices = vec![
