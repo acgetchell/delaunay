@@ -61,6 +61,8 @@ pub struct RobustPredicateConfig<T> {
     pub exact_arithmetic_threshold: T,
     /// Scale factor for perturbation when handling degeneracies
     pub perturbation_scale: T,
+    /// Multiplier for visibility threshold in fallback visibility heuristics
+    pub visibility_threshold_multiplier: T,
 }
 
 impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
@@ -71,6 +73,8 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
             max_refinement_iterations: 3,
             exact_arithmetic_threshold: cast(1e-10).unwrap_or_else(T::default_tolerance),
             perturbation_scale: cast(1e-10).unwrap_or_else(T::default_tolerance),
+            visibility_threshold_multiplier: cast(100.0)
+                .unwrap_or_else(|| T::from(100.0).unwrap_or_else(T::default_tolerance)),
         }
     }
 }
@@ -774,6 +778,8 @@ pub mod config_presets {
             max_refinement_iterations: 3,
             exact_arithmetic_threshold: cast(1e-10).unwrap_or_else(T::default_tolerance),
             perturbation_scale: cast(1e-10).unwrap_or_else(T::default_tolerance),
+            visibility_threshold_multiplier: cast(100.0)
+                .unwrap_or_else(|| T::from(100.0).unwrap_or_else(T::default_tolerance)),
         }
     }
 
@@ -799,6 +805,8 @@ pub mod config_presets {
             max_refinement_iterations: 5,
             exact_arithmetic_threshold: cast(1e-12).unwrap_or(base_tol),
             perturbation_scale: cast(1e-12).unwrap_or(base_tol),
+            visibility_threshold_multiplier: cast(100.0)
+                .unwrap_or_else(|| T::from(100.0).unwrap_or_else(T::default_tolerance)),
         }
     }
 
@@ -824,6 +832,8 @@ pub mod config_presets {
             max_refinement_iterations: 2,
             exact_arithmetic_threshold: cast(1e-8).unwrap_or(base_tol),
             perturbation_scale: cast(1e-8).unwrap_or(base_tol),
+            visibility_threshold_multiplier: cast(200.0)
+                .unwrap_or_else(|| T::from(200.0).unwrap_or_else(T::default_tolerance)),
         }
     }
 }
@@ -1168,6 +1178,7 @@ mod tests {
             max_refinement_iterations: 1,
             exact_arithmetic_threshold: 1e-8,
             perturbation_scale: 1e-15, // Very small perturbation
+            visibility_threshold_multiplier: 100.0,
         };
 
         // Create a nearly degenerate configuration that will challenge the algorithms
@@ -1242,6 +1253,7 @@ mod tests {
             max_refinement_iterations: 1,
             exact_arithmetic_threshold: 1e-18_f64,
             perturbation_scale: 1e-18_f64,
+            visibility_threshold_multiplier: 100.0,
         };
 
         // Test 1: 2D - Degenerate triangle (nearly collinear)
@@ -1602,6 +1614,7 @@ mod tests {
             max_refinement_iterations: 1,
             exact_arithmetic_threshold: 1e-20,
             perturbation_scale: 1e-20,
+            visibility_threshold_multiplier: 100.0,
         };
 
         // Use points that are challenging for numerical precision
@@ -1639,6 +1652,7 @@ mod tests {
             max_refinement_iterations: 3,
             exact_arithmetic_threshold: 1e-10,
             perturbation_scale: 1e-10,
+            visibility_threshold_multiplier: 100.0,
         };
 
         let points = vec![

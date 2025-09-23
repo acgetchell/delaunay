@@ -256,13 +256,14 @@ where
 /// This implementation follows the robust geometric predicates approach described in:
 /// Jonathan Richard Shewchuk's "Robust Adaptive Floating-Point Geometric Predicates".
 ///
-/// **Key Implementation Note**: The sign interpretation of the lifted matrix determinant
-/// depends on the dimension parity (even vs odd dimensions). This implementation correctly
-/// handles the dimension-dependent sign convention where even dimensions (2D, 4D, etc.)
-/// require inverted sign interpretation compared to odd dimensions (3D, 5D, etc.).
+/// **Key Implementation Note**: This method uses a standard determinant approach without
+/// dimension-dependent parity adjustments. For the lifted matrix formulation that requires
+/// parity handling, see [`insphere_lifted`] which correctly handles the dimension-dependent
+/// sign convention where even dimensions (2D, 4D, etc.) require inverted sign interpretation
+/// compared to odd dimensions (3D, 5D, etc.).
 ///
-/// This ensures all three insphere methods (`insphere`, `insphere_distance`, `insphere_lifted`)
-/// agree across all dimensions from 2D to 5D and beyond.
+/// This ensures agreement between `insphere_lifted` and the other insphere methods
+/// across all dimensions from 2D to 5D and beyond.
 ///
 /// Shewchuk, J. R. "Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric
 /// Predicates." Discrete & Computational Geometry 18, no. 3 (1997): 305-363.
@@ -601,52 +602,22 @@ where
     let dimension_is_even = D.is_multiple_of(2);
 
     match orientation {
-        Orientation::DEGENERATE => {
-            // Degenerate simplex - cannot determine containment reliably
-            Err(CellValidationError::DegenerateSimplex)
-        }
-        Orientation::POSITIVE => {
-            // For positive orientation, the sign interpretation depends on dimension parity
-            if dimension_is_even {
-                // Even dimensions: inverted sign compared to odd dimensions
-                if det < -tolerance_f64 {
-                    Ok(InSphere::INSIDE)
-                } else if det > tolerance_f64 {
-                    Ok(InSphere::OUTSIDE)
-                } else {
-                    Ok(InSphere::BOUNDARY)
-                }
+        Orientation::DEGENERATE => Err(CellValidationError::DegenerateSimplex),
+        Orientation::POSITIVE | Orientation::NEGATIVE => {
+            // Normalize determinant by parity (even dims invert sign) and orientation
+            let parity_sign = if dimension_is_even { -1.0 } else { 1.0 };
+            let orient_sign = if matches!(orientation, Orientation::POSITIVE) {
+                1.0
             } else {
-                // Odd dimensions: standard sign interpretation
-                if det > tolerance_f64 {
-                    Ok(InSphere::INSIDE)
-                } else if det < -tolerance_f64 {
-                    Ok(InSphere::OUTSIDE)
-                } else {
-                    Ok(InSphere::BOUNDARY)
-                }
-            }
-        }
-        Orientation::NEGATIVE => {
-            // For negative orientation, the sign interpretation also depends on dimension parity
-            if dimension_is_even {
-                // Even dimensions: inverted sign compared to odd dimensions
-                if det > tolerance_f64 {
-                    Ok(InSphere::INSIDE)
-                } else if det < -tolerance_f64 {
-                    Ok(InSphere::OUTSIDE)
-                } else {
-                    Ok(InSphere::BOUNDARY)
-                }
+                -1.0
+            };
+            let det_norm = det * parity_sign * orient_sign;
+            if det_norm > tolerance_f64 {
+                Ok(InSphere::INSIDE)
+            } else if det_norm < -tolerance_f64 {
+                Ok(InSphere::OUTSIDE)
             } else {
-                // Odd dimensions: standard sign interpretation
-                if det < -tolerance_f64 {
-                    Ok(InSphere::INSIDE)
-                } else if det > tolerance_f64 {
-                    Ok(InSphere::OUTSIDE)
-                } else {
-                    Ok(InSphere::BOUNDARY)
-                }
+                Ok(InSphere::BOUNDARY)
             }
         }
     }

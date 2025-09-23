@@ -756,8 +756,8 @@ where
     {
         use crate::geometry::predicates::{InSphere, insphere};
 
-        // Reserve exact capacity once before the loop to avoid reallocations
-        let mut vertex_points = Vec::with_capacity(D + 1);
+        // Reserve exact capacity once; keep on stack for typical small D
+        let mut vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
 
         for cell in tds.cells().values() {
             // Clear and reuse the buffer - capacity is already preallocated
@@ -860,8 +860,20 @@ where
                 },
             );
 
-            expanded_min[i] = min_coords[i] - margin;
-            expanded_max[i] = max_coords[i] + margin;
+            // Protect against overflow for integer types during bbox expansion
+            // For floating-point types, this is equivalent to normal arithmetic
+            // For integer types, this prevents overflow by clamping to valid ranges
+            expanded_min[i] = if min_coords[i] >= margin {
+                min_coords[i] - margin
+            } else {
+                min_coords[i] // Saturate at current value to prevent underflow
+            };
+            expanded_max[i] =
+                if max_coords[i] <= (cast::<f64, T>(f64::MAX).unwrap_or_else(T::zero) - margin) {
+                    max_coords[i] + margin
+                } else {
+                    max_coords[i] // Saturate at current value to prevent overflow
+                };
         }
 
         // Check if vertex is outside the expanded bounding box
@@ -916,8 +928,8 @@ where
         let mut bad_cells = Vec::with_capacity(tds.number_of_cells());
         let mut cells_tested = 0;
         let mut degenerate_count = 0;
-        // Preallocate vertex_points buffer outside the loop to avoid per-iteration allocations
-        let mut vertex_points = Vec::with_capacity(D + 1);
+        // Reuse a small stack-allocated buffer to avoid heap traffic
+        let mut vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
 
         // Only consider cells that have a valid circumsphere and strict containment
         for (cell_key, cell) in tds.cells() {
@@ -1127,8 +1139,8 @@ where
                 let opposite_vertex = cell.vertices()[facet_idx];
                 // Create the facet using the Cell and its opposite vertex
                 // TODO: Optimize Facet construction to avoid Cell cloning (allocation reduction)
-                // Consider lightweight Facet construction from (cell_key, facet_index) parameters
-                // to eliminate this allocation in insertion hot paths.
+                // Consider a Facet::from_cell_and_index(cell_key, facet_index, tds) constructor
+                // to sidestep Cell clone and eliminate this allocation in insertion hot paths.
                 let facet = Facet::new(cell.clone(), opposite_vertex).map_err(|e| {
                     TriangulationValidationError::InconsistentDataStructure {
                         message: format!("Failed to construct boundary facet: {e}"),
@@ -1904,8 +1916,12 @@ where
                 Ok(is_visible)
             }
             _ => {
-                // Orientation computation failed - conservative fallback
-                Ok(false)
+                // Consider surfacing orientation failures as recoverable errors
+                // instead of returning Ok(false) which may hide geometric issues
+                Err(InsertionError::geometric_failure(
+                    "Orientation predicate failed during facet visibility test",
+                    InsertionStrategy::CavityBased,
+                ))
             }
         }
     }

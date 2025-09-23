@@ -57,7 +57,6 @@ use std::{
     cmp,
     fmt::{self, Debug},
     hash::{Hash, Hasher},
-    iter::Sum,
     marker::PhantomData,
 };
 use thiserror::Error;
@@ -913,8 +912,8 @@ where
         validate_uuid(&self.uuid)?;
 
         // Check if all vertices are distinct from one another
-        let mut seen = FastHashSet::default();
-        if !self.vertices.iter().all(|vertex| seen.insert(*vertex)) {
+        let mut seen: FastHashSet<&Vertex<T, U, D>> = FastHashSet::default();
+        if !self.vertices.iter().all(|vertex| seen.insert(vertex)) {
             return Err(CellValidationError::DuplicateVertices);
         }
 
@@ -945,7 +944,7 @@ where
 // Advanced implementation block for Cell methods
 impl<T, U, V, const D: usize> Cell<T, U, V, D>
 where
-    T: CoordinateScalar + Clone + PartialEq + PartialOrd + Sum,
+    T: CoordinateScalar + Clone + PartialEq + PartialOrd,
     U: DataType,
     V: DataType,
     [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
@@ -983,7 +982,7 @@ where
     ///
     /// This method requires the coordinate type `T` to implement additional traits
     /// beyond the basic `Cell` requirements:
-    /// - `Clone + PartialEq + PartialOrd + Sum`: Required for
+    /// - `Clone + PartialEq + PartialOrd`: Required for
     ///   geometric computations and facet creation operations.
     ///
     /// # Returns

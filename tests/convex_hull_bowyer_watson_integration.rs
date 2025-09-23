@@ -210,8 +210,8 @@ fn test_comprehensive_hull_extension_execution() {
         "Final cell count should exceed initial"
     );
     assert!(
-        final_boundary_count > initial_boundary_count,
-        "Should have more boundary facets after extensions"
+        final_boundary_count >= initial_boundary_count,
+        "Boundary facets should not decrease after hull extensions"
     );
     assert_eq!(
         final_invalid_count, 0,

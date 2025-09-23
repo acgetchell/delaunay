@@ -223,7 +223,7 @@ where
 enum CoordRepr<T> {
     /// Regular numeric value
     Num(T),
-    /// String representation (for special values like "Infinity")
+    /// String representation (case-insensitive special values: "Infinity"/"Inf", "-Infinity"/"-Inf", "NaN")
     Str(String),
     /// Null value (will be converted to NaN)
     Null,
@@ -248,7 +248,7 @@ where
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_fmt(format_args!(
-                    "an array of {D} coordinates (numbers, null, \"Infinity\", or \"-Infinity\")"
+                    "an array of {D} coordinates (numbers, null, \"Infinity\", \"-Infinity\", \"NaN\", or their case-insensitive variants)"
                 ))
             }
 
@@ -270,10 +270,12 @@ where
                             value
                         }
                         CoordRepr::Str(s) => {
-                            // Handle special string representations
-                            match s.as_str() {
-                                "Infinity" => T::infinity(),
-                                "-Infinity" => T::neg_infinity(),
+                            // Handle special string representations (case-insensitive)
+                            let sl = s.trim().to_ascii_lowercase();
+                            match sl.as_str() {
+                                "infinity" | "inf" => T::infinity(),
+                                "-infinity" | "-inf" => T::neg_infinity(),
+                                "nan" => T::nan(),
                                 _ => {
                                     return Err(Error::custom(format!(
                                         "Unknown special value: {s}"
@@ -1704,6 +1706,120 @@ mod tests {
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(error_msg.contains("Unknown special value"));
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)] // Comprehensive test with many test cases
+    fn point_deserialize_case_insensitive_special_values() {
+        // Test case-insensitive deserialization of special values
+
+        // Test case-insensitive "Infinity" variants
+        let test_cases = vec![
+            (r#"["infinity", 1.0]"#, "lowercase infinity"),
+            (r#"["INFINITY", 1.0]"#, "uppercase infinity"),
+            (r#"["Infinity", 1.0]"#, "mixed case infinity"),
+            (r#"["inf", 1.0]"#, "lowercase inf"),
+            (r#"["INF", 1.0]"#, "uppercase inf"),
+            (r#"["Inf", 1.0]"#, "mixed case inf"),
+        ];
+
+        for (json_str, description) in test_cases {
+            let point: Point<f64, 2> = serde_json::from_str(json_str).unwrap_or_else(|e| {
+                panic!("Failed to deserialize {description} ({json_str}): {e}")
+            });
+
+            assert!(
+                point.coords[0].is_infinite() && point.coords[0].is_sign_positive(),
+                "First coordinate should be positive infinity for {description}"
+            );
+            assert_relative_eq!(point.coords[1], 1.0, epsilon = 1e-10);
+        }
+
+        // Test negative infinity variants
+        let neg_inf_cases = vec![
+            (r#"["-infinity", 2.0]"#, "lowercase -infinity"),
+            (r#"["-INFINITY", 2.0]"#, "uppercase -infinity"),
+            (r#"["-Infinity", 2.0]"#, "mixed case -infinity"),
+            (r#"["-inf", 2.0]"#, "lowercase -inf"),
+            (r#"["-INF", 2.0]"#, "uppercase -inf"),
+            (r#"["-Inf", 2.0]"#, "mixed case -inf"),
+        ];
+
+        for (json_str, description) in neg_inf_cases {
+            let point: Point<f64, 2> = serde_json::from_str(json_str).unwrap_or_else(|e| {
+                panic!("Failed to deserialize {description} ({json_str}): {e}")
+            });
+
+            assert!(
+                point.coords[0].is_infinite() && point.coords[0].is_sign_negative(),
+                "First coordinate should be negative infinity for {description}"
+            );
+            assert_relative_eq!(point.coords[1], 2.0, epsilon = 1e-10);
+        }
+
+        // Test case-insensitive "NaN" variants
+        let nan_cases = vec![
+            (r#"["nan", 3.0]"#, "lowercase nan"),
+            (r#"["NaN", 3.0]"#, "mixed case NaN"),
+            (r#"["NAN", 3.0]"#, "uppercase NAN"),
+            (r#"["Nan", 3.0]"#, "title case Nan"),
+        ];
+
+        for (json_str, description) in nan_cases {
+            let point: Point<f64, 2> = serde_json::from_str(json_str).unwrap_or_else(|e| {
+                panic!("Failed to deserialize {description} ({json_str}): {e}")
+            });
+
+            assert!(
+                point.coords[0].is_nan(),
+                "First coordinate should be NaN for {description}"
+            );
+            assert_relative_eq!(point.coords[1], 3.0, epsilon = 1e-10);
+        }
+
+        // Test whitespace trimming
+        let whitespace_cases = vec![
+            (r#"[" infinity ", 1.0]"#, "spaces around infinity"),
+            (r#"["\tinf\n", 2.0]"#, "tabs and newlines around inf"),
+            (r#"["  NaN  ", 3.0]"#, "spaces around NaN"),
+        ];
+
+        for (json_str, description) in whitespace_cases {
+            let point: Point<f64, 2> = serde_json::from_str(json_str).unwrap_or_else(|e| {
+                panic!("Failed to deserialize {description} ({json_str}): {e}")
+            });
+
+            if description.contains("infinity") || description.contains("inf") {
+                assert!(
+                    point.coords[0].is_infinite() && point.coords[0].is_sign_positive(),
+                    "First coordinate should be positive infinity for {description}"
+                );
+            } else {
+                assert!(
+                    point.coords[0].is_nan(),
+                    "First coordinate should be NaN for {description}"
+                );
+            }
+        }
+
+        // Test combined case insensitive values
+        let combined = r#"["INFINITY", "-inf", "Nan", 42.0]"#;
+        let point: Point<f64, 4> = serde_json::from_str(combined).unwrap();
+        assert!(point.coords[0].is_infinite() && point.coords[0].is_sign_positive());
+        assert!(point.coords[1].is_infinite() && point.coords[1].is_sign_negative());
+        assert!(point.coords[2].is_nan());
+        assert_relative_eq!(point.coords[3], 42.0, epsilon = 1e-10);
+
+        // Test that unknown special values still fail
+        let invalid = r#"["unknown_special", 1.0]"#;
+        let result: Result<Point<f64, 2>, _> = serde_json::from_str(invalid);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown special value")
+        );
     }
 
     #[test]

@@ -973,11 +973,12 @@ where
         };
 
         // Create test simplices for orientation comparison
-        let mut simplex_with_opposite: Vec<Point<T, D>> =
+        // Use SmallBuffer to avoid heap allocations for small simplices (typically D+1 vertices)
+        let mut simplex_with_opposite: SmallBuffer<Point<T, D>, 8> =
             facet_vertices.iter().map(|v| *v.point()).collect();
         simplex_with_opposite.push(*opposite_vertex.point());
 
-        let mut simplex_with_test: Vec<Point<T, D>> =
+        let mut simplex_with_test: SmallBuffer<Point<T, D>, 8> =
             facet_vertices.iter().map(|v| *v.point()).collect();
         simplex_with_test.push(*vertex.point());
 
@@ -1023,6 +1024,10 @@ where
         T: DivAssign<T> + AddAssign<T> + std::ops::Sub<Output = T> + std::ops::Mul<Output = T>,
     {
         let facet_vertices = facet.vertices();
+        if facet_vertices.is_empty() {
+            // Conservatively treat as not visible if we cannot compute a centroid
+            return false;
+        }
 
         // Calculate facet centroid
         let mut centroid_coords = [T::zero(); D];
@@ -1051,12 +1056,11 @@ where
 
         // For exterior vertices, use a more aggressive threshold
         // If the vertex is far from the facet centroid, consider it visible
-        // Use a threshold based on the perturbation scale multiplied by a factor
+        // Use a threshold based on the perturbation scale multiplied by a configurable factor
         let threshold = {
-            // TODO: Move VISIBILITY_THRESHOLD_MULTIPLIER to RobustPredicateConfig
-            const VISIBILITY_THRESHOLD_MULTIPLIER: f64 = 100.0;
             let scale = self.predicate_config.perturbation_scale;
-            let th = scale * scale * <T as From<f64>>::from(VISIBILITY_THRESHOLD_MULTIPLIER);
+            let multiplier = self.predicate_config.visibility_threshold_multiplier;
+            let th = scale * scale * multiplier;
             // Best-effort clamp: treat non-finite as "very large"
             // If T is float-like, this avoids NaN/Inf comparisons.
             if (f64::from(th)).is_finite() {
@@ -1376,6 +1380,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::used_underscore_binding)] // Variables used in conditional debug_println! macros
     fn test_no_double_counting_statistics() {
         debug_println!("Testing that robust vertex insertion statistics are not double counted");
 
@@ -1395,9 +1400,9 @@ mod tests {
             algorithm.get_statistics();
 
         debug_println!("After initial tetrahedron:");
-        println!("  Insertions: {insertions_after_initial}");
-        println!("  Cells created: {created_after_initial}");
-        println!("  Cells removed: {removed_after_initial}");
+        debug_println!("  Insertions: {insertions_after_initial}");
+        debug_println!("  Cells created: {created_after_initial}");
+        debug_println!("  Cells removed: {removed_after_initial}");
 
         assert_eq!(insertions_after_initial, 0, "No insertions performed yet");
         assert_eq!(
@@ -1425,21 +1430,22 @@ mod tests {
                 i + 1
             );
 
-            let (after_insertions, after_created, after_removed) = algorithm.get_statistics();
+            let (after_insertions, _after_created, _after_removed) = algorithm.get_statistics();
             let insertion_info = insertion_result.unwrap();
 
-            println!(
+            debug_println!(
                 "\nAfter adding vertex {} ({:?}):",
                 i + 1,
                 new_vertex.point().to_array()
             );
-            println!("  Insertions: {after_insertions}");
-            println!("  Cells created: {after_created}");
-            println!("  Cells removed: {after_removed}");
-            println!("  Total cells in TDS: {}", tds.number_of_cells());
-            println!(
+            debug_println!("  Insertions: {after_insertions}");
+            debug_println!("  Cells created: {_after_created}");
+            debug_println!("  Cells removed: {_after_removed}");
+            debug_println!("  Total cells in TDS: {}", tds.number_of_cells());
+            debug_println!(
                 "  InsertionInfo: created={}, removed={}",
-                insertion_info.cells_created, insertion_info.cells_removed
+                insertion_info.cells_created,
+                insertion_info.cells_removed
             );
 
             // Critical test: insertion count should increment by exactly 1
@@ -1459,14 +1465,14 @@ mod tests {
             );
         }
 
-        println!(
+        debug_println!(
             "✓ No double counting detected in robust algorithm - statistics are accurate and consistent"
         );
     }
 
     #[test]
     fn test_debug_exterior_vertex_insertion() {
-        println!("Testing exterior vertex insertion in robust Bowyer-Watson");
+        debug_println!("Testing exterior vertex insertion in robust Bowyer-Watson");
 
         let mut algorithm = RobustBoyerWatson::new();
 
@@ -1479,11 +1485,11 @@ mod tests {
         ];
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
 
-        println!("Initial TDS has {} cells", tds.number_of_cells());
+        debug_println!("Initial TDS has {} cells", tds.number_of_cells());
 
         // First, test with an interior vertex (should work)
         let interior_vertex = vertex!([0.5, 0.5, 0.5]);
-        println!(
+        debug_println!(
             "Inserting interior vertex {:?}",
             interior_vertex.point().to_array()
         );
@@ -1501,10 +1507,10 @@ mod tests {
             "Interior vertex insertion should succeed"
         );
 
-        println!("TDS now has {} cells", tds.number_of_cells());
+        debug_println!("TDS now has {} cells", tds.number_of_cells());
 
         // Let's check the TDS consistency after the interior insertion
-        println!("Checking TDS consistency...");
+        debug_println!("Checking TDS consistency...");
         let boundary_facets_result = tds.boundary_facets();
         match &boundary_facets_result {
             Ok(boundary_facets) => println!("TDS has {} boundary facets", boundary_facets.len()),
@@ -1520,18 +1526,18 @@ mod tests {
 
         // Now test with an exterior vertex (this is what's failing)
         let exterior_vertex = vertex!([2.0, 0.0, 0.0]);
-        println!(
+        debug_println!(
             "Inserting exterior vertex {:?}",
             exterior_vertex.point().to_array()
         );
 
         // Let's debug what happens step by step
-        println!("Finding bad cells for exterior vertex...");
+        debug_println!("Finding bad cells for exterior vertex...");
         let bad_cells = algorithm.robust_find_bad_cells(&tds, &exterior_vertex);
-        println!("Found {} bad cells: {:?}", bad_cells.len(), bad_cells);
+        debug_println!("Found {} bad cells: {:?}", bad_cells.len(), bad_cells);
 
         if bad_cells.is_empty() {
-            println!("No bad cells found - will try hull extension");
+            debug_println!("No bad cells found - will try hull extension");
 
             // Check what boundary facets exist before trying visibility
             println!("Getting all boundary facets...");
@@ -1588,7 +1594,7 @@ mod tests {
 
     #[test]
     fn test_cavity_based_insertion_consistency() {
-        println!("Testing cavity-based insertion maintains TDS consistency");
+        debug_println!("Testing cavity-based insertion maintains TDS consistency");
 
         let mut algorithm = RobustBoyerWatson::new();
 
