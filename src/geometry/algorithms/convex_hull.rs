@@ -172,7 +172,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + Sized + Serialize + DeserializeOwned,
+    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
 {
     /// The boundary facets that form the convex hull
     pub hull_facets: Vec<Facet<T, U, V, D>>,
@@ -203,7 +203,7 @@ where
         + From<f64>,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + Sized + Serialize + DeserializeOwned,
+    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
     f64: From<T>,
     for<'a> &'a T: std::ops::Div<T>,
     OrderedFloat<f64>: From<T>,
@@ -1149,7 +1149,7 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
@@ -1165,7 +1165,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + Sized + Serialize + DeserializeOwned,
+    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
 {
     fn default() -> Self {
         Self {
@@ -2487,7 +2487,7 @@ mod tests {
     #[test]
     fn test_from_triangulation_empty_vertices_error() {
         // Test error path when triangulation has no vertices
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let result = ConvexHull::from_triangulation(&empty_tds);
 
         assert!(result.is_err());
@@ -2502,7 +2502,7 @@ mod tests {
     #[test]
     fn test_from_triangulation_no_cells_error() {
         // Create a TDS with vertices but no cells (manually constructed)
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let vertex = vertex!([0.0, 0.0, 0.0]);
         let _ = tds.insert_vertex_with_mapping(vertex);
 

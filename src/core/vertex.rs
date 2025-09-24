@@ -139,7 +139,7 @@ pub use crate::vertex;
 // VERTEX STRUCT DEFINITION
 // =============================================================================
 
-#[derive(Builder, Clone, Copy, Debug, Default, Serialize)]
+#[derive(Builder, Clone, Copy, Debug, Serialize)]
 /// The `Vertex` struct represents a vertex in a triangulation with geometric
 /// coordinates, unique identification, and optional metadata.
 ///
@@ -176,7 +176,7 @@ pub struct Vertex<T, U, const D: usize>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// The coordinates of the vertex as a D-dimensional Point.
     point: Point<T, D>,
@@ -203,7 +203,7 @@ impl<'de, T, U, const D: usize> Deserialize<'de> for Vertex<T, U, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
     where
@@ -213,7 +213,7 @@ where
         where
             T: CoordinateScalar,
             U: DataType,
-            [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
         {
             _phantom: PhantomData<(T, U)>,
         }
@@ -222,7 +222,7 @@ where
         where
             T: CoordinateScalar,
             U: DataType,
-            [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
         {
             type Value = Vertex<T, U, D>;
 
@@ -311,8 +311,45 @@ impl<T, U, const D: usize> Vertex<T, U, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
+    /// Creates an empty vertex at the origin with nil UUID and default data.
+    ///
+    /// This method creates a vertex with coordinates all set to `T::default()` (typically zero),
+    /// a nil UUID, and default data. This is useful for creating placeholder vertices or
+    /// for testing purposes.
+    ///
+    /// Note: A vertex created with `empty()` will fail validation due to the nil UUID.
+    /// Use the `vertex!` macro or `new()` constructor for creating valid vertices.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::vertex::Vertex;
+    /// use approx::assert_relative_eq;
+    ///
+    /// let empty_vertex: Vertex<f64, Option<()>, 3> = Vertex::empty();
+    /// assert_relative_eq!(
+    ///     empty_vertex.point().to_array().as_slice(),
+    ///     [0.0, 0.0, 0.0].as_slice(),
+    ///     epsilon = 1e-9
+    /// );
+    /// assert!(empty_vertex.uuid().is_nil());
+    /// assert!(empty_vertex.data.is_none());
+    /// ```
+    #[must_use]
+    pub fn empty() -> Self
+    where
+        T: Default,
+    {
+        Self {
+            point: Point::default(),
+            uuid: Uuid::nil(),
+            incident_cell: None,
+            data: None,
+        }
+    }
+
     /// The function `from_points` takes a vector of points and returns a
     /// vector of vertices, using the `new` method.
     ///
@@ -529,8 +566,8 @@ where
     /// let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
     /// assert!(vertex.is_valid().is_ok());
     ///
-    /// // Test with default vertex (which has nil UUID) to show validation
-    /// let default_vertex: Vertex<f64, Option<()>, 3> = Vertex::default();
+    /// // Test with empty vertex (which has nil UUID) to show validation
+    /// let default_vertex: Vertex<f64, Option<()>, 3> = Vertex::empty();
     /// match default_vertex.is_valid() {
     ///     Err(VertexValidationError::InvalidUuid { .. }) => (), // Expected - nil UUID
     ///     other => panic!("Expected InvalidUuid error, got: {:?}", other),
@@ -562,7 +599,7 @@ impl<T, U, const D: usize> PartialEq for Vertex<T, U, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Equality of vertices is based on ordered equality of coordinates using the Coordinate trait.
     #[inline]
@@ -578,7 +615,7 @@ impl<T, U, const D: usize> PartialOrd for Vertex<T, U, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Order of vertices is based on lexicographic order of coordinates using Point's `partial_cmp`.
     /// This ensures consistent ordering with special floating-point values (NaN, infinity)
@@ -595,7 +632,7 @@ impl<T, U, const D: usize> From<Vertex<T, U, D>> for [T; D]
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn from(vertex: Vertex<T, U, D>) -> [T; D] {
@@ -609,7 +646,7 @@ impl<T, U, const D: usize> From<&Vertex<T, U, D>> for [T; D]
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn from(vertex: &Vertex<T, U, D>) -> [T; D] {
@@ -623,7 +660,7 @@ impl<T, U, const D: usize> From<&Vertex<T, U, D>> for Point<T, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn from(vertex: &Vertex<T, U, D>) -> Self {
@@ -638,7 +675,7 @@ impl<T, U, const D: usize> Eq for Vertex<T, U, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Generic Eq implementation for Vertex based on point equality
 }
@@ -647,7 +684,7 @@ impl<T, U, const D: usize> Hash for Vertex<T, U, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     Point<T, D>: Hash,
 {
     /// Hash implementation for Vertex using only coordinates for consistency with `PartialEq`.
@@ -688,12 +725,18 @@ mod tests {
         Corner = 3,
     }
 
+    impl From<PointType> for u8 {
+        fn from(point_type: PointType) -> Self {
+            point_type as Self
+        }
+    }
+
     impl Serialize for PointType {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: serde::Serializer,
         {
-            serializer.serialize_u8(*self as u8)
+            serializer.serialize_u8(u8::from(*self))
         }
     }
 
@@ -726,7 +769,7 @@ mod tests {
     ) where
         T: CoordinateScalar,
         U: DataType,
-        [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         assert_eq!(vertex.point().to_array(), expected_coords);
         assert_eq!(vertex.dim(), D);
@@ -774,12 +817,40 @@ mod tests {
     }
 
     // =============================================================================
+    // POINTTYPE CONVERSION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_pointtype_u8_conversion() {
+        // Test u8::from conversion for each PointType variant
+        assert_eq!(u8::from(PointType::Origin), 0);
+        assert_eq!(u8::from(PointType::Boundary), 1);
+        assert_eq!(u8::from(PointType::Interior), 2);
+        assert_eq!(u8::from(PointType::Corner), 3);
+
+        // Test serialization uses the From trait correctly
+        let origin_json = serde_json::to_string(&PointType::Origin).unwrap();
+        assert_eq!(origin_json, "0");
+
+        let corner_json = serde_json::to_string(&PointType::Corner).unwrap();
+        assert_eq!(corner_json, "3");
+
+        // Test round-trip serialization/deserialization
+        let original = PointType::Boundary;
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: PointType = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+
+        println!("✓ PointType u8::from conversion works correctly");
+    }
+
+    // =============================================================================
     // BASIC VERTEX FUNCTIONALITY
     // =============================================================================
 
     #[test]
-    fn vertex_default() {
-        let vertex: Vertex<f64, Option<()>, 3> = Vertex::default();
+    fn vertex_empty() {
+        let vertex: Vertex<f64, Option<()>, 3> = Vertex::empty();
 
         assert_relative_eq!(
             vertex.point().to_array().as_slice(),
@@ -1579,8 +1650,8 @@ mod tests {
         assert!(valid_vertex.is_valid().is_ok());
         assert!(!valid_vertex.uuid().is_nil());
 
-        // Test that default vertex (which has nil UUID) is invalid
-        let default_vertex: Vertex<f64, Option<()>, 3> = Vertex::default();
+        // Test that empty vertex (which has nil UUID) is invalid
+        let default_vertex: Vertex<f64, Option<()>, 3> = Vertex::empty();
         match default_vertex.is_valid() {
             Err(VertexValidationError::InvalidUuid { source: _ }) => (), // Expected
             other => panic!("Expected InvalidUuid error, got: {other:?}"),

@@ -87,7 +87,7 @@ pub mod test_helpers {
     #[must_use]
     pub fn create_test_tds() -> Tds<f64, Option<()>, Option<()>, 4> {
         // Create an empty TDS with no vertices
-        Tds::default()
+        Tds::empty()
     }
 
     /// Create a triangulation with some test vertices

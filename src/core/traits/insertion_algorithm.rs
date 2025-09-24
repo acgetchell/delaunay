@@ -385,7 +385,7 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Buffer for storing bad cell keys during cavity detection
     bad_cells_buffer: SmallBuffer<crate::core::triangulation_data_structure::CellKey, 16>,
@@ -402,7 +402,7 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn default() -> Self {
         Self::new()
@@ -414,7 +414,7 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Create new empty buffers
     #[must_use]
@@ -594,7 +594,7 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Insert a single vertex into the triangulation
     ///
@@ -752,7 +752,7 @@ where
     fn is_vertex_interior(&self, tds: &Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) -> bool
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
-        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         use crate::geometry::predicates::{InSphere, insphere};
 
@@ -1201,7 +1201,7 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Default implementation delegates to the static helper method
         Self::is_facet_visible_from_vertex_impl(tds, facet, vertex, adjacent_cell_key)
@@ -1355,7 +1355,7 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Get visible boundary facets
         let visible_facets = self.find_visible_boundary_facets(tds, vertex)?;
@@ -1421,7 +1421,7 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Conservative fallback: try to connect to any existing boundary facet
         // This avoids creating invalid geometry by arbitrary vertex replacement
@@ -1557,7 +1557,7 @@ where
         U: DeserializeOwned,
         V: DeserializeOwned,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         if vertices.is_empty() {
             return Ok(());
@@ -1747,7 +1747,7 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         let mut visible_facets = Vec::new();
 
@@ -1843,7 +1843,7 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Get the adjacent cell to this boundary facet
         let Some(adjacent_cell) = tds.cells().get(adjacent_cell_key) else {
@@ -1977,7 +1977,7 @@ where
         U: DeserializeOwned,
         V: DeserializeOwned,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Default implementation: use the regular Tds::new constructor
         Tds::new(vertices)
@@ -2707,7 +2707,7 @@ mod tests {
         println!("Testing find_bad_cells error cases");
 
         // Create an empty triangulation to test NoCells error
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let mut algorithm = IncrementalBowyerWatson::new();
         let vertex = vertex!([0.25, 0.25, 0.25]);
 
@@ -3519,7 +3519,7 @@ mod tests {
         println!("Testing InsertionStrategy determination edge cases");
 
         // Test with empty TDS
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
         let strategy =
@@ -3733,7 +3733,7 @@ mod tests {
         println!("Testing insertion strategies with potentially corrupted TDS");
 
         // Create an empty TDS to simulate corruption scenarios
-        let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let mut algorithm = IncrementalBowyerWatson::new();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
@@ -3808,7 +3808,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             // Missing one vertex for 3D (need D+1 = 4)
         ];
-        let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let result = algorithm.triangulate(&mut empty_tds, &insufficient_vertices);
 
         match result {
@@ -3830,7 +3830,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
             vertex!([1.0, 1.0, 1.0]), // Additional vertex for testing incremental insertion
         ];
-        let mut tds = Tds::default();
+        let mut tds = Tds::empty();
         let result = algorithm.triangulate(&mut tds, &sufficient_vertices);
 
         match result {
@@ -3851,7 +3851,7 @@ mod tests {
 
         // Test triangulate with empty vertex list
         let empty_vertices = vec![];
-        let mut empty_tds = Tds::default();
+        let mut empty_tds = Tds::empty();
         let result = algorithm.triangulate(&mut empty_tds, &empty_vertices);
         assert!(
             result.is_ok(),
@@ -3868,7 +3868,7 @@ mod tests {
         println!("Testing create_initial_simplex edge cases");
 
         // Test with wrong number of vertices
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
 
         // Too few vertices
         let too_few_vertices = vec![
@@ -3968,7 +3968,7 @@ mod tests {
         println!("  ✓ Finalization succeeded on valid TDS");
 
         // Test finalization on empty TDS (should handle gracefully)
-        let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let result =
             IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_triangulation(
                 &mut empty_tds,
@@ -3992,7 +3992,7 @@ mod tests {
         println!("Testing utility methods error handling");
 
         // Test ensure_vertex_in_tds
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
         // Test successful vertex insertion
@@ -4104,7 +4104,7 @@ mod tests {
         println!("  ✓ finalize_after_insertion succeeded on valid TDS");
 
         // Test with empty TDS (should handle gracefully)
-        let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let result =
             IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_after_insertion(
                 &mut empty_tds,
@@ -4182,7 +4182,7 @@ mod tests {
         let algorithm = IncrementalBowyerWatson::new();
 
         // Test find_visible_boundary_facets with empty TDS
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
         let result = algorithm.find_visible_boundary_facets(&empty_tds, &test_vertex);
@@ -4373,7 +4373,7 @@ mod tests {
         let mut algorithm = IncrementalBowyerWatson::new();
 
         // Test NoCells error with empty TDS
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
         let result = algorithm.find_bad_cells(&empty_tds, &test_vertex);

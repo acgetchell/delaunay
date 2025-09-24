@@ -126,7 +126,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Unified statistics tracking
     stats: InsertionStatistics,
@@ -160,7 +160,7 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Creates a new incremental Bowyer-Watson algorithm instance
     ///
@@ -225,7 +225,7 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn default() -> Self {
         Self::new()
@@ -238,7 +238,7 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
@@ -257,7 +257,7 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Insert a single vertex into the triangulation
     fn insert_vertex(
@@ -1150,7 +1150,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
 
         // Test the triangulate method (this is where double counting would occur)
         algorithm.triangulate(&mut tds, &vertices).unwrap();

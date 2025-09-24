@@ -155,7 +155,7 @@ pub fn robust_insphere<T, const D: usize>(
 ) -> Result<InSphere, CoordinateConversionError>
 where
     T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::ConversionFailed {
@@ -205,7 +205,7 @@ fn adaptive_tolerance_insphere<T, const D: usize>(
 ) -> Result<InSphere, CoordinateConversionError>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Build the insphere determinant matrix
     let matrix = build_insphere_matrix(simplex_points, test_point)?;
@@ -240,7 +240,7 @@ fn conditioned_insphere<T, const D: usize>(
 ) -> Result<InSphere, CoordinateConversionError>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Build matrix and apply conditioning
     let matrix = build_insphere_matrix(simplex_points, test_point)?;
@@ -269,7 +269,7 @@ fn symbolic_perturbation_insphere<T, const D: usize>(
 ) -> InSphere
 where
     T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Try with small perturbations in different directions
     let perturbation_directions = generate_perturbation_directions::<T, D>();
@@ -301,7 +301,7 @@ pub fn robust_orientation<T, const D: usize>(
 ) -> Result<Orientation, CoordinateConversionError>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + Sized,
+    [T; D]: Copy + Sized,
 {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::ConversionFailed {
@@ -342,7 +342,7 @@ fn build_insphere_matrix<T, const D: usize>(
 ) -> Result<na::DMatrix<f64>, CoordinateConversionError>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     use na::DMatrix;
 
@@ -389,7 +389,7 @@ fn build_orientation_matrix<T, const D: usize>(
 ) -> Result<na::DMatrix<f64>, CoordinateConversionError>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + Sized,
+    [T; D]: Copy + Sized,
 {
     use na::DMatrix;
 
@@ -520,7 +520,7 @@ fn verify_insphere_consistency<T, const D: usize>(
 ) -> ConsistencyResult
 where
     T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Use the existing distance-based insphere test for verification
     super::predicates::insphere_distance(simplex_points, *test_point).map_or(ConsistencyResult::Unverifiable, |distance_result| match (determinant_result, distance_result) {
@@ -581,7 +581,7 @@ fn apply_perturbation<T, const D: usize>(
 ) -> Point<T, D>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     let mut coords: [T; D] = (*point).into();
 
@@ -607,7 +607,7 @@ fn geometric_deterministic_tie_breaking<T, const D: usize>(
 ) -> InSphere
 where
     T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Implement Simulation of Simplicity for insphere predicate
     // We assign symbolic indices: simplex points get indices 0..D, test point gets D+1
@@ -666,7 +666,7 @@ fn centroid_based_tie_breaking<T, const D: usize>(
 ) -> InSphere
 where
     T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Calculate simplex centroid
     let mut centroid_coords = [T::zero(); D];

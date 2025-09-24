@@ -198,7 +198,7 @@ fn sorted_vertices<T, U, const D: usize>(vertices: &[Vertex<T, U, D>]) -> Vec<Ve
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     let mut sorted = vertices.to_vec();
     sorted.sort_by(|a, b| {
@@ -212,7 +212,7 @@ where
 // CELL STRUCT DEFINITION
 // =============================================================================
 
-#[derive(Builder, Clone, Debug, Default, Serialize)]
+#[derive(Builder, Clone, Debug, Serialize)]
 #[builder(build_fn(validate = "Self::validate"))]
 /// The [Cell] struct represents a d-dimensional
 /// [simplex](https://en.wikipedia.org/wiki/Simplex) with vertices, a unique
@@ -238,7 +238,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// The vertices of the cell.
     vertices: Vec<Vertex<T, U, D>>,
@@ -274,7 +274,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
     where
@@ -285,7 +285,7 @@ where
             T: CoordinateScalar,
             U: DataType,
             V: DataType,
-            [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
         {
             _phantom: PhantomData<(T, U, V)>,
         }
@@ -295,7 +295,7 @@ where
             T: CoordinateScalar,
             U: DataType,
             V: DataType,
-            [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
         {
             type Value = Cell<T, U, V, D>;
 
@@ -380,7 +380,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn validate(&self) -> Result<(), CellValidationError> {
         let vertices =
@@ -421,7 +421,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// The function returns the number of vertices in the [Cell].
     ///
@@ -947,7 +947,7 @@ where
     T: CoordinateScalar + Clone + PartialEq + PartialOrd,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Returns all facets (faces) of the cell.
     ///
@@ -1066,7 +1066,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -1080,7 +1080,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
@@ -1099,7 +1099,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
 }
 
@@ -1115,7 +1115,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     Vertex<T, U, D>: Hash,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -1162,7 +1162,7 @@ mod tests {
         T: CoordinateScalar,
         U: DataType,
         V: DataType,
-        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         assert_eq!(cell.number_of_vertices(), expected_vertices);
         assert_eq!(cell.dim(), expected_dim);

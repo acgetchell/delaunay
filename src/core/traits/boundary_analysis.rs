@@ -52,7 +52,7 @@ where
     V: DataType + DeserializeOwned,
     f64: From<T>,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     ordered_float::OrderedFloat<f64>: From<T>,
 {
     /// Identifies all boundary facets in the triangulation.

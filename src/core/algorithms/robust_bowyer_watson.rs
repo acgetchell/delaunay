@@ -44,7 +44,7 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Configuration for robust predicates
     predicate_config: RobustPredicateConfig<T>,
@@ -70,7 +70,7 @@ where
     f64: From<T>,
     for<'a> &'a T: std::ops::Div<T>,
     ordered_float::OrderedFloat<f64>: From<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     na::OPoint<T, na::Const<D>>: From<[f64; D]>,
 {
@@ -87,7 +87,7 @@ where
     f64: From<T>,
     for<'a> &'a T: std::ops::Div<T>,
     ordered_float::OrderedFloat<f64>: From<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     na::OPoint<T, na::Const<D>>: From<[f64; D]>,
 {
@@ -1191,7 +1191,7 @@ where
     V: crate::core::traits::data_type::DataType + DeserializeOwned,
     f64: From<T>,
     for<'a> &'a T: std::ops::Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     ordered_float::OrderedFloat<f64>: From<T>,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
@@ -1226,7 +1226,7 @@ where
     f64: From<T>,
     for<'a> &'a T: std::ops::Div<T>,
     ordered_float::OrderedFloat<f64>: From<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     na::OPoint<T, na::Const<D>>: From<[f64; D]>,
 {
@@ -1314,7 +1314,7 @@ mod tests {
             + num_traits::cast::NumCast,
         U: crate::core::traits::data_type::DataType,
         V: crate::core::traits::data_type::DataType,
-        [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         use crate::core::util::derive_facet_key_from_vertices;
 

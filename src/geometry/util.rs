@@ -9,6 +9,7 @@ use peroxide::fuga::{LinearAlgebra, MatrixTrait, zeros};
 use peroxide::statistics::ops::factorial;
 use rand::Rng;
 use rand::distr::uniform::SampleUniform;
+use serde::{Serialize, de::DeserializeOwned};
 use std::iter::Sum;
 
 use crate::core::traits::data_type::DataType;
@@ -1159,7 +1160,7 @@ where
     T: CoordinateScalar + Sum + Zero,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     let mut total_measure = T::zero();
 
@@ -1682,7 +1683,7 @@ where
     U: DataType,
     V: DataType,
     for<'a> &'a T: std::ops::Div<T>,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Generate random points (seeded or unseeded)
     let points: Vec<Point<T, D>> = match seed {

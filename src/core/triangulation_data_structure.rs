@@ -386,7 +386,7 @@ new_key_type! {
     pub struct CellKey;
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 /// The `Tds` struct represents a triangulation data structure with vertices
 /// and cells, where the vertices and cells are identified by UUIDs.
 ///
@@ -443,7 +443,7 @@ where
     T: CoordinateScalar + DeserializeOwned,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// `SlotMap` for storing vertices, allowing stable keys and efficient access.
     vertices: SlotMap<VertexKey, Vertex<T, U, D>>,
@@ -497,7 +497,7 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Returns a reference to the cells `SlotMap`.
     ///
@@ -595,7 +595,7 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::default();
+    /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
     /// assert_eq!(tds.number_of_vertices(), 0);
     /// ```
     ///
@@ -608,7 +608,7 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::default();
+    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::empty();
     /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
     /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([4.0, 5.0, 6.0]);
     ///
@@ -730,11 +730,9 @@ where
     /// ```
     #[must_use]
     pub fn dim(&self) -> i32 {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-        let len = self.number_of_vertices() as i32;
+        let len = i32::try_from(self.number_of_vertices()).unwrap_or(i32::MAX);
         // We need at least D+1 vertices to form a simplex in D dimensions
-        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-        let max_dim = D as i32;
+        let max_dim = i32::try_from(D).unwrap_or(i32::MAX);
         min(len - 1, max_dim)
     }
 
@@ -811,7 +809,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Returns a mutable reference to the vertices `SlotMap`.
     ///
@@ -1767,8 +1765,46 @@ where
     U: DataType,
     V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
+    /// Creates a new empty triangulation data structure.
+    ///
+    /// This function creates an empty triangulation with no vertices and no cells.
+    /// It's equivalent to calling `Tds::new(&[])` but more explicit about the intent
+    /// to create an empty triangulation.
+    ///
+    /// # Returns
+    ///
+    /// An empty triangulation data structure with:
+    /// - No vertices
+    /// - No cells
+    /// - Construction state set to `Incomplete(0)`
+    /// - Dimension of -1 (empty)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::triangulation_data_structure::TriangulationConstructionState;
+    ///
+    /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
+    /// assert_eq!(tds.number_of_vertices(), 0);
+    /// assert_eq!(tds.number_of_cells(), 0);
+    /// assert_eq!(tds.dim(), -1);
+    /// assert!(matches!(tds.construction_state, TriangulationConstructionState::Incomplete(0)));
+    /// ```
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            vertices: SlotMap::with_key(),
+            cells: SlotMap::with_key(),
+            uuid_to_vertex_key: UuidToVertexKeyMap::default(),
+            uuid_to_cell_key: UuidToCellKeyMap::default(),
+            construction_state: TriangulationConstructionState::Incomplete(0),
+            generation: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
     /// The function creates a new instance of a triangulation data structure
     /// with given vertices, initializing the vertices and cells.
     ///
@@ -1934,7 +1970,7 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::default();
+    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::empty();
     /// let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
     ///
     /// let result = tds.add(vertex);
@@ -1951,7 +1987,7 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::default();
+    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::empty();
     /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
     /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]); // Same coordinates
     ///
@@ -1969,7 +2005,7 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::default();
+    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::empty();
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1995,7 +2031,7 @@ where
     /// use delaunay::vertex;
     ///
     /// // Start with empty triangulation (3D)
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
     ///
     /// // Initially: empty, unconstructed
     /// assert_eq!(tds.number_of_vertices(), 0);
@@ -2355,7 +2391,7 @@ where
     U: DataType,
     V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Assigns neighbor relationships between cells based on shared facets with semantic ordering.
     ///
@@ -2712,7 +2748,7 @@ where
     U: DataType,
     V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Remove duplicate cells (cells with identical vertex sets)
     ///
@@ -3065,7 +3101,7 @@ where
                     // The error is already TriangulationValidationError, so just propagate it
                     let vertex_keys = self.get_cell_vertex_keys(first_cell_key)?;
                     let mut facet_vertex_keys = Vec::with_capacity(vertex_keys.len() - 1);
-                    let idx = first_facet_index as usize;
+                    let idx: usize = first_facet_index.into();
                     for (i, &key) in vertex_keys.iter().enumerate() {
                         if i != idx {
                             facet_vertex_keys.push(key);
@@ -3162,7 +3198,7 @@ where
     U: DataType,
     V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Validates the consistency of vertex UUID-to-key mappings.
     ///
@@ -3653,7 +3689,7 @@ where
     T: CoordinateScalar + DeserializeOwned,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn eq(&self, other: &Self) -> bool {
         // Early exit if the basic counts don't match
@@ -3745,7 +3781,7 @@ where
     T: CoordinateScalar + DeserializeOwned,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
 }
 
@@ -3755,7 +3791,7 @@ where
     T: CoordinateScalar + DeserializeOwned,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn deserialize<D2>(deserializer: D2) -> Result<Self, D2::Error>
     where
@@ -3775,7 +3811,7 @@ where
             T: CoordinateScalar + DeserializeOwned,
             U: DataType + DeserializeOwned,
             V: DataType + DeserializeOwned,
-            [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
         {
             type Value = Tds<T, U, V, D>;
 
@@ -3886,7 +3922,7 @@ mod tests {
     where
         T: CoordinateScalar,
         U: DataType,
-        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         let mut vertex = data.map_or_else(
             || {
@@ -3916,7 +3952,7 @@ mod tests {
     fn test_add_vertex_comprehensive() {
         // Test successful vertex addition
         {
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
             let vertex = vertex!([1.0, 2.0, 3.0]);
             let result = tds.add(vertex);
             assert!(result.is_ok(), "Basic vertex addition should succeed");
@@ -3925,7 +3961,7 @@ mod tests {
 
         // Test duplicate coordinates error
         {
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
             let vertex = vertex!([1.0, 2.0, 3.0]);
             tds.add(vertex).unwrap();
 
@@ -3941,7 +3977,7 @@ mod tests {
 
         // Test duplicate UUID with different coordinates
         {
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
             let vertex1 = vertex!([1.0, 2.0, 3.0]);
             let uuid1 = vertex1.uuid();
             tds.add(vertex1).unwrap();
@@ -3962,7 +3998,7 @@ mod tests {
 
         // Test vertex addition increasing counts
         {
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
             let initial_vertices = vec![
                 vertex!([0.0, 0.0, 0.0]),
                 vertex!([1.0, 0.0, 0.0]),
@@ -3989,7 +4025,7 @@ mod tests {
 
         // Test that added vertices are properly accessible
         {
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
             let vertex = vertex!([1.0, 2.0, 3.0]);
             let uuid = vertex.uuid();
             tds.add(vertex).unwrap();
@@ -4019,7 +4055,7 @@ mod tests {
     fn test_add_vertex_rollback_on_algorithm_failure() {
         // This test verifies that if vertex insertion fails after the vertex has been
         // added to the TDS, the vertex is properly rolled back (removed)
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
 
         // First, create a triangulation with 4 vertices to get past the initial simplex creation
         let vertices = vec![
@@ -4067,7 +4103,7 @@ mod tests {
         // This test verifies atomicity: if assign_neighbors() or assign_incident_cells()
         // fails after successful algorithm.insert_vertex(), the TDS is rolled back completely.
 
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
 
         // Create initial triangulation
         let vertices = vec![
@@ -4158,7 +4194,7 @@ mod tests {
 
         // Test empty TDS creation
         {
-            let empty_tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let empty_tds: Tds<f64, usize, usize, 3> = Tds::empty();
             assert_eq!(empty_tds.number_of_vertices(), 0);
             assert_eq!(empty_tds.number_of_cells(), 0);
             assert_eq!(empty_tds.dim(), -1);
@@ -4192,6 +4228,439 @@ mod tests {
         }
     }
 
+    #[test]
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+    fn test_empty_constructor_comprehensive() {
+        // Test basic empty() constructor properties in 3D
+        {
+            let tds: Tds<f64, usize, usize, 3> = Tds::empty();
+
+            // Basic properties
+            assert_eq!(
+                tds.number_of_vertices(),
+                0,
+                "Empty TDS should have no vertices"
+            );
+            assert_eq!(tds.number_of_cells(), 0, "Empty TDS should have no cells");
+            assert_eq!(tds.dim(), -1, "Empty TDS should have dimension -1");
+
+            // Construction state
+            assert!(
+                matches!(
+                    tds.construction_state,
+                    TriangulationConstructionState::Incomplete(0)
+                ),
+                "Empty TDS should be in Incomplete(0) state"
+            );
+
+            // Collections should be empty
+            assert!(
+                tds.vertices().is_empty(),
+                "Vertices collection should be empty"
+            );
+            assert!(tds.cells().is_empty(), "Cells collection should be empty");
+
+            // Generation should be initialized to 0
+            assert_eq!(tds.generation(), 0, "Initial generation should be 0");
+        }
+
+        // Test equivalency with Tds::new(&[]) across dimensions
+        {
+            // 2D equivalency test
+            let empty_2d_via_constructor = Tds::<f64, usize, usize, 2>::empty();
+            let empty_2d_via_new = Tds::<f64, usize, usize, 2>::new(&[]).unwrap();
+            assert_eq!(
+                empty_2d_via_constructor, empty_2d_via_new,
+                "2D: empty() should equal new(&[])"
+            );
+
+            // 3D equivalency test
+            let empty_3d_via_constructor = Tds::<f64, usize, usize, 3>::empty();
+            let empty_3d_via_new = Tds::<f64, usize, usize, 3>::new(&[]).unwrap();
+            assert_eq!(
+                empty_3d_via_constructor, empty_3d_via_new,
+                "3D: empty() should equal new(&[])"
+            );
+
+            // 4D equivalency test
+            let empty_4d_via_constructor = Tds::<f64, usize, usize, 4>::empty();
+            let empty_4d_via_new = Tds::<f64, usize, usize, 4>::new(&[]).unwrap();
+            assert_eq!(
+                empty_4d_via_constructor, empty_4d_via_new,
+                "4D: empty() should equal new(&[])"
+            );
+
+            // 5D equivalency test
+            let empty_5d_via_constructor = Tds::<f64, usize, usize, 5>::empty();
+            let empty_5d_via_new = Tds::<f64, usize, usize, 5>::new(&[]).unwrap();
+            assert_eq!(
+                empty_5d_via_constructor, empty_5d_via_new,
+                "5D: empty() should equal new(&[])"
+            );
+        }
+
+        // Test empty() works correctly across dimensions 2-5
+        {
+            let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+            let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+            let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
+            let tds_5d: Tds<f64, Option<()>, Option<()>, 5> = Tds::empty();
+
+            // All should be empty regardless of dimension
+            assert_eq!(
+                tds_2d.number_of_vertices(),
+                0,
+                "2D empty TDS should have 0 vertices"
+            );
+            assert_eq!(
+                tds_3d.number_of_vertices(),
+                0,
+                "3D empty TDS should have 0 vertices"
+            );
+            assert_eq!(
+                tds_4d.number_of_vertices(),
+                0,
+                "4D empty TDS should have 0 vertices"
+            );
+            assert_eq!(
+                tds_5d.number_of_vertices(),
+                0,
+                "5D empty TDS should have 0 vertices"
+            );
+
+            assert_eq!(
+                tds_2d.number_of_cells(),
+                0,
+                "2D empty TDS should have 0 cells"
+            );
+            assert_eq!(
+                tds_3d.number_of_cells(),
+                0,
+                "3D empty TDS should have 0 cells"
+            );
+            assert_eq!(
+                tds_4d.number_of_cells(),
+                0,
+                "4D empty TDS should have 0 cells"
+            );
+            assert_eq!(
+                tds_5d.number_of_cells(),
+                0,
+                "5D empty TDS should have 0 cells"
+            );
+
+            assert_eq!(tds_2d.dim(), -1, "2D empty TDS should have dim -1");
+            assert_eq!(tds_3d.dim(), -1, "3D empty TDS should have dim -1");
+            assert_eq!(tds_4d.dim(), -1, "4D empty TDS should have dim -1");
+            assert_eq!(tds_5d.dim(), -1, "5D empty TDS should have dim -1");
+
+            // All should have same construction state
+            assert!(matches!(
+                tds_2d.construction_state,
+                TriangulationConstructionState::Incomplete(0)
+            ));
+            assert!(matches!(
+                tds_3d.construction_state,
+                TriangulationConstructionState::Incomplete(0)
+            ));
+            assert!(matches!(
+                tds_4d.construction_state,
+                TriangulationConstructionState::Incomplete(0)
+            ));
+            assert!(matches!(
+                tds_5d.construction_state,
+                TriangulationConstructionState::Incomplete(0)
+            ));
+        }
+
+        // Test that empty TDS can be used for incremental vertex addition across dimensions
+        {
+            // 2D test
+            let mut tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+            assert_eq!(tds_2d.number_of_vertices(), 0);
+            tds_2d.add(vertex!([1.0, 2.0])).unwrap();
+            assert_eq!(tds_2d.number_of_vertices(), 1);
+            assert_eq!(tds_2d.dim(), 0); // 0-dimensional with one vertex
+
+            // 3D test
+            let mut tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+            assert_eq!(tds_3d.number_of_vertices(), 0);
+            tds_3d.add(vertex!([1.0, 2.0, 3.0])).unwrap();
+            assert_eq!(tds_3d.number_of_vertices(), 1);
+            assert_eq!(tds_3d.dim(), 0);
+
+            // 4D test
+            let mut tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
+            assert_eq!(tds_4d.number_of_vertices(), 0);
+            tds_4d.add(vertex!([1.0, 2.0, 3.0, 4.0])).unwrap();
+            assert_eq!(tds_4d.number_of_vertices(), 1);
+            assert_eq!(tds_4d.dim(), 0);
+
+            // 5D test
+            let mut tds_5d: Tds<f64, Option<()>, Option<()>, 5> = Tds::empty();
+            assert_eq!(tds_5d.number_of_vertices(), 0);
+            tds_5d.add(vertex!([1.0, 2.0, 3.0, 4.0, 5.0])).unwrap();
+            assert_eq!(tds_5d.number_of_vertices(), 1);
+            assert_eq!(tds_5d.dim(), 0);
+        }
+
+        // Test different coordinate and data type combinations across dimensions
+        {
+            // 2D variants
+            let _tds_2d_f32: Tds<f32, (), (), 2> = Tds::empty();
+            let _tds_2d_f64: Tds<f64, (), (), 2> = Tds::empty();
+            let _tds_2d_with_data: Tds<f64, i32, [char; 4], 2> = Tds::empty();
+
+            // 3D variants
+            let _tds_3d_f32: Tds<f32, (), (), 3> = Tds::empty();
+            let _tds_3d_f64: Tds<f64, (), (), 3> = Tds::empty();
+            let _tds_3d_with_data: Tds<f64, i32, [char; 4], 3> = Tds::empty();
+
+            // 4D variants
+            let _tds_4d_f32: Tds<f32, (), (), 4> = Tds::empty();
+            let _tds_4d_f64: Tds<f64, (), (), 4> = Tds::empty();
+            let _tds_4d_with_data: Tds<f64, i32, [char; 4], 4> = Tds::empty();
+
+            // 5D variants
+            let _tds_5d_f32: Tds<f32, (), (), 5> = Tds::empty();
+            let _tds_5d_f64: Tds<f64, (), (), 5> = Tds::empty();
+            let _tds_5d_with_data: Tds<f64, i32, [char; 4], 5> = Tds::empty();
+
+            // All should compile and create successfully (no assertions needed, just compilation test)
+        }
+
+        println!(
+            "✓ Tds::empty() constructor works correctly across dimensions 2-5 and all test cases"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+    fn test_multidimensional_triangulations_2d_to_5d() {
+        // Test 2D triangulation (triangle)
+        {
+            let vertices_2d = vec![
+                vertex!([0.0, 0.0]),
+                vertex!([1.0, 0.0]),
+                vertex!([0.5, 1.0]),
+            ];
+            let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+
+            assert_eq!(tds_2d.dim(), 2, "2D triangulation should have dimension 2");
+            assert_eq!(
+                tds_2d.number_of_vertices(),
+                3,
+                "2D triangle should have 3 vertices"
+            );
+            assert_eq!(
+                tds_2d.number_of_cells(),
+                1,
+                "2D triangle should have 1 cell (triangle)"
+            );
+            assert!(
+                tds_2d.is_valid().is_ok(),
+                "2D triangulation should be valid"
+            );
+
+            // Test vertex counts match expected D+1 formula
+            assert_eq!(
+                tds_2d.number_of_vertices(),
+                2 + 1,
+                "2D should have D+1=3 vertices for one simplex"
+            );
+        }
+
+        // Test 3D triangulation (tetrahedron)
+        {
+            let vertices_3d = vec![
+                vertex!([0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0]),
+                vertex!([0.5, 1.0, 0.0]),
+                vertex!([0.5, 0.5, 1.0]),
+            ];
+            let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
+
+            assert_eq!(tds_3d.dim(), 3, "3D triangulation should have dimension 3");
+            assert_eq!(
+                tds_3d.number_of_vertices(),
+                4,
+                "3D tetrahedron should have 4 vertices"
+            );
+            assert_eq!(
+                tds_3d.number_of_cells(),
+                1,
+                "3D tetrahedron should have 1 cell (tetrahedron)"
+            );
+            assert!(
+                tds_3d.is_valid().is_ok(),
+                "3D triangulation should be valid"
+            );
+
+            // Test vertex counts match expected D+1 formula
+            assert_eq!(
+                tds_3d.number_of_vertices(),
+                3 + 1,
+                "3D should have D+1=4 vertices for one simplex"
+            );
+        }
+
+        // Test 4D triangulation (4-simplex)
+        {
+            let vertices_4d = vec![
+                vertex!([0.0, 0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0, 0.0]),
+                vertex!([0.0, 1.0, 0.0, 0.0]),
+                vertex!([0.0, 0.0, 1.0, 0.0]),
+                vertex!([0.0, 0.0, 0.0, 1.0]),
+            ];
+            let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+
+            assert_eq!(tds_4d.dim(), 4, "4D triangulation should have dimension 4");
+            assert_eq!(
+                tds_4d.number_of_vertices(),
+                5,
+                "4D 4-simplex should have 5 vertices"
+            );
+            assert_eq!(
+                tds_4d.number_of_cells(),
+                1,
+                "4D 4-simplex should have 1 cell (4-simplex)"
+            );
+            assert!(
+                tds_4d.is_valid().is_ok(),
+                "4D triangulation should be valid"
+            );
+
+            // Test vertex counts match expected D+1 formula
+            assert_eq!(
+                tds_4d.number_of_vertices(),
+                4 + 1,
+                "4D should have D+1=5 vertices for one simplex"
+            );
+        }
+
+        // Test 5D triangulation (5-simplex)
+        {
+            let vertices_5d = vec![
+                vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+                vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+                vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+                vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+                vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+            ];
+            let tds_5d: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices_5d).unwrap();
+
+            assert_eq!(tds_5d.dim(), 5, "5D triangulation should have dimension 5");
+            assert_eq!(
+                tds_5d.number_of_vertices(),
+                6,
+                "5D 5-simplex should have 6 vertices"
+            );
+            assert_eq!(
+                tds_5d.number_of_cells(),
+                1,
+                "5D 5-simplex should have 1 cell (5-simplex)"
+            );
+            assert!(
+                tds_5d.is_valid().is_ok(),
+                "5D triangulation should be valid"
+            );
+
+            // Test vertex counts match expected D+1 formula
+            assert_eq!(
+                tds_5d.number_of_vertices(),
+                5 + 1,
+                "5D should have D+1=6 vertices for one simplex"
+            );
+        }
+
+        // Test incremental construction across dimensions
+        {
+            // Test 2D incremental construction
+            let mut tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+            let vertices_2d = [
+                vertex!([0.0, 0.0]),
+                vertex!([1.0, 0.0]),
+                vertex!([0.5, 1.0]),
+            ];
+            for (i, &vertex) in vertices_2d.iter().enumerate() {
+                tds_2d.add(vertex).unwrap();
+                assert_eq!(
+                    tds_2d.number_of_vertices(),
+                    i + 1,
+                    "2D: Vertex count should increase incrementally"
+                );
+                assert_eq!(
+                    tds_2d.dim(),
+                    std::cmp::min(i32::try_from(i).unwrap_or(i32::MAX), 2),
+                    "2D: Dimension should increase up to 2"
+                );
+            }
+            assert!(
+                tds_2d.is_valid().is_ok(),
+                "2D incremental triangulation should be valid"
+            );
+
+            // Test 3D incremental construction
+            let mut tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+            let vertices_3d = [
+                vertex!([0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0]),
+                vertex!([0.5, 1.0, 0.0]),
+                vertex!([0.5, 0.5, 1.0]),
+            ];
+            for (i, &vertex) in vertices_3d.iter().enumerate() {
+                tds_3d.add(vertex).unwrap();
+                assert_eq!(
+                    tds_3d.number_of_vertices(),
+                    i + 1,
+                    "3D: Vertex count should increase incrementally"
+                );
+                assert_eq!(
+                    tds_3d.dim(),
+                    std::cmp::min(i32::try_from(i).unwrap_or(i32::MAX), 3),
+                    "3D: Dimension should increase up to 3"
+                );
+            }
+            assert!(
+                tds_3d.is_valid().is_ok(),
+                "3D incremental triangulation should be valid"
+            );
+
+            // Test 4D incremental construction
+            let mut tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
+            let vertices_4d = [
+                vertex!([0.0, 0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0, 0.0]),
+                vertex!([0.0, 1.0, 0.0, 0.0]),
+                vertex!([0.0, 0.0, 1.0, 0.0]),
+                vertex!([0.0, 0.0, 0.0, 1.0]),
+            ];
+            for (i, &vertex) in vertices_4d.iter().enumerate() {
+                tds_4d.add(vertex).unwrap();
+                assert_eq!(
+                    tds_4d.number_of_vertices(),
+                    i + 1,
+                    "4D: Vertex count should increase incrementally"
+                );
+                assert_eq!(
+                    tds_4d.dim(),
+                    std::cmp::min(i32::try_from(i).unwrap_or(i32::MAX), 4),
+                    "4D: Dimension should increase up to 4"
+                );
+            }
+            assert!(
+                tds_4d.is_valid().is_ok(),
+                "4D incremental triangulation should be valid"
+            );
+        }
+
+        println!(
+            "✓ Multi-dimensional triangulations (2D-5D) work correctly with proper vertex counts and validation"
+        );
+    }
+
     // =============================================================================
     // VERTEX AND CELL ACCESSOR TESTS - CONSOLIDATED
     // =============================================================================
@@ -4200,7 +4669,7 @@ mod tests {
     fn test_accessors_comprehensive() {
         // Test empty TDS accessors
         {
-            let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let tds: Tds<f64, usize, usize, 3> = Tds::empty();
             let vertices_map = tds.vertices();
             assert_eq!(vertices_map.len(), 0, "Empty TDS should have no vertices");
             assert_eq!(tds.number_of_vertices(), vertices_map.len());
@@ -4266,7 +4735,7 @@ mod tests {
 
         // Test accessors after incremental additions
         {
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
             assert_eq!(tds.vertices().len(), 0);
 
             let test_vertices = vec![

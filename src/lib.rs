@@ -21,7 +21,7 @@
 //! use delaunay::vertex;
 //!
 //! // Create a 4D triangulation (4-dimensional space!)
-//! let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::default();
+//! let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
 //!
 //! // Add vertices incrementally - triangulation evolves automatically
 //! tds.add(vertex!([0.0, 0.0, 0.0, 0.0])).unwrap();  // 1 vertex, 0 cells
