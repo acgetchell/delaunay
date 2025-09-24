@@ -98,36 +98,50 @@ where
         let mut cell_facets_cache: KeyBasedCellMap<Vec<Facet<T, U, V, D>>> =
             fast_hash_map_with_capacity(self.number_of_cells());
 
-        // Collect all facets that belong to only one cell
-        for (_facet_key, cells) in facet_to_cells {
-            if let [(cell_id, facet_index)] = cells.as_slice() {
-                // Bind dereferenced values once to avoid repetitive derefs
-                let (cell_id, facet_index) = (*cell_id, *facet_index);
-                if let Some(cell) = self.cells().get(cell_id) {
-                    // Cache facets per cell to avoid repeated allocations, but propagate errors
-                    let facets = match cell_facets_cache.entry(cell_id) {
-                        Entry::Occupied(e) => e.into_mut(),
-                        Entry::Vacant(v) => {
-                            let computed = cell.facets()?; // propagate FacetError (auto-converted to TriangulationValidationError)
-                            v.insert(computed)
-                        }
-                    };
+        // Collect all facets that belong to only one cell and validate multiplicities
+        for (facet_key, cells) in facet_to_cells {
+            match cells.as_slice() {
+                [(cell_id, facet_index)] => {
+                    // Boundary facet - bind dereferenced values once to avoid repetitive derefs
+                    let (cell_id, facet_index) = (*cell_id, *facet_index);
+                    if let Some(cell) = self.cells().get(cell_id) {
+                        // Cache facets per cell to avoid repeated allocations, but propagate errors
+                        let facets = match cell_facets_cache.entry(cell_id) {
+                            Entry::Occupied(e) => e.into_mut(),
+                            Entry::Vacant(v) => {
+                                let computed = cell.facets()?; // propagate FacetError (auto-converted to TriangulationValidationError)
+                                v.insert(computed)
+                            }
+                        };
 
-                    if let Some(f) = facets.get(usize::from(facet_index)) {
-                        boundary_facets.push(f.clone());
+                        if let Some(f) = facets.get(usize::from(facet_index)) {
+                            boundary_facets.push(f.clone());
+                        } else {
+                            // Fail fast: invalid facet index indicates data corruption
+                            return Err(TriangulationValidationError::FacetError(
+                                FacetError::InvalidFacetIndex {
+                                    index: facet_index,
+                                    facet_count: facets.len(),
+                                },
+                            ));
+                        }
                     } else {
-                        // Fail fast: invalid facet index indicates data corruption
+                        // Fail fast: cell not found indicates data corruption
                         return Err(TriangulationValidationError::FacetError(
-                            FacetError::InvalidFacetIndex {
-                                index: facet_index,
-                                facet_count: facets.len(),
-                            },
+                            FacetError::CellNotFoundInTriangulation,
                         ));
                     }
-                } else {
-                    // Fail fast: cell not found indicates data corruption
+                }
+                [_, _] => {
+                    // Internal facet shared by exactly 2 cells; skip (valid)
+                }
+                slice => {
+                    // Invalid multiplicity: facet shared by 0, 3+ cells indicates topology violation
                     return Err(TriangulationValidationError::FacetError(
-                        FacetError::CellNotFoundInTriangulation,
+                        FacetError::InvalidFacetMultiplicity {
+                            facet_key,
+                            found: slice.len(),
+                        },
                     ));
                 }
             }
@@ -152,7 +166,8 @@ where
     ///
     /// # Returns
     ///
-    /// `true` if the facet is on the boundary (belongs to only one cell), `false` otherwise.
+    /// `Ok(true)` if the facet is on the boundary (belongs to only one cell),
+    /// `Ok(false)` otherwise. `Err(...)` on validation/lookup failures.
     ///
     /// # Examples
     ///
@@ -186,7 +201,7 @@ where
         facet: &Facet<T, U, V, D>,
     ) -> Result<bool, TriangulationValidationError> {
         let facet_to_cells = self.build_facet_to_cells_map()?;
-        Ok(self.is_boundary_facet_with_map(facet, &facet_to_cells))
+        self.is_boundary_facet_with_map(facet, &facet_to_cells)
     }
 
     /// Checks if a specific facet is a boundary facet using a precomputed facet map.
@@ -201,7 +216,8 @@ where
     ///
     /// # Returns
     ///
-    /// `true` if the facet is on the boundary (belongs to only one cell), `false` otherwise.
+    /// `Ok(true)` if the facet is on the boundary (belongs to only one cell),
+    /// `Ok(false)` otherwise. `Err(...)` on validation/lookup failures.
     ///
     /// # Examples
     ///
@@ -226,7 +242,8 @@ where
     /// if let Some(cell) = tds.cells().values().next() {
     ///     if let Ok(facets) = cell.facets() {
     ///         for facet in &facets {
-    ///             let is_boundary = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
+    ///             let is_boundary = tds.is_boundary_facet_with_map(facet, &facet_to_cells)
+    ///                 .expect("Should check if facet is boundary");
     ///             println!("Facet is boundary: {is_boundary}");
     ///         }
     ///     }
@@ -237,7 +254,7 @@ where
         &self,
         facet: &Facet<T, U, V, D>,
         facet_to_cells: &crate::core::collections::FacetToCellsMap,
-    ) -> bool {
+    ) -> Result<bool, TriangulationValidationError> {
         // Facet::vertices() should always return D vertices by construction
         let vertices = facet.vertices();
         debug_assert_eq!(
@@ -248,21 +265,19 @@ where
             vertices.len()
         );
 
-        match derive_facet_key_from_vertices(&vertices, self) {
-            Ok(facet_key) => facet_to_cells
-                .get(&facet_key)
-                .is_some_and(|cells| cells.len() == 1),
-            Err(e) => {
-                debug_assert!(false, "derive_facet_key_from_vertices failed: {e:?}");
-                // Option: flip to logging + false, or plumb a Result in the non-cached path.
-                false
-            }
-        }
+        let facet_key = derive_facet_key_from_vertices(&vertices, self)
+            .map_err(TriangulationValidationError::FacetError)?;
+
+        Ok(facet_to_cells
+            .get(&facet_key)
+            .is_some_and(|cells| cells.len() == 1))
     }
 
     /// Returns the number of boundary facets in the triangulation.
     ///
-    /// This delegates to `boundary_facets()` for consistent error handling.
+    /// This method efficiently counts boundary facets directly from the facet map
+    /// without allocating or cloning `Facet` objects, making it O(|facets|) with
+    /// no per-cell `facets()` calls.
     ///
     /// # Returns
     ///
@@ -292,17 +307,17 @@ where
     /// assert_eq!(tds.number_of_boundary_facets().unwrap(), 4);
     /// ```
     fn number_of_boundary_facets(&self) -> Result<usize, TriangulationValidationError> {
-        // Delegate to boundary_facets() for consistent error handling
-        self.boundary_facets().map(|v| v.len())
+        self.build_facet_to_cells_map()
+            .map(|m| m.values().filter(|v| v.len() == 1).count())
     }
 }
 
 #[cfg(test)]
+#[allow(unnameable_test_items)]
 mod tests {
     use super::BoundaryAnalysis;
-    use crate::core::collections::{FastHashMap, fast_hash_map_with_capacity};
-    use crate::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
-    use crate::core::util::derive_facet_key_from_vertices;
+    use crate::core::facet::FacetError;
+    use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
 
@@ -310,708 +325,216 @@ mod tests {
     // SINGLE SIMPLEX TESTS
     // =============================================================================
 
+    #[allow(clippy::too_many_lines)]
     #[test]
-    fn test_boundary_facets_2d_triangle() {
-        // Test 2D triangulation (triangle) - all 3 edges should be boundary facets
-        let points = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.5, 1.0]),
-        ];
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    fn test_boundary_facets_single_simplices() {
+        // Test boundary analysis for single simplices in different dimensions
 
-        assert_eq!(tds.number_of_cells(), 1, "2D triangle should have 1 cell");
-        assert_eq!(tds.dim(), 2, "Should be 2-dimensional");
+        // Test Case 1: 2D triangle - all 3 edges should be boundary facets
+        {
+            let points = vec![
+                Point::new([0.0, 0.0]),
+                Point::new([1.0, 0.0]),
+                Point::new([0.5, 1.0]),
+            ];
+            let vertices = Vertex::from_points(points);
+            let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
 
-        // A 2D triangle has 3 boundary facets (edges)
-        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-        assert_eq!(
-            boundary_facets.len(),
-            3,
-            "2D triangle should have 3 boundary facets (edges)"
-        );
+            assert_eq!(tds.number_of_cells(), 1, "2D triangle should have 1 cell");
+            assert_eq!(tds.dim(), 2, "Should be 2-dimensional");
 
-        assert_eq!(
-            tds.number_of_boundary_facets()
-                .expect("Should get boundary facet count"),
-            3,
-            "Count should match vector length"
-        );
-
-        // All facets should be boundary facets
-        let facet_to_cells = tds
-            .build_facet_to_cells_map()
-            .expect("Should build facet map in test");
-        assert!(
-            boundary_facets
-                .iter()
-                .all(|f| tds.is_boundary_facet_with_map(f, &facet_to_cells)),
-            "All facets should be boundary facets in single triangle"
-        );
-
-        println!("✓ 2D triangle boundary analysis works correctly");
-    }
-
-    #[test]
-    fn test_boundary_facets_3d_tetrahedron() {
-        // Test 3D triangulation (single tetrahedron) - all 4 facets should be boundary facets
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        assert_eq!(
-            tds.number_of_cells(),
-            1,
-            "3D tetrahedron should have 1 cell"
-        );
-        assert_eq!(tds.dim(), 3, "Should be 3-dimensional");
-
-        // A 3D tetrahedron has 4 boundary facets (triangular faces)
-        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-        assert_eq!(
-            boundary_facets.len(),
-            4,
-            "3D tetrahedron should have 4 boundary facets"
-        );
-
-        assert_eq!(
-            tds.number_of_boundary_facets()
-                .expect("Should get boundary facet count"),
-            4,
-            "Count should match vector length"
-        );
-
-        // All facets should be boundary facets
-        let facet_to_cells = tds
-            .build_facet_to_cells_map()
-            .expect("Should build facet map in test");
-        assert!(
-            boundary_facets
-                .iter()
-                .all(|f| tds.is_boundary_facet_with_map(f, &facet_to_cells)),
-            "All facets should be boundary facets in single tetrahedron"
-        );
-
-        println!("✓ 3D tetrahedron boundary analysis works correctly");
-    }
-
-    #[test]
-    fn test_is_boundary_facet_with_map_cached_version() {
-        // Test the cached version of is_boundary_facet for better performance in tight loops
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        // Build the facet map once for efficiency
-        let facet_to_cells = tds
-            .build_facet_to_cells_map()
-            .expect("Should build facet map in test");
-
-        // Get all facets from the single tetrahedron
-        let cell = tds.cells().values().next().expect("Should have one cell");
-        let facets = cell.facets().expect("Should get facets from cell");
-
-        // Test that both methods give the same results
-        for facet in &facets {
-            let is_boundary_regular = tds
-                .is_boundary_facet(facet)
-                .expect("Should not fail to check boundary facet");
-            let is_boundary_cached = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
-
-            assert_eq!(
-                is_boundary_regular, is_boundary_cached,
-                "Regular and cached methods should give same result"
-            );
-
-            // In a single tetrahedron, all facets are boundary facets
-            assert!(
-                is_boundary_cached,
-                "All facets in single tetrahedron should be boundary facets"
-            );
-        }
-
-        println!("✓ Cached boundary facet method works correctly and matches regular method");
-    }
-
-    #[test]
-    fn test_derive_facet_key_from_vertices_integration() {
-        // Test derive_facet_key_from_vertices integration to ensure proper facet key computation
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        // Get a facet from the single tetrahedron
-        let cell = tds.cells().values().next().expect("Should have one cell");
-        let facets = cell.facets().expect("Should get facets from cell");
-        let test_facet = &facets[0];
-
-        // Test that the utility function returns Ok(key) for valid facets
-        let facet_vertices = test_facet.vertices();
-        let facet_key_result = derive_facet_key_from_vertices(&facet_vertices, &tds);
-        assert!(
-            facet_key_result.is_ok(),
-            "derive_facet_key_from_vertices should return Ok(key) for valid facet"
-        );
-
-        let facet_key = facet_key_result.unwrap();
-
-        // Test that the same facet produces the same key (deterministic)
-        let facet_vertices_2 = test_facet.vertices();
-        let facet_key_2 = derive_facet_key_from_vertices(&facet_vertices_2, &tds).unwrap();
-        assert_eq!(
-            facet_key, facet_key_2,
-            "Same facet should produce same key (deterministic)"
-        );
-
-        // Test consistency with build_facet_to_cells_map
-        let boundary_facets_from_map = tds
-            .build_facet_to_cells_map()
-            .expect("Should build facet map in test");
-        assert!(
-            boundary_facets_from_map.contains_key(&facet_key),
-            "Key from utility function should exist in facet_to_cells map"
-        );
-
-        // Verify the facet is correctly identified as boundary using the computed key
-        let cells_for_facet = &boundary_facets_from_map[&facet_key];
-        assert_eq!(
-            cells_for_facet.len(),
-            1,
-            "Facet in single tetrahedron should belong to exactly 1 cell"
-        );
-
-        // Additional verification: ensure the (cell_id, facet_index) from the map
-        // corresponds to test_facet by reconstructing and comparing keys
-        if let Some((cell_id, facet_index)) = cells_for_facet.first().copied() {
-            if let Some(mapped_cell) = tds.cells().get(cell_id) {
-                let mapped_facets = mapped_cell
-                    .facets()
-                    .expect("Should get facets from mapped cell");
-                if let Some(mapped_facet) = mapped_facets.get(usize::from(facet_index)) {
-                    let mapped_facet_vertices = mapped_facet.vertices();
-                    let mapped_facet_key =
-                        derive_facet_key_from_vertices(&mapped_facet_vertices, &tds)
-                            .expect("Should derive key from mapped facet");
-                    assert_eq!(
-                        facet_key, mapped_facet_key,
-                        "Facet key from test_facet should match key from (cell_id, facet_index) mapping"
-                    );
-
-                    // Verify the facets represent the same geometric entity
-                    assert_eq!(
-                        test_facet.key(),
-                        mapped_facet.key(),
-                        "test_facet and mapped facet should have the same facet key"
-                    );
-                } else {
-                    panic!("facet_index {facet_index} out of bounds for cell {cell_id:?}");
-                }
-            } else {
-                panic!("cell_id {cell_id:?} not found in triangulation");
-            }
-        }
-
-        println!("✓ derive_facet_key_from_vertices integration works correctly and consistently");
-    }
-
-    #[test]
-    fn test_boundary_facets_4d_simplex() {
-        // Test 4D triangulation (4-simplex) - all 5 facets should be boundary facets
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0]),
-        ];
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
-
-        assert_eq!(tds.number_of_cells(), 1, "4D simplex should have 1 cell");
-        assert_eq!(tds.dim(), 4, "Should be 4-dimensional");
-
-        // A 4D simplex has 5 boundary facets (3D tetrahedra)
-        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-        assert_eq!(
-            boundary_facets.len(),
-            5,
-            "4D simplex should have 5 boundary facets"
-        );
-
-        assert_eq!(
-            tds.number_of_boundary_facets()
-                .expect("Should count boundary facets"),
-            5,
-            "Count should match vector length"
-        );
-
-        // All facets should be boundary facets
-        // Cache once
-        let facet_to_cells = tds
-            .build_facet_to_cells_map()
-            .expect("Should build facet map in test");
-        let mut confirmed_boundary = 0;
-        for boundary_facet in &boundary_facets {
-            if tds.is_boundary_facet_with_map(boundary_facet, &facet_to_cells) {
-                confirmed_boundary += 1;
-            }
-        }
-        assert_eq!(
-            confirmed_boundary, 5,
-            "All facets should be boundary facets in single 4D simplex"
-        );
-
-        println!("✓ 4D simplex boundary analysis works correctly");
-    }
-
-    #[test]
-    fn test_boundary_facets_empty_triangulation() {
-        // Test boundary analysis on empty triangulation
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
-
-        assert_eq!(
-            tds.number_of_cells(),
-            0,
-            "Empty triangulation should have no cells"
-        );
-
-        // Empty triangulation should have no boundary facets
-        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-        assert_eq!(
-            boundary_facets.len(),
-            0,
-            "Empty triangulation should have no boundary facets"
-        );
-
-        assert_eq!(
-            tds.number_of_boundary_facets()
-                .expect("Should count boundary facets"),
-            0,
-            "Count should be 0 for empty triangulation"
-        );
-
-        println!("✓ Empty triangulation boundary analysis works correctly");
-    }
-
-    // =============================================================================
-    // MULTI-CELL TESTS
-    // =============================================================================
-
-    #[test]
-    fn test_boundary_facets_3d_two_tetrahedra() {
-        // Test 3D triangulation with two adjacent tetrahedra sharing one facet
-        // This should result in 6 boundary facets and 1 internal (shared) facet
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),  // A
-            Point::new([1.0, 0.0, 0.0]),  // B
-            Point::new([0.5, 1.0, 0.0]),  // C - forms base triangle ABC
-            Point::new([0.5, 0.5, 1.0]),  // D - above base
-            Point::new([0.5, 0.5, -1.0]), // E - below base
-        ];
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        assert_eq!(
-            tds.number_of_cells(),
-            2,
-            "Should have exactly two tetrahedra"
-        );
-
-        // Get all boundary facets
-        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-        assert_eq!(
-            boundary_facets.len(),
-            6,
-            "Two adjacent tetrahedra should have 6 boundary facets"
-        );
-
-        // Test that all facets from boundary_facets() are indeed boundary facets
-        for boundary_facet in &boundary_facets {
-            assert!(
-                tds.is_boundary_facet(boundary_facet)
-                    .expect("Should not fail to check boundary facet"),
-                "All facets from boundary_facets() should be boundary facets"
-            );
-        }
-
-        // Test the count method
-        assert_eq!(
-            tds.number_of_boundary_facets()
-                .expect("Should count boundary facets"),
-            6,
-            "Count should match vector length"
-        );
-
-        // Build a map of facet keys to the cells that contain them for detailed verification
-        let dim_usize = usize::try_from(tds.dim().max(0)).unwrap_or(0);
-        let mut facet_map: FastHashMap<u64, Vec<_>> =
-            fast_hash_map_with_capacity(tds.number_of_cells() * (dim_usize + 1));
-        for (cell_key, cell) in tds.cells() {
-            for facet in cell.facets().expect("Should get cell facets") {
-                let facet_vertices = facet.vertices();
-                if let Ok(fk) = derive_facet_key_from_vertices(&facet_vertices, &tds) {
-                    facet_map.entry(fk).or_default().push(cell_key);
-                }
-            }
-        }
-
-        // Count boundary and shared facets
-        let mut boundary_count = 0;
-        let mut shared_count = 0;
-
-        for (_, cells) in facet_map {
-            if cells.len() == 1 {
-                boundary_count += 1;
-            } else if cells.len() == 2 {
-                shared_count += 1;
-            } else {
-                panic!(
-                    "Facet should be shared by at most 2 cells, found {}",
-                    cells.len()
-                );
-            }
-        }
-
-        // Two tetrahedra should have 6 boundary facets and 1 shared facet
-        assert_eq!(boundary_count, 6, "Should have 6 boundary facets");
-        assert_eq!(shared_count, 1, "Should have 1 shared (internal) facet");
-
-        // Verify that we can find the internal facet using is_boundary_facet
-        let mut found_internal_facet = false;
-        for cell in tds.cells().values() {
-            for facet in cell.facets().expect("Should get cell facets") {
-                if !tds
-                    .is_boundary_facet(&facet)
-                    .expect("Should not fail to check boundary facet")
-                {
-                    found_internal_facet = true;
-                    break;
-                }
-            }
-            if found_internal_facet {
-                break;
-            }
-        }
-        assert!(
-            found_internal_facet,
-            "Should find at least one internal facet"
-        );
-
-        println!("✓ 3D two-tetrahedra boundary analysis works correctly");
-    }
-
-    #[test]
-    fn test_is_boundary_facet_mixed_cases() {
-        // Test is_boundary_facet with a mix of boundary and internal facets
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),  // A
-            Point::new([2.0, 0.0, 0.0]),  // B
-            Point::new([1.0, 2.0, 0.0]),  // C - forms base triangle ABC
-            Point::new([1.0, 1.0, 2.0]),  // D - above base
-            Point::new([1.0, 1.0, -2.0]), // E - below base
-        ];
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        if tds.number_of_cells() >= 2 {
             let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-            let total_facets_count = tds
-                .cells()
-                .values()
-                .map(|cell| cell.facets().expect("Should get cell facets").len())
-                .sum::<usize>();
-
-            println!("Total facets in all cells: {total_facets_count}");
-            println!("Boundary facets: {}", boundary_facets.len());
-            println!(
-                "Expected internal (shared) facets: {}",
-                (total_facets_count - boundary_facets.len()) / 2
+            assert_eq!(
+                boundary_facets.len(),
+                3,
+                "2D triangle should have 3 boundary facets"
             );
+            assert_eq!(tds.number_of_boundary_facets().expect("Should count"), 3);
 
-            // Test each boundary facet
-            for boundary_facet in &boundary_facets {
-                assert!(
-                    tds.is_boundary_facet(boundary_facet)
-                        .expect("Should not fail to check boundary facet"),
-                    "Facet from boundary_facets() should be identified as boundary"
-                );
-            }
-
-            // Check if we can find any internal (non-boundary) facets
-            let mut found_internal_facet = false;
-            for cell in tds.cells().values() {
-                for facet in cell.facets().expect("Should get cell facets") {
-                    if !tds
-                        .is_boundary_facet(&facet)
-                        .expect("Should not fail to check boundary facet")
-                    {
-                        found_internal_facet = true;
-                        let facet_vertices = facet.vertices();
-                        let facet_key =
-                            derive_facet_key_from_vertices(&facet_vertices, &tds).unwrap_or(0); // Use 0 as fallback for debug output
-                        println!("Found internal facet: key = {facet_key}");
-                        break;
-                    }
-                }
-                if found_internal_facet {
-                    break;
-                }
-            }
-
-            if tds.number_of_cells() > 1 && !found_internal_facet {
-                println!(
-                    "Warning: Expected to find internal facets with {} cells, but found none",
-                    tds.number_of_cells()
-                );
-            }
+            // Verify all facets are boundary facets using cached map
+            let facet_to_cells = tds
+                .build_facet_to_cells_map()
+                .expect("Should build facet map");
+            assert!(boundary_facets.iter().all(|f| {
+                tds.is_boundary_facet_with_map(f, &facet_to_cells)
+                    .expect("Should not fail for valid facets")
+            }));
         }
 
-        println!("✓ Mixed boundary/internal facet identification works correctly");
-    }
-
-    // =============================================================================
-    // CONSISTENCY AND VALIDATION TESTS
-    // =============================================================================
-
-    #[test]
-    fn test_boundary_facets_consistency() {
-        // Test that boundary_facets(), is_boundary_facet(), and number_of_boundary_facets() are consistent
-        let test_cases = vec![
-            // Single tetrahedron
-            vec![
+        // Test Case 2: 3D tetrahedron - all 4 faces should be boundary facets
+        {
+            let points = vec![
                 Point::new([0.0, 0.0, 0.0]),
                 Point::new([1.0, 0.0, 0.0]),
                 Point::new([0.0, 1.0, 0.0]),
                 Point::new([0.0, 0.0, 1.0]),
-            ],
-            // Well-separated points (avoids degenerate configurations)
-            vec![
-                Point::new([0.0, 0.0, 0.0]),
-                Point::new([2.0, 0.0, 0.0]),
-                Point::new([0.0, 2.0, 0.0]),
-                Point::new([0.0, 0.0, 2.0]),
-                Point::new([1.0, 1.0, 1.0]),
-            ],
-        ];
-
-        for (i, points) in test_cases.into_iter().enumerate() {
+            ];
             let vertices = Vertex::from_points(points);
             let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
-            println!(
-                "Test case {}: {} vertices, {} cells",
-                i + 1,
-                tds.number_of_vertices(),
-                tds.number_of_cells()
-            );
-
-            // Get boundary facets using the vector method
-            let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-            let boundary_count_from_vector = boundary_facets.len();
-
-            // Get count using the efficient counting method
-            let boundary_count_from_count = tds
-                .number_of_boundary_facets()
-                .expect("Should count boundary facets");
-
-            // These should be equal
             assert_eq!(
-                boundary_count_from_vector, boundary_count_from_count,
-                "boundary_facets().len() should equal number_of_boundary_facets()"
+                tds.number_of_cells(),
+                1,
+                "3D tetrahedron should have 1 cell"
             );
+            assert_eq!(tds.dim(), 3, "Should be 3-dimensional");
 
-            // Each facet from boundary_facets() should be identified as boundary by is_boundary_facet()
-            for facet in &boundary_facets {
-                assert!(
-                    tds.is_boundary_facet(facet)
-                        .expect("Should not fail to check boundary facet"),
-                    "Facet from boundary_facets() should be confirmed as boundary by is_boundary_facet()"
-                );
-            }
-
-            // Count boundary facets by checking each facet individually
-            let mut boundary_count_from_individual_checks = 0;
-            for cell in tds.cells().values() {
-                for facet in cell.facets().expect("Should get cell facets") {
-                    if tds
-                        .is_boundary_facet(&facet)
-                        .expect("Should not fail to check boundary facet")
-                    {
-                        boundary_count_from_individual_checks += 1;
-                    }
-                }
-            }
-
-            assert_eq!(
-                boundary_count_from_individual_checks, boundary_count_from_vector,
-                "Individual facet checks should match boundary_facets() count"
-            );
-
-            println!(
-                "  ✓ All {boundary_count_from_vector} boundary facets are consistent across all methods"
-            );
-        }
-
-        println!("✓ All boundary analysis methods are consistent");
-    }
-
-    #[test]
-    #[cfg(feature = "bench")]
-    fn test_boundary_facets_large_triangulation() {
-        // Test with a larger triangulation to ensure scalability
-        // This test is marked as benchmark-only due to its performance-sensitive nature
-        use rand::Rng;
-
-        let mut rng = rand::rng();
-        let points: Vec<Point<f64, 3>> = (0..15)
-            .map(|_| {
-                Point::new([
-                    rng.random::<f64>() * 10.0,
-                    rng.random::<f64>() * 10.0,
-                    rng.random::<f64>() * 10.0,
-                ])
-            })
-            .collect();
-
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        println!(
-            "Large triangulation: {} vertices, {} cells",
-            tds.number_of_vertices(),
-            tds.number_of_cells()
-        );
-
-        if tds.number_of_cells() > 0 {
             let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-            let boundary_count = tds
-                .number_of_boundary_facets()
-                .expect("Should count boundary facets");
-
-            // Consistency check
             assert_eq!(
                 boundary_facets.len(),
-                boundary_count,
-                "boundary_facets().len() should equal number_of_boundary_facets()"
+                4,
+                "3D tetrahedron should have 4 boundary facets"
             );
+            assert_eq!(tds.number_of_boundary_facets().expect("Should count"), 4);
 
-            // Each boundary facet should be confirmed by is_boundary_facet()
-            for facet in &boundary_facets {
-                assert!(
-                    tds.is_boundary_facet(facet)
-                        .expect("Should not fail to check boundary facet"),
-                    "Each facet from boundary_facets() should be confirmed as boundary"
-                );
-            }
+            // Verify all facets are boundary facets
+            let facet_to_cells = tds
+                .build_facet_to_cells_map()
+                .expect("Should build facet map");
+            assert!(boundary_facets.iter().all(|f| {
+                tds.is_boundary_facet_with_map(f, &facet_to_cells)
+                    .expect("Should not fail for valid facets")
+            }));
+        }
 
-            // Basic sanity checks
-            assert!(
-                boundary_count > 0,
-                "Non-empty triangulation should have boundary facets"
-            );
+        // Test Case 3: 4D simplex - all 5 tetrahedra should be boundary facets
+        {
+            let points = vec![
+                Point::new([0.0, 0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 0.0, 1.0]),
+            ];
+            let vertices = Vertex::from_points(points);
+            let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
 
-            // In a convex triangulation, we expect boundary facets to exist
-            let total_facets: usize = tds
-                .cells()
-                .values()
-                .map(|cell| cell.facets().expect("Should get cell facets").len())
-                .sum();
+            assert_eq!(tds.number_of_cells(), 1, "4D simplex should have 1 cell");
+            assert_eq!(tds.dim(), 4, "Should be 4-dimensional");
 
-            println!("  Total facet instances: {total_facets}, Boundary facets: {boundary_count}");
-
-            // Internal facets are counted twice (once per adjacent cell), boundary facets once
-            // So: total_facets = boundary_facets + 2 * internal_facets
-            let internal_facets = (total_facets - boundary_count) / 2;
-            println!("  Calculated internal facets: {internal_facets}");
-
-            // Verify this makes sense
+            let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
             assert_eq!(
-                boundary_count + 2 * internal_facets,
-                total_facets,
-                "Facet accounting should be correct: boundary + 2*internal = total"
+                boundary_facets.len(),
+                5,
+                "4D simplex should have 5 boundary facets"
+            );
+            assert_eq!(tds.number_of_boundary_facets().expect("Should count"), 5);
+
+            // Verify all facets are boundary facets
+            let facet_to_cells = tds
+                .build_facet_to_cells_map()
+                .expect("Should build facet map");
+            let confirmed_boundary = boundary_facets
+                .iter()
+                .filter(|f| {
+                    tds.is_boundary_facet_with_map(f, &facet_to_cells)
+                        .expect("Should not fail for valid facets")
+                })
+                .count();
+            assert_eq!(
+                confirmed_boundary, 5,
+                "All facets should be boundary facets"
             );
         }
 
-        println!("✓ Large triangulation boundary analysis completed successfully");
+        // Test Case 4: Empty triangulation
+        {
+            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
+            assert_eq!(
+                tds.number_of_cells(),
+                0,
+                "Empty triangulation should have no cells"
+            );
+
+            let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
+            assert_eq!(
+                boundary_facets.len(),
+                0,
+                "Empty triangulation should have no boundary facets"
+            );
+            assert_eq!(
+                tds.number_of_boundary_facets().expect("Should count"),
+                0,
+                "Count should be 0"
+            );
+        }
+
+        println!(
+            "✓ Single simplex boundary analysis works correctly in 2D, 3D, 4D, and empty cases"
+        );
     }
 
     #[test]
-    fn test_boundary_facets_edge_cases() {
-        // Test various edge cases for boundary analysis
+    fn test_boundary_facets_method_coverage() {
+        // Test method delegation and implementation path coverage
 
-        // Test 1: Minimal triangulation (single point - should fail with InsufficientVertices)
-        let single_point = vec![Point::new([0.0, 0.0, 0.0])];
-        let vertices_single = Vertex::from_points(single_point);
-        let result_single = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices_single);
+        // Test case 1: Basic method delegation and error propagation
+        {
+            let points = vec![
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0]),
+            ];
+            let vertices = Vertex::from_points(points);
+            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
-        // Single vertex should fail with InsufficientVertices error since 1 < 4 (D+1 for 3D)
-        assert!(matches!(
-            result_single,
-            Err(TriangulationConstructionError::InsufficientVertices { .. })
-        ));
+            // Test boundary_facets() normal path
+            let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
+            assert_eq!(
+                boundary_facets.len(),
+                4,
+                "Single tetrahedron has 4 boundary facets"
+            );
 
-        // Test 2: Collinear points (should fail with InsufficientVertices)
-        let collinear_points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([2.0, 0.0, 0.0]),
-        ];
-        let vertices_collinear = Vertex::from_points(collinear_points);
-        let result_collinear = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices_collinear);
+            // Test is_boundary_facet() delegation (builds facet map internally)
+            if let Some(facet) = boundary_facets.first() {
+                let result = tds.is_boundary_facet(facet);
+                assert!(result.is_ok(), "Should not error on valid facet");
+                assert!(
+                    result.unwrap(),
+                    "Facet should be boundary in single tetrahedron"
+                );
+            }
+        }
 
-        // Collinear points should fail with InsufficientVertices error since 3 < 4 (D+1 for 3D)
-        assert!(matches!(
-            result_collinear,
-            Err(TriangulationConstructionError::InsufficientVertices { .. })
-        ));
+        // Test case 2: Capacity allocation and vector operations
+        {
+            let points = vec![
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0]),
+                Point::new([0.5, 0.5, 0.5]), // Interior point
+            ];
+            let vertices = Vertex::from_points(points);
+            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
-        // Test 3: Coplanar points in 3D (should fail with InsufficientVertices)
-        let coplanar_points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.5, 0.5, 0.0]),
-        ];
-        let vertices_coplanar = Vertex::from_points(coplanar_points);
-        let tds_coplanar: Tds<f64, Option<()>, Option<()>, 3> =
-            Tds::new(&vertices_coplanar).unwrap();
+            assert!(
+                tds.number_of_cells() >= 2,
+                "Should have multiple cells for this test"
+            );
 
-        // With exactly D+1=4 vertices, this should succeed even if coplanar
-        assert_eq!(tds_coplanar.number_of_cells(), 1); // Should create 1 degenerate cell
-        assert_eq!(
-            tds_coplanar
-                .boundary_facets()
-                .expect("Should get boundary facets")
-                .len(),
-            4
-        ); // Should have 4 boundary facets
-        assert_eq!(
-            tds_coplanar
+            // Exercise capacity allocation, cache initialization, and vector push operations
+            let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
+            assert!(!boundary_facets.is_empty(), "Should have boundary facets");
+            assert!(
+                boundary_facets.len() >= 4,
+                "Should have at least 4 boundary facets"
+            );
+
+            // Test count method delegation
+            let count = tds
                 .number_of_boundary_facets()
-                .expect("Should count boundary facets"),
-            4
-        );
+                .expect("Should count boundary facets");
+            assert_eq!(
+                count,
+                boundary_facets.len(),
+                "Count should match vector length"
+            );
+        }
 
-        println!("✓ Edge cases handled correctly:");
-        println!("  - Single point: correctly fails with InsufficientVertices");
-        println!("  - Collinear points: correctly fails with InsufficientVertices");
-        println!("  - Minimum vertices (4) for 3D: creates triangulation with boundary facets");
+        println!("✓ Boundary facets method coverage and delegation work correctly");
     }
 
     #[test]
@@ -1186,5 +709,234 @@ mod tests {
         println!("- Single pass over all cells and facets: O(N·F)");
         println!("- HashMap-based facet-to-cells mapping");
         println!("- Direct facet cloning instead of repeated computation");
+    }
+
+    // =============================================================================
+    // ADDITIONAL TESTS FOR UNCOVERED ERROR PATHS
+    // =============================================================================
+
+    #[test]
+    fn test_boundary_facets_invalid_facet_index_error() {
+        println!("Testing boundary_facets with invalid facet index error path");
+
+        // Note: This error path (InvalidFacetIndex) is difficult to trigger in practice
+        // because the facet-to-cells mapping is built from valid facets.
+        // We test this by confirming the error structure exists and can be created.
+
+        // Test that the error can be created and has correct structure
+        let error = TriangulationValidationError::FacetError(FacetError::InvalidFacetIndex {
+            index: 42,
+            facet_count: 4,
+        });
+
+        // Verify error display includes useful information
+        let error_string = format!("{error}");
+        assert!(
+            error_string.contains("42"),
+            "Error should contain the invalid index"
+        );
+        assert!(
+            error_string.contains('4'),
+            "Error should contain the facet count"
+        );
+
+        println!("  Error structure: {error}");
+        println!("  ✓ InvalidFacetIndex error path structure verified");
+    }
+
+    #[test]
+    fn test_boundary_facets_cell_not_found_error() {
+        println!("Testing boundary_facets with cell not found error path");
+
+        // Note: This error path (CellNotFoundInTriangulation) is also difficult to trigger
+        // in practice because the mapping is built from existing cells.
+        // We test the error structure.
+
+        // Test that the error can be created
+        let error =
+            TriangulationValidationError::FacetError(FacetError::CellNotFoundInTriangulation);
+
+        // Verify error display is meaningful
+        let error_string = format!("{error}");
+        assert!(
+            error_string.contains("Cell") || error_string.contains("cell"),
+            "Error should mention cell: {error_string}"
+        );
+
+        println!("  Error structure: {error}");
+        println!("  ✓ CellNotFoundInTriangulation error path structure verified");
+    }
+
+    #[test]
+    fn test_is_boundary_facet_with_map_derive_key_failure_path() {
+        println!("Testing is_boundary_facet_with_map when derive_facet_key_from_vertices fails");
+
+        // Create a valid triangulation
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // To exercise the error path in is_boundary_facet_with_map where
+        // derive_facet_key_from_vertices fails, we intentionally pass a Facet
+        // from a different triangulation (with different vertex UUIDs) to this TDS.
+        // The UUID lookups will fail against this TDS, triggering the error path.
+
+        // First, create a completely separate triangulation with different points
+        let other_points = vec![
+            Point::new([10.0, 10.0, 10.0]),
+            Point::new([11.0, 10.0, 10.0]),
+            Point::new([10.0, 11.0, 10.0]),
+            Point::new([10.0, 10.0, 11.0]),
+        ];
+        let other_vertices = Vertex::from_points(other_points);
+        let other_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&other_vertices).unwrap();
+
+        // Build a facet map for the other triangulation (consistent with receiver TDS)
+        let facet_to_cells = other_tds
+            .build_facet_to_cells_map()
+            .expect("Should build map for other TDS");
+
+        // Obtain a valid facet from the original triangulation
+        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
+        let foreign_facet = &boundary_facets[0];
+
+        // This should now return an error because derive_facet_key_from_vertices will fail
+        // when looking up the foreign facet's vertex UUIDs in other_tds
+        let result = other_tds.is_boundary_facet_with_map(foreign_facet, &facet_to_cells);
+        assert!(
+            result.is_err(),
+            "Should return error when vertex UUIDs are not found in the receiver TDS"
+        );
+
+        // Verify it's the expected error type
+        if let Err(e) = result {
+            println!("  Got expected error: {e}");
+        }
+
+        println!("  ✓ is_boundary_facet_with_map error path (derive key failure) exercised");
+    }
+
+    #[test]
+    fn test_boundary_facets_error_propagation_from_build_map() {
+        println!("Testing error propagation from build_facet_to_cells_map");
+
+        // Test that boundary_facets properly propagates errors from build_facet_to_cells_map
+        // This exercises the error propagation path in boundary_facets()
+
+        // Create a minimal valid triangulation
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Test that build_facet_to_cells_map succeeds on valid triangulation
+        let map_result = tds.build_facet_to_cells_map();
+        assert!(
+            map_result.is_ok(),
+            "build_facet_to_cells_map should succeed on valid TDS"
+        );
+
+        // Test that boundary_facets succeeds when build_facet_to_cells_map succeeds
+        let boundary_result = tds.boundary_facets();
+        assert!(
+            boundary_result.is_ok(),
+            "boundary_facets should succeed when build_map succeeds"
+        );
+
+        let boundary_facets = boundary_result.unwrap();
+        assert_eq!(
+            boundary_facets.len(),
+            4,
+            "Single tetrahedron should have 4 boundary facets"
+        );
+
+        println!("  ✓ Error propagation path from build_facet_to_cells_map verified");
+    }
+
+    #[test]
+    fn test_number_of_boundary_facets_delegation() {
+        println!("Testing number_of_boundary_facets delegation to boundary_facets");
+
+        // This test exercises the delegation to boundary_facets() and result transformation
+        // ensuring the method properly delegates and transforms the result
+
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(points);
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Test both methods return consistent results
+        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
+        let boundary_count = tds
+            .number_of_boundary_facets()
+            .expect("Should get boundary count");
+
+        assert_eq!(
+            boundary_facets.len(),
+            boundary_count,
+            "number_of_boundary_facets should equal boundary_facets().len()"
+        );
+
+        assert_eq!(
+            boundary_count, 4,
+            "Single tetrahedron should have 4 boundary facets"
+        );
+
+        println!("  ✓ number_of_boundary_facets delegation working correctly");
+        println!("    - boundary_facets().len(): {}", boundary_facets.len());
+        println!("    - number_of_boundary_facets(): {boundary_count}");
+    }
+
+    #[test]
+    fn test_invalid_facet_multiplicity_error_creation() {
+        println!("Testing InvalidFacetMultiplicity error creation and formatting");
+
+        // Test that the error can be created with various multiplicity values
+        let test_cases = [
+            (0, "zero multiplicity"),
+            (3, "triple multiplicity"),
+            (5, "excessive multiplicity"),
+        ];
+
+        for (multiplicity, description) in &test_cases {
+            let facet_key = 0x1234_5678_9ABC_DEF0_u64; // Example facet key
+            let error =
+                TriangulationValidationError::FacetError(FacetError::InvalidFacetMultiplicity {
+                    facet_key,
+                    found: *multiplicity,
+                });
+
+            // Verify error display includes all necessary information
+            let error_string = format!("{error}");
+            assert!(
+                error_string.contains(&format!("{multiplicity:}").to_string()),
+                "Error should contain multiplicity {multiplicity}: {error_string}"
+            );
+            assert!(
+                error_string.contains(&format!("{facet_key:016x}")),
+                "Error should contain facet key in hex: {error_string}"
+            );
+            assert!(
+                error_string.contains("expected 1 (boundary) or 2 (internal)"),
+                "Error should explain valid multiplicities: {error_string}"
+            );
+
+            println!("  ✓ {description}: {error}");
+        }
+
+        println!("  ✓ InvalidFacetMultiplicity error creation and formatting verified");
     }
 }

@@ -25,10 +25,14 @@ use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar, CoordinateValidationError,
 };
 use num_traits::cast;
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, Error, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
+use std::any;
+use std::cmp::Ordering;
 use std::convert::TryFrom;
+use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 
 // =============================================================================
 // POINT STRUCT DEFINITION
@@ -151,15 +155,15 @@ impl<T, const D: usize> PartialOrd for Point<T, D>
 where
     T: CoordinateScalar,
 {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         // Perform lexicographic comparison using ordered comparison for each coordinate
         for (a, b) in self.coords.iter().zip(other.coords.iter()) {
             match a.ordered_partial_cmp(b) {
-                Some(std::cmp::Ordering::Equal) => {}
+                Some(Ordering::Equal) => {}
                 other_ordering => return other_ordering,
             }
         }
-        Some(std::cmp::Ordering::Equal)
+        Some(Ordering::Equal)
     }
 }
 
@@ -211,6 +215,20 @@ where
     }
 }
 
+/// Format-agnostic representation for coordinate values during deserialization.
+/// This enum allows the deserializer to work with any format (JSON, CBOR, bincode, etc.)
+/// without being tied to specific format types.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CoordRepr<T> {
+    /// Regular numeric value
+    Num(T),
+    /// String representation (case-insensitive special values: "Infinity"/"Inf", "-Infinity"/"-Inf", "NaN")
+    Str(String),
+    /// Null value (will be converted to NaN)
+    Null,
+}
+
 // Implement Deserialize manually with null -> NaN mapping
 impl<'de, T, const D: usize> Deserialize<'de> for Point<T, D>
 where
@@ -220,10 +238,6 @@ where
     where
         DE: serde::Deserializer<'de>,
     {
-        use serde::de::{Error, SeqAccess, Visitor};
-        use std::fmt;
-        use std::marker::PhantomData;
-
         struct ArrayVisitor<T, const D: usize>(PhantomData<T>);
 
         impl<'de, T, const D: usize> Visitor<'de> for ArrayVisitor<T, D>
@@ -234,7 +248,7 @@ where
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_fmt(format_args!(
-                    "an array of {D} coordinates (numbers, null, \"Infinity\", or \"-Infinity\")"
+                    "an array of {D} coordinates (numbers, null, \"Infinity\", \"-Infinity\", \"NaN\", or their case-insensitive variants)"
                 ))
             }
 
@@ -245,23 +259,23 @@ where
                 // Collect coordinates into a Vec first, then convert to array
                 let mut coords = Vec::with_capacity(D);
                 for i in 0..D {
-                    // Deserialize each element as a generic value to handle numbers, null, and strings
-                    let element: serde_json::Value = seq
+                    // Deserialize each element using the format-agnostic enum
+                    let element: CoordRepr<T> = seq
                         .next_element()?
                         .ok_or_else(|| Error::invalid_length(i, &self))?;
 
                     let coord = match element {
-                        serde_json::Value::Number(n) => {
-                            // Handle regular numeric values
-                            n.as_f64()
-                                .and_then(|f| num_traits::cast::cast::<f64, T>(f))
-                                .ok_or_else(|| Error::custom("Invalid numeric value"))?
+                        CoordRepr::Num(value) => {
+                            // Handle regular numeric values - already the correct type
+                            value
                         }
-                        serde_json::Value::String(s) => {
-                            // Handle special string representations
-                            match s.as_str() {
-                                "Infinity" => T::infinity(),
-                                "-Infinity" => T::neg_infinity(),
+                        CoordRepr::Str(s) => {
+                            // Handle special string representations (case-insensitive)
+                            let sl = s.trim().to_ascii_lowercase();
+                            match sl.as_str() {
+                                "infinity" | "inf" => T::infinity(),
+                                "-infinity" | "-inf" => T::neg_infinity(),
+                                "nan" => T::nan(),
                                 _ => {
                                     return Err(Error::custom(format!(
                                         "Unknown special value: {s}"
@@ -269,11 +283,10 @@ where
                                 }
                             }
                         }
-                        serde_json::Value::Null => {
+                        CoordRepr::Null => {
                             // Handle null values as NaN
                             T::nan()
                         }
-                        _ => return Err(Error::custom("Expected number, string, or null")),
                     };
 
                     coords.push(coord);
@@ -304,7 +317,7 @@ where
 /// cast into the target type, or if a non-finite value is encountered post-cast.
 impl<T, U, const D: usize> TryFrom<[T; D]> for Point<U, D>
 where
-    T: cast::NumCast + std::fmt::Debug,
+    T: cast::NumCast + fmt::Debug,
     U: CoordinateScalar + cast::NumCast,
 {
     type Error = CoordinateConversionError;
@@ -320,8 +333,8 @@ where
                 cast::cast(c).ok_or_else(|| CoordinateConversionError::ConversionFailed {
                     coordinate_index: i,
                     coordinate_value: c_debug,
-                    from_type: std::any::type_name::<T>(),
-                    to_type: std::any::type_name::<U>(),
+                    from_type: any::type_name::<T>(),
+                    to_type: any::type_name::<U>(),
                 })?;
             // Validate finiteness after cast
             if !v.is_finite_generic() {
@@ -378,10 +391,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::collections::FastHashMap;
     use approx::assert_relative_eq;
+    use std::cmp::Ordering;
     use std::collections::hash_map::DefaultHasher;
     use std::collections::{HashMap, HashSet};
     use std::hash::{Hash, Hasher};
+    use std::mem;
 
     // Helper function to get hash value for any hashable type
     fn get_hash<T: Hash>(value: &T) -> u64 {
@@ -513,24 +529,9 @@ mod tests {
     }
 
     #[test]
-    fn point_to_and_from_json() {
-        let point: Point<f64, 4> = Point::default();
-        let serialized = serde_json::to_string(&point).unwrap();
-
-        assert_eq!(serialized, "[0.0,0.0,0.0,0.0]");
-
-        let deserialized: Point<f64, 4> = serde_json::from_str(&serialized).unwrap();
-
-        assert_eq!(deserialized, point);
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Serialized: {serialized:?}");
-    }
-
-    #[test]
     fn point_from_array_f32_to_f64() {
         let coords = [1.5f32, 2.5f32, 3.5f32, 4.5f32];
-        let point: Point<f64, 4> = Point::new(coords.map(std::convert::Into::into));
+        let point: Point<f64, 4> = Point::new(coords.map(Into::into));
 
         let result_coords = point.to_array();
         assert_relative_eq!(
@@ -542,33 +543,20 @@ mod tests {
     }
 
     #[test]
-    fn point_from_array_same_type() {
-        // Test conversion when source and target types are the same
-        let coords_f32 = [1.0f32, 2.0f32, 3.0f32];
+    fn point_type_conversions() {
+        // Test same-type conversion (f32 to f32)
+        let coords_f32 = [1.5f32, 2.5f32, 3.5f32];
         let point_f32: Point<f32, 3> = Point::new(coords_f32);
         let result_f32 = point_f32.to_array();
         assert_relative_eq!(
             result_f32.as_slice(),
-            [1.0f32, 2.0f32, 3.0f32].as_slice(),
-            epsilon = 1e-9
-        );
-    }
-
-    #[test]
-    fn point_from_array_float_to_float() {
-        // Test conversion from f32 to f32 (same type)
-        let coords_f32 = [1.5f32, 2.5f32];
-        let point_f32: Point<f32, 2> = Point::new(coords_f32);
-        let result_f32 = point_f32.to_array();
-        assert_relative_eq!(
-            result_f32.as_slice(),
-            [1.5f32, 2.5f32].as_slice(),
+            [1.5f32, 2.5f32, 3.5f32].as_slice(),
             epsilon = 1e-9
         );
 
-        // Test conversion from f32 to f64 (safe upcast)
-        let coords_f32 = [1.5f32, 2.5f32];
-        let point_f64: Point<f64, 2> = Point::new(coords_f32.map(std::convert::Into::into));
+        // Test safe upcast conversion (f32 to f64)
+        let coords_f32_upcast = [1.5f32, 2.5f32];
+        let point_f64: Point<f64, 2> = Point::new(coords_f32_upcast.map(Into::into));
         let result_f64 = point_f64.to_array();
         assert_relative_eq!(
             result_f64.as_slice(),
@@ -583,9 +571,6 @@ mod tests {
 
     #[test]
     fn point_hash() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         let point1 = Point::new([1.0, 2.0, 3.0]);
         let point2 = Point::new([1.0, 2.0, 3.0]);
         let point3 = Point::new([1.0, 2.0, 4.0]);
@@ -606,9 +591,7 @@ mod tests {
 
     #[test]
     fn point_hash_in_hashmap() {
-        use std::collections::HashMap;
-
-        let mut map: HashMap<Point<f64, 2>, i32> = HashMap::new();
+        let mut map: FastHashMap<Point<f64, 2>, i32> = FastHashMap::default();
 
         let point1 = Point::new([1.0, 2.0]);
         let point2 = Point::new([3.0, 4.0]);
@@ -647,39 +630,30 @@ mod tests {
     }
 
     #[test]
-    fn point_1d() {
-        let point: Point<f64, 1> = Point::new([42.0]);
-        test_basic_point_properties(&point, [42.0], 1);
+    fn point_multidimensional_comprehensive() {
+        // Test 2D points
+        let point_2d: Point<f64, 2> = Point::new([1.0, 2.0]);
+        test_basic_point_properties(&point_2d, [1.0, 2.0], 2);
+        let origin_2d: Point<f64, 2> = Point::origin();
+        test_basic_point_properties(&origin_2d, [0.0, 0.0], 2);
 
-        let origin: Point<f64, 1> = Point::origin();
-        test_basic_point_properties(&origin, [0.0], 1);
-    }
+        // Test 3D points
+        let point_3d: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
+        test_basic_point_properties(&point_3d, [1.0, 2.0, 3.0], 3);
+        let origin_3d: Point<f64, 3> = Point::origin();
+        test_basic_point_properties(&origin_3d, [0.0, 0.0, 0.0], 3);
 
-    #[test]
-    fn point_2d() {
-        let point: Point<f64, 2> = Point::new([1.0, 2.0]);
-        test_basic_point_properties(&point, [1.0, 2.0], 2);
+        // Test 4D points
+        let point_4d: Point<f64, 4> = Point::new([1.0, 2.0, 3.0, 4.0]);
+        test_basic_point_properties(&point_4d, [1.0, 2.0, 3.0, 4.0], 4);
+        let origin_4d: Point<f64, 4> = Point::origin();
+        test_basic_point_properties(&origin_4d, [0.0, 0.0, 0.0, 0.0], 4);
 
-        let origin: Point<f64, 2> = Point::origin();
-        test_basic_point_properties(&origin, [0.0, 0.0], 2);
-    }
-
-    #[test]
-    fn point_3d() {
-        let point: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
-        test_basic_point_properties(&point, [1.0, 2.0, 3.0], 3);
-
-        let origin: Point<f64, 3> = Point::origin();
-        test_basic_point_properties(&origin, [0.0, 0.0, 0.0], 3);
-    }
-
-    #[test]
-    fn point_5d() {
-        let point: Point<f64, 5> = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
-        test_basic_point_properties(&point, [1.0, 2.0, 3.0, 4.0, 5.0], 5);
-
-        let origin: Point<f64, 5> = Point::origin();
-        test_basic_point_properties(&origin, [0.0, 0.0, 0.0, 0.0, 0.0], 5);
+        // Test 5D points
+        let point_5d: Point<f64, 5> = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+        test_basic_point_properties(&point_5d, [1.0, 2.0, 3.0, 4.0, 5.0], 5);
+        let origin_5d: Point<f64, 5> = Point::origin();
+        test_basic_point_properties(&origin_5d, [0.0, 0.0, 0.0, 0.0, 0.0], 5);
     }
 
     #[test]
@@ -742,6 +716,17 @@ mod tests {
         let serialized_1d = serde_json::to_string(&point_1d).unwrap();
         let deserialized_1d: Point<f64, 1> = serde_json::from_str(&serialized_1d).unwrap();
         assert_eq!(point_1d, deserialized_1d);
+
+        // Test with very large and small numbers (roundtrip)
+        let point_large = Point::new([1e100, -1e100, 0.0]);
+        let serialized_large = serde_json::to_string(&point_large).unwrap();
+        let deserialized_large: Point<f64, 3> = serde_json::from_str(&serialized_large).unwrap();
+        assert_eq!(point_large, deserialized_large);
+
+        let point_small = Point::new([1e-100, -1e-100, 0.0]);
+        let serialized_small = serde_json::to_string(&point_small).unwrap();
+        let deserialized_small: Point<f64, 3> = serde_json::from_str(&serialized_small).unwrap();
+        assert_eq!(point_small, deserialized_small);
     }
 
     #[test]
@@ -805,8 +790,6 @@ mod tests {
 
     #[test]
     fn point_ordering_edge_cases() {
-        use std::cmp::Ordering;
-
         let point1 = Point::new([1.0, 2.0]);
         let point2 = Point::new([1.0, 2.0]);
 
@@ -817,23 +800,6 @@ mod tests {
         assert!(point2 <= point1);
         assert!(point1 >= point2);
         assert!(point2 >= point1);
-    }
-
-    #[test]
-    fn point_hash_f32() {
-        use std::collections::HashMap;
-
-        let mut map: HashMap<Point<f32, 2>, i32> = HashMap::new();
-
-        let point1 = Point::new([1.5f32, 2.5f32]);
-        let point2 = Point::new([3.5f32, 4.5f32]);
-        let point3 = Point::new([1.5f32, 2.5f32]); // Same as point1
-
-        map.insert(point1, 10);
-        map.insert(point2, 20);
-
-        assert_eq!(map.get(&point3), Some(&10)); // Should find point1's value
-        assert_eq!(map.len(), 2);
     }
 
     #[test]
@@ -1039,99 +1005,43 @@ mod tests {
     }
 
     #[test]
-    fn point_nan_hash_consistency() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+    fn point_special_values_hash_consistency() {
+        // Test that OrderedFloat provides consistent hashing for NaN and infinity values
 
-        // Test that OrderedFloat provides consistent hashing for NaN values
-        // Note: Equality comparison treats all NaN values as equivalent
-        // Hashing uses OrderedFloat which treats all NaN values as equivalent
-
+        // Test NaN hash consistency
         let point_nan1 = Point::new([f64::NAN, 2.0]);
         let point_nan2 = Point::new([f64::NAN, 2.0]);
+        assert_eq!(get_hash(&point_nan1), get_hash(&point_nan2));
 
-        let mut hasher1 = DefaultHasher::new();
-        let mut hasher2 = DefaultHasher::new();
-
-        point_nan1.hash(&mut hasher1);
-        point_nan2.hash(&mut hasher2);
-
-        // NaN points with same structure should hash to same value
-        assert_eq!(hasher1.finish(), hasher2.finish());
-
-        // Test with f32 NaN
-        let point_f32_nan1 = Point::new([f32::NAN, 1.0f32]);
-        let point_f32_nan2 = Point::new([f32::NAN, 1.0f32]);
-
-        let mut hasher_f32_1 = DefaultHasher::new();
-        let mut hasher_f32_2 = DefaultHasher::new();
-
-        point_f32_nan1.hash(&mut hasher_f32_1);
-        point_f32_nan2.hash(&mut hasher_f32_2);
-
-        assert_eq!(hasher_f32_1.finish(), hasher_f32_2.finish());
-    }
-
-    #[test]
-    fn point_infinity_hash_consistency() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        // Test that OrderedFloat provides consistent hashing for infinity values
+        // Test infinity hash consistency
         let point_pos_inf1 = Point::new([f64::INFINITY, 2.0]);
         let point_pos_inf2 = Point::new([f64::INFINITY, 2.0]);
+        assert_eq!(get_hash(&point_pos_inf1), get_hash(&point_pos_inf2));
 
-        let mut hasher1 = DefaultHasher::new();
-        let mut hasher2 = DefaultHasher::new();
-
-        point_pos_inf1.hash(&mut hasher1);
-        point_pos_inf2.hash(&mut hasher2);
-
-        // Same infinity points should hash to same value
-        assert_eq!(hasher1.finish(), hasher2.finish());
-
-        // Test negative infinity
         let point_neg_inf1 = Point::new([f64::NEG_INFINITY, 2.0]);
         let point_neg_inf2 = Point::new([f64::NEG_INFINITY, 2.0]);
-
-        let mut hasher_neg1 = DefaultHasher::new();
-        let mut hasher_neg2 = DefaultHasher::new();
-
-        point_neg_inf1.hash(&mut hasher_neg1);
-        point_neg_inf2.hash(&mut hasher_neg2);
-
-        assert_eq!(hasher_neg1.finish(), hasher_neg2.finish());
+        assert_eq!(get_hash(&point_neg_inf1), get_hash(&point_neg_inf2));
 
         // Positive and negative infinity should hash differently
-        assert_ne!(hasher1.finish(), hasher_neg1.finish());
-    }
+        assert_ne!(get_hash(&point_pos_inf1), get_hash(&point_neg_inf1));
 
-    #[test]
-    fn point_nan_infinity_hash_consistency() {
-        use std::collections::HashMap;
-
-        // Test that points with NaN can be used as HashMap keys
+        // Test HashMap usage with special values
         let mut map: HashMap<Point<f64, 2>, i32> = HashMap::new();
-
-        let point_nan1 = Point::new([f64::NAN, 2.0]);
-        let point_nan2 = Point::new([f64::NAN, 2.0]); // Should be equal to point_nan1
-        let point_inf = Point::new([f64::INFINITY, 2.0]);
+        let point_nan_lookup = Point::new([f64::NAN, 2.0]);
+        let point_inf_lookup = Point::new([f64::INFINITY, 2.0]);
 
         map.insert(point_nan1, 100);
-        map.insert(point_inf, 200);
+        map.insert(point_pos_inf1, 200);
 
-        // Should be able to retrieve using equivalent NaN point
-        assert_eq!(map.get(&point_nan2), Some(&100));
+        // Should be able to retrieve using equivalent points
+        assert_eq!(map.get(&point_nan_lookup), Some(&100));
+        assert_eq!(map.get(&point_inf_lookup), Some(&200));
         assert_eq!(map.len(), 2);
 
-        // Test with f32
-        let mut map_f32: HashMap<Point<f32, 1>, i32> = HashMap::new();
-
-        let point_f32_nan1 = Point::new([f32::NAN]);
-        let point_f32_nan2 = Point::new([f32::NAN]);
-
-        map_f32.insert(point_f32_nan1, 300);
-        assert_eq!(map_f32.get(&point_f32_nan2), Some(&300));
+        // Test with f32 types
+        let point_f32_nan1 = Point::new([f32::NAN, 1.0f32]);
+        let point_f32_nan2 = Point::new([f32::NAN, 1.0f32]);
+        assert_eq!(get_hash(&point_f32_nan1), get_hash(&point_f32_nan2));
     }
 
     #[test]
@@ -1247,58 +1157,32 @@ mod tests {
     }
 
     #[test]
-    fn point_nan_reflexivity() {
-        // Test that NaN points are equal to themselves (reflexivity)
+    fn point_nan_equality_properties() {
+        // Test that NaN equality follows mathematical properties: reflexivity, symmetry, and transitivity
 
+        // Test reflexivity: NaN points are equal to themselves
         let point_nan = Point::new([f64::NAN, f64::NAN, f64::NAN]);
         assert_eq!(point_nan, point_nan);
-
         let point_mixed = Point::new([1.0, f64::NAN, 3.0, f64::INFINITY]);
         assert_eq!(point_mixed, point_mixed);
 
-        // Test with f32
-        let point_f32_nan = Point::new([f32::NAN, f32::NAN]);
-        assert_eq!(point_f32_nan, point_f32_nan);
-    }
-
-    #[test]
-    fn point_nan_symmetry() {
-        // Test that NaN equality is symmetric (if a == b, then b == a)
-
+        // Test symmetry: if a == b, then b == a
         let point_a = Point::new([f64::NAN, 2.0, f64::INFINITY]);
         let point_b = Point::new([f64::NAN, 2.0, f64::INFINITY]);
-
         assert_eq!(point_a, point_b);
-        assert_eq!(point_b, point_a); // Should be symmetric
+        assert_eq!(point_b, point_a);
 
-        // Test with f32
-        let point_f32_a = Point::new([f32::NAN, 1.0f32, f32::NEG_INFINITY]);
-        let point_f32_b = Point::new([f32::NAN, 1.0f32, f32::NEG_INFINITY]);
-
-        assert_eq!(point_f32_a, point_f32_b);
-        assert_eq!(point_f32_b, point_f32_a);
-    }
-
-    #[test]
-    fn point_nan_transitivity() {
-        // Test that NaN equality is transitive (if a == b and b == c, then a == c)
-
-        let point_a = Point::new([f64::NAN, 2.0, 3.0]);
-        let point_b = Point::new([f64::NAN, 2.0, 3.0]);
-        let point_c = Point::new([f64::NAN, 2.0, 3.0]);
-
+        // Test transitivity: if a == b and b == c, then a == c
+        let point_c = Point::new([f64::NAN, 2.0, f64::INFINITY]);
         assert_eq!(point_a, point_b);
         assert_eq!(point_b, point_c);
-        assert_eq!(point_a, point_c); // Should be transitive
+        assert_eq!(point_a, point_c);
 
-        // Test with complex special values
-        let point_complex_a = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0]);
-        let point_complex_b = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0]);
-        let point_complex_c = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0]);
-
-        assert_eq!(point_complex_a, point_complex_b);
-        assert_eq!(point_complex_b, point_complex_c);
-        assert_eq!(point_complex_a, point_complex_c);
+        // Test with f32 types
+        let point_f32_a = Point::new([f32::NAN, 1.0f32, f32::NEG_INFINITY]);
+        let point_f32_b = Point::new([f32::NAN, 1.0f32, f32::NEG_INFINITY]);
+        assert_eq!(point_f32_a, point_f32_b);
+        assert_eq!(point_f32_b, point_f32_a);
     }
 
     #[test]
@@ -1516,8 +1400,6 @@ mod tests {
 
     #[test]
     fn point_partial_ord_comprehensive() {
-        use std::cmp::Ordering;
-
         // Test lexicographic ordering in detail
         let point_a = Point::new([1.0, 2.0, 3.0]);
         let point_b = Point::new([1.0, 2.0, 4.0]); // Greater in last coordinate
@@ -1563,8 +1445,6 @@ mod tests {
 
     #[test]
     fn point_partial_ord_special_values() {
-        use std::cmp::Ordering;
-
         // Test NaN vs NaN comparison (should be Some(Equal) with OrderedCmp)
         let point_nan1 = Point::new([f64::NAN, 1.0]);
         let point_nan2 = Point::new([f64::NAN, 1.0]);
@@ -1649,8 +1529,6 @@ mod tests {
 
     #[test]
     fn point_memory_layout_and_size() {
-        use std::mem;
-
         // Test that Point has the expected memory layout
         // Point should be the same size as its coordinate array
 
@@ -1692,40 +1570,6 @@ mod tests {
         // Test origin for 0D
         let origin_0d: Point<f64, 0> = Point::origin();
         assert_eq!(origin_0d, point_0d);
-    }
-
-    #[test]
-    fn point_serialization_edge_cases() {
-        // Test serialization with special floating point values
-
-        // Test with NaN
-        let point_with_nan = Point::new([f64::NAN, 1.0, 2.0]);
-        let serialized_nan = serde_json::to_string(&point_with_nan).unwrap();
-        // NaN serializes as null in JSON
-        assert!(serialized_nan.contains("null"));
-
-        // Test with infinity
-        let point_with_inf = Point::new([f64::INFINITY, 1.0]);
-        let serialized_inf = serde_json::to_string(&point_with_inf).unwrap();
-        // Infinity now serializes as "Infinity" string in JSON
-        assert!(serialized_inf.contains("\"Infinity\""));
-
-        // Test with negative infinity
-        let point_with_neg_inf = Point::new([f64::NEG_INFINITY, 1.0]);
-        let serialized_neg_inf = serde_json::to_string(&point_with_neg_inf).unwrap();
-        assert!(serialized_neg_inf.contains("\"-Infinity\""));
-
-        // Test with very large numbers
-        let point_large = Point::new([1e100, -1e100, 0.0]);
-        let serialized_large = serde_json::to_string(&point_large).unwrap();
-        let deserialized_large: Point<f64, 3> = serde_json::from_str(&serialized_large).unwrap();
-        assert_eq!(point_large, deserialized_large);
-
-        // Test with very small numbers
-        let point_small = Point::new([1e-100, -1e-100, 0.0]);
-        let serialized_small = serde_json::to_string(&point_small).unwrap();
-        let deserialized_small: Point<f64, 3> = serde_json::from_str(&serialized_small).unwrap();
-        assert_eq!(point_small, deserialized_small);
     }
 
     #[test]
@@ -1782,28 +1626,6 @@ mod tests {
     }
 
     #[test]
-    fn point_deserialize_nan_infinity_handling() {
-        // Test how deserialization handles null values that were serialized from NaN/infinity
-        // NOTE: This may fail because the current Deserialize doesn't handle null -> coordinate mapping
-
-        // Try to deserialize a point with null values
-        let json_with_nulls = "[null,1.0,2.0]";
-        let result: Result<Point<f64, 3>, _> = serde_json::from_str(json_with_nulls);
-
-        // This should fail unless we implement special handling for null -> NaN/infinity
-        match result {
-            Ok(_) => {
-                // If this passes, document what value was used for null
-                println!("Deserialization of null succeeded unexpectedly");
-            }
-            Err(e) => {
-                // Expected behavior - null can't be deserialized as f64
-                println!("Expected deserialization error: {e}");
-            }
-        }
-    }
-
-    #[test]
     fn point_deserialize_null_maps_to_nan() {
         // With custom Deserialize, JSON null deserializes to NaN
         let json = "[null,1.0,2.0]";
@@ -1812,6 +1634,192 @@ mod tests {
         assert!(coords[0].is_nan());
         assert_relative_eq!(coords[1], 1.0);
         assert_relative_eq!(coords[2], 2.0);
+    }
+
+    #[test]
+    fn point_deserialize_format_agnostic_comprehensive() {
+        // Test the format-agnostic deserialization improvements with CoordRepr enum
+
+        // Test 1: Regular numeric values (NumCast improvement)
+        let json_regular = "[1.0, 2.5, 4.25]";
+        let point_regular: Point<f64, 3> = serde_json::from_str(json_regular).unwrap();
+        assert_relative_eq!(
+            point_regular.to_array().as_slice(),
+            [1.0, 2.5, 4.25].as_slice()
+        );
+
+        // Test 2: Mixed special values using format-agnostic approach
+        let json_special = "[1.0, null, \"Infinity\", \"-Infinity\"]";
+        let point_special: Point<f64, 4> = serde_json::from_str(json_special).unwrap();
+        let coords = point_special.to_array();
+        assert_relative_eq!(coords[0], 1.0);
+        assert!(coords[1].is_nan());
+        assert!(coords[2].is_infinite() && coords[2].is_sign_positive());
+        assert!(coords[3].is_infinite() && coords[3].is_sign_negative());
+
+        // Test 3: All null values
+        let json_all_null = "[null, null, null]";
+        let point_all_null: Point<f64, 3> = serde_json::from_str(json_all_null).unwrap();
+        let all_null_coords = point_all_null.to_array();
+        assert!(all_null_coords.iter().all(|&x| x.is_nan()));
+
+        // Test 4: All special string values
+        let json_all_special = "[\"Infinity\", \"-Infinity\", \"Infinity\"]";
+        let point_all_special: Point<f64, 3> = serde_json::from_str(json_all_special).unwrap();
+        let special_coords = point_all_special.to_array();
+        assert!(special_coords[0].is_infinite() && special_coords[0].is_sign_positive());
+        assert!(special_coords[1].is_infinite() && special_coords[1].is_sign_negative());
+        assert!(special_coords[2].is_infinite() && special_coords[2].is_sign_positive());
+
+        // Test 5: Serialization roundtrip with format-agnostic deserialization
+        let original = Point::new([1.5, f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0]);
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: Point<f64, 5> = serde_json::from_str(&serialized).unwrap();
+
+        // Compare coordinates (can't use == because of NaN)
+        let orig_coords = original.to_array();
+        let deser_coords = deserialized.to_array();
+        assert_relative_eq!(orig_coords[0], deser_coords[0]);
+        assert!(orig_coords[1].is_nan() && deser_coords[1].is_nan());
+        assert!(
+            orig_coords[2].is_infinite()
+                && orig_coords[2].is_sign_positive()
+                && deser_coords[2].is_infinite()
+                && deser_coords[2].is_sign_positive()
+        );
+        assert!(
+            orig_coords[3].is_infinite()
+                && orig_coords[3].is_sign_negative()
+                && deser_coords[3].is_infinite()
+                && deser_coords[3].is_sign_negative()
+        );
+        assert_relative_eq!(orig_coords[4], deser_coords[4]);
+
+        // Test 6: Test with different numeric types to verify NumCast improvement
+        let json_f32 = "[1.5, 2.5]";
+        let point_f32: Point<f32, 2> = serde_json::from_str(json_f32).unwrap();
+        assert_relative_eq!(point_f32.to_array().as_slice(), [1.5f32, 2.5f32].as_slice());
+
+        // Test 7: Invalid special string should fail gracefully
+        let json_invalid = "[1.0, \"NotASpecialValue\", 2.0]";
+        let result: Result<Point<f64, 3>, _> = serde_json::from_str(json_invalid);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Unknown special value"));
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)] // Comprehensive test with many test cases
+    fn point_deserialize_case_insensitive_special_values() {
+        // Test case-insensitive deserialization of special values
+
+        // Test case-insensitive "Infinity" variants
+        let test_cases = vec![
+            (r#"["infinity", 1.0]"#, "lowercase infinity"),
+            (r#"["INFINITY", 1.0]"#, "uppercase infinity"),
+            (r#"["Infinity", 1.0]"#, "mixed case infinity"),
+            (r#"["inf", 1.0]"#, "lowercase inf"),
+            (r#"["INF", 1.0]"#, "uppercase inf"),
+            (r#"["Inf", 1.0]"#, "mixed case inf"),
+        ];
+
+        for (json_str, description) in test_cases {
+            let point: Point<f64, 2> = serde_json::from_str(json_str).unwrap_or_else(|e| {
+                panic!("Failed to deserialize {description} ({json_str}): {e}")
+            });
+
+            assert!(
+                point.coords[0].is_infinite() && point.coords[0].is_sign_positive(),
+                "First coordinate should be positive infinity for {description}"
+            );
+            assert_relative_eq!(point.coords[1], 1.0, epsilon = 1e-10);
+        }
+
+        // Test negative infinity variants
+        let neg_inf_cases = vec![
+            (r#"["-infinity", 2.0]"#, "lowercase -infinity"),
+            (r#"["-INFINITY", 2.0]"#, "uppercase -infinity"),
+            (r#"["-Infinity", 2.0]"#, "mixed case -infinity"),
+            (r#"["-inf", 2.0]"#, "lowercase -inf"),
+            (r#"["-INF", 2.0]"#, "uppercase -inf"),
+            (r#"["-Inf", 2.0]"#, "mixed case -inf"),
+        ];
+
+        for (json_str, description) in neg_inf_cases {
+            let point: Point<f64, 2> = serde_json::from_str(json_str).unwrap_or_else(|e| {
+                panic!("Failed to deserialize {description} ({json_str}): {e}")
+            });
+
+            assert!(
+                point.coords[0].is_infinite() && point.coords[0].is_sign_negative(),
+                "First coordinate should be negative infinity for {description}"
+            );
+            assert_relative_eq!(point.coords[1], 2.0, epsilon = 1e-10);
+        }
+
+        // Test case-insensitive "NaN" variants
+        let nan_cases = vec![
+            (r#"["nan", 3.0]"#, "lowercase nan"),
+            (r#"["NaN", 3.0]"#, "mixed case NaN"),
+            (r#"["NAN", 3.0]"#, "uppercase NAN"),
+            (r#"["Nan", 3.0]"#, "title case Nan"),
+        ];
+
+        for (json_str, description) in nan_cases {
+            let point: Point<f64, 2> = serde_json::from_str(json_str).unwrap_or_else(|e| {
+                panic!("Failed to deserialize {description} ({json_str}): {e}")
+            });
+
+            assert!(
+                point.coords[0].is_nan(),
+                "First coordinate should be NaN for {description}"
+            );
+            assert_relative_eq!(point.coords[1], 3.0, epsilon = 1e-10);
+        }
+
+        // Test whitespace trimming
+        let whitespace_cases = vec![
+            (r#"[" infinity ", 1.0]"#, "spaces around infinity"),
+            (r#"["\tinf\n", 2.0]"#, "tabs and newlines around inf"),
+            (r#"["  NaN  ", 3.0]"#, "spaces around NaN"),
+        ];
+
+        for (json_str, description) in whitespace_cases {
+            let point: Point<f64, 2> = serde_json::from_str(json_str).unwrap_or_else(|e| {
+                panic!("Failed to deserialize {description} ({json_str}): {e}")
+            });
+
+            if description.contains("infinity") || description.contains("inf") {
+                assert!(
+                    point.coords[0].is_infinite() && point.coords[0].is_sign_positive(),
+                    "First coordinate should be positive infinity for {description}"
+                );
+            } else {
+                assert!(
+                    point.coords[0].is_nan(),
+                    "First coordinate should be NaN for {description}"
+                );
+            }
+        }
+
+        // Test combined case insensitive values
+        let combined = r#"["INFINITY", "-inf", "Nan", 42.0]"#;
+        let point: Point<f64, 4> = serde_json::from_str(combined).unwrap();
+        assert!(point.coords[0].is_infinite() && point.coords[0].is_sign_positive());
+        assert!(point.coords[1].is_infinite() && point.coords[1].is_sign_negative());
+        assert!(point.coords[2].is_nan());
+        assert_relative_eq!(point.coords[3], 42.0, epsilon = 1e-10);
+
+        // Test that unknown special values still fail
+        let invalid = r#"["unknown_special", 1.0]"#;
+        let result: Result<Point<f64, 2>, _> = serde_json::from_str(invalid);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown special value")
+        );
     }
 
     #[test]
@@ -1849,7 +1857,7 @@ mod tests {
 
         // Test conversion from array reference
         let coords_ref = &[1.0f32, 2.0f32, 3.0f32];
-        let point_from_ref: Point<f64, 3> = Point::new(coords_ref.map(std::convert::Into::into));
+        let point_from_ref: Point<f64, 3> = Point::new(coords_ref.map(Into::into));
         assert_relative_eq!(
             point_from_ref.to_array().as_slice(),
             [1.0f64, 2.0f64, 3.0f64].as_slice()
@@ -1924,9 +1932,6 @@ mod tests {
 
     #[test]
     fn point_hash_special_values() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         // Test for NaN
         let point_nan1 = Point::new([f64::NAN, 2.0]);
         let point_nan2 = Point::new([f64::NAN, 2.0]);
@@ -1978,8 +1983,6 @@ mod tests {
 
     #[test]
     fn point_hashmap_special_values() {
-        use std::collections::HashMap;
-
         let mut map: HashMap<Point<f64, 2>, &str> = HashMap::new();
 
         let point_nan = Point::new([f64::NAN, 2.0]);
@@ -2003,8 +2006,6 @@ mod tests {
 
     #[test]
     fn point_hashset_special_values() {
-        use std::collections::HashSet;
-
         let mut set: HashSet<Point<f64, 2>> = HashSet::new();
 
         set.insert(Point::new([f64::NAN, 2.0]));
@@ -2023,8 +2024,6 @@ mod tests {
 
     #[test]
     fn point_hash_distribution_basic() {
-        use std::collections::HashSet;
-
         // Test that different points generally produce different hashes
         // (This is a probabilistic test, not a guarantee)
 
@@ -2221,8 +2220,6 @@ mod tests {
 
     #[test]
     fn point_hashmap_with_special_values() {
-        use std::collections::HashMap;
-
         let mut point_map: HashMap<Point<f64, 3>, &str> = HashMap::new();
 
         // Insert points with various special values
@@ -2266,8 +2263,6 @@ mod tests {
 
     #[test]
     fn point_hashset_with_special_values() {
-        use std::collections::HashSet;
-
         let mut point_set: HashSet<Point<f64, 2>> = HashSet::new();
 
         // Add various points including duplicates with special values
@@ -2719,7 +2714,7 @@ mod tests {
         assert_eq!(copied.dim(), cloned.dim());
 
         // Test that point can be used in collections requiring Hash + Eq
-        let mut set = std::collections::HashSet::new();
+        let mut set = HashSet::new();
         set.insert(point);
         assert!(set.contains(&point));
     }

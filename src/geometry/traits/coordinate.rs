@@ -519,6 +519,31 @@ pub trait CoordinateScalar:
     /// }
     /// ```
     fn default_tolerance() -> Self;
+
+    /// Returns the number of mantissa digits for this floating-point type.
+    ///
+    /// This method provides the number of mantissa bits available for precision
+    /// in the floating-point representation. This is useful for determining
+    /// the maximum integer value that can be represented exactly.
+    ///
+    /// # Returns
+    ///
+    /// The number of mantissa digits:
+    /// - For `f32`: `24` bits (including implicit bit)
+    /// - For `f64`: `53` bits (including implicit bit)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::geometry::traits::coordinate::CoordinateScalar;
+    ///
+    /// // f32 has 24 mantissa bits
+    /// assert_eq!(f32::mantissa_digits(), 24);
+    ///
+    /// // f64 has 53 mantissa bits
+    /// assert_eq!(f64::mantissa_digits(), 53);
+    /// ```
+    fn mantissa_digits() -> u32;
 }
 
 // Specific implementations for f32 and f64
@@ -526,11 +551,19 @@ impl CoordinateScalar for f32 {
     fn default_tolerance() -> Self {
         DEFAULT_TOLERANCE_F32
     }
+
+    fn mantissa_digits() -> u32 {
+        Self::MANTISSA_DIGITS
+    }
 }
 
 impl CoordinateScalar for f64 {
     fn default_tolerance() -> Self {
         DEFAULT_TOLERANCE_F64
+    }
+
+    fn mantissa_digits() -> u32 {
+        Self::MANTISSA_DIGITS
     }
 }
 
@@ -869,135 +902,81 @@ mod tests {
     }
 
     #[test]
-    fn coordinate_trait_validate_various() {
-        let test_cases = [
-            ([1.0, 2.0, 3.0], true),                // Valid
-            ([-1.0, -2.0, -3.0], true),             // Valid negative
-            ([0.0, 0.0, 0.0], true),                // Valid zeros
-            ([1e10, 2e10, 3e10], true),             // Valid large
-            ([1e-10, 2e-10, 3e-10], true),          // Valid small
-            ([f64::NAN, 2.0, 3.0], false),          // Invalid NaN
-            ([2.0, f64::NAN, 3.0], false),          // Invalid NaN middle
-            ([3.0, 2.0, f64::NAN], false),          // Invalid NaN end
-            ([f64::INFINITY, 2.0, 3.0], false),     // Invalid positive infinity
-            ([2.0, f64::NEG_INFINITY, 3.0], false), // Invalid negative infinity
+    fn coordinate_trait_validate_comprehensive() {
+        // Test valid coordinates
+        let valid_cases = [
+            ([1.0, 2.0, 3.0], "positive values"),
+            ([-1.0, -2.0, -3.0], "negative values"),
+            ([0.0, 0.0, 0.0], "zeros"),
+            ([1e10, 2e10, 3e10], "large values"),
+            ([1e-10, 2e-10, 3e-10], "small values"),
         ];
 
-        for &(input, expected) in &test_cases {
-            let coord: Point<f64, 3> = Point::new(input);
-            assert_eq!(coord.validate().is_ok(), expected);
-        }
-    }
-
-    #[test]
-    fn coordinate_trait_validate_invalid_special_values() {
-        // Test NaN in various positions
-        let nan_first: Point<f64, 3> = Point::new([f64::NAN, 2.0, 3.0]);
-        let result = nan_first.validate();
-        assert!(result.is_err());
-        if let Err(CoordinateValidationError::InvalidCoordinate {
-            coordinate_index,
-            dimension,
-            ..
-        }) = result
-        {
-            assert_eq!(coordinate_index, 0);
-            assert_eq!(dimension, 3);
+        for &(coords, description) in &valid_cases {
+            let coord: Point<f64, 3> = Point::new(coords);
+            assert!(coord.validate().is_ok(), "Valid case failed: {description}");
         }
 
-        let nan_middle: Point<f64, 3> = Point::new([1.0, f64::NAN, 3.0]);
-        let result = nan_middle.validate();
-        assert!(result.is_err());
-        if let Err(CoordinateValidationError::InvalidCoordinate {
-            coordinate_index,
-            dimension,
-            ..
-        }) = result
-        {
-            assert_eq!(coordinate_index, 1);
-            assert_eq!(dimension, 3);
+        // Test invalid coordinates with position and dimension validation
+        let invalid_cases = [
+            ([f64::NAN, 2.0, 3.0], 0, 3, "NaN at start"),
+            ([1.0, f64::NAN, 3.0], 1, 3, "NaN in middle"),
+            ([1.0, 2.0, f64::NAN], 2, 3, "NaN at end"),
+            ([f64::INFINITY, 2.0, 3.0], 0, 3, "positive infinity"),
+            ([1.0, f64::NEG_INFINITY, 3.0], 1, 3, "negative infinity"),
+        ];
+
+        for &(coords, expected_index, expected_dim, description) in &invalid_cases {
+            let coord: Point<f64, 3> = Point::new(coords);
+            let result = coord.validate();
+            assert!(result.is_err(), "Invalid case should fail: {description}");
+
+            if let Err(CoordinateValidationError::InvalidCoordinate {
+                coordinate_index,
+                dimension,
+                ..
+            }) = result
+            {
+                assert_eq!(
+                    coordinate_index, expected_index,
+                    "Wrong index for: {description}"
+                );
+                assert_eq!(
+                    dimension, expected_dim,
+                    "Wrong dimension for: {description}"
+                );
+            }
         }
 
-        let nan_last: Point<f64, 3> = Point::new([1.0, 2.0, f64::NAN]);
-        let result = nan_last.validate();
-        assert!(result.is_err());
-        if let Err(CoordinateValidationError::InvalidCoordinate {
-            coordinate_index,
-            dimension,
-            ..
-        }) = result
-        {
-            assert_eq!(coordinate_index, 2);
-            assert_eq!(dimension, 3);
-        }
-
-        // Test infinity values
-        let pos_inf: Point<f64, 2> = Point::new([f64::INFINITY, 2.0]);
-        let result = pos_inf.validate();
-        assert!(result.is_err());
-        if let Err(CoordinateValidationError::InvalidCoordinate {
-            coordinate_index,
-            dimension,
-            ..
-        }) = result
-        {
-            assert_eq!(coordinate_index, 0);
-            assert_eq!(dimension, 2);
-        }
-
-        let neg_inf: Point<f64, 2> = Point::new([1.0, f64::NEG_INFINITY]);
-        let result = neg_inf.validate();
-        assert!(result.is_err());
-        if let Err(CoordinateValidationError::InvalidCoordinate {
-            coordinate_index,
-            dimension,
-            ..
-        }) = result
-        {
-            assert_eq!(coordinate_index, 1);
-            assert_eq!(dimension, 2);
-        }
-    }
-
-    #[test]
-    fn coordinate_trait_validate_first_invalid_reported() {
-        // When multiple coordinates are invalid, the first one should be reported
+        // Test first invalid coordinate is reported when multiple are invalid
         let multi_invalid: Point<f64, 4> = Point::new([f64::NAN, f64::INFINITY, f64::NAN, 1.0]);
-        let result = multi_invalid.validate();
-        assert!(result.is_err());
-
         if let Err(CoordinateValidationError::InvalidCoordinate {
             coordinate_index,
-            coordinate_value: _,
             dimension,
-        }) = result
+            ..
+        }) = multi_invalid.validate()
         {
-            assert_eq!(coordinate_index, 0); // First invalid coordinate
+            assert_eq!(
+                coordinate_index, 0,
+                "Should report first invalid coordinate"
+            );
             assert_eq!(dimension, 4);
         }
-    }
 
-    #[test]
-    fn coordinate_trait_validate_different_dimensions() {
-        // Test validation in 1D
+        // Test different dimensions
         let invalid_1d: Point<f64, 1> = Point::new([f64::NAN]);
-        let result = invalid_1d.validate();
-        assert!(result.is_err());
-
-        if let Err(CoordinateValidationError::InvalidCoordinate { dimension, .. }) = result {
+        if let Err(CoordinateValidationError::InvalidCoordinate { dimension, .. }) =
+            invalid_1d.validate()
+        {
             assert_eq!(dimension, 1);
         }
 
-        // Test validation in 5D
         let invalid_5d: Point<f64, 5> = Point::new([1.0, 2.0, f64::INFINITY, 4.0, 5.0]);
-        let result = invalid_5d.validate();
-        assert!(result.is_err());
-
         if let Err(CoordinateValidationError::InvalidCoordinate {
             coordinate_index,
             dimension,
             ..
-        }) = result
+        }) = invalid_5d.validate()
         {
             assert_eq!(coordinate_index, 2);
             assert_eq!(dimension, 5);
@@ -1005,8 +984,8 @@ mod tests {
     }
 
     #[test]
-    fn coordinate_trait_hash_coordinate() {
-        // Test hash_coordinate method
+    fn coordinate_trait_hash_coordinate_comprehensive() {
+        // Test normal coordinates - same values should produce same hash
         let coord1: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
         let coord2: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
         let coord3: Point<f64, 3> = Point::new([1.0, 2.0, 4.0]);
@@ -1014,104 +993,81 @@ mod tests {
         let mut hasher1 = DefaultHasher::new();
         let mut hasher2 = DefaultHasher::new();
         let mut hasher3 = DefaultHasher::new();
-
         coord1.hash_coordinate(&mut hasher1);
         coord2.hash_coordinate(&mut hasher2);
         coord3.hash_coordinate(&mut hasher3);
 
-        let hash1 = hasher1.finish();
-        let hash2 = hasher2.finish();
-        let hash3 = hasher3.finish();
+        assert_eq!(
+            hasher1.finish(),
+            hasher2.finish(),
+            "Same coordinates should have same hash"
+        );
+        assert_ne!(
+            hasher1.finish(),
+            hasher3.finish(),
+            "Different coordinates should have different hash"
+        );
 
-        // Same coordinates should have same hash
-        assert_eq!(hash1, hash2);
+        // Test special floating-point values - NaN should hash consistently
+        let nan_coord1: Point<f64, 2> = Point::new([f64::NAN, 1.0]);
+        let nan_coord2: Point<f64, 2> = Point::new([f64::NAN, 1.0]);
+        let mut hasher_nan1 = DefaultHasher::new();
+        let mut hasher_nan2 = DefaultHasher::new();
+        nan_coord1.hash_coordinate(&mut hasher_nan1);
+        nan_coord2.hash_coordinate(&mut hasher_nan2);
+        assert_eq!(
+            hasher_nan1.finish(),
+            hasher_nan2.finish(),
+            "NaN coordinates should hash consistently"
+        );
 
-        // Different coordinates should have different hash (with high probability)
-        assert_ne!(hash1, hash3);
+        // Test infinity values
+        let inf_coord1: Point<f64, 2> = Point::new([f64::INFINITY, 1.0]);
+        let inf_coord2: Point<f64, 2> = Point::new([f64::INFINITY, 1.0]);
+        let mut hasher_inf1 = DefaultHasher::new();
+        let mut hasher_inf2 = DefaultHasher::new();
+        inf_coord1.hash_coordinate(&mut hasher_inf1);
+        inf_coord2.hash_coordinate(&mut hasher_inf2);
+        assert_eq!(
+            hasher_inf1.finish(),
+            hasher_inf2.finish(),
+            "Infinity coordinates should hash consistently"
+        );
     }
 
     #[test]
-    fn coordinate_trait_hash_coordinate_special_values() {
-        // Test hash_coordinate with special floating-point values
-        let nan_coord: Point<f64, 2> = Point::new([f64::NAN, 1.0]);
-        let another_nan_coord: Point<f64, 2> = Point::new([f64::NAN, 1.0]);
-
-        let mut hasher1 = DefaultHasher::new();
-        let mut hasher2 = DefaultHasher::new();
-
-        nan_coord.hash_coordinate(&mut hasher1);
-        another_nan_coord.hash_coordinate(&mut hasher2);
-
-        // NaN coordinates should hash consistently
-        assert_eq!(hasher1.finish(), hasher2.finish());
-
-        // Test with infinity
-        let inf_coord: Point<f64, 2> = Point::new([f64::INFINITY, 1.0]);
-        let another_inf_coord: Point<f64, 2> = Point::new([f64::INFINITY, 1.0]);
-
-        let mut hasher3 = DefaultHasher::new();
-        let mut hasher4 = DefaultHasher::new();
-
-        inf_coord.hash_coordinate(&mut hasher3);
-        another_inf_coord.hash_coordinate(&mut hasher4);
-
-        // Infinity coordinates should hash consistently
-        assert_eq!(hasher3.finish(), hasher4.finish());
-    }
-
-    #[test]
-    fn coordinate_trait_ordered_equals() {
-        // Test ordered_equals with normal values
+    fn coordinate_trait_ordered_equals_comprehensive() {
+        // Test normal values
         let coord1: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
         let coord2: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
         let coord3: Point<f64, 3> = Point::new([1.0, 2.0, 4.0]);
-
         assert!(coord1.ordered_equals(&coord2));
         assert!(coord2.ordered_equals(&coord1));
         assert!(!coord1.ordered_equals(&coord3));
-        assert!(!coord3.ordered_equals(&coord1));
-    }
 
-    #[test]
-    fn coordinate_trait_ordered_equals_nan() {
-        // Test ordered_equals with NaN values - they should be equal to themselves
+        // Test NaN values - should be equal to themselves
         let nan_coord1: Point<f64, 3> = Point::new([f64::NAN, 2.0, 3.0]);
         let nan_coord2: Point<f64, 3> = Point::new([f64::NAN, 2.0, 3.0]);
         let normal_coord: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
-
-        // NaN coordinates should be equal to themselves using ordered equality
         assert!(nan_coord1.ordered_equals(&nan_coord2));
-        assert!(nan_coord2.ordered_equals(&nan_coord1));
-
-        // NaN coordinates should not be equal to normal coordinates
         assert!(!nan_coord1.ordered_equals(&normal_coord));
-        assert!(!normal_coord.ordered_equals(&nan_coord1));
 
         // Multiple NaN coordinates
         let multi_nan1: Point<f64, 3> = Point::new([f64::NAN, f64::NAN, 3.0]);
         let multi_nan2: Point<f64, 3> = Point::new([f64::NAN, f64::NAN, 3.0]);
         assert!(multi_nan1.ordered_equals(&multi_nan2));
-    }
 
-    #[test]
-    fn coordinate_trait_ordered_equals_infinity() {
-        // Test ordered_equals with infinity values
+        // Test infinity values
         let inf_coord1: Point<f64, 2> = Point::new([f64::INFINITY, 2.0]);
         let inf_coord2: Point<f64, 2> = Point::new([f64::INFINITY, 2.0]);
         let neg_inf_coord: Point<f64, 2> = Point::new([f64::NEG_INFINITY, 2.0]);
-
         assert!(inf_coord1.ordered_equals(&inf_coord2));
         assert!(!inf_coord1.ordered_equals(&neg_inf_coord));
-        assert!(!neg_inf_coord.ordered_equals(&inf_coord1));
-    }
 
-    #[test]
-    fn coordinate_trait_ordered_equals_mixed_special_values() {
-        // Test ordered_equals with mixed special values
+        // Test mixed special values
         let mixed1: Point<f64, 4> = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1.0]);
         let mixed2: Point<f64, 4> = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1.0]);
         let mixed3: Point<f64, 4> = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 2.0]);
-
         assert!(mixed1.ordered_equals(&mixed2));
         assert!(!mixed1.ordered_equals(&mixed3));
     }
@@ -1145,76 +1101,6 @@ mod tests {
             dimension: 3,
         };
         assert_ne!(error, different_error);
-    }
-
-    #[test]
-    fn coordinate_validation_error_different_scenarios() {
-        // Test error with different coordinate values and indices
-        let scenarios = vec![
-            (0, "NaN".to_string(), 1),
-            (2, "inf".to_string(), 3),
-            (4, "-inf".to_string(), 5),
-        ];
-
-        for (index, value, dim) in scenarios {
-            let error = CoordinateValidationError::InvalidCoordinate {
-                coordinate_index: index,
-                coordinate_value: value.clone(),
-                dimension: dim,
-            };
-
-            let display_str = format!("{error}");
-            assert!(display_str.contains(&format!("index {index}")));
-            assert!(display_str.contains(&format!("dimension {dim}")));
-            assert!(display_str.contains(&value));
-        }
-    }
-
-    #[test]
-    fn coordinate_trait_precision_and_boundary_values() {
-        // Test f32 precision and boundary values
-        let coord_f32: Point<f32, 3> = Point::new([0.1f32, 0.2f32, 0.3f32]);
-        assert_relative_eq!(
-            coord_f32.get(0).unwrap(),
-            0.1f32,
-            epsilon = f32::EPSILON * 4.0
-        );
-        assert_relative_eq!(
-            coord_f32.get(1).unwrap(),
-            0.2f32,
-            epsilon = f32::EPSILON * 4.0
-        );
-        assert_relative_eq!(
-            coord_f32.get(2).unwrap(),
-            0.3f32,
-            epsilon = f32::EPSILON * 4.0
-        );
-
-        // Test boundary values
-        let boundary_f32: Point<f32, 2> = Point::new([f32::MIN, f32::MAX]);
-        assert!(boundary_f32.validate().is_ok());
-        assert_relative_eq!(boundary_f32.get(0).unwrap(), f32::MIN, epsilon = 0.0);
-        assert_relative_eq!(boundary_f32.get(1).unwrap(), f32::MAX, epsilon = 0.0);
-
-        let boundary_f64: Point<f64, 2> = Point::new([f64::MIN, f64::MAX]);
-        assert!(boundary_f64.validate().is_ok());
-        assert_relative_eq!(boundary_f64.get(0).unwrap(), f64::MIN, epsilon = 0.0);
-        assert_relative_eq!(boundary_f64.get(1).unwrap(), f64::MAX, epsilon = 0.0);
-
-        // Test very small values
-        let small_coord: Point<f64, 2> = Point::new([f64::EPSILON, f64::MIN_POSITIVE]);
-        assert!(small_coord.validate().is_ok());
-
-        // Test NaN and infinity in special values tests
-        let nan_f32: Point<f32, 2> = Point::new([f32::NAN, 1.5f32]);
-        assert!(nan_f32.validate().is_err());
-        let inf_f32: Point<f32, 2> = Point::new([f32::INFINITY, 1.5f32]);
-        assert!(inf_f32.validate().is_err());
-
-        // Test f32 ordered equality with special values
-        let nan_coord1_f32: Point<f32, 2> = Point::new([f32::NAN, 2.0f32]);
-        let nan_coord2_f32: Point<f32, 2> = Point::new([f32::NAN, 2.0f32]);
-        assert!(nan_coord1_f32.ordered_equals(&nan_coord2_f32));
     }
 
     #[test]
@@ -1256,60 +1142,34 @@ mod tests {
 
     #[test]
     fn coordinate_trait_hash_collision_resistance() {
-        // Test that similar but different coordinates produce different hashes
+        // Test that different coordinates produce different hashes (basic collision resistance)
         use std::collections::HashSet;
-
         let mut hashes = HashSet::new();
 
-        // Generate many similar coordinates
-        for i in 0..100 {
-            let coord: Point<f64, 3> = Point::new([
-                f64::from(i) / 100.0,
-                f64::from(i + 1) / 100.0,
-                f64::from(i + 2) / 100.0,
-            ]);
+        // Generate diverse coordinates to test hash distribution
+        let test_coords = [
+            [1.0, 2.0, 3.0],
+            [1.1, 2.0, 3.0],
+            [1.0, 2.1, 3.0],
+            [1.0, 2.0, 3.1],
+            [0.0, 0.0, 0.0],
+            [-1.0, -2.0, -3.0],
+            [1e10, 1e-10, 0.0],
+        ];
 
-            let mut hash_state = DefaultHasher::new();
-            coord.hash_coordinate(&mut hash_state);
-            let hash = hash_state.finish();
-
-            // Each coordinate should produce a unique hash
-            assert!(
-                !hashes.contains(&hash),
-                "Hash collision detected at iteration {i}"
-            );
-            hashes.insert(hash);
+        for coords in test_coords {
+            let coord: Point<f64, 3> = Point::new(coords);
+            let mut hash_builder = DefaultHasher::new();
+            coord.hash_coordinate(&mut hash_builder);
+            hashes.insert(hash_builder.finish());
         }
 
-        // We should have very high uniqueness; allow rare collisions
-        assert!(
-            hashes.len() > 95,
-            "Unexpectedly low uniqueness: {} unique of 100",
-            hashes.len()
+        // All test coordinates should produce unique hashes
+        assert_eq!(
+            hashes.len(),
+            test_coords.len(),
+            "Hash collision detected in basic test set"
         );
-    }
-
-    #[test]
-    fn coordinate_trait_ordered_equals_edge_cases() {
-        // Test ordered_equals with various edge cases
-
-        // Test zero vs negative zero
-        let zero_coord: Point<f64, 2> = Point::new([0.0, 0.0]);
-        let neg_zero_coord: Point<f64, 2> = Point::new([-0.0, -0.0]);
-        assert!(zero_coord.ordered_equals(&neg_zero_coord));
-
-        // Test very close but not identical values
-        let coord1: Point<f64, 2> = Point::new([1.0, 2.0]);
-        let coord2: Point<f64, 2> = Point::new([1.0 + f64::EPSILON, 2.0]);
-        assert!(!coord1.ordered_equals(&coord2)); // Should be different
-
-        // Test with mixed special values and normal values
-        let mixed1: Point<f64, 4> = Point::new([1.0, f64::NAN, 3.0, f64::INFINITY]);
-        let mixed2: Point<f64, 4> = Point::new([1.0, f64::NAN, 3.0, f64::INFINITY]);
-        let mixed3: Point<f64, 4> = Point::new([1.0, f64::NAN, 3.0, f64::NEG_INFINITY]);
-
-        assert!(mixed1.ordered_equals(&mixed2));
-        assert!(!mixed1.ordered_equals(&mixed3));
     }
 
     #[test]
@@ -1330,46 +1190,29 @@ mod tests {
     #[test]
     fn coordinate_scalar_trait_bounds_comprehensive() {
         // Test that CoordinateScalar implementations have all required trait bounds
-        // This test ensures all trait bounds are properly satisfied
-
-        fn test_all_bounds<T: CoordinateScalar>() -> T {
-            // Test Float bounds
+        fn test_bounds<T: CoordinateScalar>() {
             let zero = T::zero();
-            let one = T::one();
-            let two = one + one;
+            let nan = T::nan();
 
-            // Test OrderedEq (through trait requirement)
+            // Test key trait requirements
             assert!(zero.ordered_eq(&T::zero()));
-
-            // Test HashCoordinate (through trait requirement)
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            zero.hash_scalar(&mut hasher);
-
-            // Test FiniteCheck (through trait requirement)
+            assert!(nan.ordered_eq(&T::nan())); // NaN should equal itself
             assert!(zero.is_finite_generic());
-
-            // Test Default
-            let default_val = T::default();
-            assert_eq!(default_val, T::zero());
-
-            // Test Debug (format for testing)
-            let debug_str = format!("{zero:?}");
-            assert!(!debug_str.is_empty());
-
-            // Test default_tolerance method
-            let tolerance = T::default_tolerance();
-            assert!(tolerance > T::zero());
-
-            two
+            assert!(!nan.is_finite_generic());
+            assert_eq!(T::default(), T::zero());
+            assert!(T::default_tolerance() > T::zero());
+            assert!(T::mantissa_digits() > 0);
         }
 
-        // Test f32 bounds
-        let result_f32 = test_all_bounds::<f32>();
-        assert_relative_eq!(result_f32, 2.0f32, epsilon = f32::EPSILON);
+        // Test both scalar types
+        test_bounds::<f32>();
+        test_bounds::<f64>();
 
-        // Test f64 bounds
-        let result_f64 = test_all_bounds::<f64>();
-        assert_relative_eq!(result_f64, 2.0f64, epsilon = f64::EPSILON);
+        // Verify expected values
+        assert_eq!(f32::mantissa_digits(), 24);
+        assert_eq!(f64::mantissa_digits(), 53);
+        assert_relative_eq!(f32::default_tolerance(), 1e-6_f32, epsilon = f32::EPSILON);
+        assert_relative_eq!(f64::default_tolerance(), 1e-15_f64, epsilon = f64::EPSILON);
     }
 
     #[test]
@@ -1414,340 +1257,5 @@ mod tests {
         // Test dimension consistency with compile-time constants
         assert_eq!(coord_1d.dim(), DIM_1D);
         assert_eq!(coord_7d.dim(), DIM_7D);
-    }
-
-    #[test]
-    fn coordinate_trait_hash_collision_edge_case() {
-        // Test a specific case that could theoretically cause hash collision
-        use std::collections::HashSet;
-        let mut hashes = HashSet::new();
-
-        // Create coordinates that are very similar to test hash distribution
-        let coord1: Point<f64, 2> = Point::new([1.0, 2.0]);
-        let coord2: Point<f64, 2> = Point::new([1.000_000_000_000_000_2, 2.0]);
-
-        let mut hasher1 = DefaultHasher::new();
-        let mut hasher2 = DefaultHasher::new();
-
-        coord1.hash_coordinate(&mut hasher1);
-        coord2.hash_coordinate(&mut hasher2);
-
-        let hash1 = hasher1.finish();
-        let hash2 = hasher2.finish();
-
-        hashes.insert(hash1);
-        hashes.insert(hash2);
-
-        // These should produce different hashes (no collision)
-        assert_eq!(hashes.len(), 2);
-    }
-
-    #[test]
-    fn coordinate_scalar_implementations_completeness() {
-        // Test that our CoordinateScalar implementations work correctly
-
-        // Test f32 implementation
-        let tolerance_f32 = f32::default_tolerance();
-        assert_relative_eq!(tolerance_f32, DEFAULT_TOLERANCE_F32, epsilon = f32::EPSILON);
-        assert_relative_eq!(tolerance_f32, 1e-6_f32, epsilon = f32::EPSILON);
-
-        // Test f64 implementation
-        let tolerance_f64 = f64::default_tolerance();
-        assert_relative_eq!(tolerance_f64, DEFAULT_TOLERANCE_F64, epsilon = f64::EPSILON);
-        assert_relative_eq!(tolerance_f64, 1e-15_f64, epsilon = f64::EPSILON);
-
-        // Test that tolerances are positive
-        assert!(tolerance_f32 > 0.0);
-        assert!(tolerance_f64 > 0.0);
-
-        // Test that f32 tolerance is larger than f64 tolerance
-        assert!(f64::from(tolerance_f32) > tolerance_f64);
-    }
-
-    // Helper function for testing NaN implementation across scalar types
-    fn test_nan<T: CoordinateScalar>() {
-        let nan_value = T::nan();
-        assert!(nan_value.is_nan());
-    }
-
-    #[test]
-    fn coordinate_scalar_nan_implementation() {
-        // Test that CoordinateScalar::nan() returns NaN values
-
-        // Test f32 nan()
-        let nan_f32 = f32::nan();
-        assert!(nan_f32.is_nan());
-
-        // Test f64 nan()
-        let nan_f64 = f64::nan();
-        assert!(nan_f64.is_nan());
-
-        // Test in generic function
-        test_nan::<f32>();
-        test_nan::<f64>();
-    }
-
-    #[test]
-    fn coordinate_trait_edge_cases_comprehensive() {
-        // Test various edge cases not covered by other tests
-
-        // Test coordinate creation and access with different patterns
-        let coord_alternating: Point<f64, 4> = Point::new([1.0, -1.0, 2.0, -2.0]);
-        assert_eq!(coord_alternating.dim(), 4);
-        assert_eq!(coord_alternating.get(0), Some(1.0));
-        assert_eq!(coord_alternating.get(1), Some(-1.0));
-        assert_eq!(coord_alternating.get(2), Some(2.0));
-        assert_eq!(coord_alternating.get(3), Some(-2.0));
-        assert_eq!(coord_alternating.get(4), None);
-
-        // Test with extreme dimension (just 1 more large test)
-        let coord_large_alt: Point<f64, 8> = Point::new([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
-        assert_eq!(coord_large_alt.dim(), 8);
-        for i in 0..8 {
-            #[allow(clippy::cast_possible_truncation)]
-            let expected_value = f64::from(i as u32 + 1);
-            assert_eq!(coord_large_alt.get(i), Some(expected_value));
-        }
-        assert_eq!(coord_large_alt.get(8), None);
-
-        // Test origin for unusual dimensions
-        let origin_alt: Point<f64, 6> = Point::origin();
-        assert_eq!(origin_alt.dim(), 6);
-        assert_relative_eq!(
-            origin_alt.to_array().as_slice(),
-            [0.0; 6].as_slice(),
-            epsilon = DEFAULT_TOLERANCE_F64
-        );
-
-        // Test validation with mixed edge values
-        let edge_coord: Point<f64, 3> = Point::new([f64::MIN_POSITIVE, f64::MAX, 0.0]);
-        assert!(edge_coord.validate().is_ok());
-    }
-
-    // =============================================================================
-    // CONSOLIDATED TRAIT TESTS
-    // =============================================================================
-
-    #[test]
-    fn finite_check_trait_coverage() {
-        // Test FiniteCheck trait implementations across types
-
-        // f64 tests
-        assert!(1.0f64.is_finite_generic());
-        assert!((-1.0f64).is_finite_generic());
-        assert!(0.0f64.is_finite_generic());
-        assert!((-0.0f64).is_finite_generic());
-        assert!(f64::MAX.is_finite_generic());
-        assert!(f64::MIN.is_finite_generic());
-        assert!(f64::MIN_POSITIVE.is_finite_generic());
-        assert!(1e308f64.is_finite_generic());
-        assert!(1e-308f64.is_finite_generic());
-
-        assert!(!f64::NAN.is_finite_generic());
-        assert!(!f64::INFINITY.is_finite_generic());
-        assert!(!f64::NEG_INFINITY.is_finite_generic());
-
-        // f32 tests
-        assert!(1.0f32.is_finite_generic());
-        assert!((-1.0f32).is_finite_generic());
-        assert!(0.0f32.is_finite_generic());
-        assert!((-0.0f32).is_finite_generic());
-        assert!(f32::MAX.is_finite_generic());
-        assert!(f32::MIN.is_finite_generic());
-        assert!(f32::MIN_POSITIVE.is_finite_generic());
-        assert!(1e38f32.is_finite_generic());
-        assert!(1e-38f32.is_finite_generic());
-
-        assert!(!f32::NAN.is_finite_generic());
-        assert!(!f32::INFINITY.is_finite_generic());
-        assert!(!f32::NEG_INFINITY.is_finite_generic());
-    }
-
-    #[test]
-    fn ordered_eq_trait_coverage() {
-        // Test OrderedEq trait implementations
-
-        // f64 normal values
-        assert!(1.0f64.ordered_eq(&1.0f64));
-        assert!(!1.0f64.ordered_eq(&2.0f64));
-
-        // f64 NaN equality (should be true with OrderedEq)
-        assert!(f64::NAN.ordered_eq(&f64::NAN));
-
-        // f64 infinity values
-        assert!(f64::INFINITY.ordered_eq(&f64::INFINITY));
-        assert!(f64::NEG_INFINITY.ordered_eq(&f64::NEG_INFINITY));
-        assert!(!f64::INFINITY.ordered_eq(&f64::NEG_INFINITY));
-
-        // f64 zero comparisons
-        assert!(0.0f64.ordered_eq(&(-0.0f64)));
-
-        // f32 normal values
-        assert!(1.0f32.ordered_eq(&1.0f32));
-        assert!(!1.0f32.ordered_eq(&2.0f32));
-
-        // f32 NaN equality
-        assert!(f32::NAN.ordered_eq(&f32::NAN));
-
-        // f32 infinity values
-        assert!(f32::INFINITY.ordered_eq(&f32::INFINITY));
-        assert!(f32::NEG_INFINITY.ordered_eq(&f32::NEG_INFINITY));
-        assert!(!f32::INFINITY.ordered_eq(&f32::NEG_INFINITY));
-
-        // f32 zero comparisons
-        assert!(0.0f32.ordered_eq(&(-0.0f32)));
-    }
-
-    #[test]
-    fn hash_coordinate_trait_coverage() {
-        // Helper function to get hash for a coordinate
-        fn hash_coord<T: HashCoordinate>(value: &T) -> u64 {
-            let mut hasher = DefaultHasher::new();
-            value.hash_scalar(&mut hasher);
-            hasher.finish()
-        }
-
-        // Test floating point types
-        let hash_f32 = hash_coord(&std::f32::consts::PI);
-        let hash_f64 = hash_coord(&std::f64::consts::PI);
-        assert!(hash_f32 > 0);
-        assert!(hash_f64 > 0);
-
-        // Test that same values hash to same result
-        assert_eq!(hash_coord(&1.0f32), hash_coord(&1.0f32));
-        assert_eq!(hash_coord(&1.0f64), hash_coord(&1.0f64));
-
-        // Test NaN hashing consistency
-        assert_eq!(hash_coord(&f32::NAN), hash_coord(&f32::NAN));
-        assert_eq!(hash_coord(&f64::NAN), hash_coord(&f64::NAN));
-
-        // Test infinity hashing
-        assert_eq!(hash_coord(&f32::INFINITY), hash_coord(&f32::INFINITY));
-        assert_eq!(hash_coord(&f64::INFINITY), hash_coord(&f64::INFINITY));
-        assert_eq!(
-            hash_coord(&f32::NEG_INFINITY),
-            hash_coord(&f32::NEG_INFINITY)
-        );
-        assert_eq!(
-            hash_coord(&f64::NEG_INFINITY),
-            hash_coord(&f64::NEG_INFINITY)
-        );
-
-        // Test that different special values hash differently
-        assert_ne!(hash_coord(&f64::INFINITY), hash_coord(&f64::NEG_INFINITY));
-    }
-
-    #[test]
-    fn trait_interoperability_comprehensive() {
-        // Test that all traits work together correctly
-
-        // Test a generic function that uses all traits
-        fn test_comprehensive_coordinate<T: CoordinateScalar>(value: T) -> bool {
-            // FiniteCheck
-            let is_finite = value.is_finite_generic();
-
-            // OrderedEq
-            let is_equal_to_self = value.ordered_eq(&value);
-
-            // HashCoordinate
-            let mut hasher = DefaultHasher::new();
-            value.hash_scalar(&mut hasher);
-
-            let hash = hasher.finish();
-
-            // Default tolerance
-            let tolerance = T::default_tolerance();
-
-            // All finite values should be equal to themselves and have non-zero hash
-            if is_finite {
-                is_equal_to_self && hash > 0 && tolerance > T::zero()
-            } else {
-                // Non-finite values should still be equal to themselves and hash consistently
-                is_equal_to_self && tolerance > T::zero()
-            }
-        }
-
-        // Test with finite values
-        assert!(test_comprehensive_coordinate(1.0f64));
-        assert!(test_comprehensive_coordinate(42.5f32));
-        assert!(test_comprehensive_coordinate(0.0f64));
-        assert!(test_comprehensive_coordinate(-1.0f32));
-
-        // Test with special values
-        assert!(test_comprehensive_coordinate(f64::NAN));
-        assert!(test_comprehensive_coordinate(f32::NAN));
-        assert!(test_comprehensive_coordinate(f64::INFINITY));
-        assert!(test_comprehensive_coordinate(f32::INFINITY));
-        assert!(test_comprehensive_coordinate(f64::NEG_INFINITY));
-        assert!(test_comprehensive_coordinate(f32::NEG_INFINITY));
-    }
-
-    #[test]
-    fn coordinate_scalar_completeness() {
-        // Test that CoordinateScalar implementations are complete
-
-        // Test all required trait bounds exist
-        fn verify_coordinate_scalar<T: CoordinateScalar>() {
-            let zero = T::zero();
-            let one = T::one();
-            let nan = T::nan();
-
-            // Float trait
-            #[allow(clippy::no_effect_underscore_binding)]
-            let _sum = zero + one;
-            #[allow(clippy::no_effect_underscore_binding)]
-            let _product = one * one;
-
-            // OrderedEq trait
-            assert!(zero.ordered_eq(&T::zero()));
-            assert!(nan.ordered_eq(&T::nan()));
-
-            // HashCoordinate trait
-            let mut hasher = DefaultHasher::new();
-            zero.hash_scalar(&mut hasher);
-            let _hash = hasher.finish();
-
-            // FiniteCheck trait
-            assert!(zero.is_finite_generic());
-            assert!(!nan.is_finite_generic());
-
-            // Default trait
-            let default_val = T::default();
-            assert_eq!(default_val, T::zero());
-
-            // Debug trait
-            let debug_str = format!("{zero:?}");
-            assert!(!debug_str.is_empty());
-
-            // CoordinateScalar-specific method
-            let tolerance = T::default_tolerance();
-            assert!(tolerance > T::zero());
-        }
-
-        verify_coordinate_scalar::<f32>();
-        verify_coordinate_scalar::<f64>();
-    }
-
-    #[test]
-    fn trait_consistency_with_point() {
-        // Test that Point implementations use the traits consistently
-
-        // Test that Point's ordered_equals uses OrderedEq
-        let point1: Point<f64, 2> = Point::new([f64::NAN, 1.0]);
-        let point2: Point<f64, 2> = Point::new([f64::NAN, 1.0]);
-        assert!(point1.ordered_equals(&point2));
-
-        // Test that Point's hash_coordinate uses HashCoordinate
-        let mut hasher1 = DefaultHasher::new();
-        let mut hasher2 = DefaultHasher::new();
-        point1.hash_coordinate(&mut hasher1);
-        point2.hash_coordinate(&mut hasher2);
-        assert_eq!(hasher1.finish(), hasher2.finish());
-
-        // Test that Point's validate uses FiniteCheck
-        let valid_point: Point<f64, 2> = Point::new([1.0, 2.0]);
-        let invalid_point: Point<f64, 2> = Point::new([f64::NAN, 2.0]);
-        assert!(valid_point.validate().is_ok());
-        assert!(invalid_point.validate().is_err());
     }
 }

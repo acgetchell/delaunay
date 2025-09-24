@@ -9,7 +9,7 @@
 //! - **Generic Coordinate Support**: Works with any floating-point type (`f32`, `f64`, etc.)
 //!   that implements the `CoordinateScalar` trait
 //! - **Unique Identification**: Each vertex has a UUID for consistent identification
-//! - **Optional Data Storage**: Supports attaching arbitrary user data of type `U`
+//! - **Optional Data Storage**: Supports attaching user data of any type `U` that implements [`DataType`]
 //! - **Incident Cell Tracking**: Maintains references to containing cells
 //! - **Serialization Support**: Full serde support for persistence
 //! - **Builder Pattern**: Convenient vertex construction using `VertexBuilder`
@@ -39,12 +39,16 @@ use crate::geometry::{
     point::Point,
     traits::coordinate::{Coordinate, CoordinateScalar, CoordinateValidationError},
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{
+    Deserialize, Serialize,
+    de::{self, DeserializeOwned, IgnoredAny, MapAccess, Visitor},
+};
 use std::{
     cmp::Ordering,
     collections::HashMap,
-    fmt::Debug,
+    fmt::{self, Debug},
     hash::{Hash, Hasher},
+    marker::PhantomData,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -205,16 +209,13 @@ where
     where
         De: serde::Deserializer<'de>,
     {
-        use serde::de::{self, MapAccess, Visitor};
-        use std::fmt;
-
         struct VertexVisitor<T, U, const D: usize>
         where
             T: CoordinateScalar,
             U: DataType,
             [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
         {
-            _phantom: std::marker::PhantomData<(T, U)>,
+            _phantom: PhantomData<(T, U)>,
         }
 
         impl<'de, T, U, const D: usize> Visitor<'de> for VertexVisitor<T, U, D>
@@ -265,7 +266,7 @@ where
                             data = Some(map.next_value()?);
                         }
                         _ => {
-                            let _ = map.next_value::<serde::de::IgnoredAny>()?;
+                            let _ = map.next_value::<IgnoredAny>()?;
                         }
                     }
                 }
@@ -296,7 +297,7 @@ where
             "Vertex",
             FIELDS,
             VertexVisitor {
-                _phantom: std::marker::PhantomData,
+                _phantom: PhantomData,
             },
         )
     }
@@ -670,10 +671,49 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::collections::{FastHashMap, FastHashSet};
     use crate::core::util::{UuidValidationError, make_uuid};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
-    use approx::assert_relative_eq;
+    use approx::{assert_abs_diff_eq, assert_relative_eq};
+    use serde::{Deserialize, Serialize};
+
+    // Test enum for demonstrating vertex data usage
+    #[repr(u8)]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    enum PointType {
+        Origin = 0,
+        Boundary = 1,
+        Interior = 2,
+        Corner = 3,
+    }
+
+    impl Serialize for PointType {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            serializer.serialize_u8(*self as u8)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for PointType {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let value = u8::deserialize(deserializer)?;
+            match value {
+                0 => Ok(Self::Origin),
+                1 => Ok(Self::Boundary),
+                2 => Ok(Self::Interior),
+                3 => Ok(Self::Corner),
+                _ => Err(serde::de::Error::custom(format!(
+                    "Invalid PointType: {value}"
+                ))),
+            }
+        }
+    }
 
     // =============================================================================
     // HELPER FUNCTIONS
@@ -1027,10 +1067,8 @@ mod tests {
 
     #[test]
     fn test_vertex_in_hashset() {
-        use std::collections::HashSet;
-
-        // Test vertices in a HashSet to verify Hash/Eq contract in practice
-        let mut set: HashSet<Vertex<f64, Option<()>, 2>> = HashSet::new();
+        // Test vertices in a FastHashSet to verify Hash/Eq contract in practice
+        let mut set: FastHashSet<Vertex<f64, Option<()>, 2>> = FastHashSet::default();
 
         let v1: Vertex<f64, Option<()>, 2> = vertex!([1.0, 2.0]);
         let v2: Vertex<f64, Option<()>, 2> = vertex!([3.0, 4.0]);
@@ -1055,10 +1093,8 @@ mod tests {
 
     #[test]
     fn test_vertex_in_hashmap() {
-        use std::collections::HashMap;
-
-        // Test vertices as HashMap keys
-        let mut map: HashMap<Vertex<f64, Option<()>, 2>, i32> = HashMap::new();
+        // Test vertices as FastHashMap keys
+        let mut map: FastHashMap<Vertex<f64, Option<()>, 2>, i32> = FastHashMap::default();
 
         let v1: Vertex<f64, Option<()>, 2> = vertex!([1.0, 2.0]);
         let v2: Vertex<f64, Option<()>, 2> = vertex!([3.0, 4.0]);
@@ -1084,18 +1120,16 @@ mod tests {
 
     #[test]
     fn test_vertex_hash_with_different_data_types() {
-        use std::collections::HashMap;
-
         // Test that vertices with different data types but same coordinates work in collections
         let v1: Vertex<f64, u16, 2> = vertex!([1.0, 2.0], 999u16);
         let v2: Vertex<f64, i32, 2> = vertex!([3.0, 4.0], -42i32);
 
-        // Test HashMap with different vertex data types
-        let mut map1: HashMap<Vertex<f64, u16, 2>, &str> = HashMap::new();
+        // Test FastHashMap with different vertex data types
+        let mut map1: FastHashMap<Vertex<f64, u16, 2>, &str> = FastHashMap::default();
         map1.insert(v1, "first");
         assert_eq!(map1.len(), 1);
 
-        let mut map2: HashMap<Vertex<f64, i32, 2>, bool> = HashMap::new();
+        let mut map2: FastHashMap<Vertex<f64, i32, 2>, bool> = FastHashMap::default();
         map2.insert(v2, true);
         assert_eq!(map2.len(), 1);
     }
@@ -1588,34 +1622,120 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn vertex_from_points_with_str_data() {
-        // Test creating vertices from points and then adding Copy data
-        let points = vec![Point::new([1.0, 2.0]), Point::new([3.0, 4.0])];
-        let mut vertices: Vec<Vertex<f64, u8, 2>> = Vertex::from_points(points);
+    fn vertex_string_data_usage_examples() {
+        // This test demonstrates what works and what doesn't work with string data in vertices.
+        // Note: String data has limitations due to the DataType trait requirements and lifetime complexities.
 
-        // Add Copy u8 data to each vertex
-        vertices[0].data = Some(1u8);
-        vertices[1].data = Some(2u8);
+        // =====================================================================
+        // DEMONSTRATE THE FUNDAMENTAL ISSUE
+        // =====================================================================
 
-        assert_eq!(vertices[0].data.unwrap(), 1u8);
-        assert_eq!(vertices[1].data.unwrap(), 2u8);
-        assert_eq!(vertices.len(), 2);
+        // The following would NOT compile because String doesn't implement Copy:
+        // let vertex_string: Vertex<f64, String, 2> = vertex!([1.0, 2.0], "test".to_string());
+        // Error: String doesn't implement Copy trait required by DataType
+
+        // The following would also cause lifetime issues in real usage:
+        // let vertex_str: Vertex<f64, &str, 2> = vertex!([1.0, 2.0], "test");
+        // While this compiles, it has severe lifetime limitations in practice
+
+        // =====================================================================
+        // PRACTICAL ALTERNATIVE: Use numeric IDs with external lookup
+        // =====================================================================
+
+        // Create a lookup table for string labels - this is the recommended approach
+        let mut label_lookup: FastHashMap<u32, String> = FastHashMap::default();
+        label_lookup.insert(0, "center".to_string());
+        label_lookup.insert(1, "corner".to_string());
+        label_lookup.insert(2, "edge_midpoint".to_string());
+        label_lookup.insert(3, "boundary_point".to_string());
+
+        // Use numeric IDs in vertices - this works perfectly and is efficient
+        let vertices_with_ids: Vec<Vertex<f64, u32, 2>> = vec![
+            vertex!([0.5, 0.5], 0u32), // center
+            vertex!([1.0, 1.0], 1u32), // corner
+            vertex!([0.5, 1.0], 2u32), // edge_midpoint
+            vertex!([0.0, 0.5], 3u32), // boundary_point
+        ];
+
+        // Verify we can retrieve the labels
+        for (i, v) in vertices_with_ids.iter().enumerate() {
+            let label_id = v.data.unwrap();
+            let label = label_lookup.get(&label_id).unwrap();
+            match i {
+                0 => assert_eq!(label, "center"),
+                1 => assert_eq!(label, "corner"),
+                2 => assert_eq!(label, "edge_midpoint"),
+                3 => assert_eq!(label, "boundary_point"),
+                _ => unreachable!(),
+            }
+        }
+
+        // Test that these vertices work with all normal operations
+        assert_eq!(vertices_with_ids.len(), 4);
+        let coords = vertices_with_ids[0].point().to_array();
+        assert_abs_diff_eq!(coords[0], 0.5, epsilon = f64::EPSILON);
+        assert_abs_diff_eq!(coords[1], 0.5, epsilon = f64::EPSILON);
+        assert_eq!(vertices_with_ids[1].data.unwrap(), 1u32);
+
+        // Test hashing and equality (works because u32 implements all required traits)
+        let vertex_set: FastHashSet<Vertex<f64, u32, 2>> =
+            vertices_with_ids.iter().copied().collect();
+        assert_eq!(vertex_set.len(), 4);
+
+        // =====================================================================
+        // OTHER COPY-ABLE ALTERNATIVES FOR LABELS
+        // =====================================================================
+
+        // Alternative 1: Use character codes
+        let vertices_with_chars: Vec<Vertex<f64, char, 2>> = vec![
+            vertex!([0.0, 0.0], 'A'),
+            vertex!([1.0, 0.0], 'B'),
+            vertex!([0.0, 1.0], 'C'),
+        ];
+
+        for (i, v) in vertices_with_chars.iter().enumerate() {
+            let expected_char = char::from(b'A' + u8::try_from(i).expect("Index should fit in u8"));
+            assert_eq!(v.data.unwrap(), expected_char);
+        }
+
+        // Alternative 2: Use small integer codes with enum mapping
+
+        let vertices_with_enums: Vec<Vertex<f64, PointType, 2>> = vec![
+            vertex!([0.0, 0.0], PointType::Origin),
+            vertex!([1.0, 0.0], PointType::Corner),
+            vertex!([0.5, 0.5], PointType::Interior),
+        ];
+
+        assert_eq!(vertices_with_enums[0].data.unwrap(), PointType::Origin);
+        assert_eq!(vertices_with_enums[1].data.unwrap(), PointType::Corner);
+        assert_eq!(vertices_with_enums[2].data.unwrap(), PointType::Interior);
+
+        // =====================================================================
+        // SUMMARY OF STRING DATA LIMITATIONS
+        // =====================================================================
+
+        // 1. String doesn't work because it doesn't implement Copy
+        // 2. &str has complex lifetime issues that make it impractical
+        // 3. &'static str could work but only for compile-time constants
+        // 4. Recommended alternatives:
+        //    - Numeric IDs with external lookup (most flexible)
+        //    - Character codes (for single characters)
+        //    - Custom Copy enums (for predefined categories)
+        //    - Small fixed-size byte arrays (for very short strings)
     }
 
     #[test]
     fn vertex_hash_with_copy_data() {
         // Test hashing with Copy data
-        use std::collections::HashMap;
-
         let vertex1: Vertex<f64, u16, 2> = vertex!([1.0, 2.0], 999u16);
 
         let vertex2: Vertex<f64, i32, 2> = vertex!([3.0, 4.0], 42);
 
         // Test that vertices with Copy data can be used as HashMap keys
-        let mut map: HashMap<Vertex<f64, u16, 2>, i32> = HashMap::new();
+        let mut map: FastHashMap<Vertex<f64, u16, 2>, i32> = FastHashMap::default();
         map.insert(vertex1, 100);
 
-        let mut map2: HashMap<Vertex<f64, i32, 2>, u8> = HashMap::new();
+        let mut map2: FastHashMap<Vertex<f64, i32, 2>, u8> = FastHashMap::default();
         map2.insert(vertex2, 255u8);
 
         assert_eq!(map.len(), 1);

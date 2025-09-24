@@ -23,7 +23,7 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 
 ## ✨ Features
 
-- [x]  Arbitrary data types associated with vertices and cells
+- [x]  Copy-able data types associated with vertices and cells (integers, floats, chars, custom enums)
 - [x]  d-dimensional [Delaunay triangulations]
 - [x]  d-dimensional [Convex hulls]
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]

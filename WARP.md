@@ -150,6 +150,10 @@ cargo build
 cargo test --lib --verbose
 cargo test --doc --verbose
 
+# Test coverage analysis (excludes benchmarks, examples, and integration tests)
+cargo tarpaulin --exclude-files 'benches/**' --exclude-files 'examples/**' --exclude-files 'tests/**' --out Html --output-dir target/tarpaulin
+# View coverage report: open target/tarpaulin/tarpaulin-report.html
+
 # Integration tests (comprehensive)
 cargo test --release  # Run all tests in release mode for performance
 cargo test --test circumsphere_debug_tools -- --nocapture  # Debug tools with output
@@ -195,7 +199,7 @@ uv run changelog-utils generate
 
 The `delaunay` library implements d-dimensional Delaunay triangulations in Rust, inspired by CGAL. Key facts for AI assistants:
 
-- **Language**: Rust (MSRV 1.89.0, Edition 2024)
+- **Language**: Rust (MSRV 1.90.0, Edition 2024)
 - **Unsafe code**: Forbidden via `#![forbid(unsafe_code)]`
 - **Published to**: crates.io (documentation build failures will prevent publishing)
 - **CI**: GitHub Actions with strict quality requirements (clippy pedantic mode, rustfmt, no security vulnerabilities)

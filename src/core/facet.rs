@@ -63,9 +63,16 @@ use super::traits::data_type::DataType;
 use super::util::stable_hash_u64_slice;
 use super::{cell::Cell, triangulation_data_structure::VertexKey, vertex::Vertex};
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{self, DeserializeOwned, IgnoredAny, MapAccess, Visitor},
+};
 use slotmap::Key;
-use std::hash::{Hash, Hasher};
+use std::{
+    fmt::{self, Debug},
+    hash::{Hash, Hasher},
+    marker::PhantomData,
+};
 use thiserror::Error;
 
 // =============================================================================
@@ -141,6 +148,16 @@ pub enum FacetError {
     /// Cell was not found in the triangulation.
     #[error("Cell not found in triangulation (potential data corruption)")]
     CellNotFoundInTriangulation,
+    /// Facet has invalid multiplicity (should be 1 for boundary or 2 for internal).
+    #[error(
+        "Facet with key {facet_key:016x} has invalid multiplicity {found}, expected 1 (boundary) or 2 (internal)"
+    )]
+    InvalidFacetMultiplicity {
+        /// The facet key with invalid multiplicity.
+        facet_key: u64,
+        /// The actual multiplicity found.
+        found: usize,
+    },
 }
 
 // =============================================================================
@@ -178,7 +195,7 @@ where
 // =============================================================================
 
 /// Manual implementation of Deserialize for Facet
-impl<'de, T, U, V, const D: usize> serde::Deserialize<'de> for Facet<T, U, V, D>
+impl<'de, T, U, V, const D: usize> Deserialize<'de> for Facet<T, U, V, D>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -187,11 +204,8 @@ where
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
     where
-        De: serde::Deserializer<'de>,
+        De: Deserializer<'de>,
     {
-        use serde::de::{self, MapAccess, Visitor};
-        use std::fmt;
-
         struct FacetVisitor<T, U, V, const D: usize>
         where
             T: CoordinateScalar,
@@ -199,7 +213,7 @@ where
             V: DataType,
             [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
         {
-            _phantom: std::marker::PhantomData<(T, U, V)>,
+            _phantom: PhantomData<(T, U, V)>,
         }
 
         impl<'de, T, U, V, const D: usize> Visitor<'de> for FacetVisitor<T, U, V, D>
@@ -237,7 +251,7 @@ where
                             vertex = Some(map.next_value()?);
                         }
                         _ => {
-                            let _ = map.next_value::<serde::de::IgnoredAny>()?;
+                            let _ = map.next_value::<IgnoredAny>()?;
                         }
                     }
                 }
@@ -256,7 +270,7 @@ where
             "Facet",
             FIELDS,
             FacetVisitor {
-                _phantom: std::marker::PhantomData,
+                _phantom: PhantomData,
             },
         )
     }
@@ -308,7 +322,7 @@ where
     /// assert_eq!(facet.cell(), &cell);
     /// ```
     pub fn new(cell: Cell<T, U, V, D>, vertex: Vertex<T, U, D>) -> Result<Self, FacetError> {
-        if !cell.contains_vertex(vertex) {
+        if !cell.contains_vertex(&vertex) {
             return Err(FacetError::CellDoesNotContainVertex);
         }
 
