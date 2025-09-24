@@ -137,6 +137,8 @@
 
 // Allow multiple crate versions due to transitive dependencies
 #![allow(clippy::multiple_crate_versions)]
+// Temporarily allow deprecated warnings during Facet -> FacetView migration
+#![allow(deprecated)]
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
 

@@ -28,6 +28,8 @@
 //! - Validation results
 //! - Performance metrics
 
+#![allow(deprecated)]
+
 use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::*;
 use num_traits::cast::cast;
