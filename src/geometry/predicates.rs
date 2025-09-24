@@ -701,9 +701,11 @@ mod tests {
         ];
 
         // Test point clearly outside circumsphere
-        let _point_far_outside = Point::new([10.0, 10.0, 10.0]);
-        // Using placeholder assertion due to method inconsistency
-        // assert_eq!(insphere_lifted(&simplex_points, point_far_outside).unwrap(), InSphere::OUTSIDE);
+        let point_far_outside = Point::new([10.0, 10.0, 10.0]);
+        assert_eq!(
+            insphere_lifted(&simplex_points, point_far_outside).unwrap(),
+            InSphere::OUTSIDE
+        );
 
         // Test with origin (should be inside or on boundary)
         let origin = Point::new([0.0, 0.0, 0.0]);
@@ -865,23 +867,20 @@ mod tests {
         ];
 
         // The circumcenter of this tetrahedron is at (0.5, 0.5, 0.5)
-        let _circumcenter_point = Point::new([0.5, 0.5, 0.5]);
+        let circumcenter_point = Point::new([0.5, 0.5, 0.5]);
 
-        // TODO: Point at circumcenter should be inside the circumsphere, but matrix method fails
-        // This is why we use circumsphere_contains_vertex in bowyer_watson instead
-        // assert_eq!(
-        //     insphere_lifted(&simplex_points, _circumcenter_point).unwrap(),
-        //     InSphere::INSIDE
-        // );
+        // Point at circumcenter should be inside the circumsphere
+        assert_eq!(
+            insphere_lifted(&simplex_points, circumcenter_point).unwrap(),
+            InSphere::INSIDE
+        );
 
         // Test with point that is actually inside circumsphere (distance 0.693 < radius 0.866)
-        let _actually_inside = Point::new([0.9, 0.9, 0.9]);
-        // TODO: Matrix method should correctly identify this point as inside, but currently fails
-        // This is why we use circumsphere_contains_vertex in bowyer_watson instead
-        // assert_eq!(
-        //     insphere_lifted(&simplex_points, _actually_inside).unwrap(),
-        //     InSphere::INSIDE
-        // );
+        let actually_inside = Point::new([0.9, 0.9, 0.9]);
+        assert_eq!(
+            insphere_lifted(&simplex_points, actually_inside).unwrap(),
+            InSphere::INSIDE
+        );
 
         // Test with one of the simplex vertices (on boundary, but matrix method returns BOUNDARY)
         let vertex1 = Point::new([0.0, 0.0, 0.0]);

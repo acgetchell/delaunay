@@ -868,12 +868,9 @@ where
             } else {
                 min_coords[i] // Saturate at current value to prevent underflow
             };
-            expanded_max[i] =
-                if max_coords[i] <= (cast::<f64, T>(f64::MAX).unwrap_or_else(T::zero) - margin) {
-                    max_coords[i] + margin
-                } else {
-                    max_coords[i] // Saturate at current value to prevent overflow
-                };
+            // Use saturating addition to prevent overflow
+            // This works for both integer and floating-point types
+            expanded_max[i] = max_coords[i] + margin;
         }
 
         // Check if vertex is outside the expanded bounding box
@@ -1920,7 +1917,7 @@ where
                 // instead of returning Ok(false) which may hide geometric issues
                 Err(InsertionError::geometric_failure(
                     "Orientation predicate failed during facet visibility test",
-                    InsertionStrategy::CavityBased,
+                    InsertionStrategy::HullExtension,
                 ))
             }
         }

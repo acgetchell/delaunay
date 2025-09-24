@@ -973,13 +973,15 @@ where
         };
 
         // Create test simplices for orientation comparison
-        // Use SmallBuffer to avoid heap allocations for small simplices (typically D+1 vertices)
-        let mut simplex_with_opposite: SmallBuffer<Point<T, D>, 8> =
-            facet_vertices.iter().map(|v| *v.point()).collect();
+        // Use SmallBuffer with safe capacity for all practical dimensions (D+1 vertices needed)
+        let mut simplex_with_opposite: SmallBuffer<Point<T, D>, { MAX_PRACTICAL_DIMENSION_SIZE }> =
+            SmallBuffer::new();
+        simplex_with_opposite.extend(facet_vertices.iter().map(|v| *v.point()));
         simplex_with_opposite.push(*opposite_vertex.point());
 
-        let mut simplex_with_test: SmallBuffer<Point<T, D>, 8> =
-            facet_vertices.iter().map(|v| *v.point()).collect();
+        let mut simplex_with_test: SmallBuffer<Point<T, D>, { MAX_PRACTICAL_DIMENSION_SIZE }> =
+            SmallBuffer::new();
+        simplex_with_test.extend(facet_vertices.iter().map(|v| *v.point()));
         simplex_with_test.push(*vertex.point());
 
         // Get orientations using robust predicates first, fall back to standard predicates

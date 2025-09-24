@@ -942,6 +942,11 @@ where
     /// over separate `vertices_mut().insert()` + `uuid_to_vertex_key.insert()` calls
     /// which can leave the data structure in an inconsistent state if interrupted.
     ///
+    /// **⚠️ INTERNAL API WARNING**: This method bypasses atomicity guarantees for topology
+    /// assignment operations (`assign_neighbors()` and `assign_incident_cells()`). It only
+    /// ensures atomic vertex insertion and UUID mapping. If you need full atomicity including
+    /// topology assignment, use `insert_vertex_with_topology_assignment()` instead.
+    ///
     /// **Note:** This method does NOT check for duplicate coordinates. It only checks
     /// for UUID uniqueness. For public API use where coordinate uniqueness is required,
     /// prefer using the `add()` method instead, which enforces coordinate-uniqueness.
@@ -1068,12 +1073,12 @@ where
         }
     }
 
-    /// **Phase 1 Migration**: Key-based helper that works directly with `CellKey`.
+    /// Gets vertex keys for a cell via UUID→Key mapping.
     ///
-    /// This method eliminates UUID→Key lookups by working directly with keys, providing:
+    /// This method eliminates UUID→Key lookups for cell access by working directly with keys, providing:
     /// - Zero UUID mapping lookups for cell access (O(1) `SlotMap` lookup instead of O(1) hash lookup)
     /// - Direct `SlotMap` access for maximum performance
-    /// - Same functionality as the UUID-based version
+    /// - Avoids per-cell UUID lookups by resolving vertex keys through internal UUID→Key mapping
     ///
     /// Note: Currently still performs O(D) UUID→Key lookups for vertices. This will be
     /// optimized in Phase 3 when Cell stores vertex keys directly.
@@ -1092,13 +1097,19 @@ where
     /// A `Result` containing a `VertexKeyBuffer` if the cell exists and all vertices are valid,
     /// or a `TriangulationValidationError` if the cell doesn't exist or vertices are missing.
     ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError` if:
+    /// - The cell with the given key doesn't exist
+    /// - A vertex UUID from the cell cannot be found in the vertex mapping
+    ///
     /// # Performance
     ///
     /// This uses direct `SlotMap` access with O(1) key lookup for the cell, though vertex
     /// lookups still require O(D) UUID→Key mappings until Phase 3.
     /// Uses stack-allocated buffer for D ≤ 7 to avoid heap allocation in the hot path.
     #[inline]
-    fn vertex_keys_for_cell_direct(
+    pub fn get_cell_vertex_keys(
         &self,
         cell_key: CellKey,
     ) -> Result<VertexKeyBuffer, TriangulationValidationError> {
@@ -1744,49 +1755,6 @@ where
 
         containing_cells
     }
-
-    /// Gets vertex keys for a cell via UUID→Key mapping.
-    ///
-    /// This method avoids per-cell UUID lookups by resolving vertex keys through
-    /// the internal UUID→Key mapping once per vertex.
-    ///
-    /// # Arguments
-    ///
-    /// * `cell_key` - The key of the cell
-    ///
-    /// # Returns
-    ///
-    /// A result containing the vertex keys of the cell, or an error if the cell
-    /// doesn't exist or vertices aren't properly mapped.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TriangulationValidationError` if:
-    /// - The cell with the given key doesn't exist
-    /// - A vertex UUID from the cell cannot be found in the vertex mapping
-    pub fn get_cell_vertex_keys(
-        &self,
-        cell_key: CellKey,
-    ) -> Result<VertexKeyBuffer, TriangulationValidationError> {
-        let Some(cell) = self.get_cell_by_key(cell_key) else {
-            return Err(TriangulationValidationError::InconsistentDataStructure {
-                message: format!("Cell with key {cell_key:?} not found"),
-            });
-        };
-
-        // Pre-size to D+1 to reflect simplex invariant and avoid reallocation
-        let mut vertex_keys = VertexKeyBuffer::with_capacity(D + 1);
-        for vertex in cell.vertices() {
-            let key = self.vertex_key_from_uuid(&vertex.uuid()).ok_or_else(|| {
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!("Vertex UUID {} not found in mapping", vertex.uuid()),
-                }
-            })?;
-            vertex_keys.push(key);
-        }
-
-        Ok(vertex_keys)
-    }
 }
 
 // =============================================================================
@@ -2146,9 +2114,15 @@ where
             let mut algorithm = IncrementalBowyerWatson::new();
             if let Err(e) = algorithm.insert_vertex(self, vertex) {
                 // Roll back vertex insertion to keep TDS consistent
-                self.vertices.remove(new_vertex_key);
-                self.uuid_to_vertex_key.remove(&uuid);
-                self.bump_generation();
+                let vertex_coords = Some(format!("{new_coords:?}"));
+                self.rollback_vertex_insertion(
+                    new_vertex_key,
+                    &uuid,
+                    vertex_coords,
+                    false, // Simple vertex-only rollback for algorithm failures
+                    None,
+                    "algorithm insertion failed",
+                );
                 return Err(match e {
                     InsertionError::TriangulationConstruction(tc_err) => tc_err,
                     other => TriangulationConstructionError::FailedToAddVertex {
@@ -2157,17 +2131,142 @@ where
                 });
             }
 
-            // Update neighbor relationships and incident cells
-            self.assign_neighbors()
-                .map_err(TriangulationConstructionError::ValidationError)?;
-            self.assign_incident_cells()
-                .map_err(TriangulationConstructionError::ValidationError)?;
+            // Update neighbor relationships and incident cells with transactional safety
+            // Save state for potential rollback
+            let pre_topology_state = (self.vertices.len(), self.cells.len(), self.generation());
+
+            if let Err(e) = self.assign_neighbors() {
+                // Rollback: Remove the vertex and any cells created by the algorithm
+                let vertex_coords = Some(format!("{new_coords:?}"));
+                self.rollback_vertex_insertion(
+                    new_vertex_key,
+                    &uuid,
+                    vertex_coords,
+                    true, // Remove cells that reference the vertex
+                    Some(pre_topology_state),
+                    "neighbor assignment failed",
+                );
+                return Err(TriangulationConstructionError::ValidationError(e));
+            }
+
+            if let Err(e) = self.assign_incident_cells() {
+                // Rollback: Remove the vertex and any cells created by the algorithm
+                let vertex_coords = Some(format!("{new_coords:?}"));
+                self.rollback_vertex_insertion(
+                    new_vertex_key,
+                    &uuid,
+                    vertex_coords,
+                    true, // Remove cells that reference the vertex
+                    Some(pre_topology_state),
+                    "incident cell assignment failed",
+                );
+                return Err(TriangulationConstructionError::ValidationError(e));
+            }
         }
 
         // Increment generation counter to invalidate caches
         self.bump_generation();
 
         Ok(())
+    }
+
+    /// Rolls back TDS state after vertex insertion operations fail.
+    ///
+    /// This consolidated method handles different rollback scenarios based on the parameters:
+    /// - Simple vertex-only rollback (when `remove_related_cells` is false)
+    /// - Complex algorithm rollback (when `remove_related_cells` is true)
+    ///
+    /// For bulk operations and debugging purposes, this method logs rollback actions to stderr
+    /// to help identify problematic vertices in batch processing scenarios.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertex_key` - The key of the vertex that was successfully inserted
+    /// * `vertex_uuid` - The UUID of the vertex for mapping cleanup
+    /// * `vertex_coords` - Optional coordinates for logging (helps identify problematic vertices)
+    /// * `remove_related_cells` - Whether to remove cells that reference the vertex
+    /// * `pre_state` - Optional tuple of (`vertex_count`, `cell_count`, `generation`) for verification
+    /// * `failure_reason` - Description of why the rollback is needed (for logging)
+    ///
+    /// # Usage Examples
+    ///
+    /// ```ignore
+    /// // Simple vertex rollback
+    /// self.rollback_vertex_insertion(key, &uuid, Some(coords), false, None, "topology assignment failed");
+    ///
+    /// // Complex algorithm rollback (legacy add() method)
+    /// self.rollback_vertex_insertion(key, &uuid, Some(coords), true, Some(pre_state), "algorithm insertion failed");
+    /// ```
+    fn rollback_vertex_insertion(
+        &mut self,
+        vertex_key: VertexKey,
+        vertex_uuid: &Uuid,
+        vertex_coords: Option<String>,
+        remove_related_cells: bool,
+        pre_state: Option<(usize, usize, u64)>,
+        failure_reason: &str,
+    ) {
+        // Log the rollback for debugging bulk operations
+        let coords_str = vertex_coords.unwrap_or_else(|| "<unknown coordinates>".to_string());
+        eprintln!(
+            "⚠️  Vertex insertion rollback: Discarding vertex {vertex_uuid} at {coords_str} due to {failure_reason}"
+        );
+
+        // Always remove the vertex and its mapping
+        self.vertices.remove(vertex_key);
+        self.uuid_to_vertex_key.remove(vertex_uuid);
+
+        // For complex rollback, also remove cells that reference the vertex
+        if remove_related_cells {
+            // Remove any cells that were added by the algorithm
+            // We need to be careful here - we can't just truncate to pre_cell_count
+            // because SlotMap keys aren't sequential. Instead, we identify and remove
+            // cells that reference the removed vertex.
+            let mut cells_to_remove = Vec::new();
+
+            for (cell_key, cell) in &self.cells {
+                // If this cell references the removed vertex, it was created by the algorithm
+                if cell.vertices().iter().any(|v| v.uuid() == *vertex_uuid) {
+                    cells_to_remove.push(cell_key);
+                }
+            }
+
+            // Log cell removal for complex rollbacks
+            if !cells_to_remove.is_empty() {
+                let cell_count = cells_to_remove.len();
+                eprintln!(
+                    "   └─ Also removing {cell_count} related cells created by the algorithm"
+                );
+            }
+
+            // Remove the identified cells
+            for cell_key in cells_to_remove {
+                if let Some(cell) = self.cells.remove(cell_key) {
+                    // Also remove from UUID mapping
+                    self.uuid_to_cell_key.remove(&cell.uuid());
+                }
+            }
+
+            // Verify we've restored the expected counts if provided
+            if let Some((pre_vertex_count, pre_cell_count, _pre_generation)) = pre_state {
+                // The vertex count should be exactly pre_vertex_count
+                debug_assert_eq!(
+                    self.vertices.len(),
+                    pre_vertex_count,
+                    "Vertex count should be restored to pre-algorithm state"
+                );
+
+                // The cell count should be at most pre_cell_count + some reasonable delta
+                // (in case the algorithm created cells that don't directly reference the vertex)
+                debug_assert!(
+                    self.cells.len() <= pre_cell_count + 10,
+                    "Cell count should be close to pre-algorithm state after rollback"
+                );
+            }
+        }
+
+        // Bump generation to invalidate any caches that might reference removed entities
+        self.bump_generation();
     }
 
     /// Performs the incremental Bowyer-Watson algorithm to construct a Delaunay triangulation.
@@ -2351,7 +2450,7 @@ where
             fast_hash_map_with_capacity(self.cells.len() * (D + 1));
 
         for (cell_key, cell) in &self.cells {
-            let vertex_keys = self.vertex_keys_for_cell_direct(cell_key).map_err(|err| {
+            let vertex_keys = self.get_cell_vertex_keys(cell_key).map_err(|err| {
                 TriangulationValidationError::VertexKeyRetrievalFailed {
                     cell_id: cell.uuid(),
                     message: format!(
@@ -2558,7 +2657,7 @@ where
             fast_hash_map_with_capacity(self.vertices.len());
 
         for (cell_key, cell) in &self.cells {
-            let vertex_keys = self.vertex_keys_for_cell_direct(cell_key).map_err(|e| {
+            let vertex_keys = self.get_cell_vertex_keys(cell_key).map_err(|e| {
                 TriangulationValidationError::InconsistentDataStructure {
                     message: format!("Failed to get vertex keys for cell {}: {}", cell.uuid(), e),
                 }
@@ -2631,7 +2730,7 @@ where
 
         // First pass: identify duplicate cells
         for cell_key in self.cells.keys() {
-            let vertex_keys = self.vertex_keys_for_cell_direct(cell_key)?;
+            let vertex_keys = self.get_cell_vertex_keys(cell_key)?;
             // Sort vertex UUIDs instead of keys for deterministic ordering
             // Note: Don't sort by VertexKey as slotmap::Key's Ord is implementation-defined
             let mut vertex_uuids: Vec<_> = vertex_keys
@@ -2770,7 +2869,7 @@ where
         for (cell_id, cell) in &self.cells {
             // Phase 1: Use direct key-based method to avoid UUID→Key lookups
             // Note: We skip cells with missing vertex keys for backwards compatibility
-            let Ok(vertex_keys) = self.vertex_keys_for_cell_direct(cell_id) else {
+            let Ok(vertex_keys) = self.get_cell_vertex_keys(cell_id) else {
                 #[cfg(debug_assertions)]
                 {
                     skipped_cells += 1;
@@ -2864,8 +2963,8 @@ where
         // Iterate over all cells and their facets
         for (cell_id, _cell) in &self.cells {
             // Use direct key-based method to avoid UUID→Key lookups
-            // The error from vertex_keys_for_cell_direct is already TriangulationValidationError
-            let vertex_keys = self.vertex_keys_for_cell_direct(cell_id)?;
+            // The error from get_cell_vertex_keys is already TriangulationValidationError
+            let vertex_keys = self.get_cell_vertex_keys(cell_id)?;
 
             for i in 0..vertex_keys.len() {
                 // Clear and reuse the buffer instead of allocating a new one
@@ -2960,7 +3059,7 @@ where
                 if self.cells.contains_key(first_cell_key) {
                     // Use direct key-based method with proper error propagation
                     // The error is already TriangulationValidationError, so just propagate it
-                    let vertex_keys = self.vertex_keys_for_cell_direct(first_cell_key)?;
+                    let vertex_keys = self.get_cell_vertex_keys(first_cell_key)?;
                     let mut facet_vertex_keys = Vec::with_capacity(vertex_keys.len() - 1);
                     let idx = first_facet_index as usize;
                     for (i, &key) in vertex_keys.iter().enumerate() {
@@ -2978,8 +3077,7 @@ where
                         if self.cells.contains_key(cell_key) {
                             // Use direct key-based method with proper error propagation
                             // The error is already TriangulationValidationError, so just propagate it
-                            let cell_vertex_keys_vec =
-                                self.vertex_keys_for_cell_direct(cell_key)?;
+                            let cell_vertex_keys_vec = self.get_cell_vertex_keys(cell_key)?;
                             // Use iter().copied() to avoid moving the Vec
                             let cell_vertex_keys: VertexKeySet =
                                 cell_vertex_keys_vec.iter().copied().collect();
@@ -2994,14 +3092,15 @@ where
 
                     if valid_cells.len() > 2 {
                         // TODO: Improve cell retention criteria using geometric quality measures
-                        // Current approach: Sort by CellKey to ensure deterministic selection
+                        // Current approach: Sort by UUID to ensure deterministic selection
                         // This guarantees reproducible behavior - the same cells are always removed
                         // given the same input, which is critical for debugging and testing.
                         // Better approach would be to compute cell quality (volume, aspect ratio, etc.) and keep
                         // the two highest-quality cells. This would improve triangulation robustness.
                         // Track with issue: #86
-                        valid_cells.sort_unstable(); // Deterministic ordering by CellKey
-                        // Remove all but the first two (smallest keys) - deterministic selection
+                        // Deterministic ordering by stable UUID instead of SlotMap key
+                        valid_cells.sort_unstable_by_key(|&k| self.cells[k].uuid());
+                        // Remove all but the first two (smallest UUIDs) - deterministic selection
                         for &cell_key in valid_cells.iter().skip(2) {
                             cells_to_remove.insert(cell_key);
                         }
@@ -3226,7 +3325,7 @@ where
     /// This is useful for validation where you want to detect duplicates
     /// without automatically removing them.
     ///
-    /// **Phase 1 Migration**: This method now uses the optimized `vertex_keys_for_cell_direct`
+    /// **Phase 1 Migration**: This method now uses the optimized `get_cell_vertex_keys`
     /// method to eliminate UUID→Key hash lookups, improving performance.
     fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError> {
         let mut unique_cells = FastHashMap::default();
@@ -3235,7 +3334,7 @@ where
         for (cell_key, _cell) in &self.cells {
             // Phase 1: Use direct key-based method to avoid UUID→Key lookups
             // The error is already TriangulationValidationError, so just propagate it
-            let vertex_keys = self.vertex_keys_for_cell_direct(cell_key)?;
+            let vertex_keys = self.get_cell_vertex_keys(cell_key)?;
 
             let mut sorted_keys = vertex_keys;
             sorted_keys.sort_unstable();
@@ -3410,9 +3509,9 @@ where
         let mut cell_vertex_keys: CellVertexKeysMap = fast_hash_map_with_capacity(self.cells.len());
 
         for cell_key in self.cells.keys() {
-            // Use vertex_keys_for_cell_direct to ensure all vertex keys are present
+            // Use get_cell_vertex_keys to ensure all vertex keys are present
             // The error is already TriangulationValidationError, so just propagate it
-            let vertex_keys = self.vertex_keys_for_cell_direct(cell_key)?;
+            let vertex_keys = self.get_cell_vertex_keys(cell_key)?;
 
             // Store both the Vec (for positional access) and HashSet (for containment checks)
             let vertex_set: VertexKeySet = vertex_keys.iter().copied().collect();
@@ -3922,6 +4021,77 @@ mod tests {
         assert!(tds.is_valid().is_ok());
 
         println!("✓ TDS remains consistent after vertex addition (success or failure)");
+    }
+
+    #[test]
+    fn test_add_vertex_atomic_rollback_on_topology_failure() {
+        // This test verifies atomicity: if assign_neighbors() or assign_incident_cells()
+        // fails after successful algorithm.insert_vertex(), the TDS is rolled back completely.
+
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Create initial triangulation
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        for vertex in &vertices {
+            tds.add(*vertex).unwrap();
+        }
+
+        let initial_vertex_count = tds.number_of_vertices();
+        let initial_cell_count = tds.number_of_cells();
+        let initial_generation = tds.generation();
+
+        // Test the rollback mechanism by creating a scenario where topology assignment could fail
+        // In practice, assign_neighbors() and assign_incident_cells() are quite robust,
+        // so we'll test the rollback mechanism directly to ensure it works correctly.
+
+        let test_vertex = vertex!([0.25, 0.25, 0.25]);
+        let test_uuid = test_vertex.uuid();
+
+        // Manually insert vertex to simulate the state after successful algorithm.insert_vertex()
+        let vertex_key = tds.insert_vertex_with_mapping(test_vertex).unwrap();
+
+        // Verify vertex was inserted
+        assert_eq!(tds.number_of_vertices(), initial_vertex_count + 1);
+        assert!(tds.vertex_key_from_uuid(&test_uuid).is_some());
+
+        // Now test the rollback mechanism directly
+        let pre_state = (initial_vertex_count, initial_cell_count, initial_generation);
+        let coords_str = Some(format!("{:?}", test_vertex.point()));
+        tds.rollback_vertex_insertion(
+            vertex_key,
+            &test_uuid,
+            coords_str,
+            true, // Remove cells that reference the vertex (complex rollback)
+            Some(pre_state),
+            "topology assignment test failure",
+        );
+
+        // Verify complete rollback
+        assert_eq!(
+            tds.number_of_vertices(),
+            initial_vertex_count,
+            "Vertex count should be restored after rollback"
+        );
+        assert!(
+            tds.vertex_key_from_uuid(&test_uuid).is_none(),
+            "Vertex UUID mapping should be removed after rollback"
+        );
+        assert!(
+            tds.generation() > initial_generation,
+            "Generation should be bumped after rollback to invalidate caches"
+        );
+        assert!(
+            tds.is_valid().is_ok(),
+            "TDS should remain valid after rollback"
+        );
+
+        println!("✓ Atomic rollback works correctly on topology assignment failures");
     }
 
     #[test]
@@ -5199,7 +5369,7 @@ mod tests {
             // Also verify we can use the key-based method to check cell contents
             for (cell_key, _cell) in &tds.cells {
                 // Test the Phase 1 key-based path
-                let vertex_keys_result = tds.vertex_keys_for_cell_direct(cell_key);
+                let vertex_keys_result = tds.get_cell_vertex_keys(cell_key);
                 assert!(
                     vertex_keys_result.is_ok(),
                     "Should be able to get vertex keys for cell using direct method"
@@ -5336,12 +5506,12 @@ mod tests {
                     .cell_key_from_uuid(&cell.uuid())
                     .expect("Cell UUID should map to a key");
                 let cell_vertex_keys: VertexKeySet = tds
-                    .vertex_keys_for_cell_direct(cell_key)
+                    .get_cell_vertex_keys(cell_key)
                     .unwrap()
                     .into_iter()
                     .collect();
                 let neighbor_vertex_keys: VertexKeySet = tds
-                    .vertex_keys_for_cell_direct(neighbor_cell_key)
+                    .get_cell_vertex_keys(neighbor_cell_key)
                     .unwrap()
                     .into_iter()
                     .collect();
@@ -5361,7 +5531,7 @@ mod tests {
 
                 // Find the index of this unique vertex in the current cell
                 let unique_vertex_index = tds
-                    .vertex_keys_for_cell_direct(cell_key)
+                    .get_cell_vertex_keys(cell_key)
                     .unwrap()
                     .iter()
                     .position(|&k| k == unique_vertex_key)
@@ -7989,7 +8159,7 @@ mod tests {
     }
 
     #[test]
-    fn test_vertex_keys_for_cell_direct_error_path() {
+    fn test_get_cell_vertex_keys_error_path() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -8001,7 +8171,7 @@ mod tests {
 
         // Test with valid cell key
         if let Some((cell_key, _)) = tds.cells().iter().next() {
-            let result = tds.vertex_keys_for_cell_direct(cell_key);
+            let result = tds.get_cell_vertex_keys(cell_key);
             assert!(result.is_ok());
             let vertex_keys = result.unwrap();
             assert_eq!(vertex_keys.len(), 4); // 3D tetrahedron has 4 vertices
