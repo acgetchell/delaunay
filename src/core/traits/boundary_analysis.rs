@@ -152,7 +152,14 @@ where
     ///
     /// # Returns
     ///
-    /// `true` if the facet is on the boundary (belongs to only one cell), `false` otherwise.
+    /// `Ok(true)` if the facet is on the boundary (belongs to only one cell),
+    /// `Ok(false)` if it's an interior facet (belongs to two cells).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TriangulationValidationError)` if:
+    /// - The facet's vertices cannot be found in the triangulation (e.g., facet from different TDS)
+    /// - The facet key cannot be derived from its vertices
     ///
     /// # Examples
     ///
@@ -176,7 +183,7 @@ where
     /// if let Some(cell) = tds.cells().values().next() {
     ///     let facets = cell.facets().expect("Failed to get facets from cell");
     ///     for facet in &facets {
-    ///         let is_boundary = tds.is_boundary_facet_with_map(facet, &facet_to_cells);
+    ///         let is_boundary = tds.is_boundary_facet_with_map(facet, &facet_to_cells).expect("Should not fail for valid facets");
     ///         println!("Facet is boundary: {is_boundary}");
     ///         // In a single tetrahedron, all facets are boundary facets
     ///         assert!(is_boundary);
@@ -189,7 +196,7 @@ where
         &self,
         facet: &Facet<T, U, V, D>,
         facet_to_cells: &crate::core::collections::FacetToCellsMap,
-    ) -> bool;
+    ) -> Result<bool, TriangulationValidationError>;
 
     /// Returns the number of boundary facets in the triangulation.
     ///

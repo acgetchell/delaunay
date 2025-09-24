@@ -1,0 +1,28 @@
+# Gitleaks configuration file for delaunay project
+# https://github.com/gitleaks/gitleaks
+#
+# This configuration allowlists known false positives where hex literals
+# are used as benign test constants for facet key formatting validation.
+# These are not secrets but rather mock data used in unit tests.
+
+title = "Gitleaks Configuration"
+
+# Enable default rules
+[extend]
+useDefault = true
+
+# Allowlists for false positives
+[allowlist]
+description = "Benign hex literals used for facet key formatting validation in tests"
+regexes = [
+    '''(?i)0x1234_5678_9abc_def0''',  # Test constant for facet key formatting in boundary tests
+    '''(?i)0x1234_5678_90ab_cdef''',  # Test constant for facet key formatting in convex hull tests
+    '''(?i)0xdead_beef_cafe_babe''',  # Additional test constant used for comparison tests
+]
+
+# Additional allowlist entries can be added here for other false positives
+# For example:
+# [[allowlist]]
+# description = "Example: prefer literal-scoped regex over file paths"
+# regexes = ['''0xdead_beef_cafe_babe''']
+# # Note: avoid file-level path allowlists; they mask unrelated leaks.

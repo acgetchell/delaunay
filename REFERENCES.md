@@ -63,6 +63,21 @@ These references ensure the library's geometric computations are mathematically 
 - Shewchuk, J. R. "Robust Adaptive Floating-Point Geometric Predicates."
   *Proceedings of the Twelfth Annual Symposium on Computational Geometry* (1996): 141-150.
 
+### Simulation of Simplicity and Degeneracy Handling
+
+- Edelsbrunner, H., and Mücke, E. P. "Simulation of Simplicity: A Technique to Cope with Degenerate Cases in Geometric Algorithms."
+  *ACM Transactions on Graphics* 9, no. 1 (1990): 66-104. DOI: [10.1145/77635.77639](https://doi.org/10.1145/77635.77639)
+- Seidel, R. "The Nature and Meaning of Perturbations in Geometric Computing."
+  *Discrete & Computational Geometry* 19, no. 1 (1998): 1-17. DOI: [10.1007/PL00009336](https://doi.org/10.1007/PL00009336)
+
+### Geometric Tie-Breaking and Deterministic Perturbations
+
+- Burnikel, C., Funke, S., and Mehlhorn, K. "Exact Geometric Computation Made Easy."
+  *Proceedings of the Fifteenth Annual Symposium on Computational Geometry* (1999): 341-350.
+  DOI: [10.1145/304893.304988](https://doi.org/10.1145/304893.304988)
+- Yap, C. K. "Towards Exact Geometric Computation."
+  *Computational Geometry* 7, no. 1-2 (1997): 3-23. DOI: [10.1016/0925-7721(95)00040-2](https://doi.org/10.1016/0925-7721(95)00040-2)
+
 ### Circumcenter and Circumradius Calculations
 
 - Lévy, Bruno, and Yang Liu. "Lp Centroidal Voronoi Tessellation and Its Applications."

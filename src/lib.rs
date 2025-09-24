@@ -9,7 +9,7 @@
 //! - d-dimensional Delaunay triangulations
 //! - d-dimensional convex hulls
 //! - Generic floating-point coordinate types (supports `f32`, `f64`, and other types implementing `CoordinateScalar`)
-//! - Arbitrary data types associated with vertices and cells
+//! - Copy-able data types associated with vertices and cells (see [`DataType`](core::traits::DataType) for constraints)
 //! - Serialization/Deserialization with [serde](https://serde.rs)
 //!
 //! # Basic Usage

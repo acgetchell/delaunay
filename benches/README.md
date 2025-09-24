@@ -117,12 +117,12 @@ Performance results are automatically updated using the benchmark infrastructure
 # Prerequisite: install uv (e.g., `pipx install uv` or `brew install uv`)
 
 # Generate updated performance summary
-uv run performance-summary-utils generate
+uv run benchmark-utils generate-summary
 
 # Generate summary with fresh benchmark data
-uv run performance-summary-utils generate --run-benchmarks
+uv run benchmark-utils generate-summary --run-benchmarks
 
-# Compare current performance against baseline (separate utility)
+# Compare current performance against baseline
 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 ```
 

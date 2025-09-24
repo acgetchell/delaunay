@@ -505,7 +505,7 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 /// - **Primary Direction**: UUID → Key is the hot path in neighbor assignment
 /// - **Hash Function**: `FxHash` provides ~2-3x faster lookups than default hasher in typical non-adversarial workloads
 /// - **Use Case**: Converting cell UUIDs to keys for `SlotMap` access
-/// - **Performance**: O(1) average case, eliminates `BiMap` overhead
+/// - **Performance**: O(1) average case, optimized for triangulation algorithms
 ///
 /// # Reverse Lookups
 ///
@@ -788,14 +788,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_fast_collections_basic_usage() {
+    fn test_fast_collections_basic_operations() {
+        // Test FastHashMap basic operations
         let mut map: FastHashMap<u64, usize> = FastHashMap::default();
+        assert!(map.is_empty());
+
         map.insert(123, 456);
         assert_eq!(map.get(&123), Some(&456));
+        assert_eq!(map.len(), 1);
 
+        map.insert(789, 101_112);
+        assert_eq!(map.len(), 2);
+
+        // Test FastHashSet basic operations
         let mut set: FastHashSet<u64> = FastHashSet::default();
+        assert!(set.is_empty());
+
         set.insert(789);
         assert!(set.contains(&789));
+        assert_eq!(set.len(), 1);
+
+        set.insert(456);
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&456));
+        assert!(!set.contains(&999));
     }
 
     #[test]
@@ -817,35 +833,65 @@ mod tests {
 
     #[test]
     fn test_capacity_helpers() {
+        // Test hash map and set capacity helpers
         let map = fast_hash_map_with_capacity::<u64, usize>(100);
         assert!(map.capacity() >= 100);
 
         let set = fast_hash_set_with_capacity::<u64>(50);
         assert!(set.capacity() >= 50);
 
-        let buffer = small_buffer_with_capacity_8::<i32>(5);
-        assert!(buffer.capacity() >= 5);
+        // Test small buffer capacity helpers with spill validation
+        let mut buffer_8 = small_buffer_with_capacity_8::<i32>(5);
+        assert!(buffer_8.capacity() >= 5);
+        // Force growth beyond inline 8 to validate spill
+        for i in 0..9 {
+            buffer_8.push(i);
+        }
+        assert!(buffer_8.spilled());
+
+        // Test small_buffer_with_capacity_2 with spill validation
+        let mut buffer_2 = small_buffer_with_capacity_2::<i32>(10);
+        assert!(buffer_2.capacity() >= 10);
+        buffer_2.extend(0..3); // > inline(2) -> heap
+        assert!(buffer_2.spilled());
+
+        // Test small_buffer_with_capacity_16 with spill validation
+        let mut buffer_16 = small_buffer_with_capacity_16::<String>(25);
+        assert!(buffer_16.capacity() >= 25);
+        buffer_16.extend(std::iter::repeat_n(String::new(), 17)); // > inline(16)
+        assert!(buffer_16.spilled());
+
+        // Test different types work correctly
+        let mut test_buffer2: SmallBuffer<f64, 2> = small_buffer_with_capacity_2(3);
+        test_buffer2.push(1.0);
+        test_buffer2.push(2.0);
+        assert_eq!(test_buffer2.len(), 2);
+
+        let mut test_buffer16: SmallBuffer<char, 16> = small_buffer_with_capacity_16(5);
+        test_buffer16.push('a');
+        test_buffer16.push('b');
+        assert_eq!(test_buffer16.len(), 2);
+
+        // Test zero capacity edge case
+        let _buffer2_zero = small_buffer_with_capacity_2::<u8>(0);
+        let _buffer16_zero = small_buffer_with_capacity_16::<u32>(0);
     }
 
     #[test]
-    fn test_domain_specific_types() {
+    fn test_collection_type_instantiation() {
+        // Test domain-specific UUID-based types compile and instantiate
         let _facet_map: FacetToCellsMap = FacetToCellsMap::default();
         let _neighbors: CellNeighborsMap = CellNeighborsMap::default();
         let _vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
         let _cell_vertices: CellVerticesMap = CellVerticesMap::default();
 
-        // Just test that they compile and can be instantiated
-    }
-
-    #[test]
-    fn test_phase1_key_based_types() {
-        // Test that Phase 1 key-based types compile and can be instantiated
+        // Test Phase 1 key-based types compile and instantiate
         let _cell_set: CellKeySet = CellKeySet::default();
         let _vertex_set: VertexKeySet = VertexKeySet::default();
         let _cell_map: KeyBasedCellMap<i32> = KeyBasedCellMap::default();
         let _vertex_map: KeyBasedVertexMap<String> = KeyBasedVertexMap::default();
 
-        // Test basic operations work
+        // Test basic operations work on key-based types
         let cell_set: CellKeySet = CellKeySet::default();
         assert!(cell_set.is_empty());
         assert_eq!(cell_set.len(), 0);

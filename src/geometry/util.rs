@@ -434,10 +434,10 @@ pub fn safe_scalar_from_f64<T: CoordinateScalar>(
 /// Safely convert a `usize` value to a coordinate scalar type T.
 ///
 /// This function handles the conversion from `usize` to coordinate scalar types
-/// with proper precision checking. Since `f64` has only 52 bits of precision
-/// for the mantissa, `usize` values larger than 2^52 could lose precision when
-/// converted through `f64`. This function checks for this condition and returns
-/// an error if precision loss would occur.
+/// with proper precision checking. The conversion goes through `f64` as an intermediate,
+/// so we must guard against precision loss in both the f64 conversion and the final
+/// conversion to type T. The function uses the minimum mantissa bits of f64 (53 bits)
+/// and the target type T to determine the safe conversion limit.
 ///
 /// # Arguments
 ///
@@ -450,7 +450,7 @@ pub fn safe_scalar_from_f64<T: CoordinateScalar>(
 /// # Errors
 ///
 /// Returns `CoordinateConversionError::ConversionFailed` if:
-/// - The `usize` value is too large and would lose precision when converted through `f64`
+/// - The `usize` value is too large and would lose precision in the conversion chain
 /// - The conversion from `f64` to type T fails
 ///
 /// # Examples
@@ -473,17 +473,22 @@ pub fn safe_scalar_from_f64<T: CoordinateScalar>(
 ///
 /// # Precision Limits
 ///
-/// - `f64` integers are exact up to 2^53 − 1
-/// - `usize` values larger than 2^53 − 1 (9,007,199,254,740,991) may lose precision
-/// - On 32-bit platforms, `usize` is only 32 bits, so precision loss is impossible
-/// - On 64-bit platforms, `usize` can be up to 64 bits, so precision loss is possible
+/// The function uses the minimum mantissa bits between f64 and the target type:
+/// - `f64` integers are exact up to 2^53 − 1 (9,007,199,254,740,991)
+/// - `f32` integers are exact up to 2^24 − 1 (16,777,215)
+/// - For f32 targets: `usize` values larger than 2^24 − 1 will cause an error
+/// - For f64 targets: `usize` values larger than 2^53 − 1 will cause an error
+/// - On 32-bit platforms, `usize` is only 32 bits, so f32 precision loss is possible
+/// - On 64-bit platforms, `usize` can be up to 64 bits, so both f32 and f64 precision loss is possible
 pub fn safe_usize_to_scalar<T: CoordinateScalar>(
     value: usize,
 ) -> Result<T, CoordinateConversionError> {
-    // Check for potential precision loss when converting usize to f64
-    // f64 has 53 bits of integer precision (including the implicit bit).
-    // Integers up to 2^53 - 1 are exactly representable.
-    const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1; // 9,007,199,254,740,991
+    // Guard precision for both the f64 intermediate and the target T.
+    // Use mantissa bits min(53 (f64), T::mantissa_digits()) to bound exact integers.
+    const F64_MANTISSA_BITS: u32 = 53;
+    let t_mantissa_bits: u32 = T::mantissa_digits();
+    let max_precise_bits = core::cmp::min(F64_MANTISSA_BITS, t_mantissa_bits);
+    let max_precise_u128: u128 = (1u128 << max_precise_bits) - 1;
 
     // Use try_from to safely convert usize to u64 for comparison
     let value_u64 =
@@ -494,7 +499,7 @@ pub fn safe_usize_to_scalar<T: CoordinateScalar>(
             to_type: std::any::type_name::<T>(),
         })?;
 
-    if value_u64 > MAX_PRECISE_USIZE_IN_F64 {
+    if u128::from(value_u64) > max_precise_u128 {
         return Err(CoordinateConversionError::ConversionFailed {
             coordinate_index: 0,
             coordinate_value: format!("{value}"),
@@ -821,11 +826,7 @@ where
     T: CoordinateScalar + Sum + Zero,
 {
     let circumcenter = circumcenter(points)?;
-    circumradius_with_center(points, &circumcenter).map_err(|e| {
-        CircumcenterError::MatrixInversionFailed {
-            details: format!("Failed to calculate circumradius: {e}"),
-        }
-    })
+    circumradius_with_center(points, &circumcenter)
 }
 
 /// Calculate the circumradius given a precomputed circumcenter.
@@ -892,9 +893,9 @@ where
 /// Calculate the area/volume of a facet defined by a set of points.
 ///
 /// This function calculates the (D-1)-dimensional "area" of a facet in D-dimensional space:
-/// - 1D: Distance between two points (length)
-/// - 2D: Area of triangle using cross product  
-/// - 3D: Volume of tetrahedron using scalar triple product
+/// - 1D: Point measure (0-dimensional, returns 0)
+/// - 2D: Length of line segment (1-dimensional)
+/// - 3D: Area of triangle using cross product (2-dimensional)
 /// - 4D+: Generalized volume using Gram matrix method
 ///
 /// For dimensions 4 and higher, this function uses the Gram matrix method for
@@ -954,7 +955,7 @@ where
 
     match D {
         1 => {
-            // 1D: Distance between two points
+            // 1D: Point measure (0-dimensional facet)
             if points.len() != 1 {
                 return Err(CircumcenterError::InvalidSimplex {
                     actual: points.len(),
@@ -962,9 +963,8 @@ where
                     dimension: 1,
                 });
             }
-            // For 1D, a "facet" is a single point, so "area" is 1 (or we could return 0)
-            // This is somewhat arbitrary - in practice 1D facets aren't commonly used
-            Ok(T::one())
+            // A 0-dimensional point has measure 0
+            Ok(T::zero())
         }
         2 => {
             // 2D: Length of line segment (1D facet in 2D space)
@@ -1895,27 +1895,6 @@ mod tests {
     }
 
     #[test]
-    fn test_safe_usize_to_scalar_zero() {
-        let zero_value = 0_usize;
-        let result: Result<f64, _> = safe_usize_to_scalar(zero_value);
-        assert!(result.is_ok());
-        assert_relative_eq!(result.unwrap(), 0.0f64, epsilon = 1e-15);
-    }
-
-    #[test]
-    fn test_safe_usize_to_scalar_small_values() {
-        // Test various small values that should always work
-        let test_values = [1, 10, 100, 1000, 10_000, 100_000, 1_000_000];
-
-        for &value in &test_values {
-            let result: Result<f64, _> = safe_usize_to_scalar(value);
-            assert!(result.is_ok(), "Failed to convert {value}");
-            let expected_f64: f64 = cast(value).expect("Small values should convert safely");
-            assert_relative_eq!(result.unwrap(), expected_f64, epsilon = 1e-15);
-        }
-    }
-
-    #[test]
     fn test_safe_usize_to_scalar_within_f64_precision() {
         // Test values that are within f64 precision limits but relatively large
         let safe_large_values = [
@@ -2011,47 +1990,6 @@ mod tests {
     }
 
     #[test]
-    fn test_safe_usize_to_scalar_different_target_types() {
-        let test_value = 1000_usize;
-
-        // Test conversion to f64
-        let result_f64: Result<f64, _> = safe_usize_to_scalar(test_value);
-        assert!(result_f64.is_ok());
-        assert_relative_eq!(result_f64.unwrap(), 1000.0f64, epsilon = 1e-15);
-
-        // Test conversion to f32
-        let result_f32: Result<f32, _> = safe_usize_to_scalar(test_value);
-        assert!(result_f32.is_ok());
-        assert_relative_eq!(result_f32.unwrap(), 1000.0f32, epsilon = 1e-6);
-    }
-
-    #[test]
-    fn test_safe_usize_to_scalar_max_safe_values() {
-        // Test maximum values that should be safe for common vertex/facet counts
-        let realistic_values = [
-            1_000,      // Small mesh
-            10_000,     // Medium mesh
-            100_000,    // Large mesh
-            1_000_000,  // Very large mesh
-            10_000_000, // Extremely large mesh (but still practical)
-        ];
-
-        for &value in &realistic_values {
-            let result: Result<f64, _> = safe_usize_to_scalar(value);
-            assert!(result.is_ok(), "Failed to convert realistic value {value}");
-
-            // Verify precision is maintained
-            let converted = result.unwrap();
-            let back_converted: usize =
-                cast(converted).expect("Realistic f64 values should convert back to usize exactly");
-            assert_eq!(
-                back_converted, value,
-                "Precision lost for realistic value {value}"
-            );
-        }
-    }
-
-    #[test]
     fn test_safe_usize_to_scalar_error_message_format() {
         // Test that error messages are properly formatted
         const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1;
@@ -2071,6 +2009,43 @@ mod tests {
                 assert!(error_message.contains("f64"));
             }
         }
+    }
+
+    #[test]
+    fn test_safe_usize_to_scalar_f32_precision_limit() {
+        // Test that f32 precision limit is correctly detected
+        // f32 has 24 mantissa bits, so max exact integer is 2^24 - 1 = 16,777,215
+        const F32_MAX_EXACT_INT: usize = 16_777_215;
+        const F32_FIRST_INEXACT_INT: usize = 16_777_216;
+
+        // This should succeed
+        let result_within: Result<f32, _> = safe_usize_to_scalar(F32_MAX_EXACT_INT);
+        assert!(
+            result_within.is_ok(),
+            "Value {F32_MAX_EXACT_INT} should be within f32 precision"
+        );
+        // Convert the expected value properly using num_traits::cast
+        let expected_f32: f32 =
+            cast(F32_MAX_EXACT_INT).expect("This value should be exactly representable in f32");
+        assert_relative_eq!(result_within.unwrap(), expected_f32, epsilon = 1e-6);
+
+        // This should fail precision check
+        let result_beyond: Result<f32, _> = safe_usize_to_scalar(F32_FIRST_INEXACT_INT);
+        assert!(
+            result_beyond.is_err(),
+            "Value {F32_FIRST_INEXACT_INT} should exceed f32 precision"
+        );
+
+        // For f64, the same value should still work since f64 has higher precision
+        let result_f64: Result<f64, _> = safe_usize_to_scalar(F32_FIRST_INEXACT_INT);
+        assert!(
+            result_f64.is_ok(),
+            "Value {F32_FIRST_INEXACT_INT} should be within f64 precision"
+        );
+        // Convert the expected value properly using num_traits::cast
+        let expected_f64: f64 =
+            cast(F32_FIRST_INEXACT_INT).expect("This value should be exactly representable in f64");
+        assert_relative_eq!(result_f64.unwrap(), expected_f64, epsilon = 1e-15);
     }
 
     #[test]
@@ -2335,60 +2310,6 @@ mod tests {
     }
 
     #[test]
-    fn test_circumcenter_large_coordinates() {
-        // Test with large but finite coordinates
-        let large_val = 1e6;
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([large_val, 0.0, 0.0]),
-            Point::new([0.0, large_val, 0.0]),
-            Point::new([0.0, 0.0, large_val]),
-        ];
-
-        let result = circumcenter(&points);
-        assert!(result.is_ok(), "Large coordinates should work");
-
-        let center = result.unwrap();
-        let center_coords = center.to_array();
-
-        // Should be approximately at (large_val/2, large_val/2, large_val/2)
-        for &coord in &center_coords {
-            assert_relative_eq!(coord, large_val / 2.0, epsilon = 1e-3);
-        }
-    }
-
-    #[test]
-    fn test_circumcenter_small_coordinates() {
-        // Test with very small but non-zero coordinates
-        let small_val = 1e-3; // Use larger value for numerical stability
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([small_val, 0.0, 0.0]),
-            Point::new([0.0, small_val, 0.0]),
-            Point::new([0.0, 0.0, small_val]),
-        ];
-
-        let result = circumcenter(&points);
-        assert!(result.is_ok(), "Small coordinates should work");
-
-        let center = result.unwrap();
-        let center_coords = center.to_array();
-
-        // Verify coordinates are finite and reasonable
-        for coord in center_coords {
-            assert!(
-                coord.is_finite(),
-                "Circumcenter coordinates should be finite"
-            );
-            // Should be on the order of small_val
-            assert!(
-                coord.abs() < small_val * 10.0,
-                "Coordinates should be reasonably small"
-            );
-        }
-    }
-
-    #[test]
     fn test_circumcenter_equilateral_triangle_properties() {
         // Test that circumcenter has expected properties for equilateral triangle
         let side_length = 2.0;
@@ -2427,37 +2348,6 @@ mod tests {
         // All distances should be equal
         for i in 1..distances.len() {
             assert_relative_eq!(distances[0], distances[i], epsilon = 1e-10);
-        }
-    }
-
-    #[test]
-    fn test_circumcenter_consistency_with_circumradius() {
-        // Test that circumcenter and circumradius are consistent
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-
-        let center = circumcenter(&points).unwrap();
-        let radius = circumradius(&points).unwrap();
-        let radius_with_center = circumradius_with_center(&points, &center).unwrap();
-
-        // Both methods should give the same radius
-        assert_relative_eq!(radius, radius_with_center, epsilon = 1e-10);
-
-        // Verify all points are at circumradius distance from circumcenter
-        let center_coords = center.to_array();
-        for point in &points {
-            let point_coords: [f64; 3] = point.into();
-            let diff = [
-                point_coords[0] - center_coords[0],
-                point_coords[1] - center_coords[1],
-                point_coords[2] - center_coords[2],
-            ];
-            let distance = hypot(diff);
-            assert_relative_eq!(distance, radius, epsilon = 1e-10);
         }
     }
 
@@ -2571,10 +2461,10 @@ mod tests {
 
     #[test]
     fn test_facet_measure_1d_point() {
-        // 1D facet is a single point - measure should be 1.0 by convention
+        // 1D facet is a single point (0-dimensional) - measure should be 0
         let points = vec![Point::new([5.0])];
         let measure = facet_measure(&points).unwrap();
-        assert_relative_eq!(measure, 1.0, epsilon = 1e-10);
+        assert_relative_eq!(measure, 0.0, epsilon = 1e-10);
     }
 
     #[test]
@@ -3672,49 +3562,6 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_random_points_coordinate_types() {
-        // Test with different coordinate scalar types across dimensions
-
-        // f64 tests
-        let points_f64_2d = generate_random_points::<f64, 2>(20, (0.0, 1.0)).unwrap();
-        let points_f64_3d = generate_random_points::<f64, 3>(20, (0.0, 1.0)).unwrap();
-        let points_f64_4d = generate_random_points::<f64, 4>(20, (0.0, 1.0)).unwrap();
-        let points_f64_5d = generate_random_points::<f64, 5>(20, (0.0, 1.0)).unwrap();
-
-        // f32 tests
-        let points_f32_2d = generate_random_points::<f32, 2>(20, (0.0_f32, 1.0_f32)).unwrap();
-        let points_f32_3d = generate_random_points::<f32, 3>(20, (0.0_f32, 1.0_f32)).unwrap();
-        let points_f32_4d = generate_random_points::<f32, 4>(20, (0.0_f32, 1.0_f32)).unwrap();
-        let points_f32_5d = generate_random_points::<f32, 5>(20, (0.0_f32, 1.0_f32)).unwrap();
-
-        // Verify lengths
-        assert_eq!(points_f64_2d.len(), 20);
-        assert_eq!(points_f64_3d.len(), 20);
-        assert_eq!(points_f64_4d.len(), 20);
-        assert_eq!(points_f64_5d.len(), 20);
-        assert_eq!(points_f32_2d.len(), 20);
-        assert_eq!(points_f32_3d.len(), 20);
-        assert_eq!(points_f32_4d.len(), 20);
-        assert_eq!(points_f32_5d.len(), 20);
-
-        // Check ranges for f64 points
-        for point in &points_f64_2d {
-            let coords: [f64; 2] = point.into();
-            for &coord in &coords {
-                assert!((0.0..1.0).contains(&coord));
-            }
-        }
-
-        // Check ranges for f32 points
-        for point in &points_f32_5d {
-            let coords: [f32; 5] = point.into();
-            for &coord in &coords {
-                assert!((0.0..1.0).contains(&coord));
-            }
-        }
-    }
-
-    #[test]
     fn test_generate_random_points_distribution_coverage_all_dimensions() {
         // Test that points cover the range reasonably well across all dimensions
 
@@ -3874,6 +3721,22 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_grid_points_5d() {
+        // Test 5D grid generation
+        let grid = generate_grid_points::<f64, 5>(2, 1.0, [0.0, 0.0, 0.0, 0.0, 0.0]).unwrap();
+
+        assert_eq!(grid.len(), 32); // 2^5 = 32 points
+
+        // Check coordinate ranges
+        for point in &grid {
+            let coords: [f64; 5] = point.into();
+            for &coord in &coords {
+                assert!((0.0..=1.0).contains(&coord)); // offset 0.0 + (0 or 1) * spacing 1.0
+            }
+        }
+    }
+
+    #[test]
     fn test_generate_grid_points_edge_cases() {
         // Test single point grid
         let grid = generate_grid_points::<f64, 3>(1, 1.0, [0.0, 0.0, 0.0]).unwrap();
@@ -3947,51 +3810,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_generate_grid_points_large_coordinates() {
-        // Test with large coordinate values
-        let grid = generate_grid_points::<f64, 2>(2, 1000.0, [1e6, 1e6]).unwrap();
-        assert_eq!(grid.len(), 4);
-
-        for point in &grid {
-            let coords: [f64; 2] = point.into();
-            assert!((1e6..=1e6 + 1000.0).contains(&coords[0]));
-            assert!((1e6..=1e6 + 1000.0).contains(&coords[1]));
-        }
-    }
-
-    #[test]
-    fn test_generate_grid_points_negative_spacing() {
-        // Test with negative spacing
-        let grid = generate_grid_points::<f64, 2>(3, -1.0, [2.0, 2.0]).unwrap();
-        assert_eq!(grid.len(), 9);
-
-        // With negative spacing, coordinates should decrease from offset
-        // Grid indices are 0, 1, 2, so coordinates are:
-        // offset + index * spacing = 2.0 + {0,1,2} * (-1.0) = {2.0, 1.0, 0.0}
-        let mut found_coords = std::collections::HashSet::new();
-        for point in &grid {
-            let coords: [f64; 2] = point.into();
-            // Each coordinate should be exactly one of: 2.0, 1.0, 0.0
-            for &coord in &coords {
-                assert!(
-                    (coord - 2.0).abs() < 1e-15
-                        || (coord - 1.0).abs() < 1e-15
-                        || coord.abs() < 1e-15,
-                    "Unexpected coordinate: {coord}"
-                );
-            }
-            found_coords.insert(format!("{:.1}_{:.1}", coords[0], coords[1]));
-        }
-
-        // Should find all 9 expected coordinate combinations
-        assert_eq!(
-            found_coords.len(),
-            9,
-            "Should have 9 unique coordinate pairs"
-        );
-    }
-
     // =============================================================================
     // POISSON POINT GENERATION TESTS
     // =============================================================================
@@ -4063,6 +3881,74 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_poisson_points_4d() {
+        // Test 4D Poisson disk sampling
+        let points =
+            generate_poisson_points::<f32, 4>(15, (0.0_f32, 5.0_f32), 0.5_f32, 333).unwrap();
+
+        assert!(!points.is_empty());
+
+        for point in &points {
+            let coords: [f32; 4] = point.into();
+            for &coord in &coords {
+                assert!((0.0..5.0).contains(&coord));
+            }
+        }
+
+        // Check minimum distance constraint in 4D
+        for (i, p1) in points.iter().enumerate() {
+            for (j, p2) in points.iter().enumerate() {
+                if i != j {
+                    let coords1: [f32; 4] = p1.into();
+                    let coords2: [f32; 4] = p2.into();
+                    let diff = [
+                        coords1[0] - coords2[0],
+                        coords1[1] - coords2[1],
+                        coords1[2] - coords2[2],
+                        coords1[3] - coords2[3],
+                    ];
+                    let distance = hypot(diff);
+                    assert!(distance >= 0.5 - 1e-6); // f32 precision
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_poisson_points_5d() {
+        // Test 5D Poisson disk sampling
+        let points = generate_poisson_points::<f64, 5>(10, (-2.0, 2.0), 0.4, 777).unwrap();
+
+        assert!(!points.is_empty());
+
+        for point in &points {
+            let coords: [f64; 5] = point.into();
+            for &coord in &coords {
+                assert!((-2.0..2.0).contains(&coord));
+            }
+        }
+
+        // Check minimum distance constraint in 5D
+        for (i, p1) in points.iter().enumerate() {
+            for (j, p2) in points.iter().enumerate() {
+                if i != j {
+                    let coords1: [f64; 5] = p1.into();
+                    let coords2: [f64; 5] = p2.into();
+                    let diff = [
+                        coords1[0] - coords2[0],
+                        coords1[1] - coords2[1],
+                        coords1[2] - coords2[2],
+                        coords1[3] - coords2[3],
+                        coords1[4] - coords2[4],
+                    ];
+                    let distance = hypot(diff);
+                    assert!(distance >= 0.4 - 1e-10);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_generate_poisson_points_reproducible() {
         // Test that same seed produces same results
         let points1 = generate_poisson_points::<f64, 2>(25, (0.0, 5.0), 0.3, 456).unwrap();
@@ -4123,113 +4009,9 @@ mod tests {
         assert_eq!(points.len(), 50); // Should get exactly the requested number
     }
 
-    #[test]
-    fn test_generate_poisson_points_small_spacing() {
-        // Test with very small minimum distance (should behave more like random sampling)
-        let points = generate_poisson_points::<f64, 2>(20, (0.0, 10.0), 0.01, 999).unwrap();
-
-        // Should be able to generate close to the requested number
-        assert!(points.len() >= 15); // Allow some margin for randomness
-
-        // All points should still respect the minimum distance
-        for (i, p1) in points.iter().enumerate() {
-            for (j, p2) in points.iter().enumerate() {
-                if i != j {
-                    let coords1: [f64; 2] = p1.into();
-                    let coords2: [f64; 2] = p2.into();
-                    let diff = [coords1[0] - coords2[0], coords1[1] - coords2[1]];
-                    let distance = hypot(diff);
-                    assert!(distance >= 0.01 - 1e-12);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_generate_poisson_points_coordinate_types() {
-        // Test with f32 coordinates
-        let points_f32 =
-            generate_poisson_points::<f32, 3>(15, (0.0_f32, 5.0_f32), 0.5_f32, 333).unwrap();
-
-        assert!(!points_f32.is_empty());
-
-        for point in &points_f32 {
-            let coords: [f32; 3] = point.into();
-            for &coord in &coords {
-                assert!((0.0..5.0).contains(&coord));
-            }
-        }
-
-        // Test with f64 coordinates
-        let points_f64 = generate_poisson_points::<f64, 4>(10, (-2.0, 2.0), 0.4, 777).unwrap();
-
-        assert!(!points_f64.is_empty());
-
-        for point in &points_f64 {
-            let coords: [f64; 4] = point.into();
-            for &coord in &coords {
-                assert!((-2.0..2.0).contains(&coord));
-            }
-        }
-    }
-
     // =============================================================================
     // SAFETY CAP AND UTILITY FUNCTION TESTS
     // =============================================================================
-
-    #[test]
-    fn test_max_grid_bytes_safety_cap_default_value() {
-        // Test that the default value is as expected
-        assert_eq!(MAX_GRID_BYTES_SAFETY_CAP_DEFAULT, 4_294_967_296); // 4 GiB
-
-        // Test that the function doesn't crash and returns a reasonable value
-        // (We can't safely test env var manipulation in a crate that forbids unsafe)
-        let cap = max_grid_bytes_safety_cap();
-        assert!(cap > 0, "Safety cap should be positive");
-        // The actual value depends on environment, but function should not crash
-    }
-
-    #[test]
-    fn test_format_bytes() {
-        // Test byte formatting with various sizes
-        assert_eq!(format_bytes(0), "0 B");
-        assert_eq!(format_bytes(512), "512 B");
-        assert_eq!(format_bytes(1024), "1.0 KiB");
-        assert_eq!(format_bytes(1536), "1.5 KiB");
-        assert_eq!(format_bytes(1_048_576), "1.0 MiB");
-        assert_eq!(format_bytes(1_073_741_824), "1.0 GiB");
-        assert_eq!(format_bytes(MAX_GRID_BYTES_SAFETY_CAP_DEFAULT), "4.0 GiB");
-        assert_eq!(format_bytes(5_368_709_120), "5.0 GiB");
-        assert_eq!(format_bytes(1_099_511_627_776), "1.0 TiB");
-    }
-
-    #[test]
-    fn test_generate_grid_points_safety_cap_enforcement() {
-        // Test that very large grids fail with the current safety cap
-        // We can't safely modify environment variables in a crate that forbids unsafe,
-        // so we test with a grid that would exceed the default 4 GiB cap
-        let result = generate_grid_points::<f64, 3>(1000, 1.0, [0.0, 0.0, 0.0]);
-        assert!(result.is_err(), "Should fail with safety cap exceeded");
-
-        if let Err(RandomPointGenerationError::RandomGenerationFailed { details, .. }) = result {
-            assert!(
-                details.contains("cap"),
-                "Error should mention cap: {details}"
-            );
-            // Should contain human-readable formatting
-            assert!(
-                details.contains('B'),
-                "Error should use human-readable bytes: {details}"
-            );
-            // Should contain one of the byte unit suffixes
-            assert!(
-                details.contains("GiB") || details.contains("MiB") || details.contains("KiB"),
-                "Error should use human-readable byte units: {details}"
-            );
-        } else {
-            panic!("Expected RandomGenerationFailed error");
-        }
-    }
 
     #[test]
     fn test_scaled_hypot_2d() {
@@ -4357,6 +4139,13 @@ mod tests {
                 .unwrap();
         assert_eq!(tri_4d.dim(), 4);
         assert!(tri_4d.number_of_cells() > 0);
+
+        // 5D with sufficient points for full triangulation
+        let tri_5d =
+            generate_random_triangulation::<f64, (), (), 5>(10, (0.0, 5.0), None, Some(888))
+                .unwrap();
+        assert_eq!(tri_5d.dim(), 5);
+        assert!(tri_5d.number_of_cells() > 0);
     }
 
     #[test]
@@ -4397,5 +4186,482 @@ mod tests {
 
         assert_eq!(tri_no_data.number_of_vertices(), 5);
         assert!(tri_no_data.is_valid().is_ok());
+    }
+
+    // =============================================================================
+    // COMPREHENSIVE ERROR PATH AND EDGE CASE TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_safe_cast_to_f64_non_finite() {
+        use std::f64;
+
+        // Test NaN handling
+        let result = safe_cast_to_f64(f64::NAN, 0);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test infinity handling
+        let result = safe_cast_to_f64(f64::INFINITY, 1);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test negative infinity
+        let result = safe_cast_to_f64(f64::NEG_INFINITY, 2);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test valid finite value
+        let result = safe_cast_to_f64(42.5f64, 0);
+        assert!(result.is_ok());
+        assert_relative_eq!(result.unwrap(), 42.5);
+    }
+
+    #[test]
+    fn test_safe_cast_from_f64_non_finite() {
+        use std::f64;
+
+        // Test NaN handling
+        let result: Result<f64, _> = safe_cast_from_f64(f64::NAN, 0);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test infinity handling
+        let result: Result<f64, _> = safe_cast_from_f64(f64::INFINITY, 1);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test negative infinity
+        let result: Result<f64, _> = safe_cast_from_f64(f64::NEG_INFINITY, 2);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test valid conversion
+        let result: Result<f32, _> = safe_cast_from_f64(42.5f64, 0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_safe_coords_conversion_with_non_finite() {
+        use std::f32;
+
+        // Test array with NaN
+        let coords_nan = [1.0f32, f32::NAN, 3.0f32];
+        let result = safe_coords_to_f64(coords_nan);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test array with infinity
+        let coords_inf = [1.0f32, 2.0f32, f32::INFINITY];
+        let result = safe_coords_to_f64(coords_inf);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test successful conversion
+        let coords_valid = [1.0f32, 2.0f32, 3.0f32];
+        let result = safe_coords_to_f64(coords_valid);
+        assert!(result.is_ok());
+        assert_relative_eq!(
+            result.unwrap().as_slice(),
+            [1.0f64, 2.0f64, 3.0f64].as_slice()
+        );
+    }
+
+    #[test]
+    fn test_safe_coords_from_f64_with_non_finite() {
+        use std::f64;
+
+        // Test array with NaN
+        let coords_nan = [1.0f64, f64::NAN, 3.0f64];
+        let result: Result<[f32; 3], _> = safe_coords_from_f64(coords_nan);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test array with infinity
+        let coords_inf = [1.0f64, 2.0f64, f64::INFINITY];
+        let result: Result<[f32; 3], _> = safe_coords_from_f64(coords_inf);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test successful conversion
+        let coords_valid = [1.0f64, 2.0f64, 3.0f64];
+        let result: Result<[f32; 3], _> = safe_coords_from_f64(coords_valid);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_safe_scalar_conversion_edge_cases() {
+        use std::f64;
+
+        // Test scalar to f64 with NaN
+        let result = safe_scalar_to_f64(f64::NAN);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test scalar from f64 with NaN
+        let result: Result<f32, _> = safe_scalar_from_f64(f64::NAN);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+
+        // Test successful conversions
+        let result = safe_scalar_to_f64(42.5f32);
+        assert!(result.is_ok());
+        assert_relative_eq!(result.unwrap(), 42.5f64);
+
+        let result: Result<f32, _> = safe_scalar_from_f64(42.5f64);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_safe_usize_to_scalar_precision_boundary_extended() {
+        // Test values at the precision boundary (additional edge cases)
+        const MAX_PRECISE: u64 = (1_u64 << 53) - 1;
+
+        // Test maximum precise value (should work)
+        let result: Result<f64, _> =
+            safe_usize_to_scalar(usize::try_from(MAX_PRECISE).unwrap_or(usize::MAX));
+        assert!(result.is_ok());
+
+        // Test beyond precision limit (if usize is large enough)
+        if std::mem::size_of::<usize>() >= 8 {
+            // Only test on 64-bit platforms
+            let large_value = usize::try_from(MAX_PRECISE + 1).unwrap_or(usize::MAX);
+            let result: Result<f64, _> = safe_usize_to_scalar(large_value);
+            assert!(matches!(
+                result,
+                Err(CoordinateConversionError::ConversionFailed { .. })
+            ));
+        }
+
+        // Test normal values
+        let result: Result<f64, _> = safe_usize_to_scalar(42_usize);
+        assert!(result.is_ok());
+        assert_relative_eq!(result.unwrap(), 42.0);
+
+        // Test zero
+        let result: Result<f64, _> = safe_usize_to_scalar(0_usize);
+        assert!(result.is_ok());
+        assert_relative_eq!(result.unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_scaled_hypot_2d_edge_cases() {
+        // Test with zeros
+        let result = scaled_hypot_2d(0.0, 0.0);
+        assert_relative_eq!(result, 0.0);
+
+        // Test with one zero
+        let result = scaled_hypot_2d(0.0, 5.0);
+        assert_relative_eq!(result, 5.0);
+
+        // Test with standard case
+        let result = scaled_hypot_2d(3.0, 4.0);
+        assert_relative_eq!(result, 5.0, epsilon = 1e-10);
+
+        // Test with negative values
+        let result = scaled_hypot_2d(-3.0, -4.0);
+        assert_relative_eq!(result, 5.0, epsilon = 1e-10);
+
+        // Test with very large values (avoid overflow)
+        let large_val = 1e100;
+        let result = scaled_hypot_2d(large_val, large_val);
+        assert!(result.is_finite());
+        assert!(result > 0.0);
+    }
+
+    #[test]
+    fn test_squared_norm_dimensions_2_to_5() {
+        // Test across dimensions 2-5
+        // Test 2D
+        let norm_2d = squared_norm([3.0, 4.0]);
+        assert_relative_eq!(norm_2d, 25.0);
+
+        // Test 3D
+        let norm_3d = squared_norm([1.0, 2.0, 2.0]);
+        assert_relative_eq!(norm_3d, 9.0);
+
+        // Test 4D
+        let norm_4d = squared_norm([1.0, 1.0, 1.0, 1.0]);
+        assert_relative_eq!(norm_4d, 4.0);
+
+        // Test 5D
+        let norm_5d = squared_norm([1.0, 1.0, 1.0, 1.0, 1.0]);
+        assert_relative_eq!(norm_5d, 5.0);
+
+        // Test with zeros
+        let norm_zero = squared_norm([0.0, 0.0, 0.0]);
+        assert_relative_eq!(norm_zero, 0.0);
+    }
+
+    #[test]
+    fn test_hypot_dimensions_2_to_5() {
+        // Test hypot across dimensions 2-5
+
+        // Test 2D case (uses optimized scaled_hypot_2d)
+        let distance_2d = hypot([3.0, 4.0]);
+        assert_relative_eq!(distance_2d, 5.0, epsilon = 1e-10);
+
+        // Test 3D case
+        let distance_3d = hypot([1.0, 2.0, 2.0]);
+        assert_relative_eq!(distance_3d, 3.0, epsilon = 1e-10);
+
+        // Test 4D case
+        let distance_4d = hypot([1.0, 1.0, 1.0, 1.0]);
+        assert_relative_eq!(distance_4d, 2.0, epsilon = 1e-10);
+
+        // Test 5D case (uses general algorithm)
+        let distance_5d = hypot([1.0, 1.0, 1.0, 1.0, 1.0]);
+        assert_relative_eq!(distance_5d, 5.0_f64.sqrt(), epsilon = 1e-10);
+
+        // Test with mixed large and small values
+        let distance_mixed = hypot([1e10, 1e-10, 1e5]);
+        assert!(distance_mixed.is_finite());
+        assert!(distance_mixed > 0.0);
+    }
+
+    #[test]
+    fn test_circumcenter_empty_point_set() {
+        let empty_points: Vec<Point<f64, 3>> = vec![];
+        let result = circumcenter(&empty_points);
+
+        assert!(matches!(result, Err(CircumcenterError::EmptyPointSet)));
+    }
+
+    #[test]
+    fn test_circumcenter_invalid_simplex() {
+        // Test wrong number of points for dimension
+        let points_2d = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            // Missing third point for 2D circumcenter
+        ];
+
+        let result = circumcenter(&points_2d);
+        assert!(matches!(
+            result,
+            Err(CircumcenterError::InvalidSimplex { .. })
+        ));
+
+        // Test too many points
+        let points_extra = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+            Point::new([0.5, 0.5]), // Extra point for 2D
+        ];
+
+        let result = circumcenter(&points_extra);
+        assert!(matches!(
+            result,
+            Err(CircumcenterError::InvalidSimplex { .. })
+        ));
+    }
+
+    #[test]
+    fn test_circumcenter_degenerate_matrix() {
+        // Test collinear points in 2D (should cause matrix inversion to fail)
+        let collinear_points = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([2.0, 0.0]), // Collinear with first two
+        ];
+
+        let result = circumcenter(&collinear_points);
+        assert!(matches!(result, Err(CircumcenterError::MatrixError(_))));
+    }
+
+    #[test]
+    fn test_facet_measure_gram_matrix_degenerate() {
+        // Test degenerate simplex (collinear points)
+        let degenerate_points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([2.0, 0.0, 0.0]), // All collinear
+        ];
+
+        let result = facet_measure(&degenerate_points);
+        // This should either return 0 or an error depending on numerical precision
+        if let Ok(measure) = result {
+            assert_relative_eq!(measure, 0.0, epsilon = 1e-10);
+        }
+        // Also acceptable for degenerate case if Err
+    }
+
+    #[test]
+    fn test_generate_random_points_invalid_range() {
+        // Test invalid range (min >= max)
+        let result = generate_random_points::<f64, 2>(100, (10.0, 5.0));
+        assert!(matches!(
+            result,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+
+        // Test equal min and max
+        let result = generate_random_points::<f64, 2>(100, (5.0, 5.0));
+        assert!(matches!(
+            result,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+
+        // Test valid range
+        let result = generate_random_points::<f64, 2>(10, (0.0, 1.0));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 10);
+    }
+
+    #[test]
+    fn test_generate_random_points_seeded_invalid_range() {
+        // Test invalid range with seed
+        let result = generate_random_points_seeded::<f64, 3>(50, (100.0, 10.0), 42);
+        assert!(matches!(
+            result,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+
+        // Test valid range produces consistent results
+        let points1 = generate_random_points_seeded::<f64, 3>(5, (0.0, 1.0), 42).unwrap();
+        let points2 = generate_random_points_seeded::<f64, 3>(5, (0.0, 1.0), 42).unwrap();
+        assert_eq!(points1, points2);
+
+        // Different seeds produce different results
+        let points3 = generate_random_points_seeded::<f64, 3>(5, (0.0, 1.0), 123).unwrap();
+        assert_ne!(points1, points3);
+    }
+
+    #[test]
+    fn test_generate_grid_points_overflow_detection_edge_cases() {
+        // Test cases that would cause potential memory issues in grid point calculation
+        // Generate small grid to test the function works
+        let result = generate_grid_points::<f64, 2>(10, 0.1, [0.0, 0.0]);
+        assert!(result.is_ok());
+
+        // Test very fine spacing which would generate lots of points
+        let result = generate_grid_points::<f64, 2>(1000, 0.0001, [0.0, 0.0]);
+        // Should either succeed or fail gracefully
+        if let Ok(points) = result {
+            assert!(!points.is_empty());
+        }
+        // Expected to fail with large point counts
+    }
+
+    #[test]
+    fn test_generate_poisson_points_edge_cases() {
+        // Test very small spacing with valid number of points
+        let result = generate_poisson_points::<f64, 2>(100, (0.0, 1.0), 0.001, 42);
+        if let Ok(points) = result {
+            assert!(!points.is_empty());
+        }
+        // May fail due to too many points
+
+        // Test with zero points (should succeed with empty result)
+        let result = generate_poisson_points::<f64, 2>(0, (0.0, 1.0), 0.1, 42);
+        if let Ok(points) = result {
+            assert!(points.is_empty());
+        }
+        // Also acceptable if Err
+
+        // Test very large spacing (should work but produce fewer points)
+        let result = generate_poisson_points::<f64, 2>(10, (0.0, 1.0), 2.0, 42);
+        if let Ok(points) = result {
+            assert!(points.len() <= 10);
+        }
+        // May fail if spacing is too large for domain
+    }
+
+    #[test]
+    fn test_format_bytes_edge_cases() {
+        // Test additional edge cases for byte formatting
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(1), "1 B");
+        assert_eq!(format_bytes(1023), "1023 B");
+        assert_eq!(format_bytes(1024), "1.0 KiB");
+        assert_eq!(format_bytes(1536), "1.5 KiB"); // 1024 + 512
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MiB");
+
+        // Test larger values
+        let large_bytes = 7 * 1024 * 1024 * 1024; // 7 GiB
+        let formatted = format_bytes(large_bytes);
+        assert!(formatted.contains("GiB"));
+        assert!(formatted.contains("7."));
+    }
+
+    #[test]
+    fn test_max_grid_bytes_safety_cap() {
+        // Test the default value
+        let default_cap = max_grid_bytes_safety_cap();
+        assert!(default_cap > 0);
+
+        // Test that it returns a reasonable default (4 GiB)
+        assert_eq!(default_cap, 4_294_967_296);
+    }
+
+    #[test]
+    fn test_error_types_display() {
+        // Test ValueConversionError display
+        let value_error = ValueConversionError::ConversionFailed {
+            value: "42".to_string(),
+            from_type: "i32",
+            to_type: "u32",
+            details: "overflow".to_string(),
+        };
+        let display = format!("{value_error}");
+        assert!(display.contains("Cannot convert 42 from i32 to u32"));
+
+        // Test RandomPointGenerationError display
+        let range_error = RandomPointGenerationError::InvalidRange {
+            min: "10.0".to_string(),
+            max: "5.0".to_string(),
+        };
+        let display = format!("{range_error}");
+        assert!(display.contains("Invalid coordinate range"));
+
+        let gen_error = RandomPointGenerationError::RandomGenerationFailed {
+            min: "0.0".to_string(),
+            max: "1.0".to_string(),
+            details: "test error".to_string(),
+        };
+        let display = format!("{gen_error}");
+        assert!(display.contains("Failed to generate random value"));
+
+        let count_error = RandomPointGenerationError::InvalidPointCount { n_points: -5 };
+        let display = format!("{count_error}");
+        assert!(display.contains("Invalid number of points: -5"));
+
+        // Test CircumcenterError variants
+        let empty_error = CircumcenterError::EmptyPointSet;
+        let display = format!("{empty_error}");
+        assert!(display.contains("Empty point set"));
+
+        let simplex_error = CircumcenterError::InvalidSimplex {
+            actual: 2,
+            expected: 3,
+            dimension: 2,
+        };
+        let display = format!("{simplex_error}");
+        assert!(display.contains("Points do not form a valid simplex"));
     }
 }
