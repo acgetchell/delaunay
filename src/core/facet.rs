@@ -196,22 +196,28 @@ pub enum FacetError {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,no_run
 /// use delaunay::core::facet::FacetView;
+/// use delaunay::core::triangulation_data_structure::{Tds, CellKey};
 ///
-/// // Create a facet view for the first facet of a cell
-/// let facet_view = FacetView::new(&tds, cell_key, 0)?;
+/// // This is a conceptual example showing FacetView usage
+/// // In practice, tds and cell_key would come from your triangulation
+/// fn example_usage<'a>(tds: &'a Tds<f64, Option<()>, Option<()>, 3>, cell_key: CellKey) -> Result<(), Box<dyn std::error::Error>> {
+///     // Create a facet view for the first facet of a cell
+///     let facet_view = FacetView::new(tds, cell_key, 0)?;
 ///
-/// // Access vertices through the view (lazy evaluation)
-/// for vertex in facet_view.vertices() {
-///     println!("Vertex: {:?}", vertex.point());
+///     // Access vertices through the view (lazy evaluation)
+///     for vertex in facet_view.vertices() {
+///         println!("Vertex: {:?}", vertex.point());
+///     }
+///
+///     // Get the opposite vertex
+///     let opposite = facet_view.opposite_vertex()?;
+///
+///     // Compute facet key
+///     let key = facet_view.key()?;
+///     Ok(())
 /// }
-///
-/// // Get the opposite vertex
-/// let opposite = facet_view.opposite_vertex()?;
-///
-/// // Compute facet key
-/// let key = facet_view.key()?;
 /// ```
 pub struct FacetView<'tds, T, U, V, const D: usize>
 where

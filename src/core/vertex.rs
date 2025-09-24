@@ -326,6 +326,7 @@ where
     ///
     /// ```
     /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
     /// use approx::assert_relative_eq;
     ///
     /// let empty_vertex: Vertex<f64, Option<()>, 3> = Vertex::empty();
