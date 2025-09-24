@@ -111,6 +111,13 @@ pub enum ConvexHullConstructionError {
         #[source]
         source: TriangulationValidationError,
     },
+    /// Failed to access facet data during convex hull construction.
+    #[error("Failed to access facet data during convex hull construction: {source}")]
+    FacetDataAccessFailed {
+        /// The underlying facet error that caused the data access to fail.
+        #[source]
+        source: FacetError,
+    },
 }
 
 // =============================================================================
@@ -223,6 +230,9 @@ where
     /// Returns a [`ConvexHullConstructionError`] if:
     /// - Boundary facets cannot be extracted from the triangulation ([`ConvexHullConstructionError::BoundaryFacetExtractionFailed`])
     /// - The input triangulation is invalid ([`ConvexHullConstructionError::InvalidTriangulation`])
+    /// - Facet data access fails during construction ([`ConvexHullConstructionError::FacetDataAccessFailed`])
+    ///   - This can happen if cells or vertices referenced by boundary facets are no longer valid
+    ///   - Or if the facet index is out of bounds for the cell's vertex count
     ///
     /// # Examples
     ///
@@ -271,9 +281,32 @@ where
         }
 
         // Use the existing boundary analysis to get hull facets
-        let hull_facets = tds.boundary_facets().map_err(|source| {
+        let hull_facets_iter = tds.boundary_facets().map_err(|source| {
             ConvexHullConstructionError::BoundaryFacetExtractionFailed { source }
         })?;
+
+        // Collect the iterator into a Vec for storage in the struct
+        // Note: This temporarily stores the deprecated Facet objects until we can migrate
+        // the ConvexHull struct itself to use iterator-based APIs
+        let hull_facets: Result<Vec<_>, ConvexHullConstructionError> = hull_facets_iter
+            .map(|facet_view| {
+                // Convert FacetView to Facet for backward compatibility
+                // This will be removed when ConvexHull is migrated to use FacetView
+                let cell = facet_view
+                    .cell()
+                    .map_err(
+                        |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
+                    )?
+                    .clone();
+                let opposite_vertex = *facet_view.opposite_vertex().map_err(|source| {
+                    ConvexHullConstructionError::FacetDataAccessFailed { source }
+                })?;
+                #[allow(deprecated)]
+                crate::core::facet::Facet::new(cell, opposite_vertex)
+                    .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })
+            })
+            .collect();
+        let hull_facets = hull_facets?;
 
         // Additional validation: ensure we have at least one boundary facet
         if hull_facets.is_empty() {

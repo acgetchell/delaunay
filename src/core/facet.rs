@@ -524,6 +524,156 @@ where
     Ok(facet_views)
 }
 
+/// Iterator over all facets in a triangulation data structure.
+///
+/// This iterator provides efficient access to all facets without allocating
+/// a vector. It's particularly useful for performance-critical operations
+/// like boundary detection and cavity analysis in triangulation insertion.
+#[derive(Clone)]
+pub struct AllFacetsIter<'tds, T, U, V, const D: usize>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    for<'a> &'a T: Div<T>,
+{
+    tds: &'tds Tds<T, U, V, D>,
+    cell_keys: std::vec::IntoIter<CellKey>,
+    current_cell_key: Option<CellKey>,
+    current_facet_index: u8,
+    current_cell_facet_count: u8,
+}
+
+impl<'tds, T, U, V, const D: usize> AllFacetsIter<'tds, T, U, V, D>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    for<'a> &'a T: Div<T>,
+{
+    /// Creates a new iterator over all facets in the TDS.
+    #[must_use]
+    pub fn new(tds: &'tds Tds<T, U, V, D>) -> Self {
+        let cell_keys: Vec<CellKey> = tds.cells().keys().collect();
+        Self {
+            tds,
+            cell_keys: cell_keys.into_iter(),
+            current_cell_key: None,
+            current_facet_index: 0,
+            current_cell_facet_count: 0,
+        }
+    }
+}
+
+impl<'tds, T, U, V, const D: usize> Iterator for AllFacetsIter<'tds, T, U, V, D>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    for<'a> &'a T: Div<T>,
+{
+    type Item = FacetView<'tds, T, U, V, D>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            // If we have a current cell and more facets in it
+            if let Some(cell_key) = self.current_cell_key
+                && self.current_facet_index < self.current_cell_facet_count
+            {
+                let facet_index = self.current_facet_index;
+                self.current_facet_index += 1;
+
+                // Create FacetView - we know this is valid since we're iterating within bounds
+                if let Ok(facet_view) = FacetView::new(self.tds, cell_key, facet_index) {
+                    return Some(facet_view);
+                }
+            }
+
+            // Move to next cell
+            if let Some(next_cell_key) = self.cell_keys.next() {
+                if let Some(cell) = self.tds.cells().get(next_cell_key) {
+                    self.current_cell_key = Some(next_cell_key);
+                    self.current_facet_index = 0;
+                    self.current_cell_facet_count =
+                        u8::try_from(cell.vertices().len()).unwrap_or(u8::MAX);
+                    // Continue loop to process first facet of new cell
+                } else {
+                    // Cell not found, skip to next (continue is implicit at end of loop)
+                }
+            } else {
+                // No more cells
+                return None;
+            }
+        }
+    }
+}
+
+/// Iterator over boundary facets in a triangulation.
+///
+/// This iterator efficiently identifies and yields only the boundary facets
+/// (facets that belong to only one cell) without pre-computing all facets.
+#[derive(Clone)]
+pub struct BoundaryFacetsIter<'tds, T, U, V, const D: usize>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    for<'a> &'a T: Div<T>,
+{
+    all_facets: AllFacetsIter<'tds, T, U, V, D>,
+    facet_to_cells_map: crate::core::collections::FacetToCellsMap,
+}
+
+impl<'tds, T, U, V, const D: usize> BoundaryFacetsIter<'tds, T, U, V, D>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    for<'a> &'a T: Div<T>,
+{
+    /// Creates a new iterator over boundary facets.
+    #[must_use]
+    pub fn new(
+        tds: &'tds Tds<T, U, V, D>,
+        facet_to_cells_map: crate::core::collections::FacetToCellsMap,
+    ) -> Self {
+        Self {
+            all_facets: AllFacetsIter::new(tds),
+            facet_to_cells_map,
+        }
+    }
+}
+
+impl<'tds, T, U, V, const D: usize> Iterator for BoundaryFacetsIter<'tds, T, U, V, D>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    for<'a> &'a T: Div<T>,
+{
+    type Item = FacetView<'tds, T, U, V, D>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Find the next boundary facet
+        self.all_facets.find(|facet_view| {
+            // Check if this facet is a boundary facet using the precomputed map
+            if let Ok(facet_key) = facet_view.key()
+                && let Some(cell_list) = self.facet_to_cells_map.get(&facet_key)
+            {
+                // Boundary facets appear in exactly one cell
+                return cell_list.len() == 1;
+            }
+            false
+        })
+    }
+}
+
 // =============================================================================
 // HEAVYWEIGHT FACET STRUCT (Legacy - Deprecated in Phase 3)
 // =============================================================================

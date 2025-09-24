@@ -1514,8 +1514,11 @@ mod tests {
         // Let's check the TDS consistency after the interior insertion
         debug_println!("Checking TDS consistency...");
         let boundary_facets_result = tds.boundary_facets();
-        match &boundary_facets_result {
-            Ok(boundary_facets) => println!("TDS has {} boundary facets", boundary_facets.len()),
+        match boundary_facets_result {
+            Ok(boundary_facets) => {
+                let boundary_count = boundary_facets.count();
+                println!("TDS has {boundary_count} boundary facets");
+            }
             Err(e) => println!("Failed to get boundary facets: {e}"),
         }
 
@@ -1544,12 +1547,13 @@ mod tests {
             // Check what boundary facets exist before trying visibility
             println!("Getting all boundary facets...");
             if let Ok(all_boundary_facets) = tds.boundary_facets() {
-                println!("Total boundary facets: {}", all_boundary_facets.len());
-                for (i, facet) in all_boundary_facets.iter().enumerate() {
+                let all_boundary_facets_vec: Vec<_> = all_boundary_facets.collect();
+                println!("Total boundary facets: {}", all_boundary_facets_vec.len());
+                for (i, facet) in all_boundary_facets_vec.iter().enumerate() {
                     println!(
                         "  Boundary facet {}: {} vertices",
                         i,
-                        facet.vertices().len()
+                        facet.vertices().count()
                     );
                 }
             }
@@ -1704,12 +1708,12 @@ mod tests {
             );
 
             if let Ok(boundary_facets) = boundary_result {
-                println!("  Boundary facets: {}", boundary_facets.len());
-
+                let boundary_facets_vec: Vec<_> = boundary_facets.collect();
+                println!("  Boundary facets: {}", boundary_facets_vec.len());
                 // Each boundary facet should have exactly 3 vertices (for 3D)
-                for facet in &boundary_facets {
+                for facet in &boundary_facets_vec {
                     assert_eq!(
-                        facet.vertices().len(),
+                        facet.vertices().count(),
                         3,
                         "Boundary facet should have 3 vertices after insertion {}",
                         i + 1
@@ -1759,7 +1763,7 @@ mod tests {
             );
 
             let cells_before = tds.number_of_cells();
-            let initial_boundary_facets = tds.boundary_facets().unwrap().len();
+            let initial_boundary_facets = tds.boundary_facets().unwrap().count();
 
             // Insert the vertex
             let result = algorithm.insert_vertex(&mut tds, *test_vertex);
@@ -1857,15 +1861,16 @@ mod tests {
             );
 
             if let Ok(boundary_facets) = boundary_result {
-                let final_boundary_facets = boundary_facets.len();
+                let boundary_facets_vec: Vec<_> = boundary_facets.collect();
+                let final_boundary_facets = boundary_facets_vec.len();
                 println!(
                     "  Initial boundary facets: {initial_boundary_facets}, final: {final_boundary_facets}"
                 );
 
                 // Each boundary facet should have exactly 3 vertices (for 3D)
-                for facet in &boundary_facets {
+                for facet in &boundary_facets_vec {
                     assert_eq!(
-                        facet.vertices().len(),
+                        facet.vertices().count(),
                         3,
                         "Boundary facet should have 3 vertices after hull extension {}",
                         i + 1
@@ -3122,7 +3127,16 @@ mod tests {
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
         let boundary_facets = tds.boundary_facets().unwrap();
 
-        let result = algorithm.validate_boundary_facets(&boundary_facets, 1);
+        let boundary_facets_vec: Vec<_> = boundary_facets
+            .map(|fv| {
+                // Convert FacetView to Facet for backward compatibility with validate_boundary_facets
+                let cell = fv.cell().unwrap().clone();
+                let opposite_vertex = *fv.opposite_vertex().unwrap();
+                #[allow(deprecated)]
+                crate::core::facet::Facet::new(cell, opposite_vertex).unwrap()
+            })
+            .collect();
+        let result = algorithm.validate_boundary_facets(&boundary_facets_vec, 1);
         assert!(result.is_ok(), "Should succeed with valid boundary facets");
     }
 
@@ -3181,12 +3195,14 @@ mod tests {
 
         // Get a boundary facet
         let boundary_facets = tds.boundary_facets().unwrap();
-        assert!(!boundary_facets.is_empty());
-        let test_facet = &boundary_facets[0];
+        let boundary_facets_vec: Vec<_> = boundary_facets.collect();
+        assert!(!boundary_facets_vec.is_empty());
+        let test_facet = &boundary_facets_vec[0];
 
         // Get the adjacent cell key for this facet
         let facet_to_cells = algorithm.try_get_or_build_facet_cache(&tds).unwrap();
-        let key = derive_facet_key_from_vertices(&test_facet.vertices(), &tds)
+        let test_facet_vertices: Vec<_> = test_facet.vertices().copied().collect();
+        let key = derive_facet_key_from_vertices(&test_facet_vertices, &tds)
             .expect("Should derive facet key");
         let adjacent_cell_key = facet_to_cells
             .get(&key)
@@ -3197,9 +3213,14 @@ mod tests {
         let degenerate_vertex = vertex!([0.5, 0.5, 0.5]); // Point at center of tetrahedron
 
         // This should exercise the fallback visibility heuristic path
+        // Convert FacetView to Facet for backward compatibility
+        let cell = test_facet.cell().unwrap().clone();
+        let opposite_vertex = *test_facet.opposite_vertex().unwrap();
+        #[allow(deprecated)]
+        let test_facet_compat = crate::core::facet::Facet::new(cell, opposite_vertex).unwrap();
         let is_visible = algorithm.is_facet_visible_from_vertex_robust(
             &tds,
-            test_facet,
+            &test_facet_compat,
             &degenerate_vertex,
             adjacent_cell_key,
         );
@@ -3228,7 +3249,12 @@ mod tests {
 
         // Test the fallback visibility heuristic with a normal facet
         for facet in boundary_facets {
-            let is_visible = algorithm.fallback_visibility_heuristic(&facet, &test_vertex);
+            // Convert FacetView to Facet for backward compatibility with fallback_visibility_heuristic
+            let cell = facet.cell().unwrap().clone();
+            let opposite_vertex = *facet.opposite_vertex().unwrap();
+            #[allow(deprecated)]
+            let facet_compat = crate::core::facet::Facet::new(cell, opposite_vertex).unwrap();
+            let is_visible = algorithm.fallback_visibility_heuristic(&facet_compat, &test_vertex);
             println!("Fallback visibility for far point: {is_visible}");
             // Should typically be true for a far point, but mainly testing no panic
         }

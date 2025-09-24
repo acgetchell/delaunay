@@ -2277,11 +2277,14 @@ mod tests {
         // Get a boundary facet
         let boundary_facets = tds.boundary_facets().expect("Should have boundary facets");
         assert!(
-            !boundary_facets.is_empty(),
+            boundary_facets.clone().next().is_some(),
             "Should have at least one boundary facet"
         );
 
-        let test_facet = &boundary_facets[0];
+        let test_facet = boundary_facets
+            .clone()
+            .next()
+            .expect("Should have boundary facets");
 
         // Find the cell adjacent to this boundary facet
         let facet_to_cells = tds
@@ -2289,7 +2292,7 @@ mod tests {
             .expect("Should build facet map in test");
 
         // Compute facet key using VertexKeys
-        let facet_vertices = test_facet.vertices();
+        let facet_vertices: Vec<_> = test_facet.vertices().collect();
         let mut vertex_keys = Vec::with_capacity(facet_vertices.len());
         for vertex in &facet_vertices {
             vertex_keys.push(
@@ -2317,6 +2320,14 @@ mod tests {
         ];
 
         for (test_vertex, description) in test_positions {
+            let test_facet_compat = {
+                #[allow(deprecated)]
+                crate::core::facet::Facet::new(
+                    test_facet.cell().unwrap().clone(),
+                    *test_facet.opposite_vertex().unwrap(),
+                )
+                .unwrap()
+            };
             let is_visible =
                 <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
                     f64,
@@ -2325,7 +2336,7 @@ mod tests {
                     3,
                 >>::is_facet_visible_from_vertex_impl(
                     &tds,
-                    test_facet,
+                    &test_facet_compat,
                     &test_vertex,
                     adjacent_cell_key,
                 );
@@ -2534,9 +2545,21 @@ mod tests {
         ];
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
 
-        // Get a boundary facet
+        // Get a boundary facet and convert it to a Facet before mutable borrow
         let boundary_facets = tds.boundary_facets().expect("Should have boundary facets");
-        let test_facet = &boundary_facets[0];
+        let test_facet = boundary_facets
+            .clone()
+            .next()
+            .expect("Should have boundary facets");
+        let test_facet_compat = {
+            #[allow(deprecated)]
+            crate::core::facet::Facet::new(
+                test_facet.cell().unwrap().clone(),
+                *test_facet.opposite_vertex().unwrap(),
+            )
+            .unwrap()
+        };
+        drop(boundary_facets); // Drop the iterator to release the immutable borrow
 
         let initial_cell_count = tds.number_of_cells();
 
@@ -2549,7 +2572,9 @@ mod tests {
                 Option<()>,
                 Option<()>,
                 3,
-            >>::create_cell_from_facet_and_vertex(&mut tds, test_facet, &new_vertex);
+            >>::create_cell_from_facet_and_vertex(
+                &mut tds, &test_facet_compat, &new_vertex
+            );
 
         assert!(
             result.is_ok(),
@@ -2578,15 +2603,25 @@ mod tests {
         ];
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
 
-        // Get a boundary facet
+        // Get a boundary facet and convert it to a Facet before mutable borrow
         let boundary_facets = tds.boundary_facets().expect("Should have boundary facets");
-        let test_facet = &boundary_facets[0];
+        let test_facet = boundary_facets
+            .clone()
+            .next()
+            .expect("Should have boundary facets");
+        let facet_vertices: Vec<_> = test_facet.vertices().collect();
+        let duplicate_vertex = *facet_vertices[0]; // Use an existing facet vertex
+        let test_facet_compat = {
+            #[allow(deprecated)]
+            crate::core::facet::Facet::new(
+                test_facet.cell().unwrap().clone(),
+                *test_facet.opposite_vertex().unwrap(),
+            )
+            .unwrap()
+        };
+        drop(boundary_facets); // Drop the iterator to release the immutable borrow
 
         let initial_cell_count = tds.number_of_cells();
-
-        // Try to create a degenerate cell by using a vertex that's already in the facet
-        let facet_vertices = test_facet.vertices();
-        let duplicate_vertex = facet_vertices[0]; // Use an existing facet vertex
 
         let result =
             <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
@@ -2595,7 +2630,7 @@ mod tests {
                 Option<()>,
                 3,
             >>::create_cell_from_facet_and_vertex(
-                &mut tds, test_facet, &duplicate_vertex
+                &mut tds, &test_facet_compat, &duplicate_vertex
             );
 
         // This should fail because it would create a degenerate cell
@@ -3338,7 +3373,19 @@ mod tests {
         .unwrap();
 
         let boundary_facets = tds.boundary_facets().unwrap();
-        let test_facet = &boundary_facets[0];
+        let test_facet = boundary_facets
+            .clone()
+            .next()
+            .expect("Should have boundary facets");
+        let test_facet_compat = {
+            #[allow(deprecated)]
+            crate::core::facet::Facet::new(
+                test_facet.cell().unwrap().clone(),
+                *test_facet.opposite_vertex().unwrap(),
+            )
+            .unwrap()
+        };
+        drop(boundary_facets); // Drop the iterator to release the immutable borrow
 
         // Try to create cell with vertex that would create degenerate cell
         let degenerate_vertex = vertex!([0.0, 0.0, 0.0]); // Same as existing vertex
@@ -3350,7 +3397,7 @@ mod tests {
                 Option<()>,
                 3,
             >>::create_cell_from_facet_and_vertex(
-                &mut tds, test_facet, &degenerate_vertex
+                &mut tds, &test_facet_compat, &degenerate_vertex
             );
 
         // This should either succeed (if handled gracefully) or fail with appropriate error
@@ -3381,9 +3428,21 @@ mod tests {
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
         let _algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
-        // Get boundary facet
+        // Get boundary facet and convert it to a Facet before mutable borrow
         let boundary_facets = tds.boundary_facets().unwrap();
-        let test_facet = &boundary_facets[0];
+        let test_facet = boundary_facets
+            .clone()
+            .next()
+            .expect("Should have boundary facets");
+        let test_facet_compat = {
+            #[allow(deprecated)]
+            crate::core::facet::Facet::new(
+                test_facet.cell().unwrap().clone(),
+                *test_facet.opposite_vertex().unwrap(),
+            )
+            .unwrap()
+        };
+        drop(boundary_facets); // Drop the iterator to release the immutable borrow
 
         // Test vertex that might cause facet creation issues
         let test_vertex = vertex!([10.0, 10.0, 10.0]);
@@ -3395,7 +3454,9 @@ mod tests {
             Option<()>,
             Option<()>,
             3,
-        >>::create_cell_from_facet_and_vertex(&mut tds, test_facet, &test_vertex);
+        >>::create_cell_from_facet_and_vertex(
+            &mut tds, &test_facet_compat, &test_vertex
+        );
 
         // Main goal is ensuring no panics occur during error handling
     }
@@ -4040,9 +4101,20 @@ mod tests {
 
         let boundary_facets = tds.boundary_facets().expect("Should have boundary facets");
         assert!(
-            !boundary_facets.is_empty(),
+            boundary_facets.clone().next().is_some(),
             "Should have at least one boundary facet"
         );
+
+        // Convert boundary facets to Vec before mutable borrow
+        let boundary_facets_vec: Vec<_> = boundary_facets
+            .map(|fv| {
+                // Convert FacetView to Facet for backward compatibility
+                let cell = fv.cell().unwrap().clone();
+                let opposite_vertex = *fv.opposite_vertex().unwrap();
+                #[allow(deprecated)]
+                crate::core::facet::Facet::new(cell, opposite_vertex).unwrap()
+            })
+            .collect();
 
         let initial_cell_count = tds.number_of_cells();
         let new_vertex = vertex!([2.0, 2.0, 2.0]);
@@ -4050,7 +4122,7 @@ mod tests {
         // Test successful cell creation
         let cells_created = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_boundary_facets(
             &mut tds,
-            &boundary_facets,
+            &boundary_facets_vec,
             &new_vertex,
         );
 
@@ -4263,17 +4335,20 @@ mod tests {
 
         let boundary_facets = tds.boundary_facets().expect("Should have boundary facets");
         assert!(
-            !boundary_facets.is_empty(),
+            boundary_facets.clone().next().is_some(),
             "Should have at least one boundary facet"
         );
 
-        let test_facet = &boundary_facets[0];
+        let test_facet = boundary_facets
+            .clone()
+            .next()
+            .expect("Should have boundary facets");
 
         // Find adjacent cell for the facet
         let facet_to_cells = tds
             .build_facet_to_cells_map()
             .expect("Should build facet map");
-        let facet_vertices = test_facet.vertices();
+        let facet_vertices: Vec<_> = test_facet.vertices().collect();
         let mut vertex_keys = Vec::with_capacity(facet_vertices.len());
         for vertex in &facet_vertices {
             vertex_keys.push(
@@ -4288,12 +4363,23 @@ mod tests {
             .expect("Facet should have adjacent cells");
         let (adjacent_cell_key, _) = adjacent_cells[0];
 
-        // Test with vertex at same position as facet vertex (degenerate case)
-        let coplanar_vertex = facet_vertices[0]; // Same as existing facet vertex
+        // Get boundary facet for coplanar vertex extraction
+        let boundary_facets = tds.boundary_facets().unwrap();
+        let boundary_facet = boundary_facets.clone().next().unwrap();
+        let facet_vertices: Vec<_> = boundary_facet.vertices().collect();
+        let coplanar_vertex = &facet_vertices[0]; // Same as existing facet vertex
+        let test_facet_compat = {
+            #[allow(deprecated)]
+            crate::core::facet::Facet::new(
+                test_facet.cell().unwrap().clone(),
+                *test_facet.opposite_vertex().unwrap(),
+            )
+            .unwrap()
+        };
         let is_visible = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
             &tds,
-            test_facet,
-            &coplanar_vertex,
+            &test_facet_compat,
+            coplanar_vertex,
             adjacent_cell_key,
         );
         match is_visible {
@@ -4307,9 +4393,17 @@ mod tests {
 
         // Test with extreme coordinates
         let extreme_vertex = vertex!([f64::MAX / 1000.0, 0.0, 0.0]);
+        let test_facet_compat = {
+            #[allow(deprecated)]
+            crate::core::facet::Facet::new(
+                test_facet.cell().unwrap().clone(),
+                *test_facet.opposite_vertex().unwrap(),
+            )
+            .unwrap()
+        };
         let is_visible = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
             &tds,
-            test_facet,
+            &test_facet_compat,
             &extreme_vertex,
             adjacent_cell_key,
         );
@@ -4320,9 +4414,17 @@ mod tests {
 
         // Test with vertex very close to facet plane
         let close_vertex = vertex!([0.001, 0.001, 0.001]);
+        let test_facet_compat = {
+            #[allow(deprecated)]
+            crate::core::facet::Facet::new(
+                test_facet.cell().unwrap().clone(),
+                *test_facet.opposite_vertex().unwrap(),
+            )
+            .unwrap()
+        };
         let is_visible = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
             &tds,
-            test_facet,
+            &test_facet_compat,
             &close_vertex,
             adjacent_cell_key,
         );

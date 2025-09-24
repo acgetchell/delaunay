@@ -7420,7 +7420,7 @@ mod tests {
         // All 4 facets of the tetrahedron should be on the boundary
         let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
         assert_eq!(
-            boundary_facets.len(),
+            boundary_facets.clone().count(),
             4,
             "A single tetrahedron should have 4 boundary facets"
         );
@@ -7465,15 +7465,15 @@ mod tests {
         // Get all boundary facets
         let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
         assert_eq!(
-            boundary_facets.len(),
+            boundary_facets.clone().count(),
             6,
             "Two adjacent tetrahedra should have 6 boundary facets"
         );
 
         // Test that all facets from boundary_facets() are indeed boundary facets
-        for boundary_facet in &boundary_facets {
+        for boundary_facet in boundary_facets {
             assert!(
-                tds.is_boundary_facet(boundary_facet)
+                tds.is_boundary_facet(&boundary_facet)
                     .expect("Should not fail to check boundary facet"),
                 "All facets from boundary_facets() should be boundary facets"
             );

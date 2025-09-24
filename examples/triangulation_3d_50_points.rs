@@ -203,11 +203,17 @@ fn analyze_boundary_properties(tds: &Tds<f64, (), (), 3>) {
     let start = Instant::now();
 
     // Count boundary facets - use the trait method
-    let boundary_facets = tds.boundary_facets().unwrap_or_else(|e| {
-        println!("Warning: Failed to get boundary facets: {e}");
-        Vec::new()
-    });
-    let boundary_count = boundary_facets.len();
+    let boundary_facets = match tds.boundary_facets() {
+        Ok(iter) => iter,
+        Err(e) => {
+            println!("Warning: Failed to get boundary facets: {e}");
+            println!("  Boundary facets:     0");
+            println!("  Boundary computation: {:?}", start.elapsed());
+            println!();
+            return;
+        }
+    };
+    let boundary_count = boundary_facets.clone().count();
 
     let boundary_time = start.elapsed();
 
@@ -221,8 +227,8 @@ fn analyze_boundary_properties(tds: &Tds<f64, (), (), 3>) {
 
         // Analyze a few boundary facets
         let sample_size = std::cmp::min(3, boundary_count);
-        for (i, facet) in boundary_facets.iter().take(sample_size).enumerate() {
-            println!("    • Facet {}: key = {}", i + 1, facet.key());
+        for (i, facet) in boundary_facets.take(sample_size).enumerate() {
+            println!("    • Facet {}: key = {:?}", i + 1, facet.key());
         }
 
         if boundary_count > sample_size {
@@ -276,7 +282,10 @@ fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
     let boundary_times: Vec<_> = (0..3)
         .map(|_| {
             let start = Instant::now();
-            let _ = tds.boundary_facets().unwrap_or_default();
+            let _ = tds
+                .boundary_facets()
+                .map(std::iter::Iterator::count)
+                .unwrap_or(0);
             start.elapsed()
         })
         .collect();
