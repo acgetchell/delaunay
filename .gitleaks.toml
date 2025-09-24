@@ -23,6 +23,6 @@ regexes = [
 # Additional allowlist entries can be added here for other false positives
 # For example:
 # [[allowlist]]
-# description = "Allow test hex literals in all test files"
-# paths = ['''.*test.*\.rs$''', '''.*tests/.*\.rs$''']
-# regexes = ['''0x[0-9A-Fa-f_]+''']
+# description = "Example: prefer literal-scoped regex over file paths"
+# regexes = ['''0xdead_beef_cafe_babe''']
+# # Note: avoid file-level path allowlists; they mask unrelated leaks.

@@ -2114,13 +2114,16 @@ where
             let mut algorithm = IncrementalBowyerWatson::new();
             if let Err(e) = algorithm.insert_vertex(self, vertex) {
                 // Roll back vertex insertion to keep TDS consistent
+                // Save state for potential rollback (algorithm may have partially mutated cells)
+                let pre_algorithm_state =
+                    (self.vertices.len(), self.cells.len(), self.generation());
                 let vertex_coords = Some(format!("{new_coords:?}"));
                 self.rollback_vertex_insertion(
                     new_vertex_key,
                     &uuid,
                     vertex_coords,
-                    false, // Simple vertex-only rollback for algorithm failures
-                    None,
+                    true, // Conservative: remove cells that may have been partially modified by algorithm
+                    Some(pre_algorithm_state),
                     "algorithm insertion failed",
                 );
                 return Err(match e {
@@ -2164,9 +2167,6 @@ where
             }
         }
 
-        // Increment generation counter to invalidate caches
-        self.bump_generation();
-
         Ok(())
     }
 
@@ -2201,16 +2201,19 @@ where
         &mut self,
         vertex_key: VertexKey,
         vertex_uuid: &Uuid,
-        vertex_coords: Option<String>,
+        #[allow(unused_variables)] vertex_coords: Option<String>,
         remove_related_cells: bool,
         pre_state: Option<(usize, usize, u64)>,
-        failure_reason: &str,
+        #[allow(unused_variables)] failure_reason: &str,
     ) {
         // Log the rollback for debugging bulk operations
-        let coords_str = vertex_coords.unwrap_or_else(|| "<unknown coordinates>".to_string());
-        eprintln!(
-            "⚠️  Vertex insertion rollback: Discarding vertex {vertex_uuid} at {coords_str} due to {failure_reason}"
-        );
+        #[cfg(debug_assertions)]
+        {
+            let coords_str = vertex_coords.unwrap_or_else(|| "<unknown coordinates>".to_string());
+            eprintln!(
+                "⚠️  Vertex insertion rollback: Discarding vertex {vertex_uuid} at {coords_str} due to {failure_reason}"
+            );
+        }
 
         // Always remove the vertex and its mapping
         self.vertices.remove(vertex_key);
@@ -2232,6 +2235,7 @@ where
             }
 
             // Log cell removal for complex rollbacks
+            #[cfg(debug_assertions)]
             if !cells_to_remove.is_empty() {
                 let cell_count = cells_to_remove.len();
                 eprintln!(
@@ -3350,7 +3354,10 @@ where
             let duplicate_descriptions: Vec<String> = duplicates
                 .iter()
                 .map(|(cell1, cell2, vertices)| {
-                    format!("cells {cell1:?} and {cell2:?} with vertices {vertices:?}")
+                    let mut vertex_uuids: Vec<Uuid> =
+                        vertices.iter().map(|&k| self.vertices[k].uuid()).collect();
+                    vertex_uuids.sort_unstable();
+                    format!("cells {cell1:?} and {cell2:?} with vertex UUIDs {vertex_uuids:?}")
                 })
                 .collect();
 
@@ -3863,11 +3870,6 @@ mod tests {
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
     use crate::vertex;
     use approx::assert_relative_eq;
-    use nalgebra::{ComplexField, Const, OPoint};
-    use num_traits::cast;
-
-    // Type alias for easier test writing - change this to test different coordinate types
-    type TestFloat = f64;
 
     // =============================================================================
     // TEST HELPER FUNCTIONS
@@ -3907,73 +3909,110 @@ mod tests {
     }
 
     // =============================================================================
-    // CORE API TESTS
+    // VERTEX ADDITION TESTS - CONSOLIDATED
     // =============================================================================
 
     #[test]
-    fn test_add_vertex_already_exists_generic() {
-        test_add_vertex_already_exists_impl::<TestFloat>();
-    }
+    fn test_add_vertex_comprehensive() {
+        // Test successful vertex addition
+        {
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let vertex = vertex!([1.0, 2.0, 3.0]);
+            let result = tds.add(vertex);
+            assert!(result.is_ok(), "Basic vertex addition should succeed");
+            assert_eq!(tds.number_of_vertices(), 1);
+        }
 
-    fn test_add_vertex_already_exists_impl<T>()
-    where
-        T: CoordinateScalar
-            + AddAssign<T>
-            + ComplexField<RealField = T>
-            + SubAssign<T>
-            + Sum
-            + From<f64>,
-        f64: From<T>,
-        for<'a> &'a T: Div<T>,
-        [T; 3]: Copy + Default + DeserializeOwned + Serialize + Sized,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        OPoint<T, Const<3>>: From<[f64; 3]>,
-        [f64; 3]: Default + DeserializeOwned + Serialize + Sized,
-        T: NumCast,
-    {
-        let mut tds: Tds<T, usize, usize, 3> = Tds::new(&[]).unwrap();
+        // Test duplicate coordinates error
+        {
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let vertex = vertex!([1.0, 2.0, 3.0]);
+            tds.add(vertex).unwrap();
 
-        let point = Point::new([
-            cast(1.0f64).unwrap(),
-            cast(2.0f64).unwrap(),
-            cast(3.0f64).unwrap(),
-        ]);
-        let vertex = VertexBuilder::default().point(point).build().unwrap();
-        tds.add(vertex).unwrap();
+            let result = tds.add(vertex); // Same vertex again
+            assert!(
+                matches!(
+                    result,
+                    Err(TriangulationConstructionError::DuplicateCoordinates { .. })
+                ),
+                "Adding same vertex should fail with DuplicateCoordinates"
+            );
+        }
 
-        let result = tds.add(vertex);
-        // When adding the same vertex twice, coordinate duplication is detected first
-        // before UUID duplication, which is the correct behavior
-        assert!(matches!(
-            result,
-            Err(TriangulationConstructionError::DuplicateCoordinates { .. })
-        ));
-    }
+        // Test duplicate UUID with different coordinates
+        {
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let vertex1 = vertex!([1.0, 2.0, 3.0]);
+            let uuid1 = vertex1.uuid();
+            tds.add(vertex1).unwrap();
 
-    #[test]
-    fn test_add_vertex_duplicate_uuid_different_coordinates() {
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let vertex2 = create_vertex_with_uuid(Point::new([4.0, 5.0, 6.0]), uuid1, None);
+            let result = tds.add(vertex2);
+            assert!(
+                matches!(
+                    result,
+                    Err(TriangulationConstructionError::DuplicateUuid {
+                        entity: EntityKind::Vertex,
+                        ..
+                    })
+                ),
+                "Same UUID with different coordinates should fail with DuplicateUuid"
+            );
+        }
 
-        // Add first vertex
-        let point1 = Point::new([1.0, 2.0, 3.0]);
-        let vertex1 = VertexBuilder::default().point(point1).build().unwrap();
-        let uuid1 = vertex1.uuid();
-        tds.add(vertex1).unwrap();
+        // Test vertex addition increasing counts
+        {
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let initial_vertices = vec![
+                vertex!([0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0]),
+                vertex!([0.0, 1.0, 0.0]),
+                vertex!([0.0, 0.0, 1.0]),
+            ];
 
-        // Create second vertex with same UUID but different coordinates
-        let point2 = Point::new([4.0, 5.0, 6.0]);
-        let vertex2 = create_vertex_with_uuid(point2, uuid1, None);
+            for vertex in &initial_vertices {
+                tds.add(*vertex).unwrap();
+            }
+            let initial_cell_count = tds.number_of_cells();
 
-        // This should fail with DuplicateUuid since coordinates are different
-        // but UUID is the same
-        let result = tds.add(vertex2);
-        assert!(matches!(
-            result,
-            Err(TriangulationConstructionError::DuplicateUuid {
-                entity: EntityKind::Vertex,
-                ..
-            })
-        ));
+            // Add another vertex
+            let new_vertex = vertex!([0.5, 0.5, 0.5]);
+            tds.add(new_vertex).unwrap();
+
+            assert_eq!(tds.number_of_vertices(), 5);
+            assert!(
+                tds.number_of_cells() >= initial_cell_count,
+                "Cell count should not decrease"
+            );
+            assert!(tds.is_valid().is_ok(), "TDS should remain valid");
+        }
+
+        // Test that added vertices are properly accessible
+        {
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let vertex = vertex!([1.0, 2.0, 3.0]);
+            let uuid = vertex.uuid();
+            tds.add(vertex).unwrap();
+
+            // Vertex should be findable by UUID
+            let vertex_key = tds.vertex_key_from_uuid(&uuid);
+            assert!(
+                vertex_key.is_some(),
+                "Added vertex should be findable by UUID"
+            );
+
+            // Vertex should be in the vertices collection
+            let stored_vertex = &tds.vertices()[vertex_key.unwrap()];
+            let coords: [f64; 3] = stored_vertex.into();
+            let expected = [1.0, 2.0, 3.0];
+            assert!(
+                coords
+                    .iter()
+                    .zip(expected.iter())
+                    .all(|(a, b)| (a - b).abs() < 1e-10),
+                "Stored coordinates should match: got {coords:?}, expected {expected:?}"
+            );
+        }
     }
 
     #[test]
@@ -4094,193 +4133,182 @@ mod tests {
         println!("✓ Atomic rollback works correctly on topology assignment failures");
     }
 
-    #[test]
-    fn test_add_vertex_uuid_collision_generic() {
-        test_add_vertex_uuid_collision_impl::<TestFloat>();
-    }
-
-    fn test_add_vertex_uuid_collision_impl<T>()
-    where
-        T: CoordinateScalar
-            + AddAssign<T>
-            + ComplexField<RealField = T>
-            + SubAssign<T>
-            + Sum
-            + From<f64>,
-        f64: From<T>,
-        for<'a> &'a T: Div<T>,
-        [T; 3]: Copy + Default + DeserializeOwned + Serialize + Sized,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        OPoint<T, Const<3>>: From<[f64; 3]>,
-        [f64; 3]: Default + DeserializeOwned + Serialize + Sized,
-        T: NumCast,
-    {
-        let mut tds: Tds<T, usize, usize, 3> = Tds::new(&[]).unwrap();
-
-        let point1 = Point::new([
-            cast(1.0f64).unwrap(),
-            cast(2.0f64).unwrap(),
-            cast(3.0f64).unwrap(),
-        ]);
-        let vertex1 = VertexBuilder::default().point(point1).build().unwrap();
-        let uuid1 = vertex1.uuid();
-        tds.add(vertex1).unwrap();
-
-        let point2 = Point::new([
-            cast(4.0f64).unwrap(),
-            cast(5.0f64).unwrap(),
-            cast(6.0f64).unwrap(),
-        ]);
-        let vertex2 = create_vertex_with_uuid(point2, uuid1, None);
-
-        let key2 = tds.vertices.insert(vertex2);
-        assert_eq!(tds.vertices.len(), 2);
-        tds.uuid_to_vertex_key.insert(uuid1, key2);
-
-        let stored_vertex = tds.vertices.get(key2).unwrap();
-        let stored_coords: [T; 3] = stored_vertex.into();
-        let expected_coords = [
-            cast(4.0f64).unwrap(),
-            cast(5.0f64).unwrap(),
-            cast(6.0f64).unwrap(),
-        ];
-        assert_eq!(stored_coords, expected_coords);
-
-        let looked_up_key = tds.uuid_to_vertex_key.get(&uuid1).unwrap();
-        assert_eq!(*looked_up_key, key2);
-    }
+    // =============================================================================
+    // TDS CREATION AND BASIC PROPERTIES TESTS - CONSOLIDATED
+    // =============================================================================
 
     #[test]
-    fn test_basic_tds_creation_and_properties() {
-        // Test basic TDS creation with new()
-        let points = vec![
-            Point::new([1.0, 2.0, 3.0]),
-            Point::new([4.0, 5.0, 6.0]),
-            Point::new([7.0, 8.0, 9.0]),
-            Point::new([10.0, 11.0, 12.0]),
-        ];
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+    fn test_tds_creation_and_basic_properties() {
+        // Test basic TDS creation with vertices
+        {
+            let points = vec![
+                Point::new([1.0, 2.0, 3.0]),
+                Point::new([4.0, 5.0, 6.0]),
+                Point::new([7.0, 8.0, 9.0]),
+                Point::new([10.0, 11.0, 12.0]),
+            ];
+            let vertices = Vertex::from_points(points);
+            let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
 
-        assert_eq!(tds.number_of_vertices(), 4);
-        assert_eq!(tds.number_of_cells(), 1);
-        assert_eq!(tds.dim(), 3);
-
-        // Test empty TDS
-        let empty_tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
-        assert_eq!(empty_tds.number_of_vertices(), 0);
-        assert_eq!(empty_tds.number_of_cells(), 0);
-        assert_eq!(empty_tds.dim(), -1);
-    }
-
-    #[test]
-    fn test_vertices_accessor_empty() {
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
-        let vertices_map = tds.vertices();
-        assert_eq!(vertices_map.len(), 0, "Empty TDS should have no vertices");
-        assert_eq!(tds.number_of_vertices(), vertices_map.len());
-    }
-
-    #[test]
-    fn test_vertices_accessor_populated_and_consistency() {
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        let vertices = Vertex::from_points(points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-
-        // Access via accessor
-        let vertices_map = tds.vertices();
-        assert_eq!(vertices_map.len(), 4, "Tetrahedron should have 4 vertices");
-        assert_eq!(tds.number_of_vertices(), vertices_map.len());
-
-        // UUID-to-key mapping consistency
-        for (vertex_key, vertex) in vertices_map {
-            let uuid = vertex.uuid();
-            let mapped_key = tds
-                .vertex_key_from_uuid(&uuid)
-                .expect("Vertex UUID should map to a key");
-            assert_eq!(mapped_key, vertex_key);
+            assert_eq!(tds.number_of_vertices(), 4);
+            assert_eq!(tds.number_of_cells(), 1);
+            assert_eq!(tds.dim(), 3);
+            assert!(tds.is_valid().is_ok(), "Created TDS should be valid");
         }
 
-        // Iteration usage pattern: collect UUIDs and ensure uniqueness
-        let uuids: std::collections::HashSet<_> = vertices_map
-            .values()
-            .map(super::super::vertex::Vertex::uuid)
-            .collect();
-        assert_eq!(uuids.len(), vertices_map.len());
-    }
+        // Test empty TDS creation
+        {
+            let empty_tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            assert_eq!(empty_tds.number_of_vertices(), 0);
+            assert_eq!(empty_tds.number_of_cells(), 0);
+            assert_eq!(empty_tds.dim(), -1);
+        }
 
-    #[test]
-    fn test_vertices_accessor_after_additions() {
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
-        assert_eq!(tds.vertices().len(), 0);
+        // Test dimension consistency across different dimensions
+        {
+            // 2D test
+            let vertices_2d = vec![
+                vertex!([0.0, 0.0]),
+                vertex!([1.0, 0.0]),
+                vertex!([0.0, 1.0]),
+            ];
+            let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+            assert_eq!(tds_2d.dim(), 2);
+            assert_eq!(tds_2d.number_of_vertices(), 3);
+            assert_eq!(tds_2d.number_of_cells(), 1);
 
-        let v1: Vertex<f64, usize, 3> = vertex!([0.0, 0.0, 0.0]);
-        let v2: Vertex<f64, usize, 3> = vertex!([1.0, 0.0, 0.0]);
-        let v3: Vertex<f64, usize, 3> = vertex!([0.0, 1.0, 0.0]);
-        let v4: Vertex<f64, usize, 3> = vertex!([0.0, 0.0, 1.0]);
-
-        tds.add(v1).unwrap();
-        assert_eq!(tds.vertices().len(), 1);
-        tds.add(v2).unwrap();
-        assert_eq!(tds.vertices().len(), 2);
-        tds.add(v3).unwrap();
-        assert_eq!(tds.vertices().len(), 3);
-        tds.add(v4).unwrap();
-        assert_eq!(tds.vertices().len(), 4);
-
-        // Access points through accessor and ensure expected coordinates exist
-        let points: Vec<[f64; 3]> = tds
-            .vertices()
-            .values()
-            .map(|v| v.point().to_array())
-            .collect();
-
-        // Check that all expected points are present
-        let expected_points = [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ];
-
-        for expected in expected_points {
-            // Use contains for efficiency, ignoring float comparison warnings since this is test code
-            let found = points.iter().any(|&p| {
-                #[allow(clippy::float_cmp)]
-                {
-                    p == expected
-                }
-            });
-            assert!(found, "Expected point {expected:?} not found");
+            // 4D test
+            let vertices_4d = vec![
+                vertex!([0.0, 0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0, 0.0]),
+                vertex!([0.0, 1.0, 0.0, 0.0]),
+                vertex!([0.0, 0.0, 1.0, 0.0]),
+                vertex!([0.0, 0.0, 0.0, 1.0]),
+            ];
+            let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+            assert_eq!(tds_4d.dim(), 4);
+            assert_eq!(tds_4d.number_of_vertices(), 5);
+            assert_eq!(tds_4d.number_of_cells(), 1);
         }
     }
 
+    // =============================================================================
+    // VERTEX AND CELL ACCESSOR TESTS - CONSOLIDATED
+    // =============================================================================
+
     #[test]
-    fn test_mutable_accessors_consistency() {
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        let vertices = Vertex::from_points(points);
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+    fn test_accessors_comprehensive() {
+        // Test empty TDS accessors
+        {
+            let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let vertices_map = tds.vertices();
+            assert_eq!(vertices_map.len(), 0, "Empty TDS should have no vertices");
+            assert_eq!(tds.number_of_vertices(), vertices_map.len());
+            assert_eq!(tds.cells().len(), 0, "Empty TDS should have no cells");
+        }
 
-        // Test that both mutable accessors are available and consistent
-        let vertices_count_before = tds.vertices_mut().len();
-        let cells_count_before = tds.cells_mut().len();
+        // Test populated TDS accessors and consistency
+        {
+            let points = vec![
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0]),
+            ];
+            let vertices = Vertex::from_points(points);
+            let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
 
-        assert_eq!(vertices_count_before, 4);
-        assert_eq!(cells_count_before, 1);
+            // Test vertex accessor
+            let vertices_map = tds.vertices();
+            assert_eq!(vertices_map.len(), 4, "Tetrahedron should have 4 vertices");
+            assert_eq!(tds.number_of_vertices(), vertices_map.len());
 
-        // Test that both accessors provide access to the same data structures
-        assert_eq!(tds.vertices().len(), vertices_count_before);
-        assert_eq!(tds.cells().len(), cells_count_before);
+            // Test UUID-to-key mapping consistency
+            for (vertex_key, vertex) in vertices_map {
+                let uuid = vertex.uuid();
+                let mapped_key = tds
+                    .vertex_key_from_uuid(&uuid)
+                    .expect("Vertex UUID should map to a key");
+                assert_eq!(mapped_key, vertex_key);
+            }
+
+            // Test UUID uniqueness
+            let uuids: std::collections::HashSet<_> = tds
+                .vertices()
+                .values()
+                .map(super::super::vertex::Vertex::uuid)
+                .collect();
+            assert_eq!(uuids.len(), tds.vertices().len());
+
+            // Test cell accessor
+            assert_eq!(tds.cells().len(), 1, "Tetrahedron should have 1 cell");
+        }
+
+        // Test mutable accessors
+        {
+            let points = vec![
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0]),
+            ];
+            let vertices = Vertex::from_points(points);
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+            let vertices_count = tds.vertices_mut().len();
+            let cells_count = tds.cells_mut().len();
+
+            assert_eq!(vertices_count, 4);
+            assert_eq!(cells_count, 1);
+            assert_eq!(tds.vertices().len(), vertices_count);
+            assert_eq!(tds.cells().len(), cells_count);
+        }
+
+        // Test accessors after incremental additions
+        {
+            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            assert_eq!(tds.vertices().len(), 0);
+
+            let test_vertices = vec![
+                vertex!([0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0]),
+                vertex!([0.0, 1.0, 0.0]),
+                vertex!([0.0, 0.0, 1.0]),
+            ];
+
+            for (i, vertex) in test_vertices.iter().enumerate() {
+                tds.add(*vertex).unwrap();
+                assert_eq!(
+                    tds.vertices().len(),
+                    i + 1,
+                    "Vertex count should increase incrementally"
+                );
+            }
+
+            // Verify all expected coordinates are present
+            let points: Vec<[f64; 3]> = tds
+                .vertices()
+                .values()
+                .map(|v| v.point().to_array())
+                .collect();
+
+            let expected_points = [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ];
+
+            for expected in expected_points {
+                let found = points.iter().any(|&p| {
+                    #[allow(clippy::float_cmp)]
+                    {
+                        p == expected
+                    }
+                });
+                assert!(found, "Expected point {expected:?} not found");
+            }
+        }
     }
 
     // =============================================================================
