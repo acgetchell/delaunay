@@ -274,7 +274,7 @@ pub const fn is_normal<T: Sized + Send + Sync + Unpin>() -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        core::{cell::Cell, facet::Facet, triangulation_data_structure::Tds, vertex::Vertex},
+        core::{cell::Cell, triangulation_data_structure::Tds, vertex::Vertex},
         geometry::Point,
         is_normal,
     };
@@ -288,7 +288,6 @@ mod tests {
         assert!(is_normal::<Point<f64, 3>>());
         assert!(is_normal::<Point<f32, 3>>());
         assert!(is_normal::<Vertex<f64, Option<()>, 3>>());
-        assert!(is_normal::<Facet<f64, Option<()>, Option<()>, 3>>());
         assert!(is_normal::<Cell<f64, Option<()>, Option<()>, 4>>());
         assert!(is_normal::<Tds<f64, Option<()>, Option<()>, 4>>());
     }

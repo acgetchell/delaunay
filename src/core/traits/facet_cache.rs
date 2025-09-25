@@ -320,25 +320,44 @@ where
             break;
         }
 
-        // Cache is stale - need to invalidate and rebuild
+        // Cache is stale - coordinate rebuild through RCU to avoid duplicate work
         let current_generation = tds.generation();
-        let new_cache = tds.build_facet_to_cells_map()?;
-        let new_cache_arc = Arc::new(new_cache);
 
-        // Atomically swap in the new cache.
-        // ORDERING: ArcSwap's store() uses SeqCst ordering, establishing a happens-before
-        // relationship with any subsequent loads. This ensures the new cache is visible
-        // to all threads before the generation update below.
-        self.facet_cache().store(Some(new_cache_arc.clone()));
+        // OPTIMIZATION: Invalidate first to coordinate rebuilds via RCU. This prevents
+        // multiple threads from rebuilding in parallel when hitting stale cache simultaneously.
+        // By setting to None first, we ensure that subsequent threads will use the RCU
+        // mechanism in try_build_cache_with_rcu(), where only one thread builds while
+        // others wait and reuse the result, avoiding expensive duplicate work.
+        self.facet_cache().store(None);
 
-        // Update the generation snapshot.
-        // ORDERING: The Release ordering here synchronizes with Acquire loads in future
-        // cache checks. Combined with the SeqCst store above, this ensures readers will
-        // see both the new cache and the updated generation consistently.
-        self.cached_generation()
-            .store(current_generation, Ordering::Release);
+        // Use RCU coordination - one thread builds, others wait and reuse
+        if let Some(new_cache_arc) = self.try_build_cache_with_rcu(tds)? {
+            // Another thread built the cache or we successfully built it
+            // Update generation for this successful cache
+            self.cached_generation()
+                .store(current_generation, Ordering::Release);
+            Ok(new_cache_arc)
+        } else {
+            // Extremely unlikely: invalidated again during build
+            // Fall back to direct build to ensure forward progress
+            let new_cache = tds.build_facet_to_cells_map()?;
+            let new_cache_arc = Arc::new(new_cache);
 
-        Ok(new_cache_arc)
+            // Atomically swap in the new cache.
+            // ORDERING: ArcSwap's store() uses SeqCst ordering, establishing a happens-before
+            // relationship with any subsequent loads. This ensures the new cache is visible
+            // to all threads before the generation update below.
+            self.facet_cache().store(Some(new_cache_arc.clone()));
+
+            // Update the generation snapshot.
+            // ORDERING: The Release ordering here synchronizes with Acquire loads in future
+            // cache checks. Combined with the SeqCst store above, this ensures readers will
+            // see both the new cache and the updated generation consistently.
+            self.cached_generation()
+                .store(current_generation, Ordering::Release);
+
+            Ok(new_cache_arc)
+        }
     }
 
     /// Invalidates the facet cache, forcing a rebuild on the next access.

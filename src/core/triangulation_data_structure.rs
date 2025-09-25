@@ -3886,8 +3886,9 @@ mod tests {
     use crate::cell;
     use crate::core::{
         collections::FastHashMap,
+        facet::FacetView,
         traits::boundary_analysis::BoundaryAnalysis,
-        util::{derive_facet_key_from_vertices, facets_are_adjacent},
+        util::{derive_facet_key_from_vertices, facet_views_are_adjacent},
         vertex::VertexBuilder,
     };
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
@@ -7135,32 +7136,41 @@ mod tests {
     }
 
     #[test]
-    fn test_facets_are_adjacent_edge_cases() {
-        let points1 = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+    fn test_facet_views_are_adjacent_edge_cases() {
+        // Create vertices that will be shared between cells
+        let shared_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
         ];
 
-        let points2 = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([2.0, 0.0, 0.0]),
-        ];
+        let vertex4 = vertex!([0.0, 0.0, 1.0]);
+        let vertex5 = vertex!([2.0, 0.0, 0.0]);
 
-        let cell1: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points1));
-        let cell2: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points2));
+        // Create vertices for two cells that share 3 vertices
+        let mut vertices1 = shared_vertices.clone();
+        vertices1.push(vertex4);
 
-        let facets1 = cell1.facets().expect("Failed to get facets from cell1");
-        let facets2 = cell2.facets().expect("Failed to get facets from cell2");
+        let mut vertices2 = shared_vertices;
+        vertices2.push(vertex5);
 
-        // Test adjacency detection
+        // Create TDS with these vertices
+        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+
+        // Get cell keys
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        // Test adjacency detection using FacetView
         let mut found_adjacent = false;
-        for facet1 in &facets1 {
-            for facet2 in &facets2 {
-                if facets_are_adjacent(facet1, facet2) {
+        for facet_idx1 in 0..4 {
+            for facet_idx2 in 0..4 {
+                if let (Ok(facet_view1), Ok(facet_view2)) = (
+                    FacetView::new(&tds1, cell1_key, facet_idx1),
+                    FacetView::new(&tds2, cell2_key, facet_idx2),
+                ) && facet_views_are_adjacent(&facet_view1, &facet_view2)
+                {
                     found_adjacent = true;
                     break;
                 }
@@ -7176,21 +7186,25 @@ mod tests {
             "Cells sharing 3 vertices should have adjacent facets"
         );
 
-        // Test with completely different cells
-        let points3 = vec![
-            Point::new([10.0, 10.0, 10.0]),
-            Point::new([11.0, 10.0, 10.0]),
-            Point::new([10.0, 11.0, 10.0]),
-            Point::new([10.0, 10.0, 11.0]),
+        // Test with completely different cells that share no vertices
+        let vertices3 = vec![
+            vertex!([10.0, 10.0, 10.0]),
+            vertex!([11.0, 10.0, 10.0]),
+            vertex!([10.0, 11.0, 10.0]),
+            vertex!([10.0, 10.0, 11.0]),
         ];
 
-        let cell3: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points3));
-        let facets3 = cell3.facets().expect("Failed to get facets from cell3");
+        let tds3: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices3).unwrap();
+        let cell3_key = tds3.cell_keys().next().unwrap();
 
         let mut found_adjacent2 = false;
-        for facet1 in &facets1 {
-            for facet3 in &facets3 {
-                if facets_are_adjacent(facet1, facet3) {
+        for facet_idx1 in 0..4 {
+            for facet_idx3 in 0..4 {
+                if let (Ok(facet_view1), Ok(facet_view3)) = (
+                    FacetView::new(&tds1, cell1_key, facet_idx1),
+                    FacetView::new(&tds3, cell3_key, facet_idx3),
+                ) && facet_views_are_adjacent(&facet_view1, &facet_view3)
+                {
                     found_adjacent2 = true;
                     break;
                 }

@@ -44,6 +44,7 @@
 use super::{
     facet::{Facet, FacetError},
     traits::DataType,
+    triangulation_data_structure::Tds,
     util::{UuidValidationError, make_uuid, validate_uuid},
     vertex::{Vertex, VertexValidationError},
 };
@@ -57,7 +58,9 @@ use std::{
     cmp,
     fmt::{self, Debug},
     hash::{Hash, Hasher},
+    iter::Sum,
     marker::PhantomData,
+    ops::{AddAssign, Div, SubAssign},
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -878,7 +881,7 @@ where
     ///
     /// Note: This method validates basic neighbor structure invariants but does not validate
     /// the correctness of neighbor relationships, which requires global knowledge of the
-    /// triangulation and is handled by the [`Tds`](crate::core::triangulation_data_structure::Tds).
+    /// triangulation and is handled by the [`Tds`].
     ///
     /// # Errors
     ///
@@ -1052,6 +1055,75 @@ where
         self.vertices
             .iter()
             .map(|vertex| Facet::new(self.clone(), *vertex))
+            .collect()
+    }
+
+    /// Returns all facets of this cell as lightweight `FacetView` objects.
+    ///
+    /// This method provides a more efficient alternative to `facets()` by returning
+    /// lightweight `FacetView` objects instead of owned `Facet` objects.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Reference to the triangulation data structure
+    /// * `cell_key` - The key of this cell in the TDS
+    ///
+    /// # Returns
+    ///
+    /// A `Result<Vec<FacetView>, FacetError>` containing all facets of the cell.
+    /// Each facet is represented as a `FacetView` which provides efficient access
+    /// to facet properties without cloning cell data.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FacetError`] if facet creation fails during the construction
+    /// of `FacetView` objects.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the facet index cannot be converted to `u8`. This should never
+    /// happen in practice since facet indices are bounded by the dimension `D`,
+    /// which is typically small (≤ 255).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::{core::triangulation_data_structure::Tds, vertex};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// let cell = tds.get_cell_by_key(cell_key).unwrap();
+    /// let facet_views = cell.facet_views(&tds, cell_key).expect("Failed to get facet views");
+    ///
+    /// // Each facet should have 3 vertices (triangular faces of tetrahedron)
+    /// for facet_view in &facet_views {
+    ///     assert_eq!(facet_view.vertices().count(), 3);
+    /// }
+    /// ```
+    pub fn facet_views<'tds>(
+        &self,
+        tds: &'tds Tds<T, U, V, D>,
+        cell_key: crate::core::triangulation_data_structure::CellKey,
+    ) -> Result<Vec<crate::core::facet::FacetView<'tds, T, U, V, D>>, FacetError>
+    where
+        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+        for<'a> &'a T: Div<T>,
+    {
+        (0..=D)
+            .map(|facet_index| {
+                crate::core::facet::FacetView::new(
+                    tds,
+                    cell_key,
+                    u8::try_from(facet_index).expect("Facet index should fit in u8"),
+                )
+            })
             .collect()
     }
 }

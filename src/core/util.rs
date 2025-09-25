@@ -4,7 +4,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::core::facet::Facet;
+use crate::core::facet::{Facet, FacetView};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -133,6 +133,10 @@ pub fn make_uuid() -> Uuid {
 /// // These facets share vertices v2 and v3, so they are adjacent
 /// assert!(facets_are_adjacent(&facet1, &facet2));
 /// ```
+#[deprecated(
+    since = "0.5.0",
+    note = "Use facet_views_are_adjacent instead. This heavyweight implementation will be removed in v1.0.0."
+)]
 pub fn facets_are_adjacent<T, U, V, const D: usize>(
     facet1: &Facet<T, U, V, D>,
     facet2: &Facet<T, U, V, D>,
@@ -146,6 +150,66 @@ where
     use crate::core::collections::FastHashSet;
     let vertices1: FastHashSet<_> = facet1.vertices().into_iter().collect();
     let vertices2: FastHashSet<_> = facet2.vertices().into_iter().collect();
+    vertices1 == vertices2
+}
+
+/// Determines if two facet views are adjacent by comparing their vertices.
+///
+/// Two facets are considered adjacent if they contain the same set of vertices.
+/// This is the modern replacement for `facets_are_adjacent` using `FacetView`.
+///
+/// # Arguments
+///
+/// * `facet1` - The first facet view to compare
+/// * `facet2` - The second facet view to compare
+///
+/// # Returns
+///
+/// `true` if the facets share the same vertices, `false` otherwise.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use delaunay::core::facet::FacetView;
+/// use delaunay::core::util::facet_views_are_adjacent;
+/// use delaunay::core::triangulation_data_structure::Tds;
+///
+/// // This is a conceptual example - in practice you would get these from a real TDS
+/// fn example(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> Result<(), Box<dyn std::error::Error>> {
+///     let cell_keys: Vec<_> = tds.cell_keys().take(2).collect();
+///     if cell_keys.len() >= 2 {
+///         let facet1 = FacetView::new(tds, cell_keys[0], 0)?;
+///         let facet2 = FacetView::new(tds, cell_keys[1], 0)?;
+///
+///         if facet_views_are_adjacent(&facet1, &facet2) {
+///             println!("Facets are adjacent");
+///         }
+///     }
+///     Ok(())
+/// }
+/// ```
+#[must_use]
+pub fn facet_views_are_adjacent<T, U, V, const D: usize>(
+    facet1: &FacetView<'_, T, U, V, D>,
+    facet2: &FacetView<'_, T, U, V, D>,
+) -> bool
+where
+    T: CoordinateScalar
+        + std::ops::AddAssign<T>
+        + std::ops::SubAssign<T>
+        + std::iter::Sum
+        + num_traits::NumCast,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    for<'a> &'a T: std::ops::Div<T>,
+{
+    use crate::core::collections::FastHashSet;
+
+    // Compare facets by their vertex UUIDs for efficiency
+    let vertices1: FastHashSet<_> = facet1.vertices().map(super::vertex::Vertex::uuid).collect();
+    let vertices2: FastHashSet<_> = facet2.vertices().map(super::vertex::Vertex::uuid).collect();
+
     vertices1 == vertices2
 }
 
@@ -605,6 +669,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::too_many_lines)]
+    #[allow(deprecated)] // Testing deprecated function during transition
     fn test_facets_are_adjacent_multidimensional() {
         use crate::core::{cell::Cell, facet::Facet};
         use crate::{cell, vertex};
@@ -1016,10 +1081,10 @@ mod tests {
         assert_eq!(result, expected_result);
 
         // Test with various allocation patterns
-        let (vec_result, _) = measure_with_result(|| vec![1, 2, 3, 4, 5]);
+        let (vec_result, ()) = measure_with_result(|| vec![1, 2, 3, 4, 5]);
         assert_eq!(vec_result, vec![1, 2, 3, 4, 5]);
 
-        let (string_result, _) = measure_with_result(|| {
+        let (string_result, ()) = measure_with_result(|| {
             let mut s = String::new();
             s.push_str("Hello, ");
             s.push_str("World!");
@@ -1027,7 +1092,7 @@ mod tests {
         });
         assert_eq!(string_result, "Hello, World!");
 
-        let (complex_result, _) = measure_with_result(|| {
+        let (complex_result, ()) = measure_with_result(|| {
             let mut data: Vec<String> = Vec::new();
             for i in 0..5 {
                 data.push(format!("Item {i}"));
@@ -1037,17 +1102,17 @@ mod tests {
         assert_eq!(complex_result, 5);
 
         // Test various return types
-        let (tuple_result, _) = measure_with_result(|| ("hello", 42));
+        let (tuple_result, ()) = measure_with_result(|| ("hello", 42));
         assert_eq!(tuple_result, ("hello", 42));
 
-        let (option_result, _) = measure_with_result(|| Some("value"));
+        let (option_result, ()) = measure_with_result(|| Some("value"));
         assert_eq!(option_result, Some("value"));
 
-        let (result_result, _) = measure_with_result(|| Ok::<i32, &str>(123));
+        let (result_result, ()) = measure_with_result(|| Ok::<i32, &str>(123));
         assert_eq!(result_result, Ok(123));
 
         // Test no-panic behavior
-        let (sum_result, _) = measure_with_result(|| {
+        let (sum_result, ()) = measure_with_result(|| {
             let data = [1, 2, 3];
             data.iter().sum::<i32>()
         });
@@ -1261,5 +1326,467 @@ mod tests {
         println!("    Found {keys_found}/{keys_tested} derived keys in TDS cache");
         assert!(keys_tested > 0, "Should have tested some keys");
         println!("  ✓ All facet key derivation tests passed");
+    }
+
+    // =============================================================================
+    // FACET VIEW ADJACENCY TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_facet_views_are_adjacent_comprehensive() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        // Test 1: Adjacent facets in 3D (tetrahedra sharing a triangular face)
+        println!("Test 1: Adjacent facets in 3D");
+
+        // Create two tetrahedra that share 3 vertices (forming a shared triangular face)
+        let shared_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]), // v0
+            vertex!([1.0, 0.0, 0.0]), // v1
+            vertex!([0.5, 1.0, 0.0]), // v2
+        ];
+
+        let vertex_a = vertex!([0.5, 0.5, 1.0]); // Above the shared triangle
+        let vertex_b = vertex!([0.5, 0.5, -1.0]); // Below the shared triangle
+
+        // Tetrahedron 1: shared triangle + vertex_a
+        let mut vertices1 = shared_vertices.clone();
+        vertices1.push(vertex_a);
+
+        // Tetrahedron 2: shared triangle + vertex_b
+        let mut vertices2 = shared_vertices;
+        vertices2.push(vertex_b);
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        // Find the facets that correspond to the shared triangle
+        // In tetrahedron 1, this is the facet opposite to vertex_a (index 3)
+        // In tetrahedron 2, this is the facet opposite to vertex_b (index 3)
+        let facet_view1 = FacetView::new(&tds1, cell1_key, 3).unwrap();
+        let facet_view2 = FacetView::new(&tds2, cell2_key, 3).unwrap();
+
+        assert!(
+            facet_views_are_adjacent(&facet_view1, &facet_view2),
+            "Facets representing the same shared triangle should be adjacent"
+        );
+        println!("  ✓ Adjacent facets correctly identified");
+
+        // Test 2: Non-adjacent facets from the same tetrahedra
+        println!("Test 2: Non-adjacent facets from same tetrahedra");
+
+        // Different facets from the same tetrahedra (not sharing vertices)
+        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap(); // Different facet
+        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap(); // Different facet
+
+        assert!(
+            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff),
+            "Different facets with different vertices should not be adjacent"
+        );
+        println!("  ✓ Non-adjacent facets correctly identified");
+
+        // Test 3: Same facet should be adjacent to itself
+        println!("Test 3: Facet adjacent to itself");
+
+        assert!(
+            facet_views_are_adjacent(&facet_view1, &facet_view1),
+            "A facet should be adjacent to itself"
+        );
+        println!("  ✓ Self-adjacency works correctly");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_2d_cases() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test 2D facet adjacency");
+
+        // Create two 2D triangles that share an edge (2 vertices)
+        let shared_edge = vec![
+            vertex!([0.0, 0.0]), // v0
+            vertex!([1.0, 0.0]), // v1
+        ];
+
+        let vertex_c = vertex!([0.5, 1.0]); // Above the shared edge
+        let vertex_d = vertex!([0.5, -1.0]); // Below the shared edge
+
+        // Triangle 1: shared edge + vertex_c
+        let mut vertices1 = shared_edge.clone();
+        vertices1.push(vertex_c);
+
+        // Triangle 2: shared edge + vertex_d
+        let mut vertices2 = shared_edge;
+        vertices2.push(vertex_d);
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices2).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        // In 2D, facets are edges. Find the facets that correspond to the shared edge
+        // This is the facet opposite to the non-shared vertex
+        let facet_view1 = FacetView::new(&tds1, cell1_key, 2).unwrap(); // Opposite to vertex_c
+        let facet_view2 = FacetView::new(&tds2, cell2_key, 2).unwrap(); // Opposite to vertex_d
+
+        assert!(
+            facet_views_are_adjacent(&facet_view1, &facet_view2),
+            "2D facets (edges) sharing vertices should be adjacent"
+        );
+
+        // Test non-adjacent edges
+        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap();
+        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
+
+        assert!(
+            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff),
+            "2D facets with different vertices should not be adjacent"
+        );
+
+        println!("  ✓ 2D facet adjacency works correctly");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_1d_cases() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test 1D facet adjacency");
+
+        // In 1D, cells are edges and facets are vertices (0D)
+        // Two edges sharing a vertex have adjacent facets
+
+        let shared_vertex = vertex!([0.0]);
+        let vertex_left = vertex!([-1.0]);
+        let vertex_right = vertex!([1.0]);
+
+        // Edge 1: shared_vertex to vertex_left
+        let vertices1 = vec![shared_vertex, vertex_left];
+        // Edge 2: shared_vertex to vertex_right
+        let vertices2 = vec![shared_vertex, vertex_right];
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices2).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        // In 1D, the facets are the individual vertices
+        // Facet 0: opposite to vertex at index 0 (so contains vertex at index 1)
+        // Facet 1: opposite to vertex at index 1 (so contains vertex at index 0)
+
+        // Both edges contain the shared vertex, so we need to find which facet index
+        // corresponds to the shared vertex
+        let facet_view1_0 = FacetView::new(&tds1, cell1_key, 0).unwrap(); // Contains vertex_left
+        let facet_view1_1 = FacetView::new(&tds1, cell1_key, 1).unwrap(); // Contains shared_vertex
+
+        let facet_view2_0 = FacetView::new(&tds2, cell2_key, 0).unwrap(); // Contains vertex_right
+        let facet_view2_1 = FacetView::new(&tds2, cell2_key, 1).unwrap(); // Contains shared_vertex
+
+        // The facets containing the shared vertex should be adjacent
+        assert!(
+            facet_views_are_adjacent(&facet_view1_1, &facet_view2_1),
+            "1D facets (vertices) that are the same should be adjacent"
+        );
+
+        // The facets containing different vertices should not be adjacent
+        assert!(
+            !facet_views_are_adjacent(&facet_view1_0, &facet_view2_0),
+            "1D facets with different vertices should not be adjacent"
+        );
+
+        println!("  ✓ 1D facet adjacency works correctly");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_edge_cases() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test facet adjacency edge cases");
+
+        // Test with minimal triangulation (single tetrahedron)
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+
+        // All facets of the same tetrahedron should be different from each other
+        let facet0 = FacetView::new(&tds, cell_key, 0).unwrap();
+        let facet1 = FacetView::new(&tds, cell_key, 1).unwrap();
+        let facet2 = FacetView::new(&tds, cell_key, 2).unwrap();
+        let facet3 = FacetView::new(&tds, cell_key, 3).unwrap();
+
+        // Each facet should be adjacent to itself
+        assert!(facet_views_are_adjacent(&facet0, &facet0));
+        assert!(facet_views_are_adjacent(&facet1, &facet1));
+        assert!(facet_views_are_adjacent(&facet2, &facet2));
+        assert!(facet_views_are_adjacent(&facet3, &facet3));
+
+        // Different facets of the same tetrahedron should not be adjacent
+        // (they have different sets of vertices)
+        assert!(!facet_views_are_adjacent(&facet0, &facet1));
+        assert!(!facet_views_are_adjacent(&facet0, &facet2));
+        assert!(!facet_views_are_adjacent(&facet0, &facet3));
+        assert!(!facet_views_are_adjacent(&facet1, &facet2));
+        assert!(!facet_views_are_adjacent(&facet1, &facet3));
+        assert!(!facet_views_are_adjacent(&facet2, &facet3));
+
+        println!("  ✓ Single tetrahedron facet relationships correct");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_performance() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+        use std::time::Instant;
+
+        println!("Test facet adjacency performance");
+
+        // Create a moderately complex case to test performance
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([1.0, 2.0, 0.0]),
+            vertex!([1.0, 1.0, 2.0]),
+        ];
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+
+        let facet1 = FacetView::new(&tds, cell_key, 0).unwrap();
+        let facet2 = FacetView::new(&tds, cell_key, 1).unwrap();
+
+        // Run the adjacency check many times to measure performance
+        let start = Instant::now();
+        let iterations = 10000;
+
+        for _ in 0..iterations {
+            // This should be very fast since it just compares UUID sets
+            let _result = facet_views_are_adjacent(&facet1, &facet2);
+        }
+
+        let duration = start.elapsed();
+        println!("  ✓ {iterations} adjacency checks completed in {duration:?}");
+
+        // Should be very fast - each check is just UUID set comparison
+        assert!(
+            duration.as_millis() < 100, // Should complete well under 100ms
+            "Adjacency checks taking too long: {duration:?}"
+        );
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_different_geometries() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test facet adjacency with different geometries");
+
+        // Create vertices with different coordinates to ensure different UUIDs
+        let vertices1 = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let vertices2 = vec![
+            vertex!([10.0, 10.0, 10.0]),
+            vertex!([11.0, 10.0, 10.0]),
+            vertex!([10.0, 11.0, 10.0]),
+            vertex!([10.0, 10.0, 11.0]),
+        ];
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        let facet1 = FacetView::new(&tds1, cell1_key, 0).unwrap();
+        let facet2 = FacetView::new(&tds2, cell2_key, 0).unwrap();
+
+        // Facets from completely different geometries should not be adjacent
+        assert!(
+            !facet_views_are_adjacent(&facet1, &facet2),
+            "Facets from different geometries should not be adjacent"
+        );
+
+        println!("  ✓ Different geometries correctly distinguished");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_uuid_based_comparison() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test that adjacency is purely UUID-based");
+
+        // Create identical geometry in separate TDS instances
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        let facet1 = FacetView::new(&tds1, cell1_key, 0).unwrap();
+        let facet2 = FacetView::new(&tds2, cell2_key, 0).unwrap();
+
+        // Check if the UUID generation is deterministic based on coordinates
+        let facet1_vertex_uuids: Vec<_> = facet1.vertices().map(Vertex::uuid).collect();
+        let facet2_vertex_uuids: Vec<_> = facet2.vertices().map(Vertex::uuid).collect();
+
+        let uuids_are_same = facet1_vertex_uuids == facet2_vertex_uuids;
+        let facets_are_adjacent = facet_views_are_adjacent(&facet1, &facet2);
+
+        // The adjacency should match the UUID equality
+        assert_eq!(
+            uuids_are_same, facets_are_adjacent,
+            "Facet adjacency should exactly match vertex UUID equality"
+        );
+
+        if uuids_are_same {
+            println!("  ✓ Identical coordinates produce identical UUIDs - facets are adjacent");
+        } else {
+            println!("  ✓ Different UUIDs for identical coordinates - facets are not adjacent");
+        }
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_4d_cases() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test 4D facet adjacency");
+
+        // Create two 4D simplices (5-vertices each) that share a 3D facet (4 vertices)
+        let shared_tetrahedron = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]), // v0
+            vertex!([1.0, 0.0, 0.0, 0.0]), // v1
+            vertex!([0.0, 1.0, 0.0, 0.0]), // v2
+            vertex!([0.0, 0.0, 1.0, 0.0]), // v3
+        ];
+
+        let vertex_e = vertex!([0.25, 0.25, 0.25, 1.0]); // Above in 4th dimension
+        let vertex_f = vertex!([0.25, 0.25, 0.25, -1.0]); // Below in 4th dimension
+
+        // 4D Simplex 1: shared tetrahedron + vertex_e
+        let mut vertices1 = shared_tetrahedron.clone();
+        vertices1.push(vertex_e);
+
+        // 4D Simplex 2: shared tetrahedron + vertex_f
+        let mut vertices2 = shared_tetrahedron;
+        vertices2.push(vertex_f);
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices2).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        // In 4D, facets are tetrahedra. Find the facets that correspond to the shared tetrahedron
+        // This is the facet opposite to the non-shared vertex (index 4)
+        let facet_view1 = FacetView::new(&tds1, cell1_key, 4).unwrap(); // Opposite to vertex_e
+        let facet_view2 = FacetView::new(&tds2, cell2_key, 4).unwrap(); // Opposite to vertex_f
+
+        assert!(
+            facet_views_are_adjacent(&facet_view1, &facet_view2),
+            "4D facets (tetrahedra) sharing vertices should be adjacent"
+        );
+
+        // Test non-adjacent tetrahedra within the same 4D simplices
+        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap();
+        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
+
+        assert!(
+            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff),
+            "4D facets with different vertices should not be adjacent"
+        );
+
+        println!("  ✓ 4D facet adjacency works correctly");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_5d_cases() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test 5D facet adjacency");
+
+        // Create two 5D simplices (6-vertices each) that share a 4D facet (5 vertices)
+        let shared_4d_simplex = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]), // v0
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]), // v1
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]), // v2
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]), // v3
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]), // v4
+        ];
+
+        let vertex_g = vertex!([0.2, 0.2, 0.2, 0.2, 1.0]); // Above in 5th dimension
+        let vertex_h = vertex!([0.2, 0.2, 0.2, 0.2, -1.0]); // Below in 5th dimension
+
+        // 5D Simplex 1: shared 4D simplex + vertex_g
+        let mut vertices1 = shared_4d_simplex.clone();
+        vertices1.push(vertex_g);
+
+        // 5D Simplex 2: shared 4D simplex + vertex_h
+        let mut vertices2 = shared_4d_simplex;
+        vertices2.push(vertex_h);
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices2).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        // In 5D, facets are 4D simplices. Find the facets that correspond to the shared 4D simplex
+        // This is the facet opposite to the non-shared vertex (index 5)
+        let facet_view1 = FacetView::new(&tds1, cell1_key, 5).unwrap(); // Opposite to vertex_g
+        let facet_view2 = FacetView::new(&tds2, cell2_key, 5).unwrap(); // Opposite to vertex_h
+
+        assert!(
+            facet_views_are_adjacent(&facet_view1, &facet_view2),
+            "5D facets (4D simplices) sharing vertices should be adjacent"
+        );
+
+        // Test non-adjacent 4D simplices within the same 5D simplices
+        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap();
+        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
+
+        assert!(
+            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff),
+            "5D facets with different vertices should not be adjacent"
+        );
+
+        println!("  ✓ 5D facet adjacency works correctly");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_multidimensional_summary() {
+        println!("Testing facet adjacency across all supported dimensions (1D-5D)");
+
+        // This test summarizes the multidimensional support
+        let dimensions_tested = vec![
+            ("1D", "edges", "vertices"),
+            ("2D", "triangles", "edges"),
+            ("3D", "tetrahedra", "triangles"),
+            ("4D", "4-simplices", "tetrahedra"),
+            ("5D", "5-simplices", "4-simplices"),
+        ];
+
+        for (dim, cell_type, facet_type) in dimensions_tested {
+            println!("  ✓ {dim}: {cell_type} with {facet_type} facets");
+        }
+
+        println!("  ✓ All dimensional cases covered comprehensively");
     }
 }

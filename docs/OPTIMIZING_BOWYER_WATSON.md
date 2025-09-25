@@ -22,22 +22,22 @@ which aligns with Phase 2's goal of optimizing internal operations and eliminati
 ### ✅ Algorithms Now Using `FacetCacheProvider`
 
 - **`ConvexHull`** - Properly implements and uses the caching trait for optimal performance during visibility testing operations
-- **`IncrementalBoyerWatson`** - ✅ IMPLEMENTED - Caching eliminates redundant facet mappings  
-- **`RobustBoyerWatson`** - ✅ IMPLEMENTED - Caching optimizes fallback strategies
+- **`IncrementalBowyerWatson`** - ✅ IMPLEMENTED - Caching eliminates redundant facet mappings  
+- **`RobustBowyerWatson`** - ✅ IMPLEMENTED - Caching optimizes fallback strategies
 
 ### Previous Issues (Now Resolved)
 
 #### 1. Bowyer-Watson Algorithm Implementations
 
-Both `IncrementalBoyerWatson` and `RobustBoyerWatson` algorithms repeatedly call `tds.build_facet_to_cells_hashmap()` without caching:
+Both `IncrementalBowyerWatson` and `RobustBowyerWatson` algorithms repeatedly call `tds.build_facet_to_cells_hashmap()` without caching:
 
-**`IncrementalBoyerWatson` (src/core/algorithms/bowyer_watson.rs):**
+**`IncrementalBowyerWatson` (src/core/algorithms/bowyer_watson.rs):**
 
 - Lines 372, 380, 388: In `count_boundary_facets()`, `count_internal_facets()`, `count_invalid_facets()`
 - Lines 453, 525, 592: In diagnostic and test methods
 - **Impact**: Test helper functions rebuild mapping multiple times per test
 
-**`RobustBoyerWatson` (src/core/algorithms/robust_bowyer_watson.rs):**
+**`RobustBowyerWatson` (src/core/algorithms/robust_bowyer_watson.rs):**
 
 - Lines 682, 694: In `build_validated_facet_mapping()`
 - Line 801: In `find_visible_boundary_facets()`
@@ -80,10 +80,10 @@ Both `IncrementalBoyerWatson` and `RobustBoyerWatson` algorithms repeatedly call
 
 ### Phase 1: Add Caching Infrastructure
 
-#### 1.1 Update `IncrementalBoyerWatson` struct
+#### 1.1 Update `IncrementalBowyerWatson` struct
 
 ```rust
-pub struct IncrementalBoyerWatson<T, U, V, const D: usize> {
+pub struct IncrementalBowyerWatson<T, U, V, const D: usize> {
     // ... existing fields ...
     
     /// Cache for facet-to-cells mapping
@@ -93,10 +93,10 @@ pub struct IncrementalBoyerWatson<T, U, V, const D: usize> {
 }
 ```
 
-#### 1.2 Update `RobustBoyerWatson` struct
+#### 1.2 Update `RobustBowyerWatson` struct
 
 ```rust
-pub struct RobustBoyerWatson<T, U, V, const D: usize> {
+pub struct RobustBowyerWatson<T, U, V, const D: usize> {
     // ... existing fields ...
     
     /// Cache for facet-to-cells mapping
@@ -126,10 +126,10 @@ Self {
 
 ### Phase 2: Implement FacetCacheProvider Trait
 
-#### 2.1 For IncrementalBoyerWatson
+#### 2.1 For IncrementalBowyerWatson
 
 ```rust
-impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for IncrementalBoyerWatson<T, U, V, D>
+impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + ComplexField<RealField = T> + AddAssign<T> + SubAssign<T> + Sum + From<f64>,
     U: DataType,
@@ -150,10 +150,10 @@ where
 }
 ```
 
-#### 2.2 For RobustBoyerWatson
+#### 2.2 For RobustBowyerWatson
 
 ```rust
-impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for RobustBoyerWatson<T, U, V, D>
+impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for RobustBowyerWatson<T, U, V, D>
 where
     // ... same trait bounds as above ...
 {
@@ -186,14 +186,14 @@ let facet_to_cells = self.get_or_build_facet_cache(&tds);
 
 #### 3.2 Update Specific Methods
 
-**In `IncrementalBoyerWatson`:**
+**In `IncrementalBowyerWatson`:**
 
 - `count_boundary_facets()` helper
 - `count_internal_facets()` helper  
 - `count_invalid_facets()` helper
 - Any diagnostic methods using facet mappings
 
-**In `RobustBoyerWatson`:**
+**In `RobustBowyerWatson`:**
 
 - `build_validated_facet_mapping()`
 - `find_visible_boundary_facets()`
@@ -251,7 +251,7 @@ To ensure cache invalidation works correctly, add checklist-based tests that ver
 ```rust
 #[test]
 fn test_cache_invalidation_on_tds_operations() {
-    let mut algorithm = IncrementalBoyerWatson::new();
+    let mut algorithm = IncrementalBowyerWatson::new();
     let mut tds = TriangulationDataStructure::new();
     
     // Record initial generation
@@ -293,19 +293,19 @@ Validate concurrent access patterns if algorithms are used in multi-threaded con
 
 ### Core Changes
 
-- [✓] Add caching fields to `IncrementalBoyerWatson` struct
-- [✓] Add caching fields to `RobustBoyerWatson` struct
+- [✓] Add caching fields to `IncrementalBowyerWatson` struct
+- [✓] Add caching fields to `RobustBowyerWatson` struct
 - [✓] Update all constructors for both algorithms
-- [✓] Implement `FacetCacheProvider` for `IncrementalBoyerWatson`
-- [✓] Implement `FacetCacheProvider` for `RobustBoyerWatson`
+- [✓] Implement `FacetCacheProvider` for `IncrementalBowyerWatson`
+- [✓] Implement `FacetCacheProvider` for `RobustBowyerWatson`
 
 ### Method Updates
 
-- [N/A] Update `count_boundary_facets()` in IncrementalBoyerWatson (test helper only)
-- [N/A] Update `count_internal_facets()` in IncrementalBoyerWatson (test helper only)
-- [N/A] Update `count_invalid_facets()` in IncrementalBoyerWatson (test helper only)
-- [✓] Update `build_validated_facet_mapping()` in RobustBoyerWatson
-- [✓] Update `find_visible_boundary_facets()` in RobustBoyerWatson
+- [N/A] Update `count_boundary_facets()` in IncrementalBowyerWatson (test helper only)
+- [N/A] Update `count_internal_facets()` in IncrementalBowyerWatson (test helper only)
+- [N/A] Update `count_invalid_facets()` in IncrementalBowyerWatson (test helper only)
+- [✓] Update `build_validated_facet_mapping()` in RobustBowyerWatson
+- [✓] Update `find_visible_boundary_facets()` in RobustBowyerWatson
 - [✓] Review and update any other methods using `build_facet_to_cells_hashmap()`
 
 ### Testing
@@ -357,13 +357,48 @@ Validate concurrent access patterns if algorithms are used in multi-threaded con
 ⚠️ **This optimization includes breaking changes to boundary analysis APIs:**
 
 - **`BoundaryAnalysis::boundary_facets()`** - Now returns
-  `Result<Vec<Facet<T, U, V, D>>, TriangulationValidationError>`
-  instead of `Result<Vec<Facet<T, U, V, D>>, FacetError>`
+  `Result<BoundaryFacetsIter<'_, T, U, V, D>, TriangulationValidationError>`
+  providing iterator-based access over `FacetView` objects instead of materialized `Vec<Facet>`
 - **`BoundaryAnalysis::number_of_boundary_facets()`** - Now returns `Result<usize, TriangulationValidationError>` instead of `usize`
-- **`BoundaryAnalysis::is_boundary_facet()`** - Now returns `Result<bool, TriangulationValidationError>` instead of `bool`
+- **`BoundaryAnalysis::is_boundary_facet()`** - Now takes `&FacetView` and returns
+  `Result<bool, TriangulationValidationError>` instead of `bool`. Also provides
+  `is_boundary_facet_with_map()` variant for efficient batch operations
 - **Facet map builder** - `build_facet_to_cells_map()` now returns `Result<FacetToCellsMap, TriangulationValidationError>` for better error handling
 
 **Migration Guide:**
+
+- **Iterator-based access**: Use `.boundary_facets()?` to get an iterator over `FacetView` objects:
+
+  ```rust
+  // Old: Vec<Facet> materialization
+  let facets: Vec<Facet<_, _, _, _>> = tds.boundary_facets().unwrap();
+
+  // New: Iterator over FacetView
+  let boundary_iter = tds.boundary_facets()?;
+  for facet_view in boundary_iter {
+      // Process FacetView directly
+  }
+  ```
+
+- **Counting boundary facets**: Use `.boundary_facets()?.count()` for efficient counting:
+
+  ```rust
+  // Efficient: Uses iterator without materialization
+  let count = tds.boundary_facets()?.count();
+
+  // Alternative: Direct method
+  let count = tds.number_of_boundary_facets()?;
+  ```
+
+- **Facet boundary checking**: Pass `&FacetView` to `is_boundary_facet()`:
+
+  ```rust
+  let is_boundary = tds.is_boundary_facet(&facet_view)?;
+
+  // For batch operations, use with_map variant:
+  let map = tds.build_facet_to_cells_map()?;
+  let is_boundary = tds.is_boundary_facet_with_map(&facet_view, &map)?;
+  ```
 
 - Wrap existing calls with `.unwrap()` or `.expect()` for quick migration
 - Add proper error handling using `?` operator or `match` statements for robust applications

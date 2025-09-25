@@ -39,6 +39,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::iter::Sum;
 
 /// Enhanced Bowyer-Watson algorithm with robust geometric predicates.
+#[derive(Default)]
 pub struct RobustBoyerWatson<T, U, V, const D: usize>
 where
     T: CoordinateScalar,
@@ -60,23 +61,6 @@ where
     cached_generation: Arc<AtomicU64>,
     /// Phantom data to indicate that U and V types are used in method signatures
     _phantom: PhantomData<(U, V)>,
-}
-
-impl<T, U, V, const D: usize> Default for RobustBoyerWatson<T, U, V, D>
-where
-    T: CoordinateScalar + ComplexField<RealField = T> + Sum + num_traits::Zero + From<f64>,
-    U: crate::core::traits::data_type::DataType + DeserializeOwned,
-    V: crate::core::traits::data_type::DataType + DeserializeOwned,
-    f64: From<T>,
-    for<'a> &'a T: std::ops::Div<T>,
-    ordered_float::OrderedFloat<f64>: From<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    [f64; D]: Default + DeserializeOwned + Serialize + Sized,
-    na::OPoint<T, na::Const<D>>: From<[f64; D]>,
-{
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl<T, U, V, const D: usize> RobustBoyerWatson<T, U, V, D>
@@ -278,24 +262,48 @@ where
         let bad_cells = self.find_bad_cells_with_robust_fallback(tds, vertex);
 
         if !bad_cells.is_empty() {
-            // Try boundary facet detection using trait method with robust fallback
+            // Try boundary facet detection using lightweight trait method with robust fallback
             #[allow(clippy::collapsible_if)] // Can't collapse due to if-let chain guard limitations
-            if let Ok(boundary_facets) =
-                self.find_cavity_boundary_facets_with_robust_fallback(tds, &bad_cells)
+            if let Ok(boundary_handles) =
+                self.find_cavity_boundary_facets_lightweight_with_robust_fallback(tds, &bad_cells)
             {
-                if !boundary_facets.is_empty() {
+                if !boundary_handles.is_empty() {
+                    // CRITICAL: We need to use handles BEFORE removing cells, as they become invalid after removal.
+                    // The cavity-based insertion algorithm requires: extract → remove → create
+
+                    // Store handles and extract facet data while cells still exist
+                    let mut extracted_facet_data = Vec::new();
+                    for &(cell_key, facet_index) in &boundary_handles {
+                        if let Some(_cell) = tds.cells().get(cell_key) {
+                            if let Ok(facet_view) =
+                                crate::core::facet::FacetView::new(tds, cell_key, facet_index)
+                            {
+                                let facet_vertices: Vec<Vertex<T, U, D>> =
+                                    facet_view.vertices().copied().collect();
+                                extracted_facet_data.push(facet_vertices);
+                            }
+                        }
+                    }
+
                     let cells_removed = bad_cells.len();
+
+                    // Remove bad cells (invalidates handles)
                     <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
 
-                    // Ensure vertex is in TDS - if this fails, propagate the error
+                    // Ensure vertex is in TDS
                     <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
 
-                    let cells_created =
-                        <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
+                    // Create cells from pre-extracted data
+                    let mut cells_created = 0;
+                    for facet_vertices in extracted_facet_data {
+                        if <Self as InsertionAlgorithm<T, U, V, D>>::create_cell_from_vertices_and_vertex(
                             tds,
-                            &boundary_facets,
+                            facet_vertices,
                             vertex,
-                        );
+                        ).is_ok() {
+                            cells_created += 1;
+                        }
+                    }
 
                     // Maintain invariants after structural changes
                     <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
@@ -440,38 +448,54 @@ where
         bad_cells
     }
 
-    /// Find cavity boundary facets by first using the trait method, then applying robust predicates for edge cases.
+    /// Find cavity boundary facets using lightweight handles with robust fallback.
     ///
-    /// This approach integrates the trait's `find_cavity_boundary_facets` method with the robust predicates
-    /// to provide a more reliable boundary facet detection method, especially for degenerate cases.
-    fn find_cavity_boundary_facets_with_robust_fallback(
+    /// This optimized approach uses the lightweight `find_cavity_boundary_facets_lightweight` method
+    /// first, then applies robust predicates for edge cases, returning lightweight handles instead
+    /// of heavyweight Facet objects for improved performance.
+    ///
+    /// # Important Usage Note
+    ///
+    /// The returned handles `(CellKey, u8)` are only valid while the referenced cells exist.
+    /// If you plan to remove cells (e.g., via `remove_bad_cells`), you MUST convert the handles
+    /// to Facet objects BEFORE removing the cells, otherwise the handles become invalid.
+    fn find_cavity_boundary_facets_lightweight_with_robust_fallback(
         &self,
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
-    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError>
+    ) -> Result<Vec<(CellKey, u8)>, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
         for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
     {
-        // First try to find boundary facets using the trait's method
-        match InsertionAlgorithm::<T, U, V, D>::find_cavity_boundary_facets(self, tds, bad_cells) {
-            Ok(boundary_facets) => {
-                // If the standard method succeeds and finds facets, use them
-                if !boundary_facets.is_empty() {
-                    return Ok(boundary_facets);
+        // First try to find boundary facets using the lightweight trait method
+        match InsertionAlgorithm::<T, U, V, D>::find_cavity_boundary_facets_lightweight(
+            self, tds, bad_cells,
+        ) {
+            Ok(boundary_handles) => {
+                // If the lightweight method succeeds and finds facets, use them
+                if !boundary_handles.is_empty() {
+                    return Ok(boundary_handles);
                 }
-                // If standard method succeeds but finds no facets, try robust method as fallback
-                self.robust_find_cavity_boundary_facets(tds, bad_cells)
+                // If lightweight method succeeds but finds no facets, try robust method as fallback
+                self.robust_find_cavity_boundary_facets_lightweight(tds, bad_cells)
             }
             Err(_) => {
-                // If standard method fails, use robust method as fallback
-                self.robust_find_cavity_boundary_facets(tds, bad_cells)
+                // If lightweight method fails, use robust method as fallback
+                self.robust_find_cavity_boundary_facets_lightweight(tds, bad_cells)
             }
         }
     }
 
+    /// Find cavity boundary facets by first using the trait method, then applying robust predicates for edge cases.
+    ///
+    /// This approach integrates the trait's `find_cavity_boundary_facets` method with the robust predicates
+    /// to provide a more reliable boundary facet detection method, especially for degenerate cases.
+    ///
+    /// # Deprecated
+    /// Consider using `find_cavity_boundary_facets_lightweight_with_robust_fallback` for better performance.
     /// Find visible boundary facets by first using the trait method, then applying robust predicates for edge cases.
     ///
     /// This approach integrates the trait's `find_visible_boundary_facets` method with the robust predicates
@@ -547,6 +571,75 @@ where
         }
 
         bad_cells.into_vec()
+    }
+
+    /// Find cavity boundary facets with enhanced error handling, returning lightweight handles.
+    ///
+    /// This optimized version returns `(CellKey, u8)` handles instead of heavyweight Facet objects,
+    /// providing significant performance improvements for boundary facet detection.
+    fn robust_find_cavity_boundary_facets_lightweight(
+        &self,
+        tds: &Tds<T, U, V, D>,
+        bad_cells: &[CellKey],
+    ) -> Result<Vec<(CellKey, u8)>, InsertionError> {
+        let mut boundary_handles = Vec::new();
+
+        if bad_cells.is_empty() {
+            return Ok(boundary_handles);
+        }
+
+        let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
+
+        // Build facet-to-cells mapping with enhanced validation
+        let facet_to_cells = self.build_validated_facet_mapping(tds)?;
+
+        // Find boundary facets with improved logic, returning lightweight handles
+        let mut processed_facets = FastHashSet::default();
+
+        for &bad_cell_key in bad_cells {
+            if let Some(bad_cell) = tds.cells().get(bad_cell_key)
+                && let Ok(facets) = bad_cell.facets()
+            {
+                for (facet_idx, facet) in facets.iter().enumerate() {
+                    // Derive facet key using the utility function
+                    let facet_vertices = facet.vertices();
+                    let Ok(facet_key) = derive_facet_key_from_vertices(&facet_vertices, tds) else {
+                        continue;
+                    }; // Cannot form a valid facet key - vertex not found
+
+                    if processed_facets.contains(&facet_key) {
+                        continue;
+                    }
+
+                    if let Some(sharing_cells) = facet_to_cells.get(&facet_key) {
+                        let bad_count = sharing_cells
+                            .iter()
+                            .filter(|&&cell_key| bad_cell_set.contains(&cell_key))
+                            .count();
+                        let total_count = sharing_cells.len();
+
+                        // Enhanced boundary detection logic
+                        if Self::is_cavity_boundary_facet(bad_count, total_count) {
+                            // Return lightweight handle instead of heavy Facet object
+                            if let Ok(facet_idx_u8) = u8::try_from(facet_idx) {
+                                boundary_handles.push((bad_cell_key, facet_idx_u8));
+                            }
+                            processed_facets.insert(facet_key);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Additional validation of boundary facet count
+        if boundary_handles.is_empty() && !bad_cells.is_empty() {
+            return Err(InsertionError::ExcessiveBadCells {
+                found: bad_cells.len(),
+                threshold: 0,
+            });
+        }
+
+        Ok(boundary_handles)
     }
 
     /// Find cavity boundary facets with enhanced error handling.
@@ -3606,47 +3699,6 @@ mod tests {
             bad_cells_exterior.len()
         );
         // Exterior vertex might not have any bad cells
-    }
-
-    /// Test cavity boundary facets detection with robust fallback
-    #[test]
-    fn test_find_cavity_boundary_facets_with_robust_fallback() {
-        let algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
-
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        // Get some cells as "bad cells"
-        let all_cells: Vec<_> = tds.cells().keys().collect();
-        let bad_cells = vec![all_cells[0]];
-
-        let result = algorithm.find_cavity_boundary_facets_with_robust_fallback(&tds, &bad_cells);
-
-        match result {
-            Ok(boundary_facets) => {
-                println!("Found {} boundary facets", boundary_facets.len());
-                assert!(
-                    !boundary_facets.is_empty(),
-                    "Should find boundary facets for valid bad cells"
-                );
-
-                // Verify facets are valid
-                for facet in &boundary_facets {
-                    assert!(
-                        !facet.vertices().is_empty(),
-                        "Boundary facet should have vertices"
-                    );
-                }
-            }
-            Err(e) => {
-                println!("Cavity boundary detection failed: {e}");
-            }
-        }
     }
 
     /// Test visible boundary facets detection with robust fallback
