@@ -10,7 +10,7 @@ use super::{
 };
 
 use crate::prelude::CoordinateScalar;
-use nalgebra::ComplexField;
+use num_traits::NumCast;
 use serde::{Serialize, de::DeserializeOwned};
 use std::iter::Sum;
 use std::ops::{AddAssign, Div, SubAssign};
@@ -21,19 +21,11 @@ use std::ops::{AddAssign, Div, SubAssign};
 /// for d-dimensional triangulations using the triangulation data structure.
 impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D>
 where
-    T: CoordinateScalar
-        + AddAssign<T>
-        + ComplexField<RealField = T>
-        + SubAssign<T>
-        + Sum
-        + From<f64>
-        + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    f64: From<T>,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    U: DataType,
+    V: DataType,
     for<'a> &'a T: Div<T>,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
 {
     /// Identifies all boundary facets in the triangulation.
     ///
@@ -58,7 +50,8 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`FacetError`] if:
+    /// Returns a [`TriangulationValidationError`] (typically
+    /// [`crate::core::facet::FacetError`]) if:
     /// - Any boundary facet cannot be created from the cells
     /// - A facet index is out of bounds (indicates data corruption)
     /// - A referenced cell is not found in the triangulation (indicates data corruption)

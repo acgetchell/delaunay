@@ -67,16 +67,12 @@ use super::{
     vertex::Vertex,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use serde::{
-    Deserialize, Deserializer, Serialize,
-    de::{self, DeserializeOwned, IgnoredAny, MapAccess, Visitor},
-};
+use serde::{Serialize, de::DeserializeOwned};
 use slotmap::Key;
 use std::{
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     iter::Sum,
-    marker::PhantomData,
     ops::{AddAssign, Div, SubAssign},
 };
 use thiserror::Error;
@@ -240,6 +236,35 @@ where
 
 impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D>
 where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+{
+    /// Returns the cell key for this facet.
+    #[inline]
+    #[must_use]
+    pub const fn cell_key(&self) -> CellKey {
+        self.cell_key
+    }
+
+    /// Returns the facet index within the cell.
+    #[inline]
+    #[must_use]
+    pub const fn facet_index(&self) -> u8 {
+        self.facet_index
+    }
+
+    /// Returns the TDS reference.
+    #[inline]
+    #[must_use]
+    pub const fn tds(&self) -> &'tds Tds<T, U, V, D> {
+        self.tds
+    }
+}
+
+impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D>
+where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
     U: DataType,
     V: DataType,
@@ -298,8 +323,19 @@ where
     /// # Returns
     ///
     /// An iterator yielding references to vertices in the facet.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the cell key is no longer present in the TDS. This should not
+    /// occur under normal circumstances as the `FacetView` borrows the TDS immutably,
+    /// but could happen if the view outlives the TDS or the TDS is mutated through
+    /// unsafe code.
     pub fn vertices(&self) -> impl Iterator<Item = &'tds Vertex<T, U, D>> {
-        let cell = &self.tds.cells()[self.cell_key]; // Safe: validated in constructor
+        let cell = self
+            .tds
+            .cells()
+            .get(self.cell_key)
+            .expect("FacetView::vertices: cell_key no longer present in TDS; ensure the view remains live while iterating");
         let facet_index = usize::from(self.facet_index);
 
         cell.vertices()
@@ -352,20 +388,6 @@ where
             .ok_or(FacetError::CellNotFoundInTriangulation)
     }
 
-    /// Returns the cell key for this facet.
-    #[inline]
-    #[must_use]
-    pub const fn cell_key(&self) -> CellKey {
-        self.cell_key
-    }
-
-    /// Returns the facet index within the containing cell.
-    #[inline]
-    #[must_use]
-    pub const fn facet_index(&self) -> u8 {
-        self.facet_index
-    }
-
     /// Computes a canonical key for this facet.
     ///
     /// The key is computed from the vertex keys of the facet vertices,
@@ -381,11 +403,10 @@ where
     /// Returns `FacetError` if vertex keys cannot be retrieved.
     pub fn key(&self) -> Result<u64, FacetError> {
         // Get vertex keys for the facet vertices
-        let cell_vertex_keys = self.tds.get_cell_vertex_keys(self.cell_key).map_err(|_e| {
-            FacetError::VertexNotFound {
-                uuid: uuid::Uuid::nil(), // Placeholder - we don't have individual vertex UUID here
-            }
-        })?;
+        let cell_vertex_keys = self
+            .tds
+            .get_cell_vertex_keys(self.cell_key)
+            .map_err(|_| FacetError::CellNotFoundInTriangulation)?;
         let facet_index = usize::from(self.facet_index);
 
         // Collect vertex keys excluding the opposite vertex
@@ -398,13 +419,6 @@ where
 
         // Compute canonical key from vertex keys
         Ok(facet_key_from_vertex_keys(&facet_vertex_keys))
-    }
-
-    /// Returns the TDS reference.
-    #[inline]
-    #[must_use]
-    pub const fn tds(&self) -> &'tds Tds<T, U, V, D> {
-        self.tds
     }
 }
 
@@ -476,6 +490,27 @@ where
 {
 }
 
+/// Helper function to safely convert usize to u8 for facet indices.
+///
+/// # Arguments
+///
+/// * `idx` - The usize index to convert
+/// * `facet_count` - The number of facets (for error reporting)
+///
+/// # Returns
+///
+/// A `Result` containing the converted u8 index or a `FacetError`.
+///
+/// # Errors
+///
+/// Returns `FacetError::InvalidFacetIndex` if the index cannot fit in a u8.
+fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
+    u8::try_from(idx).map_err(|_| FacetError::InvalidFacetIndex {
+        index: u8::MAX,
+        facet_count,
+    })
+}
+
 /// Utility function to create multiple `FacetView`s for all facets of a cell.
 ///
 /// # Arguments
@@ -510,14 +545,8 @@ where
     let mut facet_views = Vec::with_capacity(vertex_count);
 
     for facet_index in 0..vertex_count {
-        let facet_view = FacetView::new(
-            tds,
-            cell_key,
-            u8::try_from(facet_index).map_err(|_| FacetError::InvalidFacetIndex {
-                index: u8::try_from(facet_index).unwrap_or(u8::MAX),
-                facet_count: vertex_count,
-            })?,
-        )?;
+        let idx = facet_index; // usize
+        let facet_view = FacetView::new(tds, cell_key, usize_to_u8(idx, vertex_count)?)?;
         facet_views.push(facet_view);
     }
 
@@ -541,8 +570,8 @@ where
     tds: &'tds Tds<T, U, V, D>,
     cell_keys: std::vec::IntoIter<CellKey>,
     current_cell_key: Option<CellKey>,
-    current_facet_index: u8,
-    current_cell_facet_count: u8,
+    current_facet_index: usize,
+    current_cell_facet_count: usize,
 }
 
 impl<'tds, T, U, V, const D: usize> AllFacetsIter<'tds, T, U, V, D>
@@ -556,7 +585,10 @@ where
     /// Creates a new iterator over all facets in the TDS.
     #[must_use]
     pub fn new(tds: &'tds Tds<T, U, V, D>) -> Self {
-        let cell_keys: Vec<CellKey> = tds.cells().keys().collect();
+        // We collect here because we need an owned iterator to store in the struct
+        // CellKey is just u64, so this is efficient
+        #[allow(clippy::needless_collect)]
+        let cell_keys: Vec<CellKey> = tds.cell_keys().collect();
         Self {
             tds,
             cell_keys: cell_keys.into_iter(),
@@ -587,7 +619,11 @@ where
                 self.current_facet_index += 1;
 
                 // Create FacetView - we know this is valid since we're iterating within bounds
-                if let Ok(facet_view) = FacetView::new(self.tds, cell_key, facet_index) {
+                if let Ok(facet_view) = FacetView::new(
+                    self.tds,
+                    cell_key,
+                    u8::try_from(facet_index).unwrap_or(u8::MAX),
+                ) {
                     return Some(facet_view);
                 }
             }
@@ -597,8 +633,7 @@ where
                 if let Some(cell) = self.tds.cells().get(next_cell_key) {
                     self.current_cell_key = Some(next_cell_key);
                     self.current_facet_index = 0;
-                    self.current_cell_facet_count =
-                        u8::try_from(cell.vertices().len()).unwrap_or(u8::MAX);
+                    self.current_cell_facet_count = cell.vertices().len();
                     // Continue loop to process first facet of new cell
                 } else {
                     // Cell not found, skip to next (continue is implicit at end of loop)
@@ -682,7 +717,7 @@ where
     since = "0.5.0",
     note = "Use FacetView instead for 18x memory reduction. This heavyweight implementation stores complete Cell and Vertex objects. Will be removed in v1.0.0."
 )]
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd)]
 /// The [Facet] struct represents a facet of a d-dimensional simplex.
 ///
 /// **⚠️ DEPRECATED**: This heavyweight implementation will be removed in v1.0.0.
@@ -709,92 +744,6 @@ where
 
     /// The [Vertex] opposite to this facet.
     vertex: Vertex<T, U, D>,
-}
-
-// =============================================================================
-// DESERIALIZATION IMPLEMENTATION
-// =============================================================================
-
-/// Manual implementation of Deserialize for Facet
-impl<'de, T, U, V, const D: usize> Deserialize<'de> for Facet<T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-{
-    fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
-    where
-        De: Deserializer<'de>,
-    {
-        struct FacetVisitor<T, U, V, const D: usize>
-        where
-            T: CoordinateScalar,
-            U: DataType,
-            V: DataType,
-            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-        {
-            _phantom: PhantomData<(T, U, V)>,
-        }
-
-        impl<'de, T, U, V, const D: usize> Visitor<'de> for FacetVisitor<T, U, V, D>
-        where
-            T: CoordinateScalar,
-            U: DataType,
-            V: DataType,
-            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-        {
-            type Value = Facet<T, U, V, D>;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a Facet struct")
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Facet<T, U, V, D>, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                let mut cell = None;
-                let mut vertex = None;
-
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        "cell" => {
-                            if cell.is_some() {
-                                return Err(de::Error::duplicate_field("cell"));
-                            }
-                            cell = Some(map.next_value()?);
-                        }
-                        "vertex" => {
-                            if vertex.is_some() {
-                                return Err(de::Error::duplicate_field("vertex"));
-                            }
-                            vertex = Some(map.next_value()?);
-                        }
-                        _ => {
-                            let _ = map.next_value::<IgnoredAny>()?;
-                        }
-                    }
-                }
-
-                let cell = cell.ok_or_else(|| de::Error::missing_field("cell"))?;
-                let vertex = vertex.ok_or_else(|| de::Error::missing_field("vertex"))?;
-
-                Facet::new(cell, vertex).map_err(|e| {
-                    de::Error::custom(format!("Failed to create Facet from cell and vertex: {e}"))
-                })
-            }
-        }
-
-        const FIELDS: &[&str] = &["cell", "vertex"];
-        deserializer.deserialize_struct(
-            "Facet",
-            FIELDS,
-            FacetVisitor {
-                _phantom: PhantomData,
-            },
-        )
-    }
 }
 
 // =============================================================================
@@ -1142,7 +1091,41 @@ mod tests {
     use super::*;
     use crate::core::triangulation_data_structure::{Tds, VertexKey};
     use crate::{cell, vertex};
-    use approx::assert_relative_eq;
+
+    // =============================================================================
+    // UNIT TESTS FOR HELPER FUNCTIONS
+    // =============================================================================
+
+    #[test]
+    fn test_usize_to_u8_conversion() {
+        // Test successful conversion
+        assert_eq!(usize_to_u8(0, 4), Ok(0));
+        assert_eq!(usize_to_u8(1, 4), Ok(1));
+        assert_eq!(usize_to_u8(255, 256), Ok(255));
+
+        // Test conversion at boundary
+        assert_eq!(usize_to_u8(u8::MAX as usize, 256), Ok(u8::MAX));
+
+        // Test failed conversion (index too large)
+        let result = usize_to_u8(256, 10);
+        assert!(result.is_err());
+        if let Err(FacetError::InvalidFacetIndex { index, facet_count }) = result {
+            assert_eq!(index, u8::MAX); // Should use MAX as placeholder
+            assert_eq!(facet_count, 10);
+        } else {
+            panic!("Expected InvalidFacetIndex error");
+        }
+
+        // Test failed conversion (very large index)
+        let result = usize_to_u8(usize::MAX, 5);
+        assert!(result.is_err());
+        if let Err(FacetError::InvalidFacetIndex { index, facet_count }) = result {
+            assert_eq!(index, u8::MAX);
+            assert_eq!(facet_count, 5);
+        } else {
+            panic!("Expected InvalidFacetIndex error");
+        }
+    }
 
     // =============================================================================
     // TYPE ALIASES AND HELPERS
@@ -1256,158 +1239,6 @@ mod tests {
 
         // Human readable output for cargo test -- --nocapture
         println!("Facet: {facet:?}");
-    }
-
-    // =============================================================================
-    // SERIALIZATION TESTS
-    // =============================================================================
-
-    /// Helper function that constructs a simple 2D facet (triangle) and serializes it to JSON,
-    /// then splits the JSON string into separate `cell` and `vertex` components for reuse
-    /// in custom JSON inputs for error-path tests.
-    fn create_facet_json_components() -> (String, String) {
-        // Create a simple 2D triangle facet
-        let (cell, vertices) = create_triangle();
-        let facet = Facet::new(cell, vertices[0]).unwrap();
-
-        // Serialize the entire facet to JSON
-        let serialized = serde_json::to_string(&facet).unwrap();
-
-        // Parse the JSON to extract cell and vertex components
-        let json: serde_json::Value = serde_json::from_str(&serialized).unwrap();
-        let cell_json = serde_json::to_string(&json["cell"]).unwrap();
-        let vertex_json = serde_json::to_string(&json["vertex"]).unwrap();
-
-        (cell_json, vertex_json)
-    }
-
-    #[test]
-    fn facet_deserialization_with_extra_field() {
-        // Create a Facet JSON snippet with additional "extra" field
-        let (cell_json, vertex_json) = create_facet_json_components();
-        let json_with_extra = format!(
-            "{{ \"cell\": {cell_json}, \"vertex\": {vertex_json}, \"extra\": \"ignored\" }}"
-        );
-
-        // Deserialize and test that it succeeds, ignoring the extra field
-        let result: Result<Facet<f64, Option<()>, Option<()>, 2>, _> =
-            serde_json::from_str(&json_with_extra);
-
-        // Should succeed - extra fields are ignored
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_facet_json_components() {
-        let (cell_json, vertex_json) = create_facet_json_components();
-
-        // Verify that we can extract valid JSON components
-        println!("Cell JSON: {cell_json}");
-        println!("Vertex JSON: {vertex_json}");
-
-        // Basic validation that the components contain expected data
-        assert!(cell_json.contains("vertices"));
-        assert!(cell_json.contains("uuid"));
-        assert!(vertex_json.contains("[0.0,0.0]")); // The opposite vertex coordinates
-
-        // Verify the components can be parsed back as JSON
-        let _: serde_json::Value = serde_json::from_str(&cell_json).unwrap();
-        let _: serde_json::Value = serde_json::from_str(&vertex_json).unwrap();
-    }
-
-    #[test]
-    fn facet_to_json() {
-        let vertex1 = vertex!([0.0, 0.0, 0.0]);
-        let vertex2 = vertex!([1.0, 0.0, 0.0]);
-        let vertex3 = vertex!([0.0, 1.0, 0.0]);
-        let vertex4 = vertex!([0.0, 0.0, 1.0]);
-        let cell: Cell<f64, Option<()>, Option<()>, 3> =
-            cell!(vec![vertex1, vertex2, vertex3, vertex4]);
-        let facet = Facet::new(cell, vertex1).unwrap();
-        let serialized = serde_json::to_string(&facet).unwrap();
-
-        assert!(serialized.contains("[1.0,0.0,0.0]"));
-        assert!(serialized.contains("[0.0,1.0,0.0]"));
-        assert!(serialized.contains("[0.0,0.0,1.0]"));
-
-        // Note: Deserialization test removed since we use DeserializeOwned trait bound
-        // instead of the derive macro to avoid conflicts with serde trait bounds
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Serialized = {serialized:?}");
-    }
-
-    #[test]
-    fn test_facet_deserialization_duplicate_vertex_field() {
-        let (cell_json, vertex_json) = create_facet_json_components();
-        let json_with_duplicate_vertex = format!(
-            "{{ \"cell\": {cell_json}, \"vertex\": {vertex_json}, \"vertex\": {vertex_json} }}"
-        );
-
-        let result: Result<Facet<f64, Option<()>, Option<()>, 2>, _> =
-            serde_json::from_str(&json_with_duplicate_vertex);
-        assert!(result.is_err());
-        let error_message = result.unwrap_err().to_string();
-        assert!(error_message.contains("duplicate field `vertex`"));
-    }
-
-    #[test]
-    fn test_facet_deserialization_duplicate_cell_field_v2() {
-        let (cell_json, vertex_json) = create_facet_json_components();
-        let json_with_duplicate_cell = format!(
-            "{{ \"cell\": {cell_json}, \"vertex\": {vertex_json}, \"cell\": {cell_json} }}"
-        );
-
-        let result: Result<Facet<f64, Option<()>, Option<()>, 2>, _> =
-            serde_json::from_str(&json_with_duplicate_cell);
-        assert!(result.is_err());
-        let error_message = result.unwrap_err().to_string();
-        assert!(error_message.contains("duplicate field `cell`"));
-    }
-
-    #[test]
-    fn test_missing_cell_field_error() {
-        // Step 5: Test missing `cell` field error
-        // Construct JSON with only the `vertex` field: `{\"vertex\":<v>}`
-        let (_, vertex_json) = create_facet_json_components();
-        let json_with_only_vertex = format!("{{ \"vertex\": {vertex_json} }}");
-
-        // Attempt to deserialize and assert the error message contains `missing field \"cell\"`
-        let result: Result<Facet<f64, Option<()>, Option<()>, 2>, _> =
-            serde_json::from_str(&json_with_only_vertex);
-        assert!(result.is_err());
-        let error_message = result.unwrap_err().to_string();
-        assert!(error_message.contains("missing field `cell`"));
-    }
-
-    #[test]
-    fn test_empty_json_object_missing_cell_field() {
-        // Step 7: Test empty JSON object error
-        // Attempt to deserialize the string `{}` into `Facet<...>` and assert it errors out
-        // with `missing field "cell"`, covering the very first missing-field path.
-        let empty_json = "{}";
-
-        let result: Result<Facet<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(empty_json);
-        assert!(result.is_err());
-
-        let error_message = result.unwrap_err().to_string();
-        assert!(error_message.contains("missing field `cell`"));
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Empty JSON deserialization error: {error_message}");
-    }
-
-    #[test]
-    fn test_facet_deserialization_expecting_formatter() {
-        // Test the expecting formatter method
-        let invalid_json = r#"["not", "a", "facet", "object"]"#;
-        let result: Result<Facet<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(invalid_json);
-        assert!(result.is_err());
-        let error_message = result.unwrap_err().to_string();
-        // The error should mention that it expected a Facet struct
-        assert!(error_message.contains("Facet") || error_message.to_lowercase().contains("struct"));
     }
 
     // =============================================================================
@@ -1665,67 +1496,6 @@ mod tests {
     }
 
     #[test]
-    fn facet_to_and_from_json() {
-        let vertex1: Vertex<f32, u8, 2> = vertex!([0.0f32, 0.0f32], 1u8);
-        let vertex2: Vertex<f32, u8, 2> = vertex!([1.0f32, 0.0f32], 2u8);
-        let vertex3: Vertex<f32, u8, 2> = vertex!([0.5f32, 1.0f32], 3u8);
-
-        let cell: Cell<f32, u8, u16, 2> = cell!(vec![vertex1, vertex2, vertex3], 100u16);
-
-        let facet = Facet::new(cell, vertex1).unwrap();
-
-        // Test serialization
-        let serialized = serde_json::to_string(&facet).unwrap();
-        assert!(serialized.contains("1.0"));
-        assert!(serialized.contains("0.5"));
-
-        // Test deserialization using manual Deserialize implementation
-        let deserialized: Facet<f32, u8, u16, 2> = serde_json::from_str(&serialized).unwrap();
-
-        // Verify the deserialized facet has the same properties
-        assert_eq!(facet.cell().uuid(), deserialized.cell().uuid());
-        assert_eq!(facet.vertex().uuid(), deserialized.vertex().uuid());
-        assert_eq!(
-            facet.cell().vertices().len(),
-            deserialized.cell().vertices().len()
-        );
-        assert_eq!(facet.cell().data, deserialized.cell().data);
-        assert_eq!(facet.vertex().data, deserialized.vertex().data);
-
-        // Verify vertex coordinates using approximate equality for floats
-        let original_coords: [f32; 2] = facet.vertex().into();
-        let deserialized_coords: [f32; 2] = deserialized.vertex().into();
-        assert_relative_eq!(
-            original_coords.as_slice(),
-            deserialized_coords.as_slice(),
-            epsilon = f32::EPSILON
-        );
-
-        // Verify cell vertices coordinates and data
-        for (orig_v, deserialized_v) in facet
-            .cell()
-            .vertices()
-            .iter()
-            .zip(deserialized.cell().vertices().iter())
-        {
-            let orig_coords: [f32; 2] = orig_v.into();
-            let deserialized_coords: [f32; 2] = deserialized_v.into();
-            assert_relative_eq!(
-                orig_coords.as_slice(),
-                deserialized_coords.as_slice(),
-                epsilon = f32::EPSILON
-            );
-            assert_eq!(orig_v.data, deserialized_v.data);
-            assert_eq!(orig_v.uuid(), deserialized_v.uuid());
-        }
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Original facet: {facet:?}");
-        println!("Serialized: {serialized}");
-        println!("Deserialized facet: {deserialized:?}");
-    }
-
-    #[test]
     fn facet_eq_different_vertices() {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
@@ -1782,49 +1552,6 @@ mod tests {
 
         // Test that different facets hash to different values
         assert_ne!(get_hash(&facet1), get_hash(&facet3));
-    }
-
-    #[test]
-    fn facet_missing_vertex_field_error() {
-        // Test deserialization with missing "vertex" field
-        // Construct JSON with only the "cell" field
-        let json_with_only_cell = r#"{
-            "cell": {
-                "vertices": [
-                    {
-                        "point": [0.0, 0.0, 0.0],
-                        "uuid": "550e8400-e29b-41d4-a716-446655440000",
-                        "data": null
-                    },
-                    {
-                        "point": [1.0, 0.0, 0.0],
-                        "uuid": "550e8400-e29b-41d4-a716-446655440001",
-                        "data": null
-                    },
-                    {
-                        "point": [0.0, 1.0, 0.0],  
-                        "uuid": "550e8400-e29b-41d4-a716-446655440002",
-                        "data": null
-                    }
-                ],
-                "uuid": "550e8400-e29b-41d4-a716-446655440003",
-                "neighbors": null,
-                "data": null
-            }
-        }"#;
-
-        // Attempt to deserialize - this should fail with missing field "vertex" error
-        let result: Result<Facet<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(json_with_only_cell);
-
-        assert!(result.is_err());
-        let error_message = result.unwrap_err().to_string();
-
-        // Assert the error message contains `missing field "vertex"`
-        assert!(error_message.contains("missing field"));
-        assert!(error_message.contains("vertex"));
-
-        println!("✓ Correctly detected missing vertex field: {error_message}");
     }
 
     // =============================================================================

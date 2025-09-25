@@ -6,7 +6,7 @@ use crate::core::{
     triangulation_data_structure::TriangulationValidationError,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use nalgebra::ComplexField;
+use num_traits::NumCast;
 use serde::{Serialize, de::DeserializeOwned};
 use std::iter::Sum;
 use std::ops::{AddAssign, Div, SubAssign};
@@ -43,18 +43,11 @@ use std::ops::{AddAssign, Div, SubAssign};
 /// ```
 pub trait BoundaryAnalysis<T, U, V, const D: usize>
 where
-    T: CoordinateScalar
-        + AddAssign<T>
-        + ComplexField<RealField = T>
-        + SubAssign<T>
-        + Sum
-        + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    f64: From<T>,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    U: DataType,
+    V: DataType,
     for<'a> &'a T: Div<T>,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    ordered_float::OrderedFloat<f64>: From<T>,
 {
     /// Identifies all boundary facets in the triangulation.
     ///
@@ -130,7 +123,7 @@ where
     ///
     /// // Get a boundary facet using the new iterator API
     /// let boundary_facets = tds.boundary_facets().unwrap();
-    /// let first_facet = boundary_facets.into_iter().next().unwrap();
+    /// let first_facet = boundary_facets.clone().next().unwrap();
     /// // In a single tetrahedron, all facets are boundary facets
     /// assert!(tds.is_boundary_facet(&first_facet).unwrap());
     /// ```

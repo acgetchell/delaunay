@@ -290,6 +290,10 @@ where
                 // Build cache lazily inside RCU to minimize duplicate work under contention.
                 let built_cache = self.try_build_cache_with_rcu(tds)?;
 
+                // Re-check generation to avoid stashing a cache built against a stale TDS.
+                if tds.generation() != current_generation {
+                    return self.try_get_or_build_facet_cache(tds);
+                }
                 // Update generation if we were the ones who built it
                 // Note: built_cache is the old value before our update
                 // Only store generation if the cache is actually present to avoid stale store

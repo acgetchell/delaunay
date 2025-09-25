@@ -284,10 +284,7 @@ fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
     let boundary_times: Vec<_> = (0..3)
         .map(|_| {
             let start = Instant::now();
-            let _ = tds
-                .boundary_facets()
-                .map(std::iter::Iterator::count)
-                .unwrap_or(0);
+            let _ = tds.boundary_facets().map(Iterator::count).unwrap_or(0);
             start.elapsed()
         })
         .collect();

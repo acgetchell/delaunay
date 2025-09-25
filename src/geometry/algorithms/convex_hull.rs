@@ -298,11 +298,15 @@ where
                         |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
                     )?
                     .clone();
-                let opposite_vertex = *facet_view.opposite_vertex().map_err(|source| {
-                    ConvexHullConstructionError::FacetDataAccessFailed { source }
-                })?;
+                #[allow(clippy::clone_on_copy)] // Explicit clone preferred over Copy constraint
+                let opposite_vertex = facet_view
+                    .opposite_vertex()
+                    .map_err(
+                        |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
+                    )?
+                    .clone();
                 #[allow(deprecated)]
-                crate::core::facet::Facet::new(cell, opposite_vertex)
+                Facet::new(cell, opposite_vertex)
                     .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })
             })
             .collect();

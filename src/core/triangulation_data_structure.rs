@@ -592,8 +592,6 @@ where
     ///
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
     /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
     /// assert_eq!(tds.number_of_vertices(), 0);
@@ -733,7 +731,7 @@ where
         let len = i32::try_from(self.number_of_vertices()).unwrap_or(i32::MAX);
         // We need at least D+1 vertices to form a simplex in D dimensions
         let max_dim = i32::try_from(D).unwrap_or(i32::MAX);
-        min(len - 1, max_dim)
+        min(len.saturating_sub(1), max_dim)
     }
 
     /// The function `number_of_cells` returns the number of cells in the [Tds].
@@ -788,8 +786,6 @@ where
     ///
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
     /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
     /// assert_eq!(tds.number_of_cells(), 0); // No cells for empty input
@@ -1873,10 +1869,8 @@ where
     ///
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::vertex::Vertex;
     ///
-    /// let vertices: Vec<Vertex<f64, usize, 3>> = Vec::new();
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
     /// assert_eq!(tds.number_of_vertices(), 0);
     /// assert_eq!(tds.dim(), -1);
     /// ```
@@ -2147,12 +2141,10 @@ where
             // purposes only. The algorithm uses the vertex's UUID to look up the actual
             // vertex instance from the TDS, ensuring consistency between the passed value
             // and the stored vertex. The passed vertex value is not stored or modified.
+            // Save state for potential rollback (algorithm may mutate cells)
+            let pre_algorithm_state = (self.vertices.len(), self.cells.len(), self.generation());
             let mut algorithm = IncrementalBowyerWatson::new();
             if let Err(e) = algorithm.insert_vertex(self, vertex) {
-                // Roll back vertex insertion to keep TDS consistent
-                // Save state for potential rollback (algorithm may have partially mutated cells)
-                let pre_algorithm_state =
-                    (self.vertices.len(), self.cells.len(), self.generation());
                 let vertex_coords = Some(format!("{new_coords:?}"));
                 self.rollback_vertex_insertion(
                     new_vertex_key,
@@ -2290,10 +2282,11 @@ where
             // Verify we've restored the expected counts if provided
             if let Some((pre_vertex_count, pre_cell_count, _pre_generation)) = pre_state {
                 // The vertex count should be exactly pre_vertex_count
-                debug_assert_eq!(
+                debug_assert!(
+                    self.vertices.len() <= pre_vertex_count,
+                    "Vertex count after rollback ({}) should be <= pre-operation count ({})",
                     self.vertices.len(),
-                    pre_vertex_count,
-                    "Vertex count should be restored to pre-algorithm state"
+                    pre_vertex_count
                 );
 
                 // The cell count should be at most pre_cell_count + some reasonable delta
@@ -2578,31 +2571,25 @@ where
         // but this current approach provides good performance for typical triangulation sizes.
         //
         // Memory allocation tradeoff: The updates Vec can be large for meshes with many cells
-        // (e.g., 10K+ cells would create a Vec with 10K+ entries). This is a known tradeoff
-        // between borrow-checker satisfaction and memory efficiency. For extremely large meshes,
-        // consider chunked processing or unsafe code to enable single-phase updates.
-        //
-        // Performance consideration: If profiling shows this Vec allocation as a hotspot,
-        // consider using unsafe code or a more complex iterator approach to enable
-        // single-phase updates with temporary SmallBuffer<Option<Uuid>, MAX_PRACTICAL_DIMENSION_SIZE>
-        // for per-cell neighbor UUID conversion.
-        let updates: Vec<(CellKey, Vec<Option<Uuid>>)> = cell_neighbors
-            .iter()
-            .map(|(cell_key, neighbors)| {
-                let neighbor_uuids = neighbors
-                    .iter()
-                    .map(|&key| key.and_then(|k| self.cell_uuid_from_key(k)))
-                    .collect();
-                (*cell_key, neighbor_uuids)
-            })
-            .collect();
+        // Optimize memory usage by processing cells individually instead of collecting large Vec
+        // Use SmallBuffer for per-cell neighbor UUID conversion to avoid heap allocation
+        // for typical small cell neighbor counts (D+1 neighbors in D dimensions)
 
-        for (cell_key, neighbor_uuids) in updates {
-            if let Some(cell) = self.cells.get_mut(cell_key) {
+        for (cell_key, neighbors) in &cell_neighbors {
+            // Use stack-allocated buffer for neighbor UUIDs to avoid heap allocation
+            let mut neighbor_uuids =
+                SmallBuffer::<Option<Uuid>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+            neighbor_uuids.extend(
+                neighbors
+                    .iter()
+                    .map(|&key| key.and_then(|k| self.cell_uuid_from_key(k))),
+            );
+
+            if let Some(cell) = self.cells.get_mut(*cell_key) {
                 if neighbor_uuids.iter().all(Option::is_none) {
                     cell.neighbors = None;
                 } else {
-                    cell.neighbors = Some(neighbor_uuids);
+                    cell.neighbors = Some(neighbor_uuids.into_iter().collect());
                 }
             }
         }

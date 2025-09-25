@@ -341,19 +341,19 @@ where
     {
         // Use visibility detection with robust fallback
         #[allow(clippy::collapsible_if)] // Can't collapse due to if-let chain guard limitations
-        if let Ok(visible_facets) =
+        if let Ok(visible_facet_handles) =
             self.find_visible_boundary_facets_with_robust_fallback(tds, vertex)
         {
-            if !visible_facets.is_empty() {
+            if !visible_facet_handles.is_empty() {
                 // Ensure vertex is in TDS - if this fails, propagate the error
                 <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
 
                 let cells_created =
-                    <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
+                    <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_facet_handles(
                         tds,
-                        &visible_facets,
+                        &visible_facet_handles,
                         vertex,
-                    );
+                    )?;
 
                 // Maintain invariants after structural changes
                 <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
@@ -480,7 +480,7 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError>
+    ) -> Result<Vec<(CellKey, u8)>, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
@@ -488,21 +488,10 @@ where
         ordered_float::OrderedFloat<f64>: From<T>,
         [f64; D]: Default + DeserializeOwned + Serialize + Sized,
     {
-        // First try to find visible boundary facets using the trait's method
-        match InsertionAlgorithm::<T, U, V, D>::find_visible_boundary_facets(self, tds, vertex) {
-            Ok(visible_facets) => {
-                // If the standard method succeeds and finds facets, use them
-                if !visible_facets.is_empty() {
-                    return Ok(visible_facets);
-                }
-                // If standard method succeeds but finds no facets, try robust method as fallback
-                self.find_visible_boundary_facets(tds, vertex)
-            }
-            Err(_) => {
-                // If standard method fails, use robust method as fallback
-                self.find_visible_boundary_facets(tds, vertex)
-            }
-        }
+        // Use the lightweight method that avoids heavy cloning
+        <Self as InsertionAlgorithm<T, U, V, D>>::find_visible_boundary_facets_lightweight(
+            self, tds, vertex,
+        )
     }
 
     /// Find bad cells using robust insphere predicate.
@@ -3372,9 +3361,12 @@ mod tests {
             algorithm.find_visible_boundary_facets_with_robust_fallback(&tds, &exterior_vertex);
 
         match result {
-            Ok(visible_facets) => {
-                println!("Found {} visible boundary facets", visible_facets.len());
-                if visible_facets.is_empty() {
+            Ok(visible_facet_handles) => {
+                println!(
+                    "Found {} visible boundary facets",
+                    visible_facet_handles.len()
+                );
+                if visible_facet_handles.is_empty() {
                     println!("No visible facets found (edge case)");
                 } else {
                     println!("Successfully found visible facets");
@@ -3392,8 +3384,11 @@ mod tests {
             algorithm.find_visible_boundary_facets_with_robust_fallback(&tds, &interior_vertex);
 
         match interior_result {
-            Ok(facets) => {
-                println!("Interior vertex found {} visible facets", facets.len());
+            Ok(facet_handles) => {
+                println!(
+                    "Interior vertex found {} visible facets",
+                    facet_handles.len()
+                );
             }
             Err(e) => {
                 println!("Interior vertex visibility failed: {e:?}");
@@ -3673,17 +3668,21 @@ mod tests {
             algorithm.find_visible_boundary_facets_with_robust_fallback(&tds, &exterior_vertex);
 
         match result {
-            Ok(visible_facets) => {
+            Ok(visible_facet_handles) => {
                 println!(
                     "Found {} visible boundary facets from exterior",
-                    visible_facets.len()
+                    visible_facet_handles.len()
                 );
                 // Should find some visible facets for exterior point
-                if !visible_facets.is_empty() {
-                    for facet in &visible_facets {
+                if !visible_facet_handles.is_empty() {
+                    for (cell_key, facet_index) in &visible_facet_handles {
                         assert!(
-                            !facet.vertices().is_empty(),
-                            "Visible facet should have vertices"
+                            tds.cells().get(*cell_key).is_some(),
+                            "Cell key {cell_key:?} should exist in TDS"
+                        );
+                        assert!(
+                            *facet_index < 4, // 3D tetrahedra have 4 facets
+                            "Facet index {facet_index} should be valid for 3D cell"
                         );
                     }
                 }
@@ -3699,10 +3698,10 @@ mod tests {
             algorithm.find_visible_boundary_facets_with_robust_fallback(&tds, &interior_vertex);
 
         match interior_result {
-            Ok(visible_facets) => {
+            Ok(visible_facet_handles) => {
                 println!(
                     "Found {} visible boundary facets from interior",
-                    visible_facets.len()
+                    visible_facet_handles.len()
                 );
                 // Interior points typically don't see boundary facets
             }

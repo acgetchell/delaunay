@@ -234,7 +234,7 @@ where
             where
                 V: MapAccess<'de>,
             {
-                let mut point = None;
+                let mut point: Option<Point<T, D>> = None;
                 let mut uuid = None;
                 let mut incident_cell = None;
                 let mut data = None;
@@ -276,19 +276,17 @@ where
                 let incident_cell = incident_cell.unwrap_or(None);
                 let data = data.unwrap_or(None);
 
-                let mut vertex = Vertex {
-                    point: Point::default(), // Temporary placeholder
-                    uuid,
-                    incident_cell,
-                    data,
-                };
-
-                // Use set_point to ensure validation
-                vertex.set_point(point).map_err(|e| {
+                // Validate point before constructing
+                point.validate().map_err(|e| {
                     de::Error::custom(format!("Invalid point during deserialization: {e}"))
                 })?;
 
-                Ok(vertex)
+                Ok(Vertex {
+                    point,
+                    uuid,
+                    incident_cell,
+                    data,
+                })
             }
         }
 

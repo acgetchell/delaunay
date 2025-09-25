@@ -290,7 +290,7 @@ if tds_result.is_err() {
     
     // Use robust Bowyer-Watson algorithm
     let mut robust_algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::for_degenerate_cases();
-    let mut tds = Tds::new_empty();
+    let mut tds = Tds::empty();
     
     for vertex in &vertices {
         if let Err(e) = robust_algorithm.insert_vertex(&mut tds, vertex) {
@@ -395,13 +395,13 @@ pub fn create_triangulation_with_fallback(
     
     // Strategy 2: Try with general robust configuration
     let mut robust_algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
-    let mut tds = Tds::new_empty();
+    let mut tds = Tds::empty();
     
     for vertex in vertices {
         if let Err(_) = robust_algorithm.insert_vertex(&mut tds, vertex) {
             // Strategy 3: Try with maximum robustness configuration
             let mut max_robust_algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::for_degenerate_cases();
-            let mut max_robust_tds = Tds::new_empty();
+            let mut max_robust_tds = Tds::empty();
             
             for v in vertices {
                 if let Err(e) = max_robust_algorithm.insert_vertex(&mut max_robust_tds, v) {
@@ -422,7 +422,7 @@ fn try_with_filtered_vertices(
     vertices: &[Vertex<f64, Option<()>, 3>]
 ) -> Result<Tds<f64, Option<()>, Option<()>, 3>, String> {
     let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::for_degenerate_cases();
-    let mut tds = Tds::new_empty();
+    let mut tds = Tds::empty();
     
     for vertex in vertices {
         algorithm.insert_vertex(&mut tds, vertex)
