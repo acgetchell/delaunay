@@ -136,7 +136,7 @@ where
     V: DataType,
     f64: From<T>,
     for<'a> &'a T: std::ops::Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     OrderedFloat<f64>: From<T>,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {

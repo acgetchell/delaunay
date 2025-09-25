@@ -5,6 +5,7 @@
 //! Bowyer-Watson algorithm and robust variants with enhanced numerical stability.
 
 use crate::core::collections::{CellKeySet, SmallBuffer};
+use crate::core::facet::{FacetError, FacetView};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::triangulation_data_structure::CellKey;
 use crate::core::{
@@ -19,18 +20,18 @@ use crate::geometry::point::Point;
 use crate::geometry::predicates::{InSphere, Orientation, insphere, simplex_orientation};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use approx::abs_diff_eq;
-use num_traits::{NumCast, One, Zero, cast};
+use num_traits::NumCast;
+use num_traits::{One, Zero, cast};
 use serde::{Serialize, de::DeserializeOwned};
 use smallvec::SmallVec;
-use std::{
-    iter::Sum,
-    ops::{AddAssign, Div, SubAssign},
-};
+use std::iter::Sum;
+use std::marker::PhantomData;
+use std::ops::{AddAssign, Div, SubAssign};
 
 /// Helper function to convert `FacetView` to `Facet` for compatibility
 fn make_facet_from_view<T, U, V, const D: usize>(
     fv: &crate::core::facet::FacetView<'_, T, U, V, D>,
-) -> crate::core::facet::Facet<T, U, V, D>
+) -> Result<crate::core::facet::Facet<T, U, V, D>, TriangulationValidationError>
 where
     T: crate::geometry::traits::coordinate::CoordinateScalar
         + AddAssign<T>
@@ -42,9 +43,16 @@ where
     [T; D]: Copy + serde::de::DeserializeOwned + serde::Serialize + Sized,
     for<'a> &'a T: Div<T>,
 {
+    let cell = fv
+        .cell()
+        .map_err(TriangulationValidationError::FacetError)?
+        .clone();
+    let opposite = fv
+        .opposite_vertex()
+        .map_err(TriangulationValidationError::FacetError)?;
     #[allow(deprecated)]
-    crate::core::facet::Facet::new(fv.cell().unwrap().clone(), *fv.opposite_vertex().unwrap())
-        .unwrap()
+    crate::core::facet::Facet::new(cell, *opposite)
+        .map_err(TriangulationValidationError::FacetError)
 }
 
 /// Error for too many degenerate cells case
@@ -411,12 +419,14 @@ where
 {
     /// Buffer for storing bad cell keys during cavity detection
     bad_cells_buffer: SmallBuffer<crate::core::triangulation_data_structure::CellKey, 16>,
-    /// Buffer for storing boundary facets during cavity boundary detection
-    boundary_facets_buffer: SmallBuffer<Facet<T, U, V, D>, 8>,
+    /// Buffer for storing boundary facet handles during cavity boundary detection
+    boundary_facets_buffer: SmallBuffer<(CellKey, u8), 8>,
     /// Buffer for storing vertex points during geometric computations
     vertex_points_buffer: SmallBuffer<crate::geometry::point::Point<T, D>, 16>,
-    /// Buffer for storing visible boundary facets
-    visible_facets_buffer: SmallBuffer<Facet<T, U, V, D>, 8>,
+    /// Buffer for storing visible boundary facet handles
+    visible_facets_buffer: SmallBuffer<(CellKey, u8), 8>,
+    /// Phantom data to maintain generic parameter constraints
+    _phantom: PhantomData<(U, V)>,
 }
 
 impl<T, U, V, const D: usize> Default for InsertionBuffers<T, U, V, D>
@@ -446,6 +456,7 @@ where
             boundary_facets_buffer: SmallBuffer::new(),
             vertex_points_buffer: SmallBuffer::new(),
             visible_facets_buffer: SmallBuffer::new(),
+            _phantom: PhantomData,
         }
     }
 
@@ -457,6 +468,7 @@ where
             boundary_facets_buffer: SmallBuffer::with_capacity(capacity),
             vertex_points_buffer: SmallBuffer::with_capacity(capacity * (D + 1)), // More points per operation
             visible_facets_buffer: SmallBuffer::with_capacity(core::cmp::max(1, capacity / 2)), // Guard against zero capacity for tiny inputs
+            _phantom: PhantomData,
         }
     }
 
@@ -477,7 +489,7 @@ where
     }
 
     /// Prepare the boundary facets buffer and return a mutable reference
-    pub fn prepare_boundary_facets_buffer(&mut self) -> &mut SmallBuffer<Facet<T, U, V, D>, 8> {
+    pub fn prepare_boundary_facets_buffer(&mut self) -> &mut SmallBuffer<(CellKey, u8), 8> {
         self.boundary_facets_buffer.clear();
         &mut self.boundary_facets_buffer
     }
@@ -491,7 +503,7 @@ where
     }
 
     /// Prepare the visible facets buffer and return a mutable reference
-    pub fn prepare_visible_facets_buffer(&mut self) -> &mut SmallBuffer<Facet<T, U, V, D>, 8> {
+    pub fn prepare_visible_facets_buffer(&mut self) -> &mut SmallBuffer<(CellKey, u8), 8> {
         self.visible_facets_buffer.clear();
         &mut self.visible_facets_buffer
     }
@@ -516,12 +528,12 @@ where
 
     /// Get a reference to the boundary facets buffer
     #[must_use]
-    pub const fn boundary_facets_buffer(&self) -> &SmallBuffer<Facet<T, U, V, D>, 8> {
+    pub const fn boundary_facets_buffer(&self) -> &SmallBuffer<(CellKey, u8), 8> {
         &self.boundary_facets_buffer
     }
 
     /// Get a mutable reference to the boundary facets buffer
-    pub const fn boundary_facets_buffer_mut(&mut self) -> &mut SmallBuffer<Facet<T, U, V, D>, 8> {
+    pub const fn boundary_facets_buffer_mut(&mut self) -> &mut SmallBuffer<(CellKey, u8), 8> {
         &mut self.boundary_facets_buffer
     }
 
@@ -542,12 +554,12 @@ where
 
     /// Get a reference to the visible facets buffer
     #[must_use]
-    pub const fn visible_facets_buffer(&self) -> &SmallBuffer<Facet<T, U, V, D>, 8> {
+    pub const fn visible_facets_buffer(&self) -> &SmallBuffer<(CellKey, u8), 8> {
         &self.visible_facets_buffer
     }
 
     /// Get a mutable reference to the visible facets buffer
-    pub const fn visible_facets_buffer_mut(&mut self) -> &mut SmallBuffer<Facet<T, U, V, D>, 8> {
+    pub const fn visible_facets_buffer_mut(&mut self) -> &mut SmallBuffer<(CellKey, u8), 8> {
         &mut self.visible_facets_buffer
     }
 
@@ -555,6 +567,21 @@ where
     // These methods ease migration for external code that may have used direct field access
 
     /// Extract the bad cells as a Vec for compatibility with previous Vec-based APIs
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<CellKey>` containing all the bad cell keys stored in the buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::traits::insertion_algorithm::InsertionBuffers;
+    /// use delaunay::core::triangulation_data_structure::CellKey;
+    ///
+    /// let mut buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::new();
+    /// let bad_cells = buffers.bad_cells_as_vec();
+    /// assert!(bad_cells.is_empty());
+    /// ```
     #[must_use]
     pub fn bad_cells_as_vec(&self) -> Vec<crate::core::triangulation_data_structure::CellKey> {
         self.bad_cells_buffer.iter().copied().collect()
@@ -569,16 +596,43 @@ where
         self.bad_cells_buffer.extend(vec);
     }
 
-    /// Extract the boundary facets as a Vec for compatibility with previous Vec-based APIs
+    /// Extract the boundary facet handles as a Vec
     #[must_use]
-    pub fn boundary_facets_as_vec(&self) -> Vec<Facet<T, U, V, D>> {
-        self.boundary_facets_buffer.iter().cloned().collect()
+    pub fn boundary_facet_handles(&self) -> Vec<(CellKey, u8)> {
+        self.boundary_facets_buffer.iter().copied().collect()
     }
 
-    /// Set boundary facets from a Vec for compatibility with previous Vec-based APIs
-    pub fn set_boundary_facets_from_vec(&mut self, vec: Vec<Facet<T, U, V, D>>) {
+    /// Set boundary facets from handles
+    pub fn set_boundary_facet_handles(&mut self, handles: Vec<(CellKey, u8)>) {
         self.boundary_facets_buffer.clear();
-        self.boundary_facets_buffer.extend(vec);
+        self.boundary_facets_buffer.extend(handles);
+    }
+
+    /// Extract the boundary facets as `FacetViews` for iteration
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - The triangulation data structure to create `FacetViews` with
+    ///
+    /// # Returns
+    ///
+    /// A `Result<Vec<FacetView>, FacetError>` containing the `FacetViews`
+    ///
+    /// # Errors
+    ///
+    /// Returns `FacetError` if facet views cannot be created from the stored handles.
+    pub fn boundary_facets_as_views<'tds>(
+        &self,
+        tds: &'tds Tds<T, U, V, D>,
+    ) -> Result<Vec<FacetView<'tds, T, U, V, D>>, FacetError>
+    where
+        T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+        for<'a> &'a T: Div<T>,
+    {
+        self.boundary_facets_buffer
+            .iter()
+            .map(|&(cell_key, facet_index)| FacetView::new(tds, cell_key, facet_index))
+            .collect()
     }
 
     /// Extract the vertex points as a Vec for compatibility with previous Vec-based APIs
@@ -593,16 +647,43 @@ where
         self.vertex_points_buffer.extend(vec);
     }
 
-    /// Extract the visible facets as a Vec for compatibility with previous Vec-based APIs
+    /// Extract the visible facet handles as a Vec
     #[must_use]
-    pub fn visible_facets_as_vec(&self) -> Vec<Facet<T, U, V, D>> {
-        self.visible_facets_buffer.iter().cloned().collect()
+    pub fn visible_facet_handles(&self) -> Vec<(CellKey, u8)> {
+        self.visible_facets_buffer.iter().copied().collect()
     }
 
-    /// Set visible facets from a Vec for compatibility with previous Vec-based APIs
-    pub fn set_visible_facets_from_vec(&mut self, vec: Vec<Facet<T, U, V, D>>) {
+    /// Set visible facets from handles
+    pub fn set_visible_facet_handles(&mut self, handles: Vec<(CellKey, u8)>) {
         self.visible_facets_buffer.clear();
-        self.visible_facets_buffer.extend(vec);
+        self.visible_facets_buffer.extend(handles);
+    }
+
+    /// Extract the visible facets as `FacetViews` for iteration
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - The triangulation data structure to create `FacetViews` with
+    ///
+    /// # Returns
+    ///
+    /// A `Result<Vec<FacetView>, FacetError>` containing the `FacetViews`
+    ///
+    /// # Errors
+    ///
+    /// Returns `FacetError` if facet views cannot be created from the stored handles.
+    pub fn visible_facets_as_views<'tds>(
+        &self,
+        tds: &'tds Tds<T, U, V, D>,
+    ) -> Result<Vec<FacetView<'tds, T, U, V, D>>, FacetError>
+    where
+        T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+        for<'a> &'a T: Div<T>,
+    {
+        self.visible_facets_buffer
+            .iter()
+            .map(|&(cell_key, facet_index)| FacetView::new(tds, cell_key, facet_index))
+            .collect()
     }
 }
 
@@ -1789,7 +1870,7 @@ where
             match self.is_facet_visible_from_vertex(tds, &facet_view, vertex, cell_key) {
                 Ok(true) => {
                     // Convert FacetView to Facet for compatibility with return type
-                    let facet = make_facet_from_view(&facet_view);
+                    let facet = make_facet_from_view(&facet_view)?;
                     visible_facets.push(facet);
                 }
                 Ok(false) => {
@@ -2516,7 +2597,7 @@ mod tests {
                 "Both methods should find the same number of visible facets for vertex {i}"
             );
 
-            // Convert lightweight handles to FacetViews for key comparison
+            // Convert lightweight handles to `FacetViews` for key comparison
             let lightweight_views: Result<Vec<_>, _> = lightweight_result
                 .iter()
                 .map(|(cell_key, facet_index)| {
@@ -2525,9 +2606,9 @@ mod tests {
                 .collect();
 
             let lightweight_views =
-                lightweight_views.expect("Should be able to create FacetViews from handles");
+                lightweight_views.expect("Should be able to create `FacetViews` from handles");
 
-            // Convert regular facets to FacetViews for consistent comparison using FacetView::key()
+            // Convert regular facets to `FacetViews` for consistent comparison using FacetView::key()
             let regular_views: Result<Vec<_>, _> = regular_result
                 .iter()
                 .map(|facet| {
@@ -2552,7 +2633,7 @@ mod tests {
                 .collect();
 
             let regular_views =
-                regular_views.expect("Should be able to convert regular facets to FacetViews");
+                regular_views.expect("Should be able to convert regular facets to `FacetViews`");
 
             // Compare using FacetView::key() (which returns Result<u64, FacetError>)
             let mut regular_keys: Vec<u64> = regular_views
@@ -3263,7 +3344,7 @@ mod tests {
             .clone()
             .next()
             .expect("Should have boundary facets");
-        let test_facet_compat = make_facet_from_view(&test_facet);
+        let test_facet_compat = make_facet_from_view(&test_facet).unwrap();
         drop(boundary_facets); // Drop the iterator to release the immutable borrow
 
         let initial_cell_count = tds.number_of_cells();
@@ -3316,7 +3397,7 @@ mod tests {
             .expect("Should have boundary facets");
         let facet_vertices: Vec<_> = test_facet.vertices().collect();
         let duplicate_vertex = *facet_vertices[0]; // Use an existing facet vertex
-        let test_facet_compat = make_facet_from_view(&test_facet);
+        let test_facet_compat = make_facet_from_view(&test_facet).unwrap();
         drop(boundary_facets); // Drop the iterator to release the immutable borrow
 
         let initial_cell_count = tds.number_of_cells();
@@ -4075,7 +4156,7 @@ mod tests {
             .clone()
             .next()
             .expect("Should have boundary facets");
-        let test_facet_compat = make_facet_from_view(&test_facet);
+        let test_facet_compat = make_facet_from_view(&test_facet).unwrap();
         drop(boundary_facets); // Drop the iterator to release the immutable borrow
 
         // Try to create cell with vertex that would create degenerate cell
@@ -4125,7 +4206,7 @@ mod tests {
             .clone()
             .next()
             .expect("Should have boundary facets");
-        let test_facet_compat = make_facet_from_view(&test_facet);
+        let test_facet_compat = make_facet_from_view(&test_facet).unwrap();
         drop(boundary_facets); // Drop the iterator to release the immutable borrow
 
         // Test vertex that might cause facet creation issues
@@ -4791,7 +4872,7 @@ mod tests {
 
         // Convert boundary facets to Vec before mutable borrow
         let boundary_facets_vec: Vec<_> = boundary_facets
-            .map(|fv| make_facet_from_view(&fv))
+            .map(|fv| make_facet_from_view(&fv).unwrap())
             .collect();
 
         let initial_cell_count = tds.number_of_cells();
