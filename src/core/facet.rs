@@ -261,27 +261,18 @@ where
     pub const fn tds(&self) -> &'tds Tds<T, U, V, D> {
         self.tds
     }
-}
 
-impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D>
-where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
-    U: DataType,
-    V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    for<'a> &'a T: Div<T>,
-{
     /// Creates a new `FacetView` for the specified facet of a cell.
     ///
     /// # Arguments
     ///
     /// * `tds` - Reference to the triangulation data structure
-    /// * `cell_key` - Key of the cell containing the facet
-    /// * `facet_index` - Index of the facet within the cell (0 to D)
+    /// * `cell_key` - The key of the cell containing the facet
+    /// * `facet_index` - The index of the facet within the cell (0 to D)
     ///
     /// # Returns
     ///
-    /// A `Result` containing the `FacetView` or a `FacetError`.
+    /// A `Result<FacetView, FacetError>` containing the facet view if successful.
     ///
     /// # Errors
     ///
@@ -314,7 +305,16 @@ where
             facet_index,
         })
     }
+}
 
+impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    for<'a> &'a T: Div<T>,
+{
     /// Returns an iterator over the vertices that make up this facet.
     ///
     /// The facet vertices are all vertices of the containing cell except

@@ -58,9 +58,7 @@ use std::{
     cmp,
     fmt::{self, Debug},
     hash::{Hash, Hasher},
-    iter::Sum,
     marker::PhantomData,
-    ops::{AddAssign, Div, SubAssign},
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -1113,9 +1111,12 @@ where
         cell_key: crate::core::triangulation_data_structure::CellKey,
     ) -> Result<Vec<crate::core::facet::FacetView<'tds, T, U, V, D>>, FacetError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
-        for<'a> &'a T: Div<T>,
+        T: CoordinateScalar,
+        U: DataType,
+        V: DataType,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
+        debug_assert!(u8::try_from(D).is_ok(), "Facet index must fit into u8");
         (0..=D)
             .map(|facet_index| {
                 crate::core::facet::FacetView::new(

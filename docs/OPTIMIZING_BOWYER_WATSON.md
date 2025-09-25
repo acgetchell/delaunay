@@ -29,7 +29,7 @@ which aligns with Phase 2's goal of optimizing internal operations and eliminati
 
 #### 1. Bowyer-Watson Algorithm Implementations
 
-Both `IncrementalBowyerWatson` and `RobustBowyerWatson` algorithms repeatedly call `tds.build_facet_to_cells_hashmap()` without caching:
+Both `IncrementalBowyerWatson` and `RobustBowyerWatson` algorithms repeatedly call `tds.build_facet_to_cells_map()` without caching:
 
 **`IncrementalBowyerWatson` (src/core/algorithms/bowyer_watson.rs):**
 
@@ -175,7 +175,7 @@ where
 **Before:**
 
 ```rust
-let facet_to_cells = tds.build_facet_to_cells_hashmap();
+let facet_to_cells = tds.build_facet_to_cells_map();
 ```
 
 **After:**
@@ -197,7 +197,7 @@ let facet_to_cells = self.get_or_build_facet_cache(&tds);
 
 - `build_validated_facet_mapping()`
 - `find_visible_boundary_facets()`
-- Any other methods calling `build_facet_to_cells_hashmap()`
+- Any other methods calling `build_facet_to_cells_map()`
 
 #### 3.3 Optimize Boundary Analysis Patterns
 
@@ -306,7 +306,7 @@ Validate concurrent access patterns if algorithms are used in multi-threaded con
 - [N/A] Update `count_invalid_facets()` in IncrementalBowyerWatson (test helper only)
 - [✓] Update `build_validated_facet_mapping()` in RobustBowyerWatson
 - [✓] Update `find_visible_boundary_facets()` in RobustBowyerWatson
-- [✓] Review and update any other methods using `build_facet_to_cells_hashmap()`
+- [✓] Review and update any other methods using `build_facet_to_cells_map()`
 
 ### Testing
 
@@ -400,9 +400,21 @@ Validate concurrent access patterns if algorithms are used in multi-threaded con
   let is_boundary = tds.is_boundary_facet_with_map(&facet_view, &map)?;
   ```
 
-- Wrap existing calls with `.unwrap()` or `.expect()` for quick migration
-- Add proper error handling using `?` operator or `match` statements for robust applications
-- Error types are now consistent across boundary analysis APIs
+#### Quick Migration Patterns
+
+| **Common Operation** | **Old API** | **New API** |
+|---|---|---|
+| **Get boundary count** | `tds.boundary_facets().len()` | `tds.boundary_facets()?.count()` |
+| **Check if has boundaries** | `!tds.boundary_facets().is_empty()` | `tds.boundary_facets()?.next().is_some()` |
+| **Iterate boundaries** | `for facet in tds.boundary_facets() { ... }` | `for facet_view in tds.boundary_facets()? { ... }` |
+| **Collect to Vec** | `let facets = tds.boundary_facets();` | `let facets: Vec<_> = tds.boundary_facets()?.collect();` |
+| **Check specific facet** | `tds.is_boundary_facet(facet)` | `tds.is_boundary_facet(&facet_view)?` |
+
+#### Error Handling Migration
+
+- **Quick migration**: Wrap existing calls with `.unwrap()` or `.expect()` for immediate compatibility
+- **Robust applications**: Use `?` operator or `match` statements for proper error handling
+- **Error types**: All boundary analysis APIs now return consistent `TriangulationValidationError`
 
 ### Dependencies
 

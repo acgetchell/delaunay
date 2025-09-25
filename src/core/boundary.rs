@@ -360,7 +360,7 @@ mod tests {
 
         // Test Case 4: Empty triangulation
         {
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
+            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
             assert_eq!(
                 tds.number_of_cells(),
                 0,

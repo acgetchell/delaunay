@@ -489,12 +489,12 @@ where
 // =============================================================================
 
 // =============================================================================
-// CORE API METHODS
+// LIGHTWEIGHT ACCESSOR METHODS
 // =============================================================================
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
@@ -503,13 +503,15 @@ where
     ///
     /// This method provides read-only access to the internal cells collection,
     /// allowing external code to iterate over or access specific cells by their keys.
+    /// Combined with the cells iterator methods, this enables efficient traversal
+    /// of the triangulation's cellular structure.
     ///
     /// # Returns
     ///
-    /// A reference to the `SlotMap<CellKey, Cell<T, U, V, D>>` containing all cells
-    /// in the triangulation data structure.
+    /// A reference to the `SlotMap<CellKey, Cell<T, U, V, D>>` storing all cells
+    /// in the triangulation.
     ///
-    /// # Examples
+    /// # Example
     ///
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
@@ -521,14 +523,9 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    ///
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
-    /// // Access the cells SlotMap
     /// let cells = tds.cells();
-    /// println!("Number of cells: {}", cells.len());
-    ///
-    /// // Iterate over all cells
     /// for (cell_key, cell) in cells {
     ///     println!("Cell {:?} has {} vertices", cell_key, cell.vertices().len());
     /// }
@@ -547,38 +544,44 @@ where
     ///
     /// # Returns
     ///
-    /// A reference to the `SlotMap<VertexKey, Vertex<T, U, D>>` containing all vertices
-    /// in the triangulation data structure.
+    /// A reference to the `SlotMap<VertexKey, Vertex<T, U, D>>` storing all vertices
+    /// in the triangulation.
     ///
-    /// # Examples
+    /// # Example
     ///
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.5, 1.0]),
     /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
     ///
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    ///
-    /// // Access the vertices SlotMap using the accessor method
     /// let vertices_map = tds.vertices();
-    /// println!("Number of vertices: {}", vertices_map.len());
-    ///
-    /// // Iterate over all vertices
     /// for (vertex_key, vertex) in vertices_map {
-    ///     println!("Vertex {:?} at position {:?}", vertex_key, vertex.point());
+    ///     println!("Vertex {:?} at {:?}", vertex_key, vertex.point());
     /// }
     /// ```
     #[must_use]
     pub const fn vertices(&self) -> &SlotMap<VertexKey, Vertex<T, U, D>> {
         &self.vertices
     }
+}
 
+// =============================================================================
+// CORE API METHODS
+// =============================================================================
+
+impl<T, U, V, const D: usize> Tds<T, U, V, D>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+{
     /// The function returns the number of vertices in the triangulation
     /// data structure.
     ///
@@ -657,7 +660,7 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+    /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
     /// assert_eq!(tds.dim(), -1); // Empty triangulation
     /// ```
     ///
@@ -670,7 +673,7 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::new(&[]).unwrap();
+    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::empty();
     ///
     /// // Start empty
     /// assert_eq!(tds.dim(), -1);
@@ -787,7 +790,7 @@ where
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
     ///
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+    /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
     /// assert_eq!(tds.number_of_cells(), 0); // No cells for empty input
     /// ```
     #[must_use]
@@ -1179,7 +1182,7 @@ where
     /// use delaunay::core::triangulation_data_structure::Tds;
     /// use uuid::Uuid;
     ///
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
     /// let random_uuid = Uuid::new_v4();
     ///
     /// let result = tds.cell_key_from_uuid(&random_uuid);
@@ -1239,7 +1242,7 @@ where
     /// use delaunay::core::triangulation_data_structure::Tds;
     /// use uuid::Uuid;
     ///
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
     /// let random_uuid = Uuid::new_v4();
     ///
     /// let result = tds.vertex_key_from_uuid(&random_uuid);
@@ -1766,8 +1769,8 @@ where
     /// Creates a new empty triangulation data structure.
     ///
     /// This function creates an empty triangulation with no vertices and no cells.
-    /// It's equivalent to calling `Tds::new(&[])` but more explicit about the intent
-    /// to create an empty triangulation.
+    /// It's equivalent to calling `Tds::new(&[]).unwrap()` but more explicit about the intent
+    /// and doesn't require unwrapping since empty triangulations never fail to construct.
     ///
     /// # Returns
     ///
@@ -3486,7 +3489,7 @@ where
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
     ///
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+    /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
     /// assert!(tds.is_valid().is_ok());
     /// ```
     pub fn is_valid(&self) -> Result<(), TriangulationValidationError>

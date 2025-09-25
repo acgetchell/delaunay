@@ -330,34 +330,22 @@ where
         // others wait and reuse the result, avoiding expensive duplicate work.
         self.facet_cache().store(None);
 
-        // Use RCU coordination - one thread builds, others wait and reuse
-        if let Some(new_cache_arc) = self.try_build_cache_with_rcu(tds)? {
-            // Another thread built the cache or we successfully built it
-            // Update generation for this successful cache
+        // Coordinate the build; return value is the OLD cache (if any).
+        let _old = self.try_build_cache_with_rcu(tds)?;
+
+        if let Some(cache) = self.facet_cache().load_full() {
             self.cached_generation()
                 .store(current_generation, Ordering::Release);
-            Ok(new_cache_arc)
-        } else {
-            // Extremely unlikely: invalidated again during build
-            // Fall back to direct build to ensure forward progress
-            let new_cache = tds.build_facet_to_cells_map()?;
-            let new_cache_arc = Arc::new(new_cache);
-
-            // Atomically swap in the new cache.
-            // ORDERING: ArcSwap's store() uses SeqCst ordering, establishing a happens-before
-            // relationship with any subsequent loads. This ensures the new cache is visible
-            // to all threads before the generation update below.
-            self.facet_cache().store(Some(new_cache_arc.clone()));
-
-            // Update the generation snapshot.
-            // ORDERING: The Release ordering here synchronizes with Acquire loads in future
-            // cache checks. Combined with the SeqCst store above, this ensures readers will
-            // see both the new cache and the updated generation consistently.
-            self.cached_generation()
-                .store(current_generation, Ordering::Release);
-
-            Ok(new_cache_arc)
+            return Ok(cache);
         }
+
+        // Fallback to direct build to guarantee progress
+        let new_cache = tds.build_facet_to_cells_map()?;
+        let new_cache_arc = Arc::new(new_cache);
+        self.facet_cache().store(Some(new_cache_arc.clone()));
+        self.cached_generation()
+            .store(current_generation, Ordering::Release);
+        Ok(new_cache_arc)
     }
 
     /// Invalidates the facet cache, forcing a rebuild on the next access.
@@ -883,7 +871,7 @@ mod tests {
         let provider = TestCacheProvider::new();
 
         // Create an empty triangulation
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
 
         // Should handle empty triangulation gracefully
         let cache = provider.get_or_build_facet_cache(&tds);

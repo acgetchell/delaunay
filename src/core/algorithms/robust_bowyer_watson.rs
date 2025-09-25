@@ -39,7 +39,6 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::iter::Sum;
 
 /// Enhanced Bowyer-Watson algorithm with robust geometric predicates.
-#[derive(Default)]
 pub struct RobustBoyerWatson<T, U, V, const D: usize>
 where
     T: CoordinateScalar,
@@ -272,16 +271,14 @@ where
                     // The cavity-based insertion algorithm requires: extract → remove → create
 
                     // Store handles and extract facet data while cells still exist
-                    let mut extracted_facet_data = Vec::new();
+                    let mut extracted_facet_data = Vec::with_capacity(boundary_handles.len());
                     for &(cell_key, facet_index) in &boundary_handles {
-                        if let Some(_cell) = tds.cells().get(cell_key) {
-                            if let Ok(facet_view) =
-                                crate::core::facet::FacetView::new(tds, cell_key, facet_index)
-                            {
-                                let facet_vertices: Vec<Vertex<T, U, D>> =
-                                    facet_view.vertices().copied().collect();
-                                extracted_facet_data.push(facet_vertices);
-                            }
+                        if let Ok(facet_view) =
+                            crate::core::facet::FacetView::new(tds, cell_key, facet_index)
+                        {
+                            let facet_vertices: Vec<Vertex<T, U, D>> =
+                                facet_view.vertices().copied().collect();
+                            extracted_facet_data.push(facet_vertices);
                         }
                     }
 
@@ -489,13 +486,6 @@ where
         }
     }
 
-    /// Find cavity boundary facets by first using the trait method, then applying robust predicates for edge cases.
-    ///
-    /// This approach integrates the trait's `find_cavity_boundary_facets` method with the robust predicates
-    /// to provide a more reliable boundary facet detection method, especially for degenerate cases.
-    ///
-    /// # Deprecated
-    /// Consider using `find_cavity_boundary_facets_lightweight_with_robust_fallback` for better performance.
     /// Find visible boundary facets by first using the trait method, then applying robust predicates for edge cases.
     ///
     /// This approach integrates the trait's `find_visible_boundary_facets` method with the robust predicates
@@ -607,7 +597,7 @@ where
                         continue;
                     }; // Cannot form a valid facet key - vertex not found
 
-                    if processed_facets.contains(&facet_key) {
+                    if !processed_facets.insert(facet_key) {
                         continue;
                     }
 
@@ -624,7 +614,6 @@ where
                             if let Ok(facet_idx_u8) = u8::try_from(facet_idx) {
                                 boundary_handles.push((bad_cell_key, facet_idx_u8));
                             }
-                            processed_facets.insert(facet_key);
                         }
                     }
                 }
@@ -673,7 +662,7 @@ where
                         continue;
                     }; // Cannot form a valid facet key - vertex not found
 
-                    if processed_facets.contains(&facet_key) {
+                    if !processed_facets.insert(facet_key) {
                         continue;
                     }
 
@@ -687,7 +676,6 @@ where
                         // Enhanced boundary detection logic
                         if Self::is_cavity_boundary_facet(bad_count, total_count) {
                             boundary_facets.push(facet.clone());
-                            processed_facets.insert(facet_key);
                         }
                     }
                 }
@@ -1282,6 +1270,23 @@ where
 
     fn cached_generation(&self) -> &AtomicU64 {
         self.cached_generation.as_ref()
+    }
+}
+
+impl<T, U, V, const D: usize> Default for RobustBoyerWatson<T, U, V, D>
+where
+    T: CoordinateScalar + ComplexField<RealField = T> + Sum + num_traits::Zero + From<f64>,
+    U: crate::core::traits::data_type::DataType + DeserializeOwned,
+    V: crate::core::traits::data_type::DataType + DeserializeOwned,
+    f64: From<T>,
+    for<'a> &'a T: std::ops::Div<T>,
+    ordered_float::OrderedFloat<f64>: From<T>,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+    na::OPoint<T, na::Const<D>>: From<[f64; D]>,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -3875,5 +3880,84 @@ mod tests {
 
         // Should have processed at least the successful insertions
         assert!(final_processed >= successful_insertions);
+    }
+
+    #[test]
+    fn test_default_implementation_consistency() {
+        // Test that Default::default() produces the same configuration as new()
+        let default_algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::default();
+        let new_algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Both should have the same predicate configuration
+        approx::assert_relative_eq!(
+            default_algorithm.predicate_config.base_tolerance,
+            new_algorithm.predicate_config.base_tolerance,
+            epsilon = f64::EPSILON,
+            max_relative = f64::EPSILON
+        );
+        approx::assert_relative_eq!(
+            default_algorithm.predicate_config.perturbation_scale,
+            new_algorithm.predicate_config.perturbation_scale,
+            epsilon = f64::EPSILON,
+            max_relative = f64::EPSILON
+        );
+
+        // Both should have buffers with the same capacity
+        // We can't directly access buffer capacity, but we can verify they behave identically
+        // by checking they both start with zero statistics
+        let (def_processed, def_created, def_removed) = default_algorithm.get_statistics();
+        let (new_processed, new_created, new_removed) = new_algorithm.get_statistics();
+
+        assert_eq!(def_processed, 0, "Default should start with zero processed");
+        assert_eq!(new_processed, 0, "New should start with zero processed");
+        assert_eq!(def_created, 0, "Default should start with zero created");
+        assert_eq!(new_created, 0, "New should start with zero created");
+        assert_eq!(def_removed, 0, "Default should start with zero removed");
+        assert_eq!(new_removed, 0, "New should start with zero removed");
+
+        // Verify both have the same cache generation
+        assert_eq!(
+            default_algorithm
+                .cached_generation()
+                .load(std::sync::atomic::Ordering::Acquire),
+            new_algorithm
+                .cached_generation()
+                .load(std::sync::atomic::Ordering::Acquire),
+            "Default and new() should have identical cache generation"
+        );
+    }
+
+    #[test]
+    fn test_default_has_proper_buffer_capacity() {
+        // Test that Default creates buffers with pre-allocated capacity
+        // This is an indirect test since we can't access buffer internals directly
+        let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::default();
+
+        // Verify the algorithm is properly initialized and functional
+        // If buffers weren't properly initialized, this would likely fail or be inefficient
+        let vertices = vec![
+            crate::vertex!([0.0, 0.0, 0.0]),
+            crate::vertex!([1.0, 0.0, 0.0]),
+            crate::vertex!([0.0, 1.0, 0.0]),
+            crate::vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let result = algorithm.new_triangulation(&vertices);
+        assert!(
+            result.is_ok(),
+            "Default algorithm should be able to create triangulation"
+        );
+
+        let tds = result.unwrap();
+        assert_eq!(
+            tds.number_of_vertices(),
+            4,
+            "Triangulation should have 4 vertices"
+        );
+        assert_eq!(
+            tds.number_of_cells(),
+            1,
+            "Triangulation should have 1 tetrahedron"
+        );
     }
 }
