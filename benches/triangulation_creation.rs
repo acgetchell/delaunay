@@ -55,7 +55,7 @@ use delaunay::geometry::util::generate_random_triangulation;
 /// 4. Reports time and throughput metrics
 fn bench_triangulation_creation_generic<const D: usize>(c: &mut Criterion, benchmark_name: &str)
 where
-    [f64; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+    [f64; D]: Copy + serde::de::DeserializeOwned + serde::Serialize + Sized,
 {
     let mut group = c.benchmark_group(benchmark_name);
     // Reduce sample size for higher dimensions to bound runtime

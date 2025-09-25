@@ -708,7 +708,7 @@ where
 mod tests {
     use super::*;
     use crate::core::collections::{FastHashMap, FastHashSet};
-    use crate::core::util::{UuidValidationError, make_uuid};
+    use crate::core::util::{UuidValidationError, make_uuid, usize_to_u8};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use approx::{assert_abs_diff_eq, assert_relative_eq};
@@ -1764,7 +1764,8 @@ mod tests {
         ];
 
         for (i, v) in vertices_with_chars.iter().enumerate() {
-            let expected_char = char::from(b'A' + u8::try_from(i).expect("Index should fit in u8"));
+            let expected_char =
+                char::from(b'A' + usize_to_u8(i, 26).expect("Index should fit in u8"));
             assert_eq!(v.data.unwrap(), expected_char);
         }
 

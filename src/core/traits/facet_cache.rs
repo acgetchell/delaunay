@@ -316,36 +316,47 @@ where
                 }
                 // Cache was invalidated after we built it - continue loop to rebuild
             }
-            // Exit loop for stale cache - need to rebuild
-            break;
-        }
 
-        // Cache is stale - coordinate rebuild through RCU to avoid duplicate work
-        let current_generation = tds.generation();
+            // Cache is stale - coordinate rebuild through RCU to avoid duplicate work
+            current_generation = tds.generation();
 
-        // OPTIMIZATION: Invalidate first to coordinate rebuilds via RCU. This prevents
-        // multiple threads from rebuilding in parallel when hitting stale cache simultaneously.
-        // By setting to None first, we ensure that subsequent threads will use the RCU
-        // mechanism in try_build_cache_with_rcu(), where only one thread builds while
-        // others wait and reuse the result, avoiding expensive duplicate work.
-        self.facet_cache().store(None);
+            // OPTIMIZATION: Invalidate first to coordinate rebuilds via RCU. This prevents
+            // multiple threads from rebuilding in parallel when hitting stale cache simultaneously.
+            // By setting to None first, we ensure that subsequent threads will use the RCU
+            // mechanism in try_build_cache_with_rcu(), where only one thread builds while
+            // others wait and reuse the result, avoiding expensive duplicate work.
+            self.facet_cache().store(None);
 
-        // Coordinate the build; return value is the OLD cache (if any).
-        let _old = self.try_build_cache_with_rcu(tds)?;
+            // Coordinate the build; return value is the OLD cache (if any).
+            let _old = self.try_build_cache_with_rcu(tds)?;
 
-        if let Some(cache) = self.facet_cache().load_full() {
+            let rebuilt_generation = tds.generation();
+            if rebuilt_generation != current_generation {
+                current_generation = rebuilt_generation;
+                continue;
+            }
+
+            if let Some(cache) = self.facet_cache().load_full() {
+                self.cached_generation()
+                    .store(current_generation, Ordering::Release);
+                return Ok(cache);
+            }
+
+            // Fallback to direct build to guarantee progress
+            let new_cache = tds.build_facet_to_cells_map()?;
+            let new_cache_arc = Arc::new(new_cache);
+            self.facet_cache().store(Some(new_cache_arc.clone()));
+
+            let rebuilt_generation = tds.generation();
+            if rebuilt_generation != current_generation {
+                current_generation = rebuilt_generation;
+                continue;
+            }
+
             self.cached_generation()
                 .store(current_generation, Ordering::Release);
-            return Ok(cache);
+            return Ok(new_cache_arc);
         }
-
-        // Fallback to direct build to guarantee progress
-        let new_cache = tds.build_facet_to_cells_map()?;
-        let new_cache_arc = Arc::new(new_cache);
-        self.facet_cache().store(Some(new_cache_arc.clone()));
-        self.cached_generation()
-            .store(current_generation, Ordering::Release);
-        Ok(new_cache_arc)
     }
 
     /// Invalidates the facet cache, forcing a rebuild on the next access.

@@ -194,7 +194,7 @@ fn test_circumsphere_generic<const D: usize>(
     vertices: &[Vertex<f64, i32, D>],
     test_points: Vec<([f64; D], &str)>,
 ) where
-    [f64; D]: Copy + Default + Sized + Serialize + for<'de> Deserialize<'de>,
+    [f64; D]: Copy + Sized + Serialize + for<'de> Deserialize<'de>,
 {
     println!("Testing {dimension_name} circumsphere methods");
     println!("=============================================");
@@ -234,7 +234,7 @@ fn test_point_generic<const D: usize>(
     center: &[f64; D],
     radius: f64,
 ) where
-    [f64; D]: Copy + Default + Sized + Serialize + for<'de> Deserialize<'de>,
+    [f64; D]: Copy + Sized + Serialize + for<'de> Deserialize<'de>,
 {
     let test_vertex: Vertex<f64, i32, D> = vertex!(coords, 99);
 

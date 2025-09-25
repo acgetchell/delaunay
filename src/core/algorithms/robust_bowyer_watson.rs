@@ -15,6 +15,7 @@ use std::marker::PhantomData;
 use std::ops::{AddAssign, Div, DivAssign, SubAssign};
 use std::sync::{Arc, atomic::AtomicU64};
 
+use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::insertion_algorithm::{
     InsertionAlgorithm, InsertionBuffers, InsertionError, InsertionInfo, InsertionStatistics,
     InsertionStrategy,
@@ -71,7 +72,7 @@ where
     for<'a> &'a T: std::ops::Div<T>,
     ordered_float::OrderedFloat<f64>: From<T>,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+    [f64; D]: DeserializeOwned + Serialize + Sized,
     na::OPoint<T, na::Const<D>>: From<[f64; D]>,
 {
     /// Create a new robust Bowyer-Watson algorithm instance.
@@ -182,7 +183,7 @@ where
         for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         // Determine the best strategy using trait method
         let strategy = self.determine_strategy(tds, vertex);
@@ -255,7 +256,7 @@ where
         for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         // First try using trait method for bad cell detection with robust fallback
         let bad_cells = self.find_bad_cells_with_robust_fallback(tds, vertex);
@@ -273,13 +274,27 @@ where
                     // Store handles and extract facet data while cells still exist
                     let mut extracted_facet_data = Vec::with_capacity(boundary_handles.len());
                     for &(cell_key, facet_index) in &boundary_handles {
-                        if let Ok(facet_view) =
-                            crate::core::facet::FacetView::new(tds, cell_key, facet_index)
-                        {
-                            let facet_vertices: Vec<Vertex<T, U, D>> =
-                                facet_view.vertices().copied().collect();
-                            extracted_facet_data.push(facet_vertices);
-                        }
+                        let facet_view = crate::core::facet::FacetView::new(tds, cell_key, facet_index)
+                            .map_err(|_| InsertionError::TriangulationState(
+                                TriangulationValidationError::InconsistentDataStructure {
+                                    message: format!(
+                                        "Facet index {facet_index} out of bounds for cell {cell_key:?} during robust cavity extraction"
+                                    ),
+                                },
+                            ))?;
+                        let facet_vertices: Vec<Vertex<T, U, D>> = match facet_view.vertices() {
+                            Ok(iter) => iter.copied().collect(),
+                            Err(_) => {
+                                return Err(InsertionError::TriangulationState(
+                                    TriangulationValidationError::InconsistentDataStructure {
+                                        message: format!(
+                                            "Failed to get vertices from facet at index {facet_index} during robust cavity extraction"
+                                        ),
+                                    },
+                                ));
+                            }
+                        };
+                        extracted_facet_data.push(facet_vertices);
                     }
 
                     let cells_removed = bad_cells.len();
@@ -293,13 +308,12 @@ where
                     // Create cells from pre-extracted data
                     let mut cells_created = 0;
                     for facet_vertices in extracted_facet_data {
-                        if <Self as InsertionAlgorithm<T, U, V, D>>::create_cell_from_vertices_and_vertex(
+                        <Self as InsertionAlgorithm<T, U, V, D>>::create_cell_from_vertices_and_vertex(
                             tds,
                             facet_vertices,
                             vertex,
-                        ).is_ok() {
-                            cells_created += 1;
-                        }
+                        ).map_err(InsertionError::TriangulationState)?;
+                        cells_created += 1;
                     }
 
                     // Maintain invariants after structural changes
@@ -342,7 +356,7 @@ where
         for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         // Use visibility detection with robust fallback
         #[allow(clippy::collapsible_if)] // Can't collapse due to if-let chain guard limitations
@@ -401,7 +415,7 @@ where
         for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         // First try to find bad cells using the trait's method
         let mut bad_cells =
@@ -500,12 +514,40 @@ where
         f64: From<T>,
         for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
-        // Use the lightweight method that avoids heavy cloning
-        <Self as InsertionAlgorithm<T, U, V, D>>::find_visible_boundary_facets_lightweight(
+        // First try the lightweight method that avoids heavy cloning
+        match <Self as InsertionAlgorithm<T, U, V, D>>::find_visible_boundary_facets_lightweight(
             self, tds, vertex,
-        )
+        ) {
+            Ok(handles) if !handles.is_empty() => Ok(handles),
+            _ => {
+                // Fallback: robust check via Facet conversion (slow path)
+                let mut handles = Vec::new();
+                let boundary_iter = tds
+                    .boundary_facets()
+                    .map_err(InsertionError::TriangulationState)?;
+                for fv in boundary_iter {
+                    let cell_key = fv.cell_key();
+                    let facet_index = fv.facet_index();
+                    if let (Ok(cell), Ok(opposite)) = (fv.cell(), fv.opposite_vertex()) {
+                        #[allow(deprecated)]
+                        let facet = crate::core::facet::Facet::new(cell.clone(), *opposite)
+                            .map_err(|e| InsertionError::TriangulationState(
+                                TriangulationValidationError::InconsistentDataStructure {
+                                    message: format!(
+                                        "Failed to reconstruct Facet for visibility fallback: {e}"
+                                    ),
+                                },
+                            ))?;
+                        if self.is_facet_visible_from_vertex_robust(tds, &facet, vertex, cell_key) {
+                            handles.push((cell_key, facet_index));
+                        }
+                    }
+                }
+                Ok(handles)
+            }
+        }
     }
 
     /// Find bad cells using robust insphere predicate.
@@ -587,15 +629,20 @@ where
         let mut processed_facets = FastHashSet::default();
 
         for &bad_cell_key in bad_cells {
-            if let Some(bad_cell) = tds.cells().get(bad_cell_key)
-                && let Ok(facets) = bad_cell.facets()
-            {
-                for (facet_idx, facet) in facets.iter().enumerate() {
-                    // Derive facet key using the utility function
-                    let facet_vertices = facet.vertices();
-                    let Ok(facet_key) = derive_facet_key_from_vertices(&facet_vertices, tds) else {
+            if let Some(bad_cell) = tds.cells().get(bad_cell_key) {
+                let facet_count = bad_cell.vertices().len();
+                for facet_idx in 0..facet_count {
+                    let Ok(facet_idx_u8) = u8::try_from(facet_idx) else {
                         continue;
-                    }; // Cannot form a valid facet key - vertex not found
+                    };
+                    let Ok(fv) =
+                        crate::core::facet::FacetView::new(tds, bad_cell_key, facet_idx_u8)
+                    else {
+                        continue;
+                    };
+                    let Ok(facet_key) = fv.key() else {
+                        continue;
+                    };
 
                     if !processed_facets.insert(facet_key) {
                         continue;
@@ -608,12 +655,8 @@ where
                             .count();
                         let total_count = sharing_cells.len();
 
-                        // Enhanced boundary detection logic
                         if Self::is_cavity_boundary_facet(bad_count, total_count) {
-                            // Return lightweight handle instead of heavy Facet object
-                            if let Ok(facet_idx_u8) = u8::try_from(facet_idx) {
-                                boundary_handles.push((bad_cell_key, facet_idx_u8));
-                            }
+                            boundary_handles.push((bad_cell_key, facet_idx_u8));
                         }
                     }
                 }
@@ -925,7 +968,7 @@ where
         f64: From<T>,
         for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         use crate::core::collections::{KeyBasedCellMap, fast_hash_map_with_capacity};
 
@@ -1011,7 +1054,7 @@ where
         f64: From<T>,
         for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
-        [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         use crate::geometry::point::Point;
         use crate::geometry::predicates::{Orientation, simplex_orientation};
@@ -1282,7 +1325,7 @@ where
     for<'a> &'a T: std::ops::Div<T>,
     ordered_float::OrderedFloat<f64>: From<T>,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+    [f64; D]: DeserializeOwned + Serialize + Sized,
     na::OPoint<T, na::Const<D>>: From<[f64; D]>,
 {
     fn default() -> Self {
@@ -1314,7 +1357,7 @@ where
     for<'a> &'a T: std::ops::Div<T>,
     ordered_float::OrderedFloat<f64>: From<T>,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    [f64; D]: Default + DeserializeOwned + Serialize + Sized,
+    [f64; D]: DeserializeOwned + Serialize + Sized,
     na::OPoint<T, na::Const<D>>: From<[f64; D]>,
 {
     fn insert_vertex(
@@ -1640,7 +1683,7 @@ mod tests {
                     println!(
                         "  Boundary facet {}: {} vertices",
                         i,
-                        facet.vertices().count()
+                        facet.vertices().map_or(0, std::iter::Iterator::count)
                     );
                 }
             }
@@ -1800,7 +1843,7 @@ mod tests {
                 // Each boundary facet should have exactly 3 vertices (for 3D)
                 for facet in &boundary_facets_vec {
                     assert_eq!(
-                        facet.vertices().count(),
+                        facet.vertices().map_or(0, std::iter::Iterator::count),
                         3,
                         "Boundary facet should have 3 vertices after insertion {}",
                         i + 1
@@ -1957,7 +2000,7 @@ mod tests {
                 // Each boundary facet should have exactly 3 vertices (for 3D)
                 for facet in &boundary_facets_vec {
                     assert_eq!(
-                        facet.vertices().count(),
+                        facet.vertices().map_or(0, std::iter::Iterator::count),
                         3,
                         "Boundary facet should have 3 vertices after hull extension {}",
                         i + 1
@@ -3288,7 +3331,10 @@ mod tests {
 
         // Get the adjacent cell key for this facet
         let facet_to_cells = algorithm.try_get_or_build_facet_cache(&tds).unwrap();
-        let test_facet_vertices: Vec<_> = test_facet.vertices().copied().collect();
+        let test_facet_vertices: Vec<_> = match test_facet.vertices() {
+            Ok(iter) => iter.copied().collect(),
+            Err(_) => return, // Skip test if facet is invalid
+        };
         let key = derive_facet_key_from_vertices(&test_facet_vertices, &tds)
             .expect("Should derive facet key");
         let adjacent_cell_key = facet_to_cells

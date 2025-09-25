@@ -495,7 +495,7 @@ fn bench_memory_usage<const D: usize>(
     bench_id_prefix: &str,
     count: usize,
 ) where
-    [f64; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     group.bench_with_input(
         BenchmarkId::new(bench_id_prefix, count),

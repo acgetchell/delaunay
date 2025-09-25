@@ -83,9 +83,19 @@ Both `IncrementalBowyerWatson` and `RobustBowyerWatson` algorithms repeatedly ca
 #### 1.1 Update `IncrementalBowyerWatson` struct
 
 ```rust
-pub struct IncrementalBowyerWatson<T, U, V, const D: usize> {
-    // ... existing fields ...
-    
+pub struct IncrementalBowyerWatson<T, U, V, const D: usize>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+{
+    /// Unified statistics tracking
+    stats: InsertionStatistics,
+    /// Reusable buffers for performance
+    buffers: InsertionBuffers<T, U, V, D>,
+    /// Cached convex hull for hull extension
+    hull: Option<ConvexHull<T, U, V, D>>,
     /// Cache for facet-to-cells mapping
     facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
     /// Generation counter for cache invalidation
@@ -93,28 +103,56 @@ pub struct IncrementalBowyerWatson<T, U, V, const D: usize> {
 }
 ```
 
-#### 1.2 Update `RobustBowyerWatson` struct
+#### 1.2 Update `RobustBoyerWatson` struct (note: correct spelling)
 
 ```rust
-pub struct RobustBowyerWatson<T, U, V, const D: usize> {
-    // ... existing fields ...
-    
+pub struct RobustBoyerWatson<T, U, V, const D: usize>
+where
+    T: CoordinateScalar,
+    U: crate::core::traits::data_type::DataType,
+    V: crate::core::traits::data_type::DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+{
+    /// Configuration for robust predicates
+    predicate_config: RobustPredicateConfig<T>,
+    /// Unified statistics tracking
+    stats: InsertionStatistics,
+    /// Reusable buffers for performance
+    buffers: InsertionBuffers<T, U, V, D>,
+    /// Cached convex hull for hull extension
+    hull: Option<ConvexHull<T, U, V, D>>,
     /// Cache for facet-to-cells mapping
     facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
     /// Generation counter for cache invalidation
     cached_generation: Arc<AtomicU64>,
+    /// Phantom data to indicate that U and V types are used in method signatures
+    _phantom: PhantomData<(U, V)>,
 }
 ```
 
 #### 1.3 Update constructors
 
-Both `new()`, `with_config()`, and other constructor methods need to initialize the caching fields:
+Both `new()`, `with_config()`, and other constructor methods initialize the caching fields:
 
 ```rust
+// IncrementalBowyerWatson::new()
 Self {
-    // ... existing field initialization ...
+    stats: InsertionStatistics::new(),
+    buffers: InsertionBuffers::with_capacity(D * 10),
+    hull: None,
     facet_to_cells_cache: ArcSwapOption::empty(),
     cached_generation: Arc::new(AtomicU64::new(0)),
+}
+
+// RobustBoyerWatson::new()
+Self {
+    predicate_config: config_presets::general_triangulation::<T>(),
+    stats: InsertionStatistics::new(),
+    buffers: InsertionBuffers::with_capacity(D * 10),
+    hull: None,
+    facet_to_cells_cache: ArcSwapOption::empty(),
+    cached_generation: Arc::new(AtomicU64::new(0)),
+    _phantom: PhantomData,
 }
 ```
 
@@ -131,39 +169,48 @@ Self {
 ```rust
 impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for IncrementalBowyerWatson<T, U, V, D>
 where
-    T: CoordinateScalar + ComplexField<RealField = T> + AddAssign<T> + SubAssign<T> + Sum + From<f64>,
-    U: DataType,
-    V: DataType,
-    f64: From<T>,
-    for<'a> &'a T: std::ops::Div<T>,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    U: DataType + DeserializeOwned,
+    V: DataType + DeserializeOwned,
+    for<'a> &'a T: Div<T>,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    OrderedFloat<f64>: From<T>,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
     }
     
     fn cached_generation(&self) -> &AtomicU64 {
+        // Return inner &AtomicU64 from Arc explicitly
         self.cached_generation.as_ref()
-        // or: &*self.cached_generation
     }
 }
 ```
 
-#### 2.2 For RobustBowyerWatson
+#### 2.2 For RobustBoyerWatson (note: correct spelling)
 
 ```rust
-impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for RobustBowyerWatson<T, U, V, D>
+impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for RobustBoyerWatson<T, U, V, D>
 where
-    // ... same trait bounds as above ...
+    T: CoordinateScalar
+        + ComplexField<RealField = T>
+        + AddAssign<T>
+        + SubAssign<T>
+        + Sum
+        + num_traits::NumCast
+        + From<f64>,
+    U: crate::core::traits::data_type::DataType + DeserializeOwned,
+    V: crate::core::traits::data_type::DataType + DeserializeOwned,
+    f64: From<T>,
+    for<'a> &'a T: std::ops::Div<T>,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    ordered_float::OrderedFloat<f64>: From<T>,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
     }
-    
+
     fn cached_generation(&self) -> &AtomicU64 {
         self.cached_generation.as_ref()
-        // or: &*self.cached_generation
     }
 }
 ```
@@ -294,18 +341,18 @@ Validate concurrent access patterns if algorithms are used in multi-threaded con
 ### Core Changes
 
 - [✓] Add caching fields to `IncrementalBowyerWatson` struct
-- [✓] Add caching fields to `RobustBowyerWatson` struct
+- [✓] Add caching fields to `RobustBoyerWatson` struct
 - [✓] Update all constructors for both algorithms
 - [✓] Implement `FacetCacheProvider` for `IncrementalBowyerWatson`
-- [✓] Implement `FacetCacheProvider` for `RobustBowyerWatson`
+- [✓] Implement `FacetCacheProvider` for `RobustBoyerWatson`
 
 ### Method Updates
 
 - [N/A] Update `count_boundary_facets()` in IncrementalBowyerWatson (test helper only)
 - [N/A] Update `count_internal_facets()` in IncrementalBowyerWatson (test helper only)
 - [N/A] Update `count_invalid_facets()` in IncrementalBowyerWatson (test helper only)
-- [✓] Update `build_validated_facet_mapping()` in RobustBowyerWatson
-- [✓] Update `find_visible_boundary_facets()` in RobustBowyerWatson
+- [✓] Update `build_validated_facet_mapping()` in RobustBoyerWatson
+- [✓] Update `find_visible_boundary_facets()` in RobustBoyerWatson
 - [✓] Review and update any other methods using `build_facet_to_cells_map()`
 
 ### Testing

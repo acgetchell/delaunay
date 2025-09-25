@@ -119,6 +119,17 @@ pub enum CircumcenterError {
     ValueConversion(#[from] ValueConversionError),
 }
 
+/// Error type for surface measure computation operations.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum SurfaceMeasureError {
+    /// Error retrieving vertices from a facet.
+    #[error("Failed to retrieve facet vertices: {0}")]
+    FacetError(#[from] crate::core::facet::FacetError),
+    /// Error computing geometry measure.
+    #[error("Geometry computation failed: {0}")]
+    GeometryError(#[from] CircumcenterError),
+}
+
 // =============================================================================
 // CONSTANTS AND HELPERS
 // =============================================================================
@@ -1160,7 +1171,7 @@ where
 /// ```
 pub fn surface_measure<T, U, V, const D: usize>(
     facets: &[FacetView<'_, T, U, V, D>],
-) -> Result<T, CircumcenterError>
+) -> Result<T, SurfaceMeasureError>
 where
     T: CoordinateScalar + Sum + Zero + AddAssign<T> + SubAssign<T> + num_traits::NumCast,
     U: DataType,
@@ -1175,13 +1186,14 @@ where
 
         // Convert vertices to Points for measure calculation
         let points: Vec<Point<T, D>> = facet_vertices
+            .map_err(SurfaceMeasureError::FacetError)?
             .map(|v| {
-                let coords: [T; D] = v.into();
+                let coords: [T; D] = (*v.point()).into();
                 Point::new(coords)
             })
             .collect();
 
-        let measure = facet_measure(&points)?;
+        let measure = facet_measure(&points).map_err(SurfaceMeasureError::GeometryError)?;
         total_measure += measure;
     }
 
@@ -2721,7 +2733,7 @@ mod tests {
         let target_facet = boundary_facets
             .iter()
             .find(|facet| {
-                let facet_vertices: Vec<_> = facet.vertices().collect();
+                let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
                 facet_vertices.len() == 3
                     && facet_vertices.iter().any(|v| {
                         let coords: [f64; 3] = (*v.point()).into();
@@ -2770,6 +2782,7 @@ mod tests {
         // Calculate individual facet measures and sum them
         let points1: Vec<Point<f64, 3>> = facet1
             .vertices()
+            .unwrap()
             .map(|v| {
                 let coords: [f64; 3] = (*v.point()).into();
                 Point::new(coords)
@@ -2777,6 +2790,7 @@ mod tests {
             .collect();
         let points2: Vec<Point<f64, 3>> = facet2
             .vertices()
+            .unwrap()
             .map(|v| {
                 let coords: [f64; 3] = (*v.point()).into();
                 Point::new(coords)
@@ -3094,7 +3108,7 @@ mod tests {
         let small_facet = boundary_facets1
             .iter()
             .find(|facet| {
-                let facet_vertices: Vec<_> = facet.vertices().collect();
+                let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
                 facet_vertices.len() == 3
                     && facet_vertices.iter().any(|v| {
                         let coords: [f64; 3] = (*v.point()).into();
@@ -3125,7 +3139,7 @@ mod tests {
         let large_facet = boundary_facets2
             .iter()
             .find(|facet| {
-                let facet_vertices: Vec<_> = facet.vertices().collect();
+                let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
                 facet_vertices.len() == 3
                     && facet_vertices.iter().any(|v| {
                         let coords: [f64; 3] = (*v.point()).into();

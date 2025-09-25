@@ -1102,30 +1102,36 @@ where
     ///
     /// // Each facet should have 3 vertices (triangular faces of tetrahedron)
     /// for facet_view in &facet_views {
-    ///     assert_eq!(facet_view.vertices().count(), 3);
+    ///     assert_eq!(facet_view.vertices().unwrap().count(), 3);
     /// }
     /// ```
     pub fn facet_views<'tds>(
         &self,
         tds: &'tds Tds<T, U, V, D>,
         cell_key: crate::core::triangulation_data_structure::CellKey,
-    ) -> Result<Vec<crate::core::facet::FacetView<'tds, T, U, V, D>>, FacetError>
-    where
-        T: CoordinateScalar,
-        U: DataType,
-        V: DataType,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    {
-        debug_assert!(u8::try_from(D).is_ok(), "Facet index must fit into u8");
-        (0..=D)
-            .map(|facet_index| {
-                crate::core::facet::FacetView::new(
-                    tds,
-                    cell_key,
-                    u8::try_from(facet_index).expect("Facet index should fit in u8"),
-                )
-            })
-            .collect()
+    ) -> Result<Vec<crate::core::facet::FacetView<'tds, T, U, V, D>>, FacetError> {
+        // Derive facet count from the TDS cell to avoid relying on D at runtime
+        let cell = tds
+            .cells()
+            .get(cell_key)
+            .ok_or(FacetError::CellNotFoundInTriangulation)?;
+        let vertex_count = cell.vertices().len();
+        if vertex_count > u8::MAX as usize {
+            return Err(FacetError::InvalidFacetIndex {
+                index: u8::MAX,
+                facet_count: vertex_count,
+            });
+        }
+        let mut facet_views = Vec::with_capacity(vertex_count);
+        for idx in 0..vertex_count {
+            let facet_index = crate::core::util::usize_to_u8(idx, vertex_count)?;
+            facet_views.push(crate::core::facet::FacetView::new(
+                tds,
+                cell_key,
+                facet_index,
+            )?);
+        }
+        Ok(facet_views)
     }
 }
 

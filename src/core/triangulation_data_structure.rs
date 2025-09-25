@@ -195,6 +195,7 @@ use super::{
         data_type::DataType,
         insertion_algorithm::{InsertionAlgorithm, InsertionError},
     },
+    util::usize_to_u8,
     vertex::Vertex,
 };
 
@@ -2797,8 +2798,7 @@ where
             self.assign_neighbors()?;
             self.assign_incident_cells()?;
 
-            // Increment generation counter after topology changes
-            self.bump_generation();
+            // Generation already bumped by assign_neighbors(); avoid double increment
         }
         Ok(duplicate_count)
     }
@@ -2921,7 +2921,7 @@ where
                 }
 
                 let facet_key = facet_key_from_vertex_keys(&facet_vertex_keys);
-                let Ok(facet_index_u8) = u8::try_from(i) else {
+                let Ok(facet_index_u8) = usize_to_u8(i, facet_vertex_keys.len()) else {
                     // Log warning about skipped facet in debug builds
                     #[cfg(debug_assertions)]
                     {
@@ -3006,7 +3006,7 @@ where
                 }
 
                 let facet_key = facet_key_from_vertex_keys(&facet_vertex_keys);
-                let Ok(facet_index_u8) = u8::try_from(i) else {
+                let Ok(facet_index_u8) = usize_to_u8(i, facet_vertex_keys.len()) else {
                     return Err(TriangulationValidationError::InconsistentDataStructure {
                         message: format!("Facet index {i} exceeds u8 range for dimension {D}"),
                     });
@@ -3171,7 +3171,7 @@ where
         if actually_removed > 0 || duplicate_cells_removed > 0 {
             self.assign_neighbors()?;
             self.assign_incident_cells()?;
-            self.bump_generation();
+            // Generation already bumped by assign_neighbors(); avoid double increment
         }
 
         Ok(actually_removed + duplicate_cells_removed)
@@ -7424,7 +7424,7 @@ mod tests {
         // All 4 facets of the tetrahedron should be on the boundary
         let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
         assert_eq!(
-            boundary_facets.clone().count(),
+            boundary_facets.count(),
             4,
             "A single tetrahedron should have 4 boundary facets"
         );
@@ -7468,14 +7468,15 @@ mod tests {
 
         // Get all boundary facets
         let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
+        let facets: Vec<_> = boundary_facets.collect();
         assert_eq!(
-            boundary_facets.clone().count(),
+            facets.len(),
             6,
             "Two adjacent tetrahedra should have 6 boundary facets"
         );
 
         // Test that all facets from boundary_facets() are indeed boundary facets
-        for boundary_facet in boundary_facets {
+        for boundary_facet in facets {
             assert!(
                 tds.is_boundary_facet(&boundary_facet)
                     .expect("Should not fail to check boundary facet"),

@@ -2033,7 +2033,7 @@ where
 
         // Find the vertex in the adjacent cell that is NOT part of the facet
         // This is the "opposite" vertex that defines the "inside" side of the facet
-        let facet_vertices: Vec<_> = facet.vertices().collect();
+        let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
         let cell_vertices = adjacent_cell.vertices();
 
         let mut opposite_vertex = None;
@@ -2464,7 +2464,8 @@ where
                 })?;
 
             // Extract vertex data from FacetView (zero allocation access)
-            let facet_vertices: Vec<Vertex<T, U, D>> = facet_view.vertices().copied().collect();
+            let facet_vertices: Vec<Vertex<T, U, D>> =
+                facet_view.vertices().unwrap().copied().collect();
 
             // Create the cell using the optimized vertex-based approach
             if Self::create_cell_from_vertices_and_vertex(tds, facet_vertices, vertex).is_ok() {
@@ -2677,7 +2678,7 @@ mod tests {
                 .expect("Should be able to create FacetView from returned handle");
 
             assert_eq!(
-                facet_view.vertices().count(),
+                facet_view.vertices().unwrap().count(),
                 3,
                 "Visible facet {i} should have 3 vertices in 3D"
             );
@@ -2802,7 +2803,7 @@ mod tests {
                                 return crate::core::facet::FacetView::new(
                                     &tds,
                                     cell_key,
-                                    u8::try_from(facet_idx).unwrap_or(0),
+                                    crate::core::util::usize_to_u8(facet_idx, 255).unwrap_or(0),
                                 );
                             }
                         }
@@ -3274,7 +3275,7 @@ mod tests {
             .expect("Should build facet map in test");
 
         // Compute facet key using VertexKeys
-        let facet_vertices: Vec<_> = test_facet.vertices().collect();
+        let facet_vertices: Vec<_> = test_facet.vertices().unwrap().collect();
         let mut vertex_keys = Vec::with_capacity(facet_vertices.len());
         for vertex in &facet_vertices {
             vertex_keys.push(
@@ -3576,7 +3577,7 @@ mod tests {
             .clone()
             .next()
             .expect("Should have boundary facets");
-        let facet_vertices: Vec<_> = test_facet.vertices().collect();
+        let facet_vertices: Vec<_> = test_facet.vertices().unwrap().collect();
         let duplicate_vertex = *facet_vertices[0]; // Use an existing facet vertex
         let test_facet_compat = make_facet_from_view(&test_facet).unwrap();
         drop(boundary_facets); // Drop the iterator to release the immutable borrow
@@ -5288,7 +5289,7 @@ mod tests {
         let facet_to_cells = tds
             .build_facet_to_cells_map()
             .expect("Should build facet map");
-        let facet_vertices: Vec<_> = test_facet.vertices().collect();
+        let facet_vertices: Vec<_> = test_facet.vertices().unwrap().collect();
         let mut vertex_keys = Vec::with_capacity(facet_vertices.len());
         for vertex in &facet_vertices {
             vertex_keys.push(
@@ -5306,7 +5307,7 @@ mod tests {
         // Get boundary facet for coplanar vertex extraction
         let boundary_facets = tds.boundary_facets().unwrap();
         let boundary_facet = boundary_facets.clone().next().unwrap();
-        let facet_vertices: Vec<_> = boundary_facet.vertices().collect();
+        let facet_vertices: Vec<_> = boundary_facet.vertices().unwrap().collect();
         let coplanar_vertex = &facet_vertices[0]; // Same as existing facet vertex
         let is_visible = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
             &tds,

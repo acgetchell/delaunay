@@ -28,3 +28,7 @@ uv.lock
 .venv/
 .mypy_cache/
 /benches/baseline_results.txt
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md

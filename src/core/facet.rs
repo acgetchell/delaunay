@@ -60,7 +60,7 @@
 // =============================================================================
 
 use super::traits::data_type::DataType;
-use super::util::stable_hash_u64_slice;
+use super::util::{stable_hash_u64_slice, usize_to_u8};
 use super::{
     cell::Cell,
     triangulation_data_structure::{CellKey, Tds, VertexKey},
@@ -203,9 +203,9 @@ pub enum FacetError {
 ///     let facet_view = FacetView::new(tds, cell_key, 0)?;
 ///
 ///     // Access vertices through the view (lazy evaluation)
-///     for vertex in facet_view.vertices() {
-///         println!("Vertex: {:?}", vertex.point());
-///     }
+/// for vertex in facet_view.vertices().unwrap() {
+///     println!("Vertex: {:?}", vertex.point());
+/// }
 ///
 ///     // Get the opposite vertex
 ///     let opposite = facet_view.opposite_vertex()?;
@@ -305,44 +305,61 @@ where
             facet_index,
         })
     }
-}
 
-impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D>
-where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
-    U: DataType,
-    V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    for<'a> &'a T: Div<T>,
-{
     /// Returns an iterator over the vertices that make up this facet.
     ///
     /// The facet vertices are all vertices of the containing cell except
     /// the opposite vertex (at `facet_index`).
     ///
+    /// This method is available with minimal trait bounds (only `CoordinateScalar`),
+    /// enabling usage in lightweight operations that don't require arithmetic.
+    ///
     /// # Returns
     ///
-    /// An iterator yielding references to vertices in the facet.
+    /// A `Result` containing an iterator yielding references to vertices in the facet,
+    /// or a `FacetError` if the cell is no longer present in the TDS.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the cell key is no longer present in the TDS. This should not
-    /// occur under normal circumstances as the `FacetView` borrows the TDS immutably,
-    /// but could happen if the view outlives the TDS or the TDS is mutated through
-    /// unsafe code.
-    pub fn vertices(&self) -> impl Iterator<Item = &'tds Vertex<T, U, D>> {
+    /// Returns `FacetError::CellNotFoundInTriangulation` if the cell key is no longer
+    /// present in the TDS. This could happen if the TDS is modified after the `FacetView`
+    /// is created, though this should not occur under normal usage patterns.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::facet::FacetView;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// if let Some(cell_key) = tds.cell_keys().next() {
+    ///     let facet = FacetView::new(&tds, cell_key, 0).unwrap();
+    ///     let vertex_iter = facet.vertices().unwrap();
+    ///     assert_eq!(vertex_iter.count(), 3); // 3D facet has 3 vertices
+    /// }
+    /// ```
+    pub fn vertices(&self) -> Result<impl Iterator<Item = &'tds Vertex<T, U, D>>, FacetError> {
         let cell = self
             .tds
             .cells()
             .get(self.cell_key)
-            .expect("FacetView::vertices: cell_key no longer present in TDS; ensure the view remains live while iterating");
+            .ok_or(FacetError::CellNotFoundInTriangulation)?;
         let facet_index = usize::from(self.facet_index);
 
-        cell.vertices()
+        Ok(cell
+            .vertices()
             .iter()
             .enumerate()
             .filter(move |(i, _)| *i != facet_index)
-            .map(|(_, vertex)| vertex)
+            .map(|(_, vertex)| vertex))
     }
 
     /// Returns the opposite vertex (the vertex not included in the facet).
@@ -490,27 +507,6 @@ where
 {
 }
 
-/// Helper function to safely convert usize to u8 for facet indices.
-///
-/// # Arguments
-///
-/// * `idx` - The usize index to convert
-/// * `facet_count` - The number of facets (for error reporting)
-///
-/// # Returns
-///
-/// A `Result` containing the converted u8 index or a `FacetError`.
-///
-/// # Errors
-///
-/// Returns `FacetError::InvalidFacetIndex` if the index cannot fit in a u8.
-fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
-    u8::try_from(idx).map_err(|_| FacetError::InvalidFacetIndex {
-        index: u8::MAX,
-        facet_count,
-    })
-}
-
 /// Utility function to create multiple `FacetView`s for all facets of a cell.
 ///
 /// # Arguments
@@ -525,16 +521,20 @@ fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
 /// # Errors
 ///
 /// Returns `FacetError` if the cell is not found or has invalid structure.
-pub fn all_facets_for_cell<'tds, T, U, V, const D: usize>(
-    tds: &'tds Tds<T, U, V, D>,
+///
+/// # Note
+///
+/// Removed unnecessary numeric bounds (`AddAssign`, `SubAssign`, `Sum`, `NumCast`, `Div`)
+/// since this function doesn't perform any arithmetic operations.
+pub fn all_facets_for_cell<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
-) -> Result<Vec<FacetView<'tds, T, U, V, D>>, FacetError>
+) -> Result<Vec<FacetView<'_, T, U, V, D>>, FacetError>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    for<'a> &'a T: Div<T>,
 {
     let cell = tds
         .cells()
@@ -561,11 +561,10 @@ where
 #[derive(Clone)]
 pub struct AllFacetsIter<'tds, T, U, V, const D: usize>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    for<'a> &'a T: Div<T>,
 {
     tds: &'tds Tds<T, U, V, D>,
     cell_keys: std::vec::IntoIter<CellKey>,
@@ -576,11 +575,10 @@ where
 
 impl<'tds, T, U, V, const D: usize> AllFacetsIter<'tds, T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    for<'a> &'a T: Div<T>,
 {
     /// Creates a new iterator over all facets in the TDS.
     #[must_use]
@@ -601,11 +599,10 @@ where
 
 impl<'tds, T, U, V, const D: usize> Iterator for AllFacetsIter<'tds, T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    for<'a> &'a T: Div<T>,
 {
     type Item = FacetView<'tds, T, U, V, D>;
 
@@ -619,11 +616,11 @@ where
                 self.current_facet_index += 1;
 
                 // Create FacetView - we know this is valid since we're iterating within bounds
-                if let Ok(facet_view) = FacetView::new(
-                    self.tds,
-                    cell_key,
-                    u8::try_from(facet_index).unwrap_or(u8::MAX),
-                ) {
+                let Ok(facet_u8) = usize_to_u8(facet_index, self.current_cell_facet_count) else {
+                    // Skip indices that cannot be represented; avoids silent truncation
+                    continue;
+                };
+                if let Ok(facet_view) = FacetView::new(self.tds, cell_key, facet_u8) {
                     return Some(facet_view);
                 }
             }
@@ -653,11 +650,10 @@ where
 #[derive(Clone)]
 pub struct BoundaryFacetsIter<'tds, T, U, V, const D: usize>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    for<'a> &'a T: Div<T>,
 {
     all_facets: AllFacetsIter<'tds, T, U, V, D>,
     facet_to_cells_map: crate::core::collections::FacetToCellsMap,
@@ -665,11 +661,10 @@ where
 
 impl<'tds, T, U, V, const D: usize> BoundaryFacetsIter<'tds, T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    for<'a> &'a T: Div<T>,
 {
     /// Creates a new iterator over boundary facets.
     #[must_use]
@@ -1639,7 +1634,7 @@ mod tests {
         let facet_view = FacetView::new(&tds, cell_key, 0).unwrap();
 
         // Facet opposite to vertex 0 should have 3 vertices (D vertices in D-1 facet)
-        let facet_vertices: Vec<_> = facet_view.vertices().collect();
+        let facet_vertices: Vec<_> = facet_view.vertices().unwrap().collect();
         assert_eq!(facet_vertices.len(), 3);
 
         // Get original vertices for comparison
@@ -1712,7 +1707,10 @@ mod tests {
 
         // Each facet should have a different index
         for (i, facet_view) in facet_views.iter().enumerate() {
-            assert_eq!(facet_view.facet_index(), u8::try_from(i).unwrap());
+            assert_eq!(
+                facet_view.facet_index(),
+                usize_to_u8(i, facet_views.len()).unwrap()
+            );
             assert_eq!(facet_view.cell_key(), cell_key);
         }
     }
