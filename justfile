@@ -22,7 +22,7 @@ clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 doc-check:
-    RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
+    RUSTDOCFLAGS='-D warnings' cargo doc-check-strict
 
 lint: fmt clippy doc-check
 
@@ -42,7 +42,12 @@ markdown-lint:
 
 # Spell checking
 spell-check:
-    npx cspell lint --config cspell.json --no-progress --gitignore --cache --exclude cspell.json $(git status --porcelain | awk '{print $2}')
+    files="$(git status --porcelain | awk '{print $2}')"; \
+    if [ -n "$files" ]; then \
+        npx cspell lint --config cspell.json --no-progress --gitignore --cache --exclude cspell.json $files; \
+    else \
+        echo "No modified files to spell-check."; \
+    fi
 
 # File validation
 validate-json:
@@ -52,7 +57,7 @@ validate-toml:
     git ls-files -z '*.toml' | xargs -0 -r -I {} uv run python -c "import tomllib; tomllib.load(open('{}', 'rb')); print('{} is valid TOML')"
 
 # Comprehensive quality check
-quality: fmt clippy python-lint shell-lint markdown-lint spell-check validate-json validate-toml
+quality: fmt clippy doc-check python-lint shell-lint markdown-lint spell-check validate-json validate-toml
     @echo "✅ All quality checks passed!"
 
 # Testing

@@ -686,18 +686,14 @@ where
         // If no boundary handles found but we had facet construction errors,
         // return a more specific error with context instead of generic ExcessiveBadCells
         if boundary_handles.is_empty() && !bad_cells.is_empty() {
-            if let Some((_error_cell, _error_facet, _error_type)) = first_facet_error {
-                // Enhanced error message with context about facet construction failures
-                return Err(InsertionError::ExcessiveBadCells {
-                    found: bad_cells.len(),
-                    threshold: 0,
-                });
-                // Future enhancement: could introduce a new error variant like:
-                // InsertionError::FacetConstructionError {
-                //     cell_key: error_cell,
-                //     facet_index: error_facet,
-                //     error_type: error_type.to_string()
-                // }
+            if let Some((error_cell, error_facet, error_type)) = first_facet_error {
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Failed to construct/derive facet during robust cavity mapping: cell={error_cell:?}, facet_index={error_facet}, cause={error_type}"
+                        ),
+                    },
+                ));
             }
             return Err(InsertionError::ExcessiveBadCells {
                 found: bad_cells.len(),

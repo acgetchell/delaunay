@@ -964,10 +964,8 @@ where
     ///
     /// # Examples
     ///
-    /// ```no_run
-    /// # // This method is pub(crate) and cannot be demonstrated in a public doctest
-    /// # // See the unit tests for usage examples
-    /// ```
+    ///
+    /// See the unit tests for usage examples of this pub(crate) method.
     pub(crate) fn insert_vertex_with_mapping(
         &mut self,
         vertex: Vertex<T, U, D>,
@@ -1012,10 +1010,8 @@ where
     ///
     /// # Examples
     ///
-    /// ```no_run
-    /// # // This method is pub(crate) and cannot be demonstrated in a public doctest
-    /// # // See the unit tests for usage examples
-    /// ```
+    ///
+    /// See the unit tests for usage examples of this pub(crate) method.
     pub(crate) fn insert_cell_with_mapping(
         &mut self,
         cell: Cell<T, U, V, D>,

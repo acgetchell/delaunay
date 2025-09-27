@@ -2070,9 +2070,15 @@ mod tests {
         // Test error with different values
         let result = usize_to_u8(usize::MAX, 7);
         assert!(result.is_err());
-        if let Err(FacetError::InvalidFacetIndex { index, facet_count }) = result {
-            assert_eq!(index, u8::MAX);
+        if let Err(FacetError::InvalidFacetIndexOverflow {
+            original_index,
+            facet_count,
+        }) = result
+        {
+            assert_eq!(original_index, usize::MAX);
             assert_eq!(facet_count, 7);
+        } else {
+            panic!("Expected InvalidFacetIndexOverflow error");
         }
     }
 

@@ -7,13 +7,13 @@ CRITERION_OUTPUT_FORMAT = "json, html"
 b = "build"
 t = "test --all-features -- --nocapture"
 format-all = "fmt --all"
-doc = "doc --workspace --no-deps"
+doc-gen = "doc --workspace --no-deps"
 
 # Strict clippy matching repo intent
 lint = "clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo"
 
 # Documentation validation (required for crates.io publishing)
-doc-check = "doc --workspace --no-deps"
+doc-check-strict = "doc --workspace --no-deps --document-private-items"
 
 # Testing commands from WARP.md
 test-lib = "test --lib --verbose"
