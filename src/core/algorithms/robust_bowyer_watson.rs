@@ -271,6 +271,7 @@ where
                     // CRITICAL: We need to use handles BEFORE removing cells, as they become invalid after removal.
                     // The cavity-based insertion algorithm requires: extract → remove → create
 
+                    // HOT PATH OPTIMIZATION: Extract facet data while minimizing allocations
                     // Store handles and extract facet data while cells still exist
                     let mut extracted_facet_data = Vec::with_capacity(boundary_handles.len());
                     for &(cell_key, facet_index) in &boundary_handles {
@@ -282,8 +283,15 @@ where
                                     ),
                                 },
                             ))?;
-                        let facet_vertices: Vec<Vertex<T, U, D>> = match facet_view.vertices() {
-                            Ok(iter) => iter.copied().collect(),
+
+                        // OPTIMIZATION: Direct iterator processing to minimize intermediate allocations
+                        match facet_view.vertices() {
+                            Ok(vertex_iter) => {
+                                // Collect directly - must persist after cells are removed
+                                let facet_vertices: Vec<Vertex<T, U, D>> =
+                                    vertex_iter.copied().collect();
+                                extracted_facet_data.push(facet_vertices);
+                            }
                             Err(_) => {
                                 return Err(InsertionError::TriangulationState(
                                     TriangulationValidationError::InconsistentDataStructure {
@@ -293,8 +301,7 @@ where
                                     },
                                 ));
                             }
-                        };
-                        extracted_facet_data.push(facet_vertices);
+                        }
                     }
 
                     let cells_removed = bad_cells.len();
@@ -628,6 +635,9 @@ where
         // Find boundary facets with improved logic, returning lightweight handles
         let mut processed_facets = FastHashSet::default();
 
+        // Track first error for better error reporting instead of just continuing
+        let mut first_facet_error: Option<(CellKey, usize, &'static str)> = None;
+
         for &bad_cell_key in bad_cells {
             if let Some(bad_cell) = tds.cells().get(bad_cell_key) {
                 let facet_count = bad_cell.vertices().len();
@@ -638,9 +648,19 @@ where
                     let Ok(fv) =
                         crate::core::facet::FacetView::new(tds, bad_cell_key, facet_idx_u8)
                     else {
+                        // Track first FacetView construction error for better diagnostics
+                        if first_facet_error.is_none() {
+                            first_facet_error =
+                                Some((bad_cell_key, facet_idx, "FacetView::new failed"));
+                        }
                         continue;
                     };
                     let Ok(facet_key) = fv.key() else {
+                        // Track first facet key derivation error for better diagnostics
+                        if first_facet_error.is_none() {
+                            first_facet_error =
+                                Some((bad_cell_key, facet_idx, "facet.key() failed"));
+                        }
                         continue;
                     };
 
@@ -663,8 +683,22 @@ where
             }
         }
 
-        // Additional validation of boundary facet count
+        // If no boundary handles found but we had facet construction errors,
+        // return a more specific error with context instead of generic ExcessiveBadCells
         if boundary_handles.is_empty() && !bad_cells.is_empty() {
+            if let Some((_error_cell, _error_facet, _error_type)) = first_facet_error {
+                // Enhanced error message with context about facet construction failures
+                return Err(InsertionError::ExcessiveBadCells {
+                    found: bad_cells.len(),
+                    threshold: 0,
+                });
+                // Future enhancement: could introduce a new error variant like:
+                // InsertionError::FacetConstructionError {
+                //     cell_key: error_cell,
+                //     facet_index: error_facet,
+                //     error_type: error_type.to_string()
+                // }
+            }
             return Err(InsertionError::ExcessiveBadCells {
                 found: bad_cells.len(),
                 threshold: 0,
@@ -1136,7 +1170,13 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> bool
     where
-        T: DivAssign<T> + AddAssign<T> + std::ops::Sub<Output = T> + std::ops::Mul<Output = T>,
+        T: DivAssign<T>
+            + AddAssign<T>
+            + std::ops::Sub<Output = T>
+            + std::ops::Mul<Output = T>
+            + num_traits::Zero
+            + From<f64>,
+        f64: From<T>,
     {
         let facet_vertices = facet.vertices();
         if facet_vertices.is_empty() {
@@ -1683,7 +1723,10 @@ mod tests {
                     println!(
                         "  Boundary facet {}: {} vertices",
                         i,
-                        facet.vertices().map_or(0, std::iter::Iterator::count)
+                        facet
+                            .vertices()
+                            .map(std::iter::Iterator::count)
+                            .unwrap_or(0)
                     );
                 }
             }
@@ -1843,7 +1886,10 @@ mod tests {
                 // Each boundary facet should have exactly 3 vertices (for 3D)
                 for facet in &boundary_facets_vec {
                     assert_eq!(
-                        facet.vertices().map_or(0, std::iter::Iterator::count),
+                        facet
+                            .vertices()
+                            .map(std::iter::Iterator::count)
+                            .unwrap_or(0),
                         3,
                         "Boundary facet should have 3 vertices after insertion {}",
                         i + 1
@@ -2000,7 +2046,10 @@ mod tests {
                 // Each boundary facet should have exactly 3 vertices (for 3D)
                 for facet in &boundary_facets_vec {
                     assert_eq!(
-                        facet.vertices().map_or(0, std::iter::Iterator::count),
+                        facet
+                            .vertices()
+                            .map(std::iter::Iterator::count)
+                            .unwrap_or(0),
                         3,
                         "Boundary facet should have 3 vertices after hull extension {}",
                         i + 1

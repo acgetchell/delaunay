@@ -72,8 +72,6 @@ use slotmap::Key;
 use std::{
     fmt::{self, Debug},
     hash::{Hash, Hasher},
-    iter::Sum,
-    ops::{AddAssign, Div, SubAssign},
 };
 use thiserror::Error;
 
@@ -145,6 +143,16 @@ pub enum FacetError {
         /// The invalid facet index.
         index: u8,
         /// The number of facets in the cell.
+        facet_count: usize,
+    },
+    /// Invalid facet index that couldn't be converted to u8.
+    #[error(
+        "Invalid facet index {original_index} (too large for u8 conversion) for {facet_count} facets"
+    )]
+    InvalidFacetIndexOverflow {
+        /// The original usize index that failed conversion.
+        original_index: usize,
+        /// The number of facets available.
         facet_count: usize,
     },
     /// Cell was not found in the triangulation.
@@ -618,6 +626,10 @@ where
                 // Create FacetView - we know this is valid since we're iterating within bounds
                 let Ok(facet_u8) = usize_to_u8(facet_index, self.current_cell_facet_count) else {
                     // Skip indices that cannot be represented; avoids silent truncation
+                    debug_assert!(
+                        false,
+                        "Facet index {facet_index} exceeds u8 range (max 255). Consider widening FacetView index type for dimension {D}"
+                    );
                     continue;
                 };
                 if let Ok(facet_view) = FacetView::new(self.tds, cell_key, facet_u8) {
@@ -681,11 +693,10 @@ where
 
 impl<'tds, T, U, V, const D: usize> Iterator for BoundaryFacetsIter<'tds, T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    for<'a> &'a T: Div<T>,
 {
     type Item = FacetView<'tds, T, U, V, D>;
 
@@ -1104,21 +1115,29 @@ mod tests {
         // Test failed conversion (index too large)
         let result = usize_to_u8(256, 10);
         assert!(result.is_err());
-        if let Err(FacetError::InvalidFacetIndex { index, facet_count }) = result {
-            assert_eq!(index, u8::MAX); // Should use MAX as placeholder
+        if let Err(FacetError::InvalidFacetIndexOverflow {
+            original_index,
+            facet_count,
+        }) = result
+        {
+            assert_eq!(original_index, 256); // Should preserve original value
             assert_eq!(facet_count, 10);
         } else {
-            panic!("Expected InvalidFacetIndex error");
+            panic!("Expected InvalidFacetIndexOverflow error");
         }
 
         // Test failed conversion (very large index)
         let result = usize_to_u8(usize::MAX, 5);
         assert!(result.is_err());
-        if let Err(FacetError::InvalidFacetIndex { index, facet_count }) = result {
-            assert_eq!(index, u8::MAX);
+        if let Err(FacetError::InvalidFacetIndexOverflow {
+            original_index,
+            facet_count,
+        }) = result
+        {
+            assert_eq!(original_index, usize::MAX);
             assert_eq!(facet_count, 5);
         } else {
-            panic!("Expected InvalidFacetIndex error");
+            panic!("Expected InvalidFacetIndexOverflow error");
         }
     }
 

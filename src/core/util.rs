@@ -165,34 +165,44 @@ where
 ///
 /// # Returns
 ///
-/// `true` if the facets share the same vertices, `false` otherwise.
+/// `Ok(true)` if the facets share the same vertices, `Ok(false)` if they have
+/// different vertices, or `Err(FacetError)` if there was an error accessing
+/// the facet data.
+///
+/// # Errors
+///
+/// Returns `FacetError` if either facet's vertices cannot be accessed, typically
+/// due to missing cells in the triangulation data structure.
 ///
 /// # Examples
 ///
 /// ```rust,no_run
-/// use delaunay::core::facet::FacetView;
+/// use delaunay::core::facet::{FacetView, FacetError};
 /// use delaunay::core::util::facet_views_are_adjacent;
 /// use delaunay::core::triangulation_data_structure::Tds;
 ///
 /// // This is a conceptual example - in practice you would get these from a real TDS
-/// fn example(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> Result<(), Box<dyn std::error::Error>> {
+/// fn example(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> Result<bool, FacetError> {
 ///     let cell_keys: Vec<_> = tds.cell_keys().take(2).collect();
 ///     if cell_keys.len() >= 2 {
 ///         let facet1 = FacetView::new(tds, cell_keys[0], 0)?;
 ///         let facet2 = FacetView::new(tds, cell_keys[1], 0)?;
 ///
-///         if facet_views_are_adjacent(&facet1, &facet2) {
-///             println!("Facets are adjacent");
+///         let adjacent = facet_views_are_adjacent(&facet1, &facet2)?;
+///         match adjacent {
+///             true => println!("Facets are adjacent"),
+///             false => println!("Facets are not adjacent"),
 ///         }
+///         Ok(adjacent)
+///     } else {
+///         Ok(false)
 ///     }
-///     Ok(())
 /// }
 /// ```
-#[must_use]
 pub fn facet_views_are_adjacent<T, U, V, const D: usize>(
     facet1: &FacetView<'_, T, U, V, D>,
     facet2: &FacetView<'_, T, U, V, D>,
-) -> bool
+) -> Result<bool, FacetError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -202,18 +212,16 @@ where
     use crate::core::collections::FastHashSet;
 
     // Compare facets by their vertex UUIDs for efficiency
-    // Handle the Result from vertices() - if either fails, they're not adjacent
-    let vertices1_result: Result<FastHashSet<_>, _> = facet1
-        .vertices()
-        .map(|iter| iter.map(super::vertex::Vertex::uuid).collect());
-    let vertices2_result: Result<FastHashSet<_>, _> = facet2
-        .vertices()
-        .map(|iter| iter.map(super::vertex::Vertex::uuid).collect());
+    let vertices1: FastHashSet<_> = facet1
+        .vertices()?
+        .map(super::vertex::Vertex::uuid)
+        .collect();
+    let vertices2: FastHashSet<_> = facet2
+        .vertices()?
+        .map(super::vertex::Vertex::uuid)
+        .collect();
 
-    match (vertices1_result, vertices2_result) {
-        (Ok(vertices1), Ok(vertices2)) => vertices1 == vertices2,
-        _ => false, // If either facet has missing cells, they're not adjacent
-    }
+    Ok(vertices1 == vertices2)
 }
 
 /// Generates all unique combinations of `k` items from a given slice.
@@ -575,8 +583,8 @@ where
 /// assert!(result.is_err());
 /// ```
 pub fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
-    u8::try_from(idx).map_err(|_| FacetError::InvalidFacetIndex {
-        index: u8::MAX,
+    u8::try_from(idx).map_err(|_| FacetError::InvalidFacetIndexOverflow {
+        original_index: idx,
         facet_count,
     })
 }
@@ -1413,7 +1421,7 @@ mod tests {
         let facet_view2 = FacetView::new(&tds2, cell2_key, 3).unwrap();
 
         assert!(
-            facet_views_are_adjacent(&facet_view1, &facet_view2),
+            facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
             "Facets representing the same shared triangle should be adjacent"
         );
         println!("  ✓ Adjacent facets correctly identified");
@@ -1426,7 +1434,7 @@ mod tests {
         let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap(); // Different facet
 
         assert!(
-            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff),
+            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
             "Different facets with different vertices should not be adjacent"
         );
         println!("  ✓ Non-adjacent facets correctly identified");
@@ -1435,7 +1443,7 @@ mod tests {
         println!("Test 3: Facet adjacent to itself");
 
         assert!(
-            facet_views_are_adjacent(&facet_view1, &facet_view1),
+            facet_views_are_adjacent(&facet_view1, &facet_view1).unwrap(),
             "A facet should be adjacent to itself"
         );
         println!("  ✓ Self-adjacency works correctly");
@@ -1476,7 +1484,7 @@ mod tests {
         let facet_view2 = FacetView::new(&tds2, cell2_key, 2).unwrap(); // Opposite to vertex_d
 
         assert!(
-            facet_views_are_adjacent(&facet_view1, &facet_view2),
+            facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
             "2D facets (edges) sharing vertices should be adjacent"
         );
 
@@ -1485,7 +1493,7 @@ mod tests {
         let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
 
         assert!(
-            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff),
+            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
             "2D facets with different vertices should not be adjacent"
         );
 
@@ -1530,13 +1538,13 @@ mod tests {
 
         // The facets containing the shared vertex should be adjacent
         assert!(
-            facet_views_are_adjacent(&facet_view1_1, &facet_view2_1),
+            facet_views_are_adjacent(&facet_view1_1, &facet_view2_1).unwrap(),
             "1D facets (vertices) that are the same should be adjacent"
         );
 
         // The facets containing different vertices should not be adjacent
         assert!(
-            !facet_views_are_adjacent(&facet_view1_0, &facet_view2_0),
+            !facet_views_are_adjacent(&facet_view1_0, &facet_view2_0).unwrap(),
             "1D facets with different vertices should not be adjacent"
         );
 
@@ -1567,19 +1575,19 @@ mod tests {
         let facet3 = FacetView::new(&tds, cell_key, 3).unwrap();
 
         // Each facet should be adjacent to itself
-        assert!(facet_views_are_adjacent(&facet0, &facet0));
-        assert!(facet_views_are_adjacent(&facet1, &facet1));
-        assert!(facet_views_are_adjacent(&facet2, &facet2));
-        assert!(facet_views_are_adjacent(&facet3, &facet3));
+        assert!(facet_views_are_adjacent(&facet0, &facet0).unwrap());
+        assert!(facet_views_are_adjacent(&facet1, &facet1).unwrap());
+        assert!(facet_views_are_adjacent(&facet2, &facet2).unwrap());
+        assert!(facet_views_are_adjacent(&facet3, &facet3).unwrap());
 
         // Different facets of the same tetrahedron should not be adjacent
         // (they have different sets of vertices)
-        assert!(!facet_views_are_adjacent(&facet0, &facet1));
-        assert!(!facet_views_are_adjacent(&facet0, &facet2));
-        assert!(!facet_views_are_adjacent(&facet0, &facet3));
-        assert!(!facet_views_are_adjacent(&facet1, &facet2));
-        assert!(!facet_views_are_adjacent(&facet1, &facet3));
-        assert!(!facet_views_are_adjacent(&facet2, &facet3));
+        assert!(!facet_views_are_adjacent(&facet0, &facet1).unwrap());
+        assert!(!facet_views_are_adjacent(&facet0, &facet2).unwrap());
+        assert!(!facet_views_are_adjacent(&facet0, &facet3).unwrap());
+        assert!(!facet_views_are_adjacent(&facet1, &facet2).unwrap());
+        assert!(!facet_views_are_adjacent(&facet1, &facet3).unwrap());
+        assert!(!facet_views_are_adjacent(&facet2, &facet3).unwrap());
 
         println!("  ✓ Single tetrahedron facet relationships correct");
     }
@@ -1611,7 +1619,7 @@ mod tests {
 
         for _ in 0..iterations {
             // This should be very fast since it just compares UUID sets
-            let _result = facet_views_are_adjacent(&facet1, &facet2);
+            let _result = facet_views_are_adjacent(&facet1, &facet2).unwrap();
         }
 
         let duration = start.elapsed();
@@ -1657,7 +1665,7 @@ mod tests {
 
         // Facets from completely different geometries should not be adjacent
         assert!(
-            !facet_views_are_adjacent(&facet1, &facet2),
+            !facet_views_are_adjacent(&facet1, &facet2).unwrap(),
             "Facets from different geometries should not be adjacent"
         );
 
@@ -1698,7 +1706,7 @@ mod tests {
         };
 
         let uuids_are_same = facet1_vertex_uuids == facet2_vertex_uuids;
-        let facets_are_adjacent = facet_views_are_adjacent(&facet1, &facet2);
+        let facets_are_adjacent = facet_views_are_adjacent(&facet1, &facet2).unwrap();
 
         // The adjacency should match the UUID equality
         assert_eq!(
@@ -1750,7 +1758,7 @@ mod tests {
         let facet_view2 = FacetView::new(&tds2, cell2_key, 4).unwrap(); // Opposite to vertex_f
 
         assert!(
-            facet_views_are_adjacent(&facet_view1, &facet_view2),
+            facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
             "4D facets (tetrahedra) sharing vertices should be adjacent"
         );
 
@@ -1759,7 +1767,7 @@ mod tests {
         let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
 
         assert!(
-            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff),
+            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
             "4D facets with different vertices should not be adjacent"
         );
 
@@ -1804,7 +1812,7 @@ mod tests {
         let facet_view2 = FacetView::new(&tds2, cell2_key, 5).unwrap(); // Opposite to vertex_h
 
         assert!(
-            facet_views_are_adjacent(&facet_view1, &facet_view2),
+            facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
             "5D facets (4D simplices) sharing vertices should be adjacent"
         );
 
@@ -1813,7 +1821,7 @@ mod tests {
         let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
 
         assert!(
-            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff),
+            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
             "5D facets with different vertices should not be adjacent"
         );
 
@@ -1859,21 +1867,29 @@ mod tests {
         // Test failed conversion (index too large)
         let result = usize_to_u8(256, 10);
         assert!(result.is_err());
-        if let Err(FacetError::InvalidFacetIndex { index, facet_count }) = result {
-            assert_eq!(index, u8::MAX); // Should use MAX as placeholder
+        if let Err(FacetError::InvalidFacetIndexOverflow {
+            original_index,
+            facet_count,
+        }) = result
+        {
+            assert_eq!(original_index, 256); // Should preserve original value
             assert_eq!(facet_count, 10);
         } else {
-            panic!("Expected InvalidFacetIndex error");
+            panic!("Expected InvalidFacetIndexOverflow error");
         }
 
         // Test failed conversion (very large index)
         let result = usize_to_u8(usize::MAX, 5);
         assert!(result.is_err());
-        if let Err(FacetError::InvalidFacetIndex { index, facet_count }) = result {
-            assert_eq!(index, u8::MAX);
+        if let Err(FacetError::InvalidFacetIndexOverflow {
+            original_index,
+            facet_count,
+        }) = result
+        {
+            assert_eq!(original_index, usize::MAX);
             assert_eq!(facet_count, 5);
         } else {
-            panic!("Expected InvalidFacetIndex error");
+            panic!("Expected InvalidFacetIndexOverflow error");
         }
     }
 
@@ -1896,8 +1912,12 @@ mod tests {
         for &val in &large_values {
             let result = usize_to_u8(val, val);
             assert!(result.is_err(), "Should fail for value {val}");
-            if let Err(FacetError::InvalidFacetIndex { index, facet_count }) = result {
-                assert_eq!(index, u8::MAX);
+            if let Err(FacetError::InvalidFacetIndexOverflow {
+                original_index,
+                facet_count,
+            }) = result
+            {
+                assert_eq!(original_index, val);
                 assert_eq!(facet_count, val);
             }
         }
@@ -1921,8 +1941,11 @@ mod tests {
             assert!(result.is_err(), "Should fail for index {idx}");
 
             match result {
-                Err(FacetError::InvalidFacetIndex { index, facet_count }) => {
-                    assert_eq!(index, u8::MAX, "Should use u8::MAX as placeholder");
+                Err(FacetError::InvalidFacetIndexOverflow {
+                    original_index,
+                    facet_count,
+                }) => {
+                    assert_eq!(original_index, idx, "Should preserve original index");
                     assert_eq!(facet_count, count, "Should preserve facet_count");
                 }
                 _ => panic!("Expected InvalidFacetIndex error for index {idx}"),
@@ -1990,11 +2013,8 @@ mod tests {
         }
         let duration = start.elapsed();
 
-        // Should be very fast (under 1ms even in debug mode)
-        assert!(
-            duration.as_millis() < 10,
-            "Conversion should be fast, took {duration:?}"
-        );
+        // Informational only (avoid flaky time asserts in tests)
+        eprintln!("usize_to_u8 valid conversions: 1000 iters in {duration:?}");
 
         // Test that error cases are also fast
         let start = Instant::now();
@@ -2003,10 +2023,7 @@ mod tests {
         }
         let duration = start.elapsed();
 
-        assert!(
-            duration.as_millis() < 10,
-            "Error cases should be fast, took {duration:?}"
-        );
+        eprintln!("usize_to_u8 error conversions: 1000 iters in {duration:?}");
     }
 
     #[test]

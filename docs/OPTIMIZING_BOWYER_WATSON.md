@@ -103,10 +103,10 @@ where
 }
 ```
 
-#### 1.2 Update `RobustBoyerWatson` struct (note: correct spelling)
+#### 1.2 Update `RobustBowyerWatson` struct (note: correct spelling)
 
 ```rust
-pub struct RobustBoyerWatson<T, U, V, const D: usize>
+pub struct RobustBowyerWatson<T, U, V, const D: usize>
 where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
@@ -144,7 +144,7 @@ Self {
     cached_generation: Arc::new(AtomicU64::new(0)),
 }
 
-// RobustBoyerWatson::new()
+// RobustBowyerWatson::new()
 Self {
     predicate_config: config_presets::general_triangulation::<T>(),
     stats: InsertionStatistics::new(),
@@ -186,10 +186,10 @@ where
 }
 ```
 
-#### 2.2 For RobustBoyerWatson (note: correct spelling)
+#### 2.2 For RobustBowyerWatson (note: correct spelling)
 
 ```rust
-impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for RobustBoyerWatson<T, U, V, D>
+impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for RobustBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar
         + ComplexField<RealField = T>
@@ -341,18 +341,18 @@ Validate concurrent access patterns if algorithms are used in multi-threaded con
 ### Core Changes
 
 - [✓] Add caching fields to `IncrementalBowyerWatson` struct
-- [✓] Add caching fields to `RobustBoyerWatson` struct
+- [✓] Add caching fields to `RobustBowyerWatson` struct
 - [✓] Update all constructors for both algorithms
 - [✓] Implement `FacetCacheProvider` for `IncrementalBowyerWatson`
-- [✓] Implement `FacetCacheProvider` for `RobustBoyerWatson`
+- [✓] Implement `FacetCacheProvider` for `RobustBowyerWatson`
 
 ### Method Updates
 
 - [N/A] Update `count_boundary_facets()` in IncrementalBowyerWatson (test helper only)
 - [N/A] Update `count_internal_facets()` in IncrementalBowyerWatson (test helper only)
 - [N/A] Update `count_invalid_facets()` in IncrementalBowyerWatson (test helper only)
-- [✓] Update `build_validated_facet_mapping()` in RobustBoyerWatson
-- [✓] Update `find_visible_boundary_facets()` in RobustBoyerWatson
+- [✓] Update `build_validated_facet_mapping()` in RobustBowyerWatson
+- [✓] Update `find_visible_boundary_facets()` in RobustBowyerWatson
 - [✓] Review and update any other methods using `build_facet_to_cells_map()`
 
 ### Testing

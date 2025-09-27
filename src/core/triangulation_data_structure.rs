@@ -2145,8 +2145,12 @@ where
             // purposes only. The algorithm uses the vertex's UUID to look up the actual
             // vertex instance from the TDS, ensuring consistency between the passed value
             // and the stored vertex. The passed vertex value is not stored or modified.
-            // Save state for potential rollback (algorithm may mutate cells)
-            let pre_algorithm_state = (self.vertices.len(), self.cells.len(), self.generation());
+            // Save state for potential rollback (algorithm may mutate cells) — debug only
+            let pre_algorithm_state = if cfg!(debug_assertions) {
+                Some((self.vertices.len(), self.cells.len(), self.generation()))
+            } else {
+                None
+            };
             let mut algorithm = IncrementalBowyerWatson::new();
             if let Err(e) = algorithm.insert_vertex(self, vertex) {
                 let vertex_coords = Some(format!("{new_coords:?}"));
@@ -2155,7 +2159,7 @@ where
                     &uuid,
                     vertex_coords,
                     true, // Conservative: remove cells that may have been partially modified by algorithm
-                    Some(pre_algorithm_state),
+                    pre_algorithm_state,
                     "algorithm insertion failed",
                 );
                 return Err(match e {
@@ -7172,7 +7176,7 @@ mod tests {
                 if let (Ok(facet_view1), Ok(facet_view2)) = (
                     FacetView::new(&tds1, cell1_key, facet_idx1),
                     FacetView::new(&tds2, cell2_key, facet_idx2),
-                ) && facet_views_are_adjacent(&facet_view1, &facet_view2)
+                ) && facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap()
                 {
                     found_adjacent = true;
                     break;
@@ -7206,7 +7210,7 @@ mod tests {
                 if let (Ok(facet_view1), Ok(facet_view3)) = (
                     FacetView::new(&tds1, cell1_key, facet_idx1),
                     FacetView::new(&tds3, cell3_key, facet_idx3),
-                ) && facet_views_are_adjacent(&facet_view1, &facet_view3)
+                ) && facet_views_are_adjacent(&facet_view1, &facet_view3).unwrap()
                 {
                     found_adjacent2 = true;
                     break;

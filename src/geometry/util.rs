@@ -1147,9 +1147,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::util::surface_measure;
-/// use delaunay::core::facet::FacetView;
 /// use delaunay::core::triangulation_data_structure::Tds;
 /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
 /// use delaunay::vertex;
@@ -1167,7 +1165,8 @@ where
 /// let boundary_facets = tds.boundary_facets().unwrap().collect::<Vec<_>>();
 ///
 /// // Calculate surface area
-/// // let surface_area = surface_measure(&boundary_facets).unwrap();
+/// let surface_area = surface_measure(&boundary_facets).unwrap();
+/// assert!(surface_area > 0.0);
 /// ```
 pub fn surface_measure<T, U, V, const D: usize>(
     facets: &[FacetView<'_, T, U, V, D>],

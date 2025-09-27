@@ -624,17 +624,12 @@ where
     ///
     /// # Note
     ///
-    /// Currently requires heavy numeric bounds due to `FacetView::new` implementation.
-    /// TODO: Consider restructuring `FacetView` impl blocks to allow relaxed bounds for
-    /// simple handle-to-view conversion methods that don't perform geometric computations.
+    /// This method uses lightweight `FacetView::new` with minimal bounds, avoiding
+    /// heavy numeric traits for iterator-only operations.
     pub fn boundary_facets_as_views<'tds>(
         &self,
         tds: &'tds Tds<T, U, V, D>,
-    ) -> Result<Vec<FacetView<'tds, T, U, V, D>>, FacetError>
-    where
-        T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
-        for<'a> &'a T: Div<T>,
-    {
+    ) -> Result<Vec<FacetView<'tds, T, U, V, D>>, FacetError> {
         self.boundary_facets_buffer
             .iter()
             .map(|&(cell_key, facet_index)| FacetView::new(tds, cell_key, facet_index))
@@ -681,17 +676,12 @@ where
     ///
     /// # Note
     ///
-    /// Currently requires heavy numeric bounds due to `FacetView::new` implementation.
-    /// TODO: Consider restructuring `FacetView` impl blocks to allow relaxed bounds for
-    /// simple handle-to-view conversion methods that don't perform geometric computations.
+    /// This method uses lightweight `FacetView::new` with minimal bounds, avoiding
+    /// heavy numeric traits for iterator-only operations.
     pub fn visible_facets_as_views<'tds>(
         &self,
         tds: &'tds Tds<T, U, V, D>,
-    ) -> Result<Vec<FacetView<'tds, T, U, V, D>>, FacetError>
-    where
-        T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
-        for<'a> &'a T: Div<T>,
-    {
+    ) -> Result<Vec<FacetView<'tds, T, U, V, D>>, FacetError> {
         self.visible_facets_buffer
             .iter()
             .map(|&(cell_key, facet_index)| FacetView::new(tds, cell_key, facet_index))
@@ -1350,8 +1340,13 @@ where
         for sharing_cells in facet_to_cells.values() {
             let total_count = sharing_cells.len();
             if total_count > 2 {
-                // Invalid facet sharing - skip
-                continue;
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Facet shared by more than two cells (total_count = {total_count})"
+                        ),
+                    },
+                ));
             }
 
             // Count bad cells sharing this facet
@@ -2031,16 +2026,17 @@ where
             ));
         };
 
+        // HOT PATH OPTIMIZATION: Find opposite vertex without Vec allocation
         // Find the vertex in the adjacent cell that is NOT part of the facet
-        // This is the "opposite" vertex that defines the "inside" side of the facet
-        let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
+        // This is the \"opposite\" vertex that defines the \"inside\" side of the facet
         let cell_vertices = adjacent_cell.vertices();
 
         let mut opposite_vertex = None;
         for cell_vertex in cell_vertices {
-            let is_in_facet = facet_vertices
-                .iter()
-                .any(|fv| fv.uuid() == cell_vertex.uuid());
+            // OPTIMIZATION: Check membership without collecting facet vertices into Vec
+            let is_in_facet = facet.vertices().is_ok_and(|mut facet_vertex_iter| {
+                facet_vertex_iter.any(|fv| fv.uuid() == cell_vertex.uuid())
+            });
             if !is_in_facet {
                 opposite_vertex = Some(cell_vertex);
                 break;
@@ -2061,12 +2057,15 @@ where
 
         // Create test simplices for orientation comparison
         // Using SmallVec to avoid heap allocation for small simplices (D+1 points)
-        let mut simplex_with_opposite: SmallVec<[Point<T, D>; 8]> =
-            facet_vertices.iter().map(|v| *v.point()).collect();
+        // Create test simplices for orientation comparison
+        // Using SmallVec to avoid heap allocation for small simplices (D+1 points)
+        let facet_vertex_points: SmallVec<[Point<T, D>; 8]> =
+            facet.vertices().unwrap().map(|v| *v.point()).collect();
+
+        let mut simplex_with_opposite = facet_vertex_points.clone();
         simplex_with_opposite.push(*opposite_vertex.point());
 
-        let mut simplex_with_test: SmallVec<[Point<T, D>; 8]> =
-            facet_vertices.iter().map(|v| *v.point()).collect();
+        let mut simplex_with_test = facet_vertex_points;
         simplex_with_test.push(*vertex.point());
 
         // Get orientations
