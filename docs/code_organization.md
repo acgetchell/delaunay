@@ -26,8 +26,11 @@ The delaunay project follows a standard Rust library structure with additional t
 > **Tip**: Generate this tree in CI
 >
 > ```bash
-> # scripts/dev/print_tree.sh
+> # Requires tree command (install with: brew install tree or apt-get install tree)
 > git ls-files | sed 's/^/delaunay\//' | tree -I 'target|.git|**/*.png|**/*.svg' -F --fromfile
+>
+> # Alternative using find (when tree is not available):
+> find . -type f -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml" -o -name "*.yaml" | sort
 > ```
 >
 > This keeps the directory tree automatically synchronized with the actual project structure.
@@ -83,6 +86,7 @@ delaunay/
 │   └── triangulation_vs_hull_memory.rs           # Memory comparison benchmarks
 ├── tests/                                        # Integration tests
 │   ├── README.md                                 # Integration tests guide and usage instructions
+│   ├── COVERAGE.md                               # Test coverage tracking and analysis
 │   ├── allocation_api.rs                         # Memory allocation profiling and testing utilities (requires count-allocations feature)
 │   ├── circumsphere_debug_tools.rs               # Interactive circumsphere testing and debugging utilities
 │   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
@@ -94,6 +98,7 @@ delaunay/
 │   ├── templates/                                # Templates for automated generation
 │   │   ├── README.md                             # Templates documentation
 │   │   └── changelog.hbs                         # Custom changelog template
+│   ├── Cell_refactoring.md                       # Cell module refactoring documentation
 │   ├── code_organization.md                      # Code organization patterns (this file)
 │   ├── numerical_robustness_guide.md             # Numerical robustness and stability guide
 │   ├── optimization_recommendations.md           # Performance optimization guide
@@ -130,6 +135,8 @@ delaunay/
 │   │   ├── generate-baseline.yml                 # Automated performance baseline generation on releases
 │   │   ├── profiling-benchmarks.yml              # Profiling suite for large-scale performance analysis
 │   │   └── rust-clippy.yml                       # Additional clippy analysis
+│   ├── instructions/                             # GitHub integration instructions
+│   │   └── codacy.instructions.md                # Codacy configuration instructions
 │   ├── CODEOWNERS                                # Code ownership definitions
 │   └── dependabot.yml                            # Dependency update configuration
 ├── .cargo/                                       # Cargo configuration
@@ -138,6 +145,7 @@ delaunay/
 ├── .codacy.yml                                   # Codacy code quality configuration
 ├── .codecov.yml                                  # Codecov configuration
 ├── .coderabbit.yml                               # CodeRabbit AI review configuration
+├── .gitleaks.toml                                # GitLeaks security scanning configuration
 ├── .gitignore                                    # Git ignore patterns
 ├── .markdownlint.json                            # Markdown linting configuration
 ├── .python-version                               # Python version specification for performance requirements
@@ -151,6 +159,7 @@ delaunay/
 ├── Cargo.lock                                    # Dependency lockfile
 ├── Cargo.toml                                    # Package configuration and dependencies (includes allocation-counter for memory profiling)
 ├── cspell.json                                   # Spell checking configuration
+├── justfile                                      # Modern build automation and task runner (alternative to Makefiles)
 ├── LICENSE                                       # BSD-3-Clause License
 ├── pyproject.toml                                # Python project configuration for development scripts
 ├── README.md                                     # Project overview and getting started
@@ -163,7 +172,10 @@ delaunay/
 **Note**: `tests/circumsphere_debug_tools.rs` contains interactive debugging test functions that can be run with:
 
 ```bash
-# Run specific test functions with verbose output
+# Run debug tests with interactive output (just command)
+just test-debug
+
+# Or run specific test functions with verbose output (direct cargo)
 cargo test --test circumsphere_debug_tools test_2d_circumsphere_debug -- --nocapture
 cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocapture
 cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
@@ -174,9 +186,10 @@ cargo test --test circumsphere_debug_tools -- --nocapture
 **Note**: Memory allocation profiling is available through the `count-allocations` feature:
 
 ```bash
-# Run allocation profiling tests
-cargo test --test allocation_api --features count-allocations
-# Run benchmarks with allocation counting
+# Run allocation profiling tests (just command)
+just test-allocation
+
+# Run benchmarks with allocation counting (direct cargo for specific bench)
 cargo bench --bench profiling_suite --features count-allocations
 ```
 
@@ -187,8 +200,9 @@ cargo bench --bench profiling_suite --features count-allocations
 **Note**: Benchmark-style tests are available through the `bench` feature for performance analysis and demonstrations:
 
 ```bash
-# Run regular tests (excludes timing-sensitive benchmark tests)
-cargo test --lib
+# Run regular tests (just command)
+just test
+
 # Run all tests including benchmark-style performance analysis
 cargo test --lib --features bench
 ```
@@ -211,26 +225,28 @@ cargo test --test coordinate_conversion_errors
 **Note**: Python tests in `scripts/tests/` are executed via pytest (use `uv run pytest` for reproducible envs) and discovered via `pyproject.toml`. Run with:
 
 ```bash
-# Pre-req for uv users (optional): pipx install uv
+# Run all Python utility tests (just command)
+just test-python
 
-# Run all Python utility tests
-uv run pytest -q
-# Or run specific test files
+# Or run specific test files directly
 uv run pytest scripts/tests/test_benchmark_utils.py
 
 # Without uv:
-pytest -q
 pytest scripts/tests/test_benchmark_utils.py
 ```
 
 **Note**: Performance summary generation is available through the benchmark utilities CLI:
 
 ```bash
-# Generate performance summary in benches/PERFORMANCE_RESULTS.md
+# Generate performance summary in benches/PERFORMANCE_RESULTS.md (just command)
+just bench-baseline
+
+# Or use the CLI directly for more options
 uv run benchmark-utils generate-summary
 ```
 
-The `benchmark-utils` CLI provides integrated benchmark workflow functionality including performance summary generation.
+The `benchmark-utils` CLI provides integrated benchmark workflow functionality including performance summary generation,
+with convenient `just` shortcuts for common workflows.
 
 ### Architecture Overview
 
@@ -256,11 +272,11 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality i
 #### Development Infrastructure
 
 - **`examples/`** - Usage demos and trait examples, including memory profiling
-  (see: [examples/memory_analysis.rs](../examples/README.md#memory-analysis-example)) and zero-allocation iterator demonstrations
+  (see: [examples/memory_analysis.rs](../examples/README.md#5-memory-analysis-across-dimensions-memory_analysisrs)) and zero-allocation iterator demonstrations
 - **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage) and memory allocation tracking
-  (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite))
+  (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite-comprehensive))
 - **`tests/`** - Integration tests, debugging utilities, regression testing, allocation profiling tools
-  (see: [tests/allocation_api.rs](../tests/README.md#allocation-profiling-tests)), and robust predicates validation
+  (see: [tests/allocation_api.rs](../tests/README.md#allocation_apirs)), and robust predicates validation
 - **`docs/`** - Architecture guides, performance documentation, numerical robustness guide, and templates
 - **`scripts/`** - Python utilities for automation and CI integration
 
@@ -268,6 +284,7 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality i
 
 - **Quality Control**: `.codacy.yml`, `rustfmt.toml`, `pyproject.toml`, linting configurations
 - **Environment**: `rust-toolchain.toml`, `.python-version`, `.cargo/config.toml`, GitHub Actions workflows
+- **Development Workflow**: `justfile` with automated commands for common development tasks (see [Development Workflow](#development-workflow) below)
 - **Memory Profiling**: `count-allocations` feature flag, allocation-counter dependency, profiling benchmarks
 - **Performance Analysis**: `bench` feature flag for timing-based tests and performance demos (see "Benchmark-style tests" note above)
 - **Project Metadata**: `CITATION.cff`, `REFERENCES.md`, `WARP.md`
@@ -283,9 +300,10 @@ The project structure reflects several key architectural decisions:
 5. **Memory Profiling**: Comprehensive allocation tracking with `count-allocations` feature for detailed memory analysis
 6. **Performance Analysis (opt-in)**: `bench` feature for timing-based tests and ergonomics checks; distinct from CI-driven regression detection in item 4
 7. **Academic Integration**: Strong support for research use with comprehensive citations and references
-8. **High-Performance Optimizations**: Phase 1-2 optimizations completed in v0.4.4 with significant performance gains
-9. **Cross-Platform Development**: Modern Python tooling alongside traditional Rust development
-10. **Quality Assurance**: Multiple layers of automated quality control and testing
+8. **High-Performance Optimizations**: Phase 1-2 optimizations completed in v0.4.4+ with significant performance gains
+9. **Enhanced Robustness**: Rollback mechanisms, atomic operations, and comprehensive error handling
+10. **Cross-Platform Development**: Modern Python tooling alongside traditional Rust development
+11. **Quality Assurance**: Multiple layers of automated quality control and testing
 
 This structure supports both library users (through examples and documentation) and contributors (through comprehensive
 development tooling and clear architectural guidance).
@@ -300,16 +318,82 @@ Version 0.4.4 includes comprehensive memory profiling capabilities:
 - **Integration Testing**: `allocation_api.rs` provides utilities for testing memory usage in various scenarios
 - **CI Integration**: Automated profiling benchmarks with detailed allocation reports
 
-#### Performance Optimization System (v0.4.4)
+#### Performance Optimization System (v0.4.4+)
 
-Version 0.4.4 completes Phase 1-2 of the comprehensive optimization roadmap:
+Version 0.4.4+ completes Phase 1-2 of the comprehensive optimization roadmap:
 
 - **Collection Optimization** (Phase 1): FxHasher-based collections for 2-3x faster hash operations
 - **Key-Based Internal APIs** (Phase 2): Direct SlotMap key operations eliminating UUID lookups
 - **FacetCacheProvider**: 50-90% reduction in facet mapping computation time
 - **Zero-Allocation Iterators**: 1.86x faster iteration with `vertex_uuid_iter()`
-- **Thread Safety**: RCU-based caching for concurrent operations
-- **Enhanced Error Handling**: Comprehensive `InsertionError` enum for robust algorithms
+- **Enhanced Collections**: 15-30% additional gains from FastHashSet/SmallBuffer optimizations
+- **Thread Safety**: RCU-based caching and atomic operations for concurrent operations
+- **Enhanced Error Handling**: Comprehensive `InsertionError` enum with rollback mechanisms
+- **Robustness Infrastructure**: Atomic TDS operations with validation and rollback capabilities
+
+#### Development Workflow
+
+The project uses [`just`](https://github.com/casey/just) as a command runner to simplify common development tasks. Key workflows include:
+
+**Quick Development Cycle:**
+
+```bash
+just dev           # Format, lint, and test (fast feedback loop)
+```
+
+**Pre-Commit Checks:**
+
+```bash
+just pre-commit    # Full quality checks, tests, and examples
+```
+
+**Testing Workflows:**
+
+```bash
+just test          # Run library and doc tests
+just test-python   # Run Python utility tests
+just test-debug    # Run debug tools with output
+just test-allocation  # Run allocation profiling tests
+just test-all      # All tests (Rust + Python)
+```
+
+**Quality and Linting:**
+
+```bash
+just quality       # All quality checks (formatting, linting, validation)
+just fmt          # Format Rust code
+just clippy       # Run Clippy with strict settings
+just python-lint  # Format and lint Python scripts
+```
+
+**Benchmarks and Performance:**
+
+```bash
+just bench         # Run all benchmarks
+just bench-baseline # Generate performance baseline
+just bench-compare # Compare against baseline
+```
+
+**Documentation Maintenance:**
+
+```bash
+just update-tree   # Update directory tree in this document
+```
+
+**CI Simulation:**
+
+```bash
+just ci           # Run what CI runs (quality + release tests + bench compile)
+```
+
+**Complete Command Reference:**
+
+```bash
+just --list       # Show all available commands
+just help-workflows # Show common workflow patterns
+```
+
+This `justfile`-based workflow provides consistent, cross-platform development commands and integrates seamlessly with the existing tooling ecosystem.
 
 ---
 

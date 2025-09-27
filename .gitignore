@@ -32,3 +32,6 @@ uv.lock
 
 #Ignore vscode AI rules
 .github/instructions/codacy.instructions.md
+
+# Claude AI configuration (user-specific settings)
+.claude/

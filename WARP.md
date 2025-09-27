@@ -93,6 +93,35 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Essential AI Commands
 
+### Just Workflow Summary
+
+This project uses [just](https://github.com/casey/just) for streamlined development workflows. Here are the most commonly used commands:
+
+```bash
+# Quick development cycle
+just dev            # Format, lint, and test (fastest feedback loop)
+
+# Pre-commit workflow (recommended before pushing)
+just pre-commit     # Full quality checks + all tests + examples
+
+# CI simulation
+just ci             # Run what CI runs (quality + release tests + benchmark compile)
+
+# Comprehensive quality check
+just quality        # All formatting, linting, validation, and spell checking
+
+# Common individual commands
+just fmt            # Format code
+just clippy         # Rust linting
+just test           # Standard tests
+just test-all       # All tests (Rust + Python)
+just examples       # Run all examples
+just coverage       # Generate coverage report
+
+# View all available commands
+just --list         # or just help-workflows
+```
+
 ### ⚠️ **CI Performance Impact Warning**
 
 **CRITICAL**: Any changes to Rust code (`src/**`, `benches/**`, `Cargo.toml/lock`) will trigger lengthy performance regression testing (30-45 minutes) in CI.
@@ -107,91 +136,101 @@ Run these commands after making changes to ensure code quality (the assistant mu
 modified, added, or staged, and then focus the quality tools on those specific files.
 
 ```bash
-# Rust code formatting and linting (includes src/, tests/, benches/, examples/)
-cargo fmt --all
-cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+# Comprehensive quality check (recommended - runs all checks below)
+just quality
 
-# Rust documentation validation (required for crates.io publishing)
-# NOTE: Documentation failures will prevent publishing to crates.io
-RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
+# Individual quality checks (if you need granular control):
+just fmt           # Rust code formatting
+just clippy        # Rust linting with pedantic/nursery/cargo warnings
+just doc-check     # Rust documentation validation (required for crates.io publishing)
+just python-lint   # Python code quality (ruff check + format)
+just shell-lint    # Shell script formatting and linting
+just markdown-lint # Markdown linting with auto-fixes
+just spell-check   # Spell checking (only checks modified files)
+just validate-json # JSON validation
+just validate-toml # TOML validation
 
-# Python code quality (for scripts/ directory)
-uv run ruff check scripts/ --fix  # Comprehensive check with auto-fixes
-uv run ruff format scripts/      # Code formatting
-uv run pytest                   # Run tests
-# All ruff rules applied including: F401 (unused imports), F811 (duplicate imports), 
-# I (import order), PLC0415 (local imports), S110 (try-except-pass), PLR0912/PLR0915 (complexity)
-
-# Shell script formatting and linting (path-safe)
-git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -w
-git ls-files -z '*.sh' | xargs -0 -r -n4 shellcheck -x
-
-# Markdown linting (path-safe)
-git ls-files -z '*.md' | xargs -0 -r -n100 npx markdownlint --config .markdownlint.json --fix
-
-# Spell checking (path-safe)
-git ls-files -z '*.md' '*.rs' '*.toml' '*.json' \
-  | xargs -0 -r npx cspell lint --config cspell.json --no-progress --gitignore --cache
-# Or for PRs:
-# npx cspell lint --config cspell.json --no-progress --gitignore --cache $(git status --porcelain | awk '{print $2}')
-
-# JSON validation (when JSON files are modified, path-safe)
-git ls-files -z '*.json' | xargs -0 -r -n1 jq empty
-
-# TOML validation (when TOML files are modified, path-safe)
-git ls-files -z '*.toml' | xargs -0 -r -I {} uv run python -c "import tomllib; tomllib.load(open('{}', 'rb')); print('{} is valid TOML')"
+# Legacy commands (for reference, but prefer just recipes above):
+# cargo fmt --all
+# cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+# RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
+# uv run ruff check scripts/ --fix && uv run ruff format scripts/
+# git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -w
+# git ls-files -z '*.sh' | xargs -0 -r -n4 shellcheck -x
+# git ls-files -z '*.md' | xargs -0 -r -n100 npx markdownlint --config .markdownlint.json --fix
+# (spell checking, JSON/TOML validation commands in justfile)
 ```
 
 ### Testing and Validation
 
 ```bash
-# Build and test
-cargo build
-cargo test --lib --verbose
-cargo test --doc --verbose
+# Comprehensive testing
+just test-all      # Run all tests (Rust + Python)
+just pre-commit    # Full pre-commit checks (quality + tests + examples)
 
-# Test coverage analysis (excludes benchmarks, examples, and integration tests)
-cargo tarpaulin --exclude-files 'benches/**' --exclude-files 'examples/**' --exclude-files 'tests/**' --out Html --output-dir target/tarpaulin
+# Rust testing
+just test          # Standard library and doc tests
+just test-release  # All tests in release mode (recommended for performance)
+just test-debug    # Debug tools with output (circumsphere_debug_tools)
+just test-allocation  # Memory allocation profiling tests
+
+# Python testing
+just test-python   # Run pytest for Python scripts
+
+# Examples and validation
+just examples      # Run all examples (validates functionality)
+
+# Coverage analysis
+just coverage      # Generate HTML coverage report (excludes benchmarks/examples/integration tests)
 # View coverage report: open target/tarpaulin/tarpaulin-report.html
 
-# Integration tests (comprehensive)
-cargo test --release  # Run all tests in release mode for performance
-cargo test --test circumsphere_debug_tools -- --nocapture  # Debug tools with output
-
 # Benchmarks
-cargo bench --workspace --no-run
+just bench-compile # Compile benchmarks without running
+just bench         # Run all benchmarks
 
-# Run all examples (validates functionality)
-bash scripts/run_all_examples.sh
-
-# Python utility testing (if Python scripts modified)
-uv run pytest
-
-# Benchmark-style tests (performance analysis and demonstrations)
-cargo test --lib --features bench  # Includes timing-based tests normally excluded from CI
+# Legacy commands (for reference, but prefer just recipes above):
+# cargo build
+# cargo test --lib --verbose && cargo test --doc --verbose
+# cargo test --release
+# cargo test --test circumsphere_debug_tools -- --nocapture
+# bash scripts/run_all_examples.sh
+# uv run pytest
+# cargo tarpaulin --exclude-files 'benches/**' --exclude-files 'examples/**' --exclude-files 'tests/**' --out Html --output-dir target/tarpaulin
 ```
 
 ### Performance and Benchmarks
 
 ```bash
-# Generate performance baseline
-uv run benchmark-utils generate-baseline
+# Performance baseline management
+just bench-baseline  # Generate performance baseline
 
-# Compare performance against baseline
-uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
+# Performance comparison
+just bench-compare   # Compare against baseline
+just bench-dev       # Development mode (10x faster for iteration)
 
-# Development mode (10x faster for iteration)
-uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
+# Benchmark execution
+just bench-compile   # Compile benchmarks without running
+just bench          # Run all benchmarks
+
+# Legacy commands (for reference, but prefer just recipes above):
+# uv run benchmark-utils generate-baseline
+# uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
+# uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
 ```
 
 ### Changelog Management
 
 ```bash
 # Generate enhanced changelog with AI categorization
-uv run changelog-utils generate
+just changelog       # Generate changelog
+just changelog-update # Generate changelog with success message
 
 # Create git tag with changelog content (user-only; WARP must not execute)
 # Run manually from your terminal:
+just changelog-tag <version>  # e.g., just changelog-tag v0.4.2
+
+# Legacy commands (for reference, but prefer just recipes above):
+# uv run changelog-utils generate
 # uv run changelog-utils tag vX.Y.Z
 ```
 

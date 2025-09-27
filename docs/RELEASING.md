@@ -80,7 +80,8 @@ rg -n "\bv?[0-9]+\.[0-9]+\.[0-9]+\b" README.md docs/ || true
 git tag -a "$TAG" -m "delaunay $TAG"
 
 # Generate changelog using the Python-based tool (improved error handling)
-uv run changelog-utils generate
+just changelog
+# uv run changelog-utils generate
 ```
 
 4. Generate performance results with fresh benchmark data
@@ -138,7 +139,8 @@ If you discover issues (bugs, formatting problems, etc.) after creating the chan
    # Delete the temporary tag and regenerate changelog
    git tag -d "$TAG"
    git tag -a "$TAG" -m "delaunay $TAG"
-   uv run changelog-utils generate
+   just changelog
+   # uv run changelog-utils generate
    
    # Commit updated changelog
    git add CHANGELOG.md
@@ -169,7 +171,8 @@ git tag -d "$TAG" 2>/dev/null || true
 
 # Create the final annotated tag with the changelog section as the tag message
 # Using the new Python-based tagging tool
-uv run changelog-utils tag "$TAG" --force
+just changelog-tag "$TAG"
+# uv run changelog-utils tag "$TAG" --force
 ```
 
 3. (Optional) Verify tag message content

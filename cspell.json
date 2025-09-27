@@ -278,7 +278,8 @@
     "talloc",
     "justfile",
     "Justfile",
-    "justfiles"
+    "justfiles",
+    "Makefiles"
   ],
   "flagWords": [
     "varous",
