@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "delaunay"
-version = "0.4.4"
+version = "0.5.0"
 dependencies = [
  "allocation-counter",
  "anyhow",
