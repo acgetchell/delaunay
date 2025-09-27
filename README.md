@@ -51,25 +51,29 @@ We welcome contributions! Here's a 30-second quickstart:
 git clone https://github.com/acgetchell/delaunay.git
 cd delaunay
 
-# Build and test
-cargo build
-cargo test
+# Traditional approach
+cargo build && cargo test
 
-# Format and lint
-cargo fmt --all
-cargo clippy --all-targets --all-features
+# Modern approach (recommended) - install just command runner
+cargo install just
+just dev              # Quick development cycle: format, lint, test
+just --list           # See all available development commands
 
 # Run examples
-./scripts/run_all_examples.sh
-
-# Run a specific example
+just examples         # Run all examples
+# Or run specific examples:
 cargo run --example triangulation_3d_50_points
 cargo run --example convex_hull_3d_50_points
-cargo run --example into_from_conversions
-cargo run --example point_comparison_and_hashing
 cargo run --example memory_analysis
 cargo run --example zero_allocation_iterator_demo
 ```
+
+**Just Workflows:**
+
+- `just dev` - Quick development cycle (format, lint, test)
+- `just quality` - Comprehensive code quality checks
+- `just pre-commit` - Full validation before pushing
+- `just ci` - Simulate CI pipeline locally
 
 ## 📋 Examples
 

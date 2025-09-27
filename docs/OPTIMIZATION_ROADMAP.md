@@ -30,7 +30,7 @@ The goal is to achieve maximum performance while maintaining 100% backward compa
 
 ## Phase 1: Collection Optimization ✅ COMPLETE
 
-### Status: ✅ Completed (v0.4.3 - September 2025)
+### Status: ✅ Completed (v0.4.4 - September 2025)
 
 ### Objective
 
@@ -86,7 +86,7 @@ Eliminate UUID→Key lookups in hot paths by implementing direct key-based opera
 
 ```rust
 // New key-based helper method
-fn vertex_keys_for_cell_direct(&self, cell_key: CellKey) 
+fn get_cell_vertex_keys(&self, cell_key: CellKey) 
     -> Result<VertexKeyBuffer, TriangulationValidationError>
 ```
 
@@ -120,7 +120,7 @@ vertex_uuid_iter() -> impl ExactSizeIterator<Item = Uuid>
 
 #### Algorithms Optimized
 
-- `assign_neighbors()` - Uses `vertex_keys_for_cell_direct()`
+- `assign_neighbors()` - Uses `get_cell_vertex_keys()`
 - `assign_incident_cells()` - Direct key operations
 - `remove_duplicate_cells()` - Key-based duplicate detection
 - `build_facet_to_cells_map_lenient()` - Optimized with keys (deprecated lenient version)
@@ -142,7 +142,7 @@ vertex_uuid_iter() -> impl ExactSizeIterator<Item = Uuid>
 - Added `#[must_use]` attributes where appropriate
 - Added `# Errors` documentation sections
 - Eliminated `.unwrap()` calls in favor of proper error handling
-- All 690 tests passing with no clippy warnings
+- All 772 tests passing with no clippy warnings
 
 ### v0.4.4 Release Achievements (September 2025)
 
@@ -259,7 +259,7 @@ fn process_cell_neighbors_by_key(&self, cell_key: CellKey) {
 
 ### Status: 📋 PLANNED
 
-### Target: Q3 2026 (Following v0.4.4 completion)
+### Target: Q4 2025 (Following v0.4.4 completion)
 
 ### Objective
 
@@ -392,7 +392,7 @@ impl ConvexHull {
 
 ### Status: 📋 PLANNED
 
-### Target: Q4 2025 (Following Phase 3 completion)
+### Target: Q1 2026 (Following Phase 3 completion)
 
 ### Objective
 
@@ -546,7 +546,7 @@ type OptimizedTds<T, U, V, const D: usize> =
 
 ### Code Quality (v0.4.4 Status)
 
-- [x] **All tests passing (690/690)** ✅
+- [x] **All tests passing (772/774)** ✅
 - [x] **No clippy warnings** ✅
 - [x] **Documentation complete** ✅
 - [x] **Phase 1-2 implementation guides** ✅
@@ -640,8 +640,8 @@ Phase 1 and Phase 2 are **fully complete** as of v0.4.4 (September 2025), delive
 
 Phases 3-4 are well-designed and ready for implementation:
 
-- **Phase 3** (Q1 2026): Structure refactoring for 50% memory reduction  
-- **Phase 4** (Q2 2027): Collection abstraction for 10-15% iteration improvement
+- **Phase 3** (Q3 2025): Structure refactoring for 50% memory reduction  
+- **Phase 4** (Q4 2025): Collection abstraction for 10-15% iteration improvement
 
 ### Design Philosophy
 

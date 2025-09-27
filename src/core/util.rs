@@ -567,7 +567,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns `FacetError::InvalidFacetIndex` if the index cannot fit in a u8.
+/// Returns `FacetError::InvalidFacetIndexOverflow` if the index cannot fit in a u8.
 ///
 /// # Examples
 ///
@@ -1973,7 +1973,7 @@ mod tests {
             // Invalid conversion
             let result_invalid = usize_to_u8(256, count);
             assert!(result_invalid.is_err());
-            if let Err(FacetError::InvalidFacetIndex { facet_count, .. }) = result_invalid {
+            if let Err(FacetError::InvalidFacetIndexOverflow { facet_count, .. }) = result_invalid {
                 assert_eq!(facet_count, count);
             }
         }

@@ -547,7 +547,7 @@ mod tests {
     #[test]
     #[cfg(feature = "bench")]
     fn benchmark_boundary_facets_performance() {
-        use crate::core::algorithms::robust_bowyer_watson::RobustBoyerWatson;
+        use crate::core::algorithms::robust_bowyer_watson::RobustBowyerWatson;
         use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
         use num_traits::cast::cast;
         use rand::Rng;
@@ -579,8 +579,8 @@ mod tests {
             let vertices = Vertex::from_points(points);
 
             // Use robust Bowyer-Watson algorithm to create triangulation from scratch
-            let mut robust_algorithm: RobustBoyerWatson<f64, Option<()>, Option<()>, 3> =
-                RobustBoyerWatson::new();
+            let mut robust_algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
+                RobustBowyerWatson::new();
 
             // Create triangulation using robust algorithm
             let tds = match robust_algorithm.new_triangulation(&vertices) {

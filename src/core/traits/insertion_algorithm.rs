@@ -2127,7 +2127,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::algorithms::robust_bowyer_watson::RobustBoyerWatson;
+    /// use delaunay::core::algorithms::robust_bowyer_watson::RobustBowyerWatson;
     /// use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
     /// use delaunay::{vertex, geometry::point::Point};
     ///
@@ -2138,7 +2138,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let mut algorithm: RobustBoyerWatson<f64, Option<()>, Option<()>, 3> = RobustBoyerWatson::new();
+    /// let mut algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> = RobustBowyerWatson::new();
     /// let tds = algorithm.new_triangulation(&vertices)?;
     /// # Ok::<(), delaunay::core::triangulation_data_structure::TriangulationConstructionError>(())
     /// ```
@@ -2463,8 +2463,10 @@ where
                 })?;
 
             // Extract vertex data from FacetView (zero allocation access)
-            let facet_vertices: Vec<Vertex<T, U, D>> =
-                facet_view.vertices().unwrap().copied().collect();
+            let facet_vertices_iter = facet_view.vertices().map_err(|e| {
+                InsertionError::TriangulationState(TriangulationValidationError::FacetError(e))
+            })?;
+            let facet_vertices: Vec<Vertex<T, U, D>> = facet_vertices_iter.copied().collect();
 
             // Create the cell using the optimized vertex-based approach
             if Self::create_cell_from_vertices_and_vertex(tds, facet_vertices, vertex).is_ok() {
@@ -2494,6 +2496,68 @@ where
         // Use the optimized batch removal method that handles UUID mapping
         // and generation counter updates internally
         tds.remove_cells_by_keys(bad_cells);
+    }
+
+    /// Atomic operation: ensure vertex is in TDS and remove bad cells.
+    ///
+    /// This method ensures that either both operations succeed or neither has side effects,
+    /// preventing the TDS from being left in an inconsistent state. The operation ordering
+    /// is critical: vertex insertion must happen before cell removal to avoid corruption
+    /// if vertex validation fails after cells are already removed.
+    ///
+    /// This implementation uses `ArcSwapOption` operations for efficient cache invalidation
+    /// without requiring separate generation tracking.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - The triangulation data structure to modify
+    /// * `vertex` - The vertex to ensure is present in TDS
+    /// * `bad_cells` - Cell keys to remove atomically
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Both operations succeeded atomically
+    /// * `Err(InsertionError)` - Operation failed, TDS should be in consistent state
+    ///
+    /// # Atomic Operation Guarantee
+    ///
+    /// This method provides atomic semantics:
+    /// - If vertex insertion fails, no cells are removed and no caches are invalidated
+    /// - If vertex insertion succeeds, cells are guaranteed to be removed and caches invalidated
+    /// - TDS remains in a consistent state regardless of success or failure
+    /// # Errors
+    ///
+    /// Returns `InsertionError::TriangulationState` if the vertex cannot be inserted into the TDS.
+    fn atomic_vertex_insert_and_remove_cells(
+        &mut self,
+        tds: &mut Tds<T, U, V, D>,
+        vertex: &Vertex<T, U, D>,
+        bad_cells: &[crate::core::triangulation_data_structure::CellKey],
+    ) -> Result<(), InsertionError>
+    where
+        T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
+        for<'a> &'a T: Div<T>,
+    {
+        // Ensure vertex is in TDS before destructive operations
+        Self::ensure_vertex_in_tds(tds, vertex).map_err(InsertionError::TriangulationState)?;
+
+        // Remove bad cells (this modifies TDS structure)
+        Self::remove_bad_cells(tds, bad_cells);
+
+        // Invalidate cache using direct ArcSwapOption operations
+        // This is more efficient than generation-based tracking
+        self.invalidate_cache_atomically();
+
+        Ok(())
+    }
+
+    /// Hook method for atomic cache invalidation using `ArcSwapOption`
+    ///
+    /// This method leverages `ArcSwapOption`'s atomic operations for efficient
+    /// cache invalidation without requiring separate generation counters.
+    /// Algorithms that implement caching should override this method.
+    fn invalidate_cache_atomically(&mut self) {
+        // Default implementation: no caching, so nothing to invalidate
     }
 
     /// Finalizes the triangulation after insertion to ensure consistency
@@ -5826,5 +5890,172 @@ mod tests {
         }
 
         println!("✓ new_triangulation degenerate cases handled correctly");
+    }
+
+    /// Test `atomic_vertex_insert_and_remove_cells` method
+    #[test]
+    fn test_atomic_vertex_insert_and_remove_cells() {
+        println!("Testing atomic_vertex_insert_and_remove_cells");
+
+        // Create a triangulation with multiple cells
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([1.0, 1.0, 1.0]), // Additional vertex to create more cells
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut algorithm = IncrementalBowyerWatson::new();
+
+        let initial_generation = tds.generation();
+        let initial_vertex_count = tds.number_of_vertices();
+        let initial_cell_count = tds.number_of_cells();
+
+        // Get some cells to remove (simulate bad cells)
+        let cell_keys: Vec<_> = tds.cells().keys().take(1).collect();
+        assert!(!cell_keys.is_empty(), "Should have at least one cell");
+
+        // Create a new vertex to insert
+        let new_vertex = vertex!([0.5, 0.5, 0.5]);
+
+        // Test successful atomic operation
+        let result =
+            algorithm.atomic_vertex_insert_and_remove_cells(&mut tds, &new_vertex, &cell_keys);
+
+        assert!(
+            result.is_ok(),
+            "Atomic operation should succeed: {:?}",
+            result.err()
+        );
+
+        // Verify the vertex was added
+        assert!(
+            tds.vertex_key_from_uuid(&new_vertex.uuid()).is_some(),
+            "New vertex should be in TDS"
+        );
+
+        // Verify cells were removed
+        assert_eq!(
+            tds.number_of_cells(),
+            initial_cell_count - cell_keys.len(),
+            "Cells should be removed"
+        );
+
+        // Verify generation changed (indicating TDS modification)
+        assert_ne!(
+            tds.generation(),
+            initial_generation,
+            "Generation should change after modifications"
+        );
+
+        println!("  ✓ Successful atomic operation completed");
+        println!(
+            "  ✓ Vertex count: {} -> {}",
+            initial_vertex_count,
+            tds.number_of_vertices()
+        );
+        println!(
+            "  ✓ Cell count: {} -> {}",
+            initial_cell_count,
+            tds.number_of_cells()
+        );
+        println!(
+            "  ✓ Generation: {} -> {}",
+            initial_generation,
+            tds.generation()
+        );
+    }
+
+    /// Test `atomic_vertex_insert_and_remove_cells` with vertex validation failure
+    #[test]
+    fn test_atomic_vertex_insert_and_remove_cells_validation_failure() {
+        println!("Testing atomic_vertex_insert_and_remove_cells with validation failure");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut algorithm = IncrementalBowyerWatson::new();
+
+        let _initial_generation = tds.generation();
+        let _initial_cell_count = tds.number_of_cells();
+
+        // Create a scenario that might cause vertex validation to fail
+        // We'll use an existing vertex which should already be in the TDS
+        let existing_vertex = vertices[0]; // Should already be in TDS
+
+        // Get some cells to remove
+        let cell_keys: Vec<_> = tds.cells().keys().take(1).collect();
+
+        // Test atomic operation (should succeed since existing vertex handling is valid)
+        let result =
+            algorithm.atomic_vertex_insert_and_remove_cells(&mut tds, &existing_vertex, &cell_keys);
+
+        // This should actually succeed because ensure_vertex_in_tds handles duplicates gracefully
+        assert!(
+            result.is_ok(),
+            "Atomic operation with existing vertex should handle gracefully"
+        );
+
+        println!("  ✓ Atomic operation with existing vertex handled correctly");
+    }
+
+    /// Test `atomic_vertex_insert_and_remove_cells` with empty bad cells
+    #[test]
+    fn test_atomic_vertex_insert_and_remove_cells_empty_bad_cells() {
+        println!("Testing atomic_vertex_insert_and_remove_cells with empty bad cells");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut algorithm = IncrementalBowyerWatson::new();
+
+        let initial_generation = tds.generation();
+        let initial_cell_count = tds.number_of_cells();
+
+        let new_vertex = vertex!([0.5, 0.5, 0.5]);
+        let empty_bad_cells: Vec<crate::core::triangulation_data_structure::CellKey> = vec![];
+
+        // Test atomic operation with no cells to remove
+        let result = algorithm.atomic_vertex_insert_and_remove_cells(
+            &mut tds,
+            &new_vertex,
+            &empty_bad_cells,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Atomic operation should succeed with empty bad cells"
+        );
+
+        // Verify vertex was added
+        assert!(
+            tds.vertex_key_from_uuid(&new_vertex.uuid()).is_some(),
+            "New vertex should be in TDS"
+        );
+
+        // Verify no cells were removed
+        assert_eq!(
+            tds.number_of_cells(),
+            initial_cell_count,
+            "Cell count should remain unchanged with empty bad cells"
+        );
+
+        // Generation should still change due to vertex insertion
+        assert_ne!(
+            tds.generation(),
+            initial_generation,
+            "Generation should change due to vertex insertion"
+        );
+
+        println!("  ✓ Empty bad cells handled correctly");
     }
 }

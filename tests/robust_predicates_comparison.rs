@@ -5,7 +5,7 @@
 //! "No cavity boundary facets found" errors in Delaunay triangulation.
 
 use delaunay::core::{
-    algorithms::robust_bowyer_watson::RobustBoyerWatson, triangulation_data_structure::Tds,
+    algorithms::robust_bowyer_watson::RobustBowyerWatson, triangulation_data_structure::Tds,
 };
 use delaunay::geometry::{
     point::Point,
@@ -198,7 +198,7 @@ fn test_vertex_insertion_robustness() {
         }
     };
 
-    let mut robust_algorithm = RobustBoyerWatson::for_degenerate_cases();
+    let mut robust_algorithm = RobustBowyerWatson::for_degenerate_cases();
 
     // Try to insert problematic vertices that might cause "No cavity boundary facets found"
     let problematic_vertices = vec![
