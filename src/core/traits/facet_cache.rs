@@ -37,8 +37,13 @@ use std::{
 /// ```
 /// use delaunay::core::traits::facet_cache::FacetCacheProvider;
 /// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::geometry::traits::coordinate::CoordinateScalar;
+/// use delaunay::core::traits::data_type::DataType;
 /// use std::sync::Arc;
 /// use std::sync::atomic::{AtomicU64, Ordering};
+/// use std::ops::{AddAssign, SubAssign, Div};
+/// use std::iter::Sum;
+/// use serde::{Serialize, de::DeserializeOwned};
 /// use arc_swap::ArcSwapOption;
 ///
 /// struct MyAlgorithm {
@@ -57,12 +62,11 @@ use std::{
 ///
 /// impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for MyAlgorithm
 /// where
-///     T: delaunay::geometry::traits::coordinate::CoordinateScalar +
-///        std::ops::AddAssign<T> + std::ops::SubAssign<T> + std::iter::Sum + num_traits::NumCast,
-///     U: delaunay::core::traits::data_type::DataType + serde::de::DeserializeOwned,
-///     V: delaunay::core::traits::data_type::DataType + serde::de::DeserializeOwned,
-///     for<'a> &'a T: std::ops::Div<T>,
-///     [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+///     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+///     U: DataType + DeserializeOwned,
+///     V: DataType + DeserializeOwned,
+///     for<'a> &'a T: Div<T>,
+///     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 /// {
 ///     fn facet_cache(&self) -> &ArcSwapOption<delaunay::core::collections::FacetToCellsMap> {
 ///         &self.facet_to_cells_cache
@@ -79,7 +83,7 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Returns a reference to the facet cache storage.
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap>;
@@ -272,24 +276,31 @@ where
     ) -> Result<Arc<FacetToCellsMap>, TriangulationValidationError> {
         use std::sync::atomic::Ordering;
 
-        // Check if cache is stale and needs to be invalidated
-        // ORDERING: Acquire loads here synchronize with Release stores to ensure
-        // we see both the cache and generation updates from writers consistently.
-        // This prevents torn reads where we might see a new cache with old generation.
-        let current_generation = tds.generation();
-        let cached_generation = self.cached_generation().load(Ordering::Acquire);
+        let mut current_generation = tds.generation();
 
-        // Get or build the cached facet-to-cells mapping using ArcSwapOption
-        // If the TDS generation matches the cached generation, cache is current
-        if current_generation == cached_generation {
-            // Cache is current - load existing cache or build if it doesn't exist
-            if let Some(existing_cache) = self.facet_cache().load_full() {
-                // Cache exists and is current - use it
-                Ok(existing_cache)
-            } else {
+        loop {
+            // Check if cache is stale and needs to be invalidated
+            // ORDERING: Acquire loads here synchronize with Release stores to ensure
+            // we see both the cache and generation updates from writers consistently.
+            // This prevents torn reads where we might see a new cache with old generation.
+            let cached_generation = self.cached_generation().load(Ordering::Acquire);
+
+            // Get or build the cached facet-to-cells mapping using ArcSwapOption
+            // If the TDS generation matches the cached generation, cache is current
+            if current_generation == cached_generation {
+                // Cache is current - load existing cache or build if it doesn't exist
+                if let Some(existing_cache) = self.facet_cache().load_full() {
+                    // Cache exists and is current - use it
+                    return Ok(existing_cache);
+                }
                 // Build cache lazily inside RCU to minimize duplicate work under contention.
                 let built_cache = self.try_build_cache_with_rcu(tds)?;
 
+                // Re-check generation to avoid stashing a cache built against a stale TDS.
+                if tds.generation() != current_generation {
+                    current_generation = tds.generation();
+                    continue;
+                }
                 // Update generation if we were the ones who built it
                 // Note: built_cache is the old value before our update
                 // Only store generation if the cache is actually present to avoid stale store
@@ -298,31 +309,53 @@ where
                         .store(current_generation, Ordering::Release);
                 }
 
-                // Return the cache; if concurrently invalidated, retry via slow path
+                // Return the cache; if concurrently invalidated, retry via the loop
                 // Another thread could invalidate between RCU and load_full()
-                self.facet_cache()
-                    .load_full()
-                    .map_or_else(|| self.try_get_or_build_facet_cache(tds), Ok)
+                if let Some(cache) = self.facet_cache().load_full() {
+                    return Ok(cache);
+                }
+                // Cache was invalidated after we built it - continue loop to rebuild
             }
-        } else {
-            // Cache is stale - need to invalidate and rebuild
+
+            // Cache is stale - coordinate rebuild through RCU to avoid duplicate work
+            current_generation = tds.generation();
+
+            // OPTIMIZATION: Invalidate first to coordinate rebuilds via RCU. This prevents
+            // multiple threads from rebuilding in parallel when hitting stale cache simultaneously.
+            // By setting to None first, we ensure that subsequent threads will use the RCU
+            // mechanism in try_build_cache_with_rcu(), where only one thread builds while
+            // others wait and reuse the result, avoiding expensive duplicate work.
+            self.facet_cache().store(None);
+
+            // Coordinate the build; return value is the OLD cache (if any).
+            let _old = self.try_build_cache_with_rcu(tds)?;
+
+            let rebuilt_generation = tds.generation();
+            if rebuilt_generation != current_generation {
+                current_generation = rebuilt_generation;
+                continue;
+            }
+
+            if let Some(cache) = self.facet_cache().load_full() {
+                self.cached_generation()
+                    .store(current_generation, Ordering::Release);
+                return Ok(cache);
+            }
+
+            // Fallback to direct build to guarantee progress
             let new_cache = tds.build_facet_to_cells_map()?;
             let new_cache_arc = Arc::new(new_cache);
-
-            // Atomically swap in the new cache.
-            // ORDERING: ArcSwap's store() uses SeqCst ordering, establishing a happens-before
-            // relationship with any subsequent loads. This ensures the new cache is visible
-            // to all threads before the generation update below.
             self.facet_cache().store(Some(new_cache_arc.clone()));
 
-            // Update the generation snapshot.
-            // ORDERING: The Release ordering here synchronizes with Acquire loads in future
-            // cache checks. Combined with the SeqCst store above, this ensures readers will
-            // see both the new cache and the updated generation consistently.
+            let rebuilt_generation = tds.generation();
+            if rebuilt_generation != current_generation {
+                current_generation = rebuilt_generation;
+                continue;
+            }
+
             self.cached_generation()
                 .store(current_generation, Ordering::Release);
-
-            Ok(new_cache_arc)
+            return Ok(new_cache_arc);
         }
     }
 
@@ -849,7 +882,7 @@ mod tests {
         let provider = TestCacheProvider::new();
 
         // Create an empty triangulation
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
 
         // Should handle empty triangulation gracefully
         let cache = provider.get_or_build_facet_cache(&tds);

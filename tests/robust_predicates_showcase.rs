@@ -2,7 +2,7 @@
 //! where standard predicates fail, directly addressing "No cavity boundary facets found" errors.
 
 use delaunay::core::{
-    algorithms::robust_bowyer_watson::RobustBoyerWatson, triangulation_data_structure::Tds,
+    algorithms::robust_bowyer_watson::RobustBowyerWatson, triangulation_data_structure::Tds,
 };
 use delaunay::geometry::{
     point::Point,
@@ -397,7 +397,7 @@ fn triangulation_scenario_demo() {
         tds.cells().len()
     );
 
-    let mut robust_algorithm = RobustBoyerWatson::for_degenerate_cases();
+    let mut robust_algorithm = RobustBowyerWatson::for_degenerate_cases();
 
     // These are the kinds of vertices that cause problems in real triangulations
     let challenging_insertions = vec![

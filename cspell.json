@@ -28,6 +28,7 @@
   "words": [
     "Algorithmica",
     "BibTeX",
+    "Burnikel",
     "CGAL",
     "CODEOWNERS",
     "Centroidal",
@@ -124,6 +125,7 @@
     "detekt",
     "docstrings",
     "doctest",
+    "doctests",
     "dotenv",
     "downcasting",
     "dtolnay",
@@ -132,9 +134,11 @@
     "endgroup",
     "eprintln",
     "esac",
+    "expl",
     "findutils",
     "fromfile",
     "fuga",
+    "Funke",
     "functiongenerics",
     "fxhash",
     "getconf",
@@ -166,6 +170,7 @@
     "logicalcpu",
     "luacheck",
     "machdep",
+    "Mehlhorn",
     "matrixmultiply",
     "memchr",
     "memsize",
@@ -198,6 +203,8 @@
     "pipefail",
     "pipx",
     "pointee",
+    "POINTTYPE",
+    "pointtype",
     "polytopes",
     "postconditions",
     "powi",
@@ -266,7 +273,12 @@
     "winget",
     "xlarge",
     "zenodo",
-    "zerocopy"
+    "zerocopy",
+    "benchc",
+    "talloc",
+    "justfile",
+    "Justfile",
+    "justfiles"
   ],
   "flagWords": [
     "varous",
@@ -277,7 +289,8 @@
       "filename": "CHANGELOG.md",
       "ignoreWords": [
         "varous",
-        "tarpauline"
+        "tarpauline",
+        "runtim"
       ]
     }
   ],

@@ -21,7 +21,7 @@
 //! use delaunay::vertex;
 //!
 //! // Create a 4D triangulation (4-dimensional space!)
-//! let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::default();
+//! let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
 //!
 //! // Add vertices incrementally - triangulation evolves automatically
 //! tds.add(vertex!([0.0, 0.0, 0.0, 0.0])).unwrap();  // 1 vertex, 0 cells
@@ -137,6 +137,8 @@
 
 // Allow multiple crate versions due to transitive dependencies
 #![allow(clippy::multiple_crate_versions)]
+// Temporarily allow deprecated warnings during Facet -> FacetView migration
+#![allow(deprecated)]
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
 
@@ -272,7 +274,7 @@ pub const fn is_normal<T: Sized + Send + Sync + Unpin>() -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        core::{cell::Cell, facet::Facet, triangulation_data_structure::Tds, vertex::Vertex},
+        core::{cell::Cell, triangulation_data_structure::Tds, vertex::Vertex},
         geometry::Point,
         is_normal,
     };
@@ -286,7 +288,6 @@ mod tests {
         assert!(is_normal::<Point<f64, 3>>());
         assert!(is_normal::<Point<f32, 3>>());
         assert!(is_normal::<Vertex<f64, Option<()>, 3>>());
-        assert!(is_normal::<Facet<f64, Option<()>, Option<()>, 3>>());
         assert!(is_normal::<Cell<f64, Option<()>, Option<()>, 4>>());
         assert!(is_normal::<Tds<f64, Option<()>, Option<()>, 4>>());
     }

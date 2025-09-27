@@ -1,2 +1,33 @@
 [env]
 CRITERION_OUTPUT_FORMAT = "json, html"
+
+
+[alias]
+# Fast everyday commands (single Cargo invocations only)
+b = "build"
+t = "test --all-features -- --nocapture"
+format-all = "fmt --all"
+doc-gen = "doc --workspace --no-deps"
+
+# Strict clippy matching repo intent
+lint = "clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo"
+
+# Documentation validation (required for crates.io publishing)
+doc-check-strict = "doc --workspace --no-deps --document-private-items"
+
+# Testing commands from WARP.md
+test-lib = "test --lib --verbose"
+test-doc = "test --doc --verbose"
+test-release = "test --release"
+test-debug = "test --test circumsphere_debug_tools -- --nocapture"
+test-integration = "test --release"
+
+# Compile benches without running (useful locally/CI)
+benchc = "bench --workspace --no-run"
+bench-all = "bench --workspace"
+
+# Allocation profiling example (feature-gated)
+talloc = "test --test allocation_api --features count-allocations -- --nocapture"
+
+# Coverage analysis
+coverage = "tarpaulin --exclude-files 'benches/**' --exclude-files 'examples/**' --exclude-files 'tests/**' --out Html --output-dir target/tarpaulin"

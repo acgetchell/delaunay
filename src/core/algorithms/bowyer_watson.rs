@@ -126,7 +126,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Unified statistics tracking
     stats: InsertionStatistics,
@@ -160,7 +160,7 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Creates a new incremental Bowyer-Watson algorithm instance
     ///
@@ -225,7 +225,7 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn default() -> Self {
         Self::new()
@@ -238,7 +238,7 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
@@ -257,7 +257,7 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Insert a single vertex into the triangulation
     fn insert_vertex(
@@ -398,7 +398,8 @@ mod tests {
             eprintln!("  {label} - Boundary: {boundary}, Internal: {internal}, Invalid: {invalid}");
 
             if let Ok(bf) = tds.boundary_facets() {
-                eprintln!("  {} - boundary_facets() reports: {}", label, bf.len());
+                let bf_count = bf.count();
+                eprintln!("  {label} - boundary_facets() reports: {bf_count}");
             } else {
                 eprintln!("  {label} - boundary_facets() failed");
             }
@@ -529,12 +530,11 @@ mod tests {
             eprintln!("\n=== BOUNDARY ANALYSIS ===");
             match tds.boundary_facets() {
                 Ok(bf) => {
-                    eprintln!("Boundary facets found: {}", bf.len());
-                    if bf.len() != boundary_facets {
+                    let bf_count = bf.count();
+                    eprintln!("Boundary facets found: {bf_count}");
+                    if bf_count != boundary_facets {
                         eprintln!(
-                            "❌ MISMATCH: Direct count ({}) vs boundary_facets() ({})",
-                            boundary_facets,
-                            bf.len()
+                            "❌ MISMATCH: Direct count ({boundary_facets}) vs boundary_facets() ({bf_count})"
                         );
                     }
                 }
@@ -678,9 +678,9 @@ mod tests {
 
         // Boundary analysis should work
         let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
+        let boundary_count = boundary_facets.count();
         assert_eq!(
-            boundary_facets.len(),
-            4,
+            boundary_count, 4,
             "boundary_facets() should return 4 facets"
         );
 
@@ -1150,7 +1150,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
 
         // Test the triangulate method (this is where double counting would occur)
         algorithm.triangulate(&mut tds, &vertices).unwrap();

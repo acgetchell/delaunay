@@ -44,6 +44,7 @@
 use super::{
     facet::{Facet, FacetError},
     traits::DataType,
+    triangulation_data_structure::{CellKey, Tds},
     util::{UuidValidationError, make_uuid, validate_uuid},
     vertex::{Vertex, VertexValidationError},
 };
@@ -198,7 +199,7 @@ fn sorted_vertices<T, U, const D: usize>(vertices: &[Vertex<T, U, D>]) -> Vec<Ve
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     let mut sorted = vertices.to_vec();
     sorted.sort_by(|a, b| {
@@ -212,7 +213,7 @@ where
 // CELL STRUCT DEFINITION
 // =============================================================================
 
-#[derive(Builder, Clone, Debug, Default, Serialize)]
+#[derive(Builder, Clone, Debug, Serialize)]
 #[builder(build_fn(validate = "Self::validate"))]
 /// The [Cell] struct represents a d-dimensional
 /// [simplex](https://en.wikipedia.org/wiki/Simplex) with vertices, a unique
@@ -238,7 +239,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// The vertices of the cell.
     vertices: Vec<Vertex<T, U, D>>,
@@ -274,7 +275,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
     where
@@ -285,7 +286,7 @@ where
             T: CoordinateScalar,
             U: DataType,
             V: DataType,
-            [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
         {
             _phantom: PhantomData<(T, U, V)>,
         }
@@ -295,7 +296,7 @@ where
             T: CoordinateScalar,
             U: DataType,
             V: DataType,
-            [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
         {
             type Value = Cell<T, U, V, D>;
 
@@ -380,7 +381,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn validate(&self) -> Result<(), CellValidationError> {
         let vertices =
@@ -421,7 +422,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// The function returns the number of vertices in the [Cell].
     ///
@@ -859,12 +860,8 @@ where
     ///
     /// # Type Parameters
     ///
-    /// This method relies on capabilities implied by `T: CoordinateScalar`, including:
-    /// - [`FiniteCheck`](crate::geometry::traits::coordinate::FiniteCheck): Enables checking that all coordinate values are finite
-    ///   (not infinite or NaN), which is essential for geometric computations.
-    /// - [`HashCoordinate`](crate::geometry::traits::coordinate::HashCoordinate): Enables hashing of coordinate values,
-    ///   which is required for detecting duplicate vertices efficiently.
-    /// - [`Copy`]: Required for efficient comparison operations.
+    /// This method relies on capabilities implied by `T: CoordinateScalar`
+    /// (finite, comparable, and hashable coordinates suitable for geometric checks).
     ///
     /// # Returns
     ///
@@ -878,7 +875,7 @@ where
     ///
     /// Note: This method validates basic neighbor structure invariants but does not validate
     /// the correctness of neighbor relationships, which requires global knowledge of the
-    /// triangulation and is handled by the [`Tds`](crate::core::triangulation_data_structure::Tds).
+    /// triangulation and is handled by the [`Tds`].
     ///
     /// # Errors
     ///
@@ -947,7 +944,7 @@ where
     T: CoordinateScalar + Clone + PartialEq + PartialOrd,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Returns all facets (faces) of the cell.
     ///
@@ -1054,6 +1051,267 @@ where
             .map(|vertex| Facet::new(self.clone(), *vertex))
             .collect()
     }
+
+    /// Returns all facets of this cell as lightweight `FacetView` objects.
+    ///
+    /// This method provides a more efficient alternative to `facets()` by returning
+    /// lightweight `FacetView` objects instead of owned `Facet` objects.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Reference to the triangulation data structure
+    /// * `cell_key` - The key of this cell in the TDS
+    ///
+    /// # Returns
+    ///
+    /// A `Result<Vec<FacetView>, FacetError>` containing all facets of the cell.
+    /// Each facet is represented as a `FacetView` which provides efficient access
+    /// to facet properties without cloning cell data.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FacetError`] if facet creation fails during the construction
+    /// of `FacetView` objects.
+    ///
+    /// # Notes
+    ///
+    /// Returns an error if the facet index cannot be represented as `u8`.
+    /// This should never happen in practice since facet indices are bounded
+    /// by the dimension `D`, which is typically small (≤ 255).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::{core::triangulation_data_structure::Tds, vertex};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// let cell = tds.get_cell_by_key(cell_key).unwrap();
+    /// let facet_views = cell.facet_views(&tds, cell_key).expect("Failed to get facet views");
+    ///
+    /// // Each facet should have 3 vertices (triangular faces of tetrahedron)
+    /// for facet_view in &facet_views {
+    ///     assert_eq!(facet_view.vertices().unwrap().count(), 3);
+    /// }
+    /// ```
+    pub fn facet_views<'tds>(
+        &self,
+        tds: &'tds Tds<T, U, V, D>,
+        cell_key: CellKey,
+    ) -> Result<Vec<crate::core::facet::FacetView<'tds, T, U, V, D>>, FacetError> {
+        // Derive facet count from the TDS cell to avoid relying on D at runtime
+        let cell = tds
+            .cells()
+            .get(cell_key)
+            .ok_or(FacetError::CellNotFoundInTriangulation)?;
+
+        // Verify consistency between self and the cell retrieved by cell_key
+        debug_assert_eq!(
+            cell.vertices().len(),
+            self.vertices().len(),
+            "Cell/CellKey mismatch: vertex count differs between `self` and `tds[cell_key]`"
+        );
+
+        let vertex_count = cell.vertices().len();
+        if vertex_count > u8::MAX as usize {
+            return Err(FacetError::InvalidFacetIndex {
+                index: u8::MAX,
+                facet_count: vertex_count,
+            });
+        }
+        let mut facet_views = Vec::with_capacity(vertex_count);
+        for idx in 0..vertex_count {
+            let facet_index = crate::core::util::usize_to_u8(idx, vertex_count)?;
+            facet_views.push(crate::core::facet::FacetView::new(
+                tds,
+                cell_key,
+                facet_index,
+            )?);
+        }
+        Ok(facet_views)
+    }
+
+    /// Returns all facets of a cell as lightweight `FacetView` objects using only TDS and cell key.
+    ///
+    /// This is a static method that provides a more robust alternative to `facet_views()` by avoiding
+    /// potential mismatches between `self` and the cell retrieved by `cell_key`. It accesses the cell
+    /// data directly from the TDS using the provided key.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Reference to the triangulation data structure
+    /// * `cell_key` - The key of the cell in the TDS
+    ///
+    /// # Returns
+    ///
+    /// A `Result<Vec<FacetView>, FacetError>` containing all facets of the cell.
+    /// Each facet is represented as a `FacetView` which provides efficient access
+    /// to facet properties without cloning cell data.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FacetError`] if:
+    /// - The cell key is not found in the TDS
+    /// - Facet creation fails during the construction of `FacetView` objects
+    /// - The facet index cannot be represented as `u8` (very rare, only for extremely high dimensions)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::{core::{triangulation_data_structure::Tds, cell::Cell}, vertex};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// let facet_views = Cell::facet_views_from_tds(&tds, cell_key).expect("Failed to get facet views");
+    ///
+    /// // Each facet should have 3 vertices (triangular faces of tetrahedron)
+    /// for facet_view in &facet_views {
+    ///     assert_eq!(facet_view.vertices().unwrap().count(), 3);
+    /// }
+    /// ```
+    pub fn facet_views_from_tds(
+        tds: &Tds<T, U, V, D>,
+        cell_key: CellKey,
+    ) -> Result<Vec<crate::core::facet::FacetView<'_, T, U, V, D>>, FacetError> {
+        // Get the cell from the TDS using the key
+        let cell = tds
+            .cells()
+            .get(cell_key)
+            .ok_or(FacetError::CellNotFoundInTriangulation)?;
+
+        let vertex_count = cell.vertices().len();
+        if vertex_count > u8::MAX as usize {
+            return Err(FacetError::InvalidFacetIndex {
+                index: u8::MAX,
+                facet_count: vertex_count,
+            });
+        }
+
+        let mut facet_views = Vec::with_capacity(vertex_count);
+        for idx in 0..vertex_count {
+            let facet_index = crate::core::util::usize_to_u8(idx, vertex_count)?;
+            facet_views.push(crate::core::facet::FacetView::new(
+                tds,
+                cell_key,
+                facet_index,
+            )?);
+        }
+        Ok(facet_views)
+    }
+
+    /// Returns an iterator over all facets of a cell as lightweight `FacetView` objects.
+    ///
+    /// This is a zero-allocation alternative to `facet_views_from_tds()` that returns an iterator
+    /// instead of collecting results into a `Vec`. This is more memory-efficient for large cells
+    /// or when you don't need to store all facet views at once.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Reference to the triangulation data structure
+    /// * `cell_key` - The key of the cell in the TDS
+    ///
+    /// # Returns
+    ///
+    /// A `Result<impl ExactSizeIterator<Item = Result<FacetView, FacetError>>, FacetError>` that yields all facets of the cell.
+    /// The iterator implements `ExactSizeIterator`, so you can call `.len()` to get the number of facets
+    /// without consuming the iterator.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FacetError`] if:
+    /// - The cell key is not found in the TDS
+    /// - The facet count cannot be represented as `u8` (very rare, only for extremely high dimensions)
+    ///
+    /// Individual facet creation errors are yielded by the iterator as `Result<FacetView, FacetError>`
+    /// items, not returned immediately from this method.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::{core::{triangulation_data_structure::Tds, cell::Cell}, vertex};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// let facet_iter = Cell::facet_view_iter(&tds, cell_key).expect("Failed to get facet iterator");
+    ///
+    /// // Iterator knows the exact count
+    /// assert_eq!(facet_iter.len(), 4); // 4 facets for a tetrahedron
+    ///
+    /// // Process facets one at a time (zero allocation)
+    /// for (i, facet_result) in facet_iter.enumerate() {
+    ///     let facet_view = facet_result.expect("Facet creation should succeed");
+    ///     assert_eq!(facet_view.vertices().unwrap().count(), 3); // Each facet has 3 vertices
+    /// }
+    /// ```
+    ///
+    /// ```
+    /// use delaunay::{core::{triangulation_data_structure::Tds, cell::Cell}, vertex};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// let facet_iter = Cell::facet_view_iter(&tds, cell_key).expect("Failed to get facet iterator");
+    ///
+    /// // Collect only successful facets, filtering out any errors
+    /// let successful_facets: Vec<_> = facet_iter
+    ///     .filter_map(Result::ok)
+    ///     .collect();
+    /// assert_eq!(successful_facets.len(), 4);
+    /// ```
+    pub fn facet_view_iter(
+        tds: &Tds<T, U, V, D>,
+        cell_key: CellKey,
+    ) -> Result<
+        impl ExactSizeIterator<Item = Result<crate::core::facet::FacetView<'_, T, U, V, D>, FacetError>>,
+        FacetError,
+    > {
+        // Get the cell from the TDS using the key
+        let cell = tds
+            .cells()
+            .get(cell_key)
+            .ok_or(FacetError::CellNotFoundInTriangulation)?;
+
+        let vertex_count = cell.vertices().len();
+        if vertex_count > u8::MAX as usize {
+            return Err(FacetError::InvalidFacetIndex {
+                index: u8::MAX,
+                facet_count: vertex_count,
+            });
+        }
+
+        // Return a simple range-based iterator that maps indices to FacetView creation
+        Ok((0..vertex_count).map(move |idx| {
+            let facet_index = crate::core::util::usize_to_u8(idx, vertex_count)?;
+            crate::core::facet::FacetView::new(tds, cell_key, facet_index)
+        }))
+    }
 }
 
 // =============================================================================
@@ -1066,7 +1324,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -1080,7 +1338,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
@@ -1099,7 +1357,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
 }
 
@@ -1115,7 +1373,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     Vertex<T, U, D>: Hash,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -1149,6 +1407,8 @@ mod tests {
     type TestVertex3D = Vertex<f64, Option<()>, 3>;
     type TestVertex2D = Vertex<f64, Option<()>, 2>;
 
+    use crate::core::triangulation_data_structure::Tds;
+
     // =============================================================================
     // HELPER FUNCTIONS
     // =============================================================================
@@ -1162,7 +1422,7 @@ mod tests {
         T: CoordinateScalar,
         U: DataType,
         V: DataType,
-        [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         assert_eq!(cell.number_of_vertices(), expected_vertices);
         assert_eq!(cell.dim(), expected_dim);
@@ -3114,6 +3374,178 @@ mod tests {
         assert!(cell1 == cell3, "cell1 should equal cell3 (transitivity)");
 
         println!("✓ Cell equality is transitive");
+    }
+
+    #[test]
+    fn test_facet_views_from_tds() {
+        // Test the static facet_views_from_tds method
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        let cell_key = tds.cell_keys().next().unwrap();
+
+        // Test the static method
+        let static_facet_views = Cell::facet_views_from_tds(&tds, cell_key)
+            .expect("Failed to get facet views from static method");
+
+        // Should have 4 facets for a 3D tetrahedron
+        assert_eq!(static_facet_views.len(), 4);
+
+        // Each facet should have 3 vertices
+        for (i, facet_view) in static_facet_views.iter().enumerate() {
+            let vertex_count = facet_view.vertices().unwrap().count();
+            assert_eq!(vertex_count, 3, "Facet {i} should have 3 vertices");
+        }
+
+        // Test with the instance method for comparison
+        let cell = tds.get_cell_by_key(cell_key).unwrap();
+        let instance_facet_views = cell
+            .facet_views(&tds, cell_key)
+            .expect("Failed to get facet views from instance method");
+
+        // Both methods should return the same number of facets
+        assert_eq!(static_facet_views.len(), instance_facet_views.len());
+
+        println!("✓ facet_views_from_tds static method works correctly");
+    }
+
+    #[test]
+    fn test_facet_view_iter() {
+        // Test the iterator-based facet_view_iter method
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        let cell_key = tds.cell_keys().next().unwrap();
+
+        // Test the iterator method
+        let facet_iter =
+            Cell::facet_view_iter(&tds, cell_key).expect("Failed to get facet iterator");
+
+        // Should know the exact count upfront (implements ExactSizeIterator)
+        assert_eq!(
+            facet_iter.len(),
+            4,
+            "Should have 4 facets for a tetrahedron"
+        );
+
+        // Collect all results
+        let facet_results: Vec<_> = facet_iter.collect();
+        assert_eq!(facet_results.len(), 4);
+
+        // Each facet creation should succeed and have 3 vertices
+        for (i, facet_result) in facet_results.iter().enumerate() {
+            let facet_view = facet_result
+                .as_ref()
+                .unwrap_or_else(|_| panic!("Facet {i} creation should succeed"));
+            let vertex_count = facet_view.vertices().unwrap().count();
+            assert_eq!(vertex_count, 3, "Facet {i} should have 3 vertices");
+        }
+
+        // Test iterator is zero-allocation by using it without collect
+        let facet_iter2 =
+            Cell::facet_view_iter(&tds, cell_key).expect("Failed to get second facet iterator");
+
+        let mut count = 0;
+        for facet_result in facet_iter2 {
+            let _facet_view = facet_result.expect("Facet creation should succeed");
+            count += 1;
+        }
+        assert_eq!(count, 4, "Iterator should yield 4 facets");
+
+        // Test iterator combinators work correctly
+        let facet_iter3 =
+            Cell::facet_view_iter(&tds, cell_key).expect("Failed to get third facet iterator");
+
+        let successful_facets: Vec<_> = facet_iter3.filter_map(Result::ok).collect();
+        assert_eq!(
+            successful_facets.len(),
+            4,
+            "All facets should be created successfully"
+        );
+
+        // Compare with Vec-based method to ensure same results
+        let vec_facets =
+            Cell::facet_views_from_tds(&tds, cell_key).expect("Vec-based method should work");
+        assert_eq!(
+            successful_facets.len(),
+            vec_facets.len(),
+            "Iterator and Vec methods should return same count"
+        );
+
+        println!("✓ facet_view_iter zero-allocation iterator works correctly");
+    }
+
+    #[test]
+    fn test_facet_view_memory_efficiency_comparison() {
+        // Demonstrate the memory efficiency difference between Vec and iterator approaches
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+
+        // Vec-based approach: allocates memory for all FacetViews upfront
+        let vec_facets =
+            Cell::facet_views_from_tds(&tds, cell_key).expect("Vec method should work");
+        println!(
+            "Vec approach: {} FacetViews allocated in memory",
+            vec_facets.len()
+        );
+
+        // Iterator approach: zero allocation, processes one at a time
+        let facet_iter =
+            Cell::facet_view_iter(&tds, cell_key).expect("Iterator method should work");
+
+        println!(
+            "Iterator approach: processing {} facets with zero upfront allocation",
+            facet_iter.len()
+        );
+
+        let mut processed_count = 0;
+        for (i, facet_result) in facet_iter.enumerate() {
+            let facet_view = facet_result.expect("Facet creation should succeed");
+            // At this point, we only have ONE FacetView in memory, not all of them
+            let vertex_count = facet_view.vertices().unwrap().count();
+            processed_count += 1;
+            println!(
+                "  Processed facet {i}: {vertex_count} vertices (only this one FacetView in memory)"
+            );
+            // FacetView is dropped here, freeing memory before the next iteration
+        }
+
+        assert_eq!(processed_count, vec_facets.len());
+
+        // Demonstrate early termination benefit: iterator can be stopped early without
+        // creating all FacetViews
+        let facet_iter2 =
+            Cell::facet_view_iter(&tds, cell_key).expect("Iterator method should work");
+
+        let first_two_facets: Vec<_> = facet_iter2
+            .take(2) // Only process first 2 facets
+            .filter_map(Result::ok)
+            .collect();
+
+        assert_eq!(first_two_facets.len(), 2);
+        println!(
+            "Early termination: processed only {} out of {} facets",
+            first_two_facets.len(),
+            4
+        );
+
+        println!("✓ Memory efficiency comparison demonstrates iterator benefits");
     }
 
     #[test]

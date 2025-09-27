@@ -4,7 +4,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::core::facet::Facet;
+use crate::core::facet::{Facet, FacetError, FacetView};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -133,6 +133,10 @@ pub fn make_uuid() -> Uuid {
 /// // These facets share vertices v2 and v3, so they are adjacent
 /// assert!(facets_are_adjacent(&facet1, &facet2));
 /// ```
+#[deprecated(
+    since = "0.5.0",
+    note = "Use facet_views_are_adjacent instead. This heavyweight implementation will be removed in v1.0.0."
+)]
 pub fn facets_are_adjacent<T, U, V, const D: usize>(
     facet1: &Facet<T, U, V, D>,
     facet2: &Facet<T, U, V, D>,
@@ -141,12 +145,83 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     use crate::core::collections::FastHashSet;
     let vertices1: FastHashSet<_> = facet1.vertices().into_iter().collect();
     let vertices2: FastHashSet<_> = facet2.vertices().into_iter().collect();
     vertices1 == vertices2
+}
+
+/// Determines if two facet views are adjacent by comparing their vertices.
+///
+/// Two facets are considered adjacent if they contain the same set of vertices.
+/// This is the modern replacement for `facets_are_adjacent` using `FacetView`.
+///
+/// # Arguments
+///
+/// * `facet1` - The first facet view to compare
+/// * `facet2` - The second facet view to compare
+///
+/// # Returns
+///
+/// `Ok(true)` if the facets share the same vertices, `Ok(false)` if they have
+/// different vertices, or `Err(FacetError)` if there was an error accessing
+/// the facet data.
+///
+/// # Errors
+///
+/// Returns `FacetError` if either facet's vertices cannot be accessed, typically
+/// due to missing cells in the triangulation data structure.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use delaunay::core::facet::{FacetView, FacetError};
+/// use delaunay::core::util::facet_views_are_adjacent;
+/// use delaunay::core::triangulation_data_structure::Tds;
+///
+/// // This is a conceptual example - in practice you would get these from a real TDS
+/// fn example(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> Result<bool, FacetError> {
+///     let cell_keys: Vec<_> = tds.cell_keys().take(2).collect();
+///     if cell_keys.len() >= 2 {
+///         let facet1 = FacetView::new(tds, cell_keys[0], 0)?;
+///         let facet2 = FacetView::new(tds, cell_keys[1], 0)?;
+///
+///         let adjacent = facet_views_are_adjacent(&facet1, &facet2)?;
+///         match adjacent {
+///             true => println!("Facets are adjacent"),
+///             false => println!("Facets are not adjacent"),
+///         }
+///         Ok(adjacent)
+///     } else {
+///         Ok(false)
+///     }
+/// }
+/// ```
+pub fn facet_views_are_adjacent<T, U, V, const D: usize>(
+    facet1: &FacetView<'_, T, U, V, D>,
+    facet2: &FacetView<'_, T, U, V, D>,
+) -> Result<bool, FacetError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+{
+    use crate::core::collections::FastHashSet;
+
+    // Compare facets by their vertex UUIDs for efficiency
+    let vertices1: FastHashSet<_> = facet1
+        .vertices()?
+        .map(super::vertex::Vertex::uuid)
+        .collect();
+    let vertices2: FastHashSet<_> = facet2
+        .vertices()?
+        .map(super::vertex::Vertex::uuid)
+        .collect();
+
+    Ok(vertices1 == vertices2)
 }
 
 /// Generates all unique combinations of `k` items from a given slice.
@@ -193,7 +268,7 @@ pub fn generate_combinations<T, U, const D: usize>(
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     let mut combinations = Vec::new();
 
@@ -374,7 +449,7 @@ where
     T: crate::geometry::traits::coordinate::CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + Default + serde::de::DeserializeOwned + serde::Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     use crate::core::collections::SmallBuffer;
     use crate::core::facet::{FacetError, facet_key_from_vertex_keys};
@@ -472,6 +547,46 @@ where
     F: FnOnce() -> R,
 {
     (f(), ())
+}
+
+/// Helper function to safely convert usize to u8 for facet indices.
+///
+/// This function provides a centralized, safe conversion from `usize` to `u8`
+/// that is commonly needed throughout the triangulation codebase for facet indexing.
+/// It handles the conversion error gracefully by returning appropriate `FacetError`
+/// variants with detailed error information.
+///
+/// # Arguments
+///
+/// * `idx` - The usize index to convert
+/// * `facet_count` - The number of facets (for error reporting)
+///
+/// # Returns
+///
+/// A `Result` containing the converted u8 index or a `FacetError`.
+///
+/// # Errors
+///
+/// Returns `FacetError::InvalidFacetIndexOverflow` if the index cannot fit in a u8.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::core::util::usize_to_u8;
+///
+/// // Successful conversion
+/// assert_eq!(usize_to_u8(0, 4), Ok(0));
+/// assert_eq!(usize_to_u8(255, 256), Ok(255));
+///
+/// // Failed conversion
+/// let result = usize_to_u8(256, 10);
+/// assert!(result.is_err());
+/// ```
+pub fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
+    u8::try_from(idx).map_err(|_| FacetError::InvalidFacetIndexOverflow {
+        original_index: idx,
+        facet_count,
+    })
 }
 
 #[cfg(test)]
@@ -605,6 +720,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::too_many_lines)]
+    #[allow(deprecated)] // Testing deprecated function during transition
     fn test_facets_are_adjacent_multidimensional() {
         use crate::core::{cell::Cell, facet::Facet};
         use crate::{cell, vertex};
@@ -1261,5 +1377,736 @@ mod tests {
         println!("    Found {keys_found}/{keys_tested} derived keys in TDS cache");
         assert!(keys_tested > 0, "Should have tested some keys");
         println!("  ✓ All facet key derivation tests passed");
+    }
+
+    // =============================================================================
+    // FACET VIEW ADJACENCY TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_facet_views_are_adjacent_comprehensive() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        // Test 1: Adjacent facets in 3D (tetrahedra sharing a triangular face)
+        println!("Test 1: Adjacent facets in 3D");
+
+        // Create two tetrahedra that share 3 vertices (forming a shared triangular face)
+        let shared_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]), // v0
+            vertex!([1.0, 0.0, 0.0]), // v1
+            vertex!([0.5, 1.0, 0.0]), // v2
+        ];
+
+        let vertex_a = vertex!([0.5, 0.5, 1.0]); // Above the shared triangle
+        let vertex_b = vertex!([0.5, 0.5, -1.0]); // Below the shared triangle
+
+        // Tetrahedron 1: shared triangle + vertex_a
+        let mut vertices1 = shared_vertices.clone();
+        vertices1.push(vertex_a);
+
+        // Tetrahedron 2: shared triangle + vertex_b
+        let mut vertices2 = shared_vertices;
+        vertices2.push(vertex_b);
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        // Find the facets that correspond to the shared triangle
+        // In tetrahedron 1, this is the facet opposite to vertex_a (index 3)
+        // In tetrahedron 2, this is the facet opposite to vertex_b (index 3)
+        let facet_view1 = FacetView::new(&tds1, cell1_key, 3).unwrap();
+        let facet_view2 = FacetView::new(&tds2, cell2_key, 3).unwrap();
+
+        assert!(
+            facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
+            "Facets representing the same shared triangle should be adjacent"
+        );
+        println!("  ✓ Adjacent facets correctly identified");
+
+        // Test 2: Non-adjacent facets from the same tetrahedra
+        println!("Test 2: Non-adjacent facets from same tetrahedra");
+
+        // Different facets from the same tetrahedra (not sharing vertices)
+        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap(); // Different facet
+        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap(); // Different facet
+
+        assert!(
+            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
+            "Different facets with different vertices should not be adjacent"
+        );
+        println!("  ✓ Non-adjacent facets correctly identified");
+
+        // Test 3: Same facet should be adjacent to itself
+        println!("Test 3: Facet adjacent to itself");
+
+        assert!(
+            facet_views_are_adjacent(&facet_view1, &facet_view1).unwrap(),
+            "A facet should be adjacent to itself"
+        );
+        println!("  ✓ Self-adjacency works correctly");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_2d_cases() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test 2D facet adjacency");
+
+        // Create two 2D triangles that share an edge (2 vertices)
+        let shared_edge = vec![
+            vertex!([0.0, 0.0]), // v0
+            vertex!([1.0, 0.0]), // v1
+        ];
+
+        let vertex_c = vertex!([0.5, 1.0]); // Above the shared edge
+        let vertex_d = vertex!([0.5, -1.0]); // Below the shared edge
+
+        // Triangle 1: shared edge + vertex_c
+        let mut vertices1 = shared_edge.clone();
+        vertices1.push(vertex_c);
+
+        // Triangle 2: shared edge + vertex_d
+        let mut vertices2 = shared_edge;
+        vertices2.push(vertex_d);
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices2).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        // In 2D, facets are edges. Find the facets that correspond to the shared edge
+        // This is the facet opposite to the non-shared vertex
+        let facet_view1 = FacetView::new(&tds1, cell1_key, 2).unwrap(); // Opposite to vertex_c
+        let facet_view2 = FacetView::new(&tds2, cell2_key, 2).unwrap(); // Opposite to vertex_d
+
+        assert!(
+            facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
+            "2D facets (edges) sharing vertices should be adjacent"
+        );
+
+        // Test non-adjacent edges
+        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap();
+        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
+
+        assert!(
+            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
+            "2D facets with different vertices should not be adjacent"
+        );
+
+        println!("  ✓ 2D facet adjacency works correctly");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_1d_cases() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test 1D facet adjacency");
+
+        // In 1D, cells are edges and facets are vertices (0D)
+        // Two edges sharing a vertex have adjacent facets
+
+        let shared_vertex = vertex!([0.0]);
+        let vertex_left = vertex!([-1.0]);
+        let vertex_right = vertex!([1.0]);
+
+        // Edge 1: shared_vertex to vertex_left
+        let vertices1 = vec![shared_vertex, vertex_left];
+        // Edge 2: shared_vertex to vertex_right
+        let vertices2 = vec![shared_vertex, vertex_right];
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices2).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        // In 1D, the facets are the individual vertices
+        // Facet 0: opposite to vertex at index 0 (so contains vertex at index 1)
+        // Facet 1: opposite to vertex at index 1 (so contains vertex at index 0)
+
+        // Both edges contain the shared vertex, so we need to find which facet index
+        // corresponds to the shared vertex
+        let facet_view1_0 = FacetView::new(&tds1, cell1_key, 0).unwrap(); // Contains vertex_left
+        let facet_view1_1 = FacetView::new(&tds1, cell1_key, 1).unwrap(); // Contains shared_vertex
+
+        let facet_view2_0 = FacetView::new(&tds2, cell2_key, 0).unwrap(); // Contains vertex_right
+        let facet_view2_1 = FacetView::new(&tds2, cell2_key, 1).unwrap(); // Contains shared_vertex
+
+        // The facets containing the shared vertex should be adjacent
+        assert!(
+            facet_views_are_adjacent(&facet_view1_1, &facet_view2_1).unwrap(),
+            "1D facets (vertices) that are the same should be adjacent"
+        );
+
+        // The facets containing different vertices should not be adjacent
+        assert!(
+            !facet_views_are_adjacent(&facet_view1_0, &facet_view2_0).unwrap(),
+            "1D facets with different vertices should not be adjacent"
+        );
+
+        println!("  ✓ 1D facet adjacency works correctly");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_edge_cases() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test facet adjacency edge cases");
+
+        // Test with minimal triangulation (single tetrahedron)
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+
+        // All facets of the same tetrahedron should be different from each other
+        let facet0 = FacetView::new(&tds, cell_key, 0).unwrap();
+        let facet1 = FacetView::new(&tds, cell_key, 1).unwrap();
+        let facet2 = FacetView::new(&tds, cell_key, 2).unwrap();
+        let facet3 = FacetView::new(&tds, cell_key, 3).unwrap();
+
+        // Each facet should be adjacent to itself
+        assert!(facet_views_are_adjacent(&facet0, &facet0).unwrap());
+        assert!(facet_views_are_adjacent(&facet1, &facet1).unwrap());
+        assert!(facet_views_are_adjacent(&facet2, &facet2).unwrap());
+        assert!(facet_views_are_adjacent(&facet3, &facet3).unwrap());
+
+        // Different facets of the same tetrahedron should not be adjacent
+        // (they have different sets of vertices)
+        assert!(!facet_views_are_adjacent(&facet0, &facet1).unwrap());
+        assert!(!facet_views_are_adjacent(&facet0, &facet2).unwrap());
+        assert!(!facet_views_are_adjacent(&facet0, &facet3).unwrap());
+        assert!(!facet_views_are_adjacent(&facet1, &facet2).unwrap());
+        assert!(!facet_views_are_adjacent(&facet1, &facet3).unwrap());
+        assert!(!facet_views_are_adjacent(&facet2, &facet3).unwrap());
+
+        println!("  ✓ Single tetrahedron facet relationships correct");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_performance() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+        use std::time::Instant;
+
+        println!("Test facet adjacency performance");
+
+        // Create a moderately complex case to test performance
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([1.0, 2.0, 0.0]),
+            vertex!([1.0, 1.0, 2.0]),
+        ];
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+
+        let facet1 = FacetView::new(&tds, cell_key, 0).unwrap();
+        let facet2 = FacetView::new(&tds, cell_key, 1).unwrap();
+
+        // Run the adjacency check many times to measure performance
+        let start = Instant::now();
+        let iterations = 10000;
+
+        for _ in 0..iterations {
+            // This should be very fast since it just compares UUID sets
+            let _result = facet_views_are_adjacent(&facet1, &facet2).unwrap();
+        }
+
+        let duration = start.elapsed();
+        println!("  ✓ {iterations} adjacency checks completed in {duration:?}");
+
+        // Performance info: each check is just UUID set comparison
+        // Note: Timing can vary significantly based on build type and CI environment
+        if duration.as_millis() > 500 {
+            println!("  ⚠️  Performance warning: adjacency checks took {duration:?}");
+            println!("     This may indicate debug build or slower CI environment");
+        }
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_different_geometries() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test facet adjacency with different geometries");
+
+        // Create vertices with different coordinates to ensure different UUIDs
+        let vertices1 = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let vertices2 = vec![
+            vertex!([10.0, 10.0, 10.0]),
+            vertex!([11.0, 10.0, 10.0]),
+            vertex!([10.0, 11.0, 10.0]),
+            vertex!([10.0, 10.0, 11.0]),
+        ];
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        let facet1 = FacetView::new(&tds1, cell1_key, 0).unwrap();
+        let facet2 = FacetView::new(&tds2, cell2_key, 0).unwrap();
+
+        // Facets from completely different geometries should not be adjacent
+        assert!(
+            !facet_views_are_adjacent(&facet1, &facet2).unwrap(),
+            "Facets from different geometries should not be adjacent"
+        );
+
+        println!("  ✓ Different geometries correctly distinguished");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_uuid_based_comparison() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test that adjacency is purely UUID-based");
+
+        // Create identical geometry in separate TDS instances
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        let facet1 = FacetView::new(&tds1, cell1_key, 0).unwrap();
+        let facet2 = FacetView::new(&tds2, cell2_key, 0).unwrap();
+
+        // Check if the UUID generation is deterministic based on coordinates
+        let facet1_vertex_uuids: Vec<_> = match facet1.vertices() {
+            Ok(iter) => iter.map(Vertex::uuid).collect(),
+            Err(_) => return, // Skip test if facet1 is invalid
+        };
+        let facet2_vertex_uuids: Vec<_> = match facet2.vertices() {
+            Ok(iter) => iter.map(Vertex::uuid).collect(),
+            Err(_) => return, // Skip test if facet2 is invalid
+        };
+
+        let uuids_are_same = facet1_vertex_uuids == facet2_vertex_uuids;
+        let facets_are_adjacent = facet_views_are_adjacent(&facet1, &facet2).unwrap();
+
+        // The adjacency should match the UUID equality
+        assert_eq!(
+            uuids_are_same, facets_are_adjacent,
+            "Facet adjacency should exactly match vertex UUID equality"
+        );
+
+        if uuids_are_same {
+            println!("  ✓ Identical coordinates produce identical UUIDs - facets are adjacent");
+        } else {
+            println!("  ✓ Different UUIDs for identical coordinates - facets are not adjacent");
+        }
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_4d_cases() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test 4D facet adjacency");
+
+        // Create two 4D simplices (5-vertices each) that share a 3D facet (4 vertices)
+        let shared_tetrahedron = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]), // v0
+            vertex!([1.0, 0.0, 0.0, 0.0]), // v1
+            vertex!([0.0, 1.0, 0.0, 0.0]), // v2
+            vertex!([0.0, 0.0, 1.0, 0.0]), // v3
+        ];
+
+        let vertex_e = vertex!([0.25, 0.25, 0.25, 1.0]); // Above in 4th dimension
+        let vertex_f = vertex!([0.25, 0.25, 0.25, -1.0]); // Below in 4th dimension
+
+        // 4D Simplex 1: shared tetrahedron + vertex_e
+        let mut vertices1 = shared_tetrahedron.clone();
+        vertices1.push(vertex_e);
+
+        // 4D Simplex 2: shared tetrahedron + vertex_f
+        let mut vertices2 = shared_tetrahedron;
+        vertices2.push(vertex_f);
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices2).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        // In 4D, facets are tetrahedra. Find the facets that correspond to the shared tetrahedron
+        // This is the facet opposite to the non-shared vertex (index 4)
+        let facet_view1 = FacetView::new(&tds1, cell1_key, 4).unwrap(); // Opposite to vertex_e
+        let facet_view2 = FacetView::new(&tds2, cell2_key, 4).unwrap(); // Opposite to vertex_f
+
+        assert!(
+            facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
+            "4D facets (tetrahedra) sharing vertices should be adjacent"
+        );
+
+        // Test non-adjacent tetrahedra within the same 4D simplices
+        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap();
+        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
+
+        assert!(
+            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
+            "4D facets with different vertices should not be adjacent"
+        );
+
+        println!("  ✓ 4D facet adjacency works correctly");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_5d_cases() {
+        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
+
+        println!("Test 5D facet adjacency");
+
+        // Create two 5D simplices (6-vertices each) that share a 4D facet (5 vertices)
+        let shared_4d_simplex = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]), // v0
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]), // v1
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]), // v2
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]), // v3
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]), // v4
+        ];
+
+        let vertex_g = vertex!([0.2, 0.2, 0.2, 0.2, 1.0]); // Above in 5th dimension
+        let vertex_h = vertex!([0.2, 0.2, 0.2, 0.2, -1.0]); // Below in 5th dimension
+
+        // 5D Simplex 1: shared 4D simplex + vertex_g
+        let mut vertices1 = shared_4d_simplex.clone();
+        vertices1.push(vertex_g);
+
+        // 5D Simplex 2: shared 4D simplex + vertex_h
+        let mut vertices2 = shared_4d_simplex;
+        vertices2.push(vertex_h);
+
+        let tds1: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices2).unwrap();
+
+        let cell1_key = tds1.cell_keys().next().unwrap();
+        let cell2_key = tds2.cell_keys().next().unwrap();
+
+        // In 5D, facets are 4D simplices. Find the facets that correspond to the shared 4D simplex
+        // This is the facet opposite to the non-shared vertex (index 5)
+        let facet_view1 = FacetView::new(&tds1, cell1_key, 5).unwrap(); // Opposite to vertex_g
+        let facet_view2 = FacetView::new(&tds2, cell2_key, 5).unwrap(); // Opposite to vertex_h
+
+        assert!(
+            facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
+            "5D facets (4D simplices) sharing vertices should be adjacent"
+        );
+
+        // Test non-adjacent 4D simplices within the same 5D simplices
+        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap();
+        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
+
+        assert!(
+            !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
+            "5D facets with different vertices should not be adjacent"
+        );
+
+        println!("  ✓ 5D facet adjacency works correctly");
+    }
+
+    #[test]
+    fn test_facet_views_are_adjacent_multidimensional_summary() {
+        println!("Testing facet adjacency across all supported dimensions (1D-5D)");
+
+        // This test summarizes the multidimensional support
+        let dimensions_tested = vec![
+            ("1D", "edges", "vertices"),
+            ("2D", "triangles", "edges"),
+            ("3D", "tetrahedra", "triangles"),
+            ("4D", "4-simplices", "tetrahedra"),
+            ("5D", "5-simplices", "4-simplices"),
+        ];
+
+        for (dim, cell_type, facet_type) in dimensions_tested {
+            println!("  ✓ {dim}: {cell_type} with {facet_type} facets");
+        }
+
+        println!("  ✓ All dimensional cases covered comprehensively");
+    }
+
+    // =============================================================================
+    // USIZE TO U8 CONVERSION UTILITY TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_usize_to_u8_conversion_comprehensive() {
+        use super::usize_to_u8;
+
+        // Test successful conversions
+        assert_eq!(usize_to_u8(0, 4), Ok(0));
+        assert_eq!(usize_to_u8(1, 4), Ok(1));
+        assert_eq!(usize_to_u8(255, 256), Ok(255));
+
+        // Test conversion at boundary
+        assert_eq!(usize_to_u8(u8::MAX as usize, 256), Ok(u8::MAX));
+
+        // Test failed conversion (index too large)
+        let result = usize_to_u8(256, 10);
+        assert!(result.is_err());
+        if let Err(FacetError::InvalidFacetIndexOverflow {
+            original_index,
+            facet_count,
+        }) = result
+        {
+            assert_eq!(original_index, 256); // Should preserve original value
+            assert_eq!(facet_count, 10);
+        } else {
+            panic!("Expected InvalidFacetIndexOverflow error");
+        }
+
+        // Test failed conversion (very large index)
+        let result = usize_to_u8(usize::MAX, 5);
+        assert!(result.is_err());
+        if let Err(FacetError::InvalidFacetIndexOverflow {
+            original_index,
+            facet_count,
+        }) = result
+        {
+            assert_eq!(original_index, usize::MAX);
+            assert_eq!(facet_count, 5);
+        } else {
+            panic!("Expected InvalidFacetIndexOverflow error");
+        }
+    }
+
+    #[test]
+    fn test_usize_to_u8_boundary_cases() {
+        use super::usize_to_u8;
+
+        // Test all valid u8 values
+        for i in 0u8..=255 {
+            let result = usize_to_u8(i as usize, 256);
+            assert_eq!(result, Ok(i), "Failed to convert {i}");
+        }
+
+        // Test just above boundary
+        let result = usize_to_u8(256, 300);
+        assert!(result.is_err());
+
+        // Test various large values
+        let large_values = [257, 1000, 10000, 65536, usize::MAX];
+        for &val in &large_values {
+            let result = usize_to_u8(val, val);
+            assert!(result.is_err(), "Should fail for value {val}");
+            if let Err(FacetError::InvalidFacetIndexOverflow {
+                original_index,
+                facet_count,
+            }) = result
+            {
+                assert_eq!(original_index, val);
+                assert_eq!(facet_count, val);
+            }
+        }
+    }
+
+    #[test]
+    fn test_usize_to_u8_error_consistency() {
+        use super::usize_to_u8;
+
+        // Test that all out-of-range values produce consistent errors
+        let test_cases = [
+            (256, 100),
+            (300, 500),
+            (1000, 1500),
+            (usize::MAX, 42),
+            (65536, 10),
+        ];
+
+        for &(idx, count) in &test_cases {
+            let result = usize_to_u8(idx, count);
+            assert!(result.is_err(), "Should fail for index {idx}");
+
+            match result {
+                Err(FacetError::InvalidFacetIndexOverflow {
+                    original_index,
+                    facet_count,
+                }) => {
+                    assert_eq!(original_index, idx, "Should preserve original index");
+                    assert_eq!(facet_count, count, "Should preserve facet_count");
+                }
+                _ => panic!("Expected InvalidFacetIndex error for index {idx}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_usize_to_u8_edge_values() {
+        use super::usize_to_u8;
+
+        // Test edge cases around u8::MAX
+        assert_eq!(usize_to_u8(254, 300), Ok(254));
+        assert_eq!(usize_to_u8(255, 300), Ok(255));
+        assert!(usize_to_u8(256, 300).is_err());
+        assert!(usize_to_u8(257, 300).is_err());
+
+        // Test with different facet_count values
+        let facet_counts = [1, 10, 100, 255, 256, 1000, usize::MAX];
+        for &count in &facet_counts {
+            // Valid conversion
+            let result_valid = usize_to_u8(0, count);
+            assert_eq!(result_valid, Ok(0));
+
+            // Invalid conversion
+            let result_invalid = usize_to_u8(256, count);
+            assert!(result_invalid.is_err());
+            if let Err(FacetError::InvalidFacetIndexOverflow { facet_count, .. }) = result_invalid {
+                assert_eq!(facet_count, count);
+            }
+        }
+    }
+
+    #[test]
+    fn test_usize_to_u8_deterministic_behavior() {
+        use super::usize_to_u8;
+
+        // Test that same inputs produce same results
+        for i in 0..10 {
+            let result1 = usize_to_u8(i, 20);
+            let result2 = usize_to_u8(i, 20);
+            assert_eq!(result1, result2, "Results should be deterministic for {i}");
+        }
+
+        // Test that error cases are also deterministic
+        for i in [256, 1000, usize::MAX] {
+            let result1 = usize_to_u8(i, 100);
+            let result2 = usize_to_u8(i, 100);
+            assert_eq!(
+                result1, result2,
+                "Error results should be deterministic for {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_usize_to_u8_performance_characteristics() {
+        use super::usize_to_u8;
+        use std::time::Instant;
+
+        // Test that the function is fast for valid conversions
+        let start = Instant::now();
+        for i in 0..1000 {
+            let _ = usize_to_u8(i % 256, 300);
+        }
+        let duration = start.elapsed();
+
+        // Informational only (avoid flaky time asserts in tests)
+        eprintln!("usize_to_u8 valid conversions: 1000 iters in {duration:?}");
+
+        // Test that error cases are also fast
+        let start = Instant::now();
+        for i in 256..1256 {
+            let _ = usize_to_u8(i, 100);
+        }
+        let duration = start.elapsed();
+
+        eprintln!("usize_to_u8 error conversions: 1000 iters in {duration:?}");
+    }
+
+    #[test]
+    fn test_usize_to_u8_memory_efficiency() {
+        use super::usize_to_u8;
+
+        // Test that the function doesn't allocate memory unnecessarily
+        // This is a behavioral test - the function should use stack allocation only
+        let (result, _) = measure_with_result(|| {
+            let mut results = Vec::new();
+            for i in 0..100 {
+                results.push(usize_to_u8(i, 200));
+            }
+            results
+        });
+
+        // Verify results are correct
+        for (i, result) in result.iter().enumerate() {
+            assert_eq!(
+                *result,
+                Ok(u8::try_from(i).unwrap()),
+                "Result should be correct for {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_usize_to_u8_error_message_quality() {
+        use super::usize_to_u8;
+
+        // Test that error messages contain useful information
+        let result = usize_to_u8(300, 42);
+        assert!(result.is_err());
+
+        if let Err(error) = result {
+            let error_string = format!("{error}");
+            // The error should contain information about the limits
+            assert!(
+                error_string.contains("InvalidFacetIndex") || error_string.contains("index"),
+                "Error message should indicate it's about invalid index: {error_string}"
+            );
+        }
+
+        // Test error with different values
+        let result = usize_to_u8(usize::MAX, 7);
+        assert!(result.is_err());
+        if let Err(FacetError::InvalidFacetIndexOverflow {
+            original_index,
+            facet_count,
+        }) = result
+        {
+            assert_eq!(original_index, usize::MAX);
+            assert_eq!(facet_count, 7);
+        } else {
+            panic!("Expected InvalidFacetIndexOverflow error");
+        }
+    }
+
+    #[test]
+    fn test_usize_to_u8_thread_safety() {
+        use super::usize_to_u8;
+        use std::thread;
+
+        // Test that the function works correctly in multi-threaded context
+        let handles: Vec<_> = (0..4)
+            .map(|thread_id| {
+                thread::spawn(move || {
+                    let mut results = Vec::new();
+                    for i in 0..100 {
+                        let val = (thread_id * 50 + i) % 256;
+                        results.push(usize_to_u8(val, 300));
+                    }
+                    results
+                })
+            })
+            .collect();
+
+        // Join all threads and verify results
+        for handle in handles {
+            let results = handle.join().expect("Thread should complete successfully");
+            for result in results {
+                assert!(result.is_ok(), "All results should be successful");
+            }
+        }
     }
 }

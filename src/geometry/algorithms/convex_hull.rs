@@ -111,6 +111,13 @@ pub enum ConvexHullConstructionError {
         #[source]
         source: TriangulationValidationError,
     },
+    /// Failed to access facet data during convex hull construction.
+    #[error("Failed to access facet data during convex hull construction: {source}")]
+    FacetDataAccessFailed {
+        /// The underlying facet error that caused the data access to fail.
+        #[source]
+        source: FacetError,
+    },
 }
 
 // =============================================================================
@@ -172,7 +179,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + Sized + Serialize + DeserializeOwned,
+    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
 {
     /// The boundary facets that form the convex hull
     pub hull_facets: Vec<Facet<T, U, V, D>>,
@@ -203,7 +210,7 @@ where
         + From<f64>,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + Sized + Serialize + DeserializeOwned,
+    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
     f64: From<T>,
     for<'a> &'a T: std::ops::Div<T>,
     OrderedFloat<f64>: From<T>,
@@ -223,6 +230,9 @@ where
     /// Returns a [`ConvexHullConstructionError`] if:
     /// - Boundary facets cannot be extracted from the triangulation ([`ConvexHullConstructionError::BoundaryFacetExtractionFailed`])
     /// - The input triangulation is invalid ([`ConvexHullConstructionError::InvalidTriangulation`])
+    /// - Facet data access fails during construction ([`ConvexHullConstructionError::FacetDataAccessFailed`])
+    ///   - This can happen if cells or vertices referenced by boundary facets are no longer valid
+    ///   - Or if the facet index is out of bounds for the cell's vertex count
     ///
     /// # Examples
     ///
@@ -271,9 +281,36 @@ where
         }
 
         // Use the existing boundary analysis to get hull facets
-        let hull_facets = tds.boundary_facets().map_err(|source| {
+        let hull_facets_iter = tds.boundary_facets().map_err(|source| {
             ConvexHullConstructionError::BoundaryFacetExtractionFailed { source }
         })?;
+
+        // Collect the iterator into a Vec for storage in the struct
+        // Note: This temporarily stores the deprecated Facet objects until we can migrate
+        // the ConvexHull struct itself to use iterator-based APIs
+        let hull_facets: Result<Vec<_>, ConvexHullConstructionError> = hull_facets_iter
+            .map(|facet_view| {
+                // Convert FacetView to Facet for backward compatibility
+                // This will be removed when ConvexHull is migrated to use FacetView
+                let cell = facet_view
+                    .cell()
+                    .map_err(
+                        |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
+                    )?
+                    .clone();
+                #[allow(clippy::clone_on_copy)] // Explicit clone preferred over Copy constraint
+                let opposite_vertex = facet_view
+                    .opposite_vertex()
+                    .map_err(
+                        |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
+                    )?
+                    .clone();
+                #[allow(deprecated)]
+                Facet::new(cell, opposite_vertex)
+                    .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })
+            })
+            .collect();
+        let hull_facets = hull_facets?;
 
         // Additional validation: ensure we have at least one boundary facet
         if hull_facets.is_empty() {
@@ -1149,7 +1186,7 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + Default + DeserializeOwned + Serialize + Sized,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
@@ -1165,7 +1202,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Default + Sized + Serialize + DeserializeOwned,
+    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
 {
     fn default() -> Self {
         Self {
@@ -2487,7 +2524,7 @@ mod tests {
     #[test]
     fn test_from_triangulation_empty_vertices_error() {
         // Test error path when triangulation has no vertices
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let result = ConvexHull::from_triangulation(&empty_tds);
 
         assert!(result.is_err());
@@ -2502,7 +2539,7 @@ mod tests {
     #[test]
     fn test_from_triangulation_no_cells_error() {
         // Create a TDS with vertices but no cells (manually constructed)
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::default();
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let vertex = vertex!([0.0, 0.0, 0.0]);
         let _ = tds.insert_vertex_with_mapping(vertex);
 
