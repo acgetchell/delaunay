@@ -35,7 +35,7 @@ jobs:
           fetch-depth: 0  # Full history for tag operations
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@2fcdc490d667999e01ddbbf0f2823181beef6b39  # v1.15.0
+        uses: actions-rust-lang/setup-rust-toolchain@02be93da58aa71fb456aa9c43b301149248829d8  # v1.15.1
         with:
           cache: true
           # Toolchain from rust-toolchain.toml
