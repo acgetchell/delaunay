@@ -7,7 +7,6 @@ and Keep a Changelog format output functionality.
 """
 
 import io
-import re
 import tempfile
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -16,13 +15,13 @@ from unittest.mock import patch
 import pytest
 
 from enhance_commits import (
+    CATEGORY_PATTERNS,
     COMMIT_BULLET_RE,
     TITLE_FALLBACK_RE,
     _add_section_with_entries,
     _categorize_entry,
     _collect_commit_entry,
     _extract_title_text,
-    _get_regex_patterns,
     _process_changelog_lines,
     _process_section_header,
     main,
@@ -33,7 +32,7 @@ from enhance_commits import (
 @pytest.fixture
 def regex_patterns():
     """Fixture to provide regex patterns for categorization tests."""
-    return _get_regex_patterns()
+    return CATEGORY_PATTERNS
 
 
 class TestRegexPatterns:
@@ -41,7 +40,7 @@ class TestRegexPatterns:
 
     def test_get_regex_patterns_structure(self):
         """Test that regex patterns have expected structure."""
-        patterns = _get_regex_patterns()
+        patterns = CATEGORY_PATTERNS
 
         expected_categories = ["added", "removed", "fixed", "changed", "deprecated", "security"]
         assert set(patterns.keys()) == set(expected_categories)
@@ -50,10 +49,10 @@ class TestRegexPatterns:
         for category in expected_categories:
             assert isinstance(patterns[category], list)
             assert len(patterns[category]) > 0
-            # Verify patterns are valid regex strings
+            # Verify patterns are compiled regex objects
             for pattern in patterns[category]:
-                assert isinstance(pattern, str)
-                assert len(pattern) > 0
+                assert hasattr(pattern, "search")  # Check it's a compiled regex
+                assert hasattr(pattern, "pattern")  # Has pattern attribute
 
     @pytest.mark.parametrize(
         "text",
@@ -72,8 +71,8 @@ class TestRegexPatterns:
     )
     def test_added_patterns(self, text):
         """Test patterns for 'Added' category."""
-        patterns = _get_regex_patterns()["added"]
-        assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'added' patterns"
+        patterns = CATEGORY_PATTERNS["added"]
+        assert any(pattern.search(text.lower()) for pattern in patterns), f"'{text}' should match 'added' patterns"
 
     @pytest.mark.parametrize(
         "text",
@@ -86,8 +85,8 @@ class TestRegexPatterns:
     )
     def test_removed_patterns(self, text):
         """Test patterns for 'Removed' category."""
-        patterns = _get_regex_patterns()["removed"]
-        assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'removed' patterns"
+        patterns = CATEGORY_PATTERNS["removed"]
+        assert any(pattern.search(text.lower()) for pattern in patterns), f"'{text}' should match 'removed' patterns"
 
     @pytest.mark.parametrize(
         "text",
@@ -106,8 +105,8 @@ class TestRegexPatterns:
     )
     def test_fixed_patterns(self, text):
         """Test patterns for 'Fixed' category."""
-        patterns = _get_regex_patterns()["fixed"]
-        assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'fixed' patterns"
+        patterns = CATEGORY_PATTERNS["fixed"]
+        assert any(pattern.search(text.lower()) for pattern in patterns), f"'{text}' should match 'fixed' patterns"
 
     @pytest.mark.parametrize(
         "text",
@@ -124,8 +123,8 @@ class TestRegexPatterns:
     )
     def test_changed_patterns(self, text):
         """Test patterns for 'Changed' category."""
-        patterns = _get_regex_patterns()["changed"]
-        assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'changed' patterns"
+        patterns = CATEGORY_PATTERNS["changed"]
+        assert any(pattern.search(text.lower()) for pattern in patterns), f"'{text}' should match 'changed' patterns"
 
     @pytest.mark.parametrize(
         "text",
@@ -136,8 +135,8 @@ class TestRegexPatterns:
     )
     def test_deprecated_patterns(self, text):
         """Test patterns for 'Deprecated' category."""
-        patterns = _get_regex_patterns()["deprecated"]
-        assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'deprecated' patterns"
+        patterns = CATEGORY_PATTERNS["deprecated"]
+        assert any(pattern.search(text.lower()) for pattern in patterns), f"'{text}' should match 'deprecated' patterns"
 
     @pytest.mark.parametrize(
         "text",
@@ -150,16 +149,8 @@ class TestRegexPatterns:
     )
     def test_security_patterns(self, text):
         """Test patterns for 'Security' category."""
-        patterns = _get_regex_patterns()["security"]
-        assert any(_match_pattern(pattern, text) for pattern in patterns), f"'{text}' should match 'security' patterns"
-
-
-def _match_pattern(pattern, text):
-    """Helper function to test if a pattern matches text."""
-    try:
-        return bool(re.search(pattern, text.lower()))
-    except re.error:
-        return False
+        patterns = CATEGORY_PATTERNS["security"]
+        assert any(pattern.search(text.lower()) for pattern in patterns), f"'{text}' should match 'security' patterns"
 
 
 class TestTitleExtraction:
@@ -369,7 +360,7 @@ class TestOutputGeneration:
         result = _add_section_with_entries(output_lines, "Added", entries, any_sections_output=False)
 
         assert result is True
-        expected = ["### Added", "", "- **Add feature A**", "- **Add feature B**"]
+        expected = ["### Added", "", "- **Add feature A**", "", "- **Add feature B**"]
         assert output_lines == expected
 
     def test_add_section_with_entries_subsequent_section(self):
@@ -388,6 +379,7 @@ class TestOutputGeneration:
             "### Fixed",
             "",
             "- **Fix bug A**",
+            "",  # Blank line between entries
             "- **Fix bug B**",
         ]
         assert output_lines == expected
@@ -643,9 +635,10 @@ class TestMainFunction:
             with (
                 temp_chdir(temp_path),
                 patch("sys.argv", ["enhance_commits.py", str(input_file), str(output_file)]),
-                pytest.raises(FileNotFoundError),
+                pytest.raises(SystemExit) as exc_info,
             ):
                 main()
+            assert exc_info.value.code == 1
 
 
 class TestEdgeCases:
@@ -807,9 +800,11 @@ class TestImprovements:
         assert COMMIT_BULLET_RE.match(" \t - \t**Security: patch CVE**")
         assert COMMIT_BULLET_RE.match(" \t * \t**Security: patch CVE**")
 
-        # Test non-matching patterns (no bold formatting)
-        assert not COMMIT_BULLET_RE.match("- Not bold text")
-        assert not COMMIT_BULLET_RE.match("* Not bold text")
+        # Test non-matching patterns - the improved regex is more permissive
+        # It only checks for bullet format, not bold formatting
+        # These should match since they have bullet format:
+        assert COMMIT_BULLET_RE.match("- Not bold text")
+        assert COMMIT_BULLET_RE.match("* Not bold text")
 
         # Test non-bullet characters
         assert not COMMIT_BULLET_RE.match("+ **Not supported bullet**")

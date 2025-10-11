@@ -150,15 +150,6 @@ just spell-check   # Spell checking (only checks modified files)
 just validate-json # JSON validation
 just validate-toml # TOML validation
 
-# Legacy commands (for reference, but prefer just recipes above):
-# cargo fmt --all
-# cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
-# RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
-# uv run ruff check scripts/ --fix && uv run ruff format scripts/
-# git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -w
-# git ls-files -z '*.sh' | xargs -0 -r -n4 shellcheck -x
-# git ls-files -z '*.md' | xargs -0 -r -n100 npx markdownlint --config .markdownlint.json --fix
-# (spell checking, JSON/TOML validation commands in justfile)
 ```
 
 ### Testing and Validation
@@ -187,15 +178,6 @@ just coverage      # Generate HTML coverage report (excludes benchmarks/examples
 # Benchmarks
 just bench-compile # Compile benchmarks without running
 just bench         # Run all benchmarks
-
-# Legacy commands (for reference, but prefer just recipes above):
-# cargo build
-# cargo test --lib --verbose && cargo test --doc --verbose
-# cargo test --release
-# cargo test --test circumsphere_debug_tools -- --nocapture
-# bash scripts/run_all_examples.sh
-# uv run pytest
-# cargo tarpaulin --exclude-files 'benches/**' --exclude-files 'examples/**' --exclude-files 'tests/**' --out Html --output-dir target/tarpaulin
 ```
 
 ### Performance and Benchmarks
@@ -211,11 +193,6 @@ just bench-dev       # Development mode (10x faster for iteration)
 # Benchmark execution
 just bench-compile   # Compile benchmarks without running
 just bench          # Run all benchmarks
-
-# Legacy commands (for reference, but prefer just recipes above):
-# uv run benchmark-utils generate-baseline
-# uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
-# uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
 ```
 
 ### Changelog Management
@@ -228,10 +205,6 @@ just changelog-update # Generate changelog with success message
 # Create git tag with changelog content (user-only; WARP must not execute)
 # Run manually from your terminal:
 just changelog-tag <version>  # e.g., just changelog-tag v0.4.2
-
-# Legacy commands (for reference, but prefer just recipes above):
-# uv run changelog-utils generate
-# uv run changelog-utils tag vX.Y.Z
 ```
 
 ## Project Context
@@ -287,23 +260,23 @@ These items are incomplete and may require future attention:
 ### Context-Aware Test Execution (AI Assistant Guidance)
 
 - **IF** Rust code changed in `tests/` directory → **MUST** run integration/debug tests:
-  - `cargo test --release` (for performance)
-  - `cargo test --test circumsphere_debug_tools -- --nocapture` (for debug output)
+  - `just test-release` (for performance)
+  - `just test-debug` (for debug output)
 - **IF** Rust code changed in `examples/` directory → **MUST** run examples validation:
-  - See "Testing and Validation → Run all examples" for the canonical command
+  - `just examples`
 - **IF** Rust code changed in `benches/` directory → **MUST** run benchmark verification:
-  - `cargo bench --no-run` (verifies benchmarks compile without executing them)
+  - `just bench-compile` (verifies benchmarks compile without executing them)
 - **IF** other Rust code changed (`src/`, etc.) → **MUST** run standard Rust tests:
-  - `cargo test --lib --verbose`
-  - `cargo test --doc --verbose`
-- **FOR ANY** Rust code changes → validate documentation (see "Code Quality Checks → Rust documentation validation")
-- **IMPORTANT**: For allocation testing, use `cargo test --test allocation_api --features count-allocations`
+  - `just test`
+- **FOR ANY** Rust code changes → validate documentation:
+  - `just doc-check`
+- **IMPORTANT**: For allocation testing, use `just test-allocation`
 - **PURPOSE**: Ensures appropriate validation for the type of code changes made
 
 ### Integration Testing Patterns
 
-- **Debug Tools**: Use `cargo test --test circumsphere_debug_tools -- --nocapture` for interactive debugging
-- **Performance Tests**: Always run integration tests in `--release` mode for accurate performance measurements
+- **Debug Tools**: Use `just test-debug` for interactive debugging with verbose output
+- **Performance Tests**: Use `just test-release` for accurate performance measurements
 - **Test Categories**: Organize tests by purpose: debugging tools (`*_debug_tools.rs`), integration (`*_integration.rs`), regression (`*_error.rs`), comparison (`*_comparison.rs`)
 - **Test Documentation**: Each test file should have clear module documentation explaining purpose, usage, and test coverage
 - **Specialized Tests**: Available integration tests include:
@@ -313,14 +286,14 @@ These items are incomplete and may require future attention:
   - `convex_hull_bowyer_watson_integration.rs` - Algorithm integration testing
   - `coordinate_conversion_errors.rs` - Error handling tests for extreme values, NaN, infinity
   - `test_cavity_boundary_error.rs` - Reproduction tests for cavity boundary facet errors
-  - `allocation_api.rs` - Memory allocation profiling (requires `count-allocations` feature)
+  - `allocation_api.rs` - Memory allocation profiling (use `just test-allocation`)
 
 ### Testing Best Practices
 
-- **Performance Considerations**: Integration tests run significantly slower in debug mode - always recommend `--release` flag
-- **Verbose Output**: Use `--nocapture` flag for debugging tests that produce detailed analysis output
+- **Performance Considerations**: Integration tests run significantly slower in debug mode - use `just test-release` for optimal performance
+- **Verbose Output**: Use `just test-debug` for debugging tests that produce detailed analysis output
 - **Test Structure**: Convert CLI-style applications in tests to proper `#[test]` functions for better integration with cargo test framework
-- **Memory Testing**: Use `--features count-allocations` for allocation profiling tests
+- **Memory Testing**: Use `just test-allocation` for allocation profiling tests
 
 ### Test-Driven Development (TDD) Guidelines
 
@@ -332,7 +305,7 @@ These items are incomplete and may require future attention:
 - **Test Types**: Apply TDD to both unit tests (`src/` modules with `#[cfg(test)]`) and integration tests (`tests/` directory)
 - **Benefits**: TDD ensures better test coverage, cleaner APIs, and more maintainable code architecture
 - **Rust-Specific**: Leverage Rust's type system and compiler feedback during the TDD process
-- **Documentation**: Use `cargo test --doc` to validate code examples in documentation as part of TDD
+- **Documentation**: Use `just test` to validate code examples in documentation as part of TDD (includes doc tests)
 - **Performance**: Write performance-focused tests early to catch regressions during development
 
 ### Documentation Standards

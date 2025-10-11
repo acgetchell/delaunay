@@ -71,9 +71,11 @@ cargo run --example zero_allocation_iterator_demo
 **Just Workflows:**
 
 - `just dev` - Quick development cycle (format, lint, test)
-- `just quality` - Comprehensive code quality checks
-- `just pre-commit` - Full validation before pushing
-- `just ci` - Simulate CI pipeline locally
+- `just quality` - All quality checks + tests (comprehensive)
+- `just ci` - CI simulation (quality + release tests + benchmark compilation)
+- `just commit-check` - Pre-commit validation (most thorough: CI + examples)
+- `just lint` - All linting (code + docs + config)
+- `just --list` or `just help-workflows` - See all available commands
 
 ## 📋 Examples
 

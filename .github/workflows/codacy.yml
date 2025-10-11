@@ -79,12 +79,14 @@ jobs:
             echo "No SARIF file found or file is empty"
             echo "Creating empty SARIF file to prevent workflow failure"
             # Create empty SARIF file with proper schema
-            echo '{' > sarif_empty.sarif
             schema_url="https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
-            echo "  \"\$schema\": \"$schema_url\"," >> sarif_empty.sarif
-            echo '  "version": "2.1.0",' >> sarif_empty.sarif
-            echo '  "runs": []' >> sarif_empty.sarif
-            echo '}' >> sarif_empty.sarif
+            {
+              echo '{'
+              echo "  \"\$schema\": \"$schema_url\","
+              echo '  "version": "2.1.0",'
+              echo '  "runs": []'
+              echo '}'
+            } > sarif_empty.sarif
             # Mark the empty SARIF for upload
             echo "SARIF_FILE=sarif_empty.sarif" >> "$GITHUB_ENV"
             exit 0

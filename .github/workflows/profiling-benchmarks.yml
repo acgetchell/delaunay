@@ -70,7 +70,7 @@ jobs:
         run: |
           INPUT_MODE="${{ github.event.inputs.mode }}"
           if [[ "$INPUT_MODE" == "development" ]]; then
-            echo "PROFILING_DEV_MODE=1" >> $GITHUB_ENV
+            echo "PROFILING_DEV_MODE=1" >> "$GITHUB_ENV"
             echo "Running in development mode (reduced scale)"
           else
             echo "Running in production mode (full scale)"
@@ -94,13 +94,20 @@ jobs:
           # Run profiling (timing-focused)
           echo "Starting comprehensive profiling benchmarks..."
           if [[ -z "$BENCH_FILTER" ]] || [[ "$BENCH_FILTER" != *"memory"* ]]; then
-            cargo bench --bench profiling_suite $BENCH_FILTER \
-              2>&1 | tee profiling-results/profiling_output.log
+            if [[ -z "$BENCH_FILTER" ]]; then
+              cargo bench --bench profiling_suite \
+                2>&1 | tee profiling-results/profiling_output.log
+            else
+              # shellcheck disable=SC2086
+              cargo bench --bench profiling_suite $BENCH_FILTER \
+                2>&1 | tee profiling-results/profiling_output.log
+            fi
           else
             # If filter contains memory, run only the filtered benchmarks
+            # shellcheck disable=SC2086
             cargo bench --bench profiling_suite --features count-allocations $BENCH_FILTER \
               2>&1 | tee profiling-results/profiling_output.log
-            echo "MEMORY_BENCHMARKS_RUN=true" >> $GITHUB_ENV
+            echo "MEMORY_BENCHMARKS_RUN=true" >> "$GITHUB_ENV"
           fi
 
       - name: Run profiling with memory allocation tracking (if not already done)

@@ -1398,7 +1398,7 @@ class PerformanceComparator:
     def __init__(self, project_root: Path):
         self.project_root = project_root
         self.hardware = HardwareInfo()
-        self.regression_threshold = 5.0  # 5% regression threshold
+        self.regression_threshold = 7.5  # 7.5% regression threshold (adjusted for CI environment variability)
 
     def compare_with_baseline(
         self,

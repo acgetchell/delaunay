@@ -35,6 +35,10 @@ This section contains the foundational algorithms and data structures that form 
   DOI: [10.1093/comjnl/24.2.162](https://doi.org/10.1093/comjnl/24.2.162)
 - Watson, D.F. "Computing the n-dimensional Delaunay tessellation with application to Voronoi polytopes."
   *The Computer Journal* 24, no. 2 (1981): 167-172. DOI: [10.1093/comjnl/24.2.167](https://doi.org/10.1093/comjnl/24.2.167)
+- Clarkson, K.L., and Shor, P.W. "Applications of Random Sampling in Computational Geometry."
+  *Discrete & Computational Geometry* 4, no. 1 (1989): 387-421. DOI: [10.1007/BF02187740](https://doi.org/10.1007/BF02187740)
+- Guibas, L., Knuth, D., and Sharir, M. "Randomized Incremental Construction of Delaunay and Voronoi Diagrams."
+  *Algorithmica* 7, no. 1-6 (1992): 381-413. DOI: [10.1007/BF01758770](https://doi.org/10.1007/BF01758770)
 
 ### Data Structures and Implementation References
 
@@ -42,6 +46,11 @@ This section contains the foundational algorithms and data structures that form 
   Available at: <https://doc.cgal.org/6.0.1/Manual/packages.html>
 - de Berg, M., et al. "Computational Geometry: Algorithms and Applications." 3rd ed. Berlin: Springer-Verlag, 2008.
   DOI: [10.1007/978-3-540-77974-2](https://doi.org/10.1007/978-3-540-77974-2)
+- Blandford, D.K., Blelloch, G.E., and Kadow, C. "Engineering a Compact Parallel Delaunay Algorithm in 3D."
+  *Proceedings of the Twenty-Second Annual Symposium on Computational Geometry* (2006): 292-300.
+  DOI: [10.1145/1137856.1137895](https://doi.org/10.1145/1137856.1137895)
+- Devillers, O. "The Delaunay Hierarchy." *International Journal of Foundations of Computer Science* 13,
+  no. 2 (2002): 163-180. DOI: [10.1142/S0129054102001035](https://doi.org/10.1142/S0129054102001035)
 
 ### Lifted Paraboloid Method
 
@@ -62,6 +71,10 @@ These references ensure the library's geometric computations are mathematically 
   *Discrete & Computational Geometry* 18, no. 3 (1997): 305-363. DOI: [10.1007/PL00009321](https://doi.org/10.1007/PL00009321)
 - Shewchuk, J. R. "Robust Adaptive Floating-Point Geometric Predicates."
   *Proceedings of the Twelfth Annual Symposium on Computational Geometry* (1996): 141-150.
+- Fortune, S., and Van Wyk, C. J. "Static Analysis Yields Efficient Exact Integer Arithmetic for Computational Geometry."
+  *ACM Transactions on Graphics* 15, no. 3 (1996): 223-248. DOI: [10.1145/234535.234691](https://doi.org/10.1145/234535.234691)
+- Karasick, M., Lieber, D., and Nackman, L. R. "Efficient Delaunay Triangulation Using Rational Arithmetic."
+  *ACM Transactions on Graphics* 10, no. 1 (1991): 71-91. DOI: [10.1145/99902.99917](https://doi.org/10.1145/99902.99917)
 
 ### Simulation of Simplicity and Degeneracy Handling
 
@@ -138,3 +151,26 @@ These references support specialized features and high-dimensional computations 
   *Discrete & Computational Geometry* 10, no. 4 (1993): 377-409. DOI: [10.1007/BF02573985](https://doi.org/10.1007/BF02573985)
 - Seidel, R. "The Upper Bound Theorem for Polytopes: An Easy Proof of Its Asymptotic Version."
   *Computational Geometry* 5, no. 2 (1995): 115-116. DOI: [10.1016/0925-7721(95)00013-Y](https://doi.org/10.1016/0925-7721(95)00013-Y)
+- Avis, D., and Bremner, D. "How Good Are Convex Hull Algorithms?" *Computational Geometry* 7,
+  no. 5-6 (1997): 265-301. DOI: [10.1016/S0925-7721(96)00023-5](https://doi.org/10.1016/S0925-7721(96)00023-5)
+- Mulmuley, K. "Computational Geometry: An Introduction Through Randomized Algorithms."
+  New Jersey: Prentice Hall, 1994. ISBN: 978-0-13-336363-6
+
+## Performance Optimization and Memory Management
+
+These references inform the library's performance optimization strategies and memory-efficient data structure design.
+
+### Memory-Efficient Data Structures
+
+- Blandford, D.K., Blelloch, G.E., Dahle, C., and Karp, R. "Compact Representations of Simplicial Meshes in Two and Three Dimensions."
+  *International Journal of Computational Geometry & Applications* 15, no. 1 (2005): 3-24.
+  DOI: [10.1142/S0218195905001580](https://doi.org/10.1142/S0218195905001580)
+- Shewchuk, J.R. "Triangle: Engineering a 2D Quality Mesh Generator and Delaunay Triangulator."
+  *Applied Computational Geometry Towards Geometric Engineering* (1996): 203-222.
+  DOI: [10.1007/BFb0014497](https://doi.org/10.1007/BFb0014497)
+
+### Cache-Efficient Algorithms
+
+- Arge, L., Goodrich, M.T., Nelson, M., and Sitchinava, N. "Fundamental Parallel Algorithms for Private-Cache Chip Multiprocessors."
+  *Proceedings of the Twentieth Annual Symposium on Parallelism in Algorithms and Architectures* (2008): 197-206.
+  DOI: [10.1145/1378533.1378573](https://doi.org/10.1145/1378533.1378573)
