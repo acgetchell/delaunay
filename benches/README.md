@@ -8,11 +8,14 @@ triangulation data structure operations, and small-scale triangulation performan
 ### Circumsphere Containment Benchmarks
 
 ```bash
-# Run all benchmarks
+# Run all circumsphere benchmarks
 cargo bench --bench circumsphere_containment
 
 # Run with test mode (faster, no actual benchmarking)
 cargo bench --bench circumsphere_containment -- --test
+
+# Or use just to run all benchmarks
+just bench
 ```
 
 ### CI Performance Suite (primary)
@@ -79,13 +82,13 @@ The **Profiling Suite** provides comprehensive performance analysis for optimiza
 
 ```bash
 # Run all available benchmarks (includes CI + profiling suites)
-cargo bench
+just bench
 
-# Run all benchmarks with memory tracking
+# Run all benchmarks with memory tracking (direct cargo command)
 cargo bench --features count-allocations
 
 # Compile-only check (useful for CI validation without running benchmarks)
-cargo bench --no-run
+just bench-compile
 ```
 
 **💡 Targeted Benchmark Runs**: Use `cargo bench --bench profiling_suite -- --help` to see available filters and Criterion flags for scoping

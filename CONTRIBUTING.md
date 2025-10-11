@@ -83,11 +83,10 @@ Before you begin, ensure you have:
    uv sync --group dev       # Install Python dev dependencies
    uv run pytest             # Python utility tests
    
-   # Or use convenient aliases:
-   cargo t                   # Test with all features and output
-   cargo test-lib            # Library tests with verbose output
-   cargo test-doc            # Documentation tests
-   cargo test-release        # All tests in release mode (faster performance)
+   # Or use just for comprehensive testing:
+   just test                 # Library and doc tests
+   just test-all             # All tests (Rust + Python)
+   just test-release         # All tests in release mode (faster performance)
    ```
 
 4. **Try the examples**:
@@ -101,18 +100,18 @@ Before you begin, ensure you have:
 
    ```bash
    # Compile benchmarks without running (useful for CI)
-   cargo benchc
+   just bench-compile
    
    # Run all benchmarks
-   cargo bench-all
+   just bench
    ```
 
 6. **Code quality checks**:
 
    ```bash
-   cargo fmt            # Format all code
-   cargo lint           # Strict clippy with pedantic/nursery/cargo warnings
-   cargo doc-check      # Validate documentation builds
+   just fmt             # Format all code
+   just clippy          # Strict clippy with pedantic/nursery/cargo warnings
+   just doc-check       # Validate documentation builds
    ```
 
 7. **Use Just for comprehensive workflows** (recommended):
@@ -124,18 +123,20 @@ Before you begin, ensure you have:
    # See all available commands
    just --list
    
-   # Common workflows
+   # Common workflows (from quick to comprehensive)
    just dev             # Quick development cycle (format, lint, test)
-   just quality         # All quality checks
-   just pre-commit      # Full pre-commit validation
-   just ci              # Simulate CI pipeline
+   just quality         # All quality checks + tests
+   just ci              # CI simulation (quality + release tests + benchmarks)
+   just commit-check    # Pre-commit validation (most thorough: CI + examples)
+   
+   # Granular quality checks
+   just lint            # All linting (code + docs + config)
+   just lint-code       # Code linting only (Rust, Python, Shell)
+   just lint-docs       # Documentation linting only
+   just lint-config     # Configuration validation only
    ```
 
-> **Tips**:
->
-> - Cargo aliases are defined in [`.cargo/config.toml`](.cargo/config.toml) for individual commands
-> - Just recipes in [`justfile`](justfile) provide comprehensive workflows combining multiple steps
-> - Use `just help-workflows` for workflow guidance
+> **Tip**: Use `just help-workflows` for workflow guidance and to see all available commands.
 
 ## Development Environment Setup
 
@@ -343,11 +344,18 @@ just --version
 ```bash
 # See all available commands
 just --list
+just help-workflows   # Show organized workflow help
 
 # Quick development cycle
 just dev              # Format, lint, and test (fast feedback)
 
-# Pre-commit validation
+# Comprehensive validation
+just quality          # All quality checks + tests (Rust + Python)
+
+# CI simulation
+just ci               # Quality + release tests + benchmark compilation
+
+# Pre-commit validation (most thorough)
 just pre-commit       # Comprehensive checks before pushing
 
 # Quality checks
@@ -408,7 +416,7 @@ just dev              # Quick cycle: format, lint, test
 **Before committing:**
 
 ```bash
-just pre-commit       # Comprehensive validation
+just commit-check    # Most comprehensive: CI + examples
 ```
 
 **When working on performance:**
@@ -424,13 +432,6 @@ just bench-compare    # Check for regressions
 ```bash
 just ci               # Simulate what CI runs
 ```
-
-### Just vs Cargo Aliases
-
-- **Cargo aliases** ([`.cargo/config.toml`](.cargo/config.toml)): Individual commands (e.g., `cargo lint`)
-- **Just recipes** ([`justfile`](justfile)): Multi-step workflows (e.g., `just pre-commit`)
-
-Both approaches complement each other - use cargo aliases for single tasks and just recipes for comprehensive workflows.
 
 ## Development Workflow
 
@@ -664,43 +665,6 @@ uv run pytest       # Run Python tests
 cargo bench
 ```
 
-### Cargo Aliases for Development
-
-The project provides convenient cargo aliases in [`.cargo/config.toml`](.cargo/config.toml) to streamline development:
-
-#### Quick Commands
-
-- `cargo b` - Build the project
-- `cargo t` - Test with all features and output
-- `cargo fmt` - Format all code
-- `cargo doc` - Generate documentation
-
-#### Quality Checks
-
-- `cargo lint` - Run strict clippy (pedantic + nursery + cargo warnings)
-- `cargo doc-check` - Validate documentation builds (required for crates.io)
-
-#### Testing Commands
-
-- `cargo test-lib` - Library tests with verbose output
-- `cargo test-doc` - Documentation tests
-- `cargo test-release` - All tests in release mode (for performance)
-- `cargo test-debug` - Debug tools with output (`--nocapture`)
-- `cargo test-integration` - Integration tests in release mode
-- `cargo talloc` - Allocation profiling tests (requires `count-allocations` feature)
-
-#### Benchmark Commands
-
-- `cargo benchc` - Compile benchmarks without running (useful for CI)
-- `cargo bench-all` - Run all benchmarks
-
-#### Coverage Analysis
-
-- `cargo coverage` - Generate HTML coverage report
-
-These aliases replace the need to copy long commands from documentation - just use `cargo lint` instead of the full
-`cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo`.
-
 ### Writing Tests
 
 Follow these testing patterns:
@@ -768,10 +732,10 @@ Follow these testing patterns:
 cargo doc --open
 
 # Test documentation examples
-cargo test --doc
+just test             # Includes doc tests
 
-# Check documentation coverage
-cargo doc --document-private-items
+# Check documentation coverage and validate
+just doc-check        # Validates documentation builds for crates.io
 ```
 
 ## Citation and References
@@ -894,10 +858,10 @@ The project includes comprehensive benchmarking:
 
 ```bash
 # Run benchmarks directly
-cargo bench
+just bench
 
 # Run all examples to verify performance
-./scripts/run_all_examples.sh
+just examples
 ```
 
 **Note**: The project uses an **automated performance baseline system**:

@@ -52,7 +52,7 @@ changelog-update: changelog
     @echo "To create a git tag with changelog content for a specific version, run:"
     @echo "  just changelog-tag <version>  # e.g., just changelog-tag v0.4.2"
 
-# CI simulation (run what CI runs)
+# CI simulation: quality checks + release tests + benchmark compilation
 ci: quality test-release bench-compile
     @echo "🎯 CI simulation complete!"
 
@@ -71,8 +71,8 @@ clean:
 clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
-# Pre-commit workflow (recommended before pushing)
-commit-check: quality test-all examples
+# Pre-commit workflow: CI + examples (most comprehensive validation)
+commit-check: ci examples
     @echo "🚀 Ready to commit! All checks passed."
 
 # Coverage analysis
@@ -84,7 +84,7 @@ coverage:
 default:
     @just --list
 
-# Development workflow
+# Development workflow: quick format, lint, and test cycle
 dev: fmt clippy test
     @echo "⚡ Quick development check complete!"
 
@@ -100,17 +100,26 @@ fmt:
 
 help-workflows:
     @echo "Common Just workflows:"
-    @echo "  just action-lint   # Lint all GitHub workflows with actionlint"
-    @echo "  just ci            # Simulate CI pipeline"
-    @echo "  just ci-baseline   # CI + save performance baseline"
-    @echo "  just commit-check  # Full pre-commit checks (includes examples)"
-    @echo "  just coverage      # Generate coverage report"
     @echo "  just dev           # Quick development cycle (format, lint, test)"
-    @echo "  just perf-help     # Show performance analysis commands"
-    @echo "  just quality       # All quality checks"
-    @echo "  just test-all      # All tests (Rust + Python)"
+    @echo "  just quality       # All quality checks + tests (comprehensive)"
+    @echo "  just ci            # CI simulation (quality + release tests + bench compile)"
+    @echo "  just commit-check  # Pre-commit validation (CI + examples) - most thorough"
+    @echo "  just ci-baseline   # CI + save performance baseline"
+    @echo ""
+    @echo "Testing:"
+    @echo "  just test          # Rust lib and doc tests (debug mode)"
+    @echo "  just test-all      # All tests (Rust + Python, debug mode)"
+    @echo "  just test-release  # All tests in release mode"
     @echo "  just test-debug    # Run debug tools with output"
     @echo "  just test-allocation # Memory allocation profiling"
+    @echo "  just examples      # Run all examples"
+    @echo "  just coverage      # Generate coverage report"
+    @echo ""
+    @echo "Quality Check Groups:"
+    @echo "  just lint          # All linting (code + docs + config)"
+    @echo "  just lint-code     # Code linting (Rust, Python, Shell)"
+    @echo "  just lint-docs     # Documentation linting (Markdown, Spelling)"
+    @echo "  just lint-config   # Configuration validation (JSON, TOML, Actions)"
     @echo ""
     @echo "Benchmark System:"
     @echo "  just bench         # Run all benchmarks"
@@ -125,7 +134,17 @@ help-workflows:
     @echo ""
     @echo "Note: Some recipes require external tools. See 'just setup' output."
 
-lint: fmt clippy doc-check
+# Code linting: Rust (fmt, clippy, docs) + Python (ruff) + Shell scripts
+lint-code: fmt clippy doc-check python-lint shell-lint
+
+# Documentation linting: Markdown + spell checking
+lint-docs: markdown-lint spell-check
+
+# Configuration validation: JSON, TOML, GitHub Actions workflows
+lint-config: validate-json validate-toml action-lint
+
+# All linting: code + documentation + configuration
+lint: lint-code lint-docs lint-config
 
 # Shell and markdown quality
 markdown-lint:
@@ -187,9 +206,9 @@ python-lint:
     uv run ruff check scripts/ --fix
     uv run ruff format scripts/
 
-# Comprehensive quality check
-quality: fmt clippy doc-check python-lint shell-lint markdown-lint spell-check validate-json validate-toml action-lint
-    @echo "✅ All quality checks passed!"
+# Comprehensive quality check: all linting + all tests (Rust + Python)
+quality: lint-code lint-docs lint-config test-all
+    @echo "✅ All quality checks and tests passed!"
 
 # Development setup
 setup:

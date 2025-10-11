@@ -28,8 +28,8 @@ cargo test --test circumsphere_debug_tools test_2d_circumsphere_debug -- --nocap
 cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocapture
 cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
 
-# Run all debug tests at once
-cargo test --test circumsphere_debug_tools -- --nocapture
+# Run all debug tests at once (recommended)
+just test-debug
 ```
 
 **Available Test Functions:**
@@ -57,7 +57,7 @@ Integration tests for convex hull algorithms with Bowyer-Watson triangulation, f
 - Triangulation validity after hull operations
 - Mixed insertion strategy testing
 
-**Run with:** `cargo test --test convex_hull_bowyer_watson_integration`
+**Run with:** `cargo test --test convex_hull_bowyer_watson_integration` or `just test-release`
 
 #### `robust_predicates_comparison.rs`
 
@@ -71,7 +71,7 @@ Comparative testing between robust and standard geometric predicates, focusing o
 - Vertex insertion robustness analysis
 - Performance cost-benefit analysis
 
-**Run with:** `cargo test --test robust_predicates_comparison`
+**Run with:** `cargo test --test robust_predicates_comparison` or `just test-release`
 
 #### `robust_predicates_showcase.rs`
 
@@ -84,7 +84,7 @@ Demonstration and stress testing of robust geometric predicates with focus on nu
 - Real-world triangulation scenarios
 - Performance impact analysis
 
-**Run with:** `cargo test --test robust_predicates_showcase`
+**Run with:** `cargo test --test robust_predicates_showcase` or `just test-release`
 
 ### 🐛 Regression and Error Reproduction
 
@@ -98,7 +98,7 @@ Reproduces and tests specific cavity boundary errors encountered during triangul
 - Geometric degeneracy case testing
 - Error condition validation and recovery
 
-**Run with:** `cargo test --test test_cavity_boundary_error`
+**Run with:** `cargo test --test test_cavity_boundary_error` or `just test-release`
 
 #### `coordinate_conversion_errors.rs`
 
@@ -112,7 +112,7 @@ Tests error handling for coordinate conversion operations, particularly focusing
 - Mixed problematic coordinate combinations
 - Error message validation and context
 
-**Run with:** `cargo test --test coordinate_conversion_errors`
+**Run with:** `cargo test --test coordinate_conversion_errors` or `just test-release`
 
 ### 📊 Performance and Memory Testing
 
@@ -127,24 +127,20 @@ Memory allocation profiling and testing utilities for tracking memory usage patt
 - Complex workflow allocation patterns
 - Memory efficiency validation
 
-**Run with:** `cargo test --test allocation_api`
+**Run with:** `just test-allocation`
 
-**Note:** Requires the `count-allocations` feature flag:
-
-```bash
-cargo test --test allocation_api --features count-allocations
-```
+**Note:** This uses the `count-allocations` feature flag automatically.
 
 ## Running Tests
 
 ### All Integration Tests
 
 ```bash
-# Run all integration tests
-cargo test --release
+# Run all integration tests (recommended)
+just test-release
 
-# Run with verbose output (recommended for debugging tests)
-cargo test --release -- --nocapture
+# Run with verbose output for debugging
+just test-debug
 ```
 
 ### Individual Test Files
@@ -154,9 +150,9 @@ cargo test --release -- --nocapture
 cargo test --test <test_file_name>
 
 # Examples
-cargo test --test circumsphere_debug_tools
-cargo test --test robust_predicates_comparison
-cargo test --test allocation_api --features count-allocations
+just test-debug                                  # circumsphere_debug_tools
+cargo test --test robust_predicates_comparison   # specific integration test
+just test-allocation                             # allocation profiling
 ```
 
 ### Performance Considerations
@@ -166,19 +162,19 @@ measurements, run tests in release mode:
 
 ```bash
 # Recommended: Run in release mode
-cargo test --release --test <test_name>
+just test-release
 
-# Debug mode (slower, includes debug symbols)
-cargo test --test <test_name>
+# Debug mode with verbose output
+just test-debug
 ```
 
 ### Test Output
 
-Many integration tests produce detailed analysis output. Use the `--nocapture` flag to see this output:
+Many integration tests produce detailed analysis output:
 
 ```bash
 # See detailed test output
-cargo test --test circumsphere_debug_tools -- --nocapture
+just test-debug
 ```
 
 ## Test Development Guidelines
@@ -241,13 +237,13 @@ Before releases, run the full integration test suite:
 
 ```bash
 # Complete test validation
-cargo test --release --all-features
+just test-release
 
 # Include allocation testing
-cargo test --release --features count-allocations
+just test-allocation
 
-# Verbose output for manual verification
-cargo test --release -- --nocapture
+# Comprehensive pre-release checks
+just commit-check
 ```
 
 ## Contributing
