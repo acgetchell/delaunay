@@ -11,6 +11,7 @@ and necessary for comprehensive unit testing of internal functionality.
 """
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -28,6 +29,7 @@ from benchmark_models import (
     CircumsphereTestCase,
 )
 from benchmark_utils import (
+    DEFAULT_REGRESSION_THRESHOLD,
     DEV_MODE_BENCH_ARGS,
     BaselineGenerator,
     BenchmarkRegressionHelper,
@@ -38,6 +40,31 @@ from benchmark_utils import (
     WorkflowHelper,
     find_project_root,
 )
+
+THRESHOLD_PERCENT = f"{DEFAULT_REGRESSION_THRESHOLD:.1f}%"
+
+
+def compute_average_time_change(current_results, baseline_results):
+    """Replicate PerformanceComparator's geometric mean logic for tests."""
+    time_changes = []
+    for current in current_results:
+        key = f"{current.points}_{current.dimension}"
+        baseline = baseline_results.get(key)
+        if not baseline or baseline.time_mean <= 0:
+            continue
+        time_change = ((current.time_mean - baseline.time_mean) / baseline.time_mean) * 100.0
+        time_changes.append(time_change)
+
+    if not time_changes:
+        return 0.0
+
+    ratios = [1.0 + (tc / 100.0) for tc in time_changes if (1.0 + (tc / 100.0)) > 0.0]
+    if not ratios:
+        return 0.0
+
+    avg_log = sum(math.log(ratio) for ratio in ratios) / len(ratios)
+    avg_ratio = math.exp(avg_log)
+    return (avg_ratio - 1.0) * 100.0
 
 
 @pytest.fixture
@@ -279,7 +306,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
 
         # Change is (110 - 105) / 105 * 100 = 4.76%
         assert time_change == pytest.approx(4.76, abs=0.01)
-        assert not is_regression  # Less than 5% threshold
+        assert not is_regression  # Less than DEFAULT_REGRESSION_THRESHOLD
 
         result = output.getvalue()
         assert "4.8%" in result
@@ -295,7 +322,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
 
         # Change is (115 - 100) / 100 * 100 = 15%
         assert time_change == pytest.approx(15.0, abs=1e-9)
-        assert is_regression  # Greater than 5% threshold
+        assert is_regression  # Greater than DEFAULT_REGRESSION_THRESHOLD
 
         result = output.getvalue()
         assert "15.0%" in result
@@ -389,13 +416,13 @@ Time: [1.0, 1.0, 1.0] µs
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
         # Average change using geometric mean: ~0.0%
-        # This is less than 5% threshold, so no overall regression
+        # This is less than DEFAULT_REGRESSION_THRESHOLD, so no overall regression
         assert not regression_found
 
         result = output.getvalue()
         assert "SUMMARY" in result
         assert "Total benchmarks compared: 3" in result
-        assert "Individual regressions (>5.0%): 1" in result  # Only the +20% one
+        assert f"Individual regressions (>{THRESHOLD_PERCENT}): 1" in result  # Only the +20% one
         assert re.search(r"Average time change:\s*-?0\.0%", result)
         assert "✅ OVERALL OK" in result
 
@@ -403,10 +430,10 @@ Time: [1.0, 1.0, 1.0] µs
         """Test performance comparison with average regression exceeding threshold."""
         # Create current results with overall performance degradation
         current_results = [
-            # Regression: +10%
-            BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
-            # Regression: +8%
-            BenchmarkData(2000, "2D").with_timing(205.0, 216.0, 227.0, "µs"),
+            # Regression: +20%
+            BenchmarkData(1000, "2D").with_timing(118.0, 120.0, 122.0, "µs"),
+            # Regression: +15%
+            BenchmarkData(2000, "2D").with_timing(222.0, 230.0, 238.0, "µs"),
             # Small improvement: -1%
             BenchmarkData(1000, "3D").with_timing(209.0, 217.8, 226.6, "µs"),
         ]
@@ -421,15 +448,15 @@ Time: [1.0, 1.0, 1.0] µs
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change using geometric mean: 5.6%
-        # This exceeds 5% threshold, so overall regression found
+        # Average change using geometric mean: 11.0%
+        # This exceeds DEFAULT_REGRESSION_THRESHOLD, so overall regression found
         assert regression_found
 
         result = output.getvalue()
         assert "SUMMARY" in result
         assert "Total benchmarks compared: 3" in result
-        assert "Individual regressions (>5.0%): 2" in result  # The +10% and +8% ones
-        assert "Average time change: 5.6%" in result
+        assert f"Individual regressions (>{THRESHOLD_PERCENT}): 2" in result  # The +20% and +15% ones
+        assert "Average time change: 11.0%" in result
         assert "🚨 OVERALL REGRESSION" in result
 
     def test_write_performance_comparison_with_average_improvement(self, comparator):
@@ -461,9 +488,11 @@ Time: [1.0, 1.0, 1.0] µs
         result = output.getvalue()
         assert "SUMMARY" in result
         assert "Total benchmarks compared: 3" in result
-        assert "Individual regressions (>5.0%): 0" in result
-        assert "Average time change: -5.5%" in result
-        assert "🎉 OVERALL IMPROVEMENT" in result
+        assert f"Individual regressions (>{THRESHOLD_PERCENT}): 0" in result
+        expected_average_change = compute_average_time_change(current_results, baseline_results)
+        expected_average_line = f"Average time change: {expected_average_change:.1f}%"
+        assert expected_average_line in result
+        assert "✅ OVERALL OK" in result
 
     def test_write_performance_comparison_missing_baseline(self, comparator):
         """Test performance comparison when some baselines are missing."""
@@ -526,7 +555,7 @@ Time: [1.0, 1.0, 1.0] µs
     def test_regression_threshold_configuration(self, comparator):
         """Test that regression threshold can be configured."""
         # Test default threshold
-        assert comparator.regression_threshold == 5.0
+        assert comparator.regression_threshold == DEFAULT_REGRESSION_THRESHOLD
 
         # Test changing threshold
         comparator.regression_threshold = 10.0
@@ -557,8 +586,8 @@ class TestIntegrationScenarios:
         current_results = [
             # Small regression in 2D small dataset: +3%
             BenchmarkData(1000, "2D").with_timing(98.0, 103.0, 108.0, "µs"),
-            # Medium regression in 2D medium dataset: +7%
-            BenchmarkData(5000, "2D").with_timing(428.0, 535.0, 642.0, "µs"),
+            # Medium regression in 2D medium dataset: +8%
+            BenchmarkData(5000, "2D").with_timing(432.0, 540.0, 648.0, "µs"),
             # Small improvement in 2D large dataset: -2%
             BenchmarkData(10000, "2D").with_timing(931.2, 980.0, 1028.8, "µs"),
             # Large improvement in 3D small dataset: -12%
@@ -584,8 +613,10 @@ class TestIntegrationScenarios:
 
         result = output.getvalue()
         assert "Total benchmarks compared: 5" in result
-        assert "Individual regressions (>5.0%): 1" in result  # Only the 7% one
-        assert "Average time change: -0.2%" in result
+        assert f"Individual regressions (>{THRESHOLD_PERCENT}): 1" in result  # Only the +8% one
+        expected_average_change = compute_average_time_change(current_results, baseline_results)
+        expected_average_line = f"Average time change: {expected_average_change:.1f}%"
+        assert expected_average_line in result
         assert "✅ OVERALL OK" in result
 
     def test_gradual_performance_degradation_scenario(self, comparator):
@@ -593,12 +624,12 @@ class TestIntegrationScenarios:
         # Simulate gradual performance degradation that individually isn't alarming
         # but collectively indicates a problem
         current_results = [
-            # Each benchmark has 6-7% regression individually
-            BenchmarkData(1000, "2D").with_timing(101.0, 106.0, 111.0, "µs"),  # +6%
-            BenchmarkData(5000, "2D").with_timing(515.0, 535.0, 555.0, "µs"),  # +7%
-            BenchmarkData(10000, "2D").with_timing(1030.0, 1060.0, 1090.0, "µs"),  # +6%
-            BenchmarkData(1000, "3D").with_timing(231.0, 265.0, 299.0, "µs"),  # +6%
-            BenchmarkData(5000, "3D").with_timing(1300.0, 1325.0, 1350.0, "µs"),  # +6%
+            # Each benchmark has ~9% regression individually
+            BenchmarkData(1000, "2D").with_timing(104.0, 109.0, 114.0, "µs"),  # +9%
+            BenchmarkData(5000, "2D").with_timing(520.0, 545.0, 570.0, "µs"),  # +9%
+            BenchmarkData(10000, "2D").with_timing(1050.0, 1090.0, 1130.0, "µs"),  # +9%
+            BenchmarkData(1000, "3D").with_timing(240.0, 272.5, 305.0, "µs"),  # +9%
+            BenchmarkData(5000, "3D").with_timing(1335.0, 1362.5, 1390.0, "µs"),  # +9%
         ]
 
         baseline_results = {
@@ -612,14 +643,14 @@ class TestIntegrationScenarios:
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change: (6 + 7 + 6 + 6 + 6) / 5 = 6.2%
+        # Average change: 9.0%
         # Should detect overall regression even though individual ones are mixed
         assert regression_found
 
         result = output.getvalue()
         assert "Total benchmarks compared: 5" in result
-        assert "Individual regressions (>5.0%): 5" in result  # All 6% and 7% are > 5% threshold
-        assert "Average time change: 6.2%" in result
+        assert f"Individual regressions (>{THRESHOLD_PERCENT}): 5" in result  # All regressions exceed DEFAULT_REGRESSION_THRESHOLD
+        assert "Average time change: 9.0%" in result
         assert "🚨 OVERALL REGRESSION" in result
 
     def test_noisy_benchmarks_scenario(self, comparator):
@@ -649,12 +680,12 @@ class TestIntegrationScenarios:
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
         # Average change using geometric mean: 4.9%
-        # Despite the one big outlier, no overall regression should be detected (4.9% < 5.0% threshold)
+        # Despite the one big outlier, no overall regression should be detected (4.9% < DEFAULT_REGRESSION_THRESHOLD)
         assert not regression_found
 
         result = output.getvalue()
         assert "Total benchmarks compared: 5" in result
-        assert "Individual regressions (>5.0%): 1" in result  # Only the 40% outlier
+        assert f"Individual regressions (>{THRESHOLD_PERCENT}): 1" in result  # Only the 40% outlier
         assert "Average time change: 4.9%" in result
         assert "✅ OVERALL OK" in result
 

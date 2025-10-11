@@ -22,7 +22,7 @@ arc-swap = "1.7.1"
 approx = "0.5.1"
 clap = { version = "4.5.48", features = ["derive"] }
 derive_builder = "0.20.1"
-fxhash = "0.2.1"  # Fast non-cryptographic hashing for performance
+rustc-hash = "2.1.1"  # Fast non-cryptographic hashing for performance
 smallvec = { version = "1.13.2", features = ["serde"] }  # Stack allocation for small collections
 nalgebra = "0.34.1"
 num-traits = "0.2.19"

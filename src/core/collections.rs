@@ -12,13 +12,13 @@
 //!
 //! ## Hash-based Collections
 //!
-//! - **FxHashMap/FxHashSet**: Uses FxHasher which is 2-3x faster than the default
-//!   SipHash for non-cryptographic use cases. Perfect for internal data structures
+//! - **FastHashMap/FastHashSet**: Uses `FastHasher`, a non-cryptographic hasher
+//!   that is 2-3x faster than SipHash for trusted data. Perfect for internal data
 //!   where collision resistance against adversarial input is not required.
 //!
 //! ### ⚠️ Security Warning: DoS Resistance
 //!
-//! **The FxHasher used in these collections is NOT DoS-resistant.** It should only be
+//! **The hasher used in these collections is NOT DoS-resistant.** It should only be
 //! used with trusted input data. Do not use `FastHashMap` or `FastHashSet` with
 //! attacker-controlled keys, as this could lead to hash collision attacks that
 //! degrade performance to O(n) worst-case behavior.
@@ -92,7 +92,7 @@
 //! let mut key_mappings: KeyBasedCellMap<String> = KeyBasedCellMap::default();
 //! ```
 
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
 
 // Import key types for use in type aliases
@@ -133,11 +133,11 @@ pub use uuid::Uuid;
 // =============================================================================
 
 /// Optimized `HashMap` type for performance-critical operations.
-/// Uses `FxHasher` for faster hashing in non-cryptographic contexts.
+/// Uses `FastHasher` (`rustc_hash::FxHasher`) for faster hashing in non-cryptographic contexts.
 ///
 /// # Performance Characteristics
 ///
-/// - **Hash Function**: `FxHash` (non-cryptographic, very fast)
+/// - **Hash Function**: `FastHasher` (non-cryptographic, very fast)
 /// - **Use Case**: Internal mappings where security is not a concern
 /// - **Speedup**: ~2-3x faster than `std::collections::HashMap` in typical non-adversarial workloads
 ///
@@ -155,6 +155,16 @@ pub use uuid::Uuid;
 /// map.insert(123, 456);
 /// ```
 pub type FastHashMap<K, V> = FxHashMap<K, V>;
+/// Fast non-cryptographic hasher alias for internal collections.
+///
+/// Wraps [`rustc_hash::FxHasher`] to ensure consistent hashing behavior
+/// across [`FastHashMap`] and [`FastHashSet`].
+pub type FastHasher = FxHasher;
+/// Build hasher that instantiates [`FastHasher`].
+///
+/// Used by helpers that configure [`FastHashMap`]
+/// and [`FastHashSet`] with the optimized hashing strategy.
+pub type FastBuildHasher = FxBuildHasher;
 
 /// Re-export the Entry enum for `FastHashMap`.
 /// This provides the Entry API for efficient check-and-insert operations.
@@ -174,11 +184,11 @@ pub type FastHashMap<K, V> = FxHashMap<K, V>;
 pub use std::collections::hash_map::Entry;
 
 /// Optimized `HashSet` type for performance-critical operations.
-/// Uses `FxHasher` for faster hashing in non-cryptographic contexts.
+/// Uses `FastHasher` (`rustc_hash::FxHasher`) for faster hashing in non-cryptographic contexts.
 ///
 /// # Performance Characteristics
 ///
-/// - **Hash Function**: `FxHash` (non-cryptographic, very fast)
+/// - **Hash Function**: `FastHasher` (non-cryptographic, very fast)
 /// - **Use Case**: Internal sets for membership testing
 /// - **Speedup**: ~2-3x faster than `std::collections::HashSet` in typical non-adversarial workloads
 ///
@@ -315,7 +325,7 @@ pub type VertexToCellsMap =
 /// - **Key**: `CellKey` identifying the cell
 /// - **Value**: `FastHashSet<VertexKey>` - optimized for set operations
 /// - **Use Case**: Validation algorithms that need fast intersection/membership testing
-/// - **Performance**: `FxHash` provides fast hashing for `VertexKey`
+/// - **Performance**: `FastHasher` provides fast hashing for `VertexKey`
 ///
 /// # Examples
 ///
@@ -446,7 +456,7 @@ pub type GeometricPointBuffer<T, const D: usize> =
 ///
 /// # Optimization Rationale
 ///
-/// - **Hash Function**: `FxHash` for fast UUID hashing
+/// - **Hash Function**: `FastHasher` for fast UUID hashing
 /// - **Use Case**: Membership testing, intersection operations
 /// - **Performance**: ~2-3x faster than `std::collections::HashSet`
 pub type VertexUuidSet = FastHashSet<Uuid>;
@@ -472,7 +482,7 @@ pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
 /// # Optimization Rationale
 ///
 /// - **Primary Direction**: UUID → Key is the hot path in most algorithms
-/// - **Hash Function**: `FxHash` provides ~2-3x faster lookups than default hasher in typical non-adversarial workloads
+/// - **Hash Function**: `FastHasher` provides ~2-3x faster lookups than default hasher in typical non-adversarial workloads
 /// - **Use Case**: Converting vertex UUIDs to keys for `SlotMap` access
 /// - **Performance**: O(1) average case, optimized for triangulation algorithms
 ///
@@ -503,7 +513,7 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 /// # Optimization Rationale
 ///
 /// - **Primary Direction**: UUID → Key is the hot path in neighbor assignment
-/// - **Hash Function**: `FxHash` provides ~2-3x faster lookups than default hasher in typical non-adversarial workloads
+/// - **Hash Function**: `FastHasher` provides ~2-3x faster lookups than default hasher in typical non-adversarial workloads
 /// - **Use Case**: Converting cell UUIDs to keys for `SlotMap` access
 /// - **Performance**: O(1) average case, optimized for triangulation algorithms
 ///
@@ -692,7 +702,7 @@ pub type PointBuffer<T, const D: usize> = SmallBuffer<[T; D], BATCH_PROCESSING_B
 /// # Performance Benefits
 ///
 /// - **Pre-allocation**: Avoids rehashing during insertion
-/// - **Optimal Hasher**: Uses `FxHash` for maximum performance
+/// - **Optimal Hasher**: Uses `FastHasher` for maximum performance
 /// - **Memory Efficiency**: Reduces memory fragmentation
 ///
 /// # Examples
@@ -706,8 +716,7 @@ pub type PointBuffer<T, const D: usize> = SmallBuffer<[T; D], BATCH_PROCESSING_B
 #[inline]
 #[must_use]
 pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
-    use fxhash::FxBuildHasher;
-    FastHashMap::with_capacity_and_hasher(capacity, FxBuildHasher::default())
+    FastHashMap::with_capacity_and_hasher(capacity, FastBuildHasher::default())
 }
 
 /// Creates a `FastHashSet` with pre-allocated capacity using the optimal hasher.
@@ -716,7 +725,7 @@ pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
 /// # Performance Benefits
 ///
 /// - **Pre-allocation**: Avoids rehashing during insertion
-/// - **Optimal Hasher**: Uses `FxHash` for maximum performance
+/// - **Optimal Hasher**: Uses `FastHasher` for maximum performance
 /// - **Memory Efficiency**: Reduces memory fragmentation
 ///
 /// # Examples
@@ -741,8 +750,7 @@ pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
 #[inline]
 #[must_use]
 pub fn fast_hash_set_with_capacity<T>(capacity: usize) -> FastHashSet<T> {
-    use fxhash::FxBuildHasher;
-    FastHashSet::with_capacity_and_hasher(capacity, FxBuildHasher::default())
+    FastHashSet::with_capacity_and_hasher(capacity, FastBuildHasher::default())
 }
 
 /// Creates a `SmallBuffer` with the specified capacity.
