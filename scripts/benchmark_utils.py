@@ -28,6 +28,10 @@ from uuid import uuid4
 
 from packaging.version import Version
 
+logger = logging.getLogger(__name__)
+
+DEFAULT_REGRESSION_THRESHOLD = 7.5
+
 try:
     # When executed as a script from scripts/
     from benchmark_models import (  # type: ignore[no-redef]
@@ -1398,7 +1402,12 @@ class PerformanceComparator:
     def __init__(self, project_root: Path):
         self.project_root = project_root
         self.hardware = HardwareInfo()
-        self.regression_threshold = 7.5  # 7.5% regression threshold (adjusted for CI environment variability)
+        self.regression_threshold = DEFAULT_REGRESSION_THRESHOLD  # default threshold for proactive regression detection in CI
+        logger.debug(
+            "PerformanceComparator initialized with regression_threshold=%s for project_root=%s",
+            self.regression_threshold,
+            project_root,
+        )
 
     def compare_with_baseline(
         self,
@@ -1506,8 +1515,22 @@ class PerformanceComparator:
 
                         key = f"{points}_{dimension}"
                         benchmark = BenchmarkData(points, dimension).with_timing(time_low, time_mean, time_high, time_unit)
-                        if throughput_mean is not None:
-                            benchmark.with_throughput(throughput_low, throughput_mean, throughput_high, throughput_unit)
+                        if throughput_mean is not None and throughput_low is not None and throughput_high is not None and throughput_unit is not None:
+                            benchmark.with_throughput(
+                                throughput_low,
+                                throughput_mean,
+                                throughput_high,
+                                throughput_unit,
+                            )
+                        else:
+                            logger.debug(
+                                "Missing throughput data for %s: low=%s mean=%s high=%s unit=%s",
+                                key,
+                                throughput_low,
+                                throughput_mean,
+                                throughput_high,
+                                throughput_unit,
+                            )
                         results[key] = benchmark
 
             i += 1
@@ -1522,6 +1545,12 @@ class PerformanceComparator:
         output_file: Path,
     ) -> bool:
         """Write comparison results to file."""
+        logger.debug(
+            "Writing performance comparison: threshold=%.2f current_results=%s baseline_entries=%s",
+            self.regression_threshold,
+            len(current_results),
+            len(baseline_results),
+        )
         # Prepare metadata
         metadata = self._prepare_comparison_metadata(baseline_content)
 
@@ -1616,6 +1645,12 @@ class PerformanceComparator:
                 avg_log = sum(math.log(r) for r in positive_ratios) / len(positive_ratios)
                 avg_ratio = math.exp(avg_log)
                 average_change = (avg_ratio - 1.0) * 100.0
+                logger.debug(
+                    "Average change computed: %.2f%% with threshold %.2f%% across %s benchmarks",
+                    average_change,
+                    self.regression_threshold,
+                    len(time_changes),
+                )
             f.write("\n=== SUMMARY ===\n")
             f.write(f"Total benchmarks compared: {len(time_changes)}\n")
             f.write(f"Individual regressions (>{self.regression_threshold}%): {individual_regressions}\n")
@@ -1631,13 +1666,37 @@ class PerformanceComparator:
                     f"🚨 OVERALL REGRESSION: Average performance decreased by {average_change:.1f}% "
                     f"(exceeds {self.regression_threshold}% threshold)\n",
                 )
+                logger.warning(
+                    "Average regression detected: average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
+                    average_change,
+                    self.regression_threshold,
+                    len(time_changes),
+                )
             elif average_change < -self.regression_threshold:
                 f.write(
                     f"🎉 OVERALL IMPROVEMENT: Average performance improved by {abs(average_change):.1f}% "
                     f"(exceeds {self.regression_threshold}% threshold)\n",
                 )
+                logger.info(
+                    "Average improvement detected: average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
+                    average_change,
+                    self.regression_threshold,
+                    len(time_changes),
+                )
             else:
                 f.write(f"✅ OVERALL OK: Average change within acceptable range (±{self.regression_threshold}%)\n")
+                logger.debug(
+                    "Average change within threshold: average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
+                    average_change,
+                    self.regression_threshold,
+                    len(time_changes),
+                )
+
+            logger.debug(
+                "Performance comparison summary: individual_regressions=%s top_regressions=%s",
+                individual_regressions,
+                top,
+            )
 
             f.write("\n")
             return average_regression_found
@@ -1687,12 +1746,44 @@ class PerformanceComparator:
 
         time_change_pct = ((cur_mean_us - base_mean_us) / base_mean_us) * 100
         is_individual_regression = time_change_pct > self.regression_threshold
+
+        logger.debug(
+            "Benchmark %s_%s comparison: current_mean=%.3fµs baseline_mean=%.3fµs change=%.2f%% threshold=%.2f%%",
+            current.points,
+            current.dimension,
+            cur_mean_us,
+            base_mean_us,
+            time_change_pct,
+            self.regression_threshold,
+        )
+
         if is_individual_regression:
             f.write(f"⚠️  REGRESSION: Time increased by {time_change_pct:.1f}% (slower performance)\n")
+            logger.warning(
+                "Individual regression detected for %s_%s: change=%.2f%% exceeds threshold=%.2f%%",
+                current.points,
+                current.dimension,
+                time_change_pct,
+                self.regression_threshold,
+            )
         elif time_change_pct < -self.regression_threshold:
             f.write(f"✅ IMPROVEMENT: Time decreased by {abs(time_change_pct):.1f}% (faster performance)\n")
+            logger.info(
+                "Individual improvement detected for %s_%s: change=%.2f%% beyond threshold=%.2f%%",
+                current.points,
+                current.dimension,
+                time_change_pct,
+                self.regression_threshold,
+            )
         else:
             f.write(f"✅ OK: Time change {time_change_pct:+.1f}% within acceptable range\n")
+            logger.debug(
+                "Benchmark %s_%s within acceptable range: change=%.2f%% threshold=%.2f%%",
+                current.points,
+                current.dimension,
+                time_change_pct,
+                self.regression_threshold,
+            )
 
         return time_change_pct, is_individual_regression
 
