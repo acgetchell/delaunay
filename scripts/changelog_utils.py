@@ -31,6 +31,12 @@ from subprocess_utils import (
     run_safe_command,
 )
 
+# ANSI color codes for terminal output
+COLOR_GREEN = "\033[0;32m"
+COLOR_BLUE = "\033[0;34m"
+COLOR_YELLOW = "\033[1;33m"
+COLOR_RESET = "\033[0m"
+
 
 class ChangelogError(Exception):
     """Base exception for changelog operations."""
@@ -147,16 +153,16 @@ class ChangelogUtils:
         # SemVer 2.0.0 strict: vMAJOR.MINOR.PATCH with optional -PRERELEASE and optional +BUILD
         # No leading zeros in numeric identifiers (MAJOR, MINOR, PATCH, pre-release numeric parts)
         semver_pattern = (
-            r"^v"
-            r"(0|[1-9]\d*)\."
-            r"(0|[1-9]\d*)\."
-            r"(0|[1-9]\d*)"
-            r"(?:-(?:"
-            r"(?:0|[1-9]\d*)"
-            r"|(?:[A-Za-z-][0-9A-Za-z-]*)"
-            r")(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*"
-            r")?"
-            r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+            r"^v"  # Required 'v' prefix
+            r"(0|[1-9]\d*)\."  # MAJOR version (no leading zeros)
+            r"(0|[1-9]\d*)\."  # MINOR version (no leading zeros)
+            r"(0|[1-9]\d*)"  # PATCH version (no leading zeros)
+            r"(?:-(?:"  # Optional prerelease: -PRERELEASE
+            r"(?:0|[1-9]\d*)"  #   Numeric identifier (no leading zeros)
+            r"|(?:[A-Za-z-][0-9A-Za-z-]*)"  #   or alphanumeric identifier
+            r")(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*"  #   Additional dot-separated identifiers
+            r")?"  # End optional prerelease
+            r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"  # Optional build metadata: +BUILD
         )
 
         if not re.match(semver_pattern, tag_version):
@@ -280,7 +286,7 @@ class ChangelogUtils:
     @staticmethod
     def get_project_root() -> str:
         """
-        Find the project root directory (where CHANGELOG.md is located).
+        Find the project root directory (where CHANGELOG.md is located or should be created).
 
         Returns:
             Absolute path to project root
@@ -289,10 +295,20 @@ class ChangelogUtils:
             ChangelogError: If project root cannot be determined
         """
         try:
+            # First try to find existing CHANGELOG.md
             return str(Path(ChangelogUtils.find_changelog_path()).parent)
-        except ChangelogNotFoundError as e:
-            msg = "Cannot determine project root. CHANGELOG.md not found in current or parent directory."
-            raise ChangelogError(msg) from e
+        except ChangelogNotFoundError:
+            # If CHANGELOG.md doesn't exist, use git repository root
+            try:
+                result = _run_git_command(["rev-parse", "--show-toplevel"])
+                git_root = Path(result.stdout.strip())
+                if git_root.exists():
+                    return str(git_root)
+                msg = "Git root directory does not exist"
+                raise ChangelogError(msg)
+            except Exception as e:
+                msg = "Cannot determine project root. Not in a git repository and no CHANGELOG.md found."
+                raise ChangelogError(msg) from e
 
     @staticmethod
     def escape_version_for_regex(version: str) -> str:
@@ -439,7 +455,10 @@ class ChangelogUtils:
         content_lines = []
 
         # Skip the first line (PR title) and empty lines at start
-        trailer_re = re.compile(r"^\s*(Co-authored-by|Signed-off-by|Change-Id|Reviewed-on|Reviewed-by|Refs|See-Also):", re.I)
+        trailer_re = re.compile(
+            r"^\s*(Co-authored-by|Signed-off-by|Change-Id|Reviewed-on|Reviewed-by|Refs|See-Also):",
+            re.I,
+        )
         for line in lines[1:]:
             if trailer_re.match(line):
                 continue
@@ -520,68 +539,68 @@ class ChangelogUtils:
 
     @staticmethod
     def _format_entry_title(title: str, commit_sha: str, repo_url: str, max_line_length: int) -> list[str]:
-        """
-        Format an entry title with commit link.
-
-        Args:
-            title: Entry title
-            commit_sha: Git commit SHA
-            repo_url: Repository URL
-            max_line_length: Maximum line length
-
-        Returns:
-            List of formatted title lines
-        """
+        """Format an entry title with commit link."""
         escaped_title = ChangelogUtils.escape_markdown(title)
         title_line = f"- **{escaped_title}** [`{commit_sha}`]({repo_url}/commit/{commit_sha})"
 
-        # Keep bolded title intact; place commit link on its own line if too long
         if len(title_line) <= max_line_length:
             return [title_line]
 
-        # If the title alone (with bullet and bold formatting) is still too long, wrap it
         title_only = f"- **{escaped_title}**"
         if len(title_only) > max_line_length:
-            # Compute exact overhead; drop bold if the line would be too cramped.
-            first_prefix, cont_prefix, bold_suffix = "- **", "  **", "**"
+            return ChangelogUtils._format_long_title(escaped_title, commit_sha, repo_url, max_line_length)
+
+        return ChangelogUtils._format_split_title(escaped_title, commit_sha, repo_url, max_line_length)
+
+    @staticmethod
+    def _format_long_title(escaped_title: str, commit_sha: str, repo_url: str, max_line_length: int) -> list[str]:
+        """Handle titles that need wrapping even without the commit link."""
+        first_prefix, cont_prefix, bold_suffix = "- **", "  **", "**"
+        avail_first = max(1, max_line_length - len(first_prefix) - len(bold_suffix))
+        avail_cont = max(1, max_line_length - len(cont_prefix) - len(bold_suffix))
+        wrap_width = min(avail_first, avail_cont)
+
+        use_bold = wrap_width >= 8
+        if not use_bold:
+            first_prefix, cont_prefix, bold_suffix = "- ", "  ", ""
             avail_first = max(1, max_line_length - len(first_prefix) - len(bold_suffix))
             avail_cont = max(1, max_line_length - len(cont_prefix) - len(bold_suffix))
             wrap_width = min(avail_first, avail_cont)
 
-            use_bold = wrap_width >= 8
-            if not use_bold:
-                first_prefix, cont_prefix, bold_suffix = "- ", "  ", ""
-                avail_first = max(1, max_line_length - len(first_prefix) - len(bold_suffix))
-                avail_cont = max(1, max_line_length - len(cont_prefix) - len(bold_suffix))
-                wrap_width = min(avail_first, avail_cont)
+        wrapped_title_lines = textwrap.wrap(
+            escaped_title,
+            width=wrap_width,
+            break_long_words=True,
+            break_on_hyphens=True,
+        ) or [escaped_title[:wrap_width]]
 
-            wrapped_title_lines = textwrap.wrap(
-                escaped_title,
-                width=wrap_width,
-                break_long_words=True,
-                break_on_hyphens=True,
-            ) or [escaped_title[:wrap_width]]
+        result_lines: list[str] = []
+        for i, line in enumerate(wrapped_title_lines):
+            prefix = first_prefix if i == 0 else cont_prefix
+            result_lines.append(f"{prefix}{line}{bold_suffix}" if use_bold else f"{prefix}{line}")
 
-            result_lines: list[str] = []
-            for i, line in enumerate(wrapped_title_lines):
-                prefix = first_prefix if i == 0 else cont_prefix
-                result_lines.append(f"{prefix}{line}{bold_suffix}" if use_bold else f"{prefix}{line}")
-
-            # Add commit link on a separate line; split only if necessary.
-            commit_link = f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})"
-            if len(commit_link) <= max_line_length:
-                result_lines.append(commit_link)
-            else:
-                result_lines.append(f"  [`{commit_sha}`]")
-                result_lines.append(f"  ({repo_url}/commit/{commit_sha})")
-            return result_lines
-
-        # Title fits but full line doesn't - split normally
         commit_link = f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})"
         if len(commit_link) <= max_line_length:
-            return [f"- **{escaped_title}**", commit_link]
-        # Very short limit - split commit link too
-        return [f"- **{escaped_title}**", f"  [`{commit_sha}`]", f"  ({repo_url}/commit/{commit_sha})"]
+            result_lines.append(commit_link)
+        else:
+            result_lines.append(f"  [`{commit_sha}`]")
+            result_lines.append(f"  ({repo_url}/commit/{commit_sha})")
+
+        return result_lines
+
+    @staticmethod
+    def _format_split_title(escaped_title: str, commit_sha: str, repo_url: str, max_line_length: int) -> list[str]:
+        """Handle titles that fit but need commit link on separate line."""
+        lines = [f"- **{escaped_title}**"]
+        commit_link = f"  [`{commit_sha}`]({repo_url}/commit/{commit_sha})"
+
+        if len(commit_link) <= max_line_length:
+            lines.append(commit_link)
+        else:
+            lines.append(f"  [`{commit_sha}`]")
+            lines.append(f"  ({repo_url}/commit/{commit_sha})")
+
+        return lines
 
     @staticmethod
     def _format_entry_body(body_lines: list[str], max_line_length: int) -> list[str]:
@@ -703,19 +722,21 @@ class ChangelogUtils:
             ChangelogError: If tag exists and force_recreate is False
             GitRepoError: If git operations fail
         """
-        YELLOW = "\033[1;33m"
-        BLUE = "\033[0;34m"
-        NC = "\033[0m"
-
         try:
             _, result_code = ChangelogUtils.run_git_command(["rev-parse", "-q", "--verify", f"refs/tags/{tag_version}"], check=False)
             if result_code == 0:
                 if not force_recreate:
-                    print(f"{YELLOW}Tag '{tag_version}' already exists.{NC}", file=sys.stderr)
-                    print("Use --force to recreate it, or delete it first with:", file=sys.stderr)
+                    print(
+                        f"{COLOR_YELLOW}Tag '{tag_version}' already exists.{COLOR_RESET}",
+                        file=sys.stderr,
+                    )
+                    print(
+                        "Use --force to recreate it, or delete it first with:",
+                        file=sys.stderr,
+                    )
                     print(f"  git tag -d {tag_version}", file=sys.stderr)
                     raise ChangelogError(f"Tag '{tag_version}' already exists")
-                print(f"{BLUE}Deleting existing tag '{tag_version}'...{NC}")
+                print(f"{COLOR_BLUE}Deleting existing tag '{tag_version}'...{COLOR_RESET}")
                 ChangelogUtils.run_git_command(["tag", "-d", tag_version])
         except subprocess.CalledProcessError as e:
             msg = f"Failed to check for existing tag: {e}"
@@ -732,15 +753,13 @@ class ChangelogUtils:
         Returns:
             Changelog content for the tag message
         """
-        BLUE = "\033[0;34m"
-        NC = "\033[0m"
 
         changelog_path = ChangelogUtils.find_changelog_path()
         version = ChangelogUtils.parse_version(tag_version)
         tag_message = ChangelogUtils.extract_changelog_section(changelog_path, version)
 
         # Show preview
-        print(f"{BLUE}Tag message preview:{NC}")
+        print(f"{COLOR_BLUE}Tag message preview:{COLOR_RESET}")
         print("----------------------------------------")
         print(tag_message)
         print("----------------------------------------")
@@ -752,14 +771,15 @@ class ChangelogUtils:
         """
         Check git user configuration and warn if not set.
         """
-        YELLOW = "\033[1;33m"
-        NC = "\033[0m"
 
         try:
             ChangelogUtils.run_git_command(["config", "--get", "user.name"])
             ChangelogUtils.run_git_command(["config", "--get", "user.email"])
         except Exception:
-            print(f"{YELLOW}Warning: git user.name/email not configured; tag creation may fail.{NC}", file=sys.stderr)
+            print(
+                f"{COLOR_YELLOW}Warning: git user.name/email not configured; tag creation may fail.{COLOR_RESET}",
+                file=sys.stderr,
+            )
 
     @staticmethod
     def _create_tag_with_message(tag_version: str, tag_message: str) -> None:
@@ -773,10 +793,8 @@ class ChangelogUtils:
         Raises:
             GitRepoError: If tag creation fails
         """
-        BLUE = "\033[0;34m"
-        NC = "\033[0m"
 
-        print(f"{BLUE}Creating tag '{tag_version}' with changelog content...{NC}")
+        print(f"{COLOR_BLUE}Creating tag '{tag_version}' with changelog content...{COLOR_RESET}")
 
         try:
             # Tag format already validated by validate_semver(); no second check needed
@@ -796,15 +814,12 @@ class ChangelogUtils:
         Args:
             tag_version: The created tag version
         """
-        GREEN = "\033[0;32m"
-        BLUE = "\033[0;34m"
-        NC = "\033[0m"
 
-        print(f"{GREEN}✓ Successfully created tag '{tag_version}'{NC}")
+        print(f"{COLOR_GREEN}✓ Successfully created tag '{tag_version}'{COLOR_RESET}")
         print("")
         print("Next steps:")
-        print(f"  1. Push the tag: {BLUE}git push origin {tag_version}{NC}")
-        print(f"  2. Create GitHub release: {BLUE}gh release create {tag_version} --notes-from-tag{NC}")
+        print(f"  1. Push the tag: {COLOR_BLUE}git push origin {tag_version}{COLOR_RESET}")
+        print(f"  2. Create GitHub release: {COLOR_BLUE}gh release create {tag_version} --notes-from-tag{COLOR_RESET}")
 
 
 def main() -> None:
@@ -883,8 +898,9 @@ def _parse_generate_args():
 
     try:
         return parser.parse_args(args_to_parse)
-    except SystemExit:
-        sys.exit(0)
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+        sys.exit(code)
 
 
 def _show_help() -> None:
@@ -991,14 +1007,20 @@ def _validate_prerequisites() -> None:
     ChangelogUtils.check_git_history()
 
     if not shutil.which("npx"):
-        print("Error: npx not found. Install Node.js (which provides npx). See https://nodejs.org/", file=sys.stderr)
+        print(
+            "Error: npx not found. Install Node.js (which provides npx). See https://nodejs.org/",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Verify auto-changelog availability
     try:
         run_safe_command("npx", ["--yes", "-p", "auto-changelog", "auto-changelog", "--version"])
     except Exception:
-        print("Error: auto-changelog is not available via npx. Verify network access and try again.", file=sys.stderr)
+        print(
+            "Error: auto-changelog is not available via npx. Verify network access and try again.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Verify configuration files
@@ -1017,7 +1039,12 @@ def _get_repository_url() -> str:
     try:
         return ChangelogUtils.get_repository_url()
     except GitRepoError:
-        return "https://github.com/acgetchell/delaunay"  # Default fallback
+        fallback = "https://github.com/acgetchell/delaunay"  # Delaunay-specific fallback
+        print(
+            f"Warning: Could not detect repository URL, using fallback: {fallback}",
+            file=sys.stderr,
+        )
+        return fallback
 
 
 def _backup_existing_changelog(file_paths: dict[str, Path]) -> None:

@@ -206,10 +206,13 @@ class TestChangelogUtils:
         assert result == "/test/project"
 
     @patch("changelog_utils.ChangelogUtils.find_changelog_path")
-    def test_get_project_root_not_found(self, mock_find_changelog):
-        """Test project root detection failure."""
+    @patch("changelog_utils._run_git_command")
+    def test_get_project_root_not_found(self, mock_run_git_command, mock_find_changelog):
+        """Test project root detection failure when both CHANGELOG.md and git repo are unavailable."""
         # Mock find_changelog_path to raise ChangelogNotFoundError
         mock_find_changelog.side_effect = ChangelogNotFoundError("CHANGELOG.md not found")
+        # Mock git command to also fail
+        mock_run_git_command.side_effect = Exception("Not a git repository")
 
         with pytest.raises(ChangelogError) as cm:
             ChangelogUtils.get_project_root()
