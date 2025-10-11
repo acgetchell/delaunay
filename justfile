@@ -5,7 +5,17 @@
 
 # GitHub Actions workflow validation
 action-lint:
-    git ls-files -z '.github/workflows/*.yml' '.github/workflows/*.yaml' | xargs -0 -r actionlint
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '.github/workflows/*.yml' '.github/workflows/*.yaml')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 actionlint
+    else
+        echo "No workflow files found to lint."
+    fi
 
 # Benchmarks
 bench:
@@ -119,7 +129,17 @@ lint: fmt clippy doc-check
 
 # Shell and markdown quality
 markdown-lint:
-    git ls-files -z '*.md' | xargs -0 -r -n100 npx markdownlint --config .markdownlint.json --fix
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.md')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -n100 npx markdownlint --config .markdownlint.json --fix
+    else
+        echo "No markdown files found to lint."
+    fi
 
 # Performance analysis framework
 perf-baseline tag="":
@@ -195,18 +215,38 @@ setup:
     @echo "✅ Setup complete! Run 'just help-workflows' to see available commands."
 
 shell-lint:
-    git ls-files -z '*.sh' | xargs -0 -r -n1 shfmt -w
-    git ls-files -z '*.sh' | xargs -0 -r -n4 shellcheck -x
-    @# Note: justfiles are not shell scripts and are excluded from shellcheck
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.sh')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -n1 shfmt -w
+        printf '%s\0' "${files[@]}" | xargs -0 -n4 shellcheck -x
+    else
+        echo "No shell files found to lint."
+    fi
+    # Note: justfiles are not shell scripts and are excluded from shellcheck
 
 # Spell checking with robust bash implementation
 spell-check:
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git status --porcelain | awk '{print $2}' | tr '\n' '\0')
+    # Use -z for NUL-delimited output to handle filenames with spaces
+    while IFS= read -r -d '' status_line; do
+        # Extract filename from git status --porcelain -z format
+        # Format: XY filename or XY oldname -> newname (for renames)
+        if [[ "$status_line" =~ ^..[[:space:]](.*)$ ]]; then
+            filename="${BASH_REMATCH[1]}"
+            # For renames (format: "old -> new"), take the new filename
+            if [[ "$filename" == *" -> "* ]]; then
+                filename="${filename#* -> }"
+            fi
+            files+=("$filename")
+        fi
+    done < <(git status --porcelain -z --ignored=no)
     if [ "${#files[@]}" -gt 0 ]; then
         printf '%s\0' "${files[@]}" | xargs -0 npx cspell lint --config cspell.json --no-progress --gitignore --cache --exclude cspell.json
     else
@@ -235,7 +275,27 @@ test-release:
 
 # File validation
 validate-json:
-    git ls-files -z '*.json' | xargs -0 -r -n1 jq empty
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.json')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -n1 jq empty
+    else
+        echo "No JSON files found to validate."
+    fi
 
 validate-toml:
-    git ls-files -z '*.toml' | xargs -0 -r -I {} uv run python -c "import tomllib; tomllib.load(open('{}', 'rb')); print('{} is valid TOML')"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.toml')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -I {} uv run python -c "import tomllib; tomllib.load(open('{}', 'rb')); print('{} is valid TOML')"
+    else
+        echo "No TOML files found to validate."
+    fi

@@ -323,6 +323,15 @@ def _handle_section_header_processing(
     line: str,
 ) -> None:
     """Handle processing of recognized section headers."""
+    # Check if we're transitioning out of Changes or Fixed Issues sections
+    was_in_changes_or_fixed = section_state["in_changes_section"] or section_state["in_fixed_issues"]
+    will_be_in_changes_or_fixed = section_flags[1] or section_flags[2]
+
+    # Flush categorized entries if transitioning out of Changes/Fixed sections
+    if was_in_changes_or_fixed and not will_be_in_changes_or_fixed and categorize_entries_list:
+        process_and_output_categorized_entries(categorize_entries_list, output_lines)
+        categorize_entries_list.clear()
+
     section_state.update(
         {
             "in_changes_section": section_flags[1],
@@ -331,10 +340,7 @@ def _handle_section_header_processing(
         },
     )
     if section_flags[0] == "merged_prs":
-        # Flush categorized entries for this release before MPRs
-        if categorize_entries_list:
-            process_and_output_categorized_entries(categorize_entries_list, output_lines)
-            categorize_entries_list.clear()
+        # Keep Merged Pull Requests header (entries already flushed above if needed)
         if output_lines and output_lines[-1] != "":
             output_lines.append("")
         output_lines.append(line)  # Keep Merged Pull Requests header
