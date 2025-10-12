@@ -2207,9 +2207,9 @@ mod tests {
             }
 
             // 4. All vertices should have proper incident cells assigned
+            // Phase 3: incident_cell is now a CellKey, not UUID
             for (_, vertex) in tds.vertices() {
-                if let Some(incident_cell_uuid) = vertex.incident_cell
-                    && let Some(incident_cell_key) = tds.cell_key_from_uuid(&incident_cell_uuid)
+                if let Some(incident_cell_key) = vertex.incident_cell
                     && let Some(incident_cell) = tds.cells().get(incident_cell_key)
                 {
                     let cell_vertices = incident_cell.vertices();

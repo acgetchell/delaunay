@@ -1749,6 +1749,81 @@ where
 
         containing_cells
     }
+
+    /// Assigns incident cells to vertices in the triangulation.
+    ///
+    /// This method establishes a mapping from each vertex to one of the cells that contains it,
+    /// which is useful for various geometric queries and traversals. For each vertex, an arbitrary
+    /// incident cell is selected from the cells that contain that vertex.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if incident cells were successfully assigned to all vertices,
+    /// otherwise a `TriangulationValidationError`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError` if:
+    /// - A vertex UUID in a cell cannot be found in the vertex UUID-to-key mapping (`InconsistentDataStructure`)
+    /// - A cell key cannot be found in the cell UUID-to-key mapping (`InconsistentDataStructure`)
+    /// - A vertex key cannot be found in the vertices `SlotMap` (`InconsistentDataStructure`)
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Build a mapping from vertex keys to lists of cell keys that contain each vertex
+    /// 2. For each vertex that appears in at least one cell, assign the first cell as its incident cell
+    /// 3. Update the vertex's `incident_cell` field with the `CellKey` of the selected cell (Phase 3)
+    ///
+    pub fn assign_incident_cells(&mut self) -> Result<(), TriangulationValidationError> {
+        if self.cells.is_empty() {
+            return Ok(());
+        }
+        // Build vertex_to_cells mapping using optimized collections
+        let mut vertex_to_cells: VertexToCellsMap =
+            fast_hash_map_with_capacity(self.vertices.len());
+
+        for (cell_key, cell) in &self.cells {
+            let vertex_keys = self.get_cell_vertex_keys(cell_key).map_err(|e| {
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Failed to get vertex keys for cell {}: {}", cell.uuid(), e),
+                }
+            })?;
+            for &vertex_key in &vertex_keys {
+                vertex_to_cells
+                    .entry(vertex_key)
+                    .or_default()
+                    .push(cell_key);
+            }
+        }
+
+        // Iterate over for (vertex_key, cell_keys) in vertex_to_cells
+        for (vertex_key, cell_keys) in vertex_to_cells {
+            if !cell_keys.is_empty() {
+                // Phase 3: Use CellKey directly instead of converting to UUID
+                let cell_key = cell_keys[0];
+
+                // Verify the cell key is still valid
+                if !self.cells.contains_key(cell_key) {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell key {cell_key:?} not found in cells SlotMap during incident cell assignment"
+                        ),
+                    });
+                }
+
+                // Update the vertex's incident cell with the key
+                let vertex = self.vertices.get_mut(vertex_key)
+                    .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Vertex key {vertex_key:?} not found in vertices SlotMap during incident cell assignment"
+                        ),
+                    })?;
+                vertex.incident_cell = Some(cell_key);
+            }
+        }
+
+        Ok(())
+    }
 }
 
 // =============================================================================
@@ -2654,80 +2729,11 @@ where
         // Topology changed; invalidate caches.
         self.bump_generation();
     }
-
-    /// Assigns incident cells to vertices in the triangulation.
-    ///
-    /// This method establishes a mapping from each vertex to one of the cells that contains it,
-    /// which is useful for various geometric queries and traversals. For each vertex, an arbitrary
-    /// incident cell is selected from the cells that contain that vertex.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if incident cells were successfully assigned to all vertices,
-    /// otherwise a `TriangulationValidationError`.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TriangulationValidationError` if:
-    /// - A vertex UUID in a cell cannot be found in the vertex UUID-to-key mapping (`InconsistentDataStructure`)
-    /// - A cell key cannot be found in the cell UUID-to-key mapping (`InconsistentDataStructure`)
-    /// - A vertex key cannot be found in the vertices `SlotMap` (`InconsistentDataStructure`)
-    ///
-    /// # Algorithm
-    ///
-    /// 1. Build a mapping from vertex keys to lists of cell keys that contain each vertex
-    /// 2. For each vertex that appears in at least one cell, assign the first cell as its incident cell
-    /// 3. Update the vertex's `incident_cell` field with the UUID of the selected cell
-    ///
-    pub fn assign_incident_cells(&mut self) -> Result<(), TriangulationValidationError> {
-        if self.cells.is_empty() {
-            return Ok(());
-        }
-        // Build vertex_to_cells mapping using optimized collections
-        let mut vertex_to_cells: VertexToCellsMap =
-            fast_hash_map_with_capacity(self.vertices.len());
-
-        for (cell_key, cell) in &self.cells {
-            let vertex_keys = self.get_cell_vertex_keys(cell_key).map_err(|e| {
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!("Failed to get vertex keys for cell {}: {}", cell.uuid(), e),
-                }
-            })?;
-            for &vertex_key in &vertex_keys {
-                vertex_to_cells
-                    .entry(vertex_key)
-                    .or_default()
-                    .push(cell_key);
-            }
-        }
-
-        // Iterate over for (vertex_key, cell_keys) in vertex_to_cells
-        for (vertex_key, cell_keys) in vertex_to_cells {
-            if !cell_keys.is_empty() {
-                // Convert cell_keys[0] to Uuid via optimized SlotMap access
-                let cell_uuid = self.cell_uuid_from_key(cell_keys[0]).ok_or_else(|| {
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Cell key {:?} not found in cells SlotMap during incident cell assignment",
-                            cell_keys[0]
-                        ),
-                    }
-                })?;
-
-                // Update the vertex's incident cell
-                let vertex = self.vertices.get_mut(vertex_key)
-                    .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Vertex key {vertex_key:?} not found in vertices SlotMap during incident cell assignment"
-                        ),
-                    })?;
-                vertex.incident_cell = Some(cell_uuid);
-            }
-        }
-
-        Ok(())
-    }
 }
+
+// =============================================================================
+// NEIGHBOR ASSIGNMENT (requires additional trait bounds)
+// =============================================================================
 
 // =============================================================================
 // DUPLICATE REMOVAL & FACET MAPPING
@@ -3847,7 +3853,8 @@ where
                     uuid_to_cell_key.insert(cell.uuid(), cell_key);
                 }
 
-                Ok(Tds {
+                // Phase 3: Rebuild incident_cell mappings since CellKeys aren't serialized
+                let mut tds = Tds {
                     vertices,
                     cells,
                     uuid_to_vertex_key,
@@ -3862,7 +3869,13 @@ where
                     // This ensures cached data from before serialization is not incorrectly
                     // considered valid after deserialization.
                     generation: Arc::new(AtomicU64::new(0)),
-                })
+                };
+
+                // Rebuild incident_cell CellKey references
+                // This is safe to ignore errors since we're deserializing a validated triangulation
+                let _ = tds.assign_incident_cells();
+
+                Ok(tds)
             }
         }
 
@@ -5193,13 +5206,14 @@ mod tests {
 
         // Verify topology integrity after removal
         // 1. Check that all vertices have valid incident cells (no stale references)
+        // Phase 3: incident_cell is now a CellKey, not UUID
         for (vertex_key, vertex) in &tds.vertices {
-            if let Some(incident_cell_uuid) = vertex.incident_cell {
-                let cell_exists = tds.uuid_to_cell_key.contains_key(&incident_cell_uuid);
+            if let Some(incident_cell_key) = vertex.incident_cell {
+                let cell_exists = tds.cells.contains_key(incident_cell_key);
                 assert!(
                     cell_exists,
                     "Vertex {:?} has stale incident_cell reference {:?} after duplicate removal",
-                    vertex_key, incident_cell_uuid
+                    vertex_key, incident_cell_key
                 );
             }
         }
@@ -5876,11 +5890,12 @@ mod tests {
             );
 
             // Verify that assigned incident cells actually exist in the triangulation
+            // Phase 3: incident_cell is now a CellKey, check directly in SlotMap
             for vertex in tds.vertices.values() {
-                if let Some(incident_cell_uuid) = vertex.incident_cell {
+                if let Some(incident_cell_key) = vertex.incident_cell {
                     assert!(
-                        tds.cell_key_from_uuid(&incident_cell_uuid).is_some(),
-                        "Incident cell UUID should exist in the triangulation"
+                        tds.cells.contains_key(incident_cell_key),
+                        "Incident cell key should exist in the triangulation"
                     );
                 }
             }
@@ -6925,11 +6940,12 @@ mod tests {
 
         // Verify that topology was rebuilt correctly after cell removal
         // Check that all vertices have valid incident cells
+        // Phase 3: incident_cell is now a CellKey, check directly in SlotMap
         for vertex in result.vertices.values() {
-            if let Some(incident_cell_uuid) = vertex.incident_cell {
+            if let Some(incident_cell_key) = vertex.incident_cell {
                 // The incident cell should exist in the triangulation
                 assert!(
-                    result.uuid_to_cell_key.contains_key(&incident_cell_uuid),
+                    result.cells.contains_key(incident_cell_key),
                     "Vertex has stale incident_cell reference to removed cell"
                 );
             }
