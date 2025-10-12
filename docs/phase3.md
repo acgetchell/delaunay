@@ -31,17 +31,28 @@ serialization to reconstruct keys during deserialization. This is a branch-only 
 
 ### 1) Baseline in the working branch
 
-- [ ] Confirm current branch and ensure all changes are isolated from main
-- [ ] Run baseline checks and tests
-  - [ ] `just test`
-  - [ ] `just doc-check`
-  - [ ] `just clippy`
+- [x] Confirm current branch and ensure all changes are isolated from main (`refactor/complete-phase-3`)
+- [x] Run baseline checks and tests
+  - [x] `just test` (777 library tests + 192 doc tests = 969 passed)
+  - [x] `just doc-check` (✅ passed)
+  - [x] `just clippy` (✅ passed - no warnings)
 
 ### 2) Type and dependency confirmations
 
 - [x] Ensure VertexKey and CellKey are defined and stable
+  - ✅ `VertexKey` and `CellKey` defined in `src/core/triangulation_data_structure.rs` (lines 370-388)
+  - ✅ Created via `slotmap::new_key_type!` macro - stable and well-documented
+  - ✅ Already used extensively throughout codebase (>100 occurrences each)
 - [x] Confirm `SmallBuffer<T, 8>` (or equivalent) is available and appropriate
-- [ ] Remove uuid dependency usage from Cell and Facet (keep for now, remove later)
+  - ✅ `SmallBuffer<T, N>` defined as `SmallVec<[T; N]>` in `src/core/collections.rs` (line 251)
+  - ✅ `MAX_PRACTICAL_DIMENSION_SIZE = 8` constant available (line 411)
+  - ✅ Appropriate size for D+1 vertices/neighbors in practical dimensions (2D-7D)
+  - ✅ Stack allocation, heap fallback for larger sizes
+- [x] UUID dependency usage confirmed
+  - ✅ Cell currently uses `Uuid` for itself and `Option<Vec<Option<Uuid>>>` for neighbors (line 262)
+  - ✅ Vertex already migrated to `CellKey` for `incident_cell`
+  - 🔄 Will keep UUID in Cell for identification, replace neighbors with `CellKey`
+  - 🔄 Will NOT remove uuid dependency (still needed for Cell/Vertex identification)
 
 ### 3) Cell struct refactor (src/core/cell.rs)
 
@@ -159,7 +170,14 @@ serialization to reconstruct keys during deserialization. This is a branch-only 
 
 - ✅ Created Phase 3A tracking document
 - ✅ Confirmed Vertex already migrated to use `CellKey` for `incident_cell`
-- 🔄 Ready to begin Cell refactoring
+- ✅ **Task 1 Complete**: Baseline checks passed (969 tests, doc-check, clippy)
+  - Branch: `refactor/complete-phase-3`
+  - All quality checks passing
+- ✅ **Task 2 Complete**: Type and dependency confirmations
+  - VertexKey and CellKey: stable SlotMap keys, 100+ uses each
+  - SmallBuffer<T, 8>: available, appropriate for D+1 elements (2D-7D)
+  - UUID: will keep for identification, replace in neighbors only
+- 🔄 Ready to begin Cell struct refactor (Task 3)
 
 ---
 
