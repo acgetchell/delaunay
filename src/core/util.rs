@@ -95,63 +95,8 @@ pub fn make_uuid() -> Uuid {
     Uuid::new_v4()
 }
 
-/// Checks if two facets are adjacent by comparing their vertex sets.
-///
-/// Two facets are considered adjacent if they share the exact same set of vertices,
-/// regardless of the order. This is a common check in triangulation algorithms to
-/// identify neighboring cells.
-///
-/// # Arguments
-///
-/// * `facet1` - A reference to the first facet.
-/// * `facet2` - A reference to the second facet.
-///
-/// # Returns
-///
-/// `true` if the facets share the same vertices, `false` otherwise.
-///
-/// # Examples
-///
-/// ```
-/// use delaunay::core::facet::Facet;
-/// use delaunay::core::util::facets_are_adjacent;
-/// use delaunay::core::vertex::Vertex;
-/// use delaunay::core::cell::Cell;
-/// use delaunay::{cell, vertex};
-///
-/// let v1: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
-/// let v2: Vertex<f64, Option<()>, 2> = vertex!([1.0, 0.0]);
-/// let v3: Vertex<f64, Option<()>, 2> = vertex!([0.0, 1.0]);
-/// let v4: Vertex<f64, Option<()>, 2> = vertex!([1.0, 1.0]);
-///
-/// let cell1: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v1, v2, v3]);
-/// let cell2: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v2, v3, v4]);
-///
-/// let facet1 = Facet::new(cell1, v1).unwrap();
-/// let facet2 = Facet::new(cell2, v4).unwrap();
-///
-/// // These facets share vertices v2 and v3, so they are adjacent
-/// assert!(facets_are_adjacent(&facet1, &facet2));
-/// ```
-#[deprecated(
-    since = "0.5.0",
-    note = "Use facet_views_are_adjacent instead. This heavyweight implementation will be removed in v1.0.0."
-)]
-pub fn facets_are_adjacent<T, U, V, const D: usize>(
-    facet1: &Facet<T, U, V, D>,
-    facet2: &Facet<T, U, V, D>,
-) -> bool
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-{
-    use crate::core::collections::FastHashSet;
-    let vertices1: FastHashSet<_> = facet1.vertices().into_iter().collect();
-    let vertices2: FastHashSet<_> = facet2.vertices().into_iter().collect();
-    vertices1 == vertices2
-}
+// NOTE: The deprecated facets_are_adjacent function has been removed in Phase 3A.
+// Use facet_views_are_adjacent instead, which works with the lightweight FacetView API.
 
 /// Determines if two facet views are adjacent by comparing their vertices.
 ///

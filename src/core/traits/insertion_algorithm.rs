@@ -1108,6 +1108,8 @@ where
 
     /// Find the boundary facets of a cavity formed by removing bad cells
     ///
+    /// **Phase 3C**: Returns lightweight facet handles `(CellKey, u8)` instead of heavyweight `Facet` objects.
+    ///
     /// The boundary facets form the interface between the cavity (bad cells to be removed)
     /// and the good cells that remain. These facets will be used to create new cells
     /// connecting to the inserted vertex.
@@ -1119,7 +1121,8 @@ where
     ///
     /// # Returns
     ///
-    /// A vector of boundary facets, or an error if computation fails.
+    /// A vector of boundary facet handles `(CellKey, facet_index)`, or an error if computation fails.
+    /// Each handle can be used to create a `FacetView` on-demand.
     ///
     /// # Errors
     ///
@@ -1127,16 +1130,16 @@ where
     fn find_cavity_boundary_facets(
         &self,
         tds: &Tds<T, U, V, D>,
-        bad_cells: &[crate::core::triangulation_data_structure::CellKey],
-    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError>
+        bad_cells: &[CellKey],
+    ) -> Result<Vec<(CellKey, u8)>, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
-        let mut boundary_facets = Vec::new();
+        let mut boundary_facet_handles = Vec::new();
 
         if bad_cells.is_empty() {
-            return Ok(boundary_facets);
+            return Ok(boundary_facet_handles);
         }
 
         let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
@@ -1153,9 +1156,6 @@ where
                 message: format!("Failed to build facet-to-cells map: {e}"),
             }
         })?;
-
-        // Track which boundary facets we need to create
-        let mut boundary_facet_specs = Vec::new();
 
         // Process each facet in the map to identify boundary facets
         for sharing_cells in facet_to_cells.values() {
@@ -1191,9 +1191,14 @@ where
             // 1. Exactly one bad cell uses it (boundary between bad and good)
             // 2. OR it's a true boundary facet (only one cell total) that's bad
             if bad_count == 1 && (total_count == 2 || total_count == 1) {
-                // Store the bad cell key and facet index for later processing
-                if let Some((bad_cell_key, facet_index)) = single_bad_cell {
-                    boundary_facet_specs.push((bad_cell_key, facet_index));
+                // Phase 3C: Store lightweight handle directly - just validate it exists
+                if let Some((cell_key, facet_index)) = single_bad_cell {
+                    if let Some(cell) = tds.cells().get(cell_key) {
+                        let facet_idx = usize::from(facet_index);
+                        if facet_idx < cell.vertices().len() {
+                            boundary_facet_handles.push((cell_key, facet_index));
+                        }
+                    }
                 }
             }
             // Skip facets that are:
@@ -1202,62 +1207,8 @@ where
             // - Invalid sharing (total_count > 2)
         }
 
-        // Now create the actual Facet objects for the identified boundary facets
-        boundary_facets.reserve(boundary_facet_specs.len());
-        for (cell_key, facet_index) in boundary_facet_specs {
-            if let Some(cell) = tds.cells().get(cell_key) {
-                // Convert facet_index (u8) to usize for array indexing
-                let facet_idx = <usize as From<u8>>::from(facet_index);
-                // Phase 3A: Use vertices instead of vertices
-                let vertices = cell.vertices();
-                if facet_idx >= vertices.len() {
-                    // Invalid facet index indicates TDS corruption - fail fast
-                    return Err(InsertionError::TriangulationState(
-                        TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Facet index {} out of bounds (cell has {} vertices) while building cavity boundary",
-                                facet_idx,
-                                vertices.len()
-                            ),
-                        },
-                    ));
-                }
-                // Phase 3A: Get opposite vertex via TDS
-                let opposite_vertex_key = vertices[facet_idx];
-                let Some(opposite_vertex) = tds.vertices().get(opposite_vertex_key) else {
-                    return Err(InsertionError::TriangulationState(
-                        TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Vertex key {opposite_vertex_key:?} not found in TDS while building cavity boundary"
-                            ),
-                        },
-                    ));
-                };
-                // Create the facet using the Cell and its opposite vertex
-                // TODO: Optimize Facet construction to avoid Cell cloning (allocation reduction)
-                // Consider a Facet::from_cell_and_index(cell_key, facet_index, tds) constructor
-                // to sidestep Cell clone and eliminate this allocation in insertion hot paths.
-                #[allow(deprecated)]
-                let facet = Facet::new(cell.clone(), *opposite_vertex).map_err(|e| {
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: format!("Failed to construct boundary facet: {e}"),
-                    }
-                })?;
-                boundary_facets.push(facet);
-            } else {
-                // Cell not found - this shouldn't happen if TDS is consistent
-                return Err(InsertionError::TriangulationState(
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Cell with key {cell_key:?} not found while building cavity boundary"
-                        ),
-                    },
-                ));
-            }
-        }
-
         // Validation: ensure we have a reasonable number of boundary facets
-        if boundary_facets.is_empty() && !bad_cells.is_empty() {
+        if boundary_facet_handles.is_empty() && !bad_cells.is_empty() {
             return Err(InsertionError::TriangulationState(
                 TriangulationValidationError::FailedToCreateCell {
                     message: format!(
@@ -1268,7 +1219,7 @@ where
             ));
         }
 
-        Ok(boundary_facets)
+        Ok(boundary_facet_handles)
     }
 
     /// Find cavity boundary facets using lightweight `FacetView` (Phase 3 optimization).
@@ -1968,52 +1919,8 @@ where
         Ok(())
     }
 
-    /// Finds boundary facets visible from the given vertex (deprecated heavyweight version)
-    ///
-    /// **DEPRECATED**: This method returns heavyweight `Facet` objects which are broken
-    /// due to Phase 3A refactoring. Use `find_visible_boundary_facets_lightweight` instead.
-    ///
-    /// A boundary facet is visible if the vertex lies on the "outside" of that facet.
-    /// This uses proper geometric orientation tests to determine visibility.
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - Reference to the triangulation data structure
-    /// * `vertex` - The vertex from which to test visibility
-    ///
-    /// # Returns
-    ///
-    /// A result containing a vector of visible boundary facets, or an error if the computation fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TriangulationValidationError` if:
-    /// - The boundary facets cannot be computed
-    /// - The orientation tests fail for geometric reasons
-    /// - The triangulation data structure is in an invalid state
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use find_visible_boundary_facets_lightweight instead. Heavyweight Facet is broken."
-    )]
-    #[allow(dead_code)]
-    fn find_visible_boundary_facets(
-        &self,
-        tds: &Tds<T, U, V, D>,
-        vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError>
-    where
-        T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    {
-        // Just delegate to the lightweight version for compatibility
-        // This will never actually return heavyweight Facets
-        let _handles = self.find_visible_boundary_facets_lightweight(tds, vertex)?;
-
-        // Return empty vec since heavyweight Facet is broken anyway
-        // Any code using this should migrate to the lightweight version
-        Ok(Vec::new())
-    }
+    // NOTE: find_visible_boundary_facets() removed in Phase 3C.
+    // Use find_visible_boundary_facets_lightweight() which returns Vec<(CellKey, u8)>.
 
     /// Helper method to test if a boundary facet is visible from a given vertex
     ///
@@ -2220,120 +2127,8 @@ where
         Ok(())
     }
 
-    /// Creates a new cell from a facet and a vertex
-    ///
-    /// This is a shared utility method that combines a facet with a new vertex
-    /// to create a cell, handling vertex registration and cell insertion.
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - Mutable reference to the triangulation data structure
-    /// * `facet` - The facet to extend into a cell
-    /// * `vertex` - The vertex to add to the facet
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if the cell was successfully created, or an error describing the failure.
-    ///
-    /// # Errors
-    ///
-    /// Returns `TriangulationValidationError` if:
-    /// - Vertex registration in TDS fails
-    /// - Cell building fails (e.g., degenerate geometry)
-    /// - Cell insertion fails (e.g., duplicate UUID)
-    ///
-    /// # Deprecated
-    ///
-    /// Consider using [`create_cell_from_vertices_and_vertex`] for better performance.
-    /// The vertex-based approach avoids heavyweight Facet object allocation.
-    ///
-    /// [`create_cell_from_vertices_and_vertex`]: Self::create_cell_from_vertices_and_vertex
-    #[deprecated(
-        since = "0.4.4",
-        note = "Use `create_cell_from_vertices_and_vertex` for better performance with pre-extracted vertices"
-    )]
-    fn create_cell_from_facet_and_vertex(
-        tds: &mut Tds<T, U, V, D>,
-        facet: &Facet<T, U, V, D>,
-        vertex: &Vertex<T, U, D>,
-    ) -> Result<(), TriangulationValidationError>
-    where
-        T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
-    {
-        // Ensure the vertex is registered in the TDS vertex mapping
-        Self::ensure_vertex_in_tds(tds, vertex)?;
-
-        // Phase 3A: facet.vertices() returns Vec<Vertex>, but we need keys
-        let mut facet_vertices = facet.vertices();
-        facet_vertices.push(*vertex);
-
-        // Get vertex keys from TDS
-        let vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> = facet_vertices
-            .iter()
-            .filter_map(|v| tds.vertex_key_from_uuid(&v.uuid()))
-            .collect();
-
-        let new_cell = Cell::new_with_keys(vertices, None).map_err(|e| {
-            TriangulationValidationError::FailedToCreateCell {
-                message: format!("Failed to build cell from facet and vertex: {e}"),
-            }
-        })?;
-
-        tds.insert_cell_with_mapping(new_cell).map_err(|e| {
-            TriangulationValidationError::InconsistentDataStructure {
-                message: format!("Failed to insert cell into TDS: {e}"),
-            }
-        })?;
-
-        Ok(())
-    }
-
-    /// Creates multiple cells from boundary facets and a vertex
-    ///
-    /// This is a shared utility method that creates cells by combining
-    /// each boundary facet with the new vertex.
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - Mutable reference to the triangulation data structure
-    /// * `boundary_facets` - The facets to extend into cells
-    /// * `vertex` - The vertex to add to each facet
-    ///
-    /// # Returns
-    ///
-    /// The number of cells successfully created. Note that some cells may fail
-    /// to be created due to geometric constraints, which is expected behavior.
-    ///
-    /// # Deprecated
-    ///
-    /// Consider using [`create_cells_from_facet_handles`] for better performance.
-    /// The improved method now uses `FacetView` internally for better performance.
-    ///
-    /// [`create_cells_from_facet_handles`]: Self::create_cells_from_facet_handles
-    #[deprecated(
-        since = "0.4.4",
-        note = "Use `create_cells_from_facet_handles` which now uses FacetView internally for better performance"
-    )]
-    fn create_cells_from_boundary_facets(
-        tds: &mut Tds<T, U, V, D>,
-        boundary_facets: &[Facet<T, U, V, D>],
-        vertex: &Vertex<T, U, D>,
-    ) -> usize
-    where
-        T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
-    {
-        let mut cells_created = 0;
-        for facet in boundary_facets {
-            // We intentionally ignore errors here as some facets may not be able
-            // to form valid cells with the given vertex (e.g., degenerate cases)
-            if Self::create_cell_from_facet_and_vertex(tds, facet, vertex).is_ok() {
-                cells_created += 1;
-            }
-        }
-        cells_created
-    }
+    // NOTE: create_cell_from_facet_and_vertex() and create_cells_from_boundary_facets() removed in Phase 3C.
+    // Use create_cell_from_facet_handle() or create_cells_from_facet_handles() which work with lightweight (CellKey, u8) handles.
 
     /// Create a single cell from a facet handle and an additional vertex.
     ///
