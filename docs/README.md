@@ -12,22 +12,24 @@
 - Current status: Phase 1 ✅ | Phase 2 ✅ v0.4.4+ | Phase 3 🔄 IN PROGRESS | Phase 4 📋 PLANNED
 - Migration guides and performance targets
 
-### Implementation Guides
+### Phase 3 Implementation
 
-#### **[OPTIMIZING_BOWYER_WATSON.md](./OPTIMIZING_BOWYER_WATSON.md)** 📋
+#### **[phase_3a_implementation_guide.md](./phase_3a_implementation_guide.md)** 🚀
 
-FacetCacheProvider implementation (Phase 2 - ✅ COMPLETE v0.4.4)
+**Comprehensive Phase 3A implementation guide** - TDS-centric cell architecture
 
-- Detailed implementation checklist
-- ✅ Achieved 50-90% reduction in facet mapping computation
+- Complete step-by-step implementation plan (13-16 hours)
+- Architecture rationale: Why NOT a visitor trait
+- Performance and parallelization optimizations
+- Detailed code examples for every phase
+- Progress tracking checklist
 
-#### **[vertex_uuid_iter_optimizations.md](./vertex_uuid_iter_optimizations.md)** ✅
+#### **[phase3.md](./phase3.md)** 📋
 
-Zero-allocation UUID iteration optimization (COMPLETE)
+**High-level Phase 3 tracking** - Overall checklist
 
-- Migration patterns and examples
-- Performance analysis (1.86x faster)
-- Detailed benchmarking methodology
+- 15 major tasks from struct refactor to serialization
+- Cross-references to detailed implementation guide
 
 ### Technical References
 
@@ -47,7 +49,17 @@ Project structure and module organization
 - Module responsibilities
 - Design patterns used
 
-### Historical & Process Documentation
+### Historical Documentation
+
+#### **[archive/](./archive/)** 📦
+
+Completed optimization work and historical references:
+
+- `phase2_bowyer_watson_optimization.md` - FacetCacheProvider implementation (✅ v0.4.4)
+- `phase2_uuid_iter_optimization.md` - Zero-allocation UUID iteration (✅ v0.4.4)
+- `optimization_recommendations_historical.md` - Historical optimization analysis
+
+### Process Documentation
 
 #### **[optimization_recommendations.md](./optimization_recommendations.md)**
 

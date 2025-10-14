@@ -280,11 +280,29 @@ The foundation for Phase 3 has been significantly strengthened with robust infra
 - **Visibility Threshold Tuning**: Configurable via `RobustPredicateConfig`
 - **Early Exit Optimizations**: Proximity scanning in high-density vertex checks
 
-#### 🔄 Current Focus Areas
+#### 🔄 Current Focus: Phase 3A - Cell Key-Based Storage
 
-- **Direct Key Storage Planning**: Designing migration path for Cell vertex storage
-- **Memory Layout Analysis**: Profiling current vs. target memory usage patterns
-- **Serialization Strategy**: Maintaining compatibility during structural changes
+**Primary Implementation Guide**: `docs/phase_3a_implementation_guide.md`
+
+- **Comprehensive plan**: 8 phases, 13-16 hours total
+- **Architecture**: TDS-centric with iterator patterns (NOT visitor trait)
+- **Key Decision**: Zero-cost abstraction approach
+  - Cells store `VertexKey` (8 bytes) instead of full `Vertex` objects (100+ bytes)
+  - 90% memory reduction per cell
+  - Keys are `Copy + Send + Sync` for parallelization
+  - Stack allocation via SmallBuffer for D ≤ 7
+- **Progress Tracking**: `docs/phase3.md` (15-task high-level checklist)
+
+**Architecture Rationale**:
+
+- Follows Rust stdlib patterns (HashMap, Vec, SlotMap)
+- Direct SlotMap indexing (1-2ns) vs closure indirection (5-10ns)
+- Perfect for parallel algorithms with Rayon
+- Explicit TDS context passing (idiomatic Rust)
+
+**Historical Documentation** (archived):
+
+- `docs/archive/optimization_recommendations_historical.md`
 
 ### Objective
 

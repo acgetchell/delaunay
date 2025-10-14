@@ -352,7 +352,7 @@ pub type CellVerticesMap = FastHashMap<CellKey, FastHashSet<VertexKey>>;
 /// ```rust
 /// use delaunay::core::collections::CellVertexKeysMap;
 ///
-/// let mut cell_vertex_keys: CellVertexKeysMap = CellVertexKeysMap::default();
+/// let mut cell_vertices: CellVertexKeysMap = CellVertexKeysMap::default();
 /// // Efficient positional access during validation
 /// ```
 pub type CellVertexKeysMap = FastHashMap<CellKey, Vec<VertexKey>>;

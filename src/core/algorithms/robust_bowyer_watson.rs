@@ -9,7 +9,6 @@ use crate::core::collections::{
     CellKeySet, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer, fast_hash_set_with_capacity,
 };
 use crate::core::traits::facet_cache::FacetCacheProvider;
-use crate::core::util::derive_facet_key_from_vertices;
 use arc_swap::ArcSwapOption;
 use std::marker::PhantomData;
 use std::ops::{AddAssign, Div, DivAssign, SubAssign};
@@ -21,7 +20,6 @@ use crate::core::traits::insertion_algorithm::{
     InsertionStrategy,
 };
 use crate::core::{
-    facet::Facet,
     triangulation_data_structure::{
         CellKey, Tds, TriangulationConstructionError, TriangulationValidationError,
     },
@@ -245,6 +243,10 @@ where
     }
 
     /// Cavity-based insertion with robust predicates as enhancement
+    ///
+    /// This method adds robust predicate fallbacks on top of the standard trait implementation.
+    /// The core insertion algorithm is now in the trait's default implementation (which handles
+    /// the Phase 3A lightweight `FacetView` approach correctly).
     fn insert_vertex_cavity_based_with_robust_predicates(
         &mut self,
         tds: &mut Tds<T, U, V, D>,
@@ -258,24 +260,34 @@ where
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
         [f64; D]: DeserializeOwned + Serialize + Sized,
     {
-        // First try using trait method for bad cell detection with robust fallback
+        // Try the standard trait method first
+        // The trait's implementation now correctly handles the Phase 3A lightweight approach:
+        // - Extracts facet data BEFORE removing cells
+        // - Uses FacetView for zero-allocation vertex access
+        // - Properly manages handle invalidation
+        let result = self.insert_vertex_cavity_based(tds, vertex);
+
+        // If standard method succeeds, we're done
+        if result.is_ok() {
+            return result;
+        }
+
+        // If standard method fails, try with robust predicates as fallback
+        // This adds tolerance and multiple predicate strategies for degenerate cases
         let bad_cells = self.find_bad_cells_with_robust_fallback(tds, vertex);
 
-        if !bad_cells.is_empty() {
-            // Try boundary facet detection using lightweight trait method with robust fallback
-            #[allow(clippy::collapsible_if)] // Can't collapse due to if-let chain guard limitations
-            if let Ok(boundary_handles) =
+        if !bad_cells.is_empty()
+            && let Ok(boundary_handles) =
                 self.find_cavity_boundary_facets_lightweight_with_robust_fallback(tds, &bad_cells)
-            {
-                if !boundary_handles.is_empty() {
-                    // CRITICAL: We need to use handles BEFORE removing cells, as they become invalid after removal.
-                    // The cavity-based insertion algorithm requires: extract → remove → create
+            && !boundary_handles.is_empty()
+        {
+            // Use the trait's helper methods for the actual insertion
+            // This ensures consistency with the standard algorithm while adding robustness
 
-                    // HOT PATH OPTIMIZATION: Extract facet data while minimizing allocations
-                    // Store handles and extract facet data while cells still exist
-                    let mut extracted_facet_data = Vec::with_capacity(boundary_handles.len());
-                    for &(cell_key, facet_index) in &boundary_handles {
-                        let facet_view = crate::core::facet::FacetView::new(tds, cell_key, facet_index)
+            // Extract facet data before removing cells
+            let mut extracted_facet_data = Vec::with_capacity(boundary_handles.len());
+            for &(cell_key, facet_index) in &boundary_handles {
+                let facet_view = crate::core::facet::FacetView::new(tds, cell_key, facet_index)
                             .map_err(|_| InsertionError::TriangulationState(
                                 TriangulationValidationError::InconsistentDataStructure {
                                     message: format!(
@@ -284,71 +296,64 @@ where
                                 },
                             ))?;
 
-                        // OPTIMIZATION: Direct iterator processing to minimize intermediate allocations
-                        match facet_view.vertices() {
-                            Ok(vertex_iter) => {
-                                // Collect directly - must persist after cells are removed
-                                let facet_vertices: Vec<Vertex<T, U, D>> =
-                                    vertex_iter.copied().collect();
-                                extracted_facet_data.push(facet_vertices);
-                            }
-                            Err(_) => {
-                                return Err(InsertionError::TriangulationState(
-                                    TriangulationValidationError::InconsistentDataStructure {
-                                        message: format!(
-                                            "Failed to get vertices from facet at index {facet_index} during robust cavity extraction"
-                                        ),
-                                    },
-                                ));
-                            }
-                        }
-                    }
-
-                    let cells_removed = bad_cells.len();
-
-                    // Ensure vertex is in TDS before destructive operations
-                    <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
-
-                    // Remove bad cells (invalidates handles)
-                    <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
-
-                    // Create cells from pre-extracted data
-                    let mut cells_created = 0;
-                    for facet_vertices in extracted_facet_data {
-                        <Self as InsertionAlgorithm<T, U, V, D>>::create_cell_from_vertices_and_vertex(
-                            tds,
-                            facet_vertices,
-                            vertex,
-                        ).map_err(InsertionError::TriangulationState)?;
-                        cells_created += 1;
-                    }
-
-                    // Maintain invariants after structural changes
-                    <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
-                        |e| InsertionError::TriangulationState(
-                            TriangulationValidationError::FinalizationFailed {
-                                message: format!(
-                                    "Failed to finalize triangulation after robust cavity-based insertion \
-                                         (removed {cells_removed} cells, created {cells_created} cells). \
-                                         Underlying error: {e}"
-                                ),
-                            }
-                        ),
-                    )?;
-
-                    return Ok(InsertionInfo {
-                        strategy: InsertionStrategy::CavityBased,
-                        cells_removed,
-                        cells_created,
-                        success: true,
-                        degenerate_case_handled: false,
-                    });
-                }
+                let facet_vertices: Vec<Vertex<T, U, D>> = facet_view.vertices()
+                            .map_err(|_| InsertionError::TriangulationState(
+                                TriangulationValidationError::InconsistentDataStructure {
+                                    message: format!(
+                                        "Failed to get vertices from facet at index {facet_index} during robust cavity extraction"
+                                    ),
+                                },
+                            ))?
+                            .copied()
+                            .collect();
+                extracted_facet_data.push(facet_vertices);
             }
+
+            let cells_removed = bad_cells.len();
+
+            // Use trait methods for consistency
+            <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
+            <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
+
+            let mut cells_created = 0;
+            for facet_vertices in extracted_facet_data {
+                <Self as InsertionAlgorithm<T, U, V, D>>::create_cell_from_vertices_and_vertex(
+                    tds,
+                    facet_vertices,
+                    vertex,
+                )
+                .map_err(InsertionError::TriangulationState)?;
+                cells_created += 1;
+            }
+
+            <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
+                |e| {
+                    InsertionError::TriangulationState(
+                        TriangulationValidationError::FinalizationFailed {
+                            message: format!(
+                                "Failed to finalize after robust cavity insertion: {e}"
+                            ),
+                        },
+                    )
+                },
+            )?;
+
+            return Ok(InsertionInfo {
+                strategy: InsertionStrategy::CavityBased,
+                cells_removed,
+                cells_created,
+                success: true,
+                degenerate_case_handled: false,
+            });
         }
 
-        // If robust detection fails, fall back to trait method
-        self.insert_vertex_cavity_based(tds, vertex)
+        // If both standard and robust methods fail, return error
+        Err(InsertionError::TriangulationState(
+            TriangulationValidationError::FailedToCreateCell {
+                message: "Cavity-based insertion failed with both standard and robust predicates."
+                    .to_string(),
+            },
+        ))
     }
 
     /// Hull extension insertion with robust predicates as enhancement
@@ -537,19 +542,9 @@ where
                 for fv in boundary_iter {
                     let cell_key = fv.cell_key();
                     let facet_index = fv.facet_index();
-                    if let (Ok(cell), Ok(opposite)) = (fv.cell(), fv.opposite_vertex()) {
-                        #[allow(deprecated)]
-                        let facet = crate::core::facet::Facet::new(cell.clone(), *opposite)
-                            .map_err(|e| InsertionError::TriangulationState(
-                                TriangulationValidationError::InconsistentDataStructure {
-                                    message: format!(
-                                        "Failed to reconstruct Facet for visibility fallback: {e}"
-                                    ),
-                                },
-                            ))?;
-                        if self.is_facet_visible_from_vertex_robust(tds, &facet, vertex, cell_key) {
-                            handles.push((cell_key, facet_index));
-                        }
+                    // Phase 3A: Use FacetView directly instead of converting to heavyweight Facet
+                    if self.is_facet_visible_from_vertex_robust(tds, &fv, vertex, cell_key) {
+                        handles.push((cell_key, facet_index));
                     }
                 }
                 Ok(handles)
@@ -569,9 +564,15 @@ where
         vertex_points.reserve_exact(D + 1);
 
         for (cell_key, cell) in tds.cells() {
-            // Extract vertex points from the cell (reusing buffer)
+            // Extract vertex points from the cell using key-based API (reusing buffer)
             vertex_points.clear();
-            vertex_points.extend(cell.vertices().iter().map(|v| *v.point()));
+
+            // Phase 3A: Access vertices via TDS using vertices
+            for &vkey in cell.vertices() {
+                if let Some(v) = tds.vertices().get(vkey) {
+                    vertex_points.push(*v.point());
+                }
+            }
 
             if vertex_points.len() < D + 1 {
                 continue; // Skip incomplete cells
@@ -616,7 +617,9 @@ where
     ///
     /// This optimized version returns `(CellKey, u8)` handles instead of heavyweight Facet objects,
     /// providing significant performance improvements for boundary facet detection.
-    fn robust_find_cavity_boundary_facets_lightweight(
+    ///
+    /// Made `pub(crate)` for testing purposes.
+    pub(crate) fn robust_find_cavity_boundary_facets_lightweight(
         &self,
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
@@ -640,6 +643,7 @@ where
 
         for &bad_cell_key in bad_cells {
             if let Some(bad_cell) = tds.cells().get(bad_cell_key) {
+                // Phase 3A: Use vertices() to get the facet count
                 let facet_count = bad_cell.vertices().len();
                 for facet_idx in 0..facet_count {
                     let Ok(facet_idx_u8) = u8::try_from(facet_idx) else {
@@ -683,158 +687,27 @@ where
             }
         }
 
+        // Validate boundary facets before returning
+        self.validate_boundary_facets(&boundary_handles, bad_cells.len())?;
+
         // If no boundary handles found but we had facet construction errors,
-        // return a more specific error with context instead of generic ExcessiveBadCells
-        if boundary_handles.is_empty() && !bad_cells.is_empty() {
-            if let Some((error_cell, error_facet, error_type)) = first_facet_error {
-                return Err(InsertionError::TriangulationState(
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Failed to construct/derive facet during robust cavity mapping: cell={error_cell:?}, facet_index={error_facet}, cause={error_type}"
-                        ),
-                    },
-                ));
-            }
-            return Err(InsertionError::ExcessiveBadCells {
-                found: bad_cells.len(),
-                threshold: 0,
-            });
-        }
-
-        Ok(boundary_handles)
-    }
-
-    /// Find cavity boundary facets with enhanced error handling.
-    fn robust_find_cavity_boundary_facets(
-        &self,
-        tds: &Tds<T, U, V, D>,
-        bad_cells: &[CellKey],
-    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError> {
-        let mut boundary_facets = Vec::new();
-
-        if bad_cells.is_empty() {
-            return Ok(boundary_facets);
-        }
-
-        let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
-
-        // Build facet-to-cells mapping with enhanced validation
-        let facet_to_cells = self.build_validated_facet_mapping(tds)?;
-
-        // Find boundary facets with improved logic
-        let mut processed_facets = FastHashSet::default();
-
-        for &bad_cell_key in bad_cells {
-            if let Some(bad_cell) = tds.cells().get(bad_cell_key)
-                && let Ok(facets) = bad_cell.facets()
-            {
-                for facet in facets {
-                    // Derive facet key using the utility function
-                    let facet_vertices = facet.vertices();
-                    let Ok(facet_key) = derive_facet_key_from_vertices(&facet_vertices, tds) else {
-                        continue;
-                    }; // Cannot form a valid facet key - vertex not found
-
-                    if !processed_facets.insert(facet_key) {
-                        continue;
-                    }
-
-                    if let Some(sharing_cells) = facet_to_cells.get(&facet_key) {
-                        let bad_count = sharing_cells
-                            .iter()
-                            .filter(|&&cell_key| bad_cell_set.contains(&cell_key))
-                            .count();
-                        let total_count = sharing_cells.len();
-
-                        // Enhanced boundary detection logic
-                        if Self::is_cavity_boundary_facet(bad_count, total_count) {
-                            boundary_facets.push(facet.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Additional validation of boundary facets
-        self.validate_boundary_facets(&boundary_facets, bad_cells.len())?;
-
-        Ok(boundary_facets)
-    }
-
-    /// Recover from cavity boundary facet detection failure.
-    #[allow(dead_code)]
-    fn recover_cavity_boundary_facets(
-        &mut self,
-        tds: &Tds<T, U, V, D>,
-        bad_cells: &[CellKey],
-        vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError> {
-        self.stats.cavity_boundary_recoveries += 1;
-
-        // Recovery Strategy 1: Use more lenient boundary detection criteria
-        let facets = Self::lenient_cavity_boundary_detection(tds, bad_cells);
-        if !facets.is_empty() {
-            return Ok(facets);
-        }
-
-        // Recovery Strategy 2: Reduce the set of bad cells
-        if let Ok(facets) = self.reduced_bad_cell_strategy(tds, bad_cells, vertex)
-            && !facets.is_empty()
+        // return a more specific error with context (will have been caught by validation above)
+        if boundary_handles.is_empty()
+            && !bad_cells.is_empty()
+            && let Some((error_cell, error_facet, error_type)) = first_facet_error
         {
-            return Ok(facets);
-        }
-
-        // Recovery Strategy 3: Use convex hull extension
-        self.convex_hull_extension_strategy(tds, vertex)
-    }
-
-    /// Handle the case where no bad cells are found.
-    #[allow(dead_code)]
-    fn handle_no_bad_cells_case(
-        &self,
-        tds: &mut Tds<T, U, V, D>,
-        vertex: &Vertex<T, U, D>,
-    ) -> Result<RobustInsertionInfo, InsertionError> {
-        // This typically means the vertex is outside the convex hull
-        // Try to extend the hull by connecting to visible boundary facets
-
-        let visible_facets = self.find_visible_boundary_facets(tds, vertex)?;
-
-        if visible_facets.is_empty() {
-            return Err(InsertionError::HullExtensionFailure {
-                reason: "No visible boundary facets found for hull extension".to_string(),
-            });
-        }
-
-        // Add the vertex to the TDS if it's not already there
-        <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
-
-        let cells_created =
-            <Self as InsertionAlgorithm<T, U, V, D>>::create_cells_from_boundary_facets(
-                tds,
-                &visible_facets,
-                vertex,
-            );
-
-        // Finalize the triangulation to ensure consistency
-        if let Err(e) = <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds) {
             return Err(InsertionError::TriangulationState(
-                TriangulationValidationError::FinalizationFailed {
+                TriangulationValidationError::InconsistentDataStructure {
                     message: format!(
-                        "Failed to finalize triangulation after hull extension. Underlying error: {e}"
+                        "Failed to construct/derive facet during robust cavity mapping: cell={error_cell:?}, facet_index={error_facet}, cause={error_type}"
                     ),
                 },
             ));
         }
 
-        Ok(RobustInsertionInfo {
-            success: true,
-            cells_created,
-            cells_removed: 0,
-            strategy_used: InsertionStrategy::HullExtension,
-            degenerate_case_handled: false,
-        })
+        Ok(boundary_handles)
     }
+
 
     /// Handle degenerate insertion cases with special strategies.
     #[allow(dead_code)]
@@ -922,10 +795,14 @@ where
         matches!((bad_count, total_count), (1, 1 | 2))
     }
 
+    /// Validates boundary facets using the key-based `FacetView` API.
+    ///
+    /// This checks that boundary facets were found when bad cells exist,
+    /// and can perform additional geometric validation if needed.
     #[allow(clippy::unused_self)]
     const fn validate_boundary_facets(
         &self,
-        boundary_facets: &[Facet<T, U, V, D>],
+        boundary_facets: &[(CellKey, u8)],
         bad_cell_count: usize,
     ) -> Result<(), InsertionError> {
         if boundary_facets.is_empty() && bad_cell_count > 0 {
@@ -935,142 +812,30 @@ where
             });
         }
 
-        // Additional validation could check facet geometry, etc.
+        // Additional validation could check facet geometry using FacetView, etc.
+        // For example:
+        // for (cell_key, facet_idx) in boundary_facets {
+        //     if let Some(cell) = tds.cells().get(*cell_key) {
+        //         if let Ok(facet_view) = FacetView::new(tds, *cell_key, *facet_idx) {
+        //             // Validate facet geometry...
+        //         }
+        //     }
+        // }
+
         Ok(())
     }
 
-    #[allow(dead_code)]
-    const fn lenient_cavity_boundary_detection(
-        _tds: &Tds<T, U, V, D>,
-        _bad_cells: &[CellKey],
-    ) -> Vec<Facet<T, U, V, D>> {
-        // Use more permissive criteria for boundary facet detection
-        // This might include facets that are "mostly" boundary facets
-
-        // Implementation would be similar to robust_find_cavity_boundary_facets
-        // but with relaxed criteria
-
-        // For now, return empty to indicate this strategy didn't work
-        Vec::new()
-    }
-
-    #[allow(dead_code)]
-    fn reduced_bad_cell_strategy(
-        &self,
-        tds: &Tds<T, U, V, D>,
-        bad_cells: &[CellKey],
-        _vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError> {
-        // Try with a reduced set of bad cells
-        // Remove cells that might be causing the boundary detection to fail
-
-        if bad_cells.len() <= 1 {
-            return Ok(Vec::new()); // Can't reduce further
-        }
-
-        // Try with just the first half of bad cells
-        let reduced_bad_cells = &bad_cells[..bad_cells.len() / 2];
-        self.robust_find_cavity_boundary_facets(tds, reduced_bad_cells)
-    }
-
-    #[allow(dead_code)]
-    #[allow(clippy::unused_self)]
-    fn convex_hull_extension_strategy(
-        &self,
-        tds: &Tds<T, U, V, D>,
-        vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError> {
-        // Find all boundary facets and check which are visible from the vertex
-        self.find_visible_boundary_facets(tds, vertex)
-    }
-
-    /// Robust implementation of `find_visible_boundary_facets` that handles degenerate cases
-    ///
-    /// This method is more aggressive than the default implementation, using fallback strategies
-    /// when geometric predicates fail or return degenerate results.
-    fn find_visible_boundary_facets(
-        &self,
-        tds: &Tds<T, U, V, D>,
-        vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<Facet<T, U, V, D>>, InsertionError>
-    where
-        T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
-        f64: From<T>,
-        for<'a> &'a T: Div<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        [f64; D]: DeserializeOwned + Serialize + Sized,
-    {
-        use crate::core::collections::{KeyBasedCellMap, fast_hash_map_with_capacity};
-
-        let mut visible_facets = Vec::new();
-
-        // Get all boundary facets (facets shared by exactly one cell) using cache with proper error handling
-        let facet_to_cells = self
-            .try_get_or_build_facet_cache(tds)
-            .map_err(InsertionError::TriangulationState)?;
-
-        let mut cell_facets_cache: KeyBasedCellMap<Vec<Facet<T, U, V, D>>> =
-            fast_hash_map_with_capacity(tds.number_of_cells());
-
-        // Directly iterate over filtered boundary facets without collecting into a temporary Vec
-        for (_facet_key, cells) in facet_to_cells.iter().filter(|(_, cells)| cells.len() == 1) {
-            let (cell_key, facet_index) = cells[0];
-            if let Some(cell) = tds.cells().get(cell_key) {
-                let facets = match cell_facets_cache.entry(cell_key) {
-                    std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
-                    std::collections::hash_map::Entry::Vacant(v) => {
-                        let computed = cell.facets().map_err(|e| {
-                            TriangulationValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Failed to get facets from cell during visibility computation: {e}"
-                                ),
-                            }
-                        })?;
-                        v.insert(computed)
-                    }
-                };
-
-                let idx = usize::from(facet_index);
-                if idx < facets.len() {
-                    let facet = &facets[idx];
-
-                    // Test visibility using robust orientation predicates with fallback
-                    if self.is_facet_visible_from_vertex_robust(tds, facet, vertex, cell_key) {
-                        visible_facets.push(facet.clone());
-                    }
-                } else {
-                    // Fail fast on invalid facet index - indicates TDS corruption
-                    return Err(InsertionError::TriangulationState(
-                        TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Facet index {} out of bounds (cell has {} facets) during visibility computation. \
-                                 This indicates triangulation data structure corruption.",
-                                idx,
-                                facets.len()
-                            ),
-                        },
-                    ));
-                }
-            } else {
-                return Err(InsertionError::TriangulationState(
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: "Cell key not found during visibility computation".to_string(),
-                    },
-                ));
-            }
-        }
-
-        Ok(visible_facets)
-    }
 
     /// Robust helper method to test if a boundary facet is visible from a given vertex
+    ///
+    /// **Phase 3A**: Updated to use lightweight `FacetView` instead of heavyweight `Facet`.
     ///
     /// This method uses multiple fallback strategies when geometric predicates fail
     /// or return degenerate results, making it more suitable for exterior vertex insertion.
     fn is_facet_visible_from_vertex_robust(
         &self,
         tds: &Tds<T, U, V, D>,
-        facet: &Facet<T, U, V, D>,
+        facet_view: &crate::core::facet::FacetView<'_, T, U, V, D>,
         vertex: &Vertex<T, U, D>,
         adjacent_cell_key: crate::core::triangulation_data_structure::CellKey,
     ) -> bool
@@ -1094,10 +859,18 @@ where
             return false;
         };
 
-        // Find the vertex in the adjacent cell that is NOT part of the facet
-        // This is the "opposite" vertex that defines the "inside" side of the facet
-        let facet_vertices = facet.vertices();
-        let cell_vertices = adjacent_cell.vertices();
+        // Phase 3A: Get facet vertices via FacetView (returns iterator over &Vertex)
+        let Ok(facet_vertex_iter) = facet_view.vertices() else {
+            return false;
+        };
+        let facet_vertices: Vec<_> = facet_vertex_iter.collect();
+
+        // Get cell vertices via TDS using vertices
+        let cell_vertices: Vec<_> = adjacent_cell
+            .vertices()
+            .iter()
+            .filter_map(|&vkey| tds.vertices().get(vkey))
+            .collect();
 
         let mut opposite_vertex = None;
         for cell_vertex in cell_vertices {
@@ -1149,7 +922,7 @@ where
             | (Orientation::POSITIVE, Orientation::NEGATIVE) => true,
             (Orientation::DEGENERATE, _) | (_, Orientation::DEGENERATE) => {
                 // Degenerate case - use distance-based fallback for exterior vertices
-                self.fallback_visibility_heuristic(facet, vertex)
+                self.fallback_visibility_heuristic(facet_view, vertex)
             }
             _ => false, // Same orientation = same side = not visible
         }
@@ -1157,12 +930,14 @@ where
 
     /// Fallback visibility heuristic for degenerate cases
     ///
+    /// **Phase 3A**: Updated to use lightweight `FacetView` instead of heavyweight `Facet`.
+    ///
     /// When geometric predicates fail or return degenerate results, this method uses
     /// a distance-based heuristic to determine if a facet should be considered visible.
     /// For exterior vertex insertion, this is more aggressive than the default implementation.
     fn fallback_visibility_heuristic(
         &self,
-        facet: &Facet<T, U, V, D>,
+        facet_view: &crate::core::facet::FacetView<'_, T, U, V, D>,
         vertex: &Vertex<T, U, D>,
     ) -> bool
     where
@@ -1174,7 +949,11 @@ where
             + From<f64>,
         f64: From<T>,
     {
-        let facet_vertices = facet.vertices();
+        // Phase 3A: Get facet vertices via FacetView
+        let Ok(facet_vertex_iter) = facet_view.vertices() else {
+            return false; // Conservatively treat as not visible if we cannot get vertices
+        };
+        let facet_vertices: Vec<_> = facet_vertex_iter.collect();
         if facet_vertices.is_empty() {
             // Conservatively treat as not visible if we cannot compute a centroid
             return false;
@@ -1463,6 +1242,7 @@ mod tests {
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
     use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::traits::insertion_algorithm::InsertionError;
+    use crate::core::util::{derive_facet_key_from_vertices, verify_facet_index_consistency};
     use crate::vertex;
     use approx::assert_abs_diff_eq;
     use approx::assert_abs_diff_ne;
@@ -1474,58 +1254,6 @@ mod tests {
             #[cfg(feature = "test-debug")]
             println!($($arg)*);
         };
-    }
-
-    /// Helper function to verify facet index consistency between neighboring cells
-    ///
-    /// This method checks that the shared facet key computed from both cells'
-    /// perspectives matches, catching subtle neighbor assignment errors.
-    fn verify_facet_index_consistency<T, U, V, const D: usize>(
-        tds: &Tds<T, U, V, D>,
-        cell1_key: CellKey,
-        cell2_key: CellKey,
-        facet_idx: usize,
-        insertion_num: usize,
-    ) where
-        T: CoordinateScalar
-            + std::ops::AddAssign<T>
-            + std::ops::SubAssign<T>
-            + std::iter::Sum
-            + num_traits::cast::NumCast,
-        U: crate::core::traits::data_type::DataType,
-        V: crate::core::traits::data_type::DataType,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    {
-        use crate::core::util::derive_facet_key_from_vertices;
-
-        if let (Some(cell1), Some(cell2)) = (tds.cells().get(cell1_key), tds.cells().get(cell2_key))
-            && let (Ok(facets1), Ok(facets2)) = (cell1.facets(), cell2.facets())
-            && facet_idx < facets1.len()
-        {
-            let facet1 = &facets1[facet_idx];
-            let facet1_vertices = facet1.vertices();
-
-            // Derive the facet key from cell1's perspective
-            if let Ok(facet_key1) = derive_facet_key_from_vertices(&facet1_vertices, tds) {
-                // Find the corresponding facet in cell2 that shares the same vertices
-                let mut found_matching_facet = false;
-                for facet2 in facets2 {
-                    let facet2_vertices = facet2.vertices();
-                    if let Ok(facet_key2) = derive_facet_key_from_vertices(&facet2_vertices, tds)
-                        && facet_key1 == facet_key2
-                    {
-                        found_matching_facet = true;
-                        break;
-                    }
-                }
-
-                assert!(
-                    found_matching_facet,
-                    "No matching facet found between neighboring cells after insertion {insertion_num}: \
-                     cell1 facet key {facet_key1} not found in cell2"
-                );
-            }
-        }
     }
 
     #[test]
@@ -1783,6 +1511,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn test_cavity_based_insertion_consistency() {
         debug_println!("Testing cavity-based insertion maintains TDS consistency");
 
@@ -1852,32 +1581,46 @@ mod tests {
             // Verify neighbor relationships are consistent
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
-                    for (facet_idx, neighbor_uuid) in neighbors.iter().enumerate() {
-                        if let Some(neighbor_uuid) = neighbor_uuid
-                            && let Some(neighbor_key) = tds.cell_key_from_uuid(neighbor_uuid)
-                            && let Some(neighbor) = tds.cells().get(neighbor_key)
+                    for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+                        if let Some(neighbor_key) = neighbor_key_opt
+                            && let Some(neighbor) = tds.cells().get(*neighbor_key)
                             && let Some(neighbor_neighbors) = &neighbor.neighbors
                         {
                             // Each neighbor should also reference this cell as a neighbor
-                            let cell_uuid = tds
-                                .cell_uuid_from_key(cell_key)
-                                .expect("Cell should have UUID");
                             assert!(
                                 neighbor_neighbors
                                     .iter()
-                                    .any(|n| n.as_ref() == Some(&cell_uuid)),
+                                    .any(|n| n.as_ref() == Some(&cell_key)),
                                 "Neighbor relationship should be symmetric after insertion {}",
                                 i + 1
                             );
 
                             // Verify facet indices consistency
-                            verify_facet_index_consistency(
+                            match verify_facet_index_consistency(
                                 &tds,
                                 cell_key,
-                                neighbor_key,
+                                *neighbor_key,
                                 facet_idx,
-                                i + 1,
-                            );
+                            ) {
+                                Ok(true) => {} // Consistent - test passes
+                                Ok(false) => {
+                                    panic!(
+                                        "No matching facet found between neighboring cells after insertion {}: \
+                                         facet {} in cell {:?} not found in cell {:?}",
+                                        i + 1,
+                                        facet_idx,
+                                        cell_key,
+                                        neighbor_key
+                                    );
+                                }
+                                Err(e) => {
+                                    panic!(
+                                        "Error verifying facet index consistency after insertion {}: {}",
+                                        i + 1,
+                                        e
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -2008,32 +1751,46 @@ mod tests {
             // Verify neighbor relationships are consistent
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = &cell.neighbors {
-                    for (facet_idx, neighbor_uuid) in neighbors.iter().enumerate() {
-                        if let Some(neighbor_uuid) = neighbor_uuid
-                            && let Some(neighbor_key) = tds.cell_key_from_uuid(neighbor_uuid)
-                            && let Some(neighbor) = tds.cells().get(neighbor_key)
+                    for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+                        if let Some(neighbor_key) = neighbor_key_opt
+                            && let Some(neighbor) = tds.cells().get(*neighbor_key)
                             && let Some(neighbor_neighbors) = &neighbor.neighbors
                         {
                             // Each neighbor should also reference this cell as a neighbor
-                            let cell_uuid = tds
-                                .cell_uuid_from_key(cell_key)
-                                .expect("Cell should have UUID");
                             assert!(
                                 neighbor_neighbors
                                     .iter()
-                                    .any(|opt| opt.as_ref() == Some(&cell_uuid)),
+                                    .any(|opt| opt.as_ref() == Some(&cell_key)),
                                 "Neighbor relationship should be symmetric after hull extension {}",
                                 i + 1
                             );
 
                             // Verify facet indices consistency
-                            verify_facet_index_consistency(
+                            match verify_facet_index_consistency(
                                 &tds,
                                 cell_key,
-                                neighbor_key,
+                                *neighbor_key,
                                 facet_idx,
-                                i + 1,
-                            );
+                            ) {
+                                Ok(true) => {} // Consistent - test passes
+                                Ok(false) => {
+                                    panic!(
+                                        "No matching facet found between neighboring cells after hull extension {}: \
+                                         facet {} in cell {:?} not found in cell {:?}",
+                                        i + 1,
+                                        facet_idx,
+                                        cell_key,
+                                        neighbor_key
+                                    );
+                                }
+                                Err(e) => {
+                                    panic!(
+                                        "Error verifying facet index consistency after hull extension {}: {}",
+                                        i + 1,
+                                        e
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -2140,7 +1897,7 @@ mod tests {
             for (_, cell) in tds.cells() {
                 // Create efficient signature using sorted UUID array instead of string formatting
                 let mut vertex_uuids: SmallBuffer<uuid::Uuid, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    cell.vertex_uuid_iter().collect();
+                    cell.vertex_uuid_iter(&tds).collect();
                 vertex_uuids.sort_unstable();
 
                 let inserted = cell_signatures.insert(vertex_uuids.clone());
@@ -2177,43 +1934,55 @@ mod tests {
                         && let (Some(neighbors1), Some(neighbors2)) =
                             (&cell1.neighbors, &cell2.neighbors)
                     {
-                        let cell2_uuid = tds
-                            .cell_uuid_from_key(cell2_key)
-                            .expect("Cell2 should have UUID");
-                        let cell1_uuid = tds
-                            .cell_uuid_from_key(cell1_key)
-                            .expect("Cell1 should have UUID");
                         assert!(
-                            neighbors1.iter().flatten().any(|uuid| *uuid == cell2_uuid),
+                            neighbors1.iter().flatten().any(|key| *key == cell2_key),
                             "Cell1 should reference cell2 as neighbor after insertion {}",
                             i + 1
                         );
                         assert!(
-                            neighbors2.iter().flatten().any(|uuid| *uuid == cell1_uuid),
+                            neighbors2.iter().flatten().any(|key| *key == cell1_key),
                             "Cell2 should reference cell1 as neighbor after insertion {}",
                             i + 1
                         );
 
                         // Verify facet indices consistency for the shared facet
-                        verify_facet_index_consistency(
+                        match verify_facet_index_consistency(
                             &tds,
                             cell1_key,
                             cell2_key,
                             facet1_idx as usize,
-                            i + 1,
-                        );
+                        ) {
+                            Ok(true) => {} // Consistent - test passes
+                            Ok(false) => {
+                                panic!(
+                                    "No matching facet found for shared facet after insertion {}: \
+                                     facet {} in cell {:?} not found in cell {:?}",
+                                    i + 1,
+                                    facet1_idx,
+                                    cell1_key,
+                                    cell2_key
+                                );
+                            }
+                            Err(e) => {
+                                panic!(
+                                    "Error verifying facet index consistency after insertion {}: {}",
+                                    i + 1,
+                                    e
+                                );
+                            }
+                        }
                     }
                 }
             }
 
             // 4. All vertices should have proper incident cells assigned
             // Phase 3: incident_cell is now a CellKey, not UUID
-            for (_, vertex) in tds.vertices() {
+            for (vertex_key, vertex) in tds.vertices() {
                 if let Some(incident_cell_key) = vertex.incident_cell
                     && let Some(incident_cell) = tds.cells().get(incident_cell_key)
                 {
-                    let cell_vertices = incident_cell.vertices();
-                    let vertex_is_in_cell = cell_vertices.iter().any(|v| v.uuid() == vertex.uuid());
+                    let cell_vertex_keys = incident_cell.vertices();
+                    let vertex_is_in_cell = cell_vertex_keys.contains(&vertex_key);
                     assert!(
                         vertex_is_in_cell,
                         "Vertex incident cell should contain the vertex after insertion {}",
@@ -3289,14 +3058,14 @@ mod tests {
         }
     }
 
-    /// Test `validate_boundary_facets` error conditions (lines 788-796)
+    /// Test `validate_boundary_facets` error conditions using lightweight handles
     #[test]
     fn test_validate_boundary_facets() {
         let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Test with empty boundary facets but non-zero bad cell count (should error)
-        let empty_facets = vec![];
-        let result = algorithm.validate_boundary_facets(&empty_facets, 3);
+        let empty_handles: Vec<(CellKey, u8)> = vec![];
+        let result = algorithm.validate_boundary_facets(&empty_handles, 3);
         assert!(
             result.is_err(),
             "Should error when no boundary facets found but bad cells exist"
@@ -3320,16 +3089,12 @@ mod tests {
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
         let boundary_facets = tds.boundary_facets().unwrap();
 
-        let boundary_facets_vec: Vec<_> = boundary_facets
-            .map(|fv| {
-                // Convert FacetView to Facet for backward compatibility with validate_boundary_facets
-                let cell = fv.cell().unwrap().clone();
-                let opposite_vertex = *fv.opposite_vertex().unwrap();
-                #[allow(deprecated)]
-                crate::core::facet::Facet::new(cell, opposite_vertex).unwrap()
-            })
+        // Collect lightweight boundary facet handles (CellKey, u8)
+        let boundary_handles: Vec<(CellKey, u8)> = boundary_facets
+            .map(|fv| (fv.cell_key(), fv.facet_index()))
             .collect();
-        let result = algorithm.validate_boundary_facets(&boundary_facets_vec, 1);
+
+        let result = algorithm.validate_boundary_facets(&boundary_handles, 1);
         assert!(result.is_ok(), "Should succeed with valid boundary facets");
     }
 
@@ -3409,14 +3174,10 @@ mod tests {
         let degenerate_vertex = vertex!([0.5, 0.5, 0.5]); // Point at center of tetrahedron
 
         // This should exercise the fallback visibility heuristic path
-        // Convert FacetView to Facet for backward compatibility
-        let cell = test_facet.cell().unwrap().clone();
-        let opposite_vertex = *test_facet.opposite_vertex().unwrap();
-        #[allow(deprecated)]
-        let test_facet_compat = crate::core::facet::Facet::new(cell, opposite_vertex).unwrap();
+        // Use FacetView directly (Phase 3A: key-based API)
         let is_visible = algorithm.is_facet_visible_from_vertex_robust(
             &tds,
-            &test_facet_compat,
+            test_facet,
             &degenerate_vertex,
             adjacent_cell_key,
         );
@@ -3445,12 +3206,8 @@ mod tests {
 
         // Test the fallback visibility heuristic with a normal facet
         for facet in boundary_facets {
-            // Convert FacetView to Facet for backward compatibility with fallback_visibility_heuristic
-            let cell = facet.cell().unwrap().clone();
-            let opposite_vertex = *facet.opposite_vertex().unwrap();
-            #[allow(deprecated)]
-            let facet_compat = crate::core::facet::Facet::new(cell, opposite_vertex).unwrap();
-            let is_visible = algorithm.fallback_visibility_heuristic(&facet_compat, &test_vertex);
+            // Use FacetView directly (Phase 3A: key-based API)
+            let is_visible = algorithm.fallback_visibility_heuristic(&facet, &test_vertex);
             println!("Fallback visibility for far point: {is_visible}");
             // Should typically be true for a far point, but mainly testing no panic
         }
@@ -4326,5 +4083,123 @@ mod tests {
         }
 
         println!("✓ Error propagation testing completed");
+    }
+
+    #[test]
+    fn test_cavity_detection_with_lightweight_facetview() {
+        debug_println!("\n=== Testing Cavity Detection with Lightweight FacetView ===");
+
+        // Create initial tetrahedron
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([0.0, 2.0, 0.0]),
+            vertex!([0.0, 0.0, 2.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        debug_println!("\nInitial TDS:");
+        debug_println!("  Vertices: {}", tds.number_of_vertices());
+        debug_println!("  Cells: {}", tds.number_of_cells());
+
+        // Create interior vertex
+        let interior_vertex = vertex!([0.5, 0.5, 0.5]);
+        debug_println!(
+            "\nInterior vertex: {:?}",
+            interior_vertex.point().to_array()
+        );
+
+        // Create algorithm and test bad cell detection
+        let mut algorithm = RobustBowyerWatson::new();
+
+        // Test bad cells detection
+        debug_println!("\nTesting bad cell detection...");
+        let bad_cells_result = algorithm.find_bad_cells(&tds, &interior_vertex);
+
+        let bad_cells = bad_cells_result.expect("find_bad_cells should succeed");
+        debug_println!("  Bad cells found: {}", bad_cells.len());
+
+        assert!(
+            !bad_cells.is_empty(),
+            "Interior vertex should find bad cells"
+        );
+        debug_println!("  ✓ Bad cells detected correctly");
+
+        // Test cavity boundary detection using LIGHTWEIGHT method
+        debug_println!("\nTesting lightweight cavity boundary facet detection...");
+        let boundary_handles_result =
+            algorithm.robust_find_cavity_boundary_facets_lightweight(&tds, &bad_cells);
+
+        let boundary_handles = boundary_handles_result
+            .expect("find_cavity_boundary_facets_lightweight should succeed");
+        debug_println!("  Boundary facet handles found: {}", boundary_handles.len());
+
+        assert!(
+            !boundary_handles.is_empty(),
+            "Should find boundary facet handles when bad cells exist"
+        );
+        debug_println!(
+            "  ✓ {} boundary facet handles found correctly!",
+            boundary_handles.len()
+        );
+
+        // Verify we can create FacetView from these handles and get vertices
+        debug_println!("\n  Verifying FacetView creation from handles:");
+        for (i, &(cell_key, facet_index)) in boundary_handles.iter().enumerate() {
+            let facet_view = crate::core::facet::FacetView::new(&tds, cell_key, facet_index)
+                .expect("FacetView::new should succeed");
+
+            let vertex_iter = facet_view
+                .vertices()
+                .expect("FacetView::vertices should succeed");
+            let vertex_count = vertex_iter.count();
+            debug_println!(
+                "    Handle {}: FacetView with {} vertices ✓",
+                i,
+                vertex_count
+            );
+
+            assert!(vertex_count > 0, "FacetView {i} should have vertices");
+        }
+
+        debug_println!("\n  ✓ All boundary facet handles are valid and usable!");
+        debug_println!("  ✓ The lightweight FacetView-based approach works correctly!");
+
+        // Now test the full insertion including cell creation
+        debug_println!("\n=== Testing Full Cavity-Based Insertion ===");
+        let mut tds_for_insertion: Tds<f64, Option<()>, Option<()>, 3> =
+            Tds::new(&initial_vertices).unwrap();
+        let mut algorithm_for_insertion = RobustBowyerWatson::new();
+
+        let interior_vertex_for_insertion = vertex!([0.5, 0.5, 0.5]);
+        debug_println!("\nInserting interior vertex into TDS...");
+
+        match algorithm_for_insertion
+            .insert_vertex(&mut tds_for_insertion, interior_vertex_for_insertion)
+        {
+            Ok(info) => {
+                debug_println!(
+                    "  ✓ Successfully inserted! Created {} cells, removed {} cells",
+                    info.cells_created,
+                    info.cells_removed
+                );
+                assert!(info.cells_created > 0, "Should create at least one cell");
+                assert_eq!(info.cells_removed, 1, "Should remove the single bad cell");
+                assert_eq!(
+                    tds_for_insertion.number_of_vertices(),
+                    5,
+                    "Should have 5 vertices"
+                );
+                assert!(
+                    tds_for_insertion.number_of_cells() > 1,
+                    "Should have multiple cells"
+                );
+            }
+            Err(e) => {
+                panic!("❌ Full cavity-based insertion failed: {e}");
+            }
+        }
+
+        debug_println!("\n  ✓ Full cavity-based insertion works correctly!");
     }
 }

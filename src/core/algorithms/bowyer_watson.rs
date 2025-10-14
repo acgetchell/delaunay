@@ -379,6 +379,52 @@ mod tests {
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
 
+    #[test]
+    fn test_incremental_bowyer_watson_cavity_insertion() {
+        println!("\n=== Testing IncrementalBowyerWatson Cavity-Based Insertion ===");
+
+        // Create initial tetrahedron
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([0.0, 2.0, 0.0]),
+            vertex!([0.0, 0.0, 2.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        println!("Initial TDS:");
+        println!("  Vertices: {}", tds.number_of_vertices());
+        println!("  Cells: {}", tds.number_of_cells());
+
+        // Create algorithm
+        let mut algorithm = IncrementalBowyerWatson::new();
+
+        // Insert interior vertex
+        let interior_vertex = vertex!([0.5, 0.5, 0.5]);
+        println!(
+            "\nInserting interior vertex at {:?}...",
+            interior_vertex.point().to_array()
+        );
+
+        match algorithm.insert_vertex(&mut tds, interior_vertex) {
+            Ok(info) => {
+                println!(
+                    "  ✓ Successfully inserted! Created {} cells, removed {} cells",
+                    info.cells_created, info.cells_removed
+                );
+                assert!(info.cells_created > 0, "Should create at least one cell");
+                assert_eq!(info.cells_removed, 1, "Should remove the single bad cell");
+                assert_eq!(tds.number_of_vertices(), 5, "Should have 5 vertices");
+                assert!(tds.number_of_cells() > 1, "Should have multiple cells");
+            }
+            Err(e) => {
+                panic!("❌ IncrementalBowyerWatson cavity-based insertion failed: {e}");
+            }
+        }
+
+        println!("\n  ✓ IncrementalBowyerWatson cavity-based insertion works correctly!");
+    }
+
     /// Helper function to analyze a triangulation's state for debugging
     #[allow(unused_variables)]
     fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>, label: &str) {
@@ -476,7 +522,10 @@ mod tests {
                 let vertex_coords: Vec<[f64; 3]> = cell
                     .vertices()
                     .iter()
-                    .map(|v| v.point().to_array())
+                    .map(|vk| {
+                        let v = &tds.vertices()[*vk];
+                        v.point().to_array()
+                    })
                     .collect();
                 eprintln!("Cell {i}: {vertex_coords:?}");
 
@@ -805,7 +854,10 @@ mod tests {
                 let coords: Vec<[f64; 3]> = cell
                     .vertices()
                     .iter()
-                    .map(|v| v.point().to_array())
+                    .map(|vk| {
+                        let v = &tds.vertices()[*vk];
+                        v.point().to_array()
+                    })
                     .collect();
                 #[cfg(debug_assertions)]
                 eprintln!("  Bad cell {:?}: {:?}", cell.uuid(), coords);

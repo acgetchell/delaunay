@@ -1,9 +1,9 @@
 use crate::core::collections::{FacetToCellsMap, FastHashMap, SmallBuffer};
-use crate::core::facet::{Facet, FacetError};
+use crate::core::facet::FacetError;
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::traits::facet_cache::FacetCacheProvider;
-use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
+use crate::core::triangulation_data_structure::{CellKey, Tds, TriangulationValidationError};
 use crate::core::util::derive_facet_key_from_vertices;
 use crate::core::vertex::Vertex;
 use crate::geometry::point::Point;
@@ -182,7 +182,8 @@ where
     [T; D]: Copy + Sized + Serialize + DeserializeOwned,
 {
     /// The boundary facets that form the convex hull
-    pub hull_facets: Vec<Facet<T, U, V, D>>,
+    /// Stored as (CellKey, facet_index) pairs to enable reconstruction of FacetView
+    pub hull_facets: Vec<(CellKey, u8)>,
     /// Cache for the facet-to-cells mapping to avoid rebuilding it for each facet check
     /// Uses `ArcSwapOption` for lock-free atomic updates when cache needs invalidation
     /// This avoids Some/None wrapping boilerplate compared to `ArcSwap<Option<T>>`
@@ -285,32 +286,11 @@ where
             ConvexHullConstructionError::BoundaryFacetExtractionFailed { source }
         })?;
 
-        // Collect the iterator into a Vec for storage in the struct
-        // Note: This temporarily stores the deprecated Facet objects until we can migrate
-        // the ConvexHull struct itself to use iterator-based APIs
-        let hull_facets: Result<Vec<_>, ConvexHullConstructionError> = hull_facets_iter
-            .map(|facet_view| {
-                // Convert FacetView to Facet for backward compatibility
-                // This will be removed when ConvexHull is migrated to use FacetView
-                let cell = facet_view
-                    .cell()
-                    .map_err(
-                        |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
-                    )?
-                    .clone();
-                #[allow(clippy::clone_on_copy)] // Explicit clone preferred over Copy constraint
-                let opposite_vertex = facet_view
-                    .opposite_vertex()
-                    .map_err(
-                        |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
-                    )?
-                    .clone();
-                #[allow(deprecated)]
-                Facet::new(cell, opposite_vertex)
-                    .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })
-            })
+        // Collect facet handles (CellKey, facet_index) for storage
+        // These can be used to reconstruct FacetViews when needed
+        let hull_facets: Vec<_> = hull_facets_iter
+            .map(|facet_view| (facet_view.cell_key(), facet_view.facet_index()))
             .collect();
-        let hull_facets = hull_facets?;
 
         // Additional validation: ensure we have at least one boundary facet
         if hull_facets.is_empty() {
@@ -461,12 +441,12 @@ where
         // Find the vertex in the adjacent cell that is NOT part of the facet
         // This is the "opposite" or "inside" vertex
         // Optimization: Use vertex keys instead of UUID comparison for better performance
-        let cell_vertex_keys = tds.get_cell_vertex_keys(cell_key).map_err(|source| {
+        let cell_vertices = tds.get_cell_vertices(cell_key).map_err(|source| {
             ConvexHullConstructionError::AdjacentCellResolutionFailed { source }
         })?;
 
         // Get vertex keys for facet vertices (convert UUIDs to keys once)
-        let facet_vertex_keys: Result<Vec<_>, _> = facet_vertices
+        let facet_vertices: Result<Vec<_>, _> = facet_vertices
             .iter()
             .map(|v| {
                 tds.vertex_key_from_uuid(&v.uuid()).ok_or(
@@ -476,15 +456,15 @@ where
                 )
             })
             .collect();
-        let facet_vertex_keys = facet_vertex_keys?;
+        let facet_vertices = facet_vertices?;
 
         // Find the cell vertex key that's not in the facet
         // Optimized: Use a sorted merge-like approach to avoid O(D²) contains() calls
         // Since both lists are small (D and D+1 elements), we can sort and scan efficiently
-        let mut sorted_facet_keys = facet_vertex_keys;
+        let mut sorted_facet_keys = facet_vertices;
         sorted_facet_keys.sort_unstable();
 
-        let inside_vertex_key = cell_vertex_keys
+        let inside_vertex_key = cell_vertices
             .iter()
             .find(|&&cell_key| sorted_facet_keys.binary_search(&cell_key).is_err())
             .copied()
@@ -500,7 +480,11 @@ where
         )?;
 
         // Create test simplices to compare orientations
-        let facet_points: Vec<Point<T, D>> = facet_vertices.iter().map(|v| *v.point()).collect();
+        // Use sorted_facet_keys which contains the vertex keys
+        let facet_points: Vec<Point<T, D>> = sorted_facet_keys
+            .iter()
+            .filter_map(|&vkey| tds.get_vertex_by_key(vkey).map(|v| *v.point()))
+            .collect();
 
         // Simplex 1: facet vertices + inside vertex
         let mut simplex_with_inside = facet_points.clone();
