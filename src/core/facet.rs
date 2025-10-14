@@ -360,12 +360,13 @@ where
         let facet_index = usize::from(self.facet_index);
 
         // Phase 3A: Use vertices and resolve via TDS
+        // Use filter_map with get() to safely handle potentially invalid vertex keys
         Ok(cell
             .vertices()
             .iter()
             .enumerate()
             .filter(move |(i, _)| *i != facet_index)
-            .map(move |(_, &vkey)| &self.tds.vertices()[vkey]))
+            .filter_map(move |(_, &vkey)| self.tds.vertices().get(vkey)))
     }
 
     /// Returns the opposite vertex (the vertex not included in the facet).
@@ -395,7 +396,11 @@ where
                 facet_count: vertices.len(),
             })?;
 
-        Ok(&self.tds.vertices()[*vkey])
+        // Use get() to safely handle potentially invalid vertex keys
+        self.tds
+            .vertices()
+            .get(*vkey)
+            .ok_or(FacetError::CellNotFoundInTriangulation)
     }
 
     /// Returns the cell containing this facet.
@@ -451,9 +456,9 @@ where
 // Trait implementations for FacetView
 impl<T, U, V, const D: usize> Debug for FacetView<'_, T, U, V, D>
 where
-    T: CoordinateScalar + Debug,
-    U: DataType + Debug,
-    V: DataType + Debug,
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

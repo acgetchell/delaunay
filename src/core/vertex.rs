@@ -264,8 +264,10 @@ where
                             if incident_cell.is_some() {
                                 return Err(de::Error::duplicate_field("incident_cell"));
                             }
-                            // Phase 3: Deserialize CellKey (handles both old UUID format and new key format)
-                            incident_cell = Some(map.next_value()?);
+                            // Phase 3: Ignore payload to accept both legacy UUID and new CellKey formats.
+                            // TDS reconstructs incident_cell mappings via assign_incident_cells().
+                            let _ = map.next_value::<IgnoredAny>()?;
+                            incident_cell = Some(None);
                         }
                         "data" => {
                             if data.is_some() {

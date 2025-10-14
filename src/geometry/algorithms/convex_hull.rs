@@ -119,6 +119,18 @@ pub enum ConvexHullConstructionError {
         #[source]
         source: FacetError,
     },
+    /// Convex hull used with a modified triangulation (stale hull).
+    #[error(
+        "ConvexHull is stale and cannot be used with this TDS. The TDS has been modified since \
+         the hull was created (hull generation: {hull_generation}, TDS generation: {tds_generation}). \
+         Create a new ConvexHull by calling from_triangulation()."
+    )]
+    StaleHull {
+        /// The generation counter of the hull at creation time.
+        hull_generation: u64,
+        /// The current generation counter of the TDS.
+        tds_generation: u64,
+    },
 }
 
 // =============================================================================
@@ -136,19 +148,22 @@ pub enum ConvexHullConstructionError {
 /// Delaunay triangulations, point-in-hull testing, and facet visibility
 /// determination for incremental construction algorithms.
 ///
-/// # Important: `ConvexHull` is an Immutable Snapshot
+/// # Important: `ConvexHull` is a Logically Immutable Snapshot
 ///
-/// **A `ConvexHull` instance is an immutable snapshot of the triangulation at creation time.**
+/// **A `ConvexHull` instance is a logically immutable snapshot of the triangulation at creation time.**
 /// The hull stores lightweight facet handles `(CellKey, u8)` which reference cells in the TDS.
 /// These handles become **invalid** if the TDS is modified (e.g., by adding/removing vertices or cells).
 ///
-/// ## Immutability Design
+/// ## Logical Immutability Design
 ///
-/// Once created, a `ConvexHull` cannot be modified. There are no mutating methods.
+/// Once created, a `ConvexHull` cannot be modified. There are no public mutating methods for the hull topology.
+/// However, **internal caches may update** via interior mutability (`ArcSwapOption` for the facet cache,
+/// `AtomicU64` for generation tracking), allowing performance optimizations without requiring `&mut self`.
+///
 /// This design ensures:
-/// - Thread-safe sharing without locking (beyond internal cache atomics)
+/// - Thread-safe sharing without locking (cache updates use lock-free atomics)
 /// - Clear ownership semantics - a hull belongs to a specific TDS state
-/// - Prevention of stale hull misuse
+/// - Prevention of stale hull misuse (validated via generation counters)
 ///
 /// ## Validity Checking
 ///
@@ -262,7 +277,10 @@ where
     /// **WARNING**: These handles are only valid for the TDS at the generation captured
     /// in `cached_generation`. If the TDS is modified, these handles become stale.
     /// Use `is_valid_for_tds()` to check validity before use.
-    pub hull_facets: Vec<(CellKey, u8)>,
+    ///
+    /// This field is private to prevent external mutation. Use the provided read-only
+    /// accessors (`facets()`, `get_facet()`, `facet_count()`) to access hull facets.
+    hull_facets: Vec<(CellKey, u8)>,
     /// Cache for the facet-to-cells mapping to avoid rebuilding it for each facet check
     /// Uses `ArcSwapOption` for lock-free atomic updates when cache needs invalidation
     /// This avoids Some/None wrapping boilerplate compared to `ArcSwap<Option<T>>`
@@ -475,9 +493,26 @@ where
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
     ) -> Result<bool, ConvexHullConstructionError> {
+        // Debug build: catch stale-hull misuse early
+        // Allow generation 0 (indicates manual cache invalidation expecting rebuild)
+        let hull_gen = self.cached_generation.load(Ordering::Acquire);
+        let tds_gen = tds.generation();
+        debug_assert!(
+            hull_gen == 0 || hull_gen == tds_gen,
+            "ConvexHull used with a modified TDS; rebuild the hull (hull_gen={hull_gen}, tds_gen={tds_gen})"
+        );
+
+        // Production build: return error for stale hull (but allow generation 0 for cache rebuild)
+        if hull_gen != 0 && hull_gen != tds_gen {
+            return Err(ConvexHullConstructionError::StaleHull {
+                hull_generation: hull_gen,
+                tds_generation: tds_gen,
+            });
+        }
+
         // Phase 3C: Create FacetView from lightweight handle
-        let (cell_key, facet_index) = *facet_handle;
-        let facet_view = FacetView::new(tds, cell_key, facet_index)
+        let (facet_cell_key, facet_index) = *facet_handle;
+        let facet_view = FacetView::new(tds, facet_cell_key, facet_index)
             .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?;
 
         // Get the vertices that make up this facet
@@ -528,12 +563,12 @@ where
             });
         }
 
-        let (cell_key, _facet_index) = adjacent_cells[0];
+        let (adj_cell_key, _facet_index) = adjacent_cells[0];
 
         // Find the vertex in the adjacent cell that is NOT part of the facet
         // This is the "opposite" or "inside" vertex
         // Optimization: Use vertex keys instead of UUID comparison for better performance
-        let cell_vertices = tds.get_cell_vertices(cell_key).map_err(|source| {
+        let cell_vertices = tds.get_cell_vertices(adj_cell_key).map_err(|source| {
             ConvexHullConstructionError::AdjacentCellResolutionFailed { source }
         })?;
 
@@ -575,8 +610,14 @@ where
         // Use sorted_facet_keys which contains the vertex keys
         let facet_points: Vec<Point<T, D>> = sorted_facet_keys
             .iter()
-            .filter_map(|&vkey| tds.get_vertex_by_key(vkey).map(|v| *v.point()))
-            .collect();
+            .map(|&vkey| {
+                tds.get_vertex_by_key(vkey).map(|v| *v.point()).ok_or(
+                    ConvexHullConstructionError::VisibilityCheckFailed {
+                        source: FacetError::InsideVertexNotFound,
+                    },
+                )
+            })
+            .collect::<Result<_, _>>()?;
 
         // Simplex 1: facet vertices + inside vertex
         let mut simplex_with_inside = facet_points.clone();
@@ -764,6 +805,11 @@ where
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
     ) -> Result<Vec<usize>, ConvexHullConstructionError> {
+        // Hoist cache loading once before the loop to avoid redundant validations
+        let _facet_cache = self
+            .try_get_or_build_facet_cache(tds)
+            .map_err(|source| ConvexHullConstructionError::FacetCacheBuildFailed { source })?;
+
         let mut visible_facets = Vec::new();
 
         for (index, &facet_handle) in self.hull_facets.iter().enumerate() {
@@ -1268,6 +1314,13 @@ where
     /// This method forces the cache to be rebuilt on the next visibility test.
     /// It can be useful when you know the underlying triangulation has changed
     /// and you want to ensure the cache is refreshed, or for manual cache management.
+    ///
+    /// # Interior Mutability
+    ///
+    /// This method takes `&self` (not `&mut self`) and is safe to call on shared hulls
+    /// due to interior mutability via `ArcSwapOption` (for the facet cache) and `AtomicU64`
+    /// (for generation tracking). These lock-free atomic operations allow cache invalidation
+    /// without exclusive mutable access.
     ///
     /// # Examples
     ///
@@ -3842,6 +3895,8 @@ mod tests {
 
     #[test]
     #[allow(deprecated)] // Test uses deprecated method intentionally for backward compatibility
+    // TODO: Remove this test once get_or_build_facet_cache is removed after all downstreams
+    // migrate to try_get_or_build_facet_cache. Track migration via GitHub issue if needed.
     fn test_get_or_build_facet_cache() {
         println!("Testing get_or_build_facet_cache method");
 
@@ -3938,6 +3993,8 @@ mod tests {
 
     #[test]
     #[allow(deprecated)] // Test uses deprecated method intentionally for integration testing
+    // TODO: Migrate this test to use try_get_or_build_facet_cache once get_or_build_facet_cache
+    // is removed. Track migration via GitHub issue if needed.
     fn test_helper_methods_integration() {
         println!("Testing integration between helper methods");
 

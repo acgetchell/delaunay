@@ -270,7 +270,7 @@ fn test_point_containment_single(
     description: &str,
     tds: &Tds<f64, (), (), 3>,
 ) {
-    let coords = point.to_array();
+    let coords = point.coords();
 
     let start = Instant::now();
     match hull.is_point_outside(point, tds) {
@@ -322,7 +322,7 @@ fn analyze_visible_facets(tds: &Tds<f64, (), (), 3>) {
     ];
 
     for (point, description) in test_points {
-        let coords = point.to_array();
+        let coords = point.coords();
 
         let start = Instant::now();
         match hull.find_visible_facets(&point, tds) {
@@ -359,7 +359,7 @@ fn analyze_visible_facets(tds: &Tds<f64, (), (), 3>) {
     // Test nearest visible facet finding
     println!("\n  Nearest Visible Facet Analysis:");
     let test_point = Point::new([15.0, 15.0, 15.0]);
-    let coords = test_point.to_array();
+    let coords = test_point.coords();
 
     let start = Instant::now();
     match hull.find_nearest_visible_facet(&test_point, tds) {

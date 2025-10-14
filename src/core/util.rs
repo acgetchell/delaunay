@@ -432,7 +432,7 @@ where
         }
     }
 
-    Ok(facet_key_from_vertices(&vertices))
+    Ok(facet_key_from_vertices(&vertices[..]))
 }
 
 /// Verifies facet index consistency between two neighboring cells.
@@ -535,20 +535,14 @@ where
         });
     }
 
-    // Get the facet from cell1
+    // Get the facet from cell1 and compute its key
     let cell1_facet = &cell1_facets[facet_idx];
+    let cell1_key_value = cell1_facet.key()?;
 
-    // Derive the facet key from cell1's perspective
-    let cell1_vertices_vec: Vec<_> = cell1_facet.vertices()?.copied().collect();
-    let cell1_key_value = derive_facet_key_from_vertices(&cell1_vertices_vec, tds)?;
-
-    // Find the corresponding facet in cell2 that shares the same vertices
+    // Find matching facet in cell2
     for cell2_facet in &cell2_facets {
-        let cell2_vertices_vec: Vec<_> = cell2_facet.vertices()?.copied().collect();
-        let cell2_key_value = derive_facet_key_from_vertices(&cell2_vertices_vec, tds)?;
-
-        if cell1_key_value == cell2_key_value {
-            return Ok(true); // Found matching facet
+        if cell1_key_value == cell2_facet.key()? {
+            return Ok(true);
         }
     }
 

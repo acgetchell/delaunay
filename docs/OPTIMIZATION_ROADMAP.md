@@ -5,7 +5,7 @@
 This document outlines the comprehensive optimization strategy for the Delaunay triangulation library, organized into 4 distinct phases.
 The goal is to achieve maximum performance while maintaining 100% backward compatibility for public APIs.
 
-**Overall Status**: Phase 1 ✅ COMPLETE | Phase 2 ✅ COMPLETE (v0.4.4) | Phase 3 🔄 IN PROGRESS (3A ✅ Complete, 3C In Progress) | Phase 4 📋 PLANNED
+**Overall Status**: Phase 1 ✅ COMPLETE | Phase 2 ✅ COMPLETE (v0.4.4) | Phase 3 ✅ COMPLETE (v0.5.0-v0.5.1) | Phase 4 📋 PLANNED
 
 ## 🎯 Strategic Goals
 
@@ -19,11 +19,11 @@ The goal is to achieve maximum performance while maintaining 100% backward compa
 
 ## 📊 Phase Overview
 
-| Phase | Name | Status | Impact | Risk |
+|| Phase | Name | Status | Impact | Risk |
 |-------|------|--------|--------|------|
 | 1 | Collection Optimization | ✅ COMPLETE | 2-3x hash performance | Low |
 | 2 | Key-Based Internal APIs | ✅ COMPLETE | 20-40% hot path improvement | Medium |
-| 3 | Structure Refactoring | 🔄 IN PROGRESS | 50% memory reduction | High |
+| 3 | Structure Refactoring | ✅ COMPLETE | 50% memory reduction | High |
 | 4 | Collection Abstraction | 📋 PLANNED | 10-15% iteration improvement | Low |
 
 ---
@@ -255,11 +255,11 @@ fn process_cell_neighbors_by_key(&self, cell_key: CellKey) {
 
 ---
 
-## Phase 3: Structure Refactoring 🔄 IN PROGRESS
+## Phase 3: Structure Refactoring ✅ COMPLETE
 
-### Status: 🔄 Phase 3A ✅ COMPLETE (October 2025) | Phase 3C 🔄 IN PROGRESS
+### Status: ✅ COMPLETE (October 2025 - v0.5.1)
 
-### Target: Q4 2025 (Phase 3A complete, 3C in progress)
+### Completed: October 2025 (Phases 3A and 3C both complete)
 
 ### Recent Progress (v0.4.4+)
 
@@ -285,6 +285,7 @@ The foundation for Phase 3 has been significantly strengthened with robust infra
 **Status**: ✅ COMPLETE - All quality checks passing
 
 - **Test Results**: 772 unit tests passing, 194 doc tests passing
+- **Commit**: `6f03fab` - "Changed: Refactors core TDS for key-based storage"
 - **Documentation**: Archived in `docs/archive/phase_3a_implementation_guide.md`
 - **Architecture Delivered**: TDS-centric with iterator patterns (zero-cost abstraction)
 
@@ -297,28 +298,40 @@ The foundation for Phase 3 has been significantly strengthened with robust infra
 - ✅ CellBuilder deprecated, Cell::new() made internal
 - ✅ All deprecations versioned (v0.5.1 -> v0.6.0)
 - ✅ Documentation and quality checks complete
+- ✅ Replaced fxhash with rustc-hash for better performance
 
 **Performance Impact**:
 
 - Memory: ~90% reduction per cell (VertexKey vs full Vertex object)
 - Parallelization: Keys are `Copy + Send + Sync`
 - Cache locality: Direct SlotMap indexing (1-2ns vs 5-10ns closure overhead)
+- Hash operations: rustc-hash provides improved performance characteristics
 
-#### 🔄 Current Focus: Phase 3C - Complete Facet Migration
+#### ✅ Phase 3C Complete (October 2025) - Complete Facet Migration
 
-**Status**: 🔄 IN PROGRESS
+**Status**: ✅ COMPLETE (Completed during Phase 3A)
 
-**Primary Document**: `docs/phase_3c_action_plan.md`
+**Commit**: `6f03fab` - All Phase 3C work was completed as part of comprehensive Phase 3A refactor
 
-**Remaining Work**:
+**Primary Document**: `docs/archive/phase_3c_action_plan.md` (archived after completion)
 
-- Update `InsertionAlgorithm` trait method signatures
-- Complete `ConvexHull` module refactoring
-- Migrate remaining trait/algorithm code to use lightweight facet handles
+**Completed Work**:
+
+- ✅ Updated `InsertionAlgorithm` trait method signatures to use `(CellKey, u8)` tuples
+- ✅ Completed `ConvexHull` module refactoring with key-based storage
+- ✅ Migrated all trait/algorithm code to use lightweight facet handles
+- ✅ All 772 tests passing with no public API breakage
+
+**Key Design Decisions**:
+
+- **ConvexHull Design**: Implemented Option B (pass &Tds as parameter) for simplicity
+- **No lifetime parameters**: ConvexHull struct remains simple without lifetime complexity
+- **Backward compatibility**: All public APIs maintained despite internal changes
 
 **Historical Documentation** (archived):
 
 - `docs/archive/phase_3a_implementation_guide.md` - Complete implementation guide for Phase 3A
+- `docs/archive/phase_3c_action_plan.md` - Phase 3C action plan (completed during 3A)
 - `docs/archive/optimization_recommendations_historical.md` - Original optimization analysis
 
 ### Objective

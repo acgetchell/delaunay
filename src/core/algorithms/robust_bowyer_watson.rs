@@ -278,7 +278,7 @@ where
 
         if !bad_cells.is_empty()
             && let Ok(boundary_handles) =
-                self.find_cavity_boundary_facets_lightweight_with_robust_fallback(tds, &bad_cells)
+                self.find_cavity_boundary_facets_with_robust_fallback(tds, &bad_cells)
             && !boundary_handles.is_empty()
         {
             // Use the trait's helper methods for the actual insertion
@@ -309,11 +309,14 @@ where
                 extracted_facet_data.push(facet_vertices);
             }
 
-            let cells_removed = bad_cells.len();
-
-            // Use trait methods for consistency
+            // Compute actual removals after deletion to avoid miscounting
+            // (handles duplicates and cells that may already be gone)
             <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
             <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
+            let cells_removed = bad_cells
+                .iter()
+                .filter(|&&ck| tds.cells().get(ck).is_none())
+                .count();
 
             let mut cells_created = 0;
             for facet_vertices in extracted_facet_data {
@@ -473,7 +476,7 @@ where
 
     /// Find cavity boundary facets using lightweight handles with robust fallback.
     ///
-    /// This optimized approach uses the lightweight `find_cavity_boundary_facets_lightweight` method
+    /// This optimized approach uses the lightweight `find_cavity_boundary_facets` method
     /// first, then applies robust predicates for edge cases, returning lightweight handles instead
     /// of heavyweight Facet objects for improved performance.
     ///
@@ -482,7 +485,7 @@ where
     /// The returned handles `(CellKey, u8)` are only valid while the referenced cells exist.
     /// If you plan to remove cells (e.g., via `remove_bad_cells`), you MUST convert the handles
     /// to Facet objects BEFORE removing the cells, otherwise the handles become invalid.
-    fn find_cavity_boundary_facets_lightweight_with_robust_fallback(
+    fn find_cavity_boundary_facets_with_robust_fallback(
         &self,
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
@@ -494,20 +497,18 @@ where
         ordered_float::OrderedFloat<f64>: From<T>,
     {
         // First try to find boundary facets using the lightweight trait method
-        match InsertionAlgorithm::<T, U, V, D>::find_cavity_boundary_facets_lightweight(
-            self, tds, bad_cells,
-        ) {
+        match InsertionAlgorithm::<T, U, V, D>::find_cavity_boundary_facets(self, tds, bad_cells) {
             Ok(boundary_handles) => {
                 // If the lightweight method succeeds and finds facets, use them
                 if !boundary_handles.is_empty() {
                     return Ok(boundary_handles);
                 }
                 // If lightweight method succeeds but finds no facets, try robust method as fallback
-                self.robust_find_cavity_boundary_facets_lightweight(tds, bad_cells)
+                self.robust_find_cavity_boundary_facets(tds, bad_cells)
             }
             Err(_) => {
                 // If lightweight method fails, use robust method as fallback
-                self.robust_find_cavity_boundary_facets_lightweight(tds, bad_cells)
+                self.robust_find_cavity_boundary_facets(tds, bad_cells)
             }
         }
     }
@@ -619,7 +620,7 @@ where
     /// providing significant performance improvements for boundary facet detection.
     ///
     /// Made `pub(crate)` for testing purposes.
-    pub(crate) fn robust_find_cavity_boundary_facets_lightweight(
+    pub(crate) fn robust_find_cavity_boundary_facets(
         &self,
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
@@ -3384,7 +3385,7 @@ mod tests {
         let all_cell_keys: Vec<_> = tds.cells().keys().collect();
         let bad_cells = &all_cell_keys[..1];
 
-        let result = algorithm.robust_find_cavity_boundary_facets_lightweight(&tds, bad_cells);
+        let result = algorithm.robust_find_cavity_boundary_facets(&tds, bad_cells);
 
         match result {
             Ok(boundary_facet_handles) => {
@@ -4141,10 +4142,10 @@ mod tests {
         // Test cavity boundary detection using LIGHTWEIGHT method
         debug_println!("\nTesting lightweight cavity boundary facet detection...");
         let boundary_handles_result =
-            algorithm.robust_find_cavity_boundary_facets_lightweight(&tds, &bad_cells);
+            algorithm.robust_find_cavity_boundary_facets(&tds, &bad_cells);
 
-        let boundary_handles = boundary_handles_result
-            .expect("find_cavity_boundary_facets_lightweight should succeed");
+        let boundary_handles =
+            boundary_handles_result.expect("find_cavity_boundary_facets should succeed");
         debug_println!("  Boundary facet handles found: {}", boundary_handles.len());
 
         assert!(

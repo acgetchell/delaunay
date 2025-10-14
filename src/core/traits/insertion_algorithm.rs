@@ -1108,7 +1108,8 @@ where
 
     /// Find the boundary facets of a cavity formed by removing bad cells
     ///
-    /// **Phase 3C**: Returns lightweight facet handles `(CellKey, u8)` instead of heavyweight `Facet` objects.
+    /// Returns lightweight facet handles `(CellKey, u8)` instead of heavyweight `Facet` objects
+    /// for optimal performance.
     ///
     /// The boundary facets form the interface between the cavity (bad cells to be removed)
     /// and the good cells that remain. These facets will be used to create new cells
@@ -1121,12 +1122,23 @@ where
     ///
     /// # Returns
     ///
-    /// A vector of boundary facet handles `(CellKey, facet_index)`, or an error if computation fails.
-    /// Each handle can be used to create a `FacetView` on-demand.
+    /// A vector of `(CellKey, u8)` pairs representing boundary facets as (cell, `facet_index`).
+    /// Each pair can be used to create a `FacetView` on-demand for further operations.
+    ///
+    /// **Important**: These handles are only valid while the referenced cells exist in the TDS.
+    /// If cells will be removed (e.g., during cavity-based insertion), convert handles to
+    /// concrete Facet objects before removing cells.
     ///
     /// # Errors
     ///
     /// Returns an error if the cavity boundary computation fails due to topological issues.
+    ///
+    /// # Performance Note
+    ///
+    /// This method is optimized for hot paths in insertion algorithms:
+    /// - **Zero allocation** for facet creation (references existing TDS data)
+    /// - **Memory efficient** - no Cell cloning required
+    /// - **Fast** - direct access to TDS data structures
     fn find_cavity_boundary_facets(
         &self,
         tds: &Tds<T, U, V, D>,
@@ -1144,13 +1156,7 @@ where
 
         let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
 
-        // Use the canonical facet-to-cells map from TDS (already uses VertexKeys)
-        // Default trait implementation cannot access concrete type's cache,
-        // so we use try_build which returns Result.
-        //
-        // Performance note: Concrete implementations that also implement FacetCacheProvider
-        // should override this method to use get_or_build_facet_cache() for better performance
-        // in hot paths where this method is called repeatedly.
+        // Use the canonical facet-to-cells map from TDS
         let facet_to_cells = tds.build_facet_to_cells_map().map_err(|e| {
             TriangulationValidationError::InconsistentDataStructure {
                 message: format!("Failed to build facet-to-cells map: {e}"),
@@ -1159,8 +1165,6 @@ where
 
         // Process each facet in the map to identify boundary facets
         for sharing_cells in facet_to_cells.values() {
-            // Count how many bad vs good cells share this facet without allocation
-            // Note: sharing_cells contains (CellKey, facet_index) pairs
             let total_count = sharing_cells.len();
             if total_count > 2 {
                 return Err(InsertionError::TriangulationState(
@@ -1191,7 +1195,7 @@ where
             // 1. Exactly one bad cell uses it (boundary between bad and good)
             // 2. OR it's a true boundary facet (only one cell total) that's bad
             if bad_count == 1 && (total_count == 2 || total_count == 1) {
-                // Phase 3C: Store lightweight handle directly - just validate it exists
+                // Store lightweight handle directly - just validate it exists
                 if let Some((cell_key, facet_index)) = single_bad_cell
                     && let Some(cell) = tds.cells().get(cell_key)
                 {
@@ -1220,159 +1224,6 @@ where
         }
 
         Ok(boundary_facet_handles)
-    }
-
-    /// Find cavity boundary facets using lightweight `FacetView` (Phase 3 optimization).
-    ///
-    /// This is an optimized version of `find_cavity_boundary_facets` that returns lightweight
-    /// `FacetView` references instead of heavyweight `Facet` objects. This provides significant
-    /// performance benefits:
-    /// - **18x performance improvement** over heavyweight Facet objects
-    /// - **Zero allocation** for facet creation (references existing TDS data)
-    /// - **Memory efficient** - no Cell cloning required
-    ///
-    /// The method identifies facets that lie on the boundary between bad cells (to be removed)
-    /// and good cells (to be kept). These boundary facets define the cavity that will be
-    /// filled with new cells during vertex insertion.
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - The triangulation data structure
-    /// * `bad_cells` - Cell keys of cells to be removed (forming the cavity)
-    ///
-    /// # Returns
-    ///
-    /// A vector of `(CellKey, u8)` pairs representing boundary facets as (cell, `facet_index`).
-    /// Each pair can be used to create a `FacetView` on-demand for further operations.
-    ///
-    /// **Important**: These handles are only valid while the referenced cells exist in the TDS.
-    /// If cells will be removed (e.g., during cavity-based insertion), convert handles to
-    /// concrete Facet objects before removing cells.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the cavity boundary computation fails due to topological issues.
-    ///
-    /// # Performance Note
-    ///
-    /// This method is optimized for hot paths in insertion algorithms. Unlike the heavyweight
-    /// `find_cavity_boundary_facets`, it avoids:
-    /// - Cell cloning (expensive allocation)
-    /// - Facet object creation (more allocation)
-    /// - Vertex data copying (memory bandwidth)
-    ///
-    /// Use this method when you need to process many boundary facets efficiently.
-    fn find_cavity_boundary_facets_lightweight(
-        &self,
-        tds: &Tds<T, U, V, D>,
-        bad_cells: &[crate::core::triangulation_data_structure::CellKey],
-    ) -> Result<Vec<(crate::core::triangulation_data_structure::CellKey, u8)>, InsertionError>
-    where
-        T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
-    {
-        use crate::core::collections::CellKeySet;
-
-        let mut boundary_facet_specs = Vec::new();
-
-        if bad_cells.is_empty() {
-            return Ok(boundary_facet_specs);
-        }
-
-        let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
-
-        // Use the facet-to-cells map to identify boundary facets
-        let facet_to_cells = tds.build_facet_to_cells_map().map_err(|e| {
-            TriangulationValidationError::InconsistentDataStructure {
-                message: format!("Failed to build facet-to-cells map: {e}"),
-            }
-        })?;
-
-        // Process each facet to identify boundary facets
-        for sharing_cells in facet_to_cells.values() {
-            let total_count = sharing_cells.len();
-            if total_count > 2 {
-                return Err(InsertionError::TriangulationState(
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Facet shared by more than two cells (total_count = {total_count})"
-                        ),
-                    },
-                ));
-            }
-
-            // Count bad cells sharing this facet
-            let mut bad_count = 0;
-            let mut single_bad_cell = None;
-
-            for &(cell_key, facet_index) in sharing_cells {
-                if bad_cell_set.contains(&cell_key) {
-                    bad_count += 1;
-                    single_bad_cell = Some((cell_key, facet_index));
-                    if bad_count > 1 {
-                        break; // More than one bad cell, can short-circuit
-                    }
-                }
-            }
-
-            // A facet is on the cavity boundary if exactly one bad cell uses it
-            if bad_count == 1
-                && (total_count == 2 || total_count == 1)
-                && let Some((bad_cell_key, facet_index)) = single_bad_cell
-            {
-                boundary_facet_specs.push((bad_cell_key, facet_index));
-            }
-        }
-
-        // Validation: ensure we have boundary facets when we expect them
-        if boundary_facet_specs.is_empty() && !bad_cells.is_empty() {
-            return Err(InsertionError::TriangulationState(
-                TriangulationValidationError::FailedToCreateCell {
-                    message: format!(
-                        "No cavity boundary facets found for {} bad cells. This indicates a topological error.",
-                        bad_cells.len()
-                    ),
-                },
-            ));
-        }
-
-        Ok(boundary_facet_specs)
-    }
-
-    /// Test if a boundary facet is visible from a given vertex
-    ///
-    /// This method allows different algorithms to implement their own visibility testing
-    /// strategies, from basic orientation tests to robust predicates with fallbacks.
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - Reference to the triangulation data structure
-    /// * `facet` - The facet to test visibility for
-    /// * `vertex` - The vertex from which to test visibility
-    /// * `adjacent_cell_key` - Key of the cell adjacent to this boundary facet
-    ///
-    /// # Returns
-    ///
-    /// `Ok(true)` if the facet is visible from the vertex, `Ok(false)` if not visible,
-    /// or an error if topology validation fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the triangulation topology is inconsistent or corrupted.
-    fn is_facet_visible_from_vertex(
-        &self,
-        tds: &Tds<T, U, V, D>,
-        facet: &crate::core::facet::FacetView<'_, T, U, V, D>,
-        vertex: &Vertex<T, U, D>,
-        adjacent_cell_key: crate::core::triangulation_data_structure::CellKey,
-    ) -> Result<bool, InsertionError>
-    where
-        T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    {
-        // Default implementation delegates to the static helper method
-        Self::is_facet_visible_from_vertex_impl(tds, facet, vertex, adjacent_cell_key)
     }
 
     /// Inserts a vertex using cavity-based Bowyer-Watson insertion
@@ -1459,8 +1310,7 @@ where
         }
 
         // Find boundary facets of the cavity using lightweight handles
-        let boundary_facet_handles =
-            self.find_cavity_boundary_facets_lightweight(tds, &bad_cells)?;
+        let boundary_facet_handles = self.find_cavity_boundary_facets(tds, &bad_cells)?;
 
         if boundary_facet_handles.is_empty() {
             return Err(InsertionError::TriangulationState(
@@ -1919,20 +1769,28 @@ where
         Ok(())
     }
 
-    // NOTE: find_visible_boundary_facets() removed in Phase 3C.
-    // Use find_visible_boundary_facets_lightweight() which returns Vec<(CellKey, u8)>.
-
-    /// Helper method to test if a boundary facet is visible from a given vertex
+    /// Test if a boundary facet is visible from a given vertex
     ///
-    /// This is separated into its own method to allow for different visibility testing strategies
-    /// across algorithm implementations while providing a common default.
+    /// This method allows different algorithms to implement their own visibility testing
+    /// strategies, from basic orientation tests to robust predicates with fallbacks.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Reference to the triangulation data structure
+    /// * `facet` - The facet to test visibility for
+    /// * `vertex` - The vertex from which to test visibility
+    /// * `adjacent_cell_key` - Key of the cell adjacent to this boundary facet
+    ///
+    /// # Returns
+    ///
+    /// `Ok(true)` if the facet is visible from the vertex, `Ok(false)` if not visible,
+    /// or an error if topology validation fails.
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The adjacent cell cannot be found in the TDS
-    /// - The topology is inconsistent (no opposite vertex found)
-    fn is_facet_visible_from_vertex_impl(
+    /// Returns an error if the triangulation topology is inconsistent or corrupted.
+    fn is_facet_visible_from_vertex(
+        &self,
         tds: &Tds<T, U, V, D>,
         facet: &crate::core::facet::FacetView<'_, T, U, V, D>,
         vertex: &Vertex<T, U, D>,
@@ -1954,10 +1812,18 @@ where
             ));
         };
 
-        // HOT PATH OPTIMIZATION: Find opposite vertex without Vec allocation
+        // HOT PATH OPTIMIZATION: Cache facet vertex UUIDs once to avoid O(D^2) repeated lookups
+        // Collect facet vertices into a small buffer to avoid repeated calls to facet.vertices()
+        let facet_vertex_uuids: SmallVec<[uuid::Uuid; 8]> = facet
+            .vertices()
+            .map_err(|e| {
+                InsertionError::TriangulationState(TriangulationValidationError::FacetError(e))
+            })?
+            .map(Vertex::uuid)
+            .collect();
+
         // Find the vertex in the adjacent cell that is NOT part of the facet
         // This is the \"opposite\" vertex that defines the \"inside\" side of the facet
-        // Phase 3A: Get cell vertices via TDS using vertices
         let cell_vertices = adjacent_cell.vertices();
 
         let mut opposite_vertex = None;
@@ -1965,10 +1831,8 @@ where
             let Some(cell_vertex) = tds.vertices().get(vkey) else {
                 continue;
             };
-            // OPTIMIZATION: Check membership without collecting facet vertices into Vec
-            let is_in_facet = facet.vertices().is_ok_and(|mut facet_vertex_iter| {
-                facet_vertex_iter.any(|fv| fv.uuid() == cell_vertex.uuid())
-            });
+            // Check membership using cached UUIDs instead of calling facet.vertices() repeatedly
+            let is_in_facet = facet_vertex_uuids.contains(&cell_vertex.uuid());
             if !is_in_facet {
                 opposite_vertex = Some(cell_vertex);
                 break;
@@ -1989,10 +1853,13 @@ where
 
         // Create test simplices for orientation comparison
         // Using SmallVec to avoid heap allocation for small simplices (D+1 points)
-        // Create test simplices for orientation comparison
-        // Using SmallVec to avoid heap allocation for small simplices (D+1 points)
-        let facet_vertex_points: SmallVec<[Point<T, D>; 8]> =
-            facet.vertices().unwrap().map(|v| *v.point()).collect();
+        let facet_vertex_points: SmallVec<[Point<T, D>; 8]> = facet
+            .vertices()
+            .map_err(|e| {
+                InsertionError::TriangulationState(TriangulationValidationError::FacetError(e))
+            })?
+            .map(|v| *v.point())
+            .collect();
 
         let mut simplex_with_opposite = facet_vertex_points.clone();
         simplex_with_opposite.push(*opposite_vertex.point());
@@ -3156,10 +3023,10 @@ mod tests {
     }
 
     #[test]
-    fn test_is_facet_visible_from_vertex_impl_orientation_cases() {
+    fn test_is_facet_visible_from_vertex_orientation_cases() {
         use crate::core::facet::facet_key_from_vertices;
 
-        println!("Testing is_facet_visible_from_vertex_impl with different orientations");
+        println!("Testing is_facet_visible_from_vertex with different orientations");
 
         // Create simple tetrahedron
         let initial_vertices = vec![
@@ -3215,19 +3082,15 @@ mod tests {
             (vertex!([0.1, 0.1, 0.1]), "Interior point"),
         ];
 
+        let algorithm = IncrementalBowyerWatson::new();
+
         for (test_vertex, description) in test_positions {
-            let is_visible =
-                <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
-                    f64,
-                    Option<()>,
-                    Option<()>,
-                    3,
-                >>::is_facet_visible_from_vertex_impl(
-                    &tds,
-                    &test_facet,
-                    &test_vertex,
-                    adjacent_cell_key,
-                );
+            let is_visible = algorithm.is_facet_visible_from_vertex(
+                &tds,
+                &test_facet,
+                &test_vertex,
+                adjacent_cell_key,
+            );
 
             match is_visible {
                 Ok(visible) => println!("  {description} - Facet visible: {visible}"),
@@ -3352,7 +3215,7 @@ mod tests {
 
     #[test]
     fn test_find_cavity_boundary_facets_single_bad_cell() {
-        println!("Testing find_cavity_boundary_facets_lightweight with single bad cell");
+        println!("Testing find_cavity_boundary_facets with single bad cell");
 
         // Create simple tetrahedron
         let initial_vertices = vec![
@@ -3370,7 +3233,7 @@ mod tests {
 
         let bad_cells = vec![cell_keys[0]];
         let boundary_facet_handles = algorithm
-            .find_cavity_boundary_facets_lightweight(&tds, &bad_cells)
+            .find_cavity_boundary_facets(&tds, &bad_cells)
             .expect("Should find boundary facets");
 
         // For a single tetrahedron, all 4 facets should be cavity boundary facets
@@ -3799,14 +3662,14 @@ mod tests {
             }
         }
 
-        // Test 3: Verify find_cavity_boundary_facets_lightweight works correctly with valid cells
-        println!("  Test 3: find_cavity_boundary_facets_lightweight with valid cells");
+        // Test 3: Verify find_cavity_boundary_facets works correctly with valid cells
+        println!("  Test 3: find_cavity_boundary_facets with valid cells");
         let bad_cells = vec![cell_keys[0]];
-        let result = algorithm.find_cavity_boundary_facets_lightweight(&tds, &bad_cells);
+        let result = algorithm.find_cavity_boundary_facets(&tds, &bad_cells);
 
         assert!(
             result.is_ok(),
-            "find_cavity_boundary_facets_lightweight should succeed with valid cells"
+            "find_cavity_boundary_facets should succeed with valid cells"
         );
 
         if let Ok(boundary_facets) = result {
@@ -5239,7 +5102,7 @@ mod tests {
         println!("✓ Visibility computation edge cases work correctly");
     }
 
-    /// Test `is_facet_visible_from_vertex_impl` with degenerate cases
+    /// Test `is_facet_visible_from_vertex` with degenerate cases
     #[test]
     fn test_facet_visibility_degenerate_cases() {
         println!("Testing facet visibility with degenerate cases");
@@ -5287,7 +5150,9 @@ mod tests {
         let boundary_facet = boundary_facets.clone().next().unwrap();
         let facet_vertices: Vec<_> = boundary_facet.vertices().unwrap().collect();
         let coplanar_vertex = &facet_vertices[0]; // Same as existing facet vertex
-        let is_visible = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
+
+        let algorithm = IncrementalBowyerWatson::new();
+        let is_visible = algorithm.is_facet_visible_from_vertex(
             &tds,
             &test_facet,
             coplanar_vertex,
@@ -5304,7 +5169,7 @@ mod tests {
 
         // Test with extreme coordinates
         let extreme_vertex = vertex!([f64::MAX / 1000.0, 0.0, 0.0]);
-        let is_visible = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
+        let is_visible = algorithm.is_facet_visible_from_vertex(
             &tds,
             &test_facet,
             &extreme_vertex,
@@ -5317,7 +5182,7 @@ mod tests {
 
         // Test with vertex very close to facet plane
         let close_vertex = vertex!([0.001, 0.001, 0.001]);
-        let is_visible = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_facet_visible_from_vertex_impl(
+        let is_visible = algorithm.is_facet_visible_from_vertex(
             &tds,
             &test_facet,
             &close_vertex,
