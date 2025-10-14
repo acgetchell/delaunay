@@ -5,7 +5,7 @@
 This document outlines the comprehensive optimization strategy for the Delaunay triangulation library, organized into 4 distinct phases.
 The goal is to achieve maximum performance while maintaining 100% backward compatibility for public APIs.
 
-**Overall Status**: Phase 1 ✅ COMPLETE | Phase 2 ✅ COMPLETE (v0.4.4) | Phase 3 🔄 IN PROGRESS | Phase 4 📋 PLANNED
+**Overall Status**: Phase 1 ✅ COMPLETE | Phase 2 ✅ COMPLETE (v0.4.4) | Phase 3 🔄 IN PROGRESS (3A ✅ Complete, 3C In Progress) | Phase 4 📋 PLANNED
 
 ## 🎯 Strategic Goals
 
@@ -257,9 +257,9 @@ fn process_cell_neighbors_by_key(&self, cell_key: CellKey) {
 
 ## Phase 3: Structure Refactoring 🔄 IN PROGRESS
 
-### Status: 🔄 IN PROGRESS
+### Status: 🔄 Phase 3A ✅ COMPLETE (October 2025) | Phase 3C 🔄 IN PROGRESS
 
-### Target: Q1 2026 (Extended due to robustness improvements)
+### Target: Q4 2025 (Phase 3A complete, 3C in progress)
 
 ### Recent Progress (v0.4.4+)
 
@@ -280,29 +280,46 @@ The foundation for Phase 3 has been significantly strengthened with robust infra
 - **Visibility Threshold Tuning**: Configurable via `RobustPredicateConfig`
 - **Early Exit Optimizations**: Proximity scanning in high-density vertex checks
 
-#### 🔄 Current Focus: Phase 3A - Cell Key-Based Storage
+#### ✅ Phase 3A Complete (October 2025) - TDS/Cell/Facet Core Refactoring
 
-**Primary Implementation Guide**: `docs/phase_3a_implementation_guide.md`
+**Status**: ✅ COMPLETE - All quality checks passing
 
-- **Comprehensive plan**: 8 phases, 13-16 hours total
-- **Architecture**: TDS-centric with iterator patterns (NOT visitor trait)
-- **Key Decision**: Zero-cost abstraction approach
-  - Cells store `VertexKey` (8 bytes) instead of full `Vertex` objects (100+ bytes)
-  - 90% memory reduction per cell
-  - Keys are `Copy + Send + Sync` for parallelization
-  - Stack allocation via SmallBuffer for D ≤ 7
-- **Progress Tracking**: `docs/phase3.md` (15-task high-level checklist)
+- **Test Results**: 772 unit tests passing, 194 doc tests passing
+- **Documentation**: Archived in `docs/archive/phase_3a_implementation_guide.md`
+- **Architecture Delivered**: TDS-centric with iterator patterns (zero-cost abstraction)
 
-**Architecture Rationale**:
+**Key Achievements**:
 
-- Follows Rust stdlib patterns (HashMap, Vec, SlotMap)
-- Direct SlotMap indexing (1-2ns) vs closure indirection (5-10ns)
-- Perfect for parallel algorithms with Rayon
-- Explicit TDS context passing (idiomatic Rust)
+- ✅ Cell stores `VertexKey` instead of full `Vertex` objects
+- ✅ Neighbor keys use `CellKey` instead of UUIDs
+- ✅ SmallBuffer for stack allocation (D ≤ 7)
+- ✅ FacetView lightweight implementation (no object duplication)
+- ✅ CellBuilder deprecated, Cell::new() made internal
+- ✅ All deprecations versioned (v0.5.1 -> v0.6.0)
+- ✅ Documentation and quality checks complete
+
+**Performance Impact**:
+
+- Memory: ~90% reduction per cell (VertexKey vs full Vertex object)
+- Parallelization: Keys are `Copy + Send + Sync`
+- Cache locality: Direct SlotMap indexing (1-2ns vs 5-10ns closure overhead)
+
+#### 🔄 Current Focus: Phase 3C - Complete Facet Migration
+
+**Status**: 🔄 IN PROGRESS
+
+**Primary Document**: `docs/phase_3c_action_plan.md`
+
+**Remaining Work**:
+
+- Update `InsertionAlgorithm` trait method signatures
+- Complete `ConvexHull` module refactoring
+- Migrate remaining trait/algorithm code to use lightweight facet handles
 
 **Historical Documentation** (archived):
 
-- `docs/archive/optimization_recommendations_historical.md`
+- `docs/archive/phase_3a_implementation_guide.md` - Complete implementation guide for Phase 3A
+- `docs/archive/optimization_recommendations_historical.md` - Original optimization analysis
 
 ### Objective
 

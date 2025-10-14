@@ -215,8 +215,7 @@ pub use crate::cell;
 // CELL STRUCT DEFINITION
 // =============================================================================
 
-#[derive(Builder, Clone, Debug, Serialize)]
-#[builder(build_fn(validate = "Self::validate"))]
+#[derive(Clone, Debug, Serialize)]
 /// The [Cell] struct represents a d-dimensional
 /// [simplex](https://en.wikipedia.org/wiki/Simplex) with vertices, a unique
 /// identifier, optional neighbors, and optional data.
@@ -236,11 +235,23 @@ pub use crate::cell;
 /// # Accessing Vertices
 ///
 /// Since cells now store keys, you need a `&Tds` reference to access vertex data:
-/// ```rust,ignore
-/// // Get vertex keys from cell
+/// ```rust
+/// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+///
+/// // Create a TDS with some vertices
+/// let vertices = vec![
+///     vertex!([0.0, 0.0]),
+///     vertex!([1.0, 0.0]),
+///     vertex!([0.0, 1.0]),
+/// ];
+/// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+///
+/// // Get first cell and iterate over vertex keys
+/// let (cell_key, cell) = tds.cells().iter().next().unwrap();
 /// for &vertex_key in cell.vertices() {
 ///     let vertex = &tds.vertices()[vertex_key];
 ///     // use vertex...
+///     assert!(vertex.uuid() != uuid::Uuid::nil());
 /// }
 /// ```
 pub struct Cell<T, U, V, const D: usize>
@@ -262,7 +273,6 @@ where
     vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
 
     /// The unique identifier of the cell.
-    #[builder(setter(skip), default = "make_uuid()")]
     uuid: Uuid,
 
     /// Keys to neighboring cells, indexed by opposite vertex.
@@ -279,18 +289,15 @@ where
     ///
     /// Note: Not serialized - neighbors are serialized and reconstructed during deserialization.
     /// Access via `neighbors()` method. Writable by TDS for neighbor assignment.
-    #[builder(setter(skip), default = "None")]
     #[serde(skip)]
     pub(crate) neighbors: Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>>,
 
     /// The optional data associated with the cell.
-    #[builder(setter(into, strip_option), default)]
     pub data: Option<V>,
 
     /// Phantom data to maintain type parameters T and U for coordinate and vertex data types.
     /// These are needed because cells store keys to vertices, not the vertices themselves.
     #[serde(skip)]
-    #[builder(setter(skip), default = "PhantomData")]
     _phantom: PhantomData<(T, U)>,
 }
 
@@ -392,58 +399,6 @@ where
     }
 }
 
-impl From<CellValidationError> for CellBuilderError {
-    fn from(error: CellValidationError) -> Self {
-        Self::ValidationError(error.to_string())
-    }
-}
-
-impl<T, U, V, const D: usize> CellBuilder<T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-{
-    // TODO Phase 3A.3: CellBuilder needs complete refactor for key-based construction
-    #[allow(clippy::unused_self, clippy::unnecessary_wraps)]
-    const fn validate(&self) -> Result<(), CellValidationError> {
-        // Temporarily disabled - CellBuilder validation needs refactor for key-based API
-        // Use Cell::new_with_keys() directly instead during migration
-        Ok(())
-
-        /* OLD CODE - TO BE REFACTORED:
-        let vertices =
-            self.vertices
-                .as_ref()
-                .ok_or_else(|| CellValidationError::InsufficientVertices {
-                    actual: 0,
-                    expected: D + 1,
-                    dimension: D,
-                })?;
-
-        let vertex_count = vertices.len();
-        if vertex_count != D + 1 {
-            return Err(CellValidationError::InsufficientVertices {
-                actual: vertex_count,
-                expected: D + 1,
-                dimension: D,
-            });
-        }
-
-        // Check for duplicate vertices using Vertex equality (consistent with is_valid)
-        let mut seen_vertices = FastHashSet::default();
-        for vertex in vertices {
-            if !seen_vertices.insert(vertex) {
-                return Err(CellValidationError::DuplicateVertices);
-            }
-        }
-
-        Ok(())
-        */
-    }
-}
-
 // =============================================================================
 // CELL IMPLEMENTATION - CORE METHODS
 // =============================================================================
@@ -479,10 +434,10 @@ where
     /// ```rust,ignore
     /// // Within TDS methods:
     /// let vertices: SmallBuffer<VertexKey, 8> = /* ... */;
-    /// let cell = Cell::new_with_keys(vertices, Some(cell_data))?;
+    /// let cell = Cell::new(vertices, Some(cell_data))?;
     /// let cell_key = self.cells.insert(cell);
     /// ```
-    pub(crate) fn new_with_keys(
+    pub(crate) fn new(
         vertices: impl Into<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
         data: Option<V>,
     ) -> Result<Self, CellValidationError> {
@@ -521,7 +476,18 @@ where
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let (_, cell) = tds.cells().iter().next().unwrap();
+    /// let vkey = cell.vertices()[0];
+    ///
     /// if cell.contains_vertex(vkey) {
     ///     println!("Cell contains vertex {:?}", vkey);
     /// }
@@ -545,8 +511,21 @@ where
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// if cell1.has_vertex_in_common(&cell2) {
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    ///     vertex!([1.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let mut cells_iter = tds.cells().values();
+    /// let cell1 = cells_iter.next().unwrap();
+    /// let cell2 = cells_iter.next().unwrap();
+    ///
+    /// if cell1.has_vertex_in_common(cell2) {
     ///     println!("Cells share vertices");
     /// }
     /// ```
@@ -567,7 +546,17 @@ where
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let (_, cell) = tds.cells().iter().next().unwrap();
+    ///
     /// for (idx, &vkey) in cell.vertices_enumerated() {
     ///     println!("Vertex {:?} at position {}", vkey, idx);
     /// }
@@ -590,7 +579,17 @@ where
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let (_, cell) = tds.cells().iter().next().unwrap();
+    ///
     /// if let Some(neighbors) = cell.neighbors() {
     ///     for (i, neighbor_key_opt) in neighbors.iter().enumerate() {
     ///         if let Some(neighbor_key) = neighbor_key_opt {
@@ -612,10 +611,21 @@ where
     /// # Phase 3A
     ///
     /// This method returns keys (not full vertex objects). Use the TDS to resolve keys:
-    /// ```rust,ignore
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let (_, cell) = tds.cells().iter().next().unwrap();
+    ///
     /// for &vkey in cell.vertices() {
     ///     let vertex = &tds.vertices()[vkey];
     ///     // use vertex data...
+    ///     assert!(vertex.uuid() != uuid::Uuid::nil());
     /// }
     /// ```
     ///
@@ -659,8 +669,16 @@ where
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// // Phase 3A: Examples need TDS context
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     /// let cell_key = tds.cells().iter().next().unwrap().0;
     /// let cell = &tds.cells()[cell_key];
     /// assert_eq!(cell.number_of_vertices(), 4);
@@ -705,10 +723,15 @@ where
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// // Phase 3A: Examples need TDS context
-    /// let mut tds = Tds::new();
-    /// // ... add cells ...
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
     /// let cell_key = tds.cells().iter().next().unwrap().0;
     /// tds.cells_mut()[cell_key].clear_neighbors();
     /// assert!(tds.cells()[cell_key].neighbors().is_none());
@@ -734,8 +757,16 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// // Phase 3A: Requires TDS context
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     /// let cell_key = tds.cells().iter().next().unwrap().0;
     /// let cell = &tds.cells()[cell_key];
     /// let uuids = cell.vertex_uuids(&tds);
@@ -765,10 +796,19 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// // Phase 3A: Requires TDS context
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let cell_key = tds.cells().iter().next().unwrap().0;
     /// let cell = &tds.cells()[cell_key];
     /// let uuids: Vec<_> = cell.vertex_uuid_iter(&tds).collect();
+    /// assert_eq!(uuids.len(), 3);
     /// ```
     #[inline]
     pub fn vertex_uuid_iter<'a>(
@@ -820,20 +860,36 @@ where
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// // Old API (deprecated)
-    /// if cell1.contains_vertex_of(&cell2) {
-    ///     println!("Cells share vertices");
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    ///     vertex!([1.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let mut cells_iter = tds.cells().values();
+    /// let cell1 = cells_iter.next().unwrap();
+    /// let cell2 = cells_iter.next().unwrap();
+    ///
+    /// #[allow(deprecated)]
+    /// {
+    ///     // Old API (deprecated)
+    ///     if cell1.contains_vertex_of(cell2) {
+    ///         println!("Cells share vertices");
+    ///     }
     /// }
     ///
     /// // New API (preferred)
-    /// if cell1.has_vertex_in_common(&cell2) {
+    /// if cell1.has_vertex_in_common(cell2) {
     ///     println!("Cells share vertices");
     /// }
     /// ```
     #[deprecated(
-        since = "0.6.0",
-        note = "Use `has_vertex_in_common` instead. This method will be removed in v0.7.0."
+        since = "0.5.1",
+        note = "Use `has_vertex_in_common` instead. This method will be removed in v0.6.0."
     )]
     #[inline]
     pub fn contains_vertex_of(&self, other: &Self) -> bool {
@@ -1134,48 +1190,8 @@ where
     ///
     /// # Examples
     ///
-    /// ```
-    /// use delaunay::{cell, vertex};
-    /// use delaunay::core::cell::Cell;
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::core::facet::Facet;
-    ///
-    /// // Create a 3D tetrahedron (4 vertices)
-    /// let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
-    /// let vertex2: Vertex<f64, i32, 3> = vertex!([0.0, 1.0, 0.0], 1);
-    /// let vertex3: Vertex<f64, i32, 3> = vertex!([1.0, 0.0, 0.0], 1);
-    /// let vertex4: Vertex<f64, i32, 3> = vertex!([1.0, 1.0, 1.0], 2);
-    /// let cell: Cell<f64, i32, i32, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4], 42);
-    ///
-    /// let facets = cell.facets().expect("Failed to get facets");
-    /// assert_eq!(facets.len(), 4); // 4 facets for tetrahedron
-    ///
-    /// // Each facet should have 3 vertices (triangular faces)
-    /// for facet in &facets {
-    ///     assert_eq!(facet.vertices().len(), 3);
-    /// }
-    /// ```
-    ///
-    /// ```
-    /// use delaunay::{cell, vertex};
-    /// use delaunay::core::cell::Cell;
-    ///
-    /// // Create a 2D triangle (3 vertices)
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let cell: Cell<f64, Option<()>, Option<()>, 2> = cell!(vertices);
-    ///
-    /// let facets = cell.facets().expect("Failed to get facets");
-    /// assert_eq!(facets.len(), 3); // 3 facets (edges) for triangle
-    ///
-    /// // Each facet should have 2 vertices (line segments)
-    /// for facet in &facets {
-    ///     assert_eq!(facet.vertices().len(), 2);
-    /// }
-    /// ```
+    /// Note: The old `facets()` method has been replaced with `facet_views()` which requires
+    /// TDS context. See the `facet_views()` method below for examples using the Phase 3C API.
     ///
     // NOTE: Intentionally commented out; kept for reference during Phase 3A refactor.
     // TODO Phase 3A.2: Reimplement facets() with key-based API
@@ -2426,73 +2442,76 @@ mod tests {
 
     #[test]
     fn cell_deserialization_error_cases() {
-        // Test deserialization with duplicate fields to cover error paths
-        let invalid_json_duplicate_vertices = r#"{
-            "vertices": [],
-            "vertices": [],
-            "uuid": "550e8400-e29b-41d4-a716-446655440000"
-        }"#;
-        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(invalid_json_duplicate_vertices);
-        assert!(result.is_err());
+        // Test realistic JSON deserialization errors that users might encounter
 
-        let invalid_json_duplicate_uuid = r#"{
-            "vertices": [],
-            "uuid": "550e8400-e29b-41d4-a716-446655440000",
-            "uuid": "550e8400-e29b-41d4-a716-446655440001"
-        }"#;
+        // Test missing required field (uuid)
+        let invalid_json_missing_uuid = r#"{"data": null}"#;
         let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(invalid_json_duplicate_uuid);
-        assert!(result.is_err());
+            serde_json::from_str(invalid_json_missing_uuid);
+        assert!(result.is_err(), "Missing UUID should cause error");
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("missing field") || error.contains("uuid"),
+            "Error should mention missing uuid field: {error}"
+        );
 
-        let invalid_json_duplicate_neighbors = r#"{
-            "vertices": [],
-            "uuid": "550e8400-e29b-41d4-a716-446655440000",
-            "neighbors": null,
-            "neighbors": null
-        }"#;
+        // Test invalid UUID format
+        let invalid_json_bad_uuid = r#"{"uuid": "not-a-valid-uuid"}"#;
         let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(invalid_json_duplicate_neighbors);
-        assert!(result.is_err());
+            serde_json::from_str(invalid_json_bad_uuid);
+        assert!(result.is_err(), "Invalid UUID format should cause error");
 
-        let invalid_json_duplicate_data = r#"{
-            "vertices": [],
-            "uuid": "550e8400-e29b-41d4-a716-446655440000",
-            "data": null,
-            "data": null
-        }"#;
+        // Test completely invalid JSON syntax
+        let invalid_json_syntax = r"{this is not valid JSON}";
         let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(invalid_json_duplicate_data);
-        assert!(result.is_err());
+            serde_json::from_str(invalid_json_syntax);
+        assert!(result.is_err(), "Invalid JSON syntax should cause error");
 
-        // Test deserialization with unknown fields
+        // Test empty JSON object (missing required uuid)
+        let empty_json = r"{}";
+        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
+            serde_json::from_str(empty_json);
+        assert!(result.is_err(), "Empty JSON should fail (missing uuid)");
+
+        // Test deserialization with unknown fields (should succeed - ignored)
         let json_unknown_field = r#"{
-            "vertices": [],
             "uuid": "550e8400-e29b-41d4-a716-446655440000",
-            "unknown_field": "value"
+            "unknown_field": "value",
+            "another_unknown": 123
         }"#;
         let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
             serde_json::from_str(json_unknown_field);
-        // Should succeed - unknown fields are ignored
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Unknown fields should be ignored");
     }
 
     #[test]
-    fn cell_deserialization_duplicate_vertex_field() {
-        // Test deserialization with duplicate "vertex" fields
-        // Since "vertex" is not a valid field in Cell, the unknown fields are ignored
-        // and we get an error about missing the required "vertices" field
-        let invalid_json_duplicate_vertex = r#"{
-            "vertex": [],
-            "vertex": [],
-            "uuid": "550e8400-e29b-41d4-a716-446655440000"
+    fn cell_deserialization_minimal_valid() {
+        // Test deserialization with minimal valid JSON
+        // Only uuid is required; vertices and neighbors are skipped fields
+        let minimal_valid_json = r#"{"uuid": "550e8400-e29b-41d4-a716-446655440000"}"#;
+        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
+            serde_json::from_str(minimal_valid_json);
+        assert!(
+            result.is_ok(),
+            "Minimal valid JSON with just UUID should succeed"
+        );
+
+        let cell = result.unwrap();
+        assert_eq!(
+            cell.uuid().to_string(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(cell.number_of_vertices(), 0); // No vertices since field is skipped
+        assert!(cell.data.is_none());
+
+        // Test with data field included
+        let json_with_data = r#"{
+            "uuid": "550e8400-e29b-41d4-a716-446655440001",
+            "data": null
         }"#;
         let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(invalid_json_duplicate_vertex);
-        assert!(result.is_err());
-        let error_message = result.unwrap_err().to_string();
-        // The deserializer should fail with missing field "vertices" since "vertex" is unknown
-        assert!(error_message.contains("missing field") && error_message.contains("vertices"));
+            serde_json::from_str(json_with_data);
+        assert!(result.is_ok(), "JSON with null data should succeed");
     }
 
     // =============================================================================

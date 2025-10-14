@@ -14,22 +14,14 @@
 
 ### Phase 3 Implementation
 
-#### **[phase_3a_implementation_guide.md](./phase_3a_implementation_guide.md)** 🚀
+#### **[phase_3c_action_plan.md](./phase_3c_action_plan.md)** 🚧
 
-**Comprehensive Phase 3A implementation guide** - TDS-centric cell architecture
+**Phase 3C Next Steps** - Complete facet migration (IN PROGRESS)
 
-- Complete step-by-step implementation plan (13-16 hours)
-- Architecture rationale: Why NOT a visitor trait
-- Performance and parallelization optimizations
-- Detailed code examples for every phase
-- Progress tracking checklist
-
-#### **[phase3.md](./phase3.md)** 📋
-
-**High-level Phase 3 tracking** - Overall checklist
-
-- 15 major tasks from struct refactor to serialization
-- Cross-references to detailed implementation guide
+- Trait method signature updates (InsertionAlgorithm)
+- ConvexHull module refactoring
+- Breaking API changes documentation
+- Phase 3A (✅ Complete) documented in `OPTIMIZATION_ROADMAP.md`
 
 ### Technical References
 
@@ -55,6 +47,7 @@ Project structure and module organization
 
 Completed optimization work and historical references:
 
+- `phase_3a_implementation_guide.md` - TDS-centric cell architecture (✅ Phase 3A Complete)
 - `phase2_bowyer_watson_optimization.md` - FacetCacheProvider implementation (✅ v0.4.4)
 - `phase2_uuid_iter_optimization.md` - Zero-allocation UUID iteration (✅ v0.4.4)
 - `optimization_recommendations_historical.md` - Historical optimization analysis
@@ -92,7 +85,7 @@ Release process and versioning guidelines
 |-------|--------|------------|
 | **Phase 1** | ✅ Complete | Collection optimization (FastHashMap) |
 | **Phase 2** | ✅ Complete (v0.4.4+) | Key-based internal APIs |
-| **Phase 3** | 🔄 IN PROGRESS | Cell/Vertex/Facet structure refactoring |
+| **Phase 3** | 🔄 IN PROGRESS | Cell/Vertex/Facet structure (3A ✅, 3C 🔄) |
 | **Phase 4** | 📋 PLANNED | Collection abstraction (trait-based) |
 
 ## 🎯 Key Performance Achievements (v0.4.4+)

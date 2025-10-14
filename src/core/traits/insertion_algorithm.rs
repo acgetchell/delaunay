@@ -1192,12 +1192,12 @@ where
             // 2. OR it's a true boundary facet (only one cell total) that's bad
             if bad_count == 1 && (total_count == 2 || total_count == 1) {
                 // Phase 3C: Store lightweight handle directly - just validate it exists
-                if let Some((cell_key, facet_index)) = single_bad_cell {
-                    if let Some(cell) = tds.cells().get(cell_key) {
-                        let facet_idx = usize::from(facet_index);
-                        if facet_idx < cell.vertices().len() {
-                            boundary_facet_handles.push((cell_key, facet_index));
-                        }
+                if let Some((cell_key, facet_index)) = single_bad_cell
+                    && let Some(cell) = tds.cells().get(cell_key)
+                {
+                    let facet_idx = facet_index as usize;
+                    if facet_idx < cell.vertices().len() {
+                        boundary_facet_handles.push((cell_key, facet_index));
                     }
                 }
             }
@@ -1851,7 +1851,7 @@ where
             .filter_map(|v| tds.vertex_key_from_uuid(&v.uuid()))
             .collect();
 
-        let cell = Cell::new_with_keys(vertices, None).map_err(|e| {
+        let cell = Cell::new(vertices, None).map_err(|e| {
             TriangulationConstructionError::FailedToCreateCell {
                 message: format!("Failed to create initial simplex: {e}"),
             }
@@ -2220,7 +2220,7 @@ where
             .filter_map(|v| tds.vertex_key_from_uuid(&v.uuid()))
             .collect();
 
-        let new_cell = Cell::new_with_keys(vertices, None).map_err(|e| {
+        let new_cell = Cell::new(vertices, None).map_err(|e| {
             TriangulationValidationError::FailedToCreateCell {
                 message: format!("Failed to build cell from facet vertices and vertex: {e}"),
             }
@@ -2567,7 +2567,7 @@ mod tests {
         // Test interior vertex that should not see any facets from outside
         let interior_vertex = vertex!([0.4, 0.4, 0.4]);
         let visible_facets = algorithm
-            .find_visible_boundary_facets(&tds, &interior_vertex)
+            .find_visible_boundary_facets_lightweight(&tds, &interior_vertex)
             .expect("Should successfully find visible boundary facets");
 
         println!("  Interior vertex sees {} facets", visible_facets.len());
@@ -5052,13 +5052,14 @@ mod tests {
         println!("  ✓ create_cells_from_boundary_facets created {cells_created} cells");
 
         // Test with empty boundary facets (should create no cells)
-        let empty_facets: Vec<Facet<f64, Option<()>, Option<()>, 3>> = vec![];
+        let empty_facet_handles: Vec<(crate::core::triangulation_data_structure::CellKey, u8)> =
+            vec![];
         let another_vertex = vertex!([3.0, 3.0, 3.0]);
-        let cells_created = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_boundary_facets(
+        let cells_created = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_facet_handles(
             &mut tds,
-            &empty_facets,
+            &empty_facet_handles,
             &another_vertex,
-        );
+        ).unwrap_or(0);
 
         assert_eq!(
             cells_created, 0,
@@ -5175,7 +5176,7 @@ mod tests {
         let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
-        let result = algorithm.find_visible_boundary_facets(&empty_tds, &test_vertex);
+        let result = algorithm.find_visible_boundary_facets_lightweight(&empty_tds, &test_vertex);
         match result {
             Ok(facets) => {
                 assert!(facets.is_empty(), "Empty TDS should have no visible facets");
@@ -5198,7 +5199,7 @@ mod tests {
         // Test with exterior vertex (should see some facets)
         let exterior_vertex = vertex!([5.0, 5.0, 5.0]);
         let visible_facets = algorithm
-            .find_visible_boundary_facets(&tds, &exterior_vertex)
+            .find_visible_boundary_facets_lightweight(&tds, &exterior_vertex)
             .expect("Should find visible facets for exterior vertex");
 
         // Should find a reasonable number of visible facets for an exterior vertex
@@ -5216,7 +5217,7 @@ mod tests {
         // Test with interior vertex (may see fewer or no facets)
         let interior_vertex = vertex!([0.25, 0.25, 0.25]);
         let visible_facets = algorithm
-            .find_visible_boundary_facets(&tds, &interior_vertex)
+            .find_visible_boundary_facets_lightweight(&tds, &interior_vertex)
             .expect("Should complete visibility computation for interior vertex");
 
         println!(
@@ -5227,7 +5228,7 @@ mod tests {
         // Test with vertex at boundary (edge case)
         let boundary_vertex = vertex!([1.0, 0.0, 0.0]); // Same as existing vertex
         let visible_facets = algorithm
-            .find_visible_boundary_facets(&tds, &boundary_vertex)
+            .find_visible_boundary_facets_lightweight(&tds, &boundary_vertex)
             .expect("Should handle boundary vertex visibility");
 
         println!(

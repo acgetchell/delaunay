@@ -8,9 +8,12 @@
 
 ## Executive Summary
 
-Phase 3A successfully refactored the core TDS, Cell, and Facet types to use key-based storage. However, **the library does not currently compile** due to trait definitions and algorithm modules still referencing the deprecated `Facet` type.
+Phase 3A successfully refactored the core TDS, Cell, and Facet types to use key-based storage.
+However, **the library does not currently compile** due to trait definitions and algorithm modules still
+referencing the deprecated `Facet` type.
 
 **Phase 3C** completes the migration by updating:
+
 1. Trait method signatures (InsertionAlgorithm)
 2. ConvexHull module implementation
 3. All code that constructs or consumes Facet objects
@@ -20,6 +23,7 @@ Phase 3A successfully refactored the core TDS, Cell, and Facet types to use key-
 ## Current Compilation Status
 
 ### Library Compilation (cargo check --lib)
+
 - **Errors**: 14 compilation errors
 - **Breakdown**:
   - 8 errors: `cannot find type Facet in this scope`
@@ -28,9 +32,11 @@ Phase 3A successfully refactored the core TDS, Cell, and Facet types to use key-
   - 3 errors: unused type parameters in ConvexHull
 
 ### Test Compilation (cargo test --lib)
+
 - **Errors**: 208 compilation errors (cascade from library errors)
 
 ### Affected Files
+
 1. `src/core/traits/insertion_algorithm.rs` (trait definitions)
 2. `src/geometry/algorithms/convex_hull.rs` (algorithm implementation)
 3. Various test files
@@ -46,6 +52,7 @@ Phase 3A successfully refactored the core TDS, Cell, and Facet types to use key-
 **Problem**: Trait methods return `Vec<Facet<T, U, V, D>>` which no longer exists.
 
 **Methods to Update**:
+
 1. `find_cavity_boundary_facets()` (line 1127)
    - Current: `Result<Vec<Facet<T, U, V, D>>, InsertionError>`
    - Target: `Result<Vec<(CellKey, u8)>, InsertionError>`
@@ -56,6 +63,7 @@ Phase 3A successfully refactored the core TDS, Cell, and Facet types to use key-
 3. Any helper methods that construct/consume Facet objects
 
 **Implementation Strategy**:
+
 ```rust
 // Before (deprecated):
 fn find_cavity_boundary_facets(
@@ -73,6 +81,7 @@ fn find_cavity_boundary_facets(
 ```
 
 **Migration Steps**:
+
 1. Update trait method signatures
 2. Update default trait implementation (lines 1136-1260)
 3. Update RobustBowyerWatson implementation
@@ -87,11 +96,13 @@ fn find_cavity_boundary_facets(
 **File**: `src/geometry/algorithms/convex_hull.rs`
 
 **Problems**:
+
 1. `ConvexHull` struct stores `Vec<Facet<T, U, V, D>>` (deprecated)
 2. Type parameters T, U, V are unused (because Facet was removed)
 3. Methods return `&Facet` or `Iterator<Facet>` (both invalid)
 
 **Current Structure** (lines ~177-180):
+
 ```rust
 pub struct ConvexHull<T, U, V, const D: usize>
 where
@@ -105,6 +116,7 @@ where
 ```
 
 **Target Structure**:
+
 ```rust
 pub struct ConvexHull<T, U, V, const D: usize>
 where
@@ -123,6 +135,7 @@ where
 ```
 
 **Methods to Update**:
+
 1. `get_facet()` - line 900
    - Current: `Option<&Facet<T, U, V, D>>`
    - Options:
@@ -139,16 +152,19 @@ where
 **Design Decision Needed**:
 
 **Option A**: Store TDS reference in ConvexHull
+
 ```rust
 pub struct ConvexHull<'tds, T, U, V, const D: usize> {
     facet_handles: Vec<(CellKey, u8)>,
     tds: &'tds Tds<T, U, V, D>,
 }
 ```
+
 - **Pros**: Can return `FacetView` from methods
 - **Cons**: Adds lifetime parameter, more complex
 
 **Option B**: Pass TDS as parameter to methods
+
 ```rust
 pub struct ConvexHull<T, U, V, const D: usize> {
     facet_handles: Vec<(CellKey, u8)>,
@@ -162,12 +178,14 @@ impl ConvexHull {
     }
 }
 ```
+
 - **Pros**: No lifetime parameter, simpler struct
 - **Cons**: All methods need TDS parameter
 
 **Recommendation**: Use Option B (pass TDS as parameter) to keep struct simple and follow existing patterns in the codebase.
 
 **Migration Steps**:
+
 1. Change `facets` field to `facet_handles: Vec<(CellKey, u8)>`
 2. Update all construction code to store handles instead of Facets
 3. Add `&Tds` parameter to methods that need to access facet data
@@ -175,6 +193,7 @@ impl ConvexHull {
 5. Fix all call sites
 
 **Breaking Changes**: Yes, public API changes
+
 - `get_facet()` signature changes
 - `facets()` iterator type changes
 - Some methods may need additional `&Tds` parameter

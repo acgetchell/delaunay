@@ -149,8 +149,8 @@ where
 /// # Deprecated
 /// Use [`IncrementalBowyerWatson`] instead. This alias will be removed in a future version.
 #[deprecated(
-    since = "0.5.0",
-    note = "Use `IncrementalBowyerWatson` instead (correct spelling)"
+    since = "0.5.1",
+    note = "Use `IncrementalBowyerWatson` instead (correct spelling). This alias will be removed in v0.6.0."
 )]
 pub type IncrementalBoyerWatson<T, U, V, const D: usize> = IncrementalBowyerWatson<T, U, V, D>;
 

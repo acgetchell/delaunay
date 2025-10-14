@@ -103,7 +103,10 @@ where
     /// # Returns
     ///
     /// The old cache value before update (if any), or `None` if no cache existed
-    #[deprecated(note = "Use try_build_cache_with_rcu instead for proper error handling")]
+    #[deprecated(
+        since = "0.5.1",
+        note = "Use try_build_cache_with_rcu instead for proper error handling. This method will be removed in v0.6.0."
+    )]
     fn build_cache_with_rcu(&self, tds: &Tds<T, U, V, D>) -> Option<Arc<FacetToCellsMap>> {
         // Forward to strict version, falling back to lenient behavior on error
         match self.try_build_cache_with_rcu(tds) {
@@ -202,16 +205,36 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let cache = self.get_or_build_facet_cache(&tds);
+    /// ```rust
+    /// # #[allow(deprecated)]
+    /// # {
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    /// use delaunay::core::traits::facet_cache::FacetCacheProvider;
+    /// use delaunay::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let algorithm = IncrementalBowyerWatson::new();
+    ///
+    /// let cache = algorithm.get_or_build_facet_cache(&tds);
     /// let facet_to_cells = cache.as_ref();
     ///
     /// // Use the cached mapping for O(1) facet lookups
-    /// if let Some(adjacent_cells) = facet_to_cells.get(&facet_key) {
+    /// for (facet_key, adjacent_cells) in facet_to_cells.iter() {
     ///     // Process adjacent cells...
+    ///     assert!(adjacent_cells.len() <= 2);
     /// }
+    /// # }
     /// ```
-    #[deprecated(note = "Use try_get_or_build_facet_cache instead for proper error handling")]
+    #[deprecated(
+        since = "0.5.1",
+        note = "Use try_get_or_build_facet_cache instead for proper error handling. This method will be removed in v0.6.0."
+    )]
     fn get_or_build_facet_cache(&self, tds: &Tds<T, U, V, D>) -> Arc<FacetToCellsMap> {
         // Forward to strict version, falling back to lenient behavior on error
         match self.try_get_or_build_facet_cache(tds) {
@@ -261,14 +284,29 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let cache = self.try_get_or_build_facet_cache(&tds)?;
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    /// use delaunay::core::traits::facet_cache::FacetCacheProvider;
+    /// use delaunay::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let algorithm = IncrementalBowyerWatson::new();
+    ///
+    /// let cache = algorithm.try_get_or_build_facet_cache(&tds)?;
     /// let facet_to_cells = cache.as_ref();
     ///
     /// // Use the cached mapping for O(1) facet lookups
-    /// if let Some(adjacent_cells) = facet_to_cells.get(&facet_key) {
+    /// for (facet_key, adjacent_cells) in facet_to_cells.iter() {
     ///     // Process adjacent cells...
+    ///     assert!(adjacent_cells.len() <= 2);
     /// }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     fn try_get_or_build_facet_cache(
         &self,
@@ -367,12 +405,28 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// // After modifying the triangulation
-    /// tds.insert_vertex(new_vertex);
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    /// use delaunay::core::traits::facet_cache::FacetCacheProvider;
+    /// use delaunay::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let algorithm = IncrementalBowyerWatson::new();
+    ///
+    /// // Build cache
+    /// let _cache = algorithm.try_get_or_build_facet_cache(&tds).unwrap();
     ///
     /// // Invalidate caches that depend on facet mappings
     /// algorithm.invalidate_facet_cache();
+    ///
+    /// // Cache should be empty now
+    /// assert!(algorithm.facet_cache().load().is_none());
     /// ```
     fn invalidate_facet_cache(&self) {
         use std::sync::atomic::Ordering;

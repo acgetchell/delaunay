@@ -30,6 +30,7 @@
 
 #![allow(deprecated)]
 
+use delaunay::core::facet::FacetView;
 use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::*;
 use num_traits::cast::cast;
@@ -150,7 +151,7 @@ fn extract_and_analyze_convex_hull(tds: &Tds<f64, (), (), 3>) {
 
     // Validate the convex hull
     let start = Instant::now();
-    match hull.validate() {
+    match hull.validate(tds) {
         Ok(()) => {
             let validation_time = start.elapsed();
             println!("  Validation:         ✓ VALID ({validation_time:?})");
@@ -168,13 +169,21 @@ fn extract_and_analyze_convex_hull(tds: &Tds<f64, (), (), 3>) {
         let facets: Vec<_> = hull.facets().collect();
         let sample_size = std::cmp::min(5, facets.len());
 
-        for (i, facet) in facets.iter().take(sample_size).enumerate() {
-            println!(
-                "    Facet {}: key = {}, vertices = {}",
-                i + 1,
-                facet.key(),
-                facet.vertices().len()
-            );
+        for (i, (cell_key, facet_index)) in facets.iter().take(sample_size).enumerate() {
+            // Create FacetView to access facet properties
+            if let Ok(facet_view) = FacetView::new(tds, *cell_key, *facet_index) {
+                let vertex_count = facet_view
+                    .vertices()
+                    .map(std::iter::Iterator::count)
+                    .unwrap_or(0);
+                let facet_key = facet_view.key().unwrap_or(0);
+                println!(
+                    "    Facet {}: key = {}, vertices = {}",
+                    i + 1,
+                    facet_key,
+                    vertex_count
+                );
+            }
         }
 
         if facets.len() > sample_size {
@@ -461,8 +470,9 @@ fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
 
     // Memory usage estimation
     let hull_size = std::mem::size_of::<ConvexHull<f64, Option<()>, Option<()>, 3>>();
-    let estimated_hull_memory =
-        hull_size + (facet_count * std::mem::size_of::<Facet<f64, Option<()>, Option<()>, 3>>());
+    // Phase 3C: Facets are now lightweight (CellKey, u8) tuples
+    let facet_handle_size = std::mem::size_of::<(delaunay::core::CellKey, u8)>();
+    let estimated_hull_memory = hull_size + (facet_count * facet_handle_size);
 
     println!("\n  Memory Usage Estimation:");
     let estimated_f64 = cast(estimated_hull_memory).unwrap_or(0.0f64);

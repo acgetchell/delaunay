@@ -1224,84 +1224,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "diagnostic output only"]
-    fn debug_circumsphere_properties() {
-        println!("=== 3D Unit Tetrahedron Analysis ===");
-
-        // Unit tetrahedron: points at (0,0,0), (1,0,0), (0,1,0), (0,0,1)
-        let simplex_points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-
-        let center = circumcenter(&simplex_points).unwrap();
-        let radius = circumradius(&simplex_points).unwrap();
-
-        println!("Circumcenter: {:?}", center.to_array());
-        println!("Circumradius: {radius}");
-
-        // Test the point (0.9, 0.9, 0.9)
-        let test_point_coords = [0.9, 0.9, 0.9];
-        let center_coords = center.to_array();
-        let diff = [
-            test_point_coords[0] - center_coords[0],
-            test_point_coords[1] - center_coords[1],
-            test_point_coords[2] - center_coords[2],
-        ];
-        let distance_to_center = hypot(diff);
-        println!("Point (0.9, 0.9, 0.9) distance to circumcenter: {distance_to_center}");
-        println!(
-            "Is point inside circumsphere (distance < radius)? {}",
-            distance_to_center < radius
-        );
-
-        let test_point = Point::new([0.9, 0.9, 0.9]);
-
-        let standard_result = insphere_distance(&simplex_points, test_point).unwrap();
-        let matrix_result = insphere_lifted(&simplex_points, test_point).unwrap();
-
-        println!("Standard method result: {standard_result}");
-        println!("Matrix method result: {matrix_result}");
-
-        println!("\n=== 4D Symmetric Simplex Analysis ===");
-
-        // Regular 4D simplex with points forming a specific pattern
-        let simplex_points_4d = vec![
-            Point::new([1.0, 1.0, 1.0, 1.0]),
-            Point::new([1.0, -1.0, -1.0, -1.0]),
-            Point::new([-1.0, 1.0, -1.0, -1.0]),
-            Point::new([-1.0, -1.0, 1.0, -1.0]),
-            Point::new([-1.0, -1.0, -1.0, 1.0]),
-        ];
-
-        let center_4d = circumcenter(&simplex_points_4d).unwrap();
-        let radius_4d = circumradius(&simplex_points_4d).unwrap();
-
-        println!("4D Circumcenter: {:?}", center_4d.to_array());
-        println!("4D Circumradius: {radius_4d}");
-
-        // Test the origin (0, 0, 0, 0)
-        let distance_to_center_4d = hypot(center_4d.to_array());
-        println!("Origin distance to circumcenter: {distance_to_center_4d}");
-        println!(
-            "Is origin inside circumsphere (distance < radius)? {}",
-            distance_to_center_4d < radius_4d
-        );
-
-        let origin_point = Point::new([0.0, 0.0, 0.0, 0.0]);
-
-        let standard_result_4d = insphere_distance(&simplex_points_4d, origin_point).unwrap();
-        let matrix_result_4d = insphere_lifted(&simplex_points_4d, origin_point).unwrap();
-
-        println!("Standard method result for origin: {standard_result_4d}");
-        println!("Matrix method result for origin: {matrix_result_4d}");
-
-        // Don't assert anything, just debug output
-    }
-
-    #[test]
     fn test_insphere_and_insphere_lifted_consistency() {
         // Test that both insphere implementations give consistent results for various cases
         let simplex_points = vec![
@@ -1594,40 +1516,5 @@ mod tests {
             0,
             "All methods should agree after sign fix"
         );
-    }
-
-    #[test]
-    #[ignore = "diagnostic output only"]
-    fn compare_circumsphere_methods() {
-        // Compare results between standard and matrix methods
-        let simplex_points = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
-        ];
-
-        // Test various points
-        let test_points = [
-            Point::new([0.1, 0.1]),   // Should be inside
-            Point::new([0.5, 0.5]),   // Circumcenter region
-            Point::new([10.0, 10.0]), // Far outside
-            Point::new([0.25, 0.25]), // Inside
-            Point::new([2.0, 2.0]),   // Outside
-        ];
-
-        for (i, point) in test_points.iter().enumerate() {
-            let standard_result = insphere_distance(&simplex_points, *point).unwrap();
-            let matrix_result = insphere_lifted(&simplex_points, *point).unwrap();
-
-            println!(
-                "Point {}: {:?} -> Standard: {:?}, Matrix: {}",
-                i,
-                point.to_array(),
-                standard_result,
-                matrix_result
-            );
-        }
-
-        // Don't assert anything - just observe the comparison
     }
 }

@@ -708,7 +708,6 @@ where
         Ok(boundary_handles)
     }
 
-
     /// Handle degenerate insertion cases with special strategies.
     #[allow(dead_code)]
     fn handle_degenerate_insertion_case(
@@ -824,7 +823,6 @@ where
 
         Ok(())
     }
-
 
     /// Robust helper method to test if a boundary facet is visible from a given vertex
     ///
@@ -1239,6 +1237,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::facet::FacetView;
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
     use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::traits::insertion_algorithm::InsertionError;
@@ -1382,6 +1381,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn test_debug_exterior_vertex_insertion() {
         debug_println!("Testing exterior vertex insertion in robust Bowyer-Watson");
 
@@ -1472,12 +1472,19 @@ mod tests {
 
             // Test the visibility detection directly
             println!("Testing visibility detection...");
-            let visible_result = algorithm.find_visible_boundary_facets(&tds, &exterior_vertex);
+            let visible_result =
+                algorithm.find_visible_boundary_facets_with_robust_fallback(&tds, &exterior_vertex);
             match &visible_result {
-                Ok(facets) => {
-                    println!("Found {} visible boundary facets", facets.len());
-                    for (i, facet) in facets.iter().enumerate() {
-                        println!("  Visible facet {}: {} vertices", i, facet.vertices().len());
+                Ok(facet_handles) => {
+                    println!("Found {} visible boundary facets", facet_handles.len());
+                    for (i, &(cell_key, facet_index)) in facet_handles.iter().enumerate() {
+                        if let Ok(facet_view) = FacetView::new(&tds, cell_key, facet_index) {
+                            let vertex_count = facet_view
+                                .vertices()
+                                .map(std::iter::Iterator::count)
+                                .unwrap_or(0);
+                            println!("  Visible facet {i}: {vertex_count} vertices");
+                        }
                     }
                 }
                 Err(e) => println!("Visibility detection failed: {e}"),
@@ -3377,19 +3384,25 @@ mod tests {
         let all_cell_keys: Vec<_> = tds.cells().keys().collect();
         let bad_cells = &all_cell_keys[..1];
 
-        let result = algorithm.robust_find_cavity_boundary_facets(&tds, bad_cells);
+        let result = algorithm.robust_find_cavity_boundary_facets_lightweight(&tds, bad_cells);
 
         match result {
-            Ok(boundary_facets) => {
+            Ok(boundary_facet_handles) => {
                 println!(
-                    "Robust boundary detection found {} facets",
-                    boundary_facets.len()
+                    "Robust boundary detection found {} facet handles",
+                    boundary_facet_handles.len()
                 );
                 // Should find boundary facets for valid bad cells
 
-                // Verify all returned facets are valid
-                for facet in &boundary_facets {
-                    assert!(!facet.vertices().is_empty(), "Facet should have vertices");
+                // Verify all returned facet handles are valid
+                for &(cell_key, facet_index) in &boundary_facet_handles {
+                    if let Ok(facet_view) = FacetView::new(&tds, cell_key, facet_index) {
+                        let vertex_count = facet_view
+                            .vertices()
+                            .map(std::iter::Iterator::count)
+                            .unwrap_or(0);
+                        assert!(vertex_count > 0, "Facet should have vertices");
+                    }
                 }
             }
             Err(e) => {

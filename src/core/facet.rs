@@ -731,7 +731,7 @@ where
 // - Old: facet.vertices() -> Vec<Vertex>
 // - New: facet.vertices()? -> impl Iterator<Item = &Vertex>
 //
-// - Old: facet.cell() -> &Cell  
+// - Old: facet.cell() -> &Cell
 // - New: facet.cell()? -> &Cell (requires TDS lookup)
 
 // =============================================================================
@@ -822,7 +822,7 @@ pub fn facet_key_from_vertices(vertices: &[VertexKey]) -> u64 {
 mod tests {
     use super::*;
     use crate::core::triangulation_data_structure::{Tds, VertexKey};
-    use crate::{cell, vertex};
+    use crate::vertex;
 
     // =============================================================================
     // UNIT TESTS FOR HELPER FUNCTIONS
@@ -865,39 +865,6 @@ mod tests {
         } else {
             panic!("Expected InvalidFacetIndexOverflow error");
         }
-    }
-
-    // =============================================================================
-    // TYPE ALIASES AND HELPERS
-    // =============================================================================
-
-    type TestVertex3D = Vertex<f64, Option<()>, 3>;
-    type TestCell3D = Cell<f64, Option<()>, Option<()>, 3>;
-
-    // Helper function to create a standard tetrahedron (3D cell with 4 vertices)
-    fn create_tetrahedron() -> (TestCell3D, Vec<TestVertex3D>) {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let cell = cell!(vertices);
-        (cell, vertices)
-    }
-
-    type TestVertex2D = Vertex<f64, Option<()>, 2>;
-    type TestCell2D = Cell<f64, Option<()>, Option<()>, 2>;
-
-    // Helper function to create a triangle (2D cell with 3 vertices)
-    fn create_triangle() -> (TestCell2D, Vec<TestVertex2D>) {
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.5, 1.0]),
-        ];
-        let cell = cell!(vertices);
-        (cell, vertices)
     }
 
     // =============================================================================
@@ -1057,18 +1024,18 @@ mod tests {
         let cell_key = tds.cell_keys().next().unwrap();
 
         let facet = FacetView::new(&tds, cell_key, 0).unwrap();
-        let cloned_facet = facet.clone();
+        let cloned_facet = facet;
 
         // Verify clones are equal
         assert_eq!(facet, cloned_facet);
         assert_eq!(facet.cell_key(), cloned_facet.cell_key());
         assert_eq!(facet.facet_index(), cloned_facet.facet_index());
-        
+
         // Verify cell and opposite vertex are accessible through both views
         let cell1 = facet.cell().unwrap();
         let cell2 = cloned_facet.cell().unwrap();
         assert_eq!(cell1.uuid(), cell2.uuid());
-        
+
         let vertex1 = facet.opposite_vertex().unwrap();
         let vertex2 = cloned_facet.opposite_vertex().unwrap();
         assert_eq!(vertex1.uuid(), vertex2.uuid());
@@ -1136,8 +1103,7 @@ mod tests {
         let facet = FacetView::new(&tds, cell_key, 0).unwrap();
 
         // Facet of 2D triangle is an edge (1D) with 2 vertices
-        let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
-        assert_eq!(facet_vertices.len(), 2);
+        assert_eq!(facet.vertices().unwrap().count(), 2);
     }
 
     #[test]
@@ -1151,8 +1117,7 @@ mod tests {
         let facet = FacetView::new(&tds, cell_key, 0).unwrap();
 
         // Facet of 1D edge is a point (0D) with 1 vertex
-        let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
-        assert_eq!(facet_vertices.len(), 1);
+        assert_eq!(facet.vertices().unwrap().count(), 1);
     }
 
     #[test]
@@ -1172,8 +1137,7 @@ mod tests {
         let facet = FacetView::new(&tds, cell_key, 0).unwrap();
 
         // Facet of 4D simplex is a 3D tetrahedron with 4 vertices
-        let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
-        assert_eq!(facet_vertices.len(), 4);
+        assert_eq!(facet.vertices().unwrap().count(), 4);
     }
 
     // =============================================================================
@@ -1240,13 +1204,11 @@ mod tests {
 
         // Create facet with vertex 0 as opposite - should have only vertex 1 in facet
         let facet = FacetView::new(&tds, cell_key, 0).unwrap();
-        let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
-        assert_eq!(facet_vertices.len(), 1);
+        assert_eq!(facet.vertices().unwrap().count(), 1);
 
         // Test the opposite case - vertex 1 as opposite should have only vertex 0 in facet
-        let facet2 = FacetView::new(&tds, cell_key, 1).unwrap();
-        let facet2_vertices: Vec<_> = facet2.vertices().unwrap().collect();
-        assert_eq!(facet2_vertices.len(), 1);
+        let other_facet = FacetView::new(&tds, cell_key, 1).unwrap();
+        assert_eq!(other_facet.vertices().unwrap().count(), 1);
     }
 
     #[test]
@@ -1263,10 +1225,9 @@ mod tests {
 
         // Create facet view for facet 2 (excludes vertex 2)
         let facet = FacetView::new(&tds, cell_key, 2).unwrap();
-        let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
 
         // Should have all vertices except vertex at index 2
-        assert_eq!(facet_vertices.len(), 3);
+        assert_eq!(facet.vertices().unwrap().count(), 3);
         // Verify we have exactly 3 vertices (the D vertices of the D-1 dimensional facet)
     }
 
@@ -1550,7 +1511,7 @@ mod tests {
         // FacetView should be around 17 bytes (8 byte ref + 8 byte CellKey + 1 byte facet_index)
         // Allow for some padding/alignment
         assert!(lightweight_size <= 24);
-        
+
         // Document actual size for reference
         // On 64-bit systems: typically 17 bytes (reference + CellKey + u8)
     }

@@ -374,7 +374,11 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 ///
 /// // Get facet vertices from a cell - must be exactly D vertices for a D-dimensional triangulation
 /// if let Some(cell) = tds.cells().values().next() {
-///     let facet_vertices: Vec<_> = cell.vertices().iter().skip(1).cloned().collect(); // Skip 1 vertex to get D vertices
+///     // cell.vertices() returns VertexKeys, need to resolve to Vertex objects
+///     let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect(); // Skip 1 vertex to get D vertices
+///     let facet_vertices: Vec<_> = facet_vertex_keys.iter()
+///         .map(|&key| tds.vertices()[key])
+///         .collect();
 ///     assert_eq!(facet_vertices.len(), 3); // For 3D triangulation, facet has 3 vertices
 ///     let facet_key = derive_facet_key_from_vertices(&facet_vertices, &tds).unwrap();
 ///     println!("Facet key: {}", facet_key);
@@ -782,206 +786,178 @@ mod tests {
     // FACET UTILITIES TESTS
     // =============================================================================
 
-    // Phase 3A: Test disabled - uses deprecated Facet type and facets() method extensively
-    // This functionality is being replaced with facet_views in the key-based architecture
-    #[test]
-    #[ignore = "Phase 3A: Test disabled - uses deprecated Facet type and facets() method extensively"]
-    #[allow(clippy::too_many_lines)]
-    #[allow(deprecated)] // Testing deprecated function during transition
-    fn test_facets_are_adjacent_multidimensional() {
-        use crate::core::{cell::Cell, facet::Facet};
-        use crate::{cell, vertex};
+    // Phase 3A: Test removed - was testing deprecated Facet type and facets() method
+    // This functionality is now comprehensively tested in:
+    // - test_facet_views_are_adjacent_comprehensive() (3D)
+    // - test_facet_views_are_adjacent_2d_cases() (2D)
+    // - test_facet_views_are_adjacent_1d_cases() (1D)
+    // - test_facet_views_are_adjacent_4d_cases() (4D)
+    // - test_facet_views_are_adjacent_5d_cases() (5D)
+    // The modern facet_views_are_adjacent function works with lightweight FacetView API
 
-        // Test 2D case - basic adjacency detection
-        let v1: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
-        let v2: Vertex<f64, Option<()>, 2> = vertex!([1.0, 0.0]);
-        let v3: Vertex<f64, Option<()>, 2> = vertex!([0.0, 1.0]);
-        let v4: Vertex<f64, Option<()>, 2> = vertex!([1.0, 1.0]);
+    /* OLD TEST BODY REMOVED - USED DEPRECATED API
+    // Test 2D case - basic adjacency detection
+    // Test 3D case - cells with shared and non-shared vertices
+    let points3d_1 = vec![
+        Point::new([0.0, 0.0, 0.0]),
+        Point::new([1.0, 0.0, 0.0]),
+        Point::new([0.0, 1.0, 0.0]),
+        Point::new([0.0, 0.0, 1.0]),
+    ];
+    let points3d_2 = vec![
+        Point::new([0.0, 0.0, 0.0]), // Shared
+        Point::new([1.0, 0.0, 0.0]), // Shared
+        Point::new([0.0, 1.0, 0.0]), // Shared
+        Point::new([2.0, 0.0, 0.0]), // Different
+    ];
+    let points3d_separate = vec![
+        Point::new([10.0, 10.0, 10.0]),
+        Point::new([11.0, 10.0, 10.0]),
+        Point::new([10.0, 11.0, 10.0]),
+        Point::new([10.0, 10.0, 11.0]),
+    ];
 
-        let cell2d_1: Cell<f64, Option<()>, Option<()>, 2> = cell!([v1, v2, v3]);
-        let cell2d_2: Cell<f64, Option<()>, Option<()>, 2> = cell!([v2, v3, v4]);
-        let cell2d_3: Cell<f64, Option<()>, Option<()>, 2> = cell!([v1, v2, v4]);
+    let cell3d_1: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points3d_1));
+    let cell3d_2: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points3d_2));
+    let cell3d_separate: Cell<f64, usize, usize, 3> =
+        cell!(Vertex::from_points(points3d_separate));
 
-        let facet2d_1 = Facet::new(cell2d_1, v1).unwrap(); // Vertices: v2, v3
-        let facet2d_2 = Facet::new(cell2d_2, v4).unwrap(); // Vertices: v2, v3
-        let facet2d_3 = Facet::new(cell2d_3, v4).unwrap(); // Vertices: v1, v2
+    let facets3d_1 = cell3d_1
+        .facets()
+        .expect("Failed to get facets from 3D cell1");
+    let facets3d_2 = cell3d_2
+        .facets()
+        .expect("Failed to get facets from 3D cell2");
+    let facets3d_separate = cell3d_separate
+        .facets()
+        .expect("Failed to get facets from separate 3D cell");
 
-        assert!(
-            facets_are_adjacent(&facet2d_1, &facet2d_2),
-            "2D: Same vertices should be adjacent"
-        );
-        assert!(
-            !facets_are_adjacent(&facet2d_1, &facet2d_3),
-            "2D: Different vertices should not be adjacent"
-        );
-
-        // TODO Phase 3A.2: Refactor these tests to use TDS and FacetView instead of deprecated facets()
-        // The facets() method has been replaced with facet_views() which requires TDS context.
-        // These tests need to be updated to work with the key-based API.
-
-        /* COMMENTED OUT - USES DEPRECATED facets() METHOD
-        // Test 3D case - cells with shared and non-shared vertices
-        let points3d_1 = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        let points3d_2 = vec![
-            Point::new([0.0, 0.0, 0.0]), // Shared
-            Point::new([1.0, 0.0, 0.0]), // Shared
-            Point::new([0.0, 1.0, 0.0]), // Shared
-            Point::new([2.0, 0.0, 0.0]), // Different
-        ];
-        let points3d_separate = vec![
-            Point::new([10.0, 10.0, 10.0]),
-            Point::new([11.0, 10.0, 10.0]),
-            Point::new([10.0, 11.0, 10.0]),
-            Point::new([10.0, 10.0, 11.0]),
-        ];
-
-        let cell3d_1: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points3d_1));
-        let cell3d_2: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points3d_2));
-        let cell3d_separate: Cell<f64, usize, usize, 3> =
-            cell!(Vertex::from_points(points3d_separate));
-
-        let facets3d_1 = cell3d_1
-            .facets()
-            .expect("Failed to get facets from 3D cell1");
-        let facets3d_2 = cell3d_2
-            .facets()
-            .expect("Failed to get facets from 3D cell2");
-        let facets3d_separate = cell3d_separate
-            .facets()
-            .expect("Failed to get facets from separate 3D cell");
-
-        // Test that cells sharing 3 vertices have adjacent facets
-        let mut found_shared_adjacent = false;
-        for f1 in &facets3d_1 {
-            for f2 in &facets3d_2 {
-                if facets_are_adjacent(f1, f2) {
-                    found_shared_adjacent = true;
-                    break;
-                }
-            }
-            if found_shared_adjacent {
+    // Test that cells sharing 3 vertices have adjacent facets
+    let mut found_shared_adjacent = false;
+    for f1 in &facets3d_1 {
+        for f2 in &facets3d_2 {
+            if facets_are_adjacent(f1, f2) {
+                found_shared_adjacent = true;
                 break;
             }
         }
-        assert!(
-            found_shared_adjacent,
-            "3D: Cells sharing vertices should have adjacent facets"
-        );
-
-        // Test that completely separate cells have no adjacent facets
-        let mut found_separate_adjacent = false;
-        for f1 in &facets3d_1 {
-            for f_sep in &facets3d_separate {
-                if facets_are_adjacent(f1, f_sep) {
-                    found_separate_adjacent = true;
-                    break;
-                }
-            }
-            if found_separate_adjacent {
-                break;
-            }
+        if found_shared_adjacent {
+            break;
         }
-        assert!(
-            !found_separate_adjacent,
-            "3D: Separate cells should not have adjacent facets"
-        );
-
-        // Test 4D case - verify higher dimensional functionality
-        let points4d_1 = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0]),
-        ];
-        let points4d_2 = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]), // Shared
-            Point::new([1.0, 0.0, 0.0, 0.0]), // Shared
-            Point::new([0.0, 1.0, 0.0, 0.0]), // Shared
-            Point::new([0.0, 0.0, 1.0, 0.0]), // Shared
-            Point::new([2.0, 0.0, 0.0, 0.0]), // Different
-        ];
-
-        let cell4d_1: Cell<f64, usize, usize, 4> = cell!(Vertex::from_points(points4d_1));
-        let cell4d_2: Cell<f64, usize, usize, 4> = cell!(Vertex::from_points(points4d_2));
-
-        let facets4d_1 = cell4d_1
-            .facets()
-            .expect("Failed to get facets from 4D cell1");
-        let facets4d_2 = cell4d_2
-            .facets()
-            .expect("Failed to get facets from 4D cell2");
-
-        // Test 4D adjacency
-        let mut found_4d_adjacent = false;
-        for f1 in &facets4d_1 {
-            for f2 in &facets4d_2 {
-                if facets_are_adjacent(f1, f2) {
-                    found_4d_adjacent = true;
-                    break;
-                }
-            }
-            if found_4d_adjacent {
-                break;
-            }
-        }
-        assert!(
-            found_4d_adjacent,
-            "4D: Cells sharing 4 vertices should have adjacent facets"
-        );
-
-        // Test 5D case - maximum practical dimension
-        let points5d_1 = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
-        ];
-        let points5d_2 = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]), // Shared
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]), // Shared
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]), // Shared
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]), // Shared
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]), // Shared
-            Point::new([3.0, 0.0, 0.0, 0.0, 0.0]), // Different
-        ];
-
-        let cell5d_1: Cell<f64, usize, usize, 5> = cell!(Vertex::from_points(points5d_1));
-        let cell5d_2: Cell<f64, usize, usize, 5> = cell!(Vertex::from_points(points5d_2));
-
-        let facets5d_1 = cell5d_1
-            .facets()
-            .expect("Failed to get facets from 5D cell1");
-        let facets5d_2 = cell5d_2
-            .facets()
-            .expect("Failed to get facets from 5D cell2");
-
-        // Test 5D adjacency
-        let mut found_5d_adjacent = false;
-        for f1 in &facets5d_1 {
-            for f2 in &facets5d_2 {
-                if facets_are_adjacent(f1, f2) {
-                    found_5d_adjacent = true;
-                    break;
-                }
-            }
-            if found_5d_adjacent {
-                break;
-            }
-        }
-        assert!(
-            found_5d_adjacent,
-            "5D: Cells sharing 5 vertices should have adjacent facets"
-        );
-        */
     }
+    assert!(
+        found_shared_adjacent,
+        "3D: Cells sharing vertices should have adjacent facets"
+    );
+
+    // Test that completely separate cells have no adjacent facets
+    let mut found_separate_adjacent = false;
+    for f1 in &facets3d_1 {
+        for f_sep in &facets3d_separate {
+            if facets_are_adjacent(f1, f_sep) {
+                found_separate_adjacent = true;
+                break;
+            }
+        }
+        if found_separate_adjacent {
+            break;
+        }
+    }
+    assert!(
+        !found_separate_adjacent,
+        "3D: Separate cells should not have adjacent facets"
+    );
+
+    // Test 4D case - verify higher dimensional functionality
+    let points4d_1 = vec![
+        Point::new([0.0, 0.0, 0.0, 0.0]),
+        Point::new([1.0, 0.0, 0.0, 0.0]),
+        Point::new([0.0, 1.0, 0.0, 0.0]),
+        Point::new([0.0, 0.0, 1.0, 0.0]),
+        Point::new([0.0, 0.0, 0.0, 1.0]),
+    ];
+    let points4d_2 = vec![
+        Point::new([0.0, 0.0, 0.0, 0.0]), // Shared
+        Point::new([1.0, 0.0, 0.0, 0.0]), // Shared
+        Point::new([0.0, 1.0, 0.0, 0.0]), // Shared
+        Point::new([0.0, 0.0, 1.0, 0.0]), // Shared
+        Point::new([2.0, 0.0, 0.0, 0.0]), // Different
+    ];
+
+    let cell4d_1: Cell<f64, usize, usize, 4> = cell!(Vertex::from_points(points4d_1));
+    let cell4d_2: Cell<f64, usize, usize, 4> = cell!(Vertex::from_points(points4d_2));
+
+    let facets4d_1 = cell4d_1
+        .facets()
+        .expect("Failed to get facets from 4D cell1");
+    let facets4d_2 = cell4d_2
+        .facets()
+        .expect("Failed to get facets from 4D cell2");
+
+    // Test 4D adjacency
+    let mut found_4d_adjacent = false;
+    for f1 in &facets4d_1 {
+        for f2 in &facets4d_2 {
+            if facets_are_adjacent(f1, f2) {
+                found_4d_adjacent = true;
+                break;
+            }
+        }
+        if found_4d_adjacent {
+            break;
+        }
+    }
+    assert!(
+        found_4d_adjacent,
+        "4D: Cells sharing 4 vertices should have adjacent facets"
+    );
+
+    // Test 5D case - maximum practical dimension
+    let points5d_1 = vec![
+        Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
+        Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
+        Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
+        Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
+        Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
+        Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
+    ];
+    let points5d_2 = vec![
+        Point::new([0.0, 0.0, 0.0, 0.0, 0.0]), // Shared
+        Point::new([1.0, 0.0, 0.0, 0.0, 0.0]), // Shared
+        Point::new([0.0, 1.0, 0.0, 0.0, 0.0]), // Shared
+        Point::new([0.0, 0.0, 1.0, 0.0, 0.0]), // Shared
+        Point::new([0.0, 0.0, 0.0, 1.0, 0.0]), // Shared
+        Point::new([3.0, 0.0, 0.0, 0.0, 0.0]), // Different
+    ];
+
+    let cell5d_1: Cell<f64, usize, usize, 5> = cell!(Vertex::from_points(points5d_1));
+    let cell5d_2: Cell<f64, usize, usize, 5> = cell!(Vertex::from_points(points5d_2));
+
+    let facets5d_1 = cell5d_1
+        .facets()
+        .expect("Failed to get facets from 5D cell1");
+    let facets5d_2 = cell5d_2
+        .facets()
+        .expect("Failed to get facets from 5D cell2");
+
+    // Test 5D adjacency
+    let mut found_5d_adjacent = false;
+    for f1 in &facets5d_1 {
+        for f2 in &facets5d_2 {
+            if facets_are_adjacent(f1, f2) {
+                found_5d_adjacent = true;
+                break;
+            }
+        }
+        if found_5d_adjacent {
+            break;
+        }
+    }
+    assert!(
+        found_5d_adjacent,
+        "5D: Cells sharing 5 vertices should have adjacent facets"
+    );
+    END OLD TEST BODY */
 
     // =============================================================================
     // HASH UTILITIES TESTS

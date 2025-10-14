@@ -45,6 +45,35 @@ just test-debug
 
 ### 🧪 Algorithm Integration Testing
 
+#### `tds_basic_integration.rs`
+
+Fundamental integration tests for triangulation data structure (TDS) operations, verifying core functionality with simple, well-understood geometries.
+
+**Test Coverage:**
+
+- **TDS Creation**: Validates basic TDS construction with various vertex configurations
+  - Single cell (minimal 3D simplex/tetrahedron)
+  - Multiple adjacent cells sharing facets
+- **Neighbor Assignment**: Verifies correct neighbor connectivity between cells
+  - Initial simplex neighbor initialization
+  - Shared facet neighbor relationships
+- **Boundary Analysis**: Tests boundary facet computation
+  - Single cell boundary identification (4 facets for tetrahedron)
+  - Multi-cell boundary detection (shared facets excluded)
+- **Basic Validation**: Establishes baseline correctness for simple geometries
+
+**Test Functions:**
+
+- `test_tds_creates_one_cell` - Single tetrahedron creation
+- `test_tds_creates_two_cells` - Two adjacent tetrahedra
+- `test_initial_simplex_has_neighbors` - Neighbor assignment validation
+- `test_two_cells_share_facet` - Shared facet connectivity
+
+**Run with:** `cargo test --test tds_basic_integration` or `just test-release`
+
+**Purpose:** These tests establish foundational TDS behavior. For complex scenarios involving algorithms like Bowyer-Watson or convex hull
+operations, see other integration tests.
+
 #### `convex_hull_bowyer_watson_integration.rs`
 
 Integration tests for convex hull algorithms with Bowyer-Watson triangulation, focusing on the interaction between hull computation and triangulation construction.
