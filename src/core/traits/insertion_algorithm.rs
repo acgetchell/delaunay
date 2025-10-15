@@ -1126,8 +1126,9 @@ where
     /// Each pair can be used to create a `FacetView` on-demand for further operations.
     ///
     /// **Important**: These handles are only valid while the referenced cells exist in the TDS.
-    /// If cells will be removed (e.g., during cavity-based insertion), convert handles to
-    /// concrete Facet objects before removing cells.
+    /// If cells will be removed (e.g., during cavity-based insertion), extract necessary
+    /// facet data (vertices, etc.) before removing cells, as handles become invalid after
+    /// cell removal.
     ///
     /// # Errors
     ///
@@ -1350,11 +1351,11 @@ where
         Self::remove_bad_cells(tds, &bad_cells);
 
         // Create new cells from pre-extracted facet data
-        let mut cells_created = 0;
+        let cells_created = extracted_facet_data.len();
         for facet_vertices in extracted_facet_data {
+            // Discard the returned CellKey as we don't need to track it here
             Self::create_cell_from_vertices_and_vertex(tds, facet_vertices, vertex)
                 .map_err(InsertionError::TriangulationState)?;
-            cells_created += 1;
         }
 
         // Finalize the triangulation after insertion to fix any invalid states
@@ -2011,7 +2012,7 @@ where
     ///
     /// # Returns
     ///
-    /// `Ok(())` if the cell was successfully created, or an error if creation failed.
+    /// `Ok(CellKey)` containing the key of the newly created cell, or an error if creation failed.
     ///
     /// # Errors
     ///
@@ -2024,7 +2025,7 @@ where
         cell_key: CellKey,
         facet_index: u8,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<(), TriangulationValidationError>
+    ) -> Result<CellKey, TriangulationValidationError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
@@ -2057,7 +2058,7 @@ where
     ///
     /// # Returns
     ///
-    /// `Ok(())` if the cell was successfully created, or an error if creation failed
+    /// `Ok(CellKey)` containing the key of the newly created cell, or an error if creation failed
     /// due to geometric or topological issues.
     ///
     /// # Errors
@@ -2070,7 +2071,7 @@ where
         tds: &mut Tds<T, U, V, D>,
         mut facet_vertices: Vec<Vertex<T, U, D>>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<(), TriangulationValidationError>
+    ) -> Result<CellKey, TriangulationValidationError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
@@ -2093,13 +2094,13 @@ where
             }
         })?;
 
-        tds.insert_cell_with_mapping(new_cell).map_err(|e| {
+        let cell_key = tds.insert_cell_with_mapping(new_cell).map_err(|e| {
             TriangulationValidationError::InconsistentDataStructure {
                 message: format!("Failed to insert cell into TDS: {e}"),
             }
         })?;
 
-        Ok(())
+        Ok(cell_key)
     }
 
     /// Find visible boundary facets using lightweight `FacetView` handles to avoid heavy cloning.
@@ -2157,6 +2158,11 @@ where
     /// This is an optimized version of `create_cells_from_boundary_facets` that works
     /// with (`CellKey`, u8) handles instead of requiring pre-materialized Facet structures.
     ///
+    /// **Atomic Behavior**: This method provides atomic semantics - either all cells are
+    /// created successfully, or no cells are created and the TDS remains in its original state.
+    /// If cell creation fails partway through, all successfully created cells are removed
+    /// before returning the error.
+    ///
     /// # Arguments
     ///
     /// * `tds` - The triangulation data structure to modify
@@ -2170,7 +2176,8 @@ where
     /// # Errors
     ///
     /// Returns `InsertionError::TriangulationState` if any facet handle is invalid or
-    /// if cell reconstruction fails due to data structure inconsistencies.
+    /// if cell reconstruction fails due to data structure inconsistencies. On error, the TDS
+    /// is restored to its state before the method was called.
     fn create_cells_from_facet_handles(
         tds: &mut Tds<T, U, V, D>,
         facet_handles: &[(CellKey, u8)],
@@ -2180,7 +2187,9 @@ where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
-        let mut cells_created = 0;
+        // Phase 1: Extract all facet data upfront before creating any cells
+        // This ensures we can validate everything before modifying the TDS
+        let mut extracted_facet_data = Vec::with_capacity(facet_handles.len());
 
         for &(cell_key, facet_index) in facet_handles {
             // Validate cell exists first
@@ -2194,7 +2203,7 @@ where
                 )
             })?;
 
-            // Create FacetView and extract vertices - now using optimized FacetView approach
+            // Create FacetView and extract vertices
             let facet_view = crate::core::facet::FacetView::new(tds, cell_key, facet_index)
                 .map_err(|_| {
                     InsertionError::TriangulationState(
@@ -2206,18 +2215,33 @@ where
                     )
                 })?;
 
-            // Extract vertex data from FacetView (zero allocation access)
+            // Extract vertex data from FacetView
             let facet_vertices_iter = facet_view.vertices().map_err(|e| {
                 InsertionError::TriangulationState(TriangulationValidationError::FacetError(e))
             })?;
             let facet_vertices: Vec<Vertex<T, U, D>> = facet_vertices_iter.copied().collect();
-
-            // Create the cell using the optimized vertex-based approach
-            // Propagate errors instead of silently ignoring them
-            Self::create_cell_from_vertices_and_vertex(tds, facet_vertices, vertex)
-                .map_err(InsertionError::TriangulationState)?;
-            cells_created += 1;
+            extracted_facet_data.push(facet_vertices);
         }
+
+        // Phase 2: Create all cells, tracking created cell keys for potential rollback
+        let mut created_cell_keys = Vec::with_capacity(extracted_facet_data.len());
+
+        for facet_vertices in extracted_facet_data {
+            match Self::create_cell_from_vertices_and_vertex(tds, facet_vertices, vertex) {
+                Ok(cell_key) => {
+                    created_cell_keys.push(cell_key);
+                }
+                Err(e) => {
+                    // Rollback: Remove all cells created so far
+                    if !created_cell_keys.is_empty() {
+                        tds.remove_cells_by_keys(&created_cell_keys);
+                    }
+                    return Err(InsertionError::TriangulationState(e));
+                }
+            }
+        }
+
+        let cells_created = created_cell_keys.len();
 
         // Validate that we created at least some cells
         if cells_created == 0 && !facet_handles.is_empty() {
@@ -3022,6 +3046,124 @@ mod tests {
         println!("✓ Boundary conditions test works correctly");
     }
 
+    /// Test atomic rollback behavior of `create_cells_from_facet_handles`.
+    ///
+    /// This test verifies that when cell creation fails partway through processing
+    /// multiple facet handles, any previously created cells are rolled back to keep
+    /// the TDS in a consistent state.
+    #[test]
+    fn test_create_cells_from_facet_handles_atomic_rollback() {
+        println!("Testing create_cells_from_facet_handles atomic rollback behavior");
+
+        // Create simple tetrahedron
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let algorithm = IncrementalBowyerWatson::new();
+
+        // Get some valid handles
+        let exterior_vertex = vertex!([2.0, 0.0, 0.0]);
+        let valid_handles = algorithm
+            .find_visible_boundary_facets_lightweight(&tds, &exterior_vertex)
+            .expect("Should find visible boundary facets");
+
+        assert!(
+            !valid_handles.is_empty(),
+            "Should have found some visible facets"
+        );
+        println!("  Found {} valid handles", valid_handles.len());
+
+        // Record initial state
+        let initial_cell_count = tds.number_of_cells();
+        let initial_cell_keys: Vec<_> = tds.cells().keys().collect();
+        println!("  Initial cell count: {initial_cell_count}");
+        println!("  Initial cell keys: {}", initial_cell_keys.len());
+
+        // Create a handle list with valid handles followed by an invalid one
+        // This ensures some cells will be created before the error occurs
+        let valid_cell_key = tds.cells().keys().next().expect("TDS should have cells");
+        let mut mixed_handles = valid_handles.clone();
+        mixed_handles.push((valid_cell_key, 99)); // Add invalid handle at the end
+
+        println!(
+            "  Testing with {} handles ({} valid + 1 invalid)",
+            mixed_handles.len(),
+            mixed_handles.len() - 1
+        );
+
+        // Attempt to create cells - this should fail on the invalid handle
+        let result = IncrementalBowyerWatson::create_cells_from_facet_handles(
+            &mut tds,
+            &mixed_handles,
+            &exterior_vertex,
+        );
+
+        // Verify the operation failed
+        assert!(result.is_err(), "Should return error for invalid handle");
+        println!("  ✓ Operation correctly failed: {:?}", result.unwrap_err());
+
+        // Verify atomic rollback: cell count should be unchanged
+        let final_cell_count = tds.number_of_cells();
+        assert_eq!(
+            final_cell_count, initial_cell_count,
+            "Cell count should be unchanged after rollback (atomic behavior)"
+        );
+        println!("  ✓ Cell count unchanged: {initial_cell_count}");
+
+        // Verify no new cells were added (all created cells were rolled back)
+        let final_cell_keys: Vec<_> = tds.cells().keys().collect();
+        assert_eq!(
+            final_cell_keys.len(),
+            initial_cell_keys.len(),
+            "Number of cell keys should be unchanged"
+        );
+
+        // Verify the exact same cells exist (no cells added or removed)
+        for initial_key in &initial_cell_keys {
+            assert!(
+                tds.get_cell_by_key(*initial_key).is_some(),
+                "All initial cells should still exist after rollback"
+            );
+        }
+        println!("  ✓ All initial cells preserved");
+
+        // Verify no new cells exist
+        for final_key in &final_cell_keys {
+            assert!(
+                initial_cell_keys.contains(final_key),
+                "No new cells should exist after rollback"
+            );
+        }
+        println!("  ✓ No new cells created");
+
+        // Now test that valid handles still work after the failed attempt
+        let cells_created = IncrementalBowyerWatson::create_cells_from_facet_handles(
+            &mut tds,
+            &valid_handles,
+            &exterior_vertex,
+        )
+        .expect("Valid handles should work after failed attempt");
+
+        assert!(
+            cells_created > 0,
+            "Should successfully create cells with valid handles"
+        );
+        println!("  ✓ TDS remains functional after rollback: created {cells_created} cells");
+
+        let success_cell_count = tds.number_of_cells();
+        assert_eq!(
+            success_cell_count,
+            initial_cell_count + cells_created,
+            "Successful operation should increase cell count"
+        );
+
+        println!("✓ Atomic rollback behavior verified successfully");
+    }
+
     #[test]
     fn test_is_facet_visible_from_vertex_orientation_cases() {
         use crate::core::facet::facet_key_from_vertices;
@@ -3375,7 +3517,7 @@ mod tests {
 
         // Check if creation was rejected or succeeded
         match result {
-            Ok(()) => {
+            Ok(_cell_key) => {
                 println!("  Cell creation succeeded");
 
                 // The cell was created - check if it's valid or invalid
@@ -4195,7 +4337,7 @@ mod tests {
 
         // This should either succeed (if handled gracefully) or fail with appropriate error
         match result {
-            Ok(()) => {
+            Ok(_cell_key) => {
                 // If it succeeds, verify TDS is still valid
                 assert!(tds.is_valid().is_ok());
             }

@@ -573,7 +573,7 @@ where
         })?;
 
         // Get vertex keys for facet vertices (convert UUIDs to keys once)
-        let facet_vertices: Result<Vec<_>, _> = facet_vertices
+        let facet_vertex_keys_res: Result<Vec<_>, _> = facet_vertices
             .iter()
             .map(|v| {
                 tds.vertex_key_from_uuid(&v.uuid()).ok_or(
@@ -583,12 +583,12 @@ where
                 )
             })
             .collect();
-        let facet_vertices = facet_vertices?;
+        let facet_vertex_keys = facet_vertex_keys_res?;
 
         // Find the cell vertex key that's not in the facet
         // Optimized: Use a sorted merge-like approach to avoid O(D²) contains() calls
         // Since both lists are small (D and D+1 elements), we can sort and scan efficiently
-        let mut sorted_facet_keys = facet_vertices;
+        let mut sorted_facet_keys = facet_vertex_keys;
         sorted_facet_keys.sort_unstable();
 
         let inside_vertex_key = cell_vertices
@@ -805,6 +805,17 @@ where
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
     ) -> Result<Vec<usize>, ConvexHullConstructionError> {
+        // Fail fast if hull is stale relative to this TDS
+        // Note: generation 0 allows cache rebuild after invalidation
+        let hull_gen = self.cached_generation.load(Ordering::Acquire);
+        let tds_gen = tds.generation();
+        if hull_gen != 0 && hull_gen != tds_gen {
+            return Err(ConvexHullConstructionError::StaleHull {
+                hull_generation: hull_gen,
+                tds_generation: tds_gen,
+            });
+        }
+
         // Hoist cache loading once before the loop to avoid redundant validations
         let _facet_cache = self
             .try_get_or_build_facet_cache(tds)
@@ -876,6 +887,17 @@ where
     where
         T: PartialOrd + Copy,
     {
+        // Fail fast if hull is stale relative to this TDS
+        // Note: generation 0 allows cache rebuild after invalidation
+        let hull_gen = self.cached_generation.load(Ordering::Acquire);
+        let tds_gen = tds.generation();
+        if hull_gen != 0 && hull_gen != tds_gen {
+            return Err(ConvexHullConstructionError::StaleHull {
+                hull_generation: hull_gen,
+                tds_generation: tds_gen,
+            });
+        }
+
         let visible_facets = self.find_visible_facets(point, tds)?;
 
         if visible_facets.is_empty() {

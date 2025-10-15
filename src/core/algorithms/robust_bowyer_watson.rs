@@ -313,9 +313,11 @@ where
             // (handles duplicates and cells that may already be gone)
             <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
             <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
-            let cells_removed = bad_cells
-                .iter()
-                .filter(|&&ck| tds.cells().get(ck).is_none())
+            // Deduplicate to avoid overcounting when bad_cells contains repeats
+            let unique_bad: CellKeySet = bad_cells.iter().copied().collect();
+            let cells_removed = unique_bad
+                .into_iter()
+                .filter(|&ck| tds.cells().get(ck).is_none())
                 .count();
 
             let mut cells_created = 0;
@@ -544,7 +546,7 @@ where
                     let cell_key = fv.cell_key();
                     let facet_index = fv.facet_index();
                     // Phase 3A: Use FacetView directly instead of converting to heavyweight Facet
-                    if self.is_facet_visible_from_vertex_robust(tds, &fv, vertex, cell_key) {
+                    if self.is_facet_visible_from_vertex_robust(tds, &fv, vertex) {
                         handles.push((cell_key, facet_index));
                     }
                 }
@@ -836,7 +838,6 @@ where
         tds: &Tds<T, U, V, D>,
         facet_view: &crate::core::facet::FacetView<'_, T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-        adjacent_cell_key: crate::core::triangulation_data_structure::CellKey,
     ) -> bool
     where
         T: AddAssign<T>
@@ -854,7 +855,7 @@ where
         use crate::geometry::predicates::{Orientation, simplex_orientation};
 
         // Get the adjacent cell to this boundary facet
-        let Some(adjacent_cell) = tds.cells().get(adjacent_cell_key) else {
+        let Some(adjacent_cell) = tds.cells().get(facet_view.cell_key()) else {
             return false;
         };
 
@@ -3183,12 +3184,8 @@ mod tests {
 
         // This should exercise the fallback visibility heuristic path
         // Use FacetView directly (Phase 3A: key-based API)
-        let is_visible = algorithm.is_facet_visible_from_vertex_robust(
-            &tds,
-            test_facet,
-            &degenerate_vertex,
-            adjacent_cell_key,
-        );
+        let is_visible =
+            algorithm.is_facet_visible_from_vertex_robust(&tds, test_facet, &degenerate_vertex);
 
         debug_println!("Degenerate visibility test result: {is_visible}");
         // Don't assert specific result since it depends on geometry, just ensure it doesn't panic

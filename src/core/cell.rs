@@ -428,15 +428,6 @@ where
     ///
     /// Returns `CellValidationError::InsufficientVertices` if `vertices` doesn't
     /// have exactly D+1 elements.
-    ///
-    /// # Example (internal use)
-    ///
-    /// ```rust,ignore
-    /// // Within TDS methods:
-    /// let vertices: SmallBuffer<VertexKey, 8> = /* ... */;
-    /// let cell = Cell::new(vertices, Some(cell_data))?;
-    /// let cell_key = self.cells.insert(cell);
-    /// ```
     pub(crate) fn new(
         vertices: impl Into<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
         data: Option<V>,

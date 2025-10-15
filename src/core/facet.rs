@@ -59,6 +59,7 @@
 // IMPORTS
 // =============================================================================
 
+use super::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use super::traits::data_type::DataType;
 use super::util::{stable_hash_u64_slice, usize_to_u8};
 use super::{
@@ -441,12 +442,15 @@ where
         let facet_index = usize::from(self.facet_index);
 
         // Collect vertex keys excluding the opposite vertex
-        let facet_vertices: Vec<_> = cell_vertices
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != facet_index)
-            .map(|(_, &key)| key)
-            .collect();
+        let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+        facet_vertices.extend(
+            cell_vertices
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != facet_index)
+                .map(|(_, &key)| key),
+        );
 
         // Compute canonical key from vertex keys
         Ok(facet_key_from_vertices(&facet_vertices))
@@ -812,7 +816,8 @@ pub fn facet_key_from_vertices(vertices: &[VertexKey]) -> u64 {
     }
 
     // Convert VertexKeys to u64 and sort for deterministic ordering
-    let mut key_values: Vec<u64> = vertices.iter().map(|key| key.data().as_ffi()).collect();
+    let mut key_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
+        vertices.iter().map(|key| key.data().as_ffi()).collect();
     key_values.sort_unstable();
 
     // Use the shared stable hash function
@@ -1408,8 +1413,12 @@ mod tests {
         let opposite = facet_view.opposite_vertex().unwrap();
 
         // The opposite vertex should be the vertex at index 1
-        let cell_vertex_keys = tds.cells()[cell_key].vertices();
-        let expected_vertex = &tds.vertices()[cell_vertex_keys[1]];
+        let cell = tds.cells().get(cell_key).expect("cell exists");
+        let cell_vertex_keys = cell.vertices();
+        let expected_vertex = tds
+            .vertices()
+            .get(cell_vertex_keys[1])
+            .expect("vertex exists");
         assert_eq!(opposite.uuid(), expected_vertex.uuid());
     }
 
