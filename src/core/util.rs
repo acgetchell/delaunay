@@ -96,7 +96,7 @@ pub fn make_uuid() -> Uuid {
 }
 
 // NOTE: The deprecated facets_are_adjacent function has been removed in Phase 3A.
-// Use facet_views_are_adjacent instead, which works with the lightweight FacetView API.
+// Use [`facet_views_are_adjacent`] instead, which works with the lightweight FacetView API.
 
 /// Determines if two facet views are adjacent by comparing their vertices.
 ///
@@ -416,14 +416,14 @@ where
 
     // Compute the facet key using VertexKeys (same method as build_facet_to_cells_hashmap)
     // Stack-allocate for performance on hot paths
-    let mut vertices: SmallBuffer<
+    let mut vertex_keys: SmallBuffer<
         VertexKey,
         { crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE },
     > = SmallBuffer::new();
 
     for vertex in facet_vertices {
         match tds.vertex_key_from_uuid(&vertex.uuid()) {
-            Some(key) => vertices.push(key),
+            Some(key) => vertex_keys.push(key),
             None => {
                 return Err(FacetError::VertexNotFound {
                     uuid: vertex.uuid(),
@@ -432,7 +432,7 @@ where
         }
     }
 
-    Ok(facet_key_from_vertices(&vertices[..]))
+    Ok(facet_key_from_vertices(&vertex_keys[..]))
 }
 
 /// Verifies facet index consistency between two neighboring cells.

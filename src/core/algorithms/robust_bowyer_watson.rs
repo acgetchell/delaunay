@@ -285,6 +285,10 @@ where
             // This ensures consistency with the standard algorithm while adding robustness
 
             // Extract facet data before removing cells
+            // TODO: Performance optimization - reduce allocations by:
+            // 1. Reusing preallocated buffers in InsertionBuffers (e.g., SmallBuffer per facet)
+            // 2. Extracting VertexKeys from TDS and adding keyed variant of create_cell_*
+            //    to avoid cloning Vertex objects (more complex API change)
             let mut extracted_facet_data = Vec::with_capacity(boundary_handles.len());
             for &(cell_key, facet_index) in &boundary_handles {
                 let facet_view = crate::core::facet::FacetView::new(tds, cell_key, facet_index)
@@ -539,9 +543,25 @@ where
             _ => {
                 // Fallback: robust check via Facet conversion (slow path)
                 let mut handles = Vec::new();
-                let boundary_iter = tds
+                let mut boundary_iter = tds
                     .boundary_facets()
                     .map_err(InsertionError::TriangulationState)?;
+
+                // Early exit: if no boundary facets exist, return immediately
+                let first_facet = boundary_iter.next();
+                if first_facet.is_none() {
+                    return Ok(handles);
+                }
+
+                // Process first facet and then the rest
+                if let Some(fv) = first_facet {
+                    let cell_key = fv.cell_key();
+                    let facet_index = fv.facet_index();
+                    if self.is_facet_visible_from_vertex_robust(tds, &fv, vertex) {
+                        handles.push((cell_key, facet_index));
+                    }
+                }
+
                 for fv in boundary_iter {
                     let cell_key = fv.cell_key();
                     let facet_index = fv.facet_index();

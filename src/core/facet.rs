@@ -726,24 +726,6 @@ where
 }
 
 // =============================================================================
-// DEPRECATED FACET TYPE REMOVED
-// =============================================================================
-// The heavyweight Facet<T, U, V, D> type has been deleted.
-// All code should use FacetView instead for 18x memory reduction.
-// FacetView is a lightweight view that references the TDS instead of
-// storing complete Cell and Vertex objects.
-//
-// Migration guide:
-// - Old: Facet::new(cell, vertex)
-// - New: FacetView::new(&tds, cell_key, facet_index)
-//
-// - Old: facet.vertices() -> Vec<Vertex>
-// - New: facet.vertices()? -> impl Iterator<Item = &Vertex>
-//
-// - Old: facet.cell() -> &Cell
-// - New: facet.cell()? -> &Cell (requires TDS lookup)
-
-// =============================================================================
 // FACET KEY GENERATION FUNCTIONS
 // =============================================================================
 

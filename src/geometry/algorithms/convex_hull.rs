@@ -493,8 +493,11 @@ where
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
     ) -> Result<bool, ConvexHullConstructionError> {
-        // Debug build: catch stale-hull misuse early
-        // Allow generation 0 (indicates manual cache invalidation expecting rebuild)
+        // Generation 0 policy: Treat gen==0 as "unknown/invalidated" state allowing cache rebuild.
+        // This provides a useful "force rebuild" path after invalidate_cache() without requiring
+        // a separate creation_generation field. The tradeoff: stale facet handles after invalidation
+        // may be used until FacetDataAccessFailed occurs (acceptable since invalidate_cache is rare).
+        // Alternative: Add creation_generation to always detect stale handles (more complex).
         let hull_gen = self.cached_generation.load(Ordering::Acquire);
         let tds_gen = tds.generation();
         debug_assert!(
@@ -573,6 +576,9 @@ where
         })?;
 
         // Get vertex keys for facet vertices (convert UUIDs to keys once)
+        // TODO: Performance opportunity - if TDS/Vertex exposed vertex keys directly
+        // (e.g., Vertex::key() or TDS API returning keys), we could skip UUID→key roundtrip.
+        // For small D this overhead is minor but it simplifies hot path.
         let facet_vertex_keys_res: Result<Vec<_>, _> = facet_vertices
             .iter()
             .map(|v| {
@@ -649,15 +655,8 @@ where
             | (Orientation::POSITIVE, Orientation::NEGATIVE) => Ok(true),
             (Orientation::DEGENERATE, _) | (_, Orientation::DEGENERATE) => {
                 // Degenerate case - fall back to distance heuristic
-                // Get actual Vertex objects from the original facet_view
-                let facet_vertices_actual: Vec<_> = facet_view
-                    .vertices()
-                    .map_err(
-                        |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
-                    )?
-                    .copied()
-                    .collect();
-                Self::fallback_visibility_test(&facet_vertices_actual, point)
+                // Reuse vertices already loaded above to avoid redundant facet.vertices() call
+                Self::fallback_visibility_test(&facet_vertices, point)
             }
             _ => Ok(false), // Same orientation = same side = not visible
         }
@@ -806,7 +805,7 @@ where
         tds: &Tds<T, U, V, D>,
     ) -> Result<Vec<usize>, ConvexHullConstructionError> {
         // Fail fast if hull is stale relative to this TDS
-        // Note: generation 0 allows cache rebuild after invalidation
+        // Generation 0 policy: See is_facet_visible_from_point() for rationale
         let hull_gen = self.cached_generation.load(Ordering::Acquire);
         let tds_gen = tds.generation();
         if hull_gen != 0 && hull_gen != tds_gen {
@@ -888,7 +887,7 @@ where
         T: PartialOrd + Copy,
     {
         // Fail fast if hull is stale relative to this TDS
-        // Note: generation 0 allows cache rebuild after invalidation
+        // Generation 0 policy: See is_facet_visible_from_point() for rationale
         let hull_gen = self.cached_generation.load(Ordering::Acquire);
         let tds_gen = tds.generation();
         if hull_gen != 0 && hull_gen != tds_gen {
@@ -1437,7 +1436,7 @@ mod tests {
     /// This is a test utility that creates a `FacetView` from a facet handle
     /// `(CellKey, u8)` tuple and extracts the vertices as a `Vec<Vertex>`.
     /// This avoids repetitive `FacetView` creation boilerplate in tests.
-    fn facet_vertices<T, U, V, const D: usize>(
+    fn extract_facet_vertices<T, U, V, const D: usize>(
         facet_handle: &(CellKey, u8),
         tds: &Tds<T, U, V, D>,
     ) -> Result<Vec<Vertex<T, U, D>>, ConvexHullConstructionError>
@@ -1818,7 +1817,7 @@ mod tests {
             ConvexHull::from_triangulation(&tds).unwrap();
 
         assert!(!hull.hull_facets.is_empty(), "Hull should have facets");
-        let test_facet_vertices = facet_vertices(&hull.hull_facets[0], &tds).unwrap();
+        let test_facet_vertices = extract_facet_vertices(&hull.hull_facets[0], &tds).unwrap();
 
         // Test with points at various distances to verify scale-adaptive threshold
         let distance_test_points = vec![
@@ -1939,7 +1938,8 @@ mod tests {
         let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
         let hull_2d: ConvexHull<f64, Option<()>, Option<()>, 2> =
             ConvexHull::from_triangulation(&tds_2d).unwrap();
-        let test_facet_2d_vertices = facet_vertices(&hull_2d.hull_facets[0], &tds_2d).unwrap();
+        let test_facet_2d_vertices =
+            extract_facet_vertices(&hull_2d.hull_facets[0], &tds_2d).unwrap();
         let test_point_2d = Point::new([2.0, 2.0]);
         let result_2d = ConvexHull::<f64, Option<()>, Option<()>, 2>::fallback_visibility_test(
             &test_facet_2d_vertices,
@@ -1959,7 +1959,8 @@ mod tests {
         let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
         let hull_4d: ConvexHull<f64, Option<()>, Option<()>, 4> =
             ConvexHull::from_triangulation(&tds_4d).unwrap();
-        let test_facet_4d_vertices = facet_vertices(&hull_4d.hull_facets[0], &tds_4d).unwrap();
+        let test_facet_4d_vertices =
+            extract_facet_vertices(&hull_4d.hull_facets[0], &tds_4d).unwrap();
         let test_point_4d = Point::new([2.0, 2.0, 2.0, 2.0]);
         let result_4d = ConvexHull::<f64, Option<()>, Option<()>, 4>::fallback_visibility_test(
             &test_facet_4d_vertices,
@@ -3386,7 +3387,7 @@ mod tests {
             ConvexHull::from_triangulation(&tds).unwrap();
 
         // Test fallback_visibility_test with a regular facet and extreme point
-        let test_facet_vertices = facet_vertices(&hull.hull_facets[0], &tds).unwrap();
+        let test_facet_vertices = extract_facet_vertices(&hull.hull_facets[0], &tds).unwrap();
         let test_point = Point::new([1e-20, 1e-20, 1e-20]);
         let result = ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
             &test_facet_vertices,
@@ -3593,7 +3594,8 @@ mod tests {
         );
 
         // Test fallback visibility with extreme coordinates
-        let facet_vertices = facet_vertices(&hull_extreme.hull_facets[0], &tds_extreme).unwrap();
+        let facet_vertices =
+            extract_facet_vertices(&hull_extreme.hull_facets[0], &tds_extreme).unwrap();
         let fallback_result =
             ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
                 &facet_vertices,
@@ -4963,7 +4965,8 @@ mod tests {
         let normal_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&normal_vertices).unwrap();
         let normal_hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&normal_tds).unwrap();
-        let test_facet_vertices = facet_vertices(&normal_hull.hull_facets[0], &normal_tds).unwrap();
+        let test_facet_vertices =
+            extract_facet_vertices(&normal_hull.hull_facets[0], &normal_tds).unwrap();
 
         let extreme_points = [
             Point::new([1e-100, 1e-100, 1e-100]), // Extremely small
@@ -5104,7 +5107,8 @@ mod tests {
                         println!("    ✓ Near-collinear triangulation created successfully");
 
                         let collinear_facet_vertices =
-                            facet_vertices(&collinear_hull.hull_facets[0], &collinear_tds).unwrap();
+                            extract_facet_vertices(&collinear_hull.hull_facets[0], &collinear_tds)
+                                .unwrap();
                         let test_point = Point::new([1.5, 0.5, 0.5]);
 
                         let collinear_result =
@@ -5150,7 +5154,7 @@ mod tests {
                         println!("    ✓ Tiny area triangulation created successfully");
 
                         let tiny_facet_vertices =
-                            facet_vertices(&tiny_hull.hull_facets[0], &tiny_tds).unwrap();
+                            extract_facet_vertices(&tiny_hull.hull_facets[0], &tiny_tds).unwrap();
                         let test_point = Point::new([1e-3, 1e-3, 1e-3]);
 
                         let tiny_result =
@@ -5198,7 +5202,7 @@ mod tests {
         let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&tds).unwrap();
 
-        let test_facet_vertices = facet_vertices(&hull.hull_facets[0], &tds).unwrap();
+        let test_facet_vertices = extract_facet_vertices(&hull.hull_facets[0], &tds).unwrap();
 
         println!("  Testing threshold behavior with systematic point placement...");
 
@@ -5298,31 +5302,31 @@ mod tests {
             println!("    Testing {description}...");
 
             match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
-                Ok(edge_tds) => {
-                    match ConvexHull::from_triangulation(&edge_tds) {
-                        Ok(edge_hull) => {
-                            let edge_facet_vertices =
-                                facet_vertices(&edge_hull.hull_facets[0], &edge_tds).unwrap();
-                            let test_point = Point::new([5.0, 5.0, 5.0]);
+                Ok(edge_tds) => match ConvexHull::from_triangulation(&edge_tds) {
+                    Ok(edge_hull) => {
+                        let edge_facet_vertices =
+                            extract_facet_vertices(&edge_hull.hull_facets[0], &edge_tds).unwrap();
+                        let test_point = Point::new([5.0, 5.0, 5.0]);
 
-                            let edge_result = ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
-                            &edge_facet_vertices, &test_point,
-                        );
+                        let edge_result =
+                            ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
+                                &edge_facet_vertices,
+                                &test_point,
+                            );
 
-                            match edge_result {
-                                Ok(is_visible) => {
-                                    println!("      {description} visibility: {is_visible}");
-                                }
-                                Err(e) => {
-                                    println!("      {description} test failed: {e}");
-                                }
+                        match edge_result {
+                            Ok(is_visible) => {
+                                println!("      {description} visibility: {is_visible}");
+                            }
+                            Err(e) => {
+                                println!("      {description} test failed: {e}");
                             }
                         }
-                        Err(e) => {
-                            println!("      {description} hull construction failed: {e}");
-                        }
                     }
-                }
+                    Err(e) => {
+                        println!("      {description} hull construction failed: {e}");
+                    }
+                },
                 Err(e) => {
                     println!("      {description} TDS construction failed: {e}");
                 }

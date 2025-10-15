@@ -1011,7 +1011,7 @@ where
 
         // Only consider cells that have a valid circumsphere and strict containment
         for (cell_key, cell) in tds.cells() {
-            // Phase 3A: Use vertices().len() instead of vertices().len()
+            // Phase 3A: Use cell.vertices() to get vertex keys from TDS (avoids materializing Vertex objects)
             let v_count = cell.vertices().len();
             // Treat non-D+1 vertex counts as degenerate
             if v_count != D + 1 {
@@ -1157,7 +1157,10 @@ where
 
         let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
 
-        // Use the canonical facet-to-cells map from TDS
+        // TODO: Performance optimization opportunity for large meshes:
+        // - Accept cached facet_to_cells_map from FacetCacheProvider when available
+        // - Or build candidate set by iterating only facets of bad_cells (via cell.facet_views())
+        // This would reduce from O(all_facets) to O(bad_cells * D) for large meshes
         let facet_to_cells = tds.build_facet_to_cells_map().map_err(|e| {
             TriangulationValidationError::InconsistentDataStructure {
                 message: format!("Failed to build facet-to-cells map: {e}"),
@@ -1813,15 +1816,17 @@ where
             ));
         };
 
-        // HOT PATH OPTIMIZATION: Cache facet vertex UUIDs once to avoid O(D^2) repeated lookups
-        // Collect facet vertices into a small buffer to avoid repeated calls to facet.vertices()
-        let facet_vertex_uuids: SmallVec<[uuid::Uuid; 8]> = facet
+        // HOT PATH: Collect facet vertices once to avoid duplicate iteration
+        // This single collection is used for both UUID lookup and point extraction
+        let facet_vertices_vec: SmallVec<[Vertex<T, U, D>; 8]> = facet
             .vertices()
             .map_err(|e| {
                 InsertionError::TriangulationState(TriangulationValidationError::FacetError(e))
             })?
-            .map(Vertex::uuid)
+            .copied()
             .collect();
+        let facet_vertex_uuids: SmallVec<[uuid::Uuid; 8]> =
+            facet_vertices_vec.iter().map(Vertex::uuid).collect();
 
         // Find the vertex in the adjacent cell that is NOT part of the facet
         // This is the \"opposite\" vertex that defines the \"inside\" side of the facet
@@ -1854,13 +1859,9 @@ where
 
         // Create test simplices for orientation comparison
         // Using SmallVec to avoid heap allocation for small simplices (D+1 points)
-        let facet_vertex_points: SmallVec<[Point<T, D>; 8]> = facet
-            .vertices()
-            .map_err(|e| {
-                InsertionError::TriangulationState(TriangulationValidationError::FacetError(e))
-            })?
-            .map(|v| *v.point())
-            .collect();
+        // Reuse cached vertices from above to avoid redundant facet.vertices() call
+        let facet_vertex_points: SmallVec<[Point<T, D>; 8]> =
+            facet_vertices_vec.iter().map(|v| *v.point()).collect();
 
         let mut simplex_with_opposite = facet_vertex_points.clone();
         simplex_with_opposite.push(*opposite_vertex.point());
@@ -2076,6 +2077,13 @@ where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
+        // Reject duplicate vertex to avoid degenerate cell
+        if facet_vertices.iter().any(|v| v.uuid() == vertex.uuid()) {
+            return Err(TriangulationValidationError::FailedToCreateCell {
+                message: "Attempted to create a cell with duplicate vertex (facet already contains the vertex)".to_string(),
+            });
+        }
+
         // Ensure the vertex is registered in the TDS vertex mapping
         Self::ensure_vertex_in_tds(tds, vertex)?;
 
@@ -2187,6 +2195,9 @@ where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
+        // Track whether vertex existed before this operation for atomic rollback
+        let vertex_existed_before = tds.vertex_key_from_uuid(&vertex.uuid()).is_some();
+
         // Phase 1: Extract all facet data upfront before creating any cells
         // This ensures we can validate everything before modifying the TDS
         let mut extracted_facet_data = Vec::with_capacity(facet_handles.len());
@@ -2236,6 +2247,15 @@ where
                     if !created_cell_keys.is_empty() {
                         tds.remove_cells_by_keys(&created_cell_keys);
                     }
+
+                    // Also remove the vertex if it was inserted during this operation
+                    if !vertex_existed_before
+                        && let Some(vertex_key) = tds.vertex_key_from_uuid(&vertex.uuid())
+                    {
+                        tds.vertices_mut().remove(vertex_key);
+                        tds.uuid_to_vertex_key.remove(&vertex.uuid());
+                    }
+
                     return Err(InsertionError::TriangulationState(e));
                 }
             }
@@ -3139,6 +3159,16 @@ mod tests {
             );
         }
         println!("  ✓ No new cells created");
+
+        // Verify the vertex was removed during rollback
+        assert!(
+            tds.vertex_key_from_uuid(&exterior_vertex.uuid()).is_none(),
+            "Vertex should not be present in TDS after rollback"
+        );
+        println!(
+            "  ✓ Vertex {} properly removed from TDS during rollback",
+            exterior_vertex.uuid()
+        );
 
         // Now test that valid handles still work after the failed attempt
         let cells_created = IncrementalBowyerWatson::create_cells_from_facet_handles(
