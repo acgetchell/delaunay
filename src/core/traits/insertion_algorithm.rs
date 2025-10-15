@@ -1157,10 +1157,10 @@ where
 
         let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
 
-        // TODO: Performance optimization opportunity for large meshes:
-        // - Accept cached facet_to_cells_map from FacetCacheProvider when available
-        // - Or build candidate set by iterating only facets of bad_cells (via cell.facet_views())
-        // This would reduce from O(all_facets) to O(bad_cells * D) for large meshes
+        // TODO(performance): Optimize for large meshes by accepting cached facet_to_cells_map
+        // from FacetCacheProvider or building candidate set by iterating only facets of bad_cells.
+        // This would reduce from O(all_facets) to O(bad_cells * D) for large meshes.
+        // See: https://github.com/your-repo/delaunay/issues/XXX
         let facet_to_cells = tds.build_facet_to_cells_map().map_err(|e| {
             TriangulationValidationError::InconsistentDataStructure {
                 message: format!("Failed to build facet-to-cells map: {e}"),
@@ -1252,6 +1252,7 @@ where
     /// - No bad cells are found (vertex is not interior)
     /// - Cavity boundary computation fails
     /// - Cell creation fails
+    #[allow(clippy::too_many_lines)]
     fn insert_vertex_cavity_based(
         &mut self,
         tds: &mut Tds<T, U, V, D>,
@@ -1347,19 +1348,32 @@ where
             extracted_facet_data.push(facet_vertices);
         }
 
+        // Track whether vertex existed before this operation for atomic rollback
+        let vertex_existed_before = tds.vertex_key_from_uuid(&vertex.uuid()).is_some();
+
         // Ensure vertex is in TDS before destructive operations
         Self::ensure_vertex_in_tds(tds, vertex)?;
 
         // Remove bad cells (invalidates handles)
         Self::remove_bad_cells(tds, &bad_cells);
 
-        // Create new cells from pre-extracted facet data
-        let cells_created = extracted_facet_data.len();
+        // Create new cells with rollback on failure
+        let mut created_cell_keys = Vec::with_capacity(extracted_facet_data.len());
         for facet_vertices in extracted_facet_data {
-            // Discard the returned CellKey as we don't need to track it here
-            Self::create_cell_from_vertices_and_vertex(tds, facet_vertices, vertex)
-                .map_err(InsertionError::TriangulationState)?;
+            match Self::create_cell_from_vertices_and_vertex(tds, facet_vertices, vertex) {
+                Ok(key) => created_cell_keys.push(key),
+                Err(e) => {
+                    Self::rollback_created_cells_and_vertex(
+                        tds,
+                        &created_cell_keys,
+                        vertex,
+                        vertex_existed_before,
+                    );
+                    return Err(InsertionError::TriangulationState(e));
+                }
+            }
         }
+        let cells_created = created_cell_keys.len();
 
         // Finalize the triangulation after insertion to fix any invalid states
         Self::finalize_after_insertion(tds).map_err(|e| {
@@ -1704,6 +1718,11 @@ where
             .iter()
             .filter_map(|v| tds.vertex_key_from_uuid(&v.uuid()))
             .collect();
+        if vertices.len() != D + 1 {
+            return Err(TriangulationConstructionError::FailedToCreateCell {
+                message: "Initial simplex vertices missing from UUID→key mapping".to_string(),
+            });
+        }
 
         let cell = Cell::new(vertices, None).map_err(|e| {
             TriangulationConstructionError::FailedToCreateCell {
@@ -2095,6 +2114,11 @@ where
             .iter()
             .filter_map(|v| tds.vertex_key_from_uuid(&v.uuid()))
             .collect();
+        if vertices.len() != facet_vertices.len() {
+            return Err(TriangulationValidationError::InconsistentDataStructure {
+                message: "One or more facet vertices missing from UUID→key mapping".to_string(),
+            });
+        }
 
         let new_cell = Cell::new(vertices, None).map_err(|e| {
             TriangulationValidationError::FailedToCreateCell {
@@ -2243,19 +2267,12 @@ where
                     created_cell_keys.push(cell_key);
                 }
                 Err(e) => {
-                    // Rollback: Remove all cells created so far
-                    if !created_cell_keys.is_empty() {
-                        tds.remove_cells_by_keys(&created_cell_keys);
-                    }
-
-                    // Also remove the vertex if it was inserted during this operation
-                    if !vertex_existed_before
-                        && let Some(vertex_key) = tds.vertex_key_from_uuid(&vertex.uuid())
-                    {
-                        tds.vertices_mut().remove(vertex_key);
-                        tds.uuid_to_vertex_key.remove(&vertex.uuid());
-                    }
-
+                    Self::rollback_created_cells_and_vertex(
+                        tds,
+                        &created_cell_keys,
+                        vertex,
+                        vertex_existed_before,
+                    );
                     return Err(InsertionError::TriangulationState(e));
                 }
             }
@@ -2276,6 +2293,38 @@ where
         }
 
         Ok(cells_created)
+    }
+
+    /// Rollback created cells and optionally remove a vertex that was inserted during the operation.
+    ///
+    /// This is a shared utility method used by insertion algorithms to provide atomic rollback
+    /// semantics. If cell creation fails partway through, this method cleans up both the
+    /// partially created cells and the vertex if it was newly inserted.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Mutable reference to the triangulation data structure
+    /// * `created_cell_keys` - Keys of cells that were created and need to be removed
+    /// * `vertex` - The vertex that was being inserted
+    /// * `vertex_existed_before` - Whether the vertex existed in TDS before the operation started
+    fn rollback_created_cells_and_vertex(
+        tds: &mut Tds<T, U, V, D>,
+        created_cell_keys: &[crate::core::triangulation_data_structure::CellKey],
+        vertex: &Vertex<T, U, D>,
+        vertex_existed_before: bool,
+    ) where
+        T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
+        for<'a> &'a T: Div<T>,
+    {
+        // Rollback created cells
+        if !created_cell_keys.is_empty() {
+            tds.remove_cells_by_keys(created_cell_keys);
+        }
+
+        // Remove the vertex if it was inserted during this operation
+        if !vertex_existed_before {
+            tds.remove_vertex_by_uuid(&vertex.uuid());
+        }
     }
 
     /// Removes bad cells from the triangulation

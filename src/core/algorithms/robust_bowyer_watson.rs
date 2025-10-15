@@ -300,16 +300,14 @@ where
                                 },
                             ))?;
 
-                let facet_vertices: Vec<Vertex<T, U, D>> = facet_view.vertices()
+                let facet_vertices = crate::core::util::facet_view_to_vertices(&facet_view)
                             .map_err(|_| InsertionError::TriangulationState(
                                 TriangulationValidationError::InconsistentDataStructure {
                                     message: format!(
                                         "Failed to get vertices from facet at index {facet_index} during robust cavity extraction"
                                     ),
                                 },
-                            ))?
-                            .copied()
-                            .collect();
+                            ))?;
                 extracted_facet_data.push(facet_vertices);
             }
 
@@ -543,29 +541,12 @@ where
             _ => {
                 // Fallback: robust check via Facet conversion (slow path)
                 let mut handles = Vec::new();
-                let mut boundary_iter = tds
+                for fv in tds
                     .boundary_facets()
-                    .map_err(InsertionError::TriangulationState)?;
-
-                // Early exit: if no boundary facets exist, return immediately
-                let first_facet = boundary_iter.next();
-                if first_facet.is_none() {
-                    return Ok(handles);
-                }
-
-                // Process first facet and then the rest
-                if let Some(fv) = first_facet {
+                    .map_err(InsertionError::TriangulationState)?
+                {
                     let cell_key = fv.cell_key();
                     let facet_index = fv.facet_index();
-                    if self.is_facet_visible_from_vertex_robust(tds, &fv, vertex) {
-                        handles.push((cell_key, facet_index));
-                    }
-                }
-
-                for fv in boundary_iter {
-                    let cell_key = fv.cell_key();
-                    let facet_index = fv.facet_index();
-                    // Phase 3A: Use FacetView directly instead of converting to heavyweight Facet
                     if self.is_facet_visible_from_vertex_robust(tds, &fv, vertex) {
                         handles.push((cell_key, facet_index));
                     }
@@ -710,22 +691,19 @@ where
             }
         }
 
-        // Validate boundary facets before returning
-        self.validate_boundary_facets(&boundary_handles, bad_cells.len())?;
-
-        // If no boundary handles found but we had facet construction errors,
-        // return a more specific error with context (will have been caught by validation above)
-        if boundary_handles.is_empty()
-            && !bad_cells.is_empty()
-            && let Some((error_cell, error_facet, error_type)) = first_facet_error
-        {
-            return Err(InsertionError::TriangulationState(
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Failed to construct/derive facet during robust cavity mapping: cell={error_cell:?}, facet_index={error_facet}, cause={error_type}"
-                    ),
-                },
-            ));
+        // Provide specific error diagnostics if available, otherwise fall back to validation
+        if boundary_handles.is_empty() && !bad_cells.is_empty() {
+            if let Some((error_cell, error_facet, error_type)) = first_facet_error {
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Failed to construct/derive facet during robust cavity mapping: cell={error_cell:?}, facet_index={error_facet}, cause={error_type}"
+                        ),
+                    },
+                ));
+            }
+            // Generic fallback validation
+            self.validate_boundary_facets(&boundary_handles, bad_cells.len())?;
         }
 
         Ok(boundary_handles)

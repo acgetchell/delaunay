@@ -74,6 +74,52 @@ use std::fmt::{self, Debug};
 use thiserror::Error;
 
 // =============================================================================
+// TYPE ALIASES
+// =============================================================================
+
+/// A lightweight handle to a facet, represented as `(CellKey, facet_index)`.
+///
+/// This provides a more readable and maintainable alternative to raw tuples throughout
+/// the codebase. Facet handles are used to reference facets without storing full vertex data.
+///
+/// # Components
+///
+/// - `CellKey`: The key of the cell containing the facet
+/// - `u8`: The facet index (0 to D, representing the vertex opposite to the facet)
+///
+/// # Usage
+///
+/// `FacetHandle` is commonly used in:
+/// - Boundary facet analysis (convex hull extraction)
+/// - Facet visibility testing
+/// - Cavity computation in Bowyer-Watson algorithm
+/// - Any operation requiring lightweight facet references
+///
+/// # Example
+///
+/// ```rust
+/// use delaunay::core::facet::{FacetHandle, FacetView};
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let cell_key = tds.cell_keys().next().unwrap();
+///
+/// // Create a facet handle
+/// let handle: FacetHandle = (cell_key, 0);
+///
+/// // Use it to create a FacetView
+/// let facet = FacetView::new(&tds, handle.0, handle.1).unwrap();
+/// ```
+pub type FacetHandle = (CellKey, u8);
+
+// =============================================================================
 // ERROR TYPES
 // =============================================================================
 
@@ -156,6 +202,12 @@ pub enum FacetError {
     /// Cell was not found in the triangulation.
     #[error("Cell not found in triangulation (potential data corruption)")]
     CellNotFoundInTriangulation,
+    /// Vertex key was not found in the triangulation.
+    #[error("Vertex key not found in triangulation: {key:?}")]
+    VertexKeyNotFoundInTriangulation {
+        /// The vertex key that was not found.
+        key: VertexKey,
+    },
     /// Facet has invalid multiplicity (should be 1 for boundary or 2 for internal).
     #[error(
         "Facet with key {facet_key:016x} has invalid multiplicity {found}, expected 1 (boundary) or 2 (internal)"
@@ -360,14 +412,21 @@ where
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
         let facet_index = usize::from(self.facet_index);
 
-        // Phase 3A: Use vertices and resolve via TDS
-        // Use filter_map with get() to safely handle potentially invalid vertex keys
-        Ok(cell
-            .vertices()
-            .iter()
-            .enumerate()
-            .filter(move |(i, _)| *i != facet_index)
-            .filter_map(move |(_, &vkey)| self.tds.vertices().get(vkey)))
+        // Collect first so missing vertex keys become an error, not silent drops.
+        let mut refs: Vec<&'tds Vertex<T, U, D>> =
+            Vec::with_capacity(cell.vertices().len().saturating_sub(1));
+        for (i, &vkey) in cell.vertices().iter().enumerate() {
+            if i == facet_index {
+                continue;
+            }
+            refs.push(
+                self.tds
+                    .vertices()
+                    .get(vkey)
+                    .ok_or(FacetError::VertexKeyNotFoundInTriangulation { key: vkey })?,
+            );
+        }
+        Ok(refs.into_iter())
     }
 
     /// Returns the opposite vertex (the vertex not included in the facet).
@@ -401,7 +460,7 @@ where
         self.tds
             .vertices()
             .get(*vkey)
-            .ok_or(FacetError::CellNotFoundInTriangulation)
+            .ok_or(FacetError::VertexKeyNotFoundInTriangulation { key: *vkey })
     }
 
     /// Returns the cell containing this facet.

@@ -1,9 +1,9 @@
 use crate::core::collections::{FacetToCellsMap, FastHashMap, SmallBuffer};
-use crate::core::facet::{FacetError, FacetView};
+use crate::core::facet::{FacetError, FacetHandle, FacetView};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::traits::facet_cache::FacetCacheProvider;
-use crate::core::triangulation_data_structure::{CellKey, Tds, TriangulationValidationError};
+use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
 use crate::core::util::derive_facet_key_from_vertices;
 use crate::core::vertex::Vertex;
 use crate::geometry::point::Point;
@@ -272,7 +272,7 @@ where
     [T; D]: Copy + Sized + Serialize + DeserializeOwned,
 {
     /// The boundary facets that form the convex hull
-    /// Stored as (`CellKey`, `facet_index`) pairs to enable reconstruction of `FacetView`
+    /// Stored as `FacetHandle` tuples (`CellKey`, `facet_index`) to enable reconstruction of `FacetView`
     ///
     /// **WARNING**: These handles are only valid for the TDS at the generation captured
     /// in `cached_generation`. If the TDS is modified, these handles become stale.
@@ -280,7 +280,7 @@ where
     ///
     /// This field is private to prevent external mutation. Use the provided read-only
     /// accessors (`facets()`, `get_facet()`, `facet_count()`) to access hull facets.
-    hull_facets: Vec<(CellKey, u8)>,
+    hull_facets: Vec<FacetHandle>,
     /// Cache for the facet-to-cells mapping to avoid rebuilding it for each facet check
     /// Uses `ArcSwapOption` for lock-free atomic updates when cache needs invalidation
     /// This avoids Some/None wrapping boilerplate compared to `ArcSwap<Option<T>>`
@@ -489,7 +489,7 @@ where
     #[allow(clippy::too_many_lines)]
     pub fn is_facet_visible_from_point(
         &self,
-        facet_handle: &(CellKey, u8),
+        facet_handle: &FacetHandle,
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
     ) -> Result<bool, ConvexHullConstructionError> {
@@ -513,7 +513,7 @@ where
             });
         }
 
-        // Phase 3C: Create FacetView from lightweight handle
+        // Phase 3A: Create FacetView from lightweight handle
         let (facet_cell_key, facet_index) = *facet_handle;
         let facet_view = FacetView::new(tds, facet_cell_key, facet_index)
             .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?;
@@ -614,16 +614,16 @@ where
 
         // Create test simplices to compare orientations
         // Use sorted_facet_keys which contains the vertex keys
-        let facet_points: Vec<Point<T, D>> = sorted_facet_keys
-            .iter()
-            .map(|&vkey| {
-                tds.get_vertex_by_key(vkey).map(|v| *v.point()).ok_or(
-                    ConvexHullConstructionError::VisibilityCheckFailed {
-                        source: FacetError::InsideVertexNotFound,
-                    },
-                )
-            })
-            .collect::<Result<_, _>>()?;
+        // Pre-allocate with capacity D to avoid reallocation
+        let mut facet_points = Vec::with_capacity(D);
+        for &vkey in &sorted_facet_keys {
+            let vertex = tds.get_vertex_by_key(vkey).ok_or(
+                ConvexHullConstructionError::VisibilityCheckFailed {
+                    source: FacetError::InsideVertexNotFound,
+                },
+            )?;
+            facet_points.push(*vertex.point());
+        }
 
         // Simplex 1: facet vertices + inside vertex
         let mut simplex_with_inside = facet_points.clone();
@@ -1070,7 +1070,7 @@ where
     /// assert!(hull.get_facet(10).is_none());
     /// ```
     #[must_use]
-    pub fn get_facet(&self, index: usize) -> Option<&(CellKey, u8)> {
+    pub fn get_facet(&self, index: usize) -> Option<&FacetHandle> {
         self.hull_facets.get(index)
     }
 
@@ -1107,7 +1107,7 @@ where
     ///     }
     /// }
     /// ```
-    pub fn facets(&self) -> std::slice::Iter<'_, (CellKey, u8)> {
+    pub fn facets(&self) -> std::slice::Iter<'_, FacetHandle> {
         self.hull_facets.iter()
     }
 
@@ -1434,10 +1434,10 @@ mod tests {
     /// Helper function to extract vertices from a facet handle.
     ///
     /// This is a test utility that creates a `FacetView` from a facet handle
-    /// `(CellKey, u8)` tuple and extracts the vertices as a `Vec<Vertex>`.
+    /// and extracts the vertices as a `Vec<Vertex>`.
     /// This avoids repetitive `FacetView` creation boilerplate in tests.
     fn extract_facet_vertices<T, U, V, const D: usize>(
-        facet_handle: &(CellKey, u8),
+        facet_handle: &FacetHandle,
         tds: &Tds<T, U, V, D>,
     ) -> Result<Vec<Vertex<T, U, D>>, ConvexHullConstructionError>
     where
@@ -2850,7 +2850,7 @@ mod tests {
         if let Some(&(cell_key, facet_index)) = hull.get_facet(0) {
             // Create FacetView to get vertices
             let facet_view = FacetView::new(&tds, cell_key, facet_index).unwrap();
-            let facet_vertices: Vec<_> = facet_view.vertices().unwrap().copied().collect();
+            let facet_vertices = crate::core::util::facet_view_to_vertices(&facet_view).unwrap();
 
             // Test with a point very close to the facet (should not be visible)
             let close_point = Point::new([0.1, 0.1, 0.1]);
@@ -4042,7 +4042,7 @@ mod tests {
         for (i, &(cell_key, facet_index)) in hull.hull_facets.iter().enumerate() {
             // Create FacetView to get vertices
             let facet_view = FacetView::new(&tds, cell_key, facet_index).unwrap();
-            let facet_vertices: Vec<_> = facet_view.vertices().unwrap().copied().collect();
+            let facet_vertices = crate::core::util::facet_view_to_vertices(&facet_view).unwrap();
 
             let derived_key_result = derive_facet_key_from_vertices(&facet_vertices, &tds);
 
@@ -5019,7 +5019,7 @@ mod tests {
 
         let &(cell_key, facet_index) = &hull.hull_facets[0];
         let facet_view = FacetView::new(&tds, cell_key, facet_index).unwrap();
-        let test_facet_vertices: Vec<_> = facet_view.vertices().unwrap().copied().collect();
+        let test_facet_vertices = crate::core::util::facet_view_to_vertices(&facet_view).unwrap();
 
         // Test points at different distance scales
         let test_cases = vec![

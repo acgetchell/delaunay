@@ -287,6 +287,10 @@ These items are incomplete and may require future attention:
   - `coordinate_conversion_errors.rs` - Error handling tests for extreme values, NaN, infinity
   - `test_cavity_boundary_error.rs` - Reproduction tests for cavity boundary facet errors
   - `allocation_api.rs` - Memory allocation profiling (use `just test-allocation`)
+- **Property-Based Tests**: Uses proptest for randomized property verification:
+  - `proptest_predicates.rs` - Geometric predicate properties (orientation, insphere)
+  - `proptest_point.rs` - Point data structure properties (hashing, equality, serialization)
+  - `proptest_triangulation.rs` - Triangulation invariants (neighbor symmetry, validity)
 
 ### Testing Best Practices
 
@@ -294,6 +298,12 @@ These items are incomplete and may require future attention:
 - **Verbose Output**: Use `just test-debug` for debugging tests that produce detailed analysis output
 - **Test Structure**: Convert CLI-style applications in tests to proper `#[test]` functions for better integration with cargo test framework
 - **Memory Testing**: Use `just test-allocation` for allocation profiling tests
+- **Property-Based Testing**: Use proptest for verifying mathematical/structural properties:
+  - Write properties that must hold universally (e.g., symmetry, transitivity)
+  - Focus on geometric invariants and data structure consistency
+  - Property tests discover edge cases through randomized inputs
+  - Configure test iterations via `PROPTEST_CASES=N` environment variable (default: 256)
+  - Property test failures include shrunk minimal failing cases for debugging
 
 ### Test-Driven Development (TDD) Guidelines
 

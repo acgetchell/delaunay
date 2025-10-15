@@ -5,6 +5,96 @@ regression testing, and performance analysis.
 
 ## Test Categories
 
+### 🎲 Property-Based Testing
+
+#### `proptest_predicates.rs`
+
+Property-based tests for geometric predicates using proptest to verify mathematical properties that must hold universally.
+
+**Test Coverage:**
+
+- **Orientation Properties**:
+  - Sign flip under vertex swap (orientation reversal)
+  - Cyclic permutation invariance (2D/3D)
+  - Degenerate case consistency
+- **Insphere Properties**:
+  - Simplex vertices on boundary (defining vertices should be on/near circumsphere)
+  - Scaling property (far points are OUTSIDE)
+  - Cross-dimensional consistency (2D-4D)
+- **Cross-Predicate Consistency**:
+  - Degenerate orientation implies potential insphere failures
+  - Robustness under near-degenerate configurations
+
+**Run with:** `cargo test --test proptest_predicates` or included in `just test`
+
+#### `proptest_point.rs`
+
+Property-based tests for Point data structures verifying fundamental properties.
+
+**Test Coverage:**
+
+- **Equality and Hashing**:
+  - Hash consistency (equal points have equal hashes)
+  - Equality reflexivity, symmetry, transitivity
+  - HashMap key usage correctness
+- **Coordinate Operations**:
+  - Coordinate extraction roundtrips
+  - Into<[T; D]> conversion consistency
+  - get() method correctness
+- **Serialization**:
+  - Serde roundtrip preservation
+  - Cross-dimensional serialization
+- **NaN Handling**:
+  - Custom equality semantics (NaN == NaN)
+  - Hash consistency with NaN coordinates
+  - HashMap key usage with NaN
+- **Validation**:
+  - Finite coordinates validate successfully
+  - Infinite/NaN coordinates fail validation
+- **Ordering**:
+  - Consistency with equality
+  - Antisymmetry and transitivity
+
+**Run with:** `cargo test --test proptest_point` or included in `just test`
+
+#### `proptest_triangulation.rs`
+
+Property-based tests for triangulation structural invariants.
+
+**Test Coverage:**
+
+- **Triangulation Validity**:
+  - Constructed triangulations pass is_valid()
+  - Cross-dimensional validity (2D-3D)
+- **Neighbor Symmetry**:
+  - If A neighbors B, then B neighbors A
+  - Reciprocal neighbor relationships
+- **Vertex-Cell Incidence**:
+  - All cell vertices exist in TDS
+  - Vertex key consistency
+- **No Duplicate Cells**:
+  - No two cells have identical vertex sets
+  - Unique cell configurations
+- **Incremental Construction**:
+  - Validity maintained after vertex insertion
+  - Dimension consistency after growth
+- **Dimension Consistency**:
+  - Dimension matches vertex count expectations
+  - Proper dimension evolution
+- **Vertex Count Consistency**:
+  - Vertex keys count matches number_of_vertices()
+  - Iterator consistency
+
+**Run with:** `cargo test --test proptest_triangulation` or included in `just test`
+
+**Property Testing Notes:**
+
+- Property tests use randomized inputs to discover edge cases
+- Tests may take longer than unit tests due to multiple iterations
+- Failures include shrunk minimal failing cases for debugging
+- Configure test cases via `PROPTEST_CASES=N` environment variable
+- Default: 256 test cases per property
+
 ### 🔧 Debugging and Analysis Tools
 
 #### `circumsphere_debug_tools.rs`

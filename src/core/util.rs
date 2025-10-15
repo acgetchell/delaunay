@@ -169,6 +169,63 @@ where
     Ok(vertices1 == vertices2)
 }
 
+/// Extracts owned vertices from a `FacetView` as a `Vec<Vertex>`.
+///
+/// This is a convenience utility that creates owned copies of the facet's vertices.
+/// Since `Vertex` implements `Copy`, this operation is efficient and avoids the need
+/// for manual `.copied().collect()` boilerplate throughout the codebase.
+///
+/// # Arguments
+///
+/// * `facet_view` - The facet view to extract vertices from
+///
+/// # Returns
+///
+/// A `Result` containing a `Vec` of owned `Vertex` objects, or a `FacetError` if
+/// the vertices cannot be accessed.
+///
+/// # Errors
+///
+/// Returns `FacetError` if the facet's vertices cannot be accessed, typically
+/// due to missing cells in the triangulation data structure.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use delaunay::core::facet::FacetView;
+/// use delaunay::core::util::facet_view_to_vertices;
+/// use delaunay::core::triangulation_data_structure::Tds;
+///
+/// fn extract_vertices_example(
+///     tds: &Tds<f64, Option<()>, Option<()>, 3>,
+/// ) -> Result<(), Box<dyn std::error::Error>> {
+///     let cell_key = tds.cell_keys().next().unwrap();
+///     let facet_view = FacetView::new(tds, cell_key, 0)?;
+///     
+///     // Extract owned vertices
+///     let vertices = facet_view_to_vertices(&facet_view)?;
+///     println!("Facet has {} vertices", vertices.len());
+///     Ok(())
+/// }
+/// ```
+///
+/// # Performance
+///
+/// - Time Complexity: O(D) where D is the dimension (number of vertices in facet)
+/// - Space Complexity: O(D) for the returned vector
+/// - Uses `Copy` semantics so this is as efficient as possible for owned vertices
+pub fn facet_view_to_vertices<T, U, V, const D: usize>(
+    facet_view: &FacetView<'_, T, U, V, D>,
+) -> Result<Vec<Vertex<T, U, D>>, FacetError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+{
+    Ok(facet_view.vertices()?.copied().collect())
+}
+
 /// Generates all unique combinations of `k` items from a given slice.
 ///
 /// This function is used to generate vertex combinations for creating k-simplices
@@ -401,7 +458,7 @@ where
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     use crate::core::collections::SmallBuffer;
-    use crate::core::facet::{FacetError, facet_key_from_vertices};
+    use crate::core::facet::facet_key_from_vertices;
     use crate::core::triangulation_data_structure::VertexKey;
 
     // Validate that the number of vertices matches the expected dimension
@@ -530,7 +587,7 @@ where
     // Check facet index bounds
     if facet_idx >= cell1_facets.len() {
         return Err(FacetError::InvalidFacetIndex {
-            index: u8::try_from(facet_idx).unwrap_or(u8::MAX),
+            index: usize_to_u8(facet_idx, cell1_facets.len())?,
             facet_count: cell1_facets.len(),
         });
     }

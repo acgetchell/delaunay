@@ -1743,6 +1743,45 @@ where
         removed_count
     }
 
+    /// Removes a vertex by its UUID, maintaining data structure consistency.
+    ///
+    /// This method atomically removes a vertex from both the vertex storage and
+    /// the UUID→key mapping, ensuring the data structure remains consistent.
+    /// This is the preferred way to remove a vertex compared to directly manipulating
+    /// `vertices_mut()` and `uuid_to_vertex_key`, as it maintains invariants.
+    ///
+    /// **Internal API**: This method is intended for internal use only (e.g., rollback
+    /// operations in insertion algorithms). It does not maintain triangulation topology
+    /// invariants and should not be exposed in the public API.
+    ///
+    /// # Safety Warning
+    ///
+    /// This method only removes the vertex and updates the UUID→Key mapping.
+    /// It does NOT maintain topology consistency. The caller MUST ensure:
+    /// 1. No cells reference this vertex (or call `assign_incident_cells()` afterward)
+    /// 2. Incident cell references are updated appropriately
+    ///
+    /// Failure to do so will leave the triangulation in an inconsistent state.
+    ///
+    /// # Arguments
+    ///
+    /// * `uuid` - The UUID of the vertex to remove
+    ///
+    /// # Returns
+    ///
+    /// `true` if the vertex was found and removed, `false` if not found.
+    pub(crate) fn remove_vertex_by_uuid(&mut self, uuid: &uuid::Uuid) -> bool {
+        if let Some(vk) = self.vertex_key_from_uuid(uuid) {
+            self.vertices.remove(vk);
+            self.uuid_to_vertex_key.remove(uuid);
+            // Topology changed; invalidate caches
+            self.bump_generation();
+            true
+        } else {
+            false
+        }
+    }
+
     // =========================================================================
     // KEY-BASED NEIGHBOR OPERATIONS (Phase 2 Optimization)
     // =========================================================================
