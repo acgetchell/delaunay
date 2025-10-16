@@ -893,7 +893,7 @@ where
     }
 
     let point_coords: [T; D] = (&points[0]).into();
-    let circumcenter_coords: [T; D] = circumcenter.to_array();
+    let circumcenter_coords: [T; D] = *circumcenter.coords();
 
     // Calculate distance using hypot for numerical stability
     let mut diff_coords = [T::zero(); D];
@@ -982,17 +982,17 @@ where
         }
         2 => {
             // 2D: Length of line segment (1D facet in 2D space)
-            let p0 = points[0].to_array();
-            let p1 = points[1].to_array();
+            let p0 = points[0].coords();
+            let p1 = points[1].coords();
 
             let diff = [p1[0] - p0[0], p1[1] - p0[1]];
             Ok(hypot(diff))
         }
         3 => {
             // 3D: Area of triangle (2D facet in 3D space) using cross product
-            let p0 = points[0].to_array();
-            let p1 = points[1].to_array();
-            let p2 = points[2].to_array();
+            let p0 = points[0].coords();
+            let p1 = points[1].coords();
+            let p2 = points[2].coords();
 
             // Vectors from p0 to p1 and p0 to p2
             let v1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
@@ -1069,14 +1069,14 @@ where
     T: CoordinateScalar + Sum + Zero,
 {
     // Convert points to f64 and create edge vectors from first point to all others
-    let p0_coords = points[0].to_array();
-    let p0_f64 = safe_coords_to_f64(p0_coords)?;
+    let p0_coords = points[0].coords();
+    let p0_f64 = safe_coords_to_f64(*p0_coords)?;
 
     // Create matrix of edge vectors (each row is an edge vector)
     let mut edge_matrix = zeros(D - 1, D);
     for i in 1..D {
-        let point_coords = points[i].to_array();
-        let point_f64 = safe_coords_to_f64(point_coords)?;
+        let point_coords = points[i].coords();
+        let point_f64 = safe_coords_to_f64(*point_coords)?;
 
         for j in 0..D {
             edge_matrix[(i - 1, j)] = point_f64[j] - p0_f64[j];
@@ -1547,9 +1547,9 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 
         // Check distance to all existing points
         let mut valid = true;
-        let candidate_coords: [T; D] = candidate.to_array();
+        let candidate_coords: [T; D] = *candidate.coords();
         for existing_point in &points {
-            let existing_coords: [T; D] = existing_point.to_array();
+            let existing_coords: [T; D] = *existing_point.coords();
 
             // Calculate distance using hypot for numerical stability
             let mut diff_coords = [T::zero(); D];
@@ -1853,8 +1853,8 @@ mod tests {
         let center = circumcenter(&points).unwrap();
 
         // For this triangle, circumcenter should be at (1.0, 0.75)
-        assert_relative_eq!(center.to_array()[0], 1.0, epsilon = 1e-10);
-        assert_relative_eq!(center.to_array()[1], 0.75, epsilon = 1e-10);
+        assert_relative_eq!(center.coords()[0], 1.0, epsilon = 1e-10);
+        assert_relative_eq!(center.coords()[1], 0.75, epsilon = 1e-10);
     }
 
     #[test]
@@ -2121,7 +2121,7 @@ mod tests {
         let center = circumcenter(&points).unwrap();
 
         // For this tetrahedron, verify circumcenter exists and is finite
-        let center_coords = center.to_array();
+        let center_coords = center.coords();
         for coord in center_coords {
             assert!(
                 coord.is_finite(),
@@ -2162,8 +2162,8 @@ mod tests {
         let center = circumcenter(&points).unwrap();
 
         // For this symmetric configuration, circumcenter should be at equal coordinates
-        let center_coords = center.to_array();
-        for coord in center_coords {
+        let center_coords = center.coords();
+        for &coord in center_coords {
             assert!(
                 coord.is_finite(),
                 "Circumcenter coordinates should be finite"
@@ -2184,7 +2184,7 @@ mod tests {
         let center = circumcenter(&points).unwrap();
 
         // For right triangle, circumcenter is at midpoint of hypotenuse
-        let center_coords = center.to_array();
+        let center_coords = center.coords();
         assert_relative_eq!(center_coords[0], 2.0, epsilon = 1e-10);
         assert_relative_eq!(center_coords[1], 1.5, epsilon = 1e-10);
     }
@@ -2203,8 +2203,8 @@ mod tests {
 
         // Scaled simplex should have scaled circumcenter
         let expected_center = Point::new([0.5 * scale, 0.5 * scale, 0.5 * scale]);
-        let center_coords = center.to_array();
-        let expected_coords = expected_center.to_array();
+        let center_coords = center.coords();
+        let expected_coords = expected_center.coords();
 
         for i in 0..3 {
             assert_relative_eq!(center_coords[i], expected_coords[i], epsilon = 1e-9);
@@ -2249,8 +2249,8 @@ mod tests {
         let untranslated_center = circumcenter(&untranslated_points).unwrap();
 
         // Translated circumcenter should be untranslated circumcenter + translation
-        let center_coords = center.to_array();
-        let untranslated_coords = untranslated_center.to_array();
+        let center_coords = center.coords();
+        let untranslated_coords = untranslated_center.coords();
 
         for i in 0..3 {
             assert_relative_eq!(
@@ -2282,7 +2282,7 @@ mod tests {
         // Should either succeed or fail gracefully (don't require success)
         if let Ok(center) = result {
             // If it succeeds, center should have finite coordinates
-            let coords = center.to_array();
+            let coords = center.coords();
             assert!(
                 coords.iter().all(|&x| x.is_finite()),
                 "Circumcenter coordinates should be finite"
@@ -2338,7 +2338,7 @@ mod tests {
         ];
 
         let center = circumcenter(&points).unwrap();
-        let center_coords = center.to_array();
+        let center_coords = center.coords();
 
         // For equilateral triangle, circumcenter should be at centroid
         let expected_x = side_length / 2.0;
@@ -2380,7 +2380,7 @@ mod tests {
         // Should either succeed or fail gracefully (not panic)
         if let Ok(center) = result {
             // If it succeeds, center should have finite coordinates
-            let coords = center.to_array();
+            let coords = center.coords();
             assert!(
                 coords.iter().all(|&x| x.is_finite()),
                 "Circumcenter coordinates should be finite"
@@ -2396,7 +2396,7 @@ mod tests {
         let points = vec![Point::new([0.0]), Point::new([2.0])];
 
         let center = circumcenter(&points).unwrap();
-        let center_coords = center.to_array();
+        let center_coords = center.coords();
 
         // 1D circumcenter should be at midpoint
         assert_relative_eq!(center_coords[0], 1.0, epsilon = 1e-10);
@@ -2418,7 +2418,7 @@ mod tests {
         assert!(result.is_ok(), "5D circumcenter should work");
 
         let center = result.unwrap();
-        let center_coords = center.to_array();
+        let center_coords = center.coords();
 
         // Verify circumcenter has finite coordinates
         for coord in center_coords {
@@ -2463,7 +2463,7 @@ mod tests {
         ];
 
         let center = circumcenter(&points).unwrap();
-        let center_coords = center.to_array();
+        let center_coords = center.coords();
 
         // For this configuration, circumcenter should be at (3, 4, 5)
         assert_relative_eq!(center_coords[0], 3.0, epsilon = 1e-10);
@@ -4273,8 +4273,6 @@ mod tests {
 
     #[test]
     fn test_safe_cast_to_f64_non_finite() {
-        use std::f64;
-
         // Test NaN handling
         let result = safe_cast_to_f64(f64::NAN, 0);
         assert!(matches!(
@@ -4304,8 +4302,6 @@ mod tests {
 
     #[test]
     fn test_safe_cast_from_f64_non_finite() {
-        use std::f64;
-
         // Test NaN handling
         let result: Result<f64, _> = safe_cast_from_f64(f64::NAN, 0);
         assert!(matches!(
@@ -4334,8 +4330,6 @@ mod tests {
 
     #[test]
     fn test_safe_coords_conversion_with_non_finite() {
-        use std::f32;
-
         // Test array with NaN
         let coords_nan = [1.0f32, f32::NAN, 3.0f32];
         let result = safe_coords_to_f64(coords_nan);
@@ -4364,8 +4358,6 @@ mod tests {
 
     #[test]
     fn test_safe_coords_from_f64_with_non_finite() {
-        use std::f64;
-
         // Test array with NaN
         let coords_nan = [1.0f64, f64::NAN, 3.0f64];
         let result: Result<[f32; 3], _> = safe_coords_from_f64(coords_nan);
@@ -4390,8 +4382,6 @@ mod tests {
 
     #[test]
     fn test_safe_scalar_conversion_edge_cases() {
-        use std::f64;
-
         // Test scalar to f64 with NaN
         let result = safe_scalar_to_f64(f64::NAN);
         assert!(matches!(

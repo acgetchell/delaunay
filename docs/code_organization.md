@@ -93,6 +93,7 @@ delaunay/
 │   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
 │   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
 │   ├── robust_predicates_showcase.rs             # Robust predicates demonstration tests
+│   ├── tds_basic_integration.rs                  # Basic TDS creation, neighbor assignment, and validation tests
 │   └── test_cavity_boundary_error.rs             # Cavity boundary error reproduction tests
 ├── docs/                                         # Additional documentation
 │   ├── templates/                                # Templates for automated generation
@@ -211,6 +212,15 @@ cargo test --lib --features bench
 > These tests are designed for local performance analysis and ergonomics validation rather than
 > deterministic unit testing. Use `--features bench` when conducting performance investigations.
 
+**Note**: Basic TDS integration tests validate fundamental triangulation data structure operations:
+
+```bash
+# Run basic TDS creation, neighbor assignment, and boundary tests
+cargo test --test tds_basic_integration
+# Or with detailed output
+cargo test --test tds_basic_integration -- --nocapture
+```
+
 **Note**: Robust predicates testing demonstrates cases where enhanced numerical stability prevents triangulation failures:
 
 ```bash
@@ -275,7 +285,8 @@ with convenient `just` shortcuts for common workflows.
   (see: [examples/memory_analysis.rs](../examples/README.md#5-memory-analysis-across-dimensions-memory_analysisrs)) and zero-allocation iterator demonstrations
 - **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage) and memory allocation tracking
   (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite-comprehensive))
-- **`tests/`** - Integration tests, debugging utilities, regression testing, allocation profiling tools
+- **`tests/`** - Integration tests including basic TDS validation (creation, neighbor assignment, boundary analysis),
+  debugging utilities, regression testing, allocation profiling tools
   (see: [tests/allocation_api.rs](../tests/README.md#allocation_apirs)), and robust predicates validation
 - **`docs/`** - Architecture guides, performance documentation, numerical robustness guide, and templates
 - **`scripts/`** - Python utilities for automation and CI integration

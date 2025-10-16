@@ -213,8 +213,8 @@ fn test_vertex_insertion_robustness() {
 
     for (i, vertex) in problematic_vertices.into_iter().enumerate() {
         let vertex_idx = i + 1;
-        let vertex_array = vertex.point().to_array();
-        println!("Attempting to insert vertex {vertex_idx}: {vertex_array:?}");
+        let vertex_coords = vertex.point().coords();
+        println!("Attempting to insert vertex {vertex_idx}: {vertex_coords:?}");
 
         let start_time = Instant::now();
         let result = robust_algorithm.insert_vertex(&mut tds, vertex);

@@ -53,9 +53,9 @@ fn basic_comparison_demo() {
     let point2 = Point::new([1.0, 2.0, 3.0]);
     let point3 = Point::new([1.0, 2.0, 4.0]);
 
-    println!("point1 = {:?}", point1.to_array());
-    println!("point2 = {:?}", point2.to_array());
-    println!("point3 = {:?}", point3.to_array());
+    println!("point1 = {:?}", point1.coords());
+    println!("point2 = {:?}", point2.coords());
+    println!("point3 = {:?}", point3.coords());
 
     println!("point1 == point2: {}", point1 == point2);
     println!("point1 == point3: {}", point1 == point3);
@@ -93,7 +93,7 @@ fn nan_comparison_demo() {
 
     println!(
         "point_nan1 = [{}, 2.0, 3.0]",
-        if point_nan1.to_array()[0].is_nan() {
+        if point_nan1.coords()[0].is_nan() {
             "NaN"
         } else {
             "not NaN"
@@ -101,13 +101,13 @@ fn nan_comparison_demo() {
     );
     println!(
         "point_nan2 = [{}, 2.0, 3.0]",
-        if point_nan2.to_array()[0].is_nan() {
+        if point_nan2.coords()[0].is_nan() {
             "NaN"
         } else {
             "not NaN"
         }
     );
-    println!("point_normal = {:?}", point_normal.to_array());
+    println!("point_normal = {:?}", point_normal.coords());
 
     // Our implementation: NaN points are equal to themselves
     println!("point_nan1 == point_nan2: {}", point_nan1 == point_nan2);
@@ -156,7 +156,7 @@ fn infinity_comparison_demo() {
     println!("point_pos_inf1 = [∞, 2.0]");
     println!("point_pos_inf2 = [∞, 2.0]");
     println!("point_neg_inf = [-∞, 2.0]");
-    println!("point_normal = {:?}", point_normal.to_array());
+    println!("point_normal = {:?}", point_normal.coords());
 
     println!("∞ == ∞: {}", point_pos_inf1 == point_pos_inf2);
     println!("∞ == -∞: {}", point_pos_inf1 == point_neg_inf);

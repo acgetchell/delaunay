@@ -149,8 +149,8 @@ where
 /// # Deprecated
 /// Use [`IncrementalBowyerWatson`] instead. This alias will be removed in a future version.
 #[deprecated(
-    since = "0.5.0",
-    note = "Use `IncrementalBowyerWatson` instead (correct spelling)"
+    since = "0.5.1",
+    note = "Use `IncrementalBowyerWatson` instead (correct spelling). This alias will be removed in v0.6.0."
 )]
 pub type IncrementalBoyerWatson<T, U, V, const D: usize> = IncrementalBowyerWatson<T, U, V, D>;
 
@@ -379,6 +379,52 @@ mod tests {
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
 
+    #[test]
+    fn test_incremental_bowyer_watson_cavity_insertion() {
+        println!("\n=== Testing IncrementalBowyerWatson Cavity-Based Insertion ===");
+
+        // Create initial tetrahedron
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([0.0, 2.0, 0.0]),
+            vertex!([0.0, 0.0, 2.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        println!("Initial TDS:");
+        println!("  Vertices: {}", tds.number_of_vertices());
+        println!("  Cells: {}", tds.number_of_cells());
+
+        // Create algorithm
+        let mut algorithm = IncrementalBowyerWatson::new();
+
+        // Insert interior vertex
+        let interior_vertex = vertex!([0.5, 0.5, 0.5]);
+        println!(
+            "\nInserting interior vertex at {:?}...",
+            interior_vertex.point().coords()
+        );
+
+        match algorithm.insert_vertex(&mut tds, interior_vertex) {
+            Ok(info) => {
+                println!(
+                    "  ✓ Successfully inserted! Created {} cells, removed {} cells",
+                    info.cells_created, info.cells_removed
+                );
+                assert!(info.cells_created > 0, "Should create at least one cell");
+                assert_eq!(info.cells_removed, 1, "Should remove the single bad cell");
+                assert_eq!(tds.number_of_vertices(), 5, "Should have 5 vertices");
+                assert!(tds.number_of_cells() > 1, "Should have multiple cells");
+            }
+            Err(e) => {
+                panic!("❌ IncrementalBowyerWatson cavity-based insertion failed: {e}");
+            }
+        }
+
+        println!("\n  ✓ IncrementalBowyerWatson cavity-based insertion works correctly!");
+    }
+
     /// Helper function to analyze a triangulation's state for debugging
     #[allow(unused_variables)]
     fn analyze_triangulation(tds: &Tds<f64, Option<()>, Option<()>, 3>, label: &str) {
@@ -452,7 +498,7 @@ mod tests {
         {
             eprintln!("Input Points:");
             for (i, point) in points.iter().enumerate() {
-                eprintln!("  {}: {:?}", i, point.to_array());
+                eprintln!("  {}: {:?}", i, point.coords());
             }
         }
 
@@ -473,10 +519,13 @@ mod tests {
         {
             eprintln!("\n=== CELL ANALYSIS ===");
             for (i, cell) in tds.cells().values().enumerate() {
-                let vertex_coords: Vec<[f64; 3]> = cell
+                let vertex_coords: Vec<&[f64; 3]> = cell
                     .vertices()
                     .iter()
-                    .map(|v| v.point().to_array())
+                    .map(|vk| {
+                        let v = &tds.vertices()[*vk];
+                        v.point().coords()
+                    })
                     .collect();
                 eprintln!("Cell {i}: {vertex_coords:?}");
 
@@ -509,12 +558,12 @@ mod tests {
                     _ => {
                         invalid_sharing += 1;
                         eprintln!("❌ INVALID: Facet {facet_key} shared by {cell_count} cells");
-                        for (cell_key, facet_index) in cells {
-                            if let Some(cell) = tds.cells().get(*cell_key) {
+                        for facet_handle in cells {
+                            if let Some(cell) = tds.cells().get(facet_handle.cell_key()) {
                                 eprintln!(
                                     "   Cell {:?} at facet index {}",
                                     cell.uuid(),
-                                    facet_index
+                                    facet_handle.facet_index()
                                 );
                             }
                         }
@@ -709,7 +758,7 @@ mod tests {
         // Now add one point outside the tetrahedron - this should trigger Bowyer-Watson
         println!("\nStep 2: Add one point outside the tetrahedron");
         let new_point = Point::new([0.5, 0.5, 2.0]); // Far above the tetrahedron
-        println!("Adding point: {:?}", new_point.to_array());
+        println!("Adding point: {:?}", new_point.coords());
 
         points.push(new_point);
         let all_vertices = Vertex::from_points(points);
@@ -802,10 +851,13 @@ mod tests {
         println!("Bad cells found: {} cells", bad_cells.len());
         for &cell_key in &bad_cells {
             if let Some(cell) = tds.cells().get(cell_key) {
-                let coords: Vec<[f64; 3]> = cell
+                let coords: Vec<&[f64; 3]> = cell
                     .vertices()
                     .iter()
-                    .map(|v| v.point().to_array())
+                    .map(|vk| {
+                        let v = &tds.vertices()[*vk];
+                        v.point().coords()
+                    })
                     .collect();
                 #[cfg(debug_assertions)]
                 eprintln!("  Bad cell {:?}: {:?}", cell.uuid(), coords);

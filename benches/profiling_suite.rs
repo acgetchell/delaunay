@@ -672,21 +672,23 @@ fn benchmark_query_latency(c: &mut Criterion) {
                         break;
                     }
 
-                    let vertex_coords: SmallBuffer<[f64; 3], SIMPLEX_VERTICES_BUFFER_SIZE> = cell
-                        .1
-                        .vertices()
-                        .iter()
-                        .map(std::convert::Into::into)
-                        .collect();
-
-                    if vertex_coords.len() == 4 {
-                        // Valid 3D simplex - convert coordinates once and store
-                        let points_for_test: SmallBuffer<
+                    // Get vertex points for this cell by looking up each vertex key
+                    let vertex_keys = cell.1.vertices();
+                    if vertex_keys.len() == 4 {
+                        // Valid 3D simplex - collect points
+                        let mut vertex_points: SmallBuffer<
                             Point<f64, 3>,
                             SIMPLEX_VERTICES_BUFFER_SIZE,
-                        > = vertex_coords.iter().copied().map(Point::new).collect();
-                        precomputed_simplices.push(points_for_test);
-                        sampled_count += 1;
+                        > = SmallBuffer::new();
+                        for vkey in vertex_keys {
+                            if let Some(vertex) = tds.vertices().get(*vkey) {
+                                vertex_points.push(*vertex.point());
+                            }
+                        }
+                        if vertex_points.len() == 4 {
+                            precomputed_simplices.push(vertex_points);
+                            sampled_count += 1;
+                        }
                     }
                 }
 

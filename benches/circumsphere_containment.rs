@@ -281,10 +281,13 @@ fn numerical_consistency_test() {
                 r2,
                 r3
             );
-            println!("    Test point: {:?}", test.to_array());
+            println!("    Test point: {:?}", test.coords());
             println!(
                 "    Simplex: {:?}",
-                simplex.iter().map(Coordinate::to_array).collect::<Vec<_>>()
+                simplex
+                    .iter()
+                    .map(delaunay::geometry::Point::coords)
+                    .collect::<Vec<_>>()
             );
         }
     }

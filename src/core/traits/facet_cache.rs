@@ -15,7 +15,10 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
-    sync::{Arc, atomic::AtomicU64},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 /// Trait for components that provide cached facet-to-cells mappings.
@@ -103,7 +106,10 @@ where
     /// # Returns
     ///
     /// The old cache value before update (if any), or `None` if no cache existed
-    #[deprecated(note = "Use try_build_cache_with_rcu instead for proper error handling")]
+    #[deprecated(
+        since = "0.5.1",
+        note = "Use try_build_cache_with_rcu instead for proper error handling. This method will be removed in v0.6.0."
+    )]
     fn build_cache_with_rcu(&self, tds: &Tds<T, U, V, D>) -> Option<Arc<FacetToCellsMap>> {
         // Forward to strict version, falling back to lenient behavior on error
         match self.try_build_cache_with_rcu(tds) {
@@ -202,16 +208,36 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let cache = self.get_or_build_facet_cache(&tds);
+    /// ```rust
+    /// # #[allow(deprecated)]
+    /// # {
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    /// use delaunay::core::traits::facet_cache::FacetCacheProvider;
+    /// use delaunay::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let algorithm = IncrementalBowyerWatson::new();
+    ///
+    /// let cache = algorithm.get_or_build_facet_cache(&tds);
     /// let facet_to_cells = cache.as_ref();
     ///
     /// // Use the cached mapping for O(1) facet lookups
-    /// if let Some(adjacent_cells) = facet_to_cells.get(&facet_key) {
+    /// for (facet_key, adjacent_cells) in facet_to_cells.iter() {
     ///     // Process adjacent cells...
+    ///     assert!(adjacent_cells.len() <= 2);
     /// }
+    /// # }
     /// ```
-    #[deprecated(note = "Use try_get_or_build_facet_cache instead for proper error handling")]
+    #[deprecated(
+        since = "0.5.1",
+        note = "Use try_get_or_build_facet_cache instead for proper error handling. This method will be removed in v0.6.0."
+    )]
     fn get_or_build_facet_cache(&self, tds: &Tds<T, U, V, D>) -> Arc<FacetToCellsMap> {
         // Forward to strict version, falling back to lenient behavior on error
         match self.try_get_or_build_facet_cache(tds) {
@@ -261,21 +287,34 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let cache = self.try_get_or_build_facet_cache(&tds)?;
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    /// use delaunay::core::traits::facet_cache::FacetCacheProvider;
+    /// use delaunay::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let algorithm = IncrementalBowyerWatson::new();
+    ///
+    /// let cache = algorithm.try_get_or_build_facet_cache(&tds)?;
     /// let facet_to_cells = cache.as_ref();
     ///
     /// // Use the cached mapping for O(1) facet lookups
-    /// if let Some(adjacent_cells) = facet_to_cells.get(&facet_key) {
+    /// for (facet_key, adjacent_cells) in facet_to_cells.iter() {
     ///     // Process adjacent cells...
+    ///     assert!(adjacent_cells.len() <= 2);
     /// }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     fn try_get_or_build_facet_cache(
         &self,
         tds: &Tds<T, U, V, D>,
     ) -> Result<Arc<FacetToCellsMap>, TriangulationValidationError> {
-        use std::sync::atomic::Ordering;
-
         let mut current_generation = tds.generation();
 
         loop {
@@ -367,16 +406,30 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// // After modifying the triangulation
-    /// tds.insert_vertex(new_vertex);
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    /// use delaunay::core::traits::facet_cache::FacetCacheProvider;
+    /// use delaunay::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let algorithm = IncrementalBowyerWatson::new();
+    ///
+    /// // Build cache
+    /// let _cache = algorithm.try_get_or_build_facet_cache(&tds).unwrap();
     ///
     /// // Invalidate caches that depend on facet mappings
     /// algorithm.invalidate_facet_cache();
+    ///
+    /// // Cache should be empty now
+    /// assert!(algorithm.facet_cache().load().is_none());
     /// ```
     fn invalidate_facet_cache(&self) {
-        use std::sync::atomic::Ordering;
-
         // Clear the cache - next access will rebuild
         // ORDERING: The SeqCst store from ArcSwap ensures this None is visible
         // before the generation reset below. If future refactors relax the ordering,
@@ -396,7 +449,8 @@ mod tests {
     use crate::core::triangulation_data_structure::Tds;
     use crate::core::vertex;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Barrier;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::thread;
     use std::time::Duration;
 
@@ -637,8 +691,6 @@ mod tests {
 
     #[test]
     fn test_concurrent_cache_access() {
-        use std::sync::Barrier;
-
         let provider = Arc::new(TestCacheProvider::new());
         let tds = Arc::new(create_test_triangulation());
         let barrier = Arc::new(Barrier::new(4));
@@ -742,9 +794,6 @@ mod tests {
 
     #[test]
     fn test_build_cache_with_rcu_concurrent() {
-        use std::sync::Barrier;
-        use std::sync::atomic::AtomicUsize;
-
         let provider = Arc::new(TestCacheProvider::new());
         let tds = Arc::new(create_test_triangulation());
         let barrier = Arc::new(Barrier::new(4));
@@ -877,8 +926,6 @@ mod tests {
 
     #[test]
     fn test_empty_triangulation() {
-        use crate::core::triangulation_data_structure::Tds;
-
         let provider = TestCacheProvider::new();
 
         // Create an empty triangulation
