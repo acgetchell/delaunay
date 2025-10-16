@@ -156,7 +156,8 @@ where
 {
     use crate::core::collections::FastHashSet;
 
-    // Compare facets by their vertex UUIDs for efficiency
+    // Compare facets by their vertex UUIDs for semantic correctness
+    // This works across different TDS instances with the same coordinates
     let vertices1: FastHashSet<_> = facet1
         .vertices()?
         .map(super::vertex::Vertex::uuid)
@@ -393,31 +394,30 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 // FACET KEY UTILITIES
 // =============================================================================
 
-/// Derives a facet key from the facet's vertices using the TDS vertex mappings.
+/// Derives a facet key directly from vertex keys.
 ///
-/// This utility function converts the facet's vertices to vertex keys and computes
-/// the canonical facet key for lookup in facet-to-cells mappings. This is a common
-/// operation used across boundary analysis, convex hull algorithms, and insertion
-/// algorithms.
+/// Computes the canonical facet key for lookup in facet-to-cells mappings. This is useful
+/// in hot paths like visibility checking in convex hull algorithms and boundary analysis.
+///
+/// If you have `Vertex` instances instead of `VertexKey`s, obtain the keys via the TDS
+/// using the vertex's UUID (e.g., `tds.vertex_key_from_uuid(vertex.uuid())`).
 ///
 /// # Arguments
 ///
-/// * `facet_vertices` - The vertices that make up the facet
-/// * `tds` - The triangulation data structure for vertex key lookups
+/// * `facet_vertex_keys` - The vertex keys that make up the facet
 ///
 /// # Returns
 ///
-/// A `Result` containing the facet key or a `FacetError` if validation or vertex lookup fails.
+/// A `Result` containing the facet key or a `FacetError` if validation fails.
 ///
 /// # Errors
 ///
 /// Returns `FacetError::InsufficientVertices` if the vertex count doesn't equal `D`
-/// Returns `FacetError::VertexNotFound` if any vertex UUID cannot be found in the TDS
 ///
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::util::derive_facet_key_from_vertices;
+/// use delaunay::core::util::derive_facet_key_from_vertex_keys;
 /// use delaunay::core::triangulation_data_structure::Tds;
 /// use delaunay::vertex;
 ///
@@ -429,67 +429,47 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 /// ];
 /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 ///
-/// // Get facet vertices from a cell - must be exactly D vertices for a D-dimensional triangulation
+/// // Get facet vertex keys from a cell - no need to materialize Vertex objects
 /// if let Some(cell) = tds.cells().values().next() {
-///     // cell.vertices() returns VertexKeys, need to resolve to Vertex objects
 ///     let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect(); // Skip 1 vertex to get D vertices
-///     let facet_vertices: Vec<_> = facet_vertex_keys.iter()
-///         .map(|&key| tds.vertices()[key])
-///         .collect();
-///     assert_eq!(facet_vertices.len(), 3); // For 3D triangulation, facet has 3 vertices
-///     let facet_key = derive_facet_key_from_vertices(&facet_vertices, &tds).unwrap();
+///     assert_eq!(facet_vertex_keys.len(), 3); // For 3D triangulation, facet has 3 vertices
+///     let facet_key = derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys).unwrap();
 ///     println!("Facet key: {}", facet_key);
 /// }
 /// ```
 ///
 /// # Performance
 ///
-/// - Time Complexity: O(V) where V is the number of vertices in the facet
-/// - Space Complexity: O(V) for the temporary vertex keys buffer
-/// - Uses stack-allocated `SmallBuffer` for performance on hot paths
-pub fn derive_facet_key_from_vertices<T, U, V, const D: usize>(
-    facet_vertices: &[crate::core::vertex::Vertex<T, U, D>],
-    tds: &crate::core::triangulation_data_structure::Tds<T, U, V, D>,
+/// - Time Complexity: O(D log D) where D is the facet dimension (for sorting vertex keys)
+/// - Space Complexity: O(D) for the temporary sorted buffer (stack-allocated via `SmallBuffer`)
+/// - Improves cache locality by working only with compact `VertexKey` types
+///
+/// # See Also
+///
+/// - [`crate::core::facet::facet_key_from_vertices`] - Low-level function that computes the hash from keys
+pub fn derive_facet_key_from_vertex_keys<T, U, V, const D: usize>(
+    facet_vertex_keys: &[crate::core::triangulation_data_structure::VertexKey],
 ) -> Result<u64, crate::core::facet::FacetError>
 where
     T: crate::geometry::traits::coordinate::CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
-    use crate::core::collections::SmallBuffer;
     use crate::core::facet::facet_key_from_vertices;
-    use crate::core::triangulation_data_structure::VertexKey;
 
-    // Validate that the number of vertices matches the expected dimension
+    // Validate that the number of vertex keys matches the expected dimension
     // In a D-dimensional triangulation, a facet should have exactly D vertices
-    if facet_vertices.len() != D {
-        return Err(FacetError::InsufficientVertices {
+    if facet_vertex_keys.len() != D {
+        return Err(crate::core::facet::FacetError::InsufficientVertices {
             expected: D,
-            actual: facet_vertices.len(),
+            actual: facet_vertex_keys.len(),
             dimension: D,
         });
     }
 
-    // Compute the facet key using VertexKeys (same method as build_facet_to_cells_hashmap)
-    // Stack-allocate for performance on hot paths
-    let mut vertex_keys: SmallBuffer<
-        VertexKey,
-        { crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE },
-    > = SmallBuffer::new();
-
-    for vertex in facet_vertices {
-        match tds.vertex_key_from_uuid(&vertex.uuid()) {
-            Some(key) => vertex_keys.push(key),
-            None => {
-                return Err(FacetError::VertexNotFound {
-                    uuid: vertex.uuid(),
-                });
-            }
-        }
-    }
-
-    Ok(facet_key_from_vertices(&vertex_keys[..]))
+    // Directly compute the facet key from vertex keys
+    // facet_key_from_vertices handles the sorting internally
+    Ok(facet_key_from_vertices(facet_vertex_keys))
 }
 
 /// Verifies facet index consistency between two neighboring cells.
@@ -586,8 +566,10 @@ where
 
     // Check facet index bounds
     if facet_idx >= cell1_facets.len() {
+        // Use saturating conversion to avoid InvalidFacetIndexOverflow for large indices
+        let idx_u8 = u8::try_from(facet_idx).unwrap_or(u8::MAX);
         return Err(FacetError::InvalidFacetIndex {
-            index: usize_to_u8(facet_idx, cell1_facets.len())?,
+            index: idx_u8,
             facet_count: cell1_facets.len(),
         });
     }
@@ -712,9 +694,11 @@ pub fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
 #[cfg(test)]
 mod tests {
 
-    use crate::geometry::traits::coordinate::Coordinate;
+    use crate::core::facet::FacetView;
+    use crate::core::triangulation_data_structure::{Tds, VertexKey};
     use crate::vertex;
-    use uuid::Uuid;
+    use std::thread;
+    use std::time::Instant;
 
     use super::*;
 
@@ -1150,12 +1134,8 @@ mod tests {
     #[test]
     #[allow(clippy::cognitive_complexity)]
     #[allow(clippy::too_many_lines)]
-    fn test_derive_facet_key_from_vertices_comprehensive() {
-        use crate::core::triangulation_data_structure::Tds;
-        use crate::core::vertex::{Vertex, VertexBuilder};
-        use uuid::Uuid;
-
-        println!("Testing derive_facet_key_from_vertices comprehensively");
+    fn test_derive_facet_key_from_vertex_keys_comprehensive() {
+        println!("Testing derive_facet_key_from_vertex_keys comprehensively");
 
         // Create a triangulation
         let vertices = vec![
@@ -1169,40 +1149,37 @@ mod tests {
         // Test 1: Basic functionality - successful key derivation
         println!("  Testing basic functionality...");
         let cell = tds.cells().values().next().unwrap();
-        // Phase 3A: Resolve VertexKeys to actual Vertex references
         let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect();
-        let facet_vertices: Vec<_> = facet_vertex_keys
-            .iter()
-            .map(|&vk| tds.vertices()[vk])
-            .collect();
 
-        let result = derive_facet_key_from_vertices(&facet_vertices, &tds);
+        let result =
+            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys);
         assert!(
             result.is_ok(),
-            "Facet key derivation should succeed for valid vertices"
+            "Facet key derivation should succeed for valid vertex keys"
         );
 
         let facet_key = result.unwrap();
         println!("    Derived facet key: {facet_key}");
 
-        // Test deterministic behavior - same vertices produce same key
-        let result2 = derive_facet_key_from_vertices(&facet_vertices, &tds);
+        // Test deterministic behavior - same vertex keys produce same key
+        let result2 =
+            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys);
         assert!(result2.is_ok(), "Second derivation should also succeed");
         assert_eq!(
             facet_key,
             result2.unwrap(),
-            "Same vertices should produce same facet key"
+            "Same vertex keys should produce same facet key"
         );
 
-        // Test different vertices produce different keys
+        // Test different vertex keys produce different keys
         let all_vertex_keys = cell.vertices();
         let different_facet_vertex_keys: Vec<_> = all_vertex_keys.iter().take(3).copied().collect();
-        let different_facet_vertices: Vec<_> = different_facet_vertex_keys
-            .iter()
-            .map(|&vk| tds.vertices()[vk])
-            .collect();
-        if different_facet_vertices.len() == 3 && different_facet_vertex_keys != facet_vertex_keys {
-            let result3 = derive_facet_key_from_vertices(&different_facet_vertices, &tds);
+        if different_facet_vertex_keys.len() == 3
+            && different_facet_vertex_keys != facet_vertex_keys
+        {
+            let result3 = derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(
+                &different_facet_vertex_keys,
+            );
             assert!(
                 result3.is_ok(),
                 "Different facet key derivation should succeed"
@@ -1210,7 +1187,7 @@ mod tests {
             let different_facet_key = result3.unwrap();
             assert_ne!(
                 facet_key, different_facet_key,
-                "Different vertices should produce different facet keys"
+                "Different vertex keys should produce different facet keys"
             );
             println!("    Different facet key: {different_facet_key}");
         }
@@ -1218,12 +1195,13 @@ mod tests {
         // Test 2: Error cases
         println!("  Testing error handling...");
 
-        // Wrong vertex count
-        let single_vertex = vec![vertices[0]];
-        let result_count = derive_facet_key_from_vertices(&single_vertex, &tds);
+        // Wrong vertex key count
+        let single_key: Vec<VertexKey> = vec![facet_vertex_keys[0]];
+        let result_count =
+            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&single_key);
         assert!(
             result_count.is_err(),
-            "Should return error for wrong vertex count"
+            "Should return error for wrong vertex key count"
         );
         if let Err(error) = result_count {
             match error {
@@ -1232,20 +1210,21 @@ mod tests {
                     actual,
                     dimension,
                 } => {
-                    assert_eq!(expected, 3, "Expected 3 vertices for 3D");
-                    assert_eq!(actual, 1, "Got 1 vertex");
+                    assert_eq!(expected, 3, "Expected 3 vertex keys for 3D");
+                    assert_eq!(actual, 1, "Got 1 vertex key");
                     assert_eq!(dimension, 3, "Dimension should be 3");
                 }
                 _ => panic!("Expected InsufficientVertices error, got: {error:?}"),
             }
         }
 
-        // Empty vertices
-        let empty_vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![];
-        let result_empty = derive_facet_key_from_vertices(&empty_vertices, &tds);
+        // Empty vertex keys
+        let empty_keys: Vec<VertexKey> = vec![];
+        let result_empty =
+            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&empty_keys);
         assert!(
             result_empty.is_err(),
-            "Empty vertices should fail validation"
+            "Empty vertex keys should fail validation"
         );
         if let Err(error) = result_empty {
             match error {
@@ -1254,38 +1233,15 @@ mod tests {
                     actual,
                     dimension,
                 } => {
-                    assert_eq!(expected, 3, "Expected 3 vertices for 3D");
-                    assert_eq!(actual, 0, "Got 0 vertices");
+                    assert_eq!(expected, 3, "Expected 3 vertex keys for 3D");
+                    assert_eq!(actual, 0, "Got 0 vertex keys");
                     assert_eq!(dimension, 3, "Dimension should be 3");
                 }
                 _ => {
-                    panic!("Expected InsufficientVertices error for empty vertices, got: {error:?}")
+                    panic!(
+                        "Expected InsufficientVertices error for empty vertex keys, got: {error:?}"
+                    )
                 }
-            }
-        }
-
-        // Vertex not found in TDS
-        let invalid_uuid = Uuid::new_v4();
-        let mut invalid_vertex = VertexBuilder::default()
-            .point(crate::geometry::point::Point::new([99.0, 99.0, 99.0]))
-            .build()
-            .expect("Failed to create test vertex");
-        invalid_vertex
-            .set_uuid(invalid_uuid)
-            .expect("Failed to set UUID");
-        let invalid_vertices = vec![invalid_vertex, invalid_vertex, invalid_vertex];
-
-        let result_invalid = derive_facet_key_from_vertices(&invalid_vertices, &tds);
-        assert!(
-            result_invalid.is_err(),
-            "Should return error for vertex not found in TDS"
-        );
-        if let Err(error) = result_invalid {
-            match error {
-                crate::core::facet::FacetError::VertexNotFound { uuid } => {
-                    assert_eq!(uuid, invalid_uuid, "Error should contain the correct UUID");
-                }
-                _ => panic!("Expected VertexNotFound error, got: {error:?}"),
             }
         }
 
@@ -1306,14 +1262,12 @@ mod tests {
                     .filter(|(i, _)| *i != skip_vertex_idx)
                     .map(|(_, &vk)| vk)
                     .collect();
-                // Phase 3A: Resolve VertexKeys to actual Vertex references
-                let facet_vertices: Vec<_> = facet_vertex_keys
-                    .iter()
-                    .map(|&vk| tds.vertices()[vk])
-                    .collect();
 
-                if !facet_vertices.is_empty() {
-                    let key_result = derive_facet_key_from_vertices(&facet_vertices, &tds);
+                if !facet_vertex_keys.is_empty() {
+                    let key_result =
+                        derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(
+                            &facet_vertex_keys,
+                        );
                     if let Ok(derived_key) = key_result {
                         keys_tested += 1;
                         if cache.contains_key(&derived_key) {
@@ -1335,8 +1289,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_comprehensive() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         // Test 1: Adjacent facets in 3D (tetrahedra sharing a triangular face)
         println!("Test 1: Adjacent facets in 3D");
 
@@ -1401,8 +1353,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_2d_cases() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test 2D facet adjacency");
 
         // Create two 2D triangles that share an edge (2 vertices)
@@ -1452,8 +1402,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_1d_cases() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test 1D facet adjacency");
 
         // In 1D, cells are edges and facets are vertices (0D)
@@ -1503,8 +1451,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_edge_cases() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test facet adjacency edge cases");
 
         // Test with minimal triangulation (single tetrahedron)
@@ -1544,9 +1490,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_performance() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-        use std::time::Instant;
-
         println!("Test facet adjacency performance");
 
         // Create a moderately complex case to test performance
@@ -1585,8 +1528,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_different_geometries() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test facet adjacency with different geometries");
 
         // Create vertices with different coordinates to ensure different UUIDs
@@ -1624,8 +1565,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_uuid_based_comparison() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test that adjacency is purely UUID-based");
 
         // Create identical geometry in separate TDS instances
@@ -1673,8 +1612,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_4d_cases() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test 4D facet adjacency");
 
         // Create two 4D simplices (5-vertices each) that share a 3D facet (4 vertices)
@@ -1726,8 +1663,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_5d_cases() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test 5D facet adjacency");
 
         // Create two 5D simplices (6-vertices each) that share a 4D facet (5 vertices)
@@ -1804,8 +1739,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_conversion_comprehensive() {
-        use super::usize_to_u8;
-
         // Test successful conversions
         assert_eq!(usize_to_u8(0, 4), Ok(0));
         assert_eq!(usize_to_u8(1, 4), Ok(1));
@@ -1845,8 +1778,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_boundary_cases() {
-        use super::usize_to_u8;
-
         // Test all valid u8 values
         for i in 0u8..=255 {
             let result = usize_to_u8(i as usize, 256);
@@ -1875,8 +1806,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_error_consistency() {
-        use super::usize_to_u8;
-
         // Test that all out-of-range values produce consistent errors
         let test_cases = [
             (256, 100),
@@ -1905,8 +1834,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_edge_values() {
-        use super::usize_to_u8;
-
         // Test edge cases around u8::MAX
         assert_eq!(usize_to_u8(254, 300), Ok(254));
         assert_eq!(usize_to_u8(255, 300), Ok(255));
@@ -1931,8 +1858,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_deterministic_behavior() {
-        use super::usize_to_u8;
-
         // Test that same inputs produce same results
         for i in 0..10 {
             let result1 = usize_to_u8(i, 20);
@@ -1953,9 +1878,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_performance_characteristics() {
-        use super::usize_to_u8;
-        use std::time::Instant;
-
         // Test that the function is fast for valid conversions
         let start = Instant::now();
         for i in 0..1000 {
@@ -1978,8 +1900,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_memory_efficiency() {
-        use super::usize_to_u8;
-
         // Test that the function doesn't allocate memory unnecessarily
         // This is a behavioral test - the function should use stack allocation only
         let (result, _alloc_info) = measure_with_result(|| {
@@ -2002,8 +1922,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_error_message_quality() {
-        use super::usize_to_u8;
-
         // Test that error messages contain useful information
         let result = usize_to_u8(300, 42);
         assert!(result.is_err());
@@ -2034,9 +1952,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_thread_safety() {
-        use super::usize_to_u8;
-        use std::thread;
-
         // Test that the function works correctly in multi-threaded context
         let handles: Vec<_> = (0..4)
             .map(|thread_id| {

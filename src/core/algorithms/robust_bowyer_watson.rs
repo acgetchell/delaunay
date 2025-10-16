@@ -29,7 +29,7 @@ use crate::core::{
 use crate::geometry::{
     algorithms::convex_hull::ConvexHull,
     point::Point,
-    predicates::InSphere,
+    predicates::{InSphere, Orientation, simplex_orientation},
     robust_predicates::{RobustPredicateConfig, config_presets, robust_insphere},
     traits::coordinate::{Coordinate, CoordinateScalar},
     util::safe_usize_to_scalar,
@@ -277,93 +277,107 @@ where
         // This adds tolerance and multiple predicate strategies for degenerate cases
         let bad_cells = self.find_bad_cells_with_robust_fallback(tds, vertex);
 
-        if !bad_cells.is_empty()
-            && let Ok(boundary_handles) =
-                self.find_cavity_boundary_facets_with_robust_fallback(tds, &bad_cells)
-            && !boundary_handles.is_empty()
-        {
-            // Use the trait's helper methods for the actual insertion
-            // This ensures consistency with the standard algorithm while adding robustness
-
-            // Extract facet data before removing cells
-            // TODO: Performance optimization - reduce allocations by:
-            // 1. Reusing preallocated buffers in InsertionBuffers (e.g., SmallBuffer per facet)
-            // 2. Extracting VertexKeys from TDS and adding keyed variant of create_cell_*
-            //    to avoid cloning Vertex objects (more complex API change)
-            let mut extracted_facet_data = Vec::with_capacity(boundary_handles.len());
-            for handle in &boundary_handles {
-                let cell_key = handle.cell_key();
-                let facet_index = handle.facet_index();
-                let facet_view = crate::core::facet::FacetView::new(tds, cell_key, facet_index)
-                            .map_err(|_| InsertionError::TriangulationState(
-                                TriangulationValidationError::InconsistentDataStructure {
-                                    message: format!(
-                                        "Facet index {facet_index} out of bounds for cell {cell_key:?} during robust cavity extraction"
-                                    ),
-                                },
-                            ))?;
-
-                let facet_vertices = crate::core::util::facet_view_to_vertices(&facet_view)
-                            .map_err(|_| InsertionError::TriangulationState(
-                                TriangulationValidationError::InconsistentDataStructure {
-                                    message: format!(
-                                        "Failed to get vertices from facet at index {facet_index} during robust cavity extraction"
-                                    ),
-                                },
-                            ))?;
-                extracted_facet_data.push(facet_vertices);
-            }
-
-            // Compute actual removals after deletion to avoid miscounting
-            // (handles duplicates and cells that may already be gone)
-            <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)?;
-            <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
-            // Deduplicate to avoid overcounting when bad_cells contains repeats
-            let unique_bad: CellKeySet = bad_cells.iter().copied().collect();
-            let cells_removed = unique_bad
-                .into_iter()
-                .filter(|&ck| tds.cells().get(ck).is_none())
-                .count();
-
-            let mut cells_created = 0;
-            for facet_vertices in extracted_facet_data {
-                <Self as InsertionAlgorithm<T, U, V, D>>::create_cell_from_vertices_and_vertex(
-                    tds,
-                    facet_vertices,
-                    vertex,
-                )
-                .map_err(InsertionError::TriangulationState)?;
-                cells_created += 1;
-            }
-
-            <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(
-                |e| {
-                    InsertionError::TriangulationState(
-                        TriangulationValidationError::FinalizationFailed {
-                            message: format!(
-                                "Failed to finalize after robust cavity insertion: {e}"
-                            ),
-                        },
-                    )
-                },
-            )?;
-
-            return Ok(InsertionInfo {
-                strategy: InsertionStrategy::CavityBased,
-                cells_removed,
-                cells_created,
-                success: true,
-                degenerate_case_handled: false,
-            });
+        if bad_cells.is_empty() {
+            return result; // No bad cells with robust method either, return original error
         }
 
-        // If both standard and robust methods fail, return error
-        Err(InsertionError::TriangulationState(
-            TriangulationValidationError::FailedToCreateCell {
-                message: "Cavity-based insertion failed with both standard and robust predicates."
-                    .to_string(),
-            },
-        ))
+        let boundary_handles =
+            match self.find_cavity_boundary_facets_with_robust_fallback(tds, &bad_cells) {
+                Ok(handles) if !handles.is_empty() => handles,
+                _ => return result, // Can't find boundary, return original error
+            };
+
+        // Now perform the full cavity-based insertion using trait methods
+        // Follow the same pattern as the trait's insert_vertex_cavity_based
+        let cells_removed = bad_cells.len();
+
+        // Phase 1: Gather boundary facet info before modifying TDS
+        let Ok(boundary_infos) =
+            <Self as InsertionAlgorithm<T, U, V, D>>::gather_boundary_facet_info(
+                tds,
+                &boundary_handles,
+            )
+        else {
+            return result; // Can't gather info, return original error
+        };
+
+        // Phase 2: Insert vertex and create new cells
+        let vertex_existed_before = tds.vertex_key_from_uuid(&vertex.uuid()).is_some();
+
+        if let Err(e) = <Self as InsertionAlgorithm<T, U, V, D>>::ensure_vertex_in_tds(tds, vertex)
+        {
+            return Err(InsertionError::TriangulationState(e));
+        }
+
+        let Some(inserted_vk) = tds.vertex_key_from_uuid(&vertex.uuid()) else {
+            return result; // Vertex not found after insertion, return original error
+        };
+
+        // Create all new cells BEFORE removing bad cells
+        let mut created_cell_keys = Vec::with_capacity(boundary_infos.len());
+        for info in &boundary_infos {
+            let mut cell_vertices: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> =
+                info.facet_vertex_keys.clone();
+            cell_vertices.push(inserted_vk);
+
+            let Ok(new_cell) = crate::core::cell::Cell::new(cell_vertices, None) else {
+                // Rollback and return original error
+                <Self as InsertionAlgorithm<T, U, V, D>>::rollback_created_cells_and_vertex(
+                    tds,
+                    &created_cell_keys,
+                    vertex,
+                    vertex_existed_before,
+                );
+                return result;
+            };
+
+            if let Ok(key) = tds.insert_cell_with_mapping(new_cell) {
+                created_cell_keys.push(key);
+            } else {
+                // Rollback and return original error
+                <Self as InsertionAlgorithm<T, U, V, D>>::rollback_created_cells_and_vertex(
+                    tds,
+                    &created_cell_keys,
+                    vertex,
+                    vertex_existed_before,
+                );
+                return result;
+            }
+        }
+        let cells_created = created_cell_keys.len();
+
+        // Phase 3: Remove bad cells (point of no return)
+        <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
+
+        // Invalidate cache after TDS structural changes
+        self.invalidate_cache_atomically();
+
+        // Phase 4: Connect neighbor relationships
+        <Self as InsertionAlgorithm<T, U, V, D>>::connect_new_cells_to_neighbors(
+            tds,
+            inserted_vk,
+            &boundary_infos,
+            &created_cell_keys,
+        )?;
+
+        // Phase 5: Finalize
+        <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(|e| {
+            InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Failed to finalize triangulation after robust cavity-based insertion: {e}"
+                    ),
+                },
+            )
+        })?;
+
+        Ok(InsertionInfo {
+            strategy: InsertionStrategy::CavityBased,
+            cells_removed,
+            cells_created,
+            success: true,
+            degenerate_case_handled: false,
+        })
     }
 
     /// Hull extension insertion with robust predicates as enhancement
@@ -850,9 +864,6 @@ where
         ordered_float::OrderedFloat<f64>: From<T>,
         [f64; D]: DeserializeOwned + Serialize + Sized,
     {
-        use crate::geometry::point::Point;
-        use crate::geometry::predicates::{Orientation, simplex_orientation};
-
         // Get the adjacent cell to this boundary facet
         let Some(adjacent_cell) = tds.cells().get(facet_view.cell_key()) else {
             return false;
@@ -1242,7 +1253,8 @@ mod tests {
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
     use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::traits::insertion_algorithm::InsertionError;
-    use crate::core::util::{derive_facet_key_from_vertices, verify_facet_index_consistency};
+    use crate::core::util::{derive_facet_key_from_vertex_keys, verify_facet_index_consistency};
+    use crate::core::vertex::VertexBuilder;
     use crate::vertex;
     use approx::assert_abs_diff_eq;
     use approx::assert_abs_diff_ne;
@@ -2131,8 +2143,6 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn test_facet_cache_provider_implementation() {
-        use std::sync::atomic::Ordering;
-
         println!("Testing FacetCacheProvider implementation for RobustBowyerWatson");
 
         // Create test triangulation
@@ -2409,9 +2419,6 @@ mod tests {
 
     #[test]
     fn test_geometric_edge_cases() {
-        use crate::core::vertex::VertexBuilder;
-        use crate::geometry::point::Point;
-
         println!("Testing geometric edge cases...");
 
         // Test 1: Nearly collinear points in 2D
@@ -3174,8 +3181,15 @@ mod tests {
             Ok(iter) => iter.copied().collect(),
             Err(_) => return, // Skip test if facet is invalid
         };
-        let key = derive_facet_key_from_vertices(&test_facet_vertices, &tds)
-            .expect("Should derive facet key");
+        // Get vertex keys from vertices via TDS
+        let test_facet_vertex_keys: Vec<_> = test_facet_vertices
+            .iter()
+            .filter_map(|v| tds.vertex_key_from_uuid(&v.uuid()))
+            .collect();
+        let key = derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(
+            &test_facet_vertex_keys,
+        )
+        .expect("Should derive facet key");
         let adjacent_cell_key = facet_to_cells
             .get(&key)
             .and_then(|cells| (cells.len() == 1).then_some(cells[0].cell_key()))
@@ -4216,5 +4230,149 @@ mod tests {
         }
 
         debug_println!("\n  ✓ Full cavity-based insertion works correctly!");
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_atomic_cavity_based_insertion_guarantees() {
+        println!("Testing atomic cavity-based insertion guarantees");
+
+        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        // Create initial triangulation
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([0.0, 2.0, 0.0]),
+            vertex!([0.0, 0.0, 2.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Capture initial state
+        let initial_vertex_count = tds.number_of_vertices();
+        let initial_cell_count = tds.number_of_cells();
+        let initial_generation = tds.generation();
+        let initial_vertex_uuids: Vec<_> = tds.vertices().values().map(Vertex::uuid).collect();
+
+        println!(
+            "Initial state: {initial_vertex_count} vertices, {initial_cell_count} cells, generation {initial_generation}"
+        );
+
+        // Test Case 1: Successful insertion (should be atomic - all or nothing)
+        let interior_vertex = vertex!([0.5, 0.5, 0.5]);
+        let result = algorithm.insert_vertex(&mut tds, interior_vertex);
+
+        match result {
+            Ok(info) => {
+                println!(
+                    "✓ Insertion succeeded: created={}, removed={}",
+                    info.cells_created, info.cells_removed
+                );
+
+                // Verify atomicity: ALL changes should have occurred
+                assert!(
+                    tds.vertex_key_from_uuid(&interior_vertex.uuid()).is_some(),
+                    "Vertex should be in TDS after successful insertion"
+                );
+                assert!(
+                    tds.number_of_cells() != initial_cell_count,
+                    "Cell count should have changed"
+                );
+                assert!(
+                    tds.generation() > initial_generation,
+                    "Generation should have increased"
+                );
+                assert!(
+                    tds.is_valid().is_ok(),
+                    "TDS should be valid after successful insertion"
+                );
+
+                // Verify the insertion was complete (cells created, neighbors connected)
+                assert!(
+                    info.cells_created > 0,
+                    "Should have created cells during cavity-based insertion"
+                );
+                assert!(
+                    info.cells_removed > 0,
+                    "Should have removed bad cells during cavity-based insertion"
+                );
+
+                println!("✓ All changes applied atomically");
+            }
+            Err(e) => {
+                println!("✓ Insertion failed: {e}");
+
+                // Verify atomicity: NO changes should have occurred (rollback)
+                assert_eq!(
+                    tds.number_of_vertices(),
+                    initial_vertex_count,
+                    "Vertex count should be unchanged after failed insertion (rollback)"
+                );
+                assert_eq!(
+                    tds.number_of_cells(),
+                    initial_cell_count,
+                    "Cell count should be unchanged after failed insertion (rollback)"
+                );
+
+                // Verify the failed vertex was NOT added
+                assert!(
+                    tds.vertex_key_from_uuid(&interior_vertex.uuid()).is_none(),
+                    "Failed vertex should NOT be in TDS after rollback"
+                );
+
+                // Verify all original vertices are still there
+                for uuid in &initial_vertex_uuids {
+                    assert!(
+                        tds.vertices().values().any(|v| v.uuid() == *uuid),
+                        "Original vertex should still be in TDS after failed insertion"
+                    );
+                }
+
+                // TDS should still be valid after rollback
+                assert!(
+                    tds.is_valid().is_ok(),
+                    "TDS should be valid even after failed insertion (rollback)"
+                );
+
+                println!("✓ Rollback preserved TDS integrity");
+            }
+        }
+
+        // Test Case 2: Multiple insertions to verify consistent atomicity
+        println!("\nTesting multiple atomic insertions...");
+        let test_vertices = [
+            vertex!([0.3, 0.3, 0.3]),
+            vertex!([0.7, 0.2, 0.1]),
+            vertex!([0.1, 0.6, 0.4]),
+        ];
+
+        for (i, test_vertex) in test_vertices.iter().enumerate() {
+            let pre_vertex_count = tds.number_of_vertices();
+            let pre_cell_count = tds.number_of_cells();
+            let pre_generation = tds.generation();
+
+            let result = algorithm.insert_vertex(&mut tds, *test_vertex);
+
+            if let Ok(info) = result {
+                println!("  ✓ Insertion {} succeeded atomically", i + 1);
+                assert!(tds.vertex_key_from_uuid(&test_vertex.uuid()).is_some());
+                assert!(tds.generation() > pre_generation);
+                assert!(info.cells_created > 0);
+            } else {
+                println!("  ✓ Insertion {} failed with rollback", i + 1);
+                assert_eq!(tds.number_of_vertices(), pre_vertex_count);
+                assert_eq!(tds.number_of_cells(), pre_cell_count);
+                assert!(tds.vertex_key_from_uuid(&test_vertex.uuid()).is_none());
+            }
+
+            // Verify TDS remains valid after each operation
+            assert!(
+                tds.is_valid().is_ok(),
+                "TDS should remain valid after insertion {}",
+                i + 1
+            );
+        }
+
+        println!("✓ Atomic cavity-based insertion guarantees verified");
     }
 }

@@ -293,18 +293,19 @@ const DEGENERATE_CELL_THRESHOLD: f64 = 0.5;
 /// but it is not intended for external use. It may change without notice in minor versions.
 /// Do not use this type directly in your code.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields used for debugging but not all accessed in production code
 pub struct BoundaryFacetInfo {
     /// Key of the bad cell containing this boundary facet
-    bad_cell: CellKey,
+    #[allow(dead_code)] // Written during construction, only read via Debug formatting
+    pub(crate) bad_cell: CellKey,
     /// Index of the facet within the bad cell (0..=D)
-    bad_facet_index: usize,
+    #[allow(dead_code)] // Written during construction, only read via Debug formatting
+    pub(crate) bad_facet_index: usize,
     /// Vertex keys forming the boundary facet (D vertices)
-    facet_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    pub(crate) facet_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     /// Neighbor cell across this boundary facet and its reciprocal facet index.
     /// `None` if this is a true boundary facet (no neighbor on the exterior side).
     /// Format: (`neighbor_cell_key`, `reciprocal_facet_index_in_neighbor`)
-    outside_neighbor: Option<(CellKey, usize)>,
+    pub(crate) outside_neighbor: Option<(CellKey, usize)>,
 }
 
 /// Strategy used for vertex insertion

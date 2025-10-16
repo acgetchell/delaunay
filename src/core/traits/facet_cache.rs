@@ -15,7 +15,10 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
-    sync::{Arc, atomic::AtomicU64},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 /// Trait for components that provide cached facet-to-cells mappings.
@@ -312,8 +315,6 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
     ) -> Result<Arc<FacetToCellsMap>, TriangulationValidationError> {
-        use std::sync::atomic::Ordering;
-
         let mut current_generation = tds.generation();
 
         loop {
@@ -429,8 +430,6 @@ where
     /// assert!(algorithm.facet_cache().load().is_none());
     /// ```
     fn invalidate_facet_cache(&self) {
-        use std::sync::atomic::Ordering;
-
         // Clear the cache - next access will rebuild
         // ORDERING: The SeqCst store from ArcSwap ensures this None is visible
         // before the generation reset below. If future refactors relax the ordering,
@@ -450,7 +449,8 @@ mod tests {
     use crate::core::triangulation_data_structure::Tds;
     use crate::core::vertex;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Barrier;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::thread;
     use std::time::Duration;
 
@@ -691,8 +691,6 @@ mod tests {
 
     #[test]
     fn test_concurrent_cache_access() {
-        use std::sync::Barrier;
-
         let provider = Arc::new(TestCacheProvider::new());
         let tds = Arc::new(create_test_triangulation());
         let barrier = Arc::new(Barrier::new(4));
@@ -796,9 +794,6 @@ mod tests {
 
     #[test]
     fn test_build_cache_with_rcu_concurrent() {
-        use std::sync::Barrier;
-        use std::sync::atomic::AtomicUsize;
-
         let provider = Arc::new(TestCacheProvider::new());
         let tds = Arc::new(create_test_triangulation());
         let barrier = Arc::new(Barrier::new(4));
@@ -931,8 +926,6 @@ mod tests {
 
     #[test]
     fn test_empty_triangulation() {
-        use crate::core::triangulation_data_structure::Tds;
-
         let provider = TestCacheProvider::new();
 
         // Create an empty triangulation

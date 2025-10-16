@@ -4,7 +4,7 @@ use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::traits::facet_cache::FacetCacheProvider;
 use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
-use crate::core::util::derive_facet_key_from_vertices;
+use crate::core::util::derive_facet_key_from_vertex_keys;
 use crate::core::vertex::Vertex;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::simplex_orientation;
@@ -297,6 +297,291 @@ where
     _phantom: PhantomData<(T, U, V)>,
 }
 
+// Minimal impl block for simple accessor methods that don't require arithmetic operations
+impl<T, U, V, const D: usize> ConvexHull<T, U, V, D>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
+{
+    /// Returns the number of hull facets
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::vertex;
+    ///
+    /// // Create a 3D tetrahedron
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+    ///     ConvexHull::from_triangulation(&tds).unwrap();
+    ///
+    /// assert_eq!(hull.facet_count(), 4); // Tetrahedron has 4 faces
+    /// ```
+    #[must_use]
+    pub const fn facet_count(&self) -> usize {
+        self.hull_facets.len()
+    }
+
+    /// Gets a hull facet by index
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the facet to retrieve
+    ///
+    /// # Returns
+    ///
+    /// Some reference to the facet if the index is valid, None otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::vertex;
+    ///
+    /// // Create a 3D tetrahedron
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+    ///     ConvexHull::from_triangulation(&tds).unwrap();
+    ///
+    /// // Get the first facet
+    /// assert!(hull.get_facet(0).is_some());
+    /// // Index out of bounds returns None
+    /// assert!(hull.get_facet(10).is_none());
+    /// ```
+    #[must_use]
+    pub fn get_facet(&self, index: usize) -> Option<&FacetHandle> {
+        self.hull_facets.get(index)
+    }
+
+    /// Returns an iterator over the hull facets
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::vertex;
+    ///
+    /// // Create a 3D tetrahedron
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+    ///     ConvexHull::from_triangulation(&tds).unwrap();
+    ///
+    /// // Iterate over all hull facets
+    /// let facet_count = hull.facets().count();
+    /// assert_eq!(facet_count, 4); // Tetrahedron has 4 faces
+    ///
+    /// // Check that all facets have the expected number of vertices
+    /// // Note: facets() returns FacetHandle structs - need to create FacetView to access vertices
+    /// use delaunay::core::facet::FacetView;
+    /// for facet_handle in hull.facets() {
+    ///     if let Ok(facet_view) = FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index()) {
+    ///         assert_eq!(facet_view.vertices().unwrap().count(), 3); // 3D facets have 3 vertices
+    ///     }
+    /// }
+    /// ```
+    pub fn facets(&self) -> std::slice::Iter<'_, FacetHandle> {
+        self.hull_facets.iter()
+    }
+
+    /// Returns true if the convex hull is empty (has no facets)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::vertex;
+    ///
+    /// // Empty hull
+    /// let empty_hull: ConvexHull<f64, Option<()>, Option<()>, 3> = ConvexHull::default();
+    /// assert!(empty_hull.is_empty());
+    ///
+    /// // Non-empty hull
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+    ///     ConvexHull::from_triangulation(&tds).unwrap();
+    /// assert!(!hull.is_empty());
+    /// ```
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.hull_facets.is_empty()
+    }
+
+    /// Returns the dimension of the convex hull
+    ///
+    /// This is the same as the dimension of the triangulation that generated it.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::vertex;
+    ///
+    /// // Create different dimensional hulls
+    /// let vertices_2d = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+    /// let hull_2d: ConvexHull<f64, Option<()>, Option<()>, 2> =
+    ///     ConvexHull::from_triangulation(&tds_2d).unwrap();
+    /// assert_eq!(hull_2d.dimension(), 2);
+    ///
+    /// let vertices_3d = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
+    /// let hull_3d: ConvexHull<f64, Option<()>, Option<()>, 3> =
+    ///     ConvexHull::from_triangulation(&tds_3d).unwrap();
+    /// assert_eq!(hull_3d.dimension(), 3);
+    /// ```
+    #[must_use]
+    pub const fn dimension(&self) -> usize {
+        D
+    }
+
+    /// Checks if this convex hull is valid for the given triangulation
+    ///
+    /// Returns `true` if the hull's creation generation matches the TDS generation,
+    /// meaning the hull's facet handles are still valid for this TDS.
+    /// Returns `false` if the TDS has been modified since the hull was created.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - The triangulation data structure to check against
+    ///
+    /// # Returns
+    ///
+    /// `true` if the hull is valid for this TDS, `false` otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::vertex;
+    ///
+    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ]).unwrap();
+    ///
+    /// // Create hull and verify it's valid
+    /// let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    /// assert!(hull.is_valid_for_tds(&tds));
+    ///
+    /// // Modify the TDS
+    /// tds.add(vertex!([0.5, 0.5, 0.5])).unwrap();
+    ///
+    /// // Hull is now invalid for the modified TDS
+    /// assert!(!hull.is_valid_for_tds(&tds));
+    ///
+    /// // Create a new hull for the modified TDS
+    /// let new_hull = ConvexHull::from_triangulation(&tds).unwrap();
+    /// assert!(new_hull.is_valid_for_tds(&tds));
+    /// ```
+    #[must_use]
+    pub fn is_valid_for_tds(&self, tds: &Tds<T, U, V, D>) -> bool {
+        // Use creation_generation (immutable) for validity check, not cached_generation (mutable)
+        self.creation_generation.get().copied().unwrap_or(0) == tds.generation()
+    }
+
+    /// Invalidates the internal facet-to-cells cache and resets the cached generation counter
+    ///
+    /// This method forces the cache to be rebuilt on the next visibility test.
+    /// It can be useful for manual cache management.
+    ///
+    /// # Two-Generation Design
+    ///
+    /// This method resets only the **cache generation** (`cached_generation`) to 0, forcing
+    /// cache rebuild on next access. The **creation generation** (`creation_generation`) remains
+    /// immutable and is never modified after construction.
+    ///
+    /// This separation ensures:
+    /// - Cache invalidation doesn't break stale hull detection
+    /// - `is_valid_for_tds()` always returns accurate results based on creation generation
+    /// - Stale hulls are caught even after calling `invalidate_cache()`
+    ///
+    /// # Interior Mutability
+    ///
+    /// This method takes `&self` (not `&mut self`) and is safe to call on shared hulls
+    /// due to interior mutability via `ArcSwapOption` (for the facet cache) and `AtomicU64`
+    /// (for cache generation tracking). These lock-free atomic operations allow cache invalidation
+    /// without exclusive mutable access.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::vertex;
+    ///
+    /// // Create a 3D tetrahedron
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+    ///     ConvexHull::from_triangulation(&tds).unwrap();
+    ///
+    /// // Manually invalidate the cache (note: takes &self, not &mut self)
+    /// hull.invalidate_cache();
+    ///
+    /// // The next visibility test will rebuild the cache
+    /// // ... perform visibility operations ...
+    /// ```
+    pub fn invalidate_cache(&self) {
+        // Clear the cache using ArcSwapOption::store(None)
+        self.facet_to_cells_cache.store(None);
+
+        // Reset only cached_generation to force rebuild on next access.
+        // creation_generation is NEVER modified - it remains the immutable snapshot from creation.
+        // Use Release ordering to ensure consistency with Acquire loads by readers
+        self.cached_generation.store(0, Ordering::Release);
+    }
+}
+
+// Full impl block with complex bounds for construction and geometric operations
 impl<T, U, V, const D: usize> ConvexHull<T, U, V, D>
 where
     T: CoordinateScalar
@@ -315,6 +600,7 @@ where
     V: DataType,
     [T; D]: Copy + Sized + Serialize + DeserializeOwned,
     f64: From<T>,
+    // Required by nalgebra's ComplexField trait used in geometric predicates
     for<'a> &'a T: Div<T>,
 {
     /// Creates a new convex hull from a d-dimensional triangulation
@@ -448,6 +734,9 @@ where
     /// This method uses cached facet-to-cells mapping for optimal performance. The cache is
     /// automatically built if it doesn't exist or has been invalidated.
     ///
+    /// For batch visibility checking (e.g., [`Self::find_visible_facets`]), consider using the internal
+    /// helper that accepts a pre-loaded cache to avoid redundant atomic loads.
+    ///
     /// # Errors
     ///
     /// Returns a [`ConvexHullConstructionError`] if:
@@ -498,6 +787,47 @@ where
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
     ) -> Result<bool, ConvexHullConstructionError> {
+        // Get or build the cached facet-to-cells mapping
+        let facet_to_cells_arc = self
+            .try_get_or_build_facet_cache(tds)
+            .map_err(|source| ConvexHullConstructionError::FacetCacheBuildFailed { source })?;
+
+        // Delegate to internal helper with pre-loaded cache
+        self.is_facet_visible_from_point_with_cache(
+            facet_handle,
+            point,
+            tds,
+            facet_to_cells_arc.as_ref(),
+        )
+    }
+
+    /// Internal helper for visibility testing with a pre-loaded cache.
+    ///
+    /// This method avoids redundant atomic loads of the facet cache, which is beneficial
+    /// when performing batch visibility checks (e.g., in [`Self::find_visible_facets`]).
+    ///
+    /// # Arguments
+    ///
+    /// * `facet_handle` - The facet to test
+    /// * `point` - The external point
+    /// * `tds` - Reference to triangulation
+    /// * `facet_to_cells` - Pre-loaded facet-to-cells mapping
+    ///
+    /// # Returns
+    ///
+    /// `true` if the facet is visible from the point, `false` otherwise
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ConvexHullConstructionError`] if visibility checking fails.
+    #[allow(clippy::too_many_lines)]
+    fn is_facet_visible_from_point_with_cache(
+        &self,
+        facet_handle: &FacetHandle,
+        point: &Point<T, D>,
+        tds: &Tds<T, U, V, D>,
+        facet_to_cells: &FacetToCellsMap,
+    ) -> Result<bool, ConvexHullConstructionError> {
         // Two-generation design: creation_generation (immutable) vs cached_generation (mutable)
         // - creation_generation: Set once at from_triangulation(), never changes. Used for stale detection.
         // - cached_generation: Can be reset to 0 by invalidate_cache() to force cache rebuild.
@@ -544,34 +874,18 @@ where
             });
         }
 
-        // Materialize facet vertices once for key derivation and fallback path.
-        // This replaces the redundant lookup that was happening later in the hot path.
-        let facet_vertices: Vec<_> = facet_vertex_keys
-            .iter()
-            .map(|&k| {
-                tds.get_vertex_by_key(k)
-                    .ok_or(ConvexHullConstructionError::FacetDataAccessFailed {
-                        source: FacetError::VertexKeyNotFoundInTriangulation { key: k },
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let facet_vertices: Vec<_> = facet_vertices.into_iter().copied().collect();
-
-        // Get or build the cached facet-to-cells mapping
-        // Use strict error handling for facet cache access
-        let facet_to_cells_arc = self
-            .try_get_or_build_facet_cache(tds)
-            .map_err(|source| ConvexHullConstructionError::FacetCacheBuildFailed { source })?;
-        let facet_to_cells = facet_to_cells_arc.as_ref();
-
-        // Derive the facet key from vertices using the utility function
-        let facet_key = derive_facet_key_from_vertices(&facet_vertices, tds)
+        // Optimization: Derive the facet key directly from vertex keys without materializing Vertex objects.
+        // This avoids D vertex fetches and D UUID lookups, improving cache locality.
+        let facet_key = derive_facet_key_from_vertex_keys::<T, U, V, D>(&facet_vertex_keys)
             .map_err(|source| ConvexHullConstructionError::VisibilityCheckFailed { source })?;
 
         let adjacent_cells = facet_to_cells.get(&facet_key).ok_or_else(|| {
-            // Collect vertex UUIDs for enhanced error reporting
-            let vertex_uuids: Vec<uuid::Uuid> = facet_vertices.iter().map(Vertex::uuid).collect();
+            // Collect vertex UUIDs for enhanced error reporting (only on error path)
+            // Materialize vertices only when needed for error reporting
+            let vertex_uuids: Vec<uuid::Uuid> = facet_vertex_keys
+                .iter()
+                .filter_map(|&k| tds.get_vertex_by_key(k).map(Vertex::uuid))
+                .collect();
             ConvexHullConstructionError::VisibilityCheckFailed {
                 source: FacetError::FacetKeyNotFoundInCache {
                     facet_key,
@@ -620,8 +934,21 @@ where
             },
         )?;
 
+        // Materialize facet vertices only when needed for orientation computation
+        // This happens after cache lookup and inside vertex identification
+        let facet_vertices: Vec<_> = facet_vertex_keys
+            .iter()
+            .map(|&k| {
+                tds.get_vertex_by_key(k).copied().ok_or(
+                    ConvexHullConstructionError::FacetDataAccessFailed {
+                        source: FacetError::VertexKeyNotFoundInTriangulation { key: k },
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         // Create test simplices to compare orientations
-        // Build facet_points from the vertices we already loaded earlier (no redundant lookups!)
+        // Build facet_points from the vertices (fetched only once, when needed)
         let mut facet_points = Vec::with_capacity(D);
         for v in &facet_vertices {
             facet_points.push(*v.point());
@@ -815,15 +1142,16 @@ where
             });
         }
 
-        // Hoist cache loading once before the loop to avoid redundant validations
-        let _facet_cache = self
+        // Optimization: Load cache once before the loop to avoid redundant atomic loads
+        let facet_cache_arc = self
             .try_get_or_build_facet_cache(tds)
             .map_err(|source| ConvexHullConstructionError::FacetCacheBuildFailed { source })?;
+        let facet_cache = facet_cache_arc.as_ref();
 
         let mut visible_facets = Vec::new();
 
         for (index, facet_handle) in self.hull_facets.iter().enumerate() {
-            if self.is_facet_visible_from_point(facet_handle, point, tds)? {
+            if self.is_facet_visible_from_point_with_cache(facet_handle, point, tds, facet_cache)? {
                 visible_facets.push(index);
             }
         }
@@ -1010,108 +1338,6 @@ where
         Ok(!visible_facets.is_empty())
     }
 
-    /// Returns the number of hull facets
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-    /// use delaunay::vertex;
-    ///
-    /// // Create a 3D tetrahedron
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    /// let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-    ///     ConvexHull::from_triangulation(&tds).unwrap();
-    ///
-    /// assert_eq!(hull.facet_count(), 4); // Tetrahedron has 4 faces
-    /// ```
-    #[must_use]
-    pub const fn facet_count(&self) -> usize {
-        self.hull_facets.len()
-    }
-
-    /// Gets a hull facet by index
-    ///
-    /// # Arguments
-    ///
-    /// * `index` - The index of the facet to retrieve
-    ///
-    /// # Returns
-    ///
-    /// Some reference to the facet if the index is valid, None otherwise
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-    /// use delaunay::vertex;
-    ///
-    /// // Create a 3D tetrahedron
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    /// let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-    ///     ConvexHull::from_triangulation(&tds).unwrap();
-    ///
-    /// // Get the first facet
-    /// assert!(hull.get_facet(0).is_some());
-    /// // Index out of bounds returns None
-    /// assert!(hull.get_facet(10).is_none());
-    /// ```
-    #[must_use]
-    pub fn get_facet(&self, index: usize) -> Option<&FacetHandle> {
-        self.hull_facets.get(index)
-    }
-
-    /// Returns an iterator over the hull facets
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-    /// use delaunay::vertex;
-    ///
-    /// // Create a 3D tetrahedron
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    /// let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-    ///     ConvexHull::from_triangulation(&tds).unwrap();
-    ///
-    /// // Iterate over all hull facets
-    /// let facet_count = hull.facets().count();
-    /// assert_eq!(facet_count, 4); // Tetrahedron has 4 faces
-    ///
-    /// // Check that all facets have the expected number of vertices
-    /// // Note: facets() returns FacetHandle structs - need to create FacetView to access vertices
-    /// use delaunay::core::facet::FacetView;
-    /// for facet_handle in hull.facets() {
-    ///     if let Ok(facet_view) = FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index()) {
-    ///         assert_eq!(facet_view.vertices().unwrap().count(), 3); // 3D facets have 3 vertices
-    ///     }
-    /// }
-    /// ```
-    pub fn facets(&self) -> std::slice::Iter<'_, FacetHandle> {
-        self.hull_facets.iter()
-    }
-
     /// Validates the convex hull for consistency
     ///
     /// This performs basic checks on the hull facets to ensure they form
@@ -1216,179 +1442,6 @@ where
 
         Ok(())
     }
-
-    /// Returns true if the convex hull is empty (has no facets)
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-    /// use delaunay::vertex;
-    ///
-    /// // Empty hull
-    /// let empty_hull: ConvexHull<f64, Option<()>, Option<()>, 3> = ConvexHull::default();
-    /// assert!(empty_hull.is_empty());
-    ///
-    /// // Non-empty hull
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    /// let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-    ///     ConvexHull::from_triangulation(&tds).unwrap();
-    /// assert!(!hull.is_empty());
-    /// ```
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.hull_facets.is_empty()
-    }
-
-    /// Returns the dimension of the convex hull
-    ///
-    /// This is the same as the dimension of the triangulation that generated it.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-    /// use delaunay::vertex;
-    ///
-    /// // Create different dimensional hulls
-    /// let vertices_2d = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
-    /// let hull_2d: ConvexHull<f64, Option<()>, Option<()>, 2> =
-    ///     ConvexHull::from_triangulation(&tds_2d).unwrap();
-    /// assert_eq!(hull_2d.dimension(), 2);
-    ///
-    /// let vertices_3d = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
-    /// let hull_3d: ConvexHull<f64, Option<()>, Option<()>, 3> =
-    ///     ConvexHull::from_triangulation(&tds_3d).unwrap();
-    /// assert_eq!(hull_3d.dimension(), 3);
-    /// ```
-    #[must_use]
-    pub const fn dimension(&self) -> usize {
-        D
-    }
-
-    /// Checks if this convex hull is valid for the given triangulation
-    ///
-    /// Returns `true` if the hull's creation generation matches the TDS generation,
-    /// meaning the hull's facet handles are still valid for this TDS.
-    /// Returns `false` if the TDS has been modified since the hull was created.
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - The triangulation data structure to check against
-    ///
-    /// # Returns
-    ///
-    /// `true` if the hull is valid for this TDS, `false` otherwise
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-    /// use delaunay::vertex;
-    ///
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ]).unwrap();
-    ///
-    /// // Create hull and verify it's valid
-    /// let hull = ConvexHull::from_triangulation(&tds).unwrap();
-    /// assert!(hull.is_valid_for_tds(&tds));
-    ///
-    /// // Modify the TDS
-    /// tds.add(vertex!([0.5, 0.5, 0.5])).unwrap();
-    ///
-    /// // Hull is now invalid for the modified TDS
-    /// assert!(!hull.is_valid_for_tds(&tds));
-    ///
-    /// // Create a new hull for the modified TDS
-    /// let new_hull = ConvexHull::from_triangulation(&tds).unwrap();
-    /// assert!(new_hull.is_valid_for_tds(&tds));
-    /// ```
-    #[must_use]
-    pub fn is_valid_for_tds(&self, tds: &Tds<T, U, V, D>) -> bool {
-        // Use creation_generation (immutable) for validity check, not cached_generation (mutable)
-        self.creation_generation.get().copied().unwrap_or(0) == tds.generation()
-    }
-
-    /// Invalidates the internal facet-to-cells cache and resets the cached generation counter
-    ///
-    /// This method forces the cache to be rebuilt on the next visibility test.
-    /// It can be useful for manual cache management.
-    ///
-    /// # Two-Generation Design
-    ///
-    /// This method resets only the **cache generation** (`cached_generation`) to 0, forcing
-    /// cache rebuild on next access. The **creation generation** (`creation_generation`) remains
-    /// immutable and is never modified after construction.
-    ///
-    /// This separation ensures:
-    /// - Cache invalidation doesn't break stale hull detection
-    /// - `is_valid_for_tds()` always returns accurate results based on creation generation
-    /// - Stale hulls are caught even after calling `invalidate_cache()`
-    ///
-    /// # Interior Mutability
-    ///
-    /// This method takes `&self` (not `&mut self`) and is safe to call on shared hulls
-    /// due to interior mutability via `ArcSwapOption` (for the facet cache) and `AtomicU64`
-    /// (for cache generation tracking). These lock-free atomic operations allow cache invalidation
-    /// without exclusive mutable access.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-    /// use delaunay::vertex;
-    ///
-    /// // Create a 3D tetrahedron
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    /// let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-    ///     ConvexHull::from_triangulation(&tds).unwrap();
-    ///
-    /// // Manually invalidate the cache (note: takes &self, not &mut self)
-    /// hull.invalidate_cache();
-    ///
-    /// // The next visibility test will rebuild the cache
-    /// // ... perform visibility operations ...
-    /// ```
-    pub fn invalidate_cache(&self) {
-        // Clear the cache using ArcSwapOption::store(None)
-        self.facet_to_cells_cache.store(None);
-
-        // Reset only cached_generation to force rebuild on next access.
-        // creation_generation is NEVER modified - it remains the immutable snapshot from creation.
-        // Use Release ordering to ensure consistency with Acquire loads by readers
-        self.cached_generation.store(0, Ordering::Release);
-    }
 }
 
 // Implementation of FacetCacheProvider trait for ConvexHull
@@ -1442,7 +1495,7 @@ mod tests {
     use super::*;
     use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
-    use crate::core::util::facet_view_to_vertices;
+    use crate::core::util::{derive_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::vertex;
     use std::error::Error;
     use std::thread;
@@ -4070,7 +4123,16 @@ mod tests {
                 FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index()).unwrap();
             let facet_vertices = crate::core::util::facet_view_to_vertices(&facet_view).unwrap();
 
-            let derived_key_result = derive_facet_key_from_vertices(&facet_vertices, &tds);
+            // Get vertex keys from vertices via TDS
+            let facet_vertex_keys: Vec<_> = facet_vertices
+                .iter()
+                .filter_map(|v| tds.vertex_key_from_uuid(&v.uuid()))
+                .collect();
+
+            let derived_key_result =
+                derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(
+                    &facet_vertex_keys,
+                );
 
             if let Ok(derived_key) = derived_key_result {
                 if cache.contains_key(&derived_key) {

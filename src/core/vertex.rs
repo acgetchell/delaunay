@@ -718,11 +718,15 @@ where
 mod tests {
     use super::*;
     use crate::core::collections::{FastHashMap, FastHashSet};
+    use crate::core::triangulation_data_structure::CellKey;
     use crate::core::util::{UuidValidationError, make_uuid, usize_to_u8};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use approx::{assert_abs_diff_eq, assert_relative_eq};
     use serde::{Deserialize, Serialize};
+    use slotmap::KeyData;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::Hasher;
 
     // Test enum for demonstrating vertex data usage
     #[repr(u8)]
@@ -1041,9 +1045,6 @@ mod tests {
 
     #[test]
     fn test_vertex_hash_consistency() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::Hasher;
-
         let v1: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
         let v2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
 
@@ -1069,9 +1070,6 @@ mod tests {
 
     #[test]
     fn test_vertex_hash_different_coordinates() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::Hasher;
-
         let v1: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
         let v2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 4.0]);
 
@@ -1091,9 +1089,6 @@ mod tests {
 
     #[test]
     fn test_vertex_hash_ignores_metadata() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::Hasher;
-
         // Test that hash ignores UUID, incident_cell, and data (consistent with equality)
         let v1: Vertex<f64, i32, 2> = vertex!([1.0, 2.0], 42);
         let v2: Vertex<f64, i32, 2> = vertex!([1.0, 2.0], 99); // Different data
@@ -1116,9 +1111,6 @@ mod tests {
 
     #[test]
     fn test_vertex_eq_hash_contract() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::Hasher;
-
         // Comprehensive test of the Hash/Eq contract: if a == b, then hash(a) == hash(b)
         let test_cases: Vec<([f64; 2], [f64; 2])> = vec![
             // 2D vertices with explicit type annotations
@@ -1998,9 +1990,6 @@ mod tests {
     fn test_comprehensive_deserialization_with_all_fields() {
         // Phase 3: incident_cell is now a CellKey which is serialized differently
         // This test now creates a vertex programmatically with a CellKey
-        use crate::core::triangulation_data_structure::CellKey;
-        use slotmap::KeyData;
-
         let point = Point::new([1.5, 2.5, 3.5]);
         let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
         let uuid = uuid::Uuid::parse_str(uuid_str).unwrap();

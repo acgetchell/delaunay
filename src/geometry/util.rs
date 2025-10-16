@@ -1743,6 +1743,8 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::vertex;
     use approx::assert_relative_eq;
+    use std::f32;
+    use std::f64;
 
     #[test]
     fn test_hypot_2d() {
@@ -4273,8 +4275,6 @@ mod tests {
 
     #[test]
     fn test_safe_cast_to_f64_non_finite() {
-        use std::f64;
-
         // Test NaN handling
         let result = safe_cast_to_f64(f64::NAN, 0);
         assert!(matches!(
@@ -4304,8 +4304,6 @@ mod tests {
 
     #[test]
     fn test_safe_cast_from_f64_non_finite() {
-        use std::f64;
-
         // Test NaN handling
         let result: Result<f64, _> = safe_cast_from_f64(f64::NAN, 0);
         assert!(matches!(
@@ -4334,8 +4332,6 @@ mod tests {
 
     #[test]
     fn test_safe_coords_conversion_with_non_finite() {
-        use std::f32;
-
         // Test array with NaN
         let coords_nan = [1.0f32, f32::NAN, 3.0f32];
         let result = safe_coords_to_f64(coords_nan);
@@ -4364,8 +4360,6 @@ mod tests {
 
     #[test]
     fn test_safe_coords_from_f64_with_non_finite() {
-        use std::f64;
-
         // Test array with NaN
         let coords_nan = [1.0f64, f64::NAN, 3.0f64];
         let result: Result<[f32; 3], _> = safe_coords_from_f64(coords_nan);
@@ -4390,8 +4384,6 @@ mod tests {
 
     #[test]
     fn test_safe_scalar_conversion_edge_cases() {
-        use std::f64;
-
         // Test scalar to f64 with NaN
         let result = safe_scalar_to_f64(f64::NAN);
         assert!(matches!(
