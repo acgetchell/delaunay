@@ -259,6 +259,23 @@ class TestCategorization:
         result = _categorize_entry(title, regex_patterns)
         assert result == "added", "Should prioritize 'added' over 'fixed'"
 
+    def test_categorize_explicit_prefix_takes_precedence(self, regex_patterns):
+        """Test that explicit category prefixes take precedence over keyword matching.
+
+        Regression test for GitHub issue where "Fixed: Correctly count removed cells"
+        was incorrectly categorized as "removed" instead of "fixed" because the word
+        "removed" appeared in the commit message.
+        """
+        # This commit has "Fixed:" prefix but also contains "removed" keyword
+        title = "fixed: correctly count removed cells in bowyer-watson"
+        result = _categorize_entry(title, regex_patterns)
+        assert result == "fixed", "Should categorize as 'fixed' due to explicit 'Fixed:' prefix"
+
+        # Similar test cases
+        assert _categorize_entry("added: remove deprecated functionality", regex_patterns) == "added"
+        assert _categorize_entry("removed: fix for legacy code", regex_patterns) == "removed"
+        assert _categorize_entry("changed: add new feature", regex_patterns) == "changed"
+
 
 class TestSectionHandling:
     """Test cases for section header processing."""

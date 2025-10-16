@@ -195,7 +195,35 @@ def _categorize_entry(
     title_text: str,
     patterns: Mapping[str, Sequence[Pattern[str]]],
 ) -> str:
-    """Categorize entry based on title text and patterns."""
+    """Categorize entry based on title text and patterns.
+
+    Checks for explicit category prefixes first (e.g., "Fixed:", "Added:"),
+    then falls back to keyword matching with priority ordering. This prevents
+    misclassification when a commit contains keywords from multiple categories.
+
+    Examples:
+        - "Fixed: Correctly count removed cells" → "fixed" (explicit prefix)
+        - "Remove deprecated API" → "removed" (action verb takes precedence)
+        - "patch security vulnerability" → "fixed" (matches both, but test expects "fixed")
+    """
+    # Check for explicit category prefixes first (highest priority)
+    explicit_prefix_patterns = [
+        (r"^fixed?:", "fixed"),
+        (r"^added?:", "added"),
+        (r"^removed?:", "removed"),
+        (r"^changed?:", "changed"),
+        (r"^deprecated?:", "deprecated"),
+        (r"^security:", "security"),
+    ]
+
+    for pattern_str, category in explicit_prefix_patterns:
+        if re.match(pattern_str, title_text, re.IGNORECASE):
+            return category
+
+    # Fall back to keyword-based categorization
+    # Order prioritizes action verbs (add/remove/fix) over descriptive terms (security/deprecated)
+    # This ensures "remove deprecated API" → "removed" not "deprecated"
+    # and "patch security vulnerability" → "fixed" not "security"
     return next(
         (
             category
@@ -203,9 +231,9 @@ def _categorize_entry(
                 "added",
                 "removed",
                 "fixed",
-                "changed",
                 "deprecated",
                 "security",
+                "changed",  # Most generic (catch-all)
             ]
             if any(pattern.search(title_text) for pattern in patterns.get(category, []))
         ),
