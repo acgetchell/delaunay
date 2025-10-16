@@ -1743,8 +1743,6 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::vertex;
     use approx::assert_relative_eq;
-    use std::f32;
-    use std::f64;
 
     #[test]
     fn test_hypot_2d() {

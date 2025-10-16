@@ -95,9 +95,10 @@ pub fn make_uuid() -> Uuid {
     Uuid::new_v4()
 }
 
-// NOTE: The deprecated facets_are_adjacent function has been removed in Phase 3A.
-// Use [`facet_views_are_adjacent`] instead, which works with the lightweight FacetView API.
-
+/// NOTE: The deprecated `facets_are_adjacent` function has been removed in Phase 3A.
+///
+/// Use [`facet_views_are_adjacent`] instead, which works with the lightweight `FacetView` API.
+///
 /// Determines if two facet views are adjacent by comparing their vertices.
 ///
 /// Two facets are considered adjacent if they contain the same set of vertices.
@@ -566,8 +567,8 @@ where
 
     // Check facet index bounds
     if facet_idx >= cell1_facets.len() {
-        // Use saturating conversion to avoid InvalidFacetIndexOverflow for large indices
-        let idx_u8 = u8::try_from(facet_idx).unwrap_or(u8::MAX);
+        // Use consistent error handling with proper overflow detection
+        let idx_u8 = usize_to_u8(facet_idx, cell1_facets.len())?;
         return Err(FacetError::InvalidFacetIndex {
             index: idx_u8,
             facet_count: cell1_facets.len(),
