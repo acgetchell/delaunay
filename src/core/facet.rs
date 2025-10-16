@@ -74,52 +74,6 @@ use std::fmt::{self, Debug};
 use thiserror::Error;
 
 // =============================================================================
-// TYPE ALIASES
-// =============================================================================
-
-/// A lightweight handle to a facet, represented as `(CellKey, facet_index)`.
-///
-/// This provides a more readable and maintainable alternative to raw tuples throughout
-/// the codebase. Facet handles are used to reference facets without storing full vertex data.
-///
-/// # Components
-///
-/// - `CellKey`: The key of the cell containing the facet
-/// - `u8`: The facet index (0 to D, representing the vertex opposite to the facet)
-///
-/// # Usage
-///
-/// `FacetHandle` is commonly used in:
-/// - Boundary facet analysis (convex hull extraction)
-/// - Facet visibility testing
-/// - Cavity computation in Bowyer-Watson algorithm
-/// - Any operation requiring lightweight facet references
-///
-/// # Example
-///
-/// ```rust
-/// use delaunay::core::facet::{FacetHandle, FacetView};
-/// use delaunay::core::triangulation_data_structure::Tds;
-/// use delaunay::vertex;
-///
-/// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
-/// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-/// let cell_key = tds.cell_keys().next().unwrap();
-///
-/// // Create a facet handle
-/// let handle: FacetHandle = (cell_key, 0);
-///
-/// // Use it to create a FacetView
-/// let facet = FacetView::new(&tds, handle.0, handle.1).unwrap();
-/// ```
-pub type FacetHandle = (CellKey, u8);
-
-// =============================================================================
 // ERROR TYPES
 // =============================================================================
 
@@ -218,6 +172,142 @@ pub enum FacetError {
         /// The actual multiplicity found.
         found: usize,
     },
+}
+
+// =============================================================================
+// FACET HANDLE
+// =============================================================================
+
+/// A lightweight handle to a facet.
+///
+/// This provides a more readable and maintainable alternative to raw tuples throughout
+/// the codebase. Facet handles are used to reference facets without storing full vertex data.
+///
+/// # Components
+///
+/// - `cell_key`: The key of the cell containing the facet
+/// - `facet_index`: The facet index (0 to D, representing the vertex opposite to the facet)
+///
+/// # Usage
+///
+/// `FacetHandle` is commonly used in:
+/// - Boundary facet analysis (convex hull extraction)
+/// - Facet visibility testing
+/// - Cavity computation in Bowyer-Watson algorithm
+/// - Any operation requiring lightweight facet references
+///
+/// # Example
+///
+/// ```rust
+/// use delaunay::core::facet::{FacetHandle, FacetView};
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let cell_key = tds.cell_keys().next().unwrap();
+///
+/// // Create a facet handle
+/// let handle = FacetHandle::new(cell_key, 0);
+///
+/// // Use it to create a FacetView
+/// let facet = FacetView::new(&tds, handle.cell_key(), handle.facet_index()).unwrap();
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FacetHandle {
+    cell_key: CellKey,
+    facet_index: u8,
+}
+
+impl FacetHandle {
+    /// Creates a new facet handle.
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_key` - The key of the cell containing the facet
+    /// * `facet_index` - The facet index (0 to D)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::facet::FacetHandle;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    ///
+    /// let handle = FacetHandle::new(cell_key, 0);
+    /// assert_eq!(handle.cell_key(), cell_key);
+    /// assert_eq!(handle.facet_index(), 0);
+    /// ```
+    #[must_use]
+    pub const fn new(cell_key: CellKey, facet_index: u8) -> Self {
+        Self {
+            cell_key,
+            facet_index,
+        }
+    }
+
+    /// Returns the cell key.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::facet::FacetHandle;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    ///
+    /// let handle = FacetHandle::new(cell_key, 0);
+    /// assert_eq!(handle.cell_key(), cell_key);
+    /// ```
+    #[must_use]
+    pub const fn cell_key(&self) -> CellKey {
+        self.cell_key
+    }
+
+    /// Returns the facet index.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::facet::FacetHandle;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    ///
+    /// let handle = FacetHandle::new(cell_key, 1);
+    /// assert_eq!(handle.facet_index(), 1);
+    /// ```
+    #[must_use]
+    pub const fn facet_index(&self) -> u8 {
+        self.facet_index
+    }
 }
 
 // =============================================================================
@@ -658,8 +748,18 @@ where
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Creates a new iterator over all facets in the TDS.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D > 255`, since facet indices are stored as `u8`.
+    /// This check is performed at runtime but optimizes away since `D` is a compile-time constant.
     #[must_use]
     pub fn new(tds: &'tds Tds<T, U, V, D>) -> Self {
+        // Dimension check: facets per cell = D+1, so D must be <= 255
+        assert!(
+            D <= 255,
+            "Dimension D={D} exceeds maximum of 255 for u8 facet indices"
+        );
         // We collect here because we need an owned iterator to store in the struct
         // CellKey is just u64, so this is efficient
         #[allow(clippy::needless_collect)]
@@ -694,12 +794,9 @@ where
 
                 // Create FacetView - we know this is valid since we're iterating within bounds
                 let Ok(facet_u8) = usize_to_u8(facet_index, self.current_cell_facet_count) else {
-                    // Skip indices that cannot be represented; avoids silent truncation
-                    debug_assert!(
-                        false,
-                        "Facet index {facet_index} exceeds u8 range (max 255). Consider widening FacetView index type for dimension {D}"
-                    );
-                    continue;
+                    // Fail fast instead of silently skipping in release.
+                    // If D can exceed 255, widen the index type.
+                    return None;
                 };
                 if let Ok(facet_view) = FacetView::new(self.tds, cell_key, facet_u8) {
                     return Some(facet_view);

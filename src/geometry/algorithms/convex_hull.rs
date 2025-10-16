@@ -16,7 +16,6 @@ use arc_swap::ArcSwapOption;
 use nalgebra::ComplexField;
 use num_traits::NumCast;
 use num_traits::{One, Zero};
-use ordered_float::OrderedFloat;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::iter::Sum;
@@ -312,8 +311,7 @@ where
     V: DataType,
     [T; D]: Copy + Sized + Serialize + DeserializeOwned,
     f64: From<T>,
-    for<'a> &'a T: std::ops::Div<T>,
-    OrderedFloat<f64>: From<T>,
+    for<'a> &'a T: Div<T>,
 {
     /// Creates a new convex hull from a d-dimensional triangulation
     ///
@@ -388,7 +386,7 @@ where
         // Collect facet handles (CellKey, facet_index) for storage
         // These can be used to reconstruct FacetViews when needed
         let hull_facets: Vec<_> = hull_facets_iter
-            .map(|facet_view| (facet_view.cell_key(), facet_view.facet_index()))
+            .map(|facet_view| FacetHandle::new(facet_view.cell_key(), facet_view.facet_index()))
             .collect();
 
         // Additional validation: ensure we have at least one boundary facet
@@ -513,27 +511,46 @@ where
             });
         }
 
-        // Phase 3A: Create FacetView from lightweight handle
-        let (facet_cell_key, facet_index) = *facet_handle;
-        let facet_view = FacetView::new(tds, facet_cell_key, facet_index)
-            .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?;
+        // Phase 3A: Derive facet vertex keys directly from the cell to avoid UUID↔key roundtrips.
+        // This eliminates the need to convert vertex UUIDs back to keys later.
+        let (facet_cell_key, facet_index) = (facet_handle.cell_key(), facet_handle.facet_index());
+        let cell = tds.cells().get(facet_cell_key).ok_or(
+            ConvexHullConstructionError::FacetDataAccessFailed {
+                source: FacetError::CellNotFoundInTriangulation,
+            },
+        )?;
 
-        // Get the vertices that make up this facet
-        let facet_vertices: Vec<_> = facet_view
+        // Extract vertex keys for all vertices except the one at facet_index
+        let facet_vertex_keys: Vec<_> = cell
             .vertices()
-            .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?
-            .copied()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &k)| (i != facet_index as usize).then_some(k))
             .collect();
 
-        if facet_vertices.len() != D {
+        if facet_vertex_keys.len() != D {
             return Err(ConvexHullConstructionError::VisibilityCheckFailed {
                 source: FacetError::InsufficientVertices {
                     expected: D,
-                    actual: facet_vertices.len(),
+                    actual: facet_vertex_keys.len(),
                     dimension: D,
                 },
             });
         }
+
+        // Materialize facet vertices once for key derivation and fallback path.
+        // This replaces the redundant lookup that was happening later in the hot path.
+        let facet_vertices: Vec<_> = facet_vertex_keys
+            .iter()
+            .map(|&k| {
+                tds.get_vertex_by_key(k)
+                    .ok_or(ConvexHullConstructionError::FacetDataAccessFailed {
+                        source: FacetError::VertexKeyNotFoundInTriangulation { key: k },
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let facet_vertices: Vec<_> = facet_vertices.into_iter().copied().collect();
 
         // Get or build the cached facet-to-cells mapping
         // Use strict error handling for facet cache access
@@ -566,7 +583,7 @@ where
             });
         }
 
-        let (adj_cell_key, _facet_index) = adjacent_cells[0];
+        let adj_cell_key = adjacent_cells[0].cell_key();
 
         // Find the vertex in the adjacent cell that is NOT part of the facet
         // This is the "opposite" or "inside" vertex
@@ -575,26 +592,11 @@ where
             ConvexHullConstructionError::AdjacentCellResolutionFailed { source }
         })?;
 
-        // Get vertex keys for facet vertices (convert UUIDs to keys once)
-        // TODO: Performance opportunity - if TDS/Vertex exposed vertex keys directly
-        // (e.g., Vertex::key() or TDS API returning keys), we could skip UUID→key roundtrip.
-        // For small D this overhead is minor but it simplifies hot path.
-        let facet_vertex_keys_res: Result<Vec<_>, _> = facet_vertices
-            .iter()
-            .map(|v| {
-                tds.vertex_key_from_uuid(&v.uuid()).ok_or(
-                    ConvexHullConstructionError::VisibilityCheckFailed {
-                        source: FacetError::InsideVertexNotFound,
-                    },
-                )
-            })
-            .collect();
-        let facet_vertex_keys = facet_vertex_keys_res?;
-
+        // facet_vertex_keys already computed above - no UUID→key roundtrip needed!
         // Find the cell vertex key that's not in the facet
         // Optimized: Use a sorted merge-like approach to avoid O(D²) contains() calls
         // Since both lists are small (D and D+1 elements), we can sort and scan efficiently
-        let mut sorted_facet_keys = facet_vertex_keys;
+        let mut sorted_facet_keys = facet_vertex_keys.clone();
         sorted_facet_keys.sort_unstable();
 
         let inside_vertex_key = cell_vertices
@@ -613,16 +615,10 @@ where
         )?;
 
         // Create test simplices to compare orientations
-        // Use sorted_facet_keys which contains the vertex keys
-        // Pre-allocate with capacity D to avoid reallocation
+        // Build facet_points from the vertices we already loaded earlier (no redundant lookups!)
         let mut facet_points = Vec::with_capacity(D);
-        for &vkey in &sorted_facet_keys {
-            let vertex = tds.get_vertex_by_key(vkey).ok_or(
-                ConvexHullConstructionError::VisibilityCheckFailed {
-                    source: FacetError::InsideVertexNotFound,
-                },
-            )?;
-            facet_points.push(*vertex.point());
+        for v in &facet_vertices {
+            facet_points.push(*v.point());
         }
 
         // Simplex 1: facet vertices + inside vertex
@@ -745,10 +741,9 @@ where
             return Ok(false);
         }
         // Add epsilon-based bound to avoid false positives from numeric noise
-        // Use a small relative epsilon (1e-12 scale) to handle near-surface points
-        let epsilon_factor: T = NumCast::from(1e-12f64)
-            .or_else(|| NumCast::from(f64::EPSILON))
-            .unwrap_or_else(T::zero);
+        // Use the type-specific default tolerance (1e-6 for f32, 1e-15 for f64)
+        // to handle near-surface points. This adapts automatically to coordinate precision.
+        let epsilon_factor = T::default_tolerance();
         let adjusted_threshold = max_edge_sq + max_edge_sq * epsilon_factor;
 
         Ok(distance_squared > adjusted_threshold)
@@ -822,8 +817,8 @@ where
 
         let mut visible_facets = Vec::new();
 
-        for (index, &facet_handle) in self.hull_facets.iter().enumerate() {
-            if self.is_facet_visible_from_point(&facet_handle, point, tds)? {
+        for (index, facet_handle) in self.hull_facets.iter().enumerate() {
+            if self.is_facet_visible_from_point(facet_handle, point, tds)? {
                 visible_facets.push(index);
             }
         }
@@ -908,10 +903,12 @@ where
         let mut nearest_facet = None;
 
         for &facet_index in &visible_facets {
-            let &(cell_key, facet_idx) = &self.hull_facets[facet_index];
+            let facet_handle = &self.hull_facets[facet_index];
             // Create FacetView to access facet vertices
-            let facet_view = FacetView::new(tds, cell_key, facet_idx)
-                .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?;
+            let facet_view =
+                FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index()).map_err(
+                    |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
+                )?;
             let facet_vertices: Vec<_> = facet_view
                 .vertices()
                 .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?
@@ -1099,10 +1096,10 @@ where
     /// assert_eq!(facet_count, 4); // Tetrahedron has 4 faces
     ///
     /// // Check that all facets have the expected number of vertices
-    /// // Note: facets() returns (CellKey, u8) tuples - need to create FacetView to access vertices
+    /// // Note: facets() returns FacetHandle structs - need to create FacetView to access vertices
     /// use delaunay::core::facet::FacetView;
-    /// for &(cell_key, facet_index) in hull.facets() {
-    ///     if let Ok(facet_view) = FacetView::new(&tds, cell_key, facet_index) {
+    /// for facet_handle in hull.facets() {
+    ///     if let Ok(facet_view) = FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index()) {
     ///         assert_eq!(facet_view.vertices().unwrap().count(), 3); // 3D facets have 3 vertices
     ///     }
     /// }
@@ -1149,14 +1146,15 @@ where
     pub fn validate(&self, tds: &Tds<T, U, V, D>) -> Result<(), ConvexHullValidationError> {
         // Check that all facets have exactly D vertices (for D-dimensional triangulation,
         // facets are (D-1)-dimensional and have D vertices)
-        for (index, &(cell_key, facet_index)) in self.hull_facets.iter().enumerate() {
-            // Phase 3C: Create FacetView from lightweight handle to access vertices
-            let facet_view = FacetView::new(tds, cell_key, facet_index).map_err(|source| {
-                ConvexHullValidationError::InvalidFacet {
-                    facet_index: index,
-                    source,
-                }
-            })?;
+        for (index, facet_handle) in self.hull_facets.iter().enumerate() {
+            // Phase 3A: Create FacetView from lightweight handle to access vertices
+            let facet_view =
+                FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index()).map_err(
+                    |source| ConvexHullValidationError::InvalidFacet {
+                        facet_index: index,
+                        source,
+                    },
+                )?;
 
             let vertices: Vec<_> = facet_view
                 .vertices()
@@ -1336,6 +1334,13 @@ where
     /// It can be useful when you know the underlying triangulation has changed
     /// and you want to ensure the cache is refreshed, or for manual cache management.
     ///
+    /// # Generation Counter Reset
+    ///
+    /// This method sets the cached generation counter to **0**, which signals "unknown/invalidated"
+    /// state. This allows cache rebuilds while treating stale facet handles as potentially valid
+    /// until a `FacetDataAccessFailed` error occurs. The generation 0 policy provides a useful
+    /// "force rebuild" path after invalidation without requiring a separate `creation_generation` field.
+    ///
     /// # Interior Mutability
     ///
     /// This method takes `&self` (not `&mut self`) and is safe to call on shared hulls
@@ -1427,6 +1432,7 @@ mod tests {
     use super::*;
     use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
+    use crate::core::util::facet_view_to_vertices;
     use crate::vertex;
     use std::error::Error;
     use std::thread;
@@ -1435,7 +1441,7 @@ mod tests {
     ///
     /// This is a test utility that creates a `FacetView` from a facet handle
     /// and extracts the vertices as a `Vec<Vertex>`.
-    /// This avoids repetitive `FacetView` creation boilerplate in tests.
+    /// Uses the shared `facet_view_to_vertices` utility to avoid code duplication.
     fn extract_facet_vertices<T, U, V, const D: usize>(
         facet_handle: &FacetHandle,
         tds: &Tds<T, U, V, D>,
@@ -1446,15 +1452,12 @@ mod tests {
         V: DataType,
         [T; D]: Copy + Sized + Serialize + DeserializeOwned,
     {
-        let (cell_key, facet_index) = *facet_handle;
-        let facet_view = FacetView::new(tds, cell_key, facet_index)
-            .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?;
-        let vertices = facet_view
-            .vertices()
-            .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?
-            .copied()
-            .collect();
-        Ok(vertices)
+        let facet_view =
+            FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index())
+                .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?;
+        // Use the shared utility for extracting vertices
+        facet_view_to_vertices(&facet_view)
+            .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })
     }
 
     #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
@@ -2090,8 +2093,10 @@ mod tests {
             "Valid 2D hull should validate successfully"
         );
         // Validate vertices through FacetView
-        for (i, &(cell_key, facet_index)) in hull_2d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::new(&tds_2d, cell_key, facet_index).unwrap();
+        for (i, facet_handle) in hull_2d.hull_facets.iter().enumerate() {
+            let facet_view =
+                FacetView::new(&tds_2d, facet_handle.cell_key(), facet_handle.facet_index())
+                    .unwrap();
             let vertices = facet_view.vertices().unwrap().count();
             assert_eq!(vertices, 2, "2D facet {i} should have exactly 2 vertices");
         }
@@ -2119,8 +2124,10 @@ mod tests {
             "Valid 3D hull should validate successfully"
         );
         // Validate vertices through FacetView
-        for (i, &(cell_key, facet_index)) in hull_3d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::new(&tds_3d, cell_key, facet_index).unwrap();
+        for (i, facet_handle) in hull_3d.hull_facets.iter().enumerate() {
+            let facet_view =
+                FacetView::new(&tds_3d, facet_handle.cell_key(), facet_handle.facet_index())
+                    .unwrap();
             let vertices = facet_view.vertices().unwrap().count();
             assert_eq!(vertices, 3, "3D facet {i} should have exactly 3 vertices");
         }
@@ -2149,8 +2156,10 @@ mod tests {
             "Valid 4D hull should validate successfully"
         );
         // Validate vertices through FacetView
-        for (i, &(cell_key, facet_index)) in hull_4d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::new(&tds_4d, cell_key, facet_index).unwrap();
+        for (i, facet_handle) in hull_4d.hull_facets.iter().enumerate() {
+            let facet_view =
+                FacetView::new(&tds_4d, facet_handle.cell_key(), facet_handle.facet_index())
+                    .unwrap();
             let vertices = facet_view.vertices().unwrap().count();
             assert_eq!(vertices, 4, "4D facet {i} should have exactly 4 vertices");
         }
@@ -2180,8 +2189,10 @@ mod tests {
             "Valid 5D hull should validate successfully"
         );
         // Validate vertices through FacetView
-        for (i, &(cell_key, facet_index)) in hull_5d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::new(&tds_5d, cell_key, facet_index).unwrap();
+        for (i, facet_handle) in hull_5d.hull_facets.iter().enumerate() {
+            let facet_view =
+                FacetView::new(&tds_5d, facet_handle.cell_key(), facet_handle.facet_index())
+                    .unwrap();
             let vertices = facet_view.vertices().unwrap().count();
             assert_eq!(vertices, 5, "5D facet {i} should have exactly 5 vertices");
         }
@@ -2487,8 +2498,9 @@ mod tests {
         );
 
         // Verify all facets in iterator are valid - create FacetView to check vertices
-        for &(cell_key, facet_index) in hull.facets() {
-            let facet_view = FacetView::new(&tds, cell_key, facet_index).unwrap();
+        for facet_handle in hull.facets() {
+            let facet_view =
+                FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index()).unwrap();
             let vertex_count = facet_view.vertices().unwrap().count();
             assert!(vertex_count > 0, "Each facet should have vertices");
         }
@@ -2847,9 +2859,10 @@ mod tests {
             ConvexHull::from_triangulation(&tds).unwrap();
 
         // Test fallback with various points
-        if let Some(&(cell_key, facet_index)) = hull.get_facet(0) {
+        if let Some(facet_handle) = hull.get_facet(0) {
             // Create FacetView to get vertices
-            let facet_view = FacetView::new(&tds, cell_key, facet_index).unwrap();
+            let facet_view =
+                FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index()).unwrap();
             let facet_vertices = crate::core::util::facet_view_to_vertices(&facet_view).unwrap();
 
             // Test with a point very close to the facet (should not be visible)
@@ -3272,8 +3285,8 @@ mod tests {
         let vertex_counts: Vec<usize> = hull
             .hull_facets
             .iter()
-            .map(|&(cell_key, facet_index)| {
-                FacetView::new(&tds, cell_key, facet_index)
+            .map(|facet_handle| {
+                FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index())
                     .unwrap()
                     .vertices()
                     .unwrap()
@@ -3556,8 +3569,10 @@ mod tests {
         );
 
         // Verify facet count and vertex counts using FacetView
-        for (i, &(cell_key, facet_index)) in hull_2d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::new(&tds_2d, cell_key, facet_index).unwrap();
+        for (i, facet_handle) in hull_2d.hull_facets.iter().enumerate() {
+            let facet_view =
+                FacetView::new(&tds_2d, facet_handle.cell_key(), facet_handle.facet_index())
+                    .unwrap();
             let vertex_count = facet_view.vertices().unwrap().count();
             println!("  2D Facet {i}: {vertex_count} vertices (expected 2)");
         }
@@ -4039,9 +4054,10 @@ mod tests {
 
         // For each facet in the hull, derive its key and check it exists in cache
         let mut keys_found = 0usize;
-        for (i, &(cell_key, facet_index)) in hull.hull_facets.iter().enumerate() {
+        for (i, facet_handle) in hull.hull_facets.iter().enumerate() {
             // Create FacetView to get vertices
-            let facet_view = FacetView::new(&tds, cell_key, facet_index).unwrap();
+            let facet_view =
+                FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index()).unwrap();
             let facet_vertices = crate::core::util::facet_view_to_vertices(&facet_view).unwrap();
 
             let derived_key_result = derive_facet_key_from_vertices(&facet_vertices, &tds);
@@ -5017,8 +5033,9 @@ mod tests {
 
         println!("  Testing fallback with points at various distances...");
 
-        let &(cell_key, facet_index) = &hull.hull_facets[0];
-        let facet_view = FacetView::new(&tds, cell_key, facet_index).unwrap();
+        let facet_handle = &hull.hull_facets[0];
+        let facet_view =
+            FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index()).unwrap();
         let test_facet_vertices = crate::core::util::facet_view_to_vertices(&facet_view).unwrap();
 
         // Test points at different distance scales

@@ -169,9 +169,11 @@ fn extract_and_analyze_convex_hull(tds: &Tds<f64, (), (), 3>) {
         let facets: Vec<_> = hull.facets().collect();
         let sample_size = std::cmp::min(5, facets.len());
 
-        for (i, (cell_key, facet_index)) in facets.iter().take(sample_size).enumerate() {
+        for (i, facet_handle) in facets.iter().take(sample_size).enumerate() {
             // Create FacetView to access facet properties
-            if let Ok(facet_view) = FacetView::new(tds, *cell_key, *facet_index) {
+            if let Ok(facet_view) =
+                FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index())
+            {
                 let vertex_count = facet_view
                     .vertices()
                     .map(std::iter::Iterator::count)

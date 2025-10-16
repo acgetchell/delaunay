@@ -260,10 +260,10 @@ pub type SmallBuffer<T, const N: usize> = SmallVec<[T; N]>;
 /// # Optimization Rationale
 ///
 /// - **Key**: `u64` facet hash (from vertex combination)
-/// - **Value**: `SmallBuffer<(CellKey, FacetIndex), 2>` - stack allocated for typical case
+/// - **Value**: `SmallBuffer<FacetHandle, 2>` - stack allocated for typical case
 /// - **Typical Pattern**: 1 cell (boundary) or 2 cells (interior facet)
 /// - **Performance**: Avoids heap allocation for >95% of facets
-/// - **Memory Efficiency**: `FacetIndex` (u8) reduces tuple size compared to `usize`
+/// - **Memory Efficiency**: `FacetHandle` uses u8 for facet index, same size as raw tuple
 ///
 /// # Examples
 ///
@@ -273,7 +273,7 @@ pub type SmallBuffer<T, const N: usize> = SmallVec<[T; N]>;
 /// let mut facet_map: FacetToCellsMap = FacetToCellsMap::default();
 /// // Most entries will use stack allocation
 /// ```
-pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<(CellKey, FacetIndex), 2>>;
+pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<crate::core::facet::FacetHandle, 2>>;
 
 /// Cell neighbor mapping optimized for typical cell degrees.
 /// Most cells have a small number of neighbors (D+1 faces, so at most D+1 neighbors).

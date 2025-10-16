@@ -8,6 +8,7 @@ use crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use crate::core::collections::{
     CellKeySet, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer, fast_hash_set_with_capacity,
 };
+use crate::core::facet::FacetHandle;
 use crate::core::traits::facet_cache::FacetCacheProvider;
 use arc_swap::ArcSwapOption;
 use std::marker::PhantomData;
@@ -762,7 +763,7 @@ where
             .map(|(&facet_key, cell_facet_pairs)| {
                 // Extract just the CellKeys, discarding facet indices
                 let mut cell_keys = Vec::with_capacity(cell_facet_pairs.len());
-                cell_keys.extend(cell_facet_pairs.iter().map(|(cell_key, _)| *cell_key));
+                cell_keys.extend(cell_facet_pairs.iter().map(FacetHandle::cell_key));
 
                 // Defensively deduplicate cell keys in case build_facet_to_cells_hashmap()
                 // ever yields duplicate (cell_key, idx) pairs per facet
@@ -1933,8 +1934,9 @@ mod tests {
 
                 // If shared by 2 cells, both should reference each other as neighbors
                 if cells.len() == 2 {
-                    let (cell1_key, facet1_idx) = cells[0];
-                    let (cell2_key, _facet2_idx) = cells[1];
+                    let cell1_key = cells[0].cell_key();
+                    let facet1_idx = cells[0].facet_index();
+                    let cell2_key = cells[1].cell_key();
 
                     if let (Some(cell1), Some(cell2)) =
                         (tds.cells().get(cell1_key), tds.cells().get(cell2_key))
@@ -3174,7 +3176,7 @@ mod tests {
             .expect("Should derive facet key");
         let adjacent_cell_key = facet_to_cells
             .get(&key)
-            .and_then(|cells| (cells.len() == 1).then_some(cells[0].0))
+            .and_then(|cells| (cells.len() == 1).then_some(cells[0].cell_key()))
             .expect("Should find adjacent cell for test facet");
 
         // Test with a point that might cause degenerate orientation results

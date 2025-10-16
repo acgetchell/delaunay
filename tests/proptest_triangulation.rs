@@ -33,6 +33,16 @@ fn vertex_3d() -> impl Strategy<Value = Point<f64, 3>> {
     prop::array::uniform3(finite_coordinate()).prop_map(Point::new)
 }
 
+/// Strategy for generating 4D vertices
+fn vertex_4d() -> impl Strategy<Value = Point<f64, 4>> {
+    prop::array::uniform4(finite_coordinate()).prop_map(Point::new)
+}
+
+/// Strategy for generating 5D vertices
+fn vertex_5d() -> impl Strategy<Value = Point<f64, 5>> {
+    prop::array::uniform5(finite_coordinate()).prop_map(Point::new)
+}
+
 /// Strategy for generating a small collection of 2D vertices (4-10 vertices)
 fn small_vertex_set_2d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 2>>> {
     prop::collection::vec(vertex_2d(), 4..=10).prop_map(Vertex::from_points)
@@ -41,6 +51,16 @@ fn small_vertex_set_2d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 2>
 /// Strategy for generating a small collection of 3D vertices (5-12 vertices)
 fn small_vertex_set_3d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 3>>> {
     prop::collection::vec(vertex_3d(), 5..=12).prop_map(Vertex::from_points)
+}
+
+/// Strategy for generating a small collection of 4D vertices (6-14 vertices)
+fn small_vertex_set_4d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 4>>> {
+    prop::collection::vec(vertex_4d(), 6..=14).prop_map(Vertex::from_points)
+}
+
+/// Strategy for generating a small collection of 5D vertices (7-16 vertices)
+fn small_vertex_set_5d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 5>>> {
+    prop::collection::vec(vertex_5d(), 7..=16).prop_map(Vertex::from_points)
 }
 
 // =============================================================================
@@ -71,6 +91,30 @@ proptest! {
             prop_assert!(
                 tds.is_valid().is_ok(),
                 "3D triangulation should be valid: {:?}",
+                tds.is_valid().err()
+            );
+        }
+    }
+
+    /// Property: 4D triangulation validity
+    #[test]
+    fn prop_triangulation_from_vertices_is_valid_4d(vertices in small_vertex_set_4d()) {
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices) {
+            prop_assert!(
+                tds.is_valid().is_ok(),
+                "4D triangulation should be valid: {:?}",
+                tds.is_valid().err()
+            );
+        }
+    }
+
+    /// Property: 5D triangulation validity
+    #[test]
+    fn prop_triangulation_from_vertices_is_valid_5d(vertices in small_vertex_set_5d()) {
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 5>::new(&vertices) {
+            prop_assert!(
+                tds.is_valid().is_ok(),
+                "5D triangulation should be valid: {:?}",
                 tds.is_valid().err()
             );
         }
@@ -143,6 +187,60 @@ proptest! {
             }
         }
     }
+
+    /// Property: 4D neighbor symmetry
+    #[test]
+    fn prop_neighbor_symmetry_4d(vertices in small_vertex_set_4d()) {
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices) {
+            for (cell_key, cell) in tds.cells() {
+                if let Some(neighbors) = cell.neighbors() {
+                    for neighbor_key in neighbors.iter().flatten() {
+                        let neighbor_cell = tds.cells().get(*neighbor_key).unwrap();
+                        let mut found_reciprocal = false;
+                        if let Some(neighbor_neighbors) = neighbor_cell.neighbors() {
+                            for n in neighbor_neighbors {
+                                if n == &Some(cell_key) {
+                                    found_reciprocal = true;
+                                    break;
+                                }
+                            }
+                        }
+                        prop_assert!(
+                            found_reciprocal,
+                            "4D neighbor relationship should be symmetric"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Property: 5D neighbor symmetry
+    #[test]
+    fn prop_neighbor_symmetry_5d(vertices in small_vertex_set_5d()) {
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 5>::new(&vertices) {
+            for (cell_key, cell) in tds.cells() {
+                if let Some(neighbors) = cell.neighbors() {
+                    for neighbor_key in neighbors.iter().flatten() {
+                        let neighbor_cell = tds.cells().get(*neighbor_key).unwrap();
+                        let mut found_reciprocal = false;
+                        if let Some(neighbor_neighbors) = neighbor_cell.neighbors() {
+                            for n in neighbor_neighbors {
+                                if n == &Some(cell_key) {
+                                    found_reciprocal = true;
+                                    break;
+                                }
+                            }
+                        }
+                        prop_assert!(
+                            found_reciprocal,
+                            "5D neighbor relationship should be symmetric"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -154,14 +252,16 @@ proptest! {
     /// that exist in the TDS.
     #[test]
     fn prop_cell_vertices_exist_in_tds_2d(vertices in small_vertex_set_2d()) {
+        use std::collections::HashSet;
+
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices) {
-            let all_vertex_keys: Vec<_> = tds.vertices().keys().collect();
+            let all_vertex_keys: HashSet<_> = tds.vertices().keys().collect();
 
             for (_cell_key, cell) in tds.cells() {
                 // Get all vertex keys from the cell
                 let cell_vertex_keys = cell.vertices();
 
-                // Each vertex key should exist in the TDS
+                // Each vertex key should exist in the TDS (O(1) lookup with HashSet)
                 for vertex_key in cell_vertex_keys {
                     prop_assert!(
                         all_vertex_keys.contains(vertex_key),
@@ -176,8 +276,10 @@ proptest! {
     /// Property: 3D cell-vertex incidence
     #[test]
     fn prop_cell_vertices_exist_in_tds_3d(vertices in small_vertex_set_3d()) {
+        use std::collections::HashSet;
+
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
-            let all_vertex_keys: Vec<_> = tds.vertices().keys().collect();
+            let all_vertex_keys: HashSet<_> = tds.vertices().keys().collect();
 
             for (_cell_key, cell) in tds.cells() {
                 let cell_vertex_keys = cell.vertices();
@@ -186,6 +288,48 @@ proptest! {
                     prop_assert!(
                         all_vertex_keys.contains(vertex_key),
                         "3D cell vertex should exist in TDS"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Property: 4D cell-vertex incidence
+    #[test]
+    fn prop_cell_vertices_exist_in_tds_4d(vertices in small_vertex_set_4d()) {
+        use std::collections::HashSet;
+
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices) {
+            let all_vertex_keys: HashSet<_> = tds.vertices().keys().collect();
+
+            for (_cell_key, cell) in tds.cells() {
+                let cell_vertex_keys = cell.vertices();
+
+                for vertex_key in cell_vertex_keys {
+                    prop_assert!(
+                        all_vertex_keys.contains(vertex_key),
+                        "4D cell vertex should exist in TDS"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Property: 5D cell-vertex incidence
+    #[test]
+    fn prop_cell_vertices_exist_in_tds_5d(vertices in small_vertex_set_5d()) {
+        use std::collections::HashSet;
+
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 5>::new(&vertices) {
+            let all_vertex_keys: HashSet<_> = tds.vertices().keys().collect();
+
+            for (_cell_key, cell) in tds.cells() {
+                let cell_vertex_keys = cell.vertices();
+
+                for vertex_key in cell_vertex_keys {
+                    prop_assert!(
+                        all_vertex_keys.contains(vertex_key),
+                        "5D cell vertex should exist in TDS"
                     );
                 }
             }
@@ -237,6 +381,46 @@ proptest! {
                 prop_assert!(
                     seen_vertex_sets.insert(cell_vertices),
                     "Found duplicate 3D cell"
+                );
+            }
+        }
+    }
+
+    /// Property: 4D no duplicate cells
+    #[test]
+    fn prop_no_duplicate_cells_4d(vertices in small_vertex_set_4d()) {
+        use std::collections::HashSet;
+
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices) {
+            let mut seen_vertex_sets = HashSet::new();
+
+            for (_cell_key, cell) in tds.cells() {
+                let mut cell_vertices = cell.vertices().to_vec();
+                cell_vertices.sort();
+
+                prop_assert!(
+                    seen_vertex_sets.insert(cell_vertices),
+                    "Found duplicate 4D cell"
+                );
+            }
+        }
+    }
+
+    /// Property: 5D no duplicate cells
+    #[test]
+    fn prop_no_duplicate_cells_5d(vertices in small_vertex_set_5d()) {
+        use std::collections::HashSet;
+
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 5>::new(&vertices) {
+            let mut seen_vertex_sets = HashSet::new();
+
+            for (_cell_key, cell) in tds.cells() {
+                let mut cell_vertices = cell.vertices().to_vec();
+                cell_vertices.sort();
+
+                prop_assert!(
+                    seen_vertex_sets.insert(cell_vertices),
+                    "Found duplicate 5D cell"
                 );
             }
         }
@@ -293,6 +477,48 @@ proptest! {
             }
         }
     }
+
+    /// Property: 4D incremental construction validity
+    #[test]
+    fn prop_incremental_insertion_maintains_validity_4d(
+        initial_points in prop::collection::vec(vertex_4d(), 5..=7),
+        additional_point in vertex_4d(),
+    ) {
+        let initial_vertices = Vertex::from_points(initial_points);
+        if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, 4>::new(&initial_vertices) {
+            prop_assert!(tds.is_valid().is_ok(), "Initial 4D triangulation should be valid");
+
+            let additional_vertex = vertex!(additional_point);
+            if tds.add(additional_vertex).is_ok() {
+                prop_assert!(
+                    tds.is_valid().is_ok(),
+                    "4D triangulation should remain valid after insertion: {:?}",
+                    tds.is_valid().err()
+                );
+            }
+        }
+    }
+
+    /// Property: 5D incremental construction validity
+    #[test]
+    fn prop_incremental_insertion_maintains_validity_5d(
+        initial_points in prop::collection::vec(vertex_5d(), 6..=8),
+        additional_point in vertex_5d(),
+    ) {
+        let initial_vertices = Vertex::from_points(initial_points);
+        if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, 5>::new(&initial_vertices) {
+            prop_assert!(tds.is_valid().is_ok(), "Initial 5D triangulation should be valid");
+
+            let additional_vertex = vertex!(additional_point);
+            if tds.add(additional_vertex).is_ok() {
+                prop_assert!(
+                    tds.is_valid().is_ok(),
+                    "5D triangulation should remain valid after insertion: {:?}",
+                    tds.is_valid().err()
+                );
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -328,6 +554,38 @@ proptest! {
                     tds.dim(),
                     3,
                     "3D triangulation with {} vertices should have dimension 3",
+                    tds.number_of_vertices()
+                );
+            }
+        }
+    }
+
+    /// Property: 4D dimension consistency
+    #[test]
+    fn prop_dimension_consistency_4d(vertices in small_vertex_set_4d()) {
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices) {
+            // If we have at least 5 non-degenerate vertices, dimension should be 4
+            if tds.number_of_vertices() >= 5 && tds.number_of_cells() > 0 {
+                prop_assert_eq!(
+                    tds.dim(),
+                    4,
+                    "4D triangulation with {} vertices should have dimension 4",
+                    tds.number_of_vertices()
+                );
+            }
+        }
+    }
+
+    /// Property: 5D dimension consistency
+    #[test]
+    fn prop_dimension_consistency_5d(vertices in small_vertex_set_5d()) {
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 5>::new(&vertices) {
+            // If we have at least 6 non-degenerate vertices, dimension should be 5
+            if tds.number_of_vertices() >= 6 && tds.number_of_cells() > 0 {
+                prop_assert_eq!(
+                    tds.dim(),
+                    5,
+                    "5D triangulation with {} vertices should have dimension 5",
                     tds.number_of_vertices()
                 );
             }
@@ -369,6 +627,36 @@ proptest! {
                 vertex_keys_count,
                 number_of_vertices,
                 "3D vertex keys count should match number_of_vertices"
+            );
+        }
+    }
+
+    /// Property: 4D vertex count consistency
+    #[test]
+    fn prop_vertex_count_consistency_4d(vertices in small_vertex_set_4d()) {
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices) {
+            let vertex_keys_count = tds.vertices().keys().count();
+            let number_of_vertices = tds.number_of_vertices();
+
+            prop_assert_eq!(
+                vertex_keys_count,
+                number_of_vertices,
+                "4D vertex keys count should match number_of_vertices"
+            );
+        }
+    }
+
+    /// Property: 5D vertex count consistency
+    #[test]
+    fn prop_vertex_count_consistency_5d(vertices in small_vertex_set_5d()) {
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 5>::new(&vertices) {
+            let vertex_keys_count = tds.vertices().keys().count();
+            let number_of_vertices = tds.number_of_vertices();
+
+            prop_assert_eq!(
+                vertex_keys_count,
+                number_of_vertices,
+                "5D vertex keys count should match number_of_vertices"
             );
         }
     }

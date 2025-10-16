@@ -7,7 +7,7 @@ regression testing, and performance analysis.
 
 ### 🎲 Property-Based Testing
 
-#### `proptest_predicates.rs`
+#### [`proptest_predicates.rs`](./proptest_predicates.rs)
 
 Property-based tests for geometric predicates using proptest to verify mathematical properties that must hold universally.
 
@@ -27,7 +27,7 @@ Property-based tests for geometric predicates using proptest to verify mathemati
 
 **Run with:** `cargo test --test proptest_predicates` or included in `just test`
 
-#### `proptest_point.rs`
+#### [`proptest_point.rs`](./proptest_point.rs)
 
 Property-based tests for Point data structures verifying fundamental properties.
 
@@ -57,7 +57,7 @@ Property-based tests for Point data structures verifying fundamental properties.
 
 **Run with:** `cargo test --test proptest_point` or included in `just test`
 
-#### `proptest_triangulation.rs`
+#### [`proptest_triangulation.rs`](./proptest_triangulation.rs)
 
 Property-based tests for triangulation structural invariants.
 
@@ -97,7 +97,7 @@ Property-based tests for triangulation structural invariants.
 
 ### 🔧 Debugging and Analysis Tools
 
-#### `circumsphere_debug_tools.rs`
+#### [`circumsphere_debug_tools.rs`](./circumsphere_debug_tools.rs)
 
 Interactive debugging and testing tools for circumsphere calculations. Demonstrates and compares three methods for testing whether
 a point lies inside the circumsphere of a simplex in 2D, 3D, and 4D.
@@ -135,7 +135,7 @@ just test-debug
 
 ### 🧪 Algorithm Integration Testing
 
-#### `tds_basic_integration.rs`
+#### [`tds_basic_integration.rs`](./tds_basic_integration.rs)
 
 Fundamental integration tests for triangulation data structure (TDS) operations, verifying core functionality with simple, well-understood geometries.
 
@@ -164,7 +164,7 @@ Fundamental integration tests for triangulation data structure (TDS) operations,
 **Purpose:** These tests establish foundational TDS behavior. For complex scenarios involving algorithms like Bowyer-Watson or convex hull
 operations, see other integration tests.
 
-#### `convex_hull_bowyer_watson_integration.rs`
+#### [`convex_hull_bowyer_watson_integration.rs`](./convex_hull_bowyer_watson_integration.rs)
 
 Integration tests for convex hull algorithms with Bowyer-Watson triangulation, focusing on the interaction between hull computation and triangulation construction.
 
@@ -178,7 +178,7 @@ Integration tests for convex hull algorithms with Bowyer-Watson triangulation, f
 
 **Run with:** `cargo test --test convex_hull_bowyer_watson_integration` or `just test-release`
 
-#### `robust_predicates_comparison.rs`
+#### [`robust_predicates_comparison.rs`](./robust_predicates_comparison.rs)
 
 Comparative testing between robust and standard geometric predicates, focusing on numerical accuracy and edge case handling.
 
@@ -192,7 +192,7 @@ Comparative testing between robust and standard geometric predicates, focusing o
 
 **Run with:** `cargo test --test robust_predicates_comparison` or `just test-release`
 
-#### `robust_predicates_showcase.rs`
+#### [`robust_predicates_showcase.rs`](./robust_predicates_showcase.rs)
 
 Demonstration and stress testing of robust geometric predicates with focus on numerical edge cases and degenerate configurations.
 
@@ -207,7 +207,7 @@ Demonstration and stress testing of robust geometric predicates with focus on nu
 
 ### 🐛 Regression and Error Reproduction
 
-#### `test_cavity_boundary_error.rs`
+#### [`test_cavity_boundary_error.rs`](./test_cavity_boundary_error.rs)
 
 Reproduces and tests specific cavity boundary errors encountered during triangulation, ensuring fixes remain effective.
 
@@ -219,7 +219,7 @@ Reproduces and tests specific cavity boundary errors encountered during triangul
 
 **Run with:** `cargo test --test test_cavity_boundary_error` or `just test-release`
 
-#### `coordinate_conversion_errors.rs`
+#### [`coordinate_conversion_errors.rs`](./coordinate_conversion_errors.rs)
 
 Tests error handling for coordinate conversion operations, particularly focusing on special floating-point values.
 
@@ -235,7 +235,7 @@ Tests error handling for coordinate conversion operations, particularly focusing
 
 ### 📊 Performance and Memory Testing
 
-#### `allocation_api.rs`
+#### [`allocation_api.rs`](./allocation_api.rs)
 
 Memory allocation profiling and testing utilities for tracking memory usage patterns during triangulation operations.
 

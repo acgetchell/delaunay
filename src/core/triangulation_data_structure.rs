@@ -190,7 +190,7 @@ use num_traits::cast::NumCast;
 use super::{
     algorithms::bowyer_watson::IncrementalBowyerWatson,
     cell::{Cell, CellValidationError},
-    facet::facet_key_from_vertices,
+    facet::{FacetHandle, facet_key_from_vertices},
     traits::{
         data_type::DataType,
         insertion_algorithm::{InsertionAlgorithm, InsertionError},
@@ -2946,8 +2946,8 @@ where
     /// for (facet_key, cell_facet_pairs) in &facet_map {
     ///     println!("Facet key {} is contained in {} cell(s)", facet_key, cell_facet_pairs.len());
     ///     
-    ///     for (cell_id, facet_index) in cell_facet_pairs {
-    ///         println!("  - Cell {:?} at facet index {}", cell_id, facet_index);
+    ///     for facet_handle in cell_facet_pairs {
+    ///         println!("  - Cell {:?} at facet index {}", facet_handle.cell_key(), facet_handle.facet_index());
     ///     }
     /// }
     /// ```
@@ -3033,7 +3033,7 @@ where
                 facet_to_cells
                     .entry(facet_key)
                     .or_default()
-                    .push((cell_id, facet_index_u8));
+                    .push(FacetHandle::new(cell_id, facet_index_u8));
             }
         }
 
@@ -3109,7 +3109,7 @@ where
                 facet_to_cells
                     .entry(facet_key)
                     .or_default()
-                    .push((cell_id, facet_index_u8));
+                    .push(FacetHandle::new(cell_id, facet_index_u8));
             }
         }
 
@@ -3179,7 +3179,8 @@ where
         #[allow(unused_variables)] // facet_key used in debug_assertions
         for (facet_key, cell_facet_pairs) in facet_to_cells {
             if cell_facet_pairs.len() > 2 {
-                let (first_cell_key, first_facet_index) = cell_facet_pairs[0];
+                let first_cell_key = cell_facet_pairs[0].cell_key();
+                let first_facet_index = cell_facet_pairs[0].facet_index();
                 if self.cells.contains_key(first_cell_key) {
                     // Use direct key-based method with proper error propagation
                     // The error is already TriangulationValidationError, so just propagate it
@@ -3196,7 +3197,8 @@ where
                     let facet_vertices_set: VertexKeySet = facet_vertices.iter().copied().collect();
 
                     let mut valid_cells = ValidCellsBuffer::new();
-                    for &(cell_key, _facet_index) in &cell_facet_pairs {
+                    for facet_handle in &cell_facet_pairs {
+                        let cell_key = facet_handle.cell_key();
                         if self.cells.contains_key(cell_key) {
                             // Use direct key-based method with proper error propagation
                             // The error is already TriangulationValidationError, so just propagate it

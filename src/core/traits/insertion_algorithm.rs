@@ -4,8 +4,8 @@
 //! interface for different vertex insertion strategies, including the basic
 //! Bowyer-Watson algorithm and robust variants with enhanced numerical stability.
 
-use crate::core::collections::{CellKeySet, SmallBuffer};
-use crate::core::facet::{FacetError, FacetView};
+use crate::core::collections::{CellKeySet, FastHashSet, SmallBuffer, fast_hash_set_with_capacity};
+use crate::core::facet::{FacetError, FacetView, facet_key_from_vertices};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::triangulation_data_structure::CellKey;
 use crate::core::{
@@ -14,6 +14,7 @@ use crate::core::{
     triangulation_data_structure::{
         Tds, TriangulationConstructionError, TriangulationValidationError, VertexKey,
     },
+    util::usize_to_u8,
     vertex::Vertex,
 };
 use crate::geometry::point::Point;
@@ -1157,62 +1158,78 @@ where
 
         let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
 
-        // TODO(performance): Optimize for large meshes by accepting cached facet_to_cells_map
-        // from FacetCacheProvider or building candidate set by iterating only facets of bad_cells.
-        // This would reduce from O(all_facets) to O(bad_cells * D) for large meshes.
-        // See: https://github.com/your-repo/delaunay/issues/XXX
-        let facet_to_cells = tds.build_facet_to_cells_map().map_err(|e| {
-            TriangulationValidationError::InconsistentDataStructure {
-                message: format!("Failed to build facet-to-cells map: {e}"),
-            }
-        })?;
+        // Optimized O(|bad_cells|·D) algorithm: scan only facets of bad cells
+        // instead of building global facet-to-cells map O(all_facets).
+        //
+        // A facet is on the cavity boundary if:
+        // - Its neighbor cell is NOT in the bad set (boundary with good region)
+        // - OR it has no neighbor (true boundary facet)
+        //
+        // We deduplicate using canonical facet keys since each boundary facet
+        // can be seen from multiple bad cells sharing it.
 
-        // Process each facet in the map to identify boundary facets
-        for sharing_cells in facet_to_cells.values() {
-            let total_count = sharing_cells.len();
-            if total_count > 2 {
-                return Err(InsertionError::TriangulationState(
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Facet shared by more than two cells (total_count = {total_count})"
-                        ),
-                    },
-                ));
-            }
+        // Track seen boundary facets by canonical key to avoid duplicates
+        let mut seen_facet_keys: FastHashSet<u64> =
+            fast_hash_set_with_capacity(bad_cells.len() * (D + 1));
 
-            // Count bad cells and capture the single bad sharer if it exists
-            let mut bad_count = 0;
-            let mut single_bad_cell = None;
-            for &(cell_key, facet_index) in sharing_cells {
-                if bad_cell_set.contains(&cell_key) {
-                    bad_count += 1;
-                    if bad_count == 1 {
-                        single_bad_cell = Some((cell_key, facet_index));
-                    } else {
-                        // More than one bad cell, can short-circuit
-                        break;
+        // Scan each bad cell's D+1 facets
+        for &bad_cell_key in bad_cells {
+            let Some(bad_cell) = tds.cells().get(bad_cell_key) else {
+                continue;
+            };
+
+            let Some(neighbors) = bad_cell.neighbors() else {
+                // Cell has no neighbor information; treat all facets as boundary
+                for facet_idx in 0..=D {
+                    if let Ok(facet_idx_u8) = usize_to_u8(facet_idx, D + 1) {
+                        // Compute canonical facet key for deduplication
+                        let facet_vertices: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> = bad_cell
+                            .vertices()
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, &v)| (i != facet_idx).then_some(v))
+                            .collect();
+                        let canonical_key = facet_key_from_vertices(&facet_vertices);
+
+                        if seen_facet_keys.insert(canonical_key) {
+                            boundary_facet_handles.push((bad_cell_key, facet_idx_u8));
+                        }
                     }
                 }
-            }
+                continue;
+            };
 
-            // A facet is on the cavity boundary if:
-            // 1. Exactly one bad cell uses it (boundary between bad and good)
-            // 2. OR it's a true boundary facet (only one cell total) that's bad
-            if bad_count == 1 && (total_count == 2 || total_count == 1) {
-                // Store lightweight handle directly - just validate it exists
-                if let Some((cell_key, facet_index)) = single_bad_cell
-                    && let Some(cell) = tds.cells().get(cell_key)
-                {
-                    let facet_idx = facet_index as usize;
-                    if facet_idx < cell.vertices().len() {
-                        boundary_facet_handles.push((cell_key, facet_index));
-                    }
+            // Check each facet (opposite to each vertex)
+            for facet_idx in 0..=D {
+                let Some(&neighbor_key_opt) = neighbors.get(facet_idx) else {
+                    continue;
+                };
+
+                // Boundary facet if: no neighbor OR neighbor is not bad
+                let is_boundary = neighbor_key_opt.is_none_or(|n| !bad_cell_set.contains(&n));
+                if !is_boundary {
+                    continue; // Interior facet; skip
+                }
+
+                // This is a boundary facet; compute canonical key and deduplicate
+                let Ok(facet_idx_u8) = usize_to_u8(facet_idx, D + 1) else {
+                    continue;
+                };
+
+                // Compute canonical facet key: sorted vertex keys of the D vertices
+                let facet_vertices: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> = bad_cell
+                    .vertices()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &v)| (i != facet_idx).then_some(v))
+                    .collect();
+                let canonical_key = facet_key_from_vertices(&facet_vertices);
+
+                // Insert only if not already seen (deduplication)
+                if seen_facet_keys.insert(canonical_key) {
+                    boundary_facet_handles.push((bad_cell_key, facet_idx_u8));
                 }
             }
-            // Skip facets that are:
-            // - Internal to the cavity (bad_count > 1)
-            // - Not touched by any bad cells (bad_count == 0)
-            // - Invalid sharing (total_count > 2)
         }
 
         // Validation: ensure we have a reasonable number of boundary facets
@@ -1327,6 +1344,17 @@ where
 
         let cells_removed = bad_cells.len();
 
+        // Snapshot bad cells' vertex keys for rollback before removal
+        let bad_cells_snapshots: Vec<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>> =
+            bad_cells
+                .iter()
+                .filter_map(|&ck| {
+                    tds.cells()
+                        .get(ck)
+                        .map(|cell| cell.vertices().iter().copied().collect())
+                })
+                .collect();
+
         // CRITICAL: Extract facet data BEFORE removing cells, as handles become invalid after removal
         // Pre-extract vertex data from each boundary facet while cells still exist
         let mut extracted_facet_data = Vec::with_capacity(boundary_facet_handles.len());
@@ -1369,6 +1397,27 @@ where
                         vertex,
                         vertex_existed_before,
                     );
+                    // Restore removed bad cells from snapshot to keep TDS consistent
+                    for vkeys in &bad_cells_snapshots {
+                        let cell = Cell::new(vkeys.clone(), None).map_err(|err| {
+                            InsertionError::TriangulationState(
+                                TriangulationValidationError::FailedToCreateCell {
+                                    message: format!(
+                                        "Failed to reconstruct removed cell during rollback: {err}"
+                                    ),
+                                },
+                            )
+                        })?;
+                        tds.insert_cell_with_mapping(cell).map_err(|err| {
+                            InsertionError::TriangulationState(
+                                TriangulationValidationError::InconsistentDataStructure {
+                                    message: format!(
+                                        "Failed to reinsert removed cell during rollback: {err}"
+                                    ),
+                                },
+                            )
+                        })?;
+                    }
                     return Err(InsertionError::TriangulationState(e));
                 }
             }
@@ -1505,13 +1554,15 @@ where
         // First try boundary facets (most likely to work)
         for cells in facet_to_cells.values() {
             if cells.len() == 1 {
-                let &(cell_key, facet_index) = cells.first().ok_or_else(|| {
+                let facet_handle = cells.first().ok_or_else(|| {
                     InsertionError::TriangulationState(
                         TriangulationValidationError::InconsistentDataStructure {
                             message: "Boundary facet had no adjacent cell".to_string(),
                         },
                     )
                 })?;
+                let cell_key = facet_handle.cell_key();
+                let facet_index = facet_handle.facet_index();
                 let _fi = <usize as From<_>>::from(facet_index);
                 if let Some(_cell) = tds.cells().get(cell_key) {
                     // Phase 3A: Use lightweight facet handles directly
@@ -1542,7 +1593,9 @@ where
 
         // If boundary facets don't work, try ALL facets (including internal ones)
         for cells in facet_to_cells.values() {
-            for &(cell_key, facet_index) in cells {
+            for facet_handle in cells {
+                let cell_key = facet_handle.cell_key();
+                let facet_index = facet_handle.facet_index();
                 let _fi = <usize as From<_>>::from(facet_index);
                 if let Some(_cell) = tds.cells().get(cell_key) {
                     // Phase 3A: Use lightweight facet handles directly
@@ -3292,7 +3345,7 @@ mod tests {
             1,
             "Boundary facet should have exactly one adjacent cell"
         );
-        let (adjacent_cell_key, _) = adjacent_cells[0];
+        let adjacent_cell_key = adjacent_cells[0].cell_key();
 
         // Test visibility from different positions using the trait method
         let test_positions = vec![
@@ -5364,7 +5417,7 @@ mod tests {
         let adjacent_cells = facet_to_cells
             .get(&facet_key)
             .expect("Facet should have adjacent cells");
-        let (adjacent_cell_key, _) = adjacent_cells[0];
+        let adjacent_cell_key = adjacent_cells[0].cell_key();
 
         // Get boundary facet for coplanar vertex extraction
         let boundary_facets = tds.boundary_facets().unwrap();

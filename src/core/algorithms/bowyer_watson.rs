@@ -558,12 +558,12 @@ mod tests {
                     _ => {
                         invalid_sharing += 1;
                         eprintln!("❌ INVALID: Facet {facet_key} shared by {cell_count} cells");
-                        for (cell_key, facet_index) in cells {
-                            if let Some(cell) = tds.cells().get(*cell_key) {
+                        for facet_handle in cells {
+                            if let Some(cell) = tds.cells().get(facet_handle.cell_key()) {
                                 eprintln!(
                                     "   Cell {:?} at facet index {}",
                                     cell.uuid(),
-                                    facet_index
+                                    facet_handle.facet_index()
                                 );
                             }
                         }
