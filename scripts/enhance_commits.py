@@ -207,13 +207,15 @@ def _categorize_entry(
         - "patch security vulnerability" → "fixed" (matches both, but test expects "fixed")
     """
     # Check for explicit category prefixes first (highest priority)
+    # Match both short forms (fix:, add:) and past tense (fixed:, added:)
+    # Allow optional whitespace before colon
     explicit_prefix_patterns = [
-        (r"^fixed?:", "fixed"),
-        (r"^added?:", "added"),
-        (r"^removed?:", "removed"),
-        (r"^changed?:", "changed"),
-        (r"^deprecated?:", "deprecated"),
-        (r"^security:", "security"),
+        (r"^(?:fix|fixed)\s*:", "fixed"),
+        (r"^(?:add|added)\s*:", "added"),
+        (r"^(?:remove|removed)\s*:", "removed"),
+        (r"^(?:change|changed)\s*:", "changed"),
+        (r"^(?:deprecate|deprecated)\s*:", "deprecated"),
+        (r"^security\s*:", "security"),
     ]
 
     for pattern_str, category in explicit_prefix_patterns:
