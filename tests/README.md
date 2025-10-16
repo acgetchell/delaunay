@@ -5,9 +5,99 @@ regression testing, and performance analysis.
 
 ## Test Categories
 
+### 🎲 Property-Based Testing
+
+#### [`proptest_predicates.rs`](./proptest_predicates.rs)
+
+Property-based tests for geometric predicates using proptest to verify mathematical properties that must hold universally.
+
+**Test Coverage:**
+
+- **Orientation Properties**:
+  - Sign flip under vertex swap (orientation reversal)
+  - Cyclic permutation invariance (2D/3D)
+  - Degenerate case consistency
+- **Insphere Properties**:
+  - Simplex vertices on boundary (defining vertices should be on/near circumsphere)
+  - Scaling property (far points are OUTSIDE)
+  - Cross-dimensional consistency (2D-4D)
+- **Cross-Predicate Consistency**:
+  - Degenerate orientation implies potential insphere failures
+  - Robustness under near-degenerate configurations
+
+**Run with:** `cargo test --test proptest_predicates` or included in `just test`
+
+#### [`proptest_point.rs`](./proptest_point.rs)
+
+Property-based tests for Point data structures verifying fundamental properties.
+
+**Test Coverage:**
+
+- **Equality and Hashing**:
+  - Hash consistency (equal points have equal hashes)
+  - Equality reflexivity, symmetry, transitivity
+  - HashMap key usage correctness
+- **Coordinate Operations**:
+  - Coordinate extraction roundtrips
+  - Into<[T; D]> conversion consistency
+  - get() method correctness
+- **Serialization**:
+  - Serde roundtrip preservation
+  - Cross-dimensional serialization
+- **NaN Handling**:
+  - Custom equality semantics (NaN == NaN)
+  - Hash consistency with NaN coordinates
+  - HashMap key usage with NaN
+- **Validation**:
+  - Finite coordinates validate successfully
+  - Infinite/NaN coordinates fail validation
+- **Ordering**:
+  - Consistency with equality
+  - Antisymmetry and transitivity
+
+**Run with:** `cargo test --test proptest_point` or included in `just test`
+
+#### [`proptest_triangulation.rs`](./proptest_triangulation.rs)
+
+Property-based tests for triangulation structural invariants.
+
+**Test Coverage:**
+
+- **Triangulation Validity**:
+  - Constructed triangulations pass is_valid()
+  - Cross-dimensional validity (2D-3D)
+- **Neighbor Symmetry**:
+  - If A neighbors B, then B neighbors A
+  - Reciprocal neighbor relationships
+- **Vertex-Cell Incidence**:
+  - All cell vertices exist in TDS
+  - Vertex key consistency
+- **No Duplicate Cells**:
+  - No two cells have identical vertex sets
+  - Unique cell configurations
+- **Incremental Construction**:
+  - Validity maintained after vertex insertion
+  - Dimension consistency after growth
+- **Dimension Consistency**:
+  - Dimension matches vertex count expectations
+  - Proper dimension evolution
+- **Vertex Count Consistency**:
+  - Vertex keys count matches number_of_vertices()
+  - Iterator consistency
+
+**Run with:** `cargo test --test proptest_triangulation` or included in `just test`
+
+**Property Testing Notes:**
+
+- Property tests use randomized inputs to discover edge cases
+- Tests may take longer than unit tests due to multiple iterations
+- Failures include shrunk minimal failing cases for debugging
+- Configure test cases via `PROPTEST_CASES=N` environment variable
+- Default: 256 test cases per property
+
 ### 🔧 Debugging and Analysis Tools
 
-#### `circumsphere_debug_tools.rs`
+#### [`circumsphere_debug_tools.rs`](./circumsphere_debug_tools.rs)
 
 Interactive debugging and testing tools for circumsphere calculations. Demonstrates and compares three methods for testing whether
 a point lies inside the circumsphere of a simplex in 2D, 3D, and 4D.
@@ -45,7 +135,36 @@ just test-debug
 
 ### 🧪 Algorithm Integration Testing
 
-#### `convex_hull_bowyer_watson_integration.rs`
+#### [`tds_basic_integration.rs`](./tds_basic_integration.rs)
+
+Fundamental integration tests for triangulation data structure (TDS) operations, verifying core functionality with simple, well-understood geometries.
+
+**Test Coverage:**
+
+- **TDS Creation**: Validates basic TDS construction with various vertex configurations
+  - Single cell (minimal 3D simplex/tetrahedron)
+  - Multiple adjacent cells sharing facets
+- **Neighbor Assignment**: Verifies correct neighbor connectivity between cells
+  - Initial simplex neighbor initialization
+  - Shared facet neighbor relationships
+- **Boundary Analysis**: Tests boundary facet computation
+  - Single cell boundary identification (4 facets for tetrahedron)
+  - Multi-cell boundary detection (shared facets excluded)
+- **Basic Validation**: Establishes baseline correctness for simple geometries
+
+**Test Functions:**
+
+- `test_tds_creates_one_cell` - Single tetrahedron creation
+- `test_tds_creates_two_cells` - Two adjacent tetrahedra
+- `test_initial_simplex_has_neighbors` - Neighbor assignment validation
+- `test_two_cells_share_facet` - Shared facet connectivity
+
+**Run with:** `cargo test --test tds_basic_integration` or `just test-release`
+
+**Purpose:** These tests establish foundational TDS behavior. For complex scenarios involving algorithms like Bowyer-Watson or convex hull
+operations, see other integration tests.
+
+#### [`convex_hull_bowyer_watson_integration.rs`](./convex_hull_bowyer_watson_integration.rs)
 
 Integration tests for convex hull algorithms with Bowyer-Watson triangulation, focusing on the interaction between hull computation and triangulation construction.
 
@@ -59,7 +178,7 @@ Integration tests for convex hull algorithms with Bowyer-Watson triangulation, f
 
 **Run with:** `cargo test --test convex_hull_bowyer_watson_integration` or `just test-release`
 
-#### `robust_predicates_comparison.rs`
+#### [`robust_predicates_comparison.rs`](./robust_predicates_comparison.rs)
 
 Comparative testing between robust and standard geometric predicates, focusing on numerical accuracy and edge case handling.
 
@@ -73,7 +192,7 @@ Comparative testing between robust and standard geometric predicates, focusing o
 
 **Run with:** `cargo test --test robust_predicates_comparison` or `just test-release`
 
-#### `robust_predicates_showcase.rs`
+#### [`robust_predicates_showcase.rs`](./robust_predicates_showcase.rs)
 
 Demonstration and stress testing of robust geometric predicates with focus on numerical edge cases and degenerate configurations.
 
@@ -88,7 +207,7 @@ Demonstration and stress testing of robust geometric predicates with focus on nu
 
 ### 🐛 Regression and Error Reproduction
 
-#### `test_cavity_boundary_error.rs`
+#### [`test_cavity_boundary_error.rs`](./test_cavity_boundary_error.rs)
 
 Reproduces and tests specific cavity boundary errors encountered during triangulation, ensuring fixes remain effective.
 
@@ -100,7 +219,7 @@ Reproduces and tests specific cavity boundary errors encountered during triangul
 
 **Run with:** `cargo test --test test_cavity_boundary_error` or `just test-release`
 
-#### `coordinate_conversion_errors.rs`
+#### [`coordinate_conversion_errors.rs`](./coordinate_conversion_errors.rs)
 
 Tests error handling for coordinate conversion operations, particularly focusing on special floating-point values.
 
@@ -116,7 +235,7 @@ Tests error handling for coordinate conversion operations, particularly focusing
 
 ### 📊 Performance and Memory Testing
 
-#### `allocation_api.rs`
+#### [`allocation_api.rs`](./allocation_api.rs)
 
 Memory allocation profiling and testing utilities for tracking memory usage patterns during triangulation operations.
 

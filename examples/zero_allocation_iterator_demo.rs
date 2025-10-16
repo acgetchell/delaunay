@@ -37,8 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Functional Equivalence Test:");
     println!("===========================");
 
-    let vec_uuids = cell.vertex_uuids();
-    let iter_uuids: Vec<_> = cell.vertex_uuid_iter().collect();
+    let vec_uuids = cell.vertex_uuids(&tds);
+    let iter_uuids: Vec<_> = cell.vertex_uuid_iter(&tds).collect();
 
     println!("  vertex_uuids() returned {} UUIDs", vec_uuids.len());
     println!(
@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let mut total_count = 0;
     for _ in 0..iterations {
-        let uuids = cell.vertex_uuids(); // Allocates Vec
+        let uuids = cell.vertex_uuids(&tds); // Allocates Vec
         total_count += black_box(uuids.len()); // Prevent optimization
     }
     let vec_duration = start.elapsed();
@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let mut total_count_iter = 0;
     for _ in 0..iterations {
-        let count = cell.vertex_uuid_iter().count(); // No allocation
+        let count = cell.vertex_uuid_iter(&tds).count(); // No allocation
         total_count_iter += black_box(count);
     }
     let iter_duration = start.elapsed();
@@ -90,12 +90,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=====================");
 
     // ExactSizeIterator
-    let iter = cell.vertex_uuid_iter();
+    let iter = cell.vertex_uuid_iter(&tds);
     println!("  Length via ExactSizeIterator: {}", iter.len());
 
     // Can be used in for loops
     let mut count = 0;
-    for uuid in cell.vertex_uuid_iter() {
+    for uuid in cell.vertex_uuid_iter(&tds) {
         if !uuid.is_nil() {
             count += 1;
         }
@@ -104,13 +104,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Can be chained with other iterator methods
     let valid_uuid_count = cell
-        .vertex_uuid_iter()
+        .vertex_uuid_iter(&tds)
         .filter(|uuid| !uuid.is_nil())
         .count();
     println!("  Valid UUIDs via iterator chain: {valid_uuid_count}");
 
     // Can be used with iterator combinators
-    let first_few_count = cell.vertex_uuid_iter().take(3).count();
+    let first_few_count = cell.vertex_uuid_iter(&tds).take(3).count();
     println!("  First 3 UUIDs: {first_few_count} collected");
 
     println!("\n=================================================================");

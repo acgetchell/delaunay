@@ -96,6 +96,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
 
 // Import key types for use in type aliases
+use crate::core::facet::FacetHandle;
 use crate::core::triangulation_data_structure::{CellKey, VertexKey};
 
 /// Compact index type for facet positions within a cell.
@@ -260,10 +261,10 @@ pub type SmallBuffer<T, const N: usize> = SmallVec<[T; N]>;
 /// # Optimization Rationale
 ///
 /// - **Key**: `u64` facet hash (from vertex combination)
-/// - **Value**: `SmallBuffer<(CellKey, FacetIndex), 2>` - stack allocated for typical case
+/// - **Value**: `SmallBuffer<FacetHandle, 2>` - stack allocated for typical case
 /// - **Typical Pattern**: 1 cell (boundary) or 2 cells (interior facet)
 /// - **Performance**: Avoids heap allocation for >95% of facets
-/// - **Memory Efficiency**: `FacetIndex` (u8) reduces tuple size compared to `usize`
+/// - **Memory Efficiency**: `FacetHandle` uses u8 for facet index, same size as raw tuple
 ///
 /// # Examples
 ///
@@ -273,7 +274,7 @@ pub type SmallBuffer<T, const N: usize> = SmallVec<[T; N]>;
 /// let mut facet_map: FacetToCellsMap = FacetToCellsMap::default();
 /// // Most entries will use stack allocation
 /// ```
-pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<(CellKey, FacetIndex), 2>>;
+pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<crate::core::facet::FacetHandle, 2>>;
 
 /// Cell neighbor mapping optimized for typical cell degrees.
 /// Most cells have a small number of neighbors (D+1 faces, so at most D+1 neighbors).
@@ -352,7 +353,7 @@ pub type CellVerticesMap = FastHashMap<CellKey, FastHashSet<VertexKey>>;
 /// ```rust
 /// use delaunay::core::collections::CellVertexKeysMap;
 ///
-/// let mut cell_vertex_keys: CellVertexKeysMap = CellVertexKeysMap::default();
+/// let mut cell_vertices: CellVertexKeysMap = CellVertexKeysMap::default();
 /// // Efficient positional access during validation
 /// ```
 pub type CellVertexKeysMap = FastHashMap<CellKey, Vec<VertexKey>>;
@@ -394,11 +395,18 @@ pub type ValidCellsBuffer = SmallBuffer<CellKey, SMALL_CELL_OPERATION_BUFFER_SIZ
 ///
 /// # Optimization Rationale
 ///
-/// - **Stack Allocation**: Up to `MAX_PRACTICAL_DIMENSION_SIZE` facet info entries
+/// - **Stack Allocation**: Up to `MAX_PRACTICAL_DIMENSION_SIZE` facet handles
 /// - **Use Case**: Boundary analysis, facet enumeration
 /// - **Performance**: Handles cells up to 7D on stack
-/// - **Memory Efficiency**: `FacetIndex` (u8) reduces memory usage compared to `usize`
-pub type FacetInfoBuffer = SmallBuffer<(CellKey, FacetIndex), MAX_PRACTICAL_DIMENSION_SIZE>;
+/// - **Type Safety**: Uses `FacetHandle` instead of raw tuples to prevent errors
+///
+/// # Type Safety
+///
+/// This buffer uses `FacetHandle` rather than `(CellKey, FacetIndex)` tuples to:
+/// - Prevent accidental swapping of `cell_key` and `facet_index`
+/// - Make the API more self-documenting
+/// - Enable future extensions without breaking changes
+pub type FacetInfoBuffer = SmallBuffer<FacetHandle, MAX_PRACTICAL_DIMENSION_SIZE>;
 
 // =============================================================================
 // SEMANTIC SIZE CONSTANTS AND TYPE ALIASES

@@ -151,7 +151,7 @@ Before you begin, ensure you have:
 The project uses:
 
 - **Edition**: Rust 2024
-- **MSRV**: Rust 1.89.0
+- **MSRV**: Rust 1.90.0
 - **Linting**: Strict clippy pedantic mode
 - **Testing**: Standard `#[test]` with comprehensive coverage
 - **Benchmarking**: Criterion with allocation tracking
@@ -162,7 +162,7 @@ The project uses:
 
 When you enter the project directory, `rustup` will automatically:
 
-- **Install the correct Rust version** (1.89.0) if you don't have it
+- **Install the correct Rust version** (1.90.0) if you don't have it
 - **Switch to the pinned version** for this project
 - **Install required components** (clippy, rustfmt, rust-docs, rust-src)
 - **Add cross-compilation targets** for supported platforms
@@ -177,7 +177,7 @@ When you enter the project directory, `rustup` will automatically:
 **First time in the project?** You'll see:
 
 ```text
-info: syncing channel updates for '1.89.0-<your-platform>'
+info: syncing channel updates for '1.90.0-<your-platform>'
 info: downloading component 'cargo'
 info: downloading component 'clippy'
 ...

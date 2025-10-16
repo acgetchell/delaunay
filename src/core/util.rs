@@ -4,7 +4,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::core::facet::{Facet, FacetError, FacetView};
+use crate::core::facet::{FacetError, FacetView};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -95,64 +95,10 @@ pub fn make_uuid() -> Uuid {
     Uuid::new_v4()
 }
 
-/// Checks if two facets are adjacent by comparing their vertex sets.
+/// NOTE: The deprecated `facets_are_adjacent` function has been removed in Phase 3A.
 ///
-/// Two facets are considered adjacent if they share the exact same set of vertices,
-/// regardless of the order. This is a common check in triangulation algorithms to
-/// identify neighboring cells.
+/// Use [`facet_views_are_adjacent`] instead, which works with the lightweight `FacetView` API.
 ///
-/// # Arguments
-///
-/// * `facet1` - A reference to the first facet.
-/// * `facet2` - A reference to the second facet.
-///
-/// # Returns
-///
-/// `true` if the facets share the same vertices, `false` otherwise.
-///
-/// # Examples
-///
-/// ```
-/// use delaunay::core::facet::Facet;
-/// use delaunay::core::util::facets_are_adjacent;
-/// use delaunay::core::vertex::Vertex;
-/// use delaunay::core::cell::Cell;
-/// use delaunay::{cell, vertex};
-///
-/// let v1: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
-/// let v2: Vertex<f64, Option<()>, 2> = vertex!([1.0, 0.0]);
-/// let v3: Vertex<f64, Option<()>, 2> = vertex!([0.0, 1.0]);
-/// let v4: Vertex<f64, Option<()>, 2> = vertex!([1.0, 1.0]);
-///
-/// let cell1: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v1, v2, v3]);
-/// let cell2: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v2, v3, v4]);
-///
-/// let facet1 = Facet::new(cell1, v1).unwrap();
-/// let facet2 = Facet::new(cell2, v4).unwrap();
-///
-/// // These facets share vertices v2 and v3, so they are adjacent
-/// assert!(facets_are_adjacent(&facet1, &facet2));
-/// ```
-#[deprecated(
-    since = "0.5.0",
-    note = "Use facet_views_are_adjacent instead. This heavyweight implementation will be removed in v1.0.0."
-)]
-pub fn facets_are_adjacent<T, U, V, const D: usize>(
-    facet1: &Facet<T, U, V, D>,
-    facet2: &Facet<T, U, V, D>,
-) -> bool
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-{
-    use crate::core::collections::FastHashSet;
-    let vertices1: FastHashSet<_> = facet1.vertices().into_iter().collect();
-    let vertices2: FastHashSet<_> = facet2.vertices().into_iter().collect();
-    vertices1 == vertices2
-}
-
 /// Determines if two facet views are adjacent by comparing their vertices.
 ///
 /// Two facets are considered adjacent if they contain the same set of vertices.
@@ -211,7 +157,8 @@ where
 {
     use crate::core::collections::FastHashSet;
 
-    // Compare facets by their vertex UUIDs for efficiency
+    // Compare facets by their vertex UUIDs for semantic correctness
+    // This works across different TDS instances with the same coordinates
     let vertices1: FastHashSet<_> = facet1
         .vertices()?
         .map(super::vertex::Vertex::uuid)
@@ -222,6 +169,63 @@ where
         .collect();
 
     Ok(vertices1 == vertices2)
+}
+
+/// Extracts owned vertices from a `FacetView` as a `Vec<Vertex>`.
+///
+/// This is a convenience utility that creates owned copies of the facet's vertices.
+/// Since `Vertex` implements `Copy`, this operation is efficient and avoids the need
+/// for manual `.copied().collect()` boilerplate throughout the codebase.
+///
+/// # Arguments
+///
+/// * `facet_view` - The facet view to extract vertices from
+///
+/// # Returns
+///
+/// A `Result` containing a `Vec` of owned `Vertex` objects, or a `FacetError` if
+/// the vertices cannot be accessed.
+///
+/// # Errors
+///
+/// Returns `FacetError` if the facet's vertices cannot be accessed, typically
+/// due to missing cells in the triangulation data structure.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use delaunay::core::facet::FacetView;
+/// use delaunay::core::util::facet_view_to_vertices;
+/// use delaunay::core::triangulation_data_structure::Tds;
+///
+/// fn extract_vertices_example(
+///     tds: &Tds<f64, Option<()>, Option<()>, 3>,
+/// ) -> Result<(), Box<dyn std::error::Error>> {
+///     let cell_key = tds.cell_keys().next().unwrap();
+///     let facet_view = FacetView::new(tds, cell_key, 0)?;
+///     
+///     // Extract owned vertices
+///     let vertices = facet_view_to_vertices(&facet_view)?;
+///     println!("Facet has {} vertices", vertices.len());
+///     Ok(())
+/// }
+/// ```
+///
+/// # Performance
+///
+/// - Time Complexity: O(D) where D is the dimension (number of vertices in facet)
+/// - Space Complexity: O(D) for the returned vector
+/// - Uses `Copy` semantics so this is as efficient as possible for owned vertices
+pub fn facet_view_to_vertices<T, U, V, const D: usize>(
+    facet_view: &FacetView<'_, T, U, V, D>,
+) -> Result<Vec<Vertex<T, U, D>>, FacetError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+{
+    Ok(facet_view.vertices()?.copied().collect())
 }
 
 /// Generates all unique combinations of `k` items from a given slice.
@@ -391,31 +395,30 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 // FACET KEY UTILITIES
 // =============================================================================
 
-/// Derives a facet key from the facet's vertices using the TDS vertex mappings.
+/// Derives a facet key directly from vertex keys.
 ///
-/// This utility function converts the facet's vertices to vertex keys and computes
-/// the canonical facet key for lookup in facet-to-cells mappings. This is a common
-/// operation used across boundary analysis, convex hull algorithms, and insertion
-/// algorithms.
+/// Computes the canonical facet key for lookup in facet-to-cells mappings. This is useful
+/// in hot paths like visibility checking in convex hull algorithms and boundary analysis.
+///
+/// If you have `Vertex` instances instead of `VertexKey`s, obtain the keys via the TDS
+/// using the vertex's UUID (e.g., `tds.vertex_key_from_uuid(vertex.uuid())`).
 ///
 /// # Arguments
 ///
-/// * `facet_vertices` - The vertices that make up the facet
-/// * `tds` - The triangulation data structure for vertex key lookups
+/// * `facet_vertex_keys` - The vertex keys that make up the facet
 ///
 /// # Returns
 ///
-/// A `Result` containing the facet key or a `FacetError` if validation or vertex lookup fails.
+/// A `Result` containing the facet key or a `FacetError` if validation fails.
 ///
 /// # Errors
 ///
 /// Returns `FacetError::InsufficientVertices` if the vertex count doesn't equal `D`
-/// Returns `FacetError::VertexNotFound` if any vertex UUID cannot be found in the TDS
 ///
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::util::derive_facet_key_from_vertices;
+/// use delaunay::core::util::derive_facet_key_from_vertex_keys;
 /// use delaunay::core::triangulation_data_structure::Tds;
 /// use delaunay::vertex;
 ///
@@ -427,63 +430,163 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 /// ];
 /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 ///
-/// // Get facet vertices from a cell - must be exactly D vertices for a D-dimensional triangulation
+/// // Get facet vertex keys from a cell - no need to materialize Vertex objects
 /// if let Some(cell) = tds.cells().values().next() {
-///     let facet_vertices: Vec<_> = cell.vertices().iter().skip(1).cloned().collect(); // Skip 1 vertex to get D vertices
-///     assert_eq!(facet_vertices.len(), 3); // For 3D triangulation, facet has 3 vertices
-///     let facet_key = derive_facet_key_from_vertices(&facet_vertices, &tds).unwrap();
+///     let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect(); // Skip 1 vertex to get D vertices
+///     assert_eq!(facet_vertex_keys.len(), 3); // For 3D triangulation, facet has 3 vertices
+///     let facet_key = derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys).unwrap();
 ///     println!("Facet key: {}", facet_key);
 /// }
 /// ```
 ///
 /// # Performance
 ///
-/// - Time Complexity: O(V) where V is the number of vertices in the facet
-/// - Space Complexity: O(V) for the temporary vertex keys buffer
-/// - Uses stack-allocated `SmallBuffer` for performance on hot paths
-pub fn derive_facet_key_from_vertices<T, U, V, const D: usize>(
-    facet_vertices: &[crate::core::vertex::Vertex<T, U, D>],
-    tds: &crate::core::triangulation_data_structure::Tds<T, U, V, D>,
+/// - Time Complexity: O(D log D) where D is the facet dimension (for sorting vertex keys)
+/// - Space Complexity: O(D) for the temporary sorted buffer (stack-allocated via `SmallBuffer`)
+/// - Improves cache locality by working only with compact `VertexKey` types
+///
+/// # See Also
+///
+/// - [`crate::core::facet::facet_key_from_vertices`] - Low-level function that computes the hash from keys
+pub fn derive_facet_key_from_vertex_keys<T, U, V, const D: usize>(
+    facet_vertex_keys: &[crate::core::triangulation_data_structure::VertexKey],
 ) -> Result<u64, crate::core::facet::FacetError>
+where
+    T: crate::geometry::traits::coordinate::CoordinateScalar,
+    U: crate::core::traits::data_type::DataType,
+    V: crate::core::traits::data_type::DataType,
+{
+    use crate::core::facet::facet_key_from_vertices;
+
+    // Validate that the number of vertex keys matches the expected dimension
+    // In a D-dimensional triangulation, a facet should have exactly D vertices
+    if facet_vertex_keys.len() != D {
+        return Err(crate::core::facet::FacetError::InsufficientVertices {
+            expected: D,
+            actual: facet_vertex_keys.len(),
+            dimension: D,
+        });
+    }
+
+    // Directly compute the facet key from vertex keys
+    // facet_key_from_vertices handles the sorting internally
+    Ok(facet_key_from_vertices(facet_vertex_keys))
+}
+
+/// Verifies facet index consistency between two neighboring cells.
+///
+/// This function checks that a shared facet computed from both cells' perspectives
+/// produces the same facet key, which is critical for catching subtle neighbor
+/// assignment errors in triangulation algorithms.
+///
+/// # Arguments
+///
+/// * `tds` - The triangulation data structure
+/// * `cell1_key` - Key of the first cell
+/// * `cell2_key` - Key of the second (neighboring) cell
+/// * `facet_idx` - Index of the facet in cell1 that should match a facet in cell2
+///
+/// # Returns
+///
+/// `Ok(true)` if a matching facet is found in cell2 with the same facet key.
+/// `Ok(false)` if no matching facet is found.
+/// `Err(FacetError)` if there's an error accessing cell or facet data.
+///
+/// # Errors
+///
+/// Returns `FacetError` if:
+/// - Either cell cannot be found in the TDS
+/// - Facet views cannot be created from the cells
+/// - Facet vertices cannot be accessed
+/// - The facet index is out of bounds
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use delaunay::core::util::verify_facet_index_consistency;
+/// use delaunay::core::triangulation_data_structure::Tds;
+///
+/// fn validate_neighbor_consistency(
+///     tds: &Tds<f64, Option<()>, Option<()>, 3>,
+/// ) -> Result<(), String> {
+///     // Get two neighboring cell keys
+///     let cell_keys: Vec<_> = tds.cell_keys().take(2).collect();
+///     if cell_keys.len() >= 2 {
+///         // Check if facet 0 of cell1 matches a facet in cell2
+///         let consistent = verify_facet_index_consistency(
+///             tds,
+///             cell_keys[0],
+///             cell_keys[1],
+///             0,
+///         )
+///         .map_err(|e| format!("Facet error: {}", e))?;
+///
+///         if consistent {
+///             println!("Facet indices are consistent");
+///             Ok(())
+///         } else {
+///             Err("No matching facet found in neighbor".to_string())
+///         }
+///     } else {
+///         Ok(())
+///     }
+/// }
+/// ```
+///
+/// # Performance
+///
+/// - Time Complexity: O(D²) where D is the dimension (iterates over facets and vertices)
+/// - Space Complexity: O(D) for temporary vertex buffers
+pub fn verify_facet_index_consistency<T, U, V, const D: usize>(
+    tds: &crate::core::triangulation_data_structure::Tds<T, U, V, D>,
+    cell1_key: crate::core::triangulation_data_structure::CellKey,
+    cell2_key: crate::core::triangulation_data_structure::CellKey,
+    facet_idx: usize,
+) -> Result<bool, crate::core::facet::FacetError>
 where
     T: crate::geometry::traits::coordinate::CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
-    use crate::core::collections::SmallBuffer;
-    use crate::core::facet::{FacetError, facet_key_from_vertex_keys};
-    use crate::core::triangulation_data_structure::VertexKey;
+    use crate::core::facet::FacetError;
 
-    // Validate that the number of vertices matches the expected dimension
-    // In a D-dimensional triangulation, a facet should have exactly D vertices
-    if facet_vertices.len() != D {
-        return Err(FacetError::InsufficientVertices {
-            expected: D,
-            actual: facet_vertices.len(),
-            dimension: D,
+    // Get both cells
+    let cell1 = tds
+        .cells()
+        .get(cell1_key)
+        .ok_or(FacetError::CellNotFoundInTriangulation)?;
+    let cell2 = tds
+        .cells()
+        .get(cell2_key)
+        .ok_or(FacetError::CellNotFoundInTriangulation)?;
+
+    // Get facet views from both cells
+    let cell1_facets = cell1.facet_views(tds, cell1_key)?;
+    let cell2_facets = cell2.facet_views(tds, cell2_key)?;
+
+    // Check facet index bounds
+    if facet_idx >= cell1_facets.len() {
+        // Use consistent error handling with proper overflow detection
+        let idx_u8 = usize_to_u8(facet_idx, cell1_facets.len())?;
+        return Err(FacetError::InvalidFacetIndex {
+            index: idx_u8,
+            facet_count: cell1_facets.len(),
         });
     }
 
-    // Compute the facet key using VertexKeys (same method as build_facet_to_cells_hashmap)
-    // Stack-allocate for performance on hot paths
-    let mut vertex_keys: SmallBuffer<
-        VertexKey,
-        { crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE },
-    > = SmallBuffer::new();
+    // Get the facet from cell1 and compute its key
+    let cell1_facet = &cell1_facets[facet_idx];
+    let cell1_key_value = cell1_facet.key()?;
 
-    for vertex in facet_vertices {
-        match tds.vertex_key_from_uuid(&vertex.uuid()) {
-            Some(key) => vertex_keys.push(key),
-            None => {
-                return Err(FacetError::VertexNotFound {
-                    uuid: vertex.uuid(),
-                });
-            }
+    // Find matching facet in cell2
+    for cell2_facet in &cell2_facets {
+        if cell1_key_value == cell2_facet.key()? {
+            return Ok(true);
         }
     }
 
-    Ok(facet_key_from_vertex_keys(&vertex_keys))
+    Ok(false) // No matching facet found
 }
 
 // =============================================================================
@@ -592,10 +695,11 @@ pub fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
 #[cfg(test)]
 mod tests {
 
-    use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::Coordinate;
+    use crate::core::facet::FacetView;
+    use crate::core::triangulation_data_structure::{Tds, VertexKey};
     use crate::vertex;
-    use uuid::Uuid;
+    use std::thread;
+    use std::time::Instant;
 
     use super::*;
 
@@ -718,197 +822,14 @@ mod tests {
     // FACET UTILITIES TESTS
     // =============================================================================
 
-    #[test]
-    #[allow(clippy::too_many_lines)]
-    #[allow(deprecated)] // Testing deprecated function during transition
-    fn test_facets_are_adjacent_multidimensional() {
-        use crate::core::{cell::Cell, facet::Facet};
-        use crate::{cell, vertex};
-
-        // Test 2D case - basic adjacency detection
-        let v1: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
-        let v2: Vertex<f64, Option<()>, 2> = vertex!([1.0, 0.0]);
-        let v3: Vertex<f64, Option<()>, 2> = vertex!([0.0, 1.0]);
-        let v4: Vertex<f64, Option<()>, 2> = vertex!([1.0, 1.0]);
-
-        let cell2d_1: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v1, v2, v3]);
-        let cell2d_2: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v2, v3, v4]);
-        let cell2d_3: Cell<f64, Option<()>, Option<()>, 2> = cell!(vec![v1, v2, v4]);
-
-        let facet2d_1 = Facet::new(cell2d_1, v1).unwrap(); // Vertices: v2, v3
-        let facet2d_2 = Facet::new(cell2d_2, v4).unwrap(); // Vertices: v2, v3
-        let facet2d_3 = Facet::new(cell2d_3, v4).unwrap(); // Vertices: v1, v2
-
-        assert!(
-            facets_are_adjacent(&facet2d_1, &facet2d_2),
-            "2D: Same vertices should be adjacent"
-        );
-        assert!(
-            !facets_are_adjacent(&facet2d_1, &facet2d_3),
-            "2D: Different vertices should not be adjacent"
-        );
-
-        // Test 3D case - cells with shared and non-shared vertices
-        let points3d_1 = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        let points3d_2 = vec![
-            Point::new([0.0, 0.0, 0.0]), // Shared
-            Point::new([1.0, 0.0, 0.0]), // Shared
-            Point::new([0.0, 1.0, 0.0]), // Shared
-            Point::new([2.0, 0.0, 0.0]), // Different
-        ];
-        let points3d_separate = vec![
-            Point::new([10.0, 10.0, 10.0]),
-            Point::new([11.0, 10.0, 10.0]),
-            Point::new([10.0, 11.0, 10.0]),
-            Point::new([10.0, 10.0, 11.0]),
-        ];
-
-        let cell3d_1: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points3d_1));
-        let cell3d_2: Cell<f64, usize, usize, 3> = cell!(Vertex::from_points(points3d_2));
-        let cell3d_separate: Cell<f64, usize, usize, 3> =
-            cell!(Vertex::from_points(points3d_separate));
-
-        let facets3d_1 = cell3d_1
-            .facets()
-            .expect("Failed to get facets from 3D cell1");
-        let facets3d_2 = cell3d_2
-            .facets()
-            .expect("Failed to get facets from 3D cell2");
-        let facets3d_separate = cell3d_separate
-            .facets()
-            .expect("Failed to get facets from separate 3D cell");
-
-        // Test that cells sharing 3 vertices have adjacent facets
-        let mut found_shared_adjacent = false;
-        for f1 in &facets3d_1 {
-            for f2 in &facets3d_2 {
-                if facets_are_adjacent(f1, f2) {
-                    found_shared_adjacent = true;
-                    break;
-                }
-            }
-            if found_shared_adjacent {
-                break;
-            }
-        }
-        assert!(
-            found_shared_adjacent,
-            "3D: Cells sharing vertices should have adjacent facets"
-        );
-
-        // Test that completely separate cells have no adjacent facets
-        let mut found_separate_adjacent = false;
-        for f1 in &facets3d_1 {
-            for f_sep in &facets3d_separate {
-                if facets_are_adjacent(f1, f_sep) {
-                    found_separate_adjacent = true;
-                    break;
-                }
-            }
-            if found_separate_adjacent {
-                break;
-            }
-        }
-        assert!(
-            !found_separate_adjacent,
-            "3D: Separate cells should not have adjacent facets"
-        );
-
-        // Test 4D case - verify higher dimensional functionality
-        let points4d_1 = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0]),
-        ];
-        let points4d_2 = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]), // Shared
-            Point::new([1.0, 0.0, 0.0, 0.0]), // Shared
-            Point::new([0.0, 1.0, 0.0, 0.0]), // Shared
-            Point::new([0.0, 0.0, 1.0, 0.0]), // Shared
-            Point::new([2.0, 0.0, 0.0, 0.0]), // Different
-        ];
-
-        let cell4d_1: Cell<f64, usize, usize, 4> = cell!(Vertex::from_points(points4d_1));
-        let cell4d_2: Cell<f64, usize, usize, 4> = cell!(Vertex::from_points(points4d_2));
-
-        let facets4d_1 = cell4d_1
-            .facets()
-            .expect("Failed to get facets from 4D cell1");
-        let facets4d_2 = cell4d_2
-            .facets()
-            .expect("Failed to get facets from 4D cell2");
-
-        // Test 4D adjacency
-        let mut found_4d_adjacent = false;
-        for f1 in &facets4d_1 {
-            for f2 in &facets4d_2 {
-                if facets_are_adjacent(f1, f2) {
-                    found_4d_adjacent = true;
-                    break;
-                }
-            }
-            if found_4d_adjacent {
-                break;
-            }
-        }
-        assert!(
-            found_4d_adjacent,
-            "4D: Cells sharing 4 vertices should have adjacent facets"
-        );
-
-        // Test 5D case - maximum practical dimension
-        let points5d_1 = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
-        ];
-        let points5d_2 = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]), // Shared
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]), // Shared
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]), // Shared
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]), // Shared
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]), // Shared
-            Point::new([3.0, 0.0, 0.0, 0.0, 0.0]), // Different
-        ];
-
-        let cell5d_1: Cell<f64, usize, usize, 5> = cell!(Vertex::from_points(points5d_1));
-        let cell5d_2: Cell<f64, usize, usize, 5> = cell!(Vertex::from_points(points5d_2));
-
-        let facets5d_1 = cell5d_1
-            .facets()
-            .expect("Failed to get facets from 5D cell1");
-        let facets5d_2 = cell5d_2
-            .facets()
-            .expect("Failed to get facets from 5D cell2");
-
-        // Test 5D adjacency
-        let mut found_5d_adjacent = false;
-        for f1 in &facets5d_1 {
-            for f2 in &facets5d_2 {
-                if facets_are_adjacent(f1, f2) {
-                    found_5d_adjacent = true;
-                    break;
-                }
-            }
-            if found_5d_adjacent {
-                break;
-            }
-        }
-        assert!(
-            found_5d_adjacent,
-            "5D: Cells sharing 5 vertices should have adjacent facets"
-        );
-    }
+    // Phase 3A: Test removed - was testing deprecated Facet type and facets() method
+    // This functionality is now comprehensively tested in:
+    // - test_facet_views_are_adjacent_comprehensive() (3D)
+    // - test_facet_views_are_adjacent_2d_cases() (2D)
+    // - test_facet_views_are_adjacent_1d_cases() (1D)
+    // - test_facet_views_are_adjacent_4d_cases() (4D)
+    // - test_facet_views_are_adjacent_5d_cases() (5D)
+    // The modern facet_views_are_adjacent function works with lightweight FacetView API
 
     // =============================================================================
     // HASH UTILITIES TESTS
@@ -1132,10 +1053,10 @@ mod tests {
         assert_eq!(result, expected_result);
 
         // Test with various allocation patterns
-        let (vec_result, _) = measure_with_result(|| vec![1, 2, 3, 4, 5]);
+        let (vec_result, _alloc_info) = measure_with_result(|| vec![1, 2, 3, 4, 5]);
         assert_eq!(vec_result, vec![1, 2, 3, 4, 5]);
 
-        let (string_result, _) = measure_with_result(|| {
+        let (string_result, _alloc_info) = measure_with_result(|| {
             let mut s = String::new();
             s.push_str("Hello, ");
             s.push_str("World!");
@@ -1143,7 +1064,7 @@ mod tests {
         });
         assert_eq!(string_result, "Hello, World!");
 
-        let (complex_result, _) = measure_with_result(|| {
+        let (complex_result, _alloc_info) = measure_with_result(|| {
             let mut data: Vec<String> = Vec::new();
             for i in 0..5 {
                 data.push(format!("Item {i}"));
@@ -1153,17 +1074,17 @@ mod tests {
         assert_eq!(complex_result, 5);
 
         // Test various return types
-        let (tuple_result, _) = measure_with_result(|| ("hello", 42));
+        let (tuple_result, _alloc_info) = measure_with_result(|| ("hello", 42));
         assert_eq!(tuple_result, ("hello", 42));
 
-        let (option_result, _) = measure_with_result(|| Some("value"));
+        let (option_result, _alloc_info) = measure_with_result(|| Some("value"));
         assert_eq!(option_result, Some("value"));
 
-        let (result_result, _) = measure_with_result(|| Ok::<i32, &str>(123));
+        let (result_result, _alloc_info) = measure_with_result(|| Ok::<i32, &str>(123));
         assert_eq!(result_result, Ok(123));
 
         // Test no-panic behavior
-        let (sum_result, _) = measure_with_result(|| {
+        let (sum_result, _alloc_info) = measure_with_result(|| {
             let data = [1, 2, 3];
             data.iter().sum::<i32>()
         });
@@ -1214,12 +1135,8 @@ mod tests {
     #[test]
     #[allow(clippy::cognitive_complexity)]
     #[allow(clippy::too_many_lines)]
-    fn test_derive_facet_key_from_vertices_comprehensive() {
-        use crate::core::triangulation_data_structure::Tds;
-        use crate::core::vertex::{Vertex, VertexBuilder};
-        use uuid::Uuid;
-
-        println!("Testing derive_facet_key_from_vertices comprehensively");
+    fn test_derive_facet_key_from_vertex_keys_comprehensive() {
+        println!("Testing derive_facet_key_from_vertex_keys comprehensively");
 
         // Create a triangulation
         let vertices = vec![
@@ -1233,31 +1150,37 @@ mod tests {
         // Test 1: Basic functionality - successful key derivation
         println!("  Testing basic functionality...");
         let cell = tds.cells().values().next().unwrap();
-        let facet_vertices: Vec<_> = cell.vertices().iter().skip(1).copied().collect();
+        let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect();
 
-        let result = derive_facet_key_from_vertices(&facet_vertices, &tds);
+        let result =
+            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys);
         assert!(
             result.is_ok(),
-            "Facet key derivation should succeed for valid vertices"
+            "Facet key derivation should succeed for valid vertex keys"
         );
 
         let facet_key = result.unwrap();
         println!("    Derived facet key: {facet_key}");
 
-        // Test deterministic behavior - same vertices produce same key
-        let result2 = derive_facet_key_from_vertices(&facet_vertices, &tds);
+        // Test deterministic behavior - same vertex keys produce same key
+        let result2 =
+            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys);
         assert!(result2.is_ok(), "Second derivation should also succeed");
         assert_eq!(
             facet_key,
             result2.unwrap(),
-            "Same vertices should produce same facet key"
+            "Same vertex keys should produce same facet key"
         );
 
-        // Test different vertices produce different keys
-        let all_vertices = cell.vertices();
-        let different_facet_vertices: Vec<_> = all_vertices.iter().take(3).copied().collect();
-        if different_facet_vertices.len() == 3 && different_facet_vertices != facet_vertices {
-            let result3 = derive_facet_key_from_vertices(&different_facet_vertices, &tds);
+        // Test different vertex keys produce different keys
+        let all_vertex_keys = cell.vertices();
+        let different_facet_vertex_keys: Vec<_> = all_vertex_keys.iter().take(3).copied().collect();
+        if different_facet_vertex_keys.len() == 3
+            && different_facet_vertex_keys != facet_vertex_keys
+        {
+            let result3 = derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(
+                &different_facet_vertex_keys,
+            );
             assert!(
                 result3.is_ok(),
                 "Different facet key derivation should succeed"
@@ -1265,7 +1188,7 @@ mod tests {
             let different_facet_key = result3.unwrap();
             assert_ne!(
                 facet_key, different_facet_key,
-                "Different vertices should produce different facet keys"
+                "Different vertex keys should produce different facet keys"
             );
             println!("    Different facet key: {different_facet_key}");
         }
@@ -1273,12 +1196,13 @@ mod tests {
         // Test 2: Error cases
         println!("  Testing error handling...");
 
-        // Wrong vertex count
-        let single_vertex = vec![vertices[0]];
-        let result_count = derive_facet_key_from_vertices(&single_vertex, &tds);
+        // Wrong vertex key count
+        let single_key: Vec<VertexKey> = vec![facet_vertex_keys[0]];
+        let result_count =
+            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&single_key);
         assert!(
             result_count.is_err(),
-            "Should return error for wrong vertex count"
+            "Should return error for wrong vertex key count"
         );
         if let Err(error) = result_count {
             match error {
@@ -1287,20 +1211,21 @@ mod tests {
                     actual,
                     dimension,
                 } => {
-                    assert_eq!(expected, 3, "Expected 3 vertices for 3D");
-                    assert_eq!(actual, 1, "Got 1 vertex");
+                    assert_eq!(expected, 3, "Expected 3 vertex keys for 3D");
+                    assert_eq!(actual, 1, "Got 1 vertex key");
                     assert_eq!(dimension, 3, "Dimension should be 3");
                 }
                 _ => panic!("Expected InsufficientVertices error, got: {error:?}"),
             }
         }
 
-        // Empty vertices
-        let empty_vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![];
-        let result_empty = derive_facet_key_from_vertices(&empty_vertices, &tds);
+        // Empty vertex keys
+        let empty_keys: Vec<VertexKey> = vec![];
+        let result_empty =
+            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&empty_keys);
         assert!(
             result_empty.is_err(),
-            "Empty vertices should fail validation"
+            "Empty vertex keys should fail validation"
         );
         if let Err(error) = result_empty {
             match error {
@@ -1309,38 +1234,15 @@ mod tests {
                     actual,
                     dimension,
                 } => {
-                    assert_eq!(expected, 3, "Expected 3 vertices for 3D");
-                    assert_eq!(actual, 0, "Got 0 vertices");
+                    assert_eq!(expected, 3, "Expected 3 vertex keys for 3D");
+                    assert_eq!(actual, 0, "Got 0 vertex keys");
                     assert_eq!(dimension, 3, "Dimension should be 3");
                 }
                 _ => {
-                    panic!("Expected InsufficientVertices error for empty vertices, got: {error:?}")
+                    panic!(
+                        "Expected InsufficientVertices error for empty vertex keys, got: {error:?}"
+                    )
                 }
-            }
-        }
-
-        // Vertex not found in TDS
-        let invalid_uuid = Uuid::new_v4();
-        let mut invalid_vertex = VertexBuilder::default()
-            .point(crate::geometry::point::Point::new([99.0, 99.0, 99.0]))
-            .build()
-            .expect("Failed to create test vertex");
-        invalid_vertex
-            .set_uuid(invalid_uuid)
-            .expect("Failed to set UUID");
-        let invalid_vertices = vec![invalid_vertex, invalid_vertex, invalid_vertex];
-
-        let result_invalid = derive_facet_key_from_vertices(&invalid_vertices, &tds);
-        assert!(
-            result_invalid.is_err(),
-            "Should return error for vertex not found in TDS"
-        );
-        if let Err(error) = result_invalid {
-            match error {
-                crate::core::facet::FacetError::VertexNotFound { uuid } => {
-                    assert_eq!(uuid, invalid_uuid, "Error should contain the correct UUID");
-                }
-                _ => panic!("Expected VertexNotFound error, got: {error:?}"),
             }
         }
 
@@ -1353,17 +1255,20 @@ mod tests {
         let mut keys_tested = 0;
 
         for cell in tds.cells().values() {
-            let cell_vertices = cell.vertices();
-            for skip_vertex_idx in 0..cell_vertices.len() {
-                let facet_vertices: Vec<_> = cell_vertices
+            let cell_vertex_keys = cell.vertices();
+            for skip_vertex_idx in 0..cell_vertex_keys.len() {
+                let facet_vertex_keys: Vec<_> = cell_vertex_keys
                     .iter()
                     .enumerate()
                     .filter(|(i, _)| *i != skip_vertex_idx)
-                    .map(|(_, v)| *v)
+                    .map(|(_, &vk)| vk)
                     .collect();
 
-                if !facet_vertices.is_empty() {
-                    let key_result = derive_facet_key_from_vertices(&facet_vertices, &tds);
+                if !facet_vertex_keys.is_empty() {
+                    let key_result =
+                        derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(
+                            &facet_vertex_keys,
+                        );
                     if let Ok(derived_key) = key_result {
                         keys_tested += 1;
                         if cache.contains_key(&derived_key) {
@@ -1385,8 +1290,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_comprehensive() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         // Test 1: Adjacent facets in 3D (tetrahedra sharing a triangular face)
         println!("Test 1: Adjacent facets in 3D");
 
@@ -1451,8 +1354,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_2d_cases() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test 2D facet adjacency");
 
         // Create two 2D triangles that share an edge (2 vertices)
@@ -1502,8 +1403,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_1d_cases() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test 1D facet adjacency");
 
         // In 1D, cells are edges and facets are vertices (0D)
@@ -1553,8 +1452,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_edge_cases() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test facet adjacency edge cases");
 
         // Test with minimal triangulation (single tetrahedron)
@@ -1594,9 +1491,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_performance() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-        use std::time::Instant;
-
         println!("Test facet adjacency performance");
 
         // Create a moderately complex case to test performance
@@ -1635,8 +1529,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_different_geometries() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test facet adjacency with different geometries");
 
         // Create vertices with different coordinates to ensure different UUIDs
@@ -1674,8 +1566,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_uuid_based_comparison() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test that adjacency is purely UUID-based");
 
         // Create identical geometry in separate TDS instances
@@ -1723,8 +1613,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_4d_cases() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test 4D facet adjacency");
 
         // Create two 4D simplices (5-vertices each) that share a 3D facet (4 vertices)
@@ -1776,8 +1664,6 @@ mod tests {
 
     #[test]
     fn test_facet_views_are_adjacent_5d_cases() {
-        use crate::core::{facet::FacetView, triangulation_data_structure::Tds};
-
         println!("Test 5D facet adjacency");
 
         // Create two 5D simplices (6-vertices each) that share a 4D facet (5 vertices)
@@ -1854,8 +1740,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_conversion_comprehensive() {
-        use super::usize_to_u8;
-
         // Test successful conversions
         assert_eq!(usize_to_u8(0, 4), Ok(0));
         assert_eq!(usize_to_u8(1, 4), Ok(1));
@@ -1895,8 +1779,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_boundary_cases() {
-        use super::usize_to_u8;
-
         // Test all valid u8 values
         for i in 0u8..=255 {
             let result = usize_to_u8(i as usize, 256);
@@ -1925,8 +1807,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_error_consistency() {
-        use super::usize_to_u8;
-
         // Test that all out-of-range values produce consistent errors
         let test_cases = [
             (256, 100),
@@ -1955,8 +1835,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_edge_values() {
-        use super::usize_to_u8;
-
         // Test edge cases around u8::MAX
         assert_eq!(usize_to_u8(254, 300), Ok(254));
         assert_eq!(usize_to_u8(255, 300), Ok(255));
@@ -1981,8 +1859,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_deterministic_behavior() {
-        use super::usize_to_u8;
-
         // Test that same inputs produce same results
         for i in 0..10 {
             let result1 = usize_to_u8(i, 20);
@@ -2003,9 +1879,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_performance_characteristics() {
-        use super::usize_to_u8;
-        use std::time::Instant;
-
         // Test that the function is fast for valid conversions
         let start = Instant::now();
         for i in 0..1000 {
@@ -2028,11 +1901,9 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_memory_efficiency() {
-        use super::usize_to_u8;
-
         // Test that the function doesn't allocate memory unnecessarily
         // This is a behavioral test - the function should use stack allocation only
-        let (result, _) = measure_with_result(|| {
+        let (result, _alloc_info) = measure_with_result(|| {
             let mut results = Vec::new();
             for i in 0..100 {
                 results.push(usize_to_u8(i, 200));
@@ -2052,8 +1923,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_error_message_quality() {
-        use super::usize_to_u8;
-
         // Test that error messages contain useful information
         let result = usize_to_u8(300, 42);
         assert!(result.is_err());
@@ -2084,9 +1953,6 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_thread_safety() {
-        use super::usize_to_u8;
-        use std::thread;
-
         // Test that the function works correctly in multi-threaded context
         let handles: Vec<_> = (0..4)
             .map(|thread_id| {

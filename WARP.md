@@ -54,14 +54,14 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 #### Import Organization (AI Assistant Guidance)
 
-- **USE COMPREHENSIVE**: `uv run ruff check scripts/ --fix` (recommended - covers all rules)
-- **IMPORT-ONLY** (if needed): `uv run ruff check scripts/ --select F401,F811,I,PLC0415 --fix`
+- **USE COMPREHENSIVE**: `uvx ruff check scripts/ --fix` (recommended - covers all rules)
+- **IMPORT-ONLY** (if needed): `uvx ruff check scripts/ --select F401,F811,I,PLC0415 --fix`
   - **F401**: Unused imports
   - **F811**: Redefined/duplicate imports  
   - **I**: Import ordering issues
   - **PLC0415**: Local imports that should be at top-level
 - **PREFERRED**: Use comprehensive check over manual cleanup - let ruff handle all fixes
-- **FOLLOW UP** with `uv run ruff format scripts/` and `uv run pytest` to ensure correctness
+- **FOLLOW UP** with `uvx ruff format scripts/` and `uv run pytest` to ensure correctness
 - **NOTE**: The main "Code Quality Checks" section uses the comprehensive approach
 
 #### Shell Script Formatting (AI Assistant Guidance)
@@ -174,25 +174,21 @@ just examples      # Run all examples (validates functionality)
 # Coverage analysis
 just coverage      # Generate HTML coverage report (excludes benchmarks/examples/integration tests)
 # View coverage report: open target/tarpaulin/tarpaulin-report.html
-
-# Benchmarks
-just bench-compile # Compile benchmarks without running
-just bench         # Run all benchmarks
 ```
 
 ### Performance and Benchmarks
 
 ```bash
+# Benchmark execution
+just bench-compile # Compile benchmarks without running
+just bench         # Run all benchmarks
+
 # Performance baseline management
 just bench-baseline  # Generate performance baseline
 
 # Performance comparison
 just bench-compare   # Compare against baseline
 just bench-dev       # Development mode (10x faster for iteration)
-
-# Benchmark execution
-just bench-compile   # Compile benchmarks without running
-just bench          # Run all benchmarks
 ```
 
 ### Changelog Management
@@ -287,6 +283,10 @@ These items are incomplete and may require future attention:
   - `coordinate_conversion_errors.rs` - Error handling tests for extreme values, NaN, infinity
   - `test_cavity_boundary_error.rs` - Reproduction tests for cavity boundary facet errors
   - `allocation_api.rs` - Memory allocation profiling (use `just test-allocation`)
+- **Property-Based Tests**: Uses proptest for randomized property verification:
+  - `proptest_predicates.rs` - Geometric predicate properties (orientation, insphere)
+  - `proptest_point.rs` - Point data structure properties (hashing, equality, serialization)
+  - `proptest_triangulation.rs` - Triangulation invariants (neighbor symmetry, validity)
 
 ### Testing Best Practices
 
@@ -294,6 +294,12 @@ These items are incomplete and may require future attention:
 - **Verbose Output**: Use `just test-debug` for debugging tests that produce detailed analysis output
 - **Test Structure**: Convert CLI-style applications in tests to proper `#[test]` functions for better integration with cargo test framework
 - **Memory Testing**: Use `just test-allocation` for allocation profiling tests
+- **Property-Based Testing**: Use proptest for verifying mathematical/structural properties:
+  - Write properties that must hold universally (e.g., symmetry, transitivity)
+  - Focus on geometric invariants and data structure consistency
+  - Property tests discover edge cases through randomized inputs
+  - Configure test iterations via `PROPTEST_CASES=N` environment variable (default: 256)
+  - Property test failures include shrunk minimal failing cases for debugging
 
 ### Test-Driven Development (TDD) Guidelines
 

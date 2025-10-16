@@ -124,7 +124,7 @@ fn analyze_triangulation(tds: &Tds<f64, (), (), 3>) {
             }
 
             // Count neighbors
-            if let Some(neighbors) = &cell.neighbors {
+            if let Some(neighbors) = cell.neighbors() {
                 total_neighbors += neighbors.len();
             }
 
@@ -132,7 +132,7 @@ fn analyze_triangulation(tds: &Tds<f64, (), (), 3>) {
             if shown < 3 {
                 println!("    Cell {cell_key:?}:");
                 println!("      Vertices: {}", cell.vertices().len());
-                if let Some(neighbors) = &cell.neighbors {
+                if let Some(neighbors) = cell.neighbors() {
                     println!("      Neighbors: {}", neighbors.len());
                 }
                 shown += 1;

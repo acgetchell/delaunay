@@ -937,6 +937,977 @@ in the codebase and integrates cleanly with existing validation and testing fram
 
 The result will be a more robust, validated, and theoretically sound triangulation library that serves both practical applications and computational geometry research.
 
+---
+
+## Euler-Poincaré Validation: Detailed Implementation Plan
+
+### Status and Metadata
+
+**Status:** Design Phase - Implementation Deferred  
+**Created:** 2025-10-16  
+**Target Release:** v0.6.0  
+**Priority:** High  
+**Complexity:** High  
+
+### Motivation and Scope
+
+The **Euler-Poincaré characteristic** (χ) is a fundamental topological invariant that provides a global consistency check for
+simplicial complexes. Unlike local checks (neighbor symmetry, facet sharing), the Euler characteristic catches:
+
+- **Global topological corruption**: Errors that preserve local invariants but violate global topology
+- **Combinatorial inconsistencies**: Wrong counts of simplices at different dimensions
+- **Degenerate configurations**: Non-manifold or disconnected components
+- **Construction errors**: Bugs in insertion algorithms that create invalid topology
+
+**Why this matters for Delaunay triangulations:**
+
+- Finite Delaunay triangulations in R^D form a **topological ball** (homeomorphic to D-ball) with χ = 1
+- The boundary (convex hull) forms a **(D-1)-sphere** with χ depending on dimension parity
+- Violations indicate serious algorithmic failures that may not be caught by local checks
+
+### Background: Mathematical Foundations
+
+#### Definitions
+
+**Simplicial Complex:** A collection of simplices closed under taking faces.
+
+**k-simplex:** The convex hull of k+1 affinely independent points:
+
+- 0-simplex: vertex
+- 1-simplex: edge
+- 2-simplex: triangle
+- 3-simplex: tetrahedron
+- D-simplex: D-dimensional cell with D+1 vertices
+
+**f-vector:** (f₀, f₁, ..., f_D) where f_k = number of k-simplices
+
+**Boundary:** A (D-1)-facet shared by exactly one D-cell (not two)
+
+**Closed complex:** No boundary (every facet shared by exactly 2 cells)
+
+#### The Euler-Poincaré Formula
+
+For a finite simplicial complex:
+
+```text
+χ = Σ(k=0 to D) (-1)^k · f_k
+  = f₀ - f₁ + f₂ - f₃ + ... ± f_D
+```
+
+**Examples:**
+
+- 2D triangle: χ = 3 - 3 + 1 = 1 (with boundary)
+- 3D tetrahedron: χ = 4 - 6 + 4 - 1 = 1 (with boundary)
+- 4D simplex: χ = 5 - 10 + 10 - 5 + 1 = 1 (with boundary)
+
+#### Expected χ by Topological Classification
+
+| Topology | Has Boundary | χ (General) | χ (D=2) | χ (D=3) | χ (D=4) |
+|----------|--------------|-------------|---------|---------|----------|
+| **Empty** | N/A | 0 | 0 | 0 | 0 |
+| **Single Simplex** | Yes | 1 | 1 | 1 | 1 |
+| **Ball (D-ball)** | Yes | 1 | 1 | 1 | 1 |
+| **Closed Sphere (S^D)** | No | 1+(-1)^D | 0 | 2 | 0 |
+| **Unknown/Invalid** | Varies | N/A | ? | ? | ? |
+
+**Key insight:** Finite Delaunay triangulations of point sets in R^D are topological D-balls, so **χ should always equal 1**.
+
+### Design Overview: New Topology Module
+
+#### Module Location and Structure
+
+```text
+src/core/topology.rs          # New module for topological invariants
+```
+
+**Rationale:** Place in `core` (not `geometry`) because topology is about combinatorial structure, not geometric predicates.
+
+#### Public API Design
+
+```rust
+// src/core/topology.rs
+
+use crate::core::{
+    collections::{FastHashSet, SmallBuffer, MAX_PRACTICAL_DIMENSION_SIZE},
+    triangulation_data_structure::Tds,
+    traits::data_type::DataType,
+};
+use crate::geometry::traits::coordinate::CoordinateScalar;
+use thiserror::Error;
+
+/// Counts of k-simplices for all dimensions 0 ≤ k ≤ D
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SimplexCounts {
+    /// by_dim[k] = f_k = number of k-simplices
+    pub by_dim: Vec<usize>,
+}
+
+impl SimplexCounts {
+    /// Get the number of k-simplices
+    #[inline]
+    pub fn count(&self, k: usize) -> usize {
+        self.by_dim.get(k).copied().unwrap_or(0)
+    }
+    
+    /// The dimension (maximum k where f_k > 0)
+    pub fn dimension(&self) -> usize {
+        self.by_dim.len().saturating_sub(1)
+    }
+}
+
+/// Topological classification of a triangulation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopologyClassification {
+    /// Empty triangulation (no cells)
+    Empty,
+    
+    /// Single D-simplex
+    SingleSimplex(usize),
+    
+    /// Topological D-ball (has boundary)
+    Ball(usize),
+    
+    /// Closed D-sphere (no boundary)
+    ClosedSphere(usize),
+    
+    /// Cannot determine or doesn't fit known categories
+    Unknown,
+}
+
+/// Result of Euler characteristic validation
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopologyCheckResult {
+    /// Computed Euler characteristic
+    pub chi: isize,
+    
+    /// Expected χ based on classification (None if unknown)
+    pub expected: Option<isize>,
+    
+    /// Topological classification
+    pub classification: TopologyClassification,
+    
+    /// Full simplex counts
+    pub counts: SimplexCounts,
+    
+    /// Diagnostic notes or warnings
+    pub notes: Vec<String>,
+}
+
+impl TopologyCheckResult {
+    /// Whether χ matches expectation
+    pub fn is_valid(&self) -> bool {
+        self.expected.map_or(true, |exp| self.chi == exp)
+    }
+}
+
+/// Errors in topology computation or validation
+#[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TopologyError {
+    #[error("Failed to count simplices: {0}")]
+    Counting(String),
+    
+    #[error("Failed to classify triangulation: {0}")]
+    Classification(String),
+    
+    #[error("Euler characteristic mismatch: computed χ={chi}, expected χ={expected} for {classification:?}")]
+    Mismatch {
+        chi: isize,
+        expected: isize,
+        classification: TopologyClassification,
+    },
+}
+
+// ========================================================================
+// Primary Public API Functions
+// ========================================================================
+
+/// Count all k-simplices in the triangulation
+pub fn count_simplices<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<SimplexCounts, TopologyError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // Implementation deferred - see counting strategy below
+    unimplemented!("count_simplices: to be implemented")
+}
+
+/// Compute Euler characteristic from simplex counts
+pub fn euler_characteristic(counts: &SimplexCounts) -> isize {
+    counts
+        .by_dim
+        .iter()
+        .enumerate()
+        .map(|(k, &f_k)| {
+            let sign = if k % 2 == 0 { 1 } else { -1 };
+            sign * (f_k as isize)
+        })
+        .sum()
+}
+
+/// Classify the triangulation topologically
+pub fn classify_triangulation<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<TopologyClassification, TopologyError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // Implementation deferred - see classification strategy below
+    unimplemented!("classify_triangulation: to be implemented")
+}
+
+/// Get expected χ for a topological classification
+pub fn expected_chi_for(classification: &TopologyClassification) -> Option<isize> {
+    match classification {
+        TopologyClassification::Empty => Some(0),
+        TopologyClassification::SingleSimplex(_) => Some(1),
+        TopologyClassification::Ball(_) => Some(1),
+        TopologyClassification::ClosedSphere(d) => {
+            // χ(S^D) = 1 + (-1)^D
+            Some(1 + if d % 2 == 0 { -1 } else { 1 })
+        }
+        TopologyClassification::Unknown => None,
+    }
+}
+
+/// Validate triangulation Euler characteristic
+pub fn validate_triangulation_euler<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<TopologyCheckResult, TopologyError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let counts = count_simplices(tds)?;
+    let chi = euler_characteristic(&counts);
+    let classification = classify_triangulation(tds)?;
+    let expected = expected_chi_for(&classification);
+    
+    let mut notes = Vec::new();
+    
+    // Add diagnostic notes
+    if let Some(exp) = expected {
+        if chi != exp {
+            notes.push(format!(
+                "Euler characteristic mismatch: computed {}, expected {}",
+                chi, exp
+            ));
+        }
+    }
+    
+    Ok(TopologyCheckResult {
+        chi,
+        expected,
+        classification,
+        counts,
+        notes,
+    })
+}
+
+/// Validate that a single D-cell has χ = 1
+///
+/// A single D-simplex with D+1 vertices has:
+/// f_k = C(D+1, k+1) and χ = 1 for all D ≥ 0
+pub fn validate_cell_euler<T, U, V, const D: usize>(
+    _cell: &crate::core::cell::Cell<T, U, V, D>,
+) -> Result<isize, TopologyError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // For a single simplex, we can compute χ combinatorially
+    // without enumerating all sub-simplices
+    // χ = Σ(k=0 to D) (-1)^k · C(D+1, k+1) = 1
+    Ok(1)
+}
+```
+
+### Efficient k-Simplex Counting Strategy
+
+#### Overview
+
+- **f₀ (vertices):** `tds.number_of_vertices()` — O(1) from stored count
+- **f_D (cells):** `tds.number_of_cells()` — O(1) from stored count
+- **f_{D-1} (facets):** `tds.build_facet_to_cells_map().len()` — O(N·D²) where N = cells
+- **Intermediate k (0 < k < D-1):** Enumerate combinations from each cell — O(N · Σ C(D+1, k+1))
+
+#### Detailed Algorithm
+
+```rust
+fn count_simplices<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<SimplexCounts, TopologyError> {
+    let mut by_dim = vec![0usize; D + 1];
+    
+    // f₀: vertices
+    by_dim[0] = tds.number_of_vertices();
+    
+    // f_D: D-cells
+    by_dim[D] = tds.number_of_cells();
+    
+    // Handle empty triangulation
+    if by_dim[D] == 0 {
+        return Ok(SimplexCounts { by_dim });
+    }
+    
+    // f_{D-1}: (D-1)-facets
+    by_dim[D - 1] = tds
+        .build_facet_to_cells_map()
+        .map_err(|e| TopologyError::Counting(format!("Failed to build facet map: {}", e)))?
+        .len();
+    
+    // Intermediate dimensions: enumerate combinations
+    for k in 1..D - 1 {
+        by_dim[k] = count_k_simplices(tds, k)?;
+    }
+    
+    Ok(SimplexCounts { by_dim })
+}
+
+fn count_k_simplices<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    k: usize,
+) -> Result<usize, TopologyError> {
+    use crate::core::util::generate_combinations;
+    
+    let mut k_simplex_set = FastHashSet::default();
+    let simplex_size = k + 1; // k-simplex has k+1 vertices
+    
+    for (_cell_key, cell) in tds.cells() {
+        let vertices = cell.vertices();
+        
+        // Generate all C(D+1, k+1) combinations of size k+1
+        for combo in generate_combinations(vertices.len(), simplex_size) {
+            // Extract vertex keys for this k-simplex
+            let mut k_simplex: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                combo.iter().map(|&idx| vertices[idx]).collect();
+            
+            // Canonicalize by sorting for deduplication
+            k_simplex.sort();
+            
+            k_simplex_set.insert(k_simplex);
+        }
+    }
+    
+    Ok(k_simplex_set.len())
+}
+```
+
+**Complexity Analysis:**
+
+- For D=3: count 1-simplices (edges) and 2-simplices (faces)
+- For each cell: C(4,2)=6 edges, C(4,3)=4 faces
+- Total: O(N·6) + O(N·4) = O(N) with small constants
+- For D=4: C(5,2)=10 edges, C(5,3)=10 faces, C(5,4)=5 facets
+- Still practical for D ≤ 5 used in this project
+
+**Implementation Notes:**
+
+- Use `SmallBuffer` to avoid heap allocations for D ≤ 7
+- Canonicalize via sorting (orientation-agnostic)
+- Fast path for single simplex: f_k = C(D+1, k+1) computed directly
+- Empty triangulation: all f_k = 0, χ = 0
+
+### Classification Strategy
+
+```rust
+fn classify_triangulation<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<TopologyClassification, TopologyError> {
+    let num_cells = tds.number_of_cells();
+    
+    // Empty triangulation
+    if num_cells == 0 {
+        return Ok(TopologyClassification::Empty);
+    }
+    
+    // Single simplex
+    if num_cells == 1 {
+        return Ok(TopologyClassification::SingleSimplex(D));
+    }
+    
+    // Check boundary
+    let has_boundary = tds
+        .number_of_boundary_facets()
+        .map_err(|e| TopologyError::Classification(format!("Failed to count boundary: {}", e)))?
+        > 0;
+    
+    if has_boundary {
+        // Has boundary → topological ball
+        Ok(TopologyClassification::Ball(D))
+    } else {
+        // No boundary → closed manifold (assume sphere for now)
+        Ok(TopologyClassification::ClosedSphere(D))
+    }
+}
+```
+
+**Caveats:**
+
+- Finite Delaunay triangulations almost always have boundary (convex hull)
+- Closed manifolds would require special construction (e.g., periodic boundary conditions)
+- Non-manifold or disconnected components → classify as `Unknown` (future enhancement)
+
+**Configuration Option (Future):**
+
+```rust
+pub struct TopologyConfig {
+    pub assume_ball: bool,  // Assume triangulation is a ball
+    pub assume_closed: bool, // Assume closed manifold
+}
+```
+
+### Integration Points
+
+#### 1. Tds Integration
+
+```rust
+// Addition to src/core/triangulation_data_structure.rs
+
+impl<T, U, V, const D: usize> Tds<T, U, V, D>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    /// Validate the Euler characteristic of this triangulation
+    pub fn validate_euler_characteristic(&self) -> Result<TopologyCheckResult, TopologyError> {
+        crate::core::topology::validate_triangulation_euler(self)
+    }
+    
+    /// Get the Euler characteristic (convenience wrapper)
+    pub fn euler_characteristic(&self) -> Result<isize, TopologyError> {
+        let counts = crate::core::topology::count_simplices(self)?;
+        Ok(crate::core::topology::euler_characteristic(&counts))
+    }
+}
+```
+
+#### 2. is_valid() Integration
+
+```rust
+// Modified Tds::is_valid() method
+
+pub fn is_valid(&self) -> Result<(), TriangulationValidationError>
+where
+    [T; D]: DeserializeOwned + Serialize + Sized,
+{
+    // Existing validation steps
+    self.validate_vertex_mappings()?;
+    self.validate_cell_mappings()?;
+    self.validate_no_duplicate_cells()?;
+    
+    for (cell_id, cell) in &self.cells {
+        cell.is_valid().map_err(|source| {
+            // ... existing error mapping ...
+        })?;
+    }
+    
+    self.validate_facet_sharing()?;
+    self.validate_neighbors_internal()?;
+    
+    // NEW: Euler characteristic validation
+    // Only run if enabled via feature flag or debug mode
+    #[cfg(any(debug_assertions, feature = "topology-validation"))]
+    {
+        let topology_result = self.validate_euler_characteristic()
+            .map_err(|e| TriangulationValidationError::Topology {
+                message: format!("Euler characteristic validation failed: {}", e),
+            })?;
+        
+        if !topology_result.is_valid() {
+            return Err(TriangulationValidationError::EulerCharacteristic {
+                computed: topology_result.chi,
+                expected: topology_result.expected.unwrap_or(0),
+                classification: format!("{:?}", topology_result.classification),
+                notes: topology_result.notes.join("; "),
+            });
+        }
+    }
+    
+    Ok(())
+}
+```
+
+#### 3. TriangulationValidationError Extension
+
+```rust
+// Addition to TriangulationValidationError enum
+
+#[derive(Debug, Error, PartialEq)]
+pub enum TriangulationValidationError {
+    // ... existing variants ...
+    
+    #[error("Euler characteristic mismatch: computed {computed}, expected {expected} for {classification}. Notes: {notes}")]
+    EulerCharacteristic {
+        computed: isize,
+        expected: isize,
+        classification: String,
+        notes: String,
+    },
+    
+    #[error("Topology validation failed: {message}")]
+    Topology { message: String },
+}
+```
+
+### Design Contract: gather_boundary_facet_info Integration
+
+**Critical Design Requirement:** When `gather_boundary_facet_info` compiles boundary statistics, it **must** also perform Euler characteristic validation.
+
+#### Extended BoundaryFacetInfo Structure
+
+```rust
+// Addition to BoundaryFacetInfo or new BoundaryReport struct
+
+pub struct BoundaryReport {
+    /// Per-facet information (existing)
+    pub facet_infos: Vec<BoundaryFacetInfo>,
+    
+    /// Euler characteristic validation
+    pub chi: isize,
+    pub expected_chi: Option<isize>,
+    pub classification: TopologyClassification,
+    pub euler_ok: bool,
+    
+    /// Diagnostic notes
+    pub notes: Vec<String>,
+}
+```
+
+#### Implementation Checklist
+
+- [ ] Update `gather_boundary_facet_info` to return `BoundaryReport` instead of `Vec<BoundaryFacetInfo>`
+- [ ] Call `topology::count_simplices` within the function
+- [ ] Call `topology::classify_triangulation` to get classification
+- [ ] Compute χ and compare with expected value
+- [ ] Populate `BoundaryReport` with all diagnostic information
+- [ ] Update all call sites to handle new return type
+- [ ] Update debug printouts to show χ and validation status
+
+**Example Integration:**
+
+```rust
+fn gather_boundary_facet_info(
+    tds: &Tds<T, U, V, D>,
+    boundary_facet_handles: &[FacetHandle],
+) -> Result<BoundaryReport, InsertionError> {
+    // Existing facet info gathering
+    let facet_infos = /* ... existing code ... */;
+    
+    // NEW: Topology validation
+    let counts = topology::count_simplices(tds)
+        .map_err(|e| /* ... */)?;
+    let chi = topology::euler_characteristic(&counts);
+    let classification = topology::classify_triangulation(tds)
+        .map_err(|e| /* ... */)?;
+    let expected_chi = topology::expected_chi_for(&classification);
+    let euler_ok = expected_chi.map_or(true, |exp| chi == exp);
+    
+    let mut notes = Vec::new();
+    if !euler_ok {
+        notes.push(format!(
+            "WARNING: Euler characteristic mismatch (χ={}, expected={})",
+            chi, expected_chi.unwrap_or(0)
+        ));
+    }
+    
+    Ok(BoundaryReport {
+        facet_infos,
+        chi,
+        expected_chi,
+        classification,
+        euler_ok,
+        notes,
+    })
+}
+```
+
+### Testing Strategy
+
+#### 1. Unit Tests by Dimension
+
+**2D Tests:**
+
+```rust
+#[test]
+fn test_2d_single_triangle_euler() {
+    // V=3, E=3, F=1 → χ = 3-3+1 = 1
+    let vertices = vec![
+        vertex!([0.0, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.5, 1.0]),
+    ];
+    let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    
+    let result = tds.validate_euler_characteristic().unwrap();
+    assert_eq!(result.chi, 1);
+    assert_eq!(result.classification, TopologyClassification::Ball(2));
+    assert!(result.is_valid());
+}
+
+#[test]
+fn test_2d_two_triangles_euler() {
+    // Two triangles sharing an edge
+    let vertices = vec![
+        vertex!([0.0, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.5, 1.0]),
+        vertex!([0.5, -1.0]),
+    ];
+    let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    
+    let result = tds.validate_euler_characteristic().unwrap();
+    assert_eq!(result.chi, 1); // Still a topological disk
+    assert!(result.is_valid());
+}
+```
+
+**3D Tests:**
+
+```rust
+#[test]
+fn test_3d_tetrahedron_euler() {
+    // Single tetrahedron: V=4, E=6, F=4, C=1 → χ = 4-6+4-1 = 1
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    
+    let result = tds.validate_euler_characteristic().unwrap();
+    assert_eq!(result.chi, 1);
+    assert_eq!(result.classification, TopologyClassification::Ball(3));
+}
+
+#[test]
+fn test_3d_with_interior_vertex() {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+        vertex!([0.25, 0.25, 0.25]), // Interior
+    ];
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    
+    // Should still be χ = 1 (topological ball)
+    assert_eq!(tds.euler_characteristic().unwrap(), 1);
+}
+```
+
+**4D Tests:**
+
+```rust
+#[test]
+fn test_4d_simplex_euler() {
+    // V=5, E=10, F=10, Tet=5, Cell=1
+    // χ = 5 - 10 + 10 - 5 + 1 = 1
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 0.0, 1.0]),
+    ];
+    let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
+    
+    let result = tds.validate_euler_characteristic().unwrap();
+    assert_eq!(result.chi, 1);
+}
+```
+
+#### 2. Edge Cases
+
+```rust
+#[test]
+fn test_empty_triangulation_euler() {
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+    
+    let result = tds.validate_euler_characteristic().unwrap();
+    assert_eq!(result.chi, 0);
+    assert_eq!(result.classification, TopologyClassification::Empty);
+}
+
+#[test]
+fn test_single_vertex_euler() {
+    let vertices = vec![vertex!([0.0, 0.0, 0.0])];
+    // This may fail to create a valid triangulation
+    // Document expected behavior
+}
+```
+
+#### 3. Property-Based Tests
+
+```rust
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn test_random_2d_always_chi_one(
+        points in prop::collection::vec(
+            prop::array::uniform2(-100.0f64..100.0),
+            4..50
+        )
+    ) {
+        let vertices: Vec<_> = points.into_iter()
+            .map(|p| vertex!(p))
+            .collect();
+        
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices) {
+            let chi = tds.euler_characteristic().unwrap();
+            prop_assert_eq!(chi, 1, "2D triangulation should have χ=1");
+        }
+    }
+    
+    #[test]
+    fn test_random_3d_always_chi_one(
+        points in prop::collection::vec(
+            prop::array::uniform3(-100.0f64..100.0),
+            5..50
+        )
+    ) {
+        let vertices: Vec<_> = points.into_iter()
+            .map(|p| vertex!(p))
+            .collect();
+        
+        if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+            let chi = tds.euler_characteristic().unwrap();
+            prop_assert_eq!(chi, 1, "3D triangulation should have χ=1");
+        }
+    }
+}
+```
+
+#### 4. gather_boundary_facet_info Integration Test
+
+```rust
+#[test]
+fn test_boundary_report_includes_euler() {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    
+    // Test that boundary report includes topology info
+    // (requires gather_boundary_facet_info update)
+    let boundary_facets = tds.boundary_facets().unwrap().collect::<Vec<_>>();
+    let report = gather_boundary_facet_info(&tds, &boundary_facets).unwrap();
+    
+    assert_eq!(report.chi, 1);
+    assert_eq!(report.expected_chi, Some(1));
+    assert!(report.euler_ok);
+    assert_eq!(report.classification, TopologyClassification::Ball(3));
+}
+```
+
+### Academic References
+
+#### Primary References
+
+1. **Hatcher, A.** *Algebraic Topology.* Cambridge University Press, 2002.
+   - **Chapter 2:** Euler characteristic fundamentals, CW complexes
+   - **Relevance:** Theoretical foundation for χ in simplicial complexes
+   - **URL:** <https://pi.math.cornell.edu/~hatcher/AT/ATpage.html>
+
+2. **Munkres, J. R.** *Elements of Algebraic Topology.* Addison-Wesley, 1984.
+   - **Chapter 1:** Simplicial complexes and chain complexes
+   - **Relevance:** Combinatorial definition of Euler characteristic
+   - **ISBN:** 978-0201045864
+
+3. **Edelsbrunner, H., Harer, J. L.** *Computational Topology: An Introduction.* American Mathematical Society, 2010.
+   - **Chapter 3:** Simplicial homology and Euler characteristic
+   - **Relevance:** Computational algorithms for topology
+   - **URL:** <https://www.maths.ed.ac.uk/~v1ranick/papers/edelcomp.pdf>
+   - **ISBN:** 978-0821849255
+
+4. **Zomorodian, A.** *Topology for Computing.* Cambridge University Press, 2005.
+   - **Chapter 2:** Combinatorial structures and invariants
+   - **Relevance:** Persistent homology and computational topology
+   - **ISBN:** 978-0521136099
+
+#### Combinatorics References
+
+5. **Ziegler, G. M.** *Lectures on Polytopes.* Springer, 1995.
+   - **Chapter 8:** Euler characteristic of convex polytopes
+   - **Relevance:** f-vectors and combinatorics of simplices
+   - **ISBN:** 978-0387943657
+
+6. **Stillwell, J.** *Euler's Gem: The Polyhedron Formula and the Birth of Topology.* Princeton University Press, 2010.
+   - **Historical context** for Euler's formula V - E + F = 2
+   - **Relevance:** Intuition and historical development
+   - **ISBN:** 978-0691154572
+
+#### Practical References
+
+7. **CGAL Documentation:** Triangulations and Topological Invariants
+   - **Section:** 3D Triangulation Validation
+   - **Relevance:** Practical implementation in computational geometry library
+   - **URL:** <https://doc.cgal.org/latest/Triangulation_3/index.html>
+
+#### Reference Verification Checklist
+
+- [ ] Verify all ISBN numbers and DOIs are correct
+- [ ] Ensure URLs are stable (prefer DOIs or archive.org links)
+- [ ] Cross-check formulas with multiple sources
+- [ ] Document specific sections/chapters referenced
+- [ ] Add bibtex entries for LaTeX documentation (future)
+
+### Documentation Updates Checklist
+
+#### Before Publishing to crates.io
+
+- [ ] Update `docs/code_organization.md`:
+  - Add `src/core/topology.rs` under "Core Modules"
+  - Brief description: "Topological invariants (Euler characteristic) and validation"
+
+- [ ] Update crate-level documentation (`src/lib.rs`):
+  - Add section on Euler-Poincaré validation
+  - Document how to enable/disable via feature flags
+  - Explain performance implications
+
+- [ ] Create examples:
+  - `examples/euler_characteristic_2d.rs`
+  - `examples/euler_characteristic_3d.rs`
+  - `examples/topology_validation.rs`
+
+- [ ] Update README.md:
+  - Add "Topological Validation" to features list
+  - Mention Euler characteristic checking
+
+- [ ] Create user guide:
+  - `docs/topology_validation_guide.md`
+  - When to use, performance considerations, interpretation of results
+
+### Implementation Workflow
+
+#### Development Sequence
+
+1. **Create module skeleton**
+
+   ```bash
+   touch src/core/topology.rs
+   # Update src/core/mod.rs to include pub mod topology;
+   ```
+
+2. **Implement core types** (SimplexCounts, TopologyClassification, etc.)
+   - No dependencies yet
+   - Focus on data structures
+
+3. **Implement counting functions**
+   - Start with `count_simplices`
+   - Test individually before integration
+
+4. **Implement classification**
+   - `classify_triangulation`
+   - `expected_chi_for`
+
+5. **Implement validation**
+   - `validate_triangulation_euler`
+   - `validate_cell_euler`
+
+6. **Integrate with Tds**
+   - Add methods to `Tds`
+   - Update `is_valid()`
+   - Add `TriangulationValidationError` variants
+
+7. **Update gather_boundary_facet_info**
+   - Create `BoundaryReport` struct
+   - Add topology fields
+   - Update all call sites
+
+8. **Write tests**
+   - Unit tests per dimension
+   - Edge cases
+   - Property-based tests
+   - Integration tests
+
+9. **Documentation**
+   - API docs
+   - Examples
+   - User guide
+   - Update organizational docs
+
+10. **Quality checks**
+
+    ```bash
+    just fmt
+    just clippy
+    just test
+    just doc-check
+    just examples
+    just coverage
+    ```
+
+#### Feature Flag Strategy
+
+Initially implement behind feature flag:
+
+```toml
+# Cargo.toml
+[features]
+default = []
+topology-validation = []  # Enable Euler characteristic validation in is_valid()
+```
+
+Gate expensive checks:
+
+```rust
+#[cfg(any(debug_assertions, feature = "topology-validation"))]
+{
+    // Euler characteristic validation
+}
+```
+
+After validation in production, consider making it default.
+
+### Limitations and Future Work
+
+#### Current Limitations
+
+- **Classification heuristic** assumes simple topologies (ball or sphere)
+- **No detection** of non-manifold boundaries
+- **No handling** of disconnected components
+- **Performance** not optimized for very large triangulations (>100K cells)
+
+#### Future Enhancements
+
+- **Caching:** Cache simplex counts, invalidate on modification
+- **Incremental:** Update counts incrementally during insertion/deletion
+- **Advanced classification:** Detect genus, handle non-manifolds
+- **Homology:** Compute full homology groups (Betti numbers)
+- **Parallel:** Parallelize k-simplex enumeration for large meshes
+
+### Summary
+
+This design provides a **comprehensive, mathematically sound, and practically implementable** approach to Euler-Poincaré validation
+for the Delaunay triangulation library. The plan:
+
+- ✅ Captures all API signatures precisely
+- ✅ Documents counting algorithms with complexity analysis
+- ✅ Integrates with existing validation framework
+- ✅ Includes gather_boundary_facet_info contract
+- ✅ Provides comprehensive testing strategy
+- ✅ Lists academic references for verification
+- ✅ Outlines implementation workflow
+- ✅ Notes limitations and future work
+
+**Next Action:** Begin implementation following the workflow above, starting with module skeleton and core data structures.
+
+---
+
 <citations>
 <document>
     <document_type>RULE</document_type>

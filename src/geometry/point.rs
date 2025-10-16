@@ -67,8 +67,45 @@ where
     coords: [T; D],
 }
 
-/// Implementation of the `Coordinate` trait for Point
-/// This allows Point to be used as a coordinate type directly
+// =============================================================================
+// PUBLIC API
+// =============================================================================
+
+impl<T, const D: usize> Point<T, D>
+where
+    T: CoordinateScalar,
+{
+    /// Returns a reference to the point's coordinates as an array.
+    ///
+    /// This method provides read-only access to the internal coordinate array
+    /// without copying. For owned coordinates, use the `Into<[T; D]>` trait
+    /// implementation via `.into()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    ///
+    /// let point = Point::new([1.0, 2.0, 3.0]);
+    /// let coords = point.coords();
+    /// assert_eq!(coords, &[1.0, 2.0, 3.0]);
+    ///
+    /// // For owned coordinates, use Into
+    /// let owned_coords: [f64; 3] = point.into();
+    /// assert_eq!(owned_coords, [1.0, 2.0, 3.0]);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn coords(&self) -> &[T; D] {
+        &self.coords
+    }
+}
+
+// =============================================================================
+// TRAIT IMPLEMENTATIONS
+// =============================================================================
+
 impl<T, const D: usize> Coordinate<T, D> for Point<T, D>
 where
     T: CoordinateScalar,
@@ -490,6 +527,58 @@ mod tests {
 
         // Human readable output for cargo test -- --nocapture
         println!("Point: {:?} is {}-D", point, point.dim());
+    }
+
+    #[test]
+    fn point_coords() {
+        // Test coords() method provides read-only access
+        let point = Point::new([1.0, 2.0, 3.0]);
+        let coords_ref = point.coords();
+        assert_relative_eq!(
+            coords_ref.as_slice(),
+            [1.0, 2.0, 3.0].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // Test that it returns a reference (not copying)
+        assert_eq!(coords_ref.len(), 3);
+        assert_relative_eq!(coords_ref[0], 1.0, epsilon = 1e-9);
+        assert_relative_eq!(coords_ref[1], 2.0, epsilon = 1e-9);
+        assert_relative_eq!(coords_ref[2], 3.0, epsilon = 1e-9);
+
+        // Test with different dimensions
+        let point_2d = Point::new([5.5, -2.5]);
+        assert_relative_eq!(
+            point_2d.coords().as_slice(),
+            [5.5, -2.5].as_slice(),
+            epsilon = 1e-9
+        );
+
+        let point_4d = Point::new([1.0, 2.0, 3.0, 4.0]);
+        assert_relative_eq!(
+            point_4d.coords().as_slice(),
+            [1.0, 2.0, 3.0, 4.0].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // Test with f32
+        let point_f32 = Point::new([1.0f32, 2.0f32, 3.0f32]);
+        assert_relative_eq!(
+            point_f32.coords().as_slice(),
+            [1.0f32, 2.0f32, 3.0f32].as_slice(),
+            epsilon = 1e-6
+        );
+
+        // Test with 5D
+        let point_5d = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+        assert_relative_eq!(
+            point_5d.coords().as_slice(),
+            [1.0, 2.0, 3.0, 4.0, 5.0].as_slice(),
+            epsilon = 1e-9
+        );
+        assert_eq!(point_5d.coords().len(), 5);
+
+        println!("coords() provides efficient read-only access to coordinates");
     }
 
     #[test]

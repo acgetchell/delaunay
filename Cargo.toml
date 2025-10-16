@@ -20,7 +20,7 @@ allocation-counter = { version = "0.8.1", optional = true }  # for memory profil
 anyhow = "1.0.100"
 arc-swap = "1.7.1"
 approx = "0.5.1"
-clap = { version = "4.5.48", features = ["derive"] }
+clap = { version = "4.5.49", features = ["derive"] }
 derive_builder = "0.20.1"
 rustc-hash = "2.1.1"  # Fast non-cryptographic hashing for performance
 smallvec = { version = "1.13.2", features = ["serde"] }  # Stack allocation for small collections
@@ -39,6 +39,7 @@ uuid = { version = "1.18.1", features = ["v4", "serde"] }
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
 pastey = "0.1"
+proptest = "1.4"
 
 [features]
 count-allocations = ["allocation-counter"]
