@@ -291,7 +291,9 @@ where
             // 2. Extracting VertexKeys from TDS and adding keyed variant of create_cell_*
             //    to avoid cloning Vertex objects (more complex API change)
             let mut extracted_facet_data = Vec::with_capacity(boundary_handles.len());
-            for &(cell_key, facet_index) in &boundary_handles {
+            for handle in &boundary_handles {
+                let cell_key = handle.cell_key();
+                let facet_index = handle.facet_index();
                 let facet_view = crate::core::facet::FacetView::new(tds, cell_key, facet_index)
                             .map_err(|_| InsertionError::TriangulationState(
                                 TriangulationValidationError::InconsistentDataStructure {
@@ -487,14 +489,14 @@ where
     ///
     /// # Important Usage Note
     ///
-    /// The returned handles `(CellKey, u8)` are only valid while the referenced cells exist.
-    /// If you plan to remove cells (e.g., via `remove_bad_cells`), you MUST convert the handles
-    /// to Facet objects BEFORE removing the cells, otherwise the handles become invalid.
+    /// The returned `FacetHandle` are only valid while the referenced cells exist.
+    /// If you plan to remove cells (e.g., via `remove_bad_cells`), you MUST extract the facet
+    /// data BEFORE removing the cells, otherwise the handles become invalid.
     fn find_cavity_boundary_facets_with_robust_fallback(
         &self,
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
-    ) -> Result<Vec<(CellKey, u8)>, InsertionError>
+    ) -> Result<Vec<FacetHandle>, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
@@ -526,7 +528,7 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<(CellKey, u8)>, InsertionError>
+    ) -> Result<Vec<FacetHandle>, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
@@ -546,10 +548,8 @@ where
                     .boundary_facets()
                     .map_err(InsertionError::TriangulationState)?
                 {
-                    let cell_key = fv.cell_key();
-                    let facet_index = fv.facet_index();
                     if self.is_facet_visible_from_vertex_robust(tds, &fv, vertex) {
-                        handles.push((cell_key, facet_index));
+                        handles.push(FacetHandle::new(fv.cell_key(), fv.facet_index()));
                     }
                 }
                 Ok(handles)
@@ -620,7 +620,7 @@ where
 
     /// Find cavity boundary facets with enhanced error handling, returning lightweight handles.
     ///
-    /// This optimized version returns `(CellKey, u8)` handles instead of heavyweight Facet objects,
+    /// This optimized version returns `FacetHandle` instead of heavyweight facet data,
     /// providing significant performance improvements for boundary facet detection.
     ///
     /// Made `pub(crate)` for testing purposes.
@@ -628,7 +628,7 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
-    ) -> Result<Vec<(CellKey, u8)>, InsertionError> {
+    ) -> Result<Vec<FacetHandle>, InsertionError> {
         let mut boundary_handles = Vec::new();
 
         if bad_cells.is_empty() {
@@ -685,7 +685,7 @@ where
                         let total_count = sharing_cells.len();
 
                         if Self::is_cavity_boundary_facet(bad_count, total_count) {
-                            boundary_handles.push((bad_cell_key, facet_idx_u8));
+                            boundary_handles.push(FacetHandle::new(bad_cell_key, facet_idx_u8));
                         }
                     }
                 }
@@ -803,7 +803,7 @@ where
     #[allow(clippy::unused_self)]
     const fn validate_boundary_facets(
         &self,
-        boundary_facets: &[(CellKey, u8)],
+        boundary_facets: &[FacetHandle],
         bad_cell_count: usize,
     ) -> Result<(), InsertionError> {
         if boundary_facets.is_empty() && bad_cell_count > 0 {
@@ -1006,7 +1006,7 @@ where
         &self,
         vertex: &Vertex<T, U, D>,
     ) -> Result<Vertex<T, U, D>, crate::core::vertex::VertexValidationError> {
-        let mut coords: [T; D] = vertex.point().to_array();
+        let mut coords: [T; D] = *vertex.point().coords();
         let perturbation = self.predicate_config.perturbation_scale;
 
         // Apply small random perturbation to first coordinate
@@ -1043,7 +1043,7 @@ where
         // 4. Previous insertions in this area required fallback strategies
 
         // For this example, use a simple heuristic based on coordinate magnitude
-        let coords: [T; D] = vertex.point().to_array();
+        let coords: [T; D] = *vertex.point().coords();
         let has_small_coords = coords.iter().any(|&c| {
             let c_f64: f64 = c.into();
             c_f64.abs() < 1e-10
@@ -1347,7 +1347,7 @@ mod tests {
             debug_println!(
                 "\nAfter adding vertex {} ({:?}):",
                 i + 1,
-                new_vertex.point().to_array()
+                new_vertex.point().coords()
             );
             debug_println!("  Insertions: {after_insertions}");
             debug_println!("  Cells created: {_after_created}");
@@ -1403,7 +1403,7 @@ mod tests {
         let interior_vertex = vertex!([0.5, 0.5, 0.5]);
         debug_println!(
             "Inserting interior vertex {:?}",
-            interior_vertex.point().to_array()
+            interior_vertex.point().coords()
         );
 
         let interior_result = algorithm.insert_vertex(&mut tds, interior_vertex);
@@ -1443,7 +1443,7 @@ mod tests {
         let exterior_vertex = vertex!([2.0, 0.0, 0.0]);
         debug_println!(
             "Inserting exterior vertex {:?}",
-            exterior_vertex.point().to_array()
+            exterior_vertex.point().coords()
         );
 
         // Let's debug what happens step by step
@@ -1478,8 +1478,10 @@ mod tests {
             match &visible_result {
                 Ok(facet_handles) => {
                     println!("Found {} visible boundary facets", facet_handles.len());
-                    for (i, &(cell_key, facet_index)) in facet_handles.iter().enumerate() {
-                        if let Ok(facet_view) = FacetView::new(&tds, cell_key, facet_index) {
+                    for (i, handle) in facet_handles.iter().enumerate() {
+                        if let Ok(facet_view) =
+                            FacetView::new(&tds, handle.cell_key(), handle.facet_index())
+                        {
                             let vertex_count = facet_view
                                 .vertices()
                                 .map(std::iter::Iterator::count)
@@ -1550,7 +1552,7 @@ mod tests {
             println!(
                 "\nInserting vertex {} at {:?}",
                 i + 1,
-                test_vertex.point().to_array()
+                test_vertex.point().coords()
             );
 
             let cells_before = tds.number_of_cells();
@@ -1697,7 +1699,7 @@ mod tests {
             println!(
                 "\nInserting exterior vertex {} at {:?}",
                 i + 1,
-                test_vertex.point().to_array()
+                test_vertex.point().coords()
             );
 
             let cells_before = tds.number_of_cells();
@@ -1834,8 +1836,8 @@ mod tests {
 
                 // The newly inserted vertex should be in the triangulation
                 let vertex_found = tds.vertices().values().any(|v| {
-                    let v_coords: [f64; 3] = v.point().to_array();
-                    let test_coords: [f64; 3] = test_vertex.point().to_array();
+                    let v_coords = v.point().coords();
+                    let test_coords = test_vertex.point().coords();
                     v_coords
                         .iter()
                         .zip(test_coords.iter())
@@ -1882,7 +1884,7 @@ mod tests {
             println!(
                 "\nInsertion {} at {:?}",
                 i + 1,
-                test_vertex.point().to_array()
+                test_vertex.point().coords()
             );
 
             // Insert vertex
@@ -2018,8 +2020,8 @@ mod tests {
         assert!(result.is_ok(), "Normal vertex perturbation should succeed");
 
         if let Ok(perturbed) = result {
-            let original_coords = normal_vertex.point().to_array();
-            let perturbed_coords = perturbed.point().to_array();
+            let original_coords = normal_vertex.point().coords();
+            let perturbed_coords = perturbed.point().coords();
 
             // First coordinate should be different (perturbed)
             assert_abs_diff_ne!(
@@ -2063,7 +2065,7 @@ mod tests {
         match extreme_result {
             Ok(perturbed) => {
                 // If it succeeds, all coordinates must be finite
-                let coords = perturbed.point().to_array();
+                let coords = perturbed.point().coords();
                 assert!(
                     coords.iter().all(|&c| c.is_finite()),
                     "All coordinates in successful perturbation must be finite"
@@ -2090,7 +2092,7 @@ mod tests {
         // This should handle the edge case gracefully
         match edge_result {
             Ok(perturbed) => {
-                let coords = perturbed.point().to_array();
+                let coords = perturbed.point().coords();
                 assert!(
                     coords.iter().all(|&c| c.is_finite()),
                     "Edge case perturbation result must have finite coordinates"
@@ -2468,7 +2470,7 @@ mod tests {
         let perturb_result = algorithm.create_perturbed_vertex(&zero_vertex);
         match perturb_result {
             Ok(perturbed) => {
-                let coords = perturbed.point().to_array();
+                let coords = perturbed.point().coords();
                 assert!(
                     coords.iter().any(|&x| x != 0.0),
                     "Perturbation should change at least one coordinate"
@@ -3073,7 +3075,7 @@ mod tests {
         let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Test with empty boundary facets but non-zero bad cell count (should error)
-        let empty_handles: Vec<(CellKey, u8)> = vec![];
+        let empty_handles: Vec<FacetHandle> = vec![];
         let result = algorithm.validate_boundary_facets(&empty_handles, 3);
         assert!(
             result.is_err(),
@@ -3098,9 +3100,9 @@ mod tests {
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
         let boundary_facets = tds.boundary_facets().unwrap();
 
-        // Collect lightweight boundary facet handles (CellKey, u8)
-        let boundary_handles: Vec<(CellKey, u8)> = boundary_facets
-            .map(|fv| (fv.cell_key(), fv.facet_index()))
+        // Collect lightweight boundary facet handles
+        let boundary_handles: Vec<FacetHandle> = boundary_facets
+            .map(|fv| FacetHandle::new(fv.cell_key(), fv.facet_index()))
             .collect();
 
         let result = algorithm.validate_boundary_facets(&boundary_handles, 1);
@@ -3393,8 +3395,10 @@ mod tests {
                 // Should find boundary facets for valid bad cells
 
                 // Verify all returned facet handles are valid
-                for &(cell_key, facet_index) in &boundary_facet_handles {
-                    if let Ok(facet_view) = FacetView::new(&tds, cell_key, facet_index) {
+                for handle in &boundary_facet_handles {
+                    if let Ok(facet_view) =
+                        FacetView::new(&tds, handle.cell_key(), handle.facet_index())
+                    {
                         let vertex_count = facet_view
                             .vertices()
                             .map(std::iter::Iterator::count)
@@ -3609,14 +3613,16 @@ mod tests {
                 );
                 // Should find some visible facets for exterior point
                 if !visible_facet_handles.is_empty() {
-                    for (cell_key, facet_index) in &visible_facet_handles {
+                    for handle in &visible_facet_handles {
                         assert!(
-                            tds.cells().get(*cell_key).is_some(),
-                            "Cell key {cell_key:?} should exist in TDS"
+                            tds.cells().get(handle.cell_key()).is_some(),
+                            "Cell key {:?} should exist in TDS",
+                            handle.cell_key()
                         );
                         assert!(
-                            *facet_index < 4, // 3D tetrahedra have 4 facets
-                            "Facet index {facet_index} should be valid for 3D cell"
+                            handle.facet_index() < 4, // 3D tetrahedra have 4 facets
+                            "Facet index {} should be valid for 3D cell",
+                            handle.facet_index()
                         );
                     }
                 }
@@ -4115,10 +4121,7 @@ mod tests {
 
         // Create interior vertex
         let interior_vertex = vertex!([0.5, 0.5, 0.5]);
-        debug_println!(
-            "\nInterior vertex: {:?}",
-            interior_vertex.point().to_array()
-        );
+        debug_println!("\nInterior vertex: {:?}", interior_vertex.point().coords());
 
         // Create algorithm and test bad cell detection
         let mut algorithm = RobustBowyerWatson::new();
@@ -4156,9 +4159,10 @@ mod tests {
 
         // Verify we can create FacetView from these handles and get vertices
         debug_println!("\n  Verifying FacetView creation from handles:");
-        for (i, &(cell_key, facet_index)) in boundary_handles.iter().enumerate() {
-            let facet_view = crate::core::facet::FacetView::new(&tds, cell_key, facet_index)
-                .expect("FacetView::new should succeed");
+        for (i, handle) in boundary_handles.iter().enumerate() {
+            let facet_view =
+                crate::core::facet::FacetView::new(&tds, handle.cell_key(), handle.facet_index())
+                    .expect("FacetView::new should succeed");
 
             let vertex_iter = facet_view
                 .vertices()

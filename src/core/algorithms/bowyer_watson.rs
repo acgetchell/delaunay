@@ -403,7 +403,7 @@ mod tests {
         let interior_vertex = vertex!([0.5, 0.5, 0.5]);
         println!(
             "\nInserting interior vertex at {:?}...",
-            interior_vertex.point().to_array()
+            interior_vertex.point().coords()
         );
 
         match algorithm.insert_vertex(&mut tds, interior_vertex) {
@@ -498,7 +498,7 @@ mod tests {
         {
             eprintln!("Input Points:");
             for (i, point) in points.iter().enumerate() {
-                eprintln!("  {}: {:?}", i, point.to_array());
+                eprintln!("  {}: {:?}", i, point.coords());
             }
         }
 
@@ -519,12 +519,12 @@ mod tests {
         {
             eprintln!("\n=== CELL ANALYSIS ===");
             for (i, cell) in tds.cells().values().enumerate() {
-                let vertex_coords: Vec<[f64; 3]> = cell
+                let vertex_coords: Vec<&[f64; 3]> = cell
                     .vertices()
                     .iter()
                     .map(|vk| {
                         let v = &tds.vertices()[*vk];
-                        v.point().to_array()
+                        v.point().coords()
                     })
                     .collect();
                 eprintln!("Cell {i}: {vertex_coords:?}");
@@ -758,7 +758,7 @@ mod tests {
         // Now add one point outside the tetrahedron - this should trigger Bowyer-Watson
         println!("\nStep 2: Add one point outside the tetrahedron");
         let new_point = Point::new([0.5, 0.5, 2.0]); // Far above the tetrahedron
-        println!("Adding point: {:?}", new_point.to_array());
+        println!("Adding point: {:?}", new_point.coords());
 
         points.push(new_point);
         let all_vertices = Vertex::from_points(points);
@@ -851,12 +851,12 @@ mod tests {
         println!("Bad cells found: {} cells", bad_cells.len());
         for &cell_key in &bad_cells {
             if let Some(cell) = tds.cells().get(cell_key) {
-                let coords: Vec<[f64; 3]> = cell
+                let coords: Vec<&[f64; 3]> = cell
                     .vertices()
                     .iter()
                     .map(|vk| {
                         let v = &tds.vertices()[*vk];
-                        v.point().to_array()
+                        v.point().coords()
                     })
                     .collect();
                 #[cfg(debug_assertions)]

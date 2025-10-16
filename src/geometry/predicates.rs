@@ -10,9 +10,7 @@ use std::iter::Sum;
 
 use crate::core::cell::CellValidationError;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar,
-};
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use crate::geometry::util::{
     circumcenter, circumradius_with_center, hypot, safe_coords_to_f64, safe_scalar_to_f64,
     squared_norm,
@@ -225,7 +223,7 @@ where
 
     // Calculate distance using hypot for numerical stability
     let point_coords: [T; D] = (&test_point).into();
-    let circumcenter_coords: [T; D] = circumcenter.to_array();
+    let circumcenter_coords: [T; D] = *circumcenter.coords();
 
     let mut diff_coords = [T::zero(); D];
     for i in 0..D {
@@ -619,6 +617,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::traits::coordinate::Coordinate;
     use crate::prelude::circumradius;
     use approx::assert_relative_eq;
 

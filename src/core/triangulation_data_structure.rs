@@ -4915,10 +4915,10 @@ mod tests {
             }
 
             // Verify all expected coordinates are present
-            let points: Vec<[f64; 3]> = tds
+            let points: Vec<&[f64; 3]> = tds
                 .vertices()
                 .values()
-                .map(|v| v.point().to_array())
+                .map(|v| v.point().coords())
                 .collect();
 
             let expected_points = [
@@ -4932,7 +4932,7 @@ mod tests {
                 let found = points.iter().any(|&p| {
                     #[allow(clippy::float_cmp)]
                     {
-                        p == expected
+                        *p == expected
                     }
                 });
                 assert!(found, "Expected point {expected:?} not found");
@@ -5169,7 +5169,7 @@ mod tests {
 
         // Test with five vertices (dimension should stay at 3)
         let vertex5: Vertex<f64, usize, 3> = vertex!([13.0, 14.0, 15.0]);
-        println!("About to add vertex 5: {:?}", vertex5.point().to_array());
+        println!("About to add vertex 5: {:?}", vertex5.point().coords());
         println!(
             "Current state - vertices: {}, cells: {}, dim: {}",
             tds.number_of_vertices(),
@@ -6910,8 +6910,8 @@ mod tests {
         for vertex_key in cell.vertices() {
             // Resolve VertexKey to Vertex via TDS
             let vertex = &tds.vertices()[*vertex_key];
-            let coords: [f64; 3] = vertex.point().to_array();
-            for &coord in &coords {
+            let coords = vertex.point().coords();
+            for &coord in coords {
                 if coord.abs() >= 500.0 {
                     found_large_coordinate = true;
                     break;
@@ -6959,10 +6959,10 @@ mod tests {
         for vertex_key in cell.vertices() {
             // Resolve VertexKey to Vertex via TDS
             let vertex = &tds.vertices()[*vertex_key];
-            let coords: [f64; 3] = vertex.point().to_array();
+            let coords = vertex.point().coords();
 
             // Check for origin point
-            if coords == [0.0, 0.0, 0.0] {
+            if *coords == [0.0, 0.0, 0.0] {
                 found_origin = true;
             }
 
@@ -7735,7 +7735,7 @@ mod tests {
             let vertex_coords: Vec<_> = cell
                 .vertices()
                 .iter()
-                .map(|vk| tds.vertices()[*vk].point().to_array())
+                .map(|vk| tds.vertices()[*vk].point().coords())
                 .collect();
             println!("Cell {}: vertices = {:?}", i, vertex_coords);
         }

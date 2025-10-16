@@ -22,7 +22,7 @@ use std::iter::Sum;
 use std::marker::PhantomData;
 use std::ops::{AddAssign, Div, DivAssign, Sub, SubAssign};
 use std::sync::{
-    Arc,
+    Arc, OnceLock,
     atomic::{AtomicU64, Ordering},
 };
 use thiserror::Error;
@@ -274,7 +274,7 @@ where
     /// Stored as `FacetHandle` tuples (`CellKey`, `facet_index`) to enable reconstruction of `FacetView`
     ///
     /// **WARNING**: These handles are only valid for the TDS at the generation captured
-    /// in `cached_generation`. If the TDS is modified, these handles become stale.
+    /// in `creation_generation`. If the TDS is modified, these handles become stale.
     /// Use `is_valid_for_tds()` to check validity before use.
     ///
     /// This field is private to prevent external mutation. Use the provided read-only
@@ -285,8 +285,12 @@ where
     /// This avoids Some/None wrapping boilerplate compared to `ArcSwap<Option<T>>`
     #[allow(clippy::type_complexity)]
     facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
-    /// Generation counter at the time the cache was built.
-    /// Used to detect when the TDS has been mutated and cache needs invalidation.
+    /// Immutable TDS generation at hull creation time.
+    /// Set once in `from_triangulation()` and never modified. Used to detect stale hulls.
+    /// Uses `OnceLock` to express the "set once, read many" semantic contract.
+    creation_generation: OnceLock<u64>,
+    /// Cache generation counter, updated when cache is rebuilt.
+    /// Can be reset to 0 by `invalidate_cache()` to force cache rebuild.
     /// Uses `Arc<AtomicU64>` for consistent tracking across cloned `ConvexHull` instances.
     cached_generation: Arc<AtomicU64>,
     /// Phantom data to mark unused type parameters
@@ -396,11 +400,14 @@ where
             });
         }
 
+        let tds_gen = tds.generation();
         Ok(Self {
             hull_facets,
             facet_to_cells_cache: ArcSwapOption::empty(),
-            // Snapshot the current TDS generation; do not share the AtomicU64
-            cached_generation: Arc::new(AtomicU64::new(tds.generation())),
+            // Immutable snapshot of TDS generation at creation - never changes
+            creation_generation: OnceLock::from(tds_gen),
+            // Mutable cache generation - can be reset by invalidate_cache()
+            cached_generation: Arc::new(AtomicU64::new(tds_gen)),
             _phantom: PhantomData,
         })
     }
@@ -491,22 +498,21 @@ where
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
     ) -> Result<bool, ConvexHullConstructionError> {
-        // Generation 0 policy: Treat gen==0 as "unknown/invalidated" state allowing cache rebuild.
-        // This provides a useful "force rebuild" path after invalidate_cache() without requiring
-        // a separate creation_generation field. The tradeoff: stale facet handles after invalidation
-        // may be used until FacetDataAccessFailed occurs (acceptable since invalidate_cache is rare).
-        // Alternative: Add creation_generation to always detect stale handles (more complex).
-        let hull_gen = self.cached_generation.load(Ordering::Acquire);
+        // Two-generation design: creation_generation (immutable) vs cached_generation (mutable)
+        // - creation_generation: Set once at from_triangulation(), never changes. Used for stale detection.
+        // - cached_generation: Can be reset to 0 by invalidate_cache() to force cache rebuild.
+        let creation_gen = self.creation_generation.get().copied().unwrap_or(0);
         let tds_gen = tds.generation();
+
         debug_assert!(
-            hull_gen == 0 || hull_gen == tds_gen,
-            "ConvexHull used with a modified TDS; rebuild the hull (hull_gen={hull_gen}, tds_gen={tds_gen})"
+            creation_gen == tds_gen,
+            "ConvexHull used with a modified TDS; rebuild the hull (creation_gen={creation_gen}, tds_gen={tds_gen})"
         );
 
-        // Production build: return error for stale hull (but allow generation 0 for cache rebuild)
-        if hull_gen != 0 && hull_gen != tds_gen {
+        // Production build: always check creation_generation for stale detection
+        if creation_gen != tds_gen {
             return Err(ConvexHullConstructionError::StaleHull {
-                hull_generation: hull_gen,
+                hull_generation: creation_gen,
                 tds_generation: tds_gen,
             });
         }
@@ -799,13 +805,12 @@ where
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
     ) -> Result<Vec<usize>, ConvexHullConstructionError> {
-        // Fail fast if hull is stale relative to this TDS
-        // Generation 0 policy: See is_facet_visible_from_point() for rationale
-        let hull_gen = self.cached_generation.load(Ordering::Acquire);
+        // Fail fast if hull is stale relative to this TDS (using immutable creation_generation)
+        let creation_gen = self.creation_generation.get().copied().unwrap_or(0);
         let tds_gen = tds.generation();
-        if hull_gen != 0 && hull_gen != tds_gen {
+        if creation_gen != tds_gen {
             return Err(ConvexHullConstructionError::StaleHull {
-                hull_generation: hull_gen,
+                hull_generation: creation_gen,
                 tds_generation: tds_gen,
             });
         }
@@ -881,13 +886,12 @@ where
     where
         T: PartialOrd + Copy,
     {
-        // Fail fast if hull is stale relative to this TDS
-        // Generation 0 policy: See is_facet_visible_from_point() for rationale
-        let hull_gen = self.cached_generation.load(Ordering::Acquire);
+        // Fail fast if hull is stale relative to this TDS (using immutable creation_generation)
+        let creation_gen = self.creation_generation.get().copied().unwrap_or(0);
         let tds_gen = tds.generation();
-        if hull_gen != 0 && hull_gen != tds_gen {
+        if creation_gen != tds_gen {
             return Err(ConvexHullConstructionError::StaleHull {
-                hull_generation: hull_gen,
+                hull_generation: creation_gen,
                 tds_generation: tds_gen,
             });
         }
@@ -1283,7 +1287,7 @@ where
 
     /// Checks if this convex hull is valid for the given triangulation
     ///
-    /// Returns `true` if the hull's generation matches the TDS generation,
+    /// Returns `true` if the hull's creation generation matches the TDS generation,
     /// meaning the hull's facet handles are still valid for this TDS.
     /// Returns `false` if the TDS has been modified since the hull was created.
     ///
@@ -1325,27 +1329,31 @@ where
     /// ```
     #[must_use]
     pub fn is_valid_for_tds(&self, tds: &Tds<T, U, V, D>) -> bool {
-        self.cached_generation.load(Ordering::Acquire) == tds.generation()
+        // Use creation_generation (immutable) for validity check, not cached_generation (mutable)
+        self.creation_generation.get().copied().unwrap_or(0) == tds.generation()
     }
 
     /// Invalidates the internal facet-to-cells cache and resets the cached generation counter
     ///
     /// This method forces the cache to be rebuilt on the next visibility test.
-    /// It can be useful when you know the underlying triangulation has changed
-    /// and you want to ensure the cache is refreshed, or for manual cache management.
+    /// It can be useful for manual cache management.
     ///
-    /// # Generation Counter Reset
+    /// # Two-Generation Design
     ///
-    /// This method sets the cached generation counter to **0**, which signals "unknown/invalidated"
-    /// state. This allows cache rebuilds while treating stale facet handles as potentially valid
-    /// until a `FacetDataAccessFailed` error occurs. The generation 0 policy provides a useful
-    /// "force rebuild" path after invalidation without requiring a separate `creation_generation` field.
+    /// This method resets only the **cache generation** (`cached_generation`) to 0, forcing
+    /// cache rebuild on next access. The **creation generation** (`creation_generation`) remains
+    /// immutable and is never modified after construction.
+    ///
+    /// This separation ensures:
+    /// - Cache invalidation doesn't break stale hull detection
+    /// - `is_valid_for_tds()` always returns accurate results based on creation generation
+    /// - Stale hulls are caught even after calling `invalidate_cache()`
     ///
     /// # Interior Mutability
     ///
     /// This method takes `&self` (not `&mut self`) and is safe to call on shared hulls
     /// due to interior mutability via `ArcSwapOption` (for the facet cache) and `AtomicU64`
-    /// (for generation tracking). These lock-free atomic operations allow cache invalidation
+    /// (for cache generation tracking). These lock-free atomic operations allow cache invalidation
     /// without exclusive mutable access.
     ///
     /// # Examples
@@ -1376,7 +1384,8 @@ where
         // Clear the cache using ArcSwapOption::store(None)
         self.facet_to_cells_cache.store(None);
 
-        // Reset only our snapshot to force rebuild on next access
+        // Reset only cached_generation to force rebuild on next access.
+        // creation_generation is NEVER modified - it remains the immutable snapshot from creation.
         // Use Release ordering to ensure consistency with Acquire loads by readers
         self.cached_generation.store(0, Ordering::Release);
     }
@@ -1413,6 +1422,7 @@ where
         Self {
             hull_facets: Vec::new(),
             facet_to_cells_cache: ArcSwapOption::empty(),
+            creation_generation: OnceLock::new(), // Empty - indicates invalid/uninitialized hull
             cached_generation: Arc::new(AtomicU64::new(0)),
             _phantom: PhantomData,
         }
@@ -6393,5 +6403,114 @@ mod tests {
         println!("    ✓ Independent cache invalidation working correctly");
 
         println!("  ✓ Memory usage and cleanup patterns tested");
+    }
+
+    /// Regression test for the bug where stale hulls could silently revalidate after `invalidate_cache()`.
+    ///
+    /// Bug description: Before the two-generation design (`creation_generation` + `cached_generation`),
+    /// calling `invalidate_cache()` would set the single generation counter to 0. This allowed
+    /// stale hulls to bypass staleness detection, rebuild the cache with the new TDS generation,
+    /// and then report as "valid" via `is_valid_for_tds()` despite having facet handles that
+    /// reference the old TDS topology.
+    ///
+    /// Expected behavior: Hull remains invalid for the modified TDS even after cache invalidation.
+    #[test]
+    fn test_stale_hull_detection_after_invalidate_cache() {
+        println!("Testing stale hull detection after invalidate_cache (regression test)");
+
+        // Step 1: Create hull from initial TDS
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ])
+        .unwrap();
+        let initial_gen = tds.generation();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Verify hull is valid initially
+        assert!(
+            hull.is_valid_for_tds(&tds),
+            "Hull should be valid for initial TDS"
+        );
+        println!("  ✓ Hull created with generation {initial_gen}");
+
+        // Step 2: Mutate TDS (increases generation)
+        tds.add(vertex!([0.5, 0.5, 0.5])).unwrap();
+        let new_gen = tds.generation();
+        assert_ne!(
+            initial_gen, new_gen,
+            "TDS generation should increase after mutation"
+        );
+        println!("  ✓ TDS mutated, generation increased to {new_gen}");
+
+        // Verify hull is now invalid (stale)
+        assert!(
+            !hull.is_valid_for_tds(&tds),
+            "Hull should be invalid after TDS modification"
+        );
+        println!("  ✓ Hull correctly detected as stale");
+
+        // Step 3: Call invalidate_cache() (the critical operation that triggered the bug)
+        hull.invalidate_cache();
+        println!("  ✓ Called invalidate_cache()");
+
+        // Step 4: Try to use the hull (this would trigger cache rebuild in the old buggy code)
+        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let visibility_result = hull.find_visible_facets(&test_point, &tds);
+
+        // The visibility operation should fail with StaleHull error
+        assert!(
+            visibility_result.is_err(),
+            "Visibility operation should fail on stale hull even after invalidate_cache()"
+        );
+
+        if let Err(ConvexHullConstructionError::StaleHull {
+            hull_generation,
+            tds_generation,
+        }) = visibility_result
+        {
+            assert_eq!(
+                hull_generation, initial_gen,
+                "Error should report hull's creation generation"
+            );
+            assert_eq!(
+                tds_generation, new_gen,
+                "Error should report current TDS generation"
+            );
+            println!("  ✓ Visibility operation correctly failed with StaleHull error");
+        } else {
+            panic!("Expected StaleHull error, got: {visibility_result:?}");
+        }
+
+        // Step 5: CRITICAL CHECK - is_valid_for_tds() must STILL return false
+        // This is the key test that catches the bug
+        assert!(
+            !hull.is_valid_for_tds(&tds),
+            "BUG DETECTED: Hull should STILL be invalid for modified TDS after invalidate_cache()"
+        );
+        println!(
+            "  ✓ CRITICAL: is_valid_for_tds() correctly returns false after cache invalidation"
+        );
+
+        // Step 6: Verify that creating a new hull works correctly
+        let new_hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+        assert!(
+            new_hull.is_valid_for_tds(&tds),
+            "New hull should be valid for modified TDS"
+        );
+        let new_visibility_result = new_hull.find_visible_facets(&test_point, &tds);
+        assert!(
+            new_visibility_result.is_ok(),
+            "Visibility operation should succeed on new hull"
+        );
+        println!("  ✓ New hull works correctly with modified TDS");
+
+        println!(
+            "  ✓ Regression test passed: stale hull detection works correctly after invalidate_cache()"
+        );
     }
 }

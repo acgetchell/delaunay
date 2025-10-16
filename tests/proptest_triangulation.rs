@@ -136,17 +136,11 @@ proptest! {
                 if let Some(neighbors) = cell.neighbors() {
                     for (neighbor_index, neighbor_opt) in neighbors.iter().enumerate() {
                         if let Some(neighbor_key) = neighbor_opt {
-                            let neighbor_cell = tds.cells().get(*neighbor_key).unwrap();
-                            // The neighbor should have this cell as one of its neighbors
-                            let mut found_reciprocal = false;
-                            if let Some(neighbor_neighbors) = neighbor_cell.neighbors() {
-                                for n in neighbor_neighbors {
-                                    if n == &Some(cell_key) {
-                                        found_reciprocal = true;
-                                        break;
-                                    }
-                                }
-                            }
+                            let found_reciprocal = tds
+                                .cells()
+                                .get(*neighbor_key)
+                                .and_then(|c| c.neighbors())
+                                .is_some_and(|nn| nn.iter().any(|n| n == &Some(cell_key)));
                             prop_assert!(
                                 found_reciprocal,
                                 "Neighbor relationship should be symmetric: cell {:?} has neighbor {:?} at index {}, but reciprocal not found",
@@ -168,16 +162,11 @@ proptest! {
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = cell.neighbors() {
                     for neighbor_key in neighbors.iter().flatten() {
-                        let neighbor_cell = tds.cells().get(*neighbor_key).unwrap();
-                        let mut found_reciprocal = false;
-                        if let Some(neighbor_neighbors) = neighbor_cell.neighbors() {
-                            for n in neighbor_neighbors {
-                                if n == &Some(cell_key) {
-                                    found_reciprocal = true;
-                                    break;
-                                }
-                            }
-                        }
+                        let found_reciprocal = tds
+                            .cells()
+                            .get(*neighbor_key)
+                            .and_then(|c| c.neighbors())
+                            .is_some_and(|nn| nn.iter().any(|n| n == &Some(cell_key)));
                         prop_assert!(
                             found_reciprocal,
                             "3D neighbor relationship should be symmetric"
@@ -195,16 +184,11 @@ proptest! {
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = cell.neighbors() {
                     for neighbor_key in neighbors.iter().flatten() {
-                        let neighbor_cell = tds.cells().get(*neighbor_key).unwrap();
-                        let mut found_reciprocal = false;
-                        if let Some(neighbor_neighbors) = neighbor_cell.neighbors() {
-                            for n in neighbor_neighbors {
-                                if n == &Some(cell_key) {
-                                    found_reciprocal = true;
-                                    break;
-                                }
-                            }
-                        }
+                        let found_reciprocal = tds
+                            .cells()
+                            .get(*neighbor_key)
+                            .and_then(|c| c.neighbors())
+                            .is_some_and(|nn| nn.iter().any(|n| n == &Some(cell_key)));
                         prop_assert!(
                             found_reciprocal,
                             "4D neighbor relationship should be symmetric"
@@ -222,16 +206,11 @@ proptest! {
             for (cell_key, cell) in tds.cells() {
                 if let Some(neighbors) = cell.neighbors() {
                     for neighbor_key in neighbors.iter().flatten() {
-                        let neighbor_cell = tds.cells().get(*neighbor_key).unwrap();
-                        let mut found_reciprocal = false;
-                        if let Some(neighbor_neighbors) = neighbor_cell.neighbors() {
-                            for n in neighbor_neighbors {
-                                if n == &Some(cell_key) {
-                                    found_reciprocal = true;
-                                    break;
-                                }
-                            }
-                        }
+                        let found_reciprocal = tds
+                            .cells()
+                            .get(*neighbor_key)
+                            .and_then(|c| c.neighbors())
+                            .is_some_and(|nn| nn.iter().any(|n| n == &Some(cell_key)));
                         prop_assert!(
                             found_reciprocal,
                             "5D neighbor relationship should be symmetric"

@@ -70,7 +70,7 @@ fn main() {
         if displayed >= 10 {
             break;
         }
-        let coords: [f64; 3] = vertex.into();
+        let coords = vertex.point().coords();
         println!(
             "  v{:2}: [{:8.3}, {:8.3}, {:8.3}]",
             displayed, coords[0], coords[1], coords[2]
@@ -174,10 +174,7 @@ fn extract_and_analyze_convex_hull(tds: &Tds<f64, (), (), 3>) {
             if let Ok(facet_view) =
                 FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index())
             {
-                let vertex_count = facet_view
-                    .vertices()
-                    .map(std::iter::Iterator::count)
-                    .unwrap_or(0);
+                let vertex_count = facet_view.vertices().map(Iterator::count).unwrap_or(0);
                 let facet_key = facet_view.key().unwrap_or(0);
                 println!(
                     "    Facet {}: key = {}, vertices = {}",

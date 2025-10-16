@@ -1068,10 +1068,10 @@ mod tests {
         assert_eq!(result, expected_result);
 
         // Test with various allocation patterns
-        let (vec_result, _) = measure_with_result(|| vec![1, 2, 3, 4, 5]);
+        let (vec_result, _alloc_info) = measure_with_result(|| vec![1, 2, 3, 4, 5]);
         assert_eq!(vec_result, vec![1, 2, 3, 4, 5]);
 
-        let (string_result, _) = measure_with_result(|| {
+        let (string_result, _alloc_info) = measure_with_result(|| {
             let mut s = String::new();
             s.push_str("Hello, ");
             s.push_str("World!");
@@ -1079,7 +1079,7 @@ mod tests {
         });
         assert_eq!(string_result, "Hello, World!");
 
-        let (complex_result, _) = measure_with_result(|| {
+        let (complex_result, _alloc_info) = measure_with_result(|| {
             let mut data: Vec<String> = Vec::new();
             for i in 0..5 {
                 data.push(format!("Item {i}"));
@@ -1089,17 +1089,17 @@ mod tests {
         assert_eq!(complex_result, 5);
 
         // Test various return types
-        let (tuple_result, _) = measure_with_result(|| ("hello", 42));
+        let (tuple_result, _alloc_info) = measure_with_result(|| ("hello", 42));
         assert_eq!(tuple_result, ("hello", 42));
 
-        let (option_result, _) = measure_with_result(|| Some("value"));
+        let (option_result, _alloc_info) = measure_with_result(|| Some("value"));
         assert_eq!(option_result, Some("value"));
 
-        let (result_result, _) = measure_with_result(|| Ok::<i32, &str>(123));
+        let (result_result, _alloc_info) = measure_with_result(|| Ok::<i32, &str>(123));
         assert_eq!(result_result, Ok(123));
 
         // Test no-panic behavior
-        let (sum_result, _) = measure_with_result(|| {
+        let (sum_result, _alloc_info) = measure_with_result(|| {
             let data = [1, 2, 3];
             data.iter().sum::<i32>()
         });
@@ -1982,7 +1982,7 @@ mod tests {
 
         // Test that the function doesn't allocate memory unnecessarily
         // This is a behavioral test - the function should use stack allocation only
-        let (result, _) = measure_with_result(|| {
+        let (result, _alloc_info) = measure_with_result(|| {
             let mut results = Vec::new();
             for i in 0..100 {
                 results.push(usize_to_u8(i, 200));

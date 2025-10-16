@@ -405,7 +405,6 @@ where
 
 // Minimal trait bounds impl block
 // Note: [T; D] bounds required due to struct's Serialize/Deserialize derives
-// TODO Phase 3A.6: Remove when serialization is redesigned
 impl<T, U, V, const D: usize> Cell<T, U, V, D>
 where
     T: CoordinateScalar,
@@ -1576,7 +1575,6 @@ mod tests {
     use crate::core::vertex::vertex;
     use crate::geometry::point::Point;
     use crate::geometry::predicates::{insphere, insphere_distance};
-    use crate::geometry::traits::coordinate::Coordinate;
     use crate::geometry::util::{circumcenter, circumradius, circumradius_with_center};
     use approx::assert_relative_eq;
     use slotmap::KeyData;
@@ -1667,8 +1665,8 @@ mod tests {
         for (original, &vkey) in vertices.iter().zip(cell.vertices().iter()) {
             let result = &tds.vertices()[vkey];
             assert_relative_eq!(
-                original.point().to_array().as_slice(),
-                result.point().to_array().as_slice(),
+                original.point().coords().as_slice(),
+                result.point().coords().as_slice(),
                 epsilon = f64::EPSILON
             );
         }
@@ -1700,8 +1698,8 @@ mod tests {
         for (original, &vkey) in vertices.iter().zip(cell.vertices().iter()) {
             let result = &tds.vertices()[vkey];
             assert_relative_eq!(
-                original.point().to_array().as_slice(),
-                result.point().to_array().as_slice(),
+                original.point().coords().as_slice(),
+                result.point().coords().as_slice(),
                 epsilon = f64::EPSILON
             );
         }
@@ -2159,7 +2157,7 @@ mod tests {
         let first_vertex_key = cell.vertices()[0];
         let first_vertex = &tds.vertices()[first_vertex_key];
         assert_relative_eq!(
-            first_vertex.point().to_array()[0],
+            first_vertex.point().coords()[0],
             0.0f32,
             epsilon = f32::EPSILON
         );

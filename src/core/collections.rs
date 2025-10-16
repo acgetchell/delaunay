@@ -96,6 +96,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
 
 // Import key types for use in type aliases
+use crate::core::facet::FacetHandle;
 use crate::core::triangulation_data_structure::{CellKey, VertexKey};
 
 /// Compact index type for facet positions within a cell.
@@ -394,11 +395,18 @@ pub type ValidCellsBuffer = SmallBuffer<CellKey, SMALL_CELL_OPERATION_BUFFER_SIZ
 ///
 /// # Optimization Rationale
 ///
-/// - **Stack Allocation**: Up to `MAX_PRACTICAL_DIMENSION_SIZE` facet info entries
+/// - **Stack Allocation**: Up to `MAX_PRACTICAL_DIMENSION_SIZE` facet handles
 /// - **Use Case**: Boundary analysis, facet enumeration
 /// - **Performance**: Handles cells up to 7D on stack
-/// - **Memory Efficiency**: `FacetIndex` (u8) reduces memory usage compared to `usize`
-pub type FacetInfoBuffer = SmallBuffer<(CellKey, FacetIndex), MAX_PRACTICAL_DIMENSION_SIZE>;
+/// - **Type Safety**: Uses `FacetHandle` instead of raw tuples to prevent errors
+///
+/// # Type Safety
+///
+/// This buffer uses `FacetHandle` rather than `(CellKey, FacetIndex)` tuples to:
+/// - Prevent accidental swapping of `cell_key` and `facet_index`
+/// - Make the API more self-documenting
+/// - Enable future extensions without breaking changes
+pub type FacetInfoBuffer = SmallBuffer<FacetHandle, MAX_PRACTICAL_DIMENSION_SIZE>;
 
 // =============================================================================
 // SEMANTIC SIZE CONSTANTS AND TYPE ALIASES

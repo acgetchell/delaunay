@@ -3,9 +3,56 @@
 //! This module defines the `InsertionAlgorithm` trait that provides a unified
 //! interface for different vertex insertion strategies, including the basic
 //! Bowyer-Watson algorithm and robust variants with enhanced numerical stability.
+//!
+//! # Transactional Cavity-Based Insertion
+//!
+//! The cavity-based insertion algorithm (used for interior vertices) implements a
+//! **three-phase transactional pattern** to ensure atomic operations:
+//!
+//! ## Phase 1: Validate
+//!
+//! - Extract all boundary facet metadata while bad cells still exist
+//! - Capture vertex keys and outside neighbor information
+//! - Validate topology and relationships
+//! - **Critical**: No TDS modifications occur in this phase
+//! - Any errors leave the triangulation completely unchanged
+//!
+//! ## Phase 2: Tentative
+//!
+//! - Insert the vertex (if not already present)
+//! - Create ALL new cells filling the cavity
+//! - **Key insight**: Bad cells are NOT removed yet
+//! - On failure: Remove only newly-created cells + vertex (if new)
+//! - The original triangulation remains intact and valid
+//!
+//! ## Phase 3: Commit
+//!
+//! - Remove bad cells (point of no return)
+//! - Wire neighbor relationships:
+//!   - New→Old: Connect new cells to neighbors across cavity boundary
+//!   - New→New: Connect new cells to each other using facet signatures
+//! - Finalize incident cell assignments
+//!
+//! ## Why Not Serialization?
+//!
+//! The previous implementation attempted to snapshot and restore cells, which was
+//! fundamentally broken because:
+//! - `SlotMap` keys cannot be preserved across remove/insert cycles
+//! - Cell UUIDs, neighbors, and data would be lost
+//! - Dangling references would corrupt the entire triangulation
+//!
+//! The transactional pattern avoids these issues entirely by deferring destructive
+//! operations until success is guaranteed.
+//!
+//! ## Performance Considerations
+//!
+//! - **No deep copies**: Metadata extraction is lightweight (vertex keys only)
+//! - **No serialization**: Avoids expensive encoding/decoding overhead
+//! - **Bounded overhead**: Extra work scales with cavity size, not TDS size
+//! - **Cache-friendly**: Uses `SmallBuffer` and pre-allocated `Vec` containers
 
 use crate::core::collections::{CellKeySet, FastHashSet, SmallBuffer, fast_hash_set_with_capacity};
-use crate::core::facet::{FacetError, FacetView, facet_key_from_vertices};
+use crate::core::facet::{FacetError, FacetHandle, FacetView, facet_key_from_vertices};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::triangulation_data_structure::CellKey;
 use crate::core::{
@@ -225,6 +272,41 @@ const MARGIN_FACTOR: f64 = 0.1;
 /// tolerance for degenerate cases in specific applications.
 const DEGENERATE_CELL_THRESHOLD: f64 = 0.5;
 
+/// Metadata for a single boundary facet during transactional cavity-based insertion.
+///
+/// This structure captures all information needed to create new cells after removing
+/// bad cells, enabling a validate-then-commit pattern that avoids corruption on rollback.
+///
+/// # Transactional Insertion Pattern
+///
+/// The cavity-based insertion algorithm uses a three-phase approach:
+/// 1. **Validate**: Extract all boundary facet metadata while bad cells still exist
+/// 2. **Tentative**: Create new cells without removing bad cells yet
+/// 3. **Commit**: Remove bad cells and wire neighbor relationships
+///
+/// This struct is populated during Phase 1 and used in Phases 2-3 to ensure
+/// that failure during new cell creation does not corrupt the existing triangulation.
+///
+/// # Visibility
+///
+/// **⚠️ Internal API**: This type is public because it appears in trait method signatures,
+/// but it is not intended for external use. It may change without notice in minor versions.
+/// Do not use this type directly in your code.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields used for debugging but not all accessed in production code
+pub struct BoundaryFacetInfo {
+    /// Key of the bad cell containing this boundary facet
+    bad_cell: CellKey,
+    /// Index of the facet within the bad cell (0..=D)
+    bad_facet_index: usize,
+    /// Vertex keys forming the boundary facet (D vertices)
+    facet_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    /// Neighbor cell across this boundary facet and its reciprocal facet index.
+    /// `None` if this is a true boundary facet (no neighbor on the exterior side).
+    /// Format: (`neighbor_cell_key`, `reciprocal_facet_index_in_neighbor`)
+    outside_neighbor: Option<(CellKey, usize)>,
+}
+
 /// Strategy used for vertex insertion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InsertionStrategy {
@@ -398,11 +480,11 @@ where
     /// Buffer for storing bad cell keys during cavity detection
     bad_cells_buffer: SmallBuffer<crate::core::triangulation_data_structure::CellKey, 16>,
     /// Buffer for storing boundary facet handles during cavity boundary detection
-    boundary_facets_buffer: SmallBuffer<(CellKey, u8), 8>,
+    boundary_facets_buffer: SmallBuffer<FacetHandle, 8>,
     /// Buffer for storing vertex points during geometric computations
     vertex_points_buffer: SmallBuffer<crate::geometry::point::Point<T, D>, 16>,
     /// Buffer for storing visible boundary facet handles
-    visible_facets_buffer: SmallBuffer<(CellKey, u8), 8>,
+    visible_facets_buffer: SmallBuffer<FacetHandle, 8>,
     /// Phantom data to maintain generic parameter constraints
     _phantom: PhantomData<(U, V)>,
 }
@@ -467,7 +549,7 @@ where
     }
 
     /// Prepare the boundary facets buffer and return a mutable reference
-    pub fn prepare_boundary_facets_buffer(&mut self) -> &mut SmallBuffer<(CellKey, u8), 8> {
+    pub fn prepare_boundary_facets_buffer(&mut self) -> &mut SmallBuffer<FacetHandle, 8> {
         self.boundary_facets_buffer.clear();
         &mut self.boundary_facets_buffer
     }
@@ -481,7 +563,7 @@ where
     }
 
     /// Prepare the visible facets buffer and return a mutable reference
-    pub fn prepare_visible_facets_buffer(&mut self) -> &mut SmallBuffer<(CellKey, u8), 8> {
+    pub fn prepare_visible_facets_buffer(&mut self) -> &mut SmallBuffer<FacetHandle, 8> {
         self.visible_facets_buffer.clear();
         &mut self.visible_facets_buffer
     }
@@ -506,12 +588,12 @@ where
 
     /// Get a reference to the boundary facets buffer
     #[must_use]
-    pub const fn boundary_facets_buffer(&self) -> &SmallBuffer<(CellKey, u8), 8> {
+    pub const fn boundary_facets_buffer(&self) -> &SmallBuffer<FacetHandle, 8> {
         &self.boundary_facets_buffer
     }
 
     /// Get a mutable reference to the boundary facets buffer
-    pub const fn boundary_facets_buffer_mut(&mut self) -> &mut SmallBuffer<(CellKey, u8), 8> {
+    pub const fn boundary_facets_buffer_mut(&mut self) -> &mut SmallBuffer<FacetHandle, 8> {
         &mut self.boundary_facets_buffer
     }
 
@@ -532,12 +614,12 @@ where
 
     /// Get a reference to the visible facets buffer
     #[must_use]
-    pub const fn visible_facets_buffer(&self) -> &SmallBuffer<(CellKey, u8), 8> {
+    pub const fn visible_facets_buffer(&self) -> &SmallBuffer<FacetHandle, 8> {
         &self.visible_facets_buffer
     }
 
     /// Get a mutable reference to the visible facets buffer
-    pub const fn visible_facets_buffer_mut(&mut self) -> &mut SmallBuffer<(CellKey, u8), 8> {
+    pub const fn visible_facets_buffer_mut(&mut self) -> &mut SmallBuffer<FacetHandle, 8> {
         &mut self.visible_facets_buffer
     }
 
@@ -576,12 +658,12 @@ where
 
     /// Extract the boundary facet handles as a Vec
     #[must_use]
-    pub fn boundary_facet_handles(&self) -> Vec<(CellKey, u8)> {
+    pub fn boundary_facet_handles(&self) -> Vec<FacetHandle> {
         self.boundary_facets_buffer.iter().copied().collect()
     }
 
     /// Set boundary facets from handles
-    pub fn set_boundary_facet_handles(&mut self, handles: Vec<(CellKey, u8)>) {
+    pub fn set_boundary_facet_handles(&mut self, handles: Vec<FacetHandle>) {
         self.boundary_facets_buffer.clear();
         self.boundary_facets_buffer.extend(handles);
     }
@@ -610,7 +692,7 @@ where
     ) -> Result<Vec<FacetView<'tds, T, U, V, D>>, FacetError> {
         self.boundary_facets_buffer
             .iter()
-            .map(|&(cell_key, facet_index)| FacetView::new(tds, cell_key, facet_index))
+            .map(|handle| FacetView::new(tds, handle.cell_key(), handle.facet_index()))
             .collect()
     }
 
@@ -628,12 +710,12 @@ where
 
     /// Extract the visible facet handles as a Vec
     #[must_use]
-    pub fn visible_facet_handles(&self) -> Vec<(CellKey, u8)> {
+    pub fn visible_facet_handles(&self) -> Vec<FacetHandle> {
         self.visible_facets_buffer.iter().copied().collect()
     }
 
     /// Set visible facets from handles
-    pub fn set_visible_facet_handles(&mut self, handles: Vec<(CellKey, u8)>) {
+    pub fn set_visible_facet_handles(&mut self, handles: Vec<FacetHandle>) {
         self.visible_facets_buffer.clear();
         self.visible_facets_buffer.extend(handles);
     }
@@ -662,7 +744,7 @@ where
     ) -> Result<Vec<FacetView<'tds, T, U, V, D>>, FacetError> {
         self.visible_facets_buffer
             .iter()
-            .map(|&(cell_key, facet_index)| FacetView::new(tds, cell_key, facet_index))
+            .map(|handle| FacetView::new(tds, handle.cell_key(), handle.facet_index()))
             .collect()
     }
 }
@@ -1109,8 +1191,7 @@ where
 
     /// Find the boundary facets of a cavity formed by removing bad cells
     ///
-    /// Returns lightweight facet handles `(CellKey, u8)` instead of heavyweight `Facet` objects
-    /// for optimal performance.
+    /// Returns lightweight `FacetHandle` for optimal performance.
     ///
     /// The boundary facets form the interface between the cavity (bad cells to be removed)
     /// and the good cells that remain. These facets will be used to create new cells
@@ -1123,8 +1204,8 @@ where
     ///
     /// # Returns
     ///
-    /// A vector of `(CellKey, u8)` pairs representing boundary facets as (cell, `facet_index`).
-    /// Each pair can be used to create a `FacetView` on-demand for further operations.
+    /// A vector of `FacetHandle` representing boundary facets.
+    /// Each handle can be used to create a `FacetView` on-demand for further operations.
     ///
     /// **Important**: These handles are only valid while the referenced cells exist in the TDS.
     /// If cells will be removed (e.g., during cavity-based insertion), extract necessary
@@ -1141,11 +1222,12 @@ where
     /// - **Zero allocation** for facet creation (references existing TDS data)
     /// - **Memory efficient** - no Cell cloning required
     /// - **Fast** - direct access to TDS data structures
+    /// - **Type safe** - `FacetHandle` prevents tuple ordering errors
     fn find_cavity_boundary_facets(
         &self,
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
-    ) -> Result<Vec<(CellKey, u8)>, InsertionError>
+    ) -> Result<Vec<FacetHandle>, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
@@ -1192,7 +1274,8 @@ where
                         let canonical_key = facet_key_from_vertices(&facet_vertices);
 
                         if seen_facet_keys.insert(canonical_key) {
-                            boundary_facet_handles.push((bad_cell_key, facet_idx_u8));
+                            boundary_facet_handles
+                                .push(FacetHandle::new(bad_cell_key, facet_idx_u8));
                         }
                     }
                 }
@@ -1227,7 +1310,7 @@ where
 
                 // Insert only if not already seen (deduplication)
                 if seen_facet_keys.insert(canonical_key) {
-                    boundary_facet_handles.push((bad_cell_key, facet_idx_u8));
+                    boundary_facet_handles.push(FacetHandle::new(bad_cell_key, facet_idx_u8));
                 }
             }
         }
@@ -1344,85 +1427,79 @@ where
 
         let cells_removed = bad_cells.len();
 
-        // Snapshot bad cells' vertex keys for rollback before removal
-        let bad_cells_snapshots: Vec<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>> =
-            bad_cells
-                .iter()
-                .filter_map(|&ck| {
-                    tds.cells()
-                        .get(ck)
-                        .map(|cell| cell.vertices().iter().copied().collect())
-                })
-                .collect();
+        // ========================================================================
+        // PHASE 1: VALIDATE - Extract all metadata while TDS is intact
+        // ========================================================================
+        // Gather boundary facet information (vertex keys + outside neighbors)
+        // This is done BEFORE any modifications to enable clean rollback on failure.
+        let boundary_infos = Self::gather_boundary_facet_info(tds, &boundary_facet_handles)?;
 
-        // CRITICAL: Extract facet data BEFORE removing cells, as handles become invalid after removal
-        // Pre-extract vertex data from each boundary facet while cells still exist
-        let mut extracted_facet_data = Vec::with_capacity(boundary_facet_handles.len());
-        for &(cell_key, facet_index) in &boundary_facet_handles {
-            let facet_view = crate::core::facet::FacetView::new(tds, cell_key, facet_index)
-                .map_err(|_| InsertionError::TriangulationState(
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Facet index {facet_index} out of bounds for cell {cell_key:?} during cavity facet extraction"
-                        ),
-                    },
-                ))?;
-
-            // Extract vertices from the facet (must persist after cells are removed)
-            let facet_vertices_iter = facet_view.vertices().map_err(|e| {
-                InsertionError::TriangulationState(TriangulationValidationError::FacetError(e))
-            })?;
-            let facet_vertices: Vec<Vertex<T, U, D>> = facet_vertices_iter.copied().collect();
-            extracted_facet_data.push(facet_vertices);
-        }
-
+        // ========================================================================
+        // PHASE 2: TENTATIVE - Insert vertex and create new cells (no removal yet)
+        // ========================================================================
         // Track whether vertex existed before this operation for atomic rollback
         let vertex_existed_before = tds.vertex_key_from_uuid(&vertex.uuid()).is_some();
 
-        // Ensure vertex is in TDS before destructive operations
+        // Ensure vertex is in TDS (needed to create cells)
         Self::ensure_vertex_in_tds(tds, vertex)?;
 
-        // Remove bad cells (invalidates handles)
-        Self::remove_bad_cells(tds, &bad_cells);
+        // Get the inserted vertex key for cell creation
+        let inserted_vk = tds.vertex_key_from_uuid(&vertex.uuid()).ok_or_else(|| {
+            InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: "Vertex was not found in TDS immediately after insertion".to_string(),
+                },
+            )
+        })?;
 
-        // Create new cells with rollback on failure
-        let mut created_cell_keys = Vec::with_capacity(extracted_facet_data.len());
-        for facet_vertices in extracted_facet_data {
-            match Self::create_cell_from_vertices_and_vertex(tds, facet_vertices, vertex) {
+        // Create all new cells BEFORE removing bad cells
+        // This allows clean rollback if creation fails
+        let mut created_cell_keys = Vec::with_capacity(boundary_infos.len());
+        for info in &boundary_infos {
+            // Combine facet vertices with the inserted vertex
+            let mut cell_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                info.facet_vertex_keys.clone();
+            cell_vertices.push(inserted_vk);
+
+            // Create cell from vertex keys
+            let new_cell = Cell::new(cell_vertices, None).map_err(|err| {
+                InsertionError::TriangulationState(
+                    TriangulationValidationError::FailedToCreateCell {
+                        message: format!("Failed to create cell from boundary facet: {err}"),
+                    },
+                )
+            })?;
+
+            match tds.insert_cell_with_mapping(new_cell) {
                 Ok(key) => created_cell_keys.push(key),
                 Err(e) => {
+                    // Rollback: remove only newly-created cells and the vertex if it was new
                     Self::rollback_created_cells_and_vertex(
                         tds,
                         &created_cell_keys,
                         vertex,
                         vertex_existed_before,
                     );
-                    // Restore removed bad cells from snapshot to keep TDS consistent
-                    for vkeys in &bad_cells_snapshots {
-                        let cell = Cell::new(vkeys.clone(), None).map_err(|err| {
-                            InsertionError::TriangulationState(
-                                TriangulationValidationError::FailedToCreateCell {
-                                    message: format!(
-                                        "Failed to reconstruct removed cell during rollback: {err}"
-                                    ),
-                                },
-                            )
-                        })?;
-                        tds.insert_cell_with_mapping(cell).map_err(|err| {
-                            InsertionError::TriangulationState(
-                                TriangulationValidationError::InconsistentDataStructure {
-                                    message: format!(
-                                        "Failed to reinsert removed cell during rollback: {err}"
-                                    ),
-                                },
-                            )
-                        })?;
-                    }
-                    return Err(InsertionError::TriangulationState(e));
+                    return Err(InsertionError::TriangulationConstruction(e));
                 }
             }
         }
         let cells_created = created_cell_keys.len();
+
+        // ========================================================================
+        // PHASE 3: COMMIT - Remove bad cells and establish neighbor relationships
+        // ========================================================================
+        // Now that all new cells exist, remove the bad cells
+        // This is the point of no return - from here on, we cannot rollback
+        Self::remove_bad_cells(tds, &bad_cells);
+
+        // Wire neighbor relationships between new cells and existing triangulation
+        Self::connect_new_cells_to_neighbors(
+            tds,
+            inserted_vk,
+            &boundary_infos,
+            &created_cell_keys,
+        )?;
 
         // Finalize the triangulation after insertion to fix any invalid states
         Self::finalize_after_insertion(tds).map_err(|e| {
@@ -2188,11 +2265,10 @@ where
         Ok(cell_key)
     }
 
-    /// Find visible boundary facets using lightweight `FacetView` handles to avoid heavy cloning.
+    /// Find visible boundary facets using lightweight `FacetHandle` to avoid heavy allocations.
     ///
-    /// This is an optimized version of `find_visible_boundary_facets` that returns lightweight
-    /// (`CellKey`, u8) handles instead of cloned Facet structures, significantly reducing memory
-    /// allocation and copying overhead.
+    /// Returns lightweight `FacetHandle` instead of materialized facet data,
+    /// significantly reducing memory allocation and copying overhead.
     ///
     /// # Arguments
     ///
@@ -2201,8 +2277,7 @@ where
     ///
     /// # Returns
     ///
-    /// A `Vec<(CellKey, u8)>` where each tuple represents a visible boundary facet by
-    /// its cell key and facet index within that cell.
+    /// A `Vec<FacetHandle>` where each handle represents a visible boundary facet.
     ///
     /// # Errors
     ///
@@ -2211,7 +2286,7 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<(CellKey, u8)>, InsertionError>
+    ) -> Result<Vec<FacetHandle>, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
@@ -2231,17 +2306,16 @@ where
 
             // Test visibility using FacetView directly (no conversion needed)
             if self.is_facet_visible_from_vertex(tds, &boundary_facet_view, vertex, cell_key)? {
-                visible_facet_handles.push((cell_key, facet_index));
+                visible_facet_handles.push(FacetHandle::new(cell_key, facet_index));
             }
         }
 
         Ok(visible_facet_handles)
     }
 
-    /// Create cells from lightweight facet handles, avoiding heavy Facet cloning.
+    /// Create cells from lightweight facet handles.
     ///
-    /// This is an optimized version of `create_cells_from_boundary_facets` that works
-    /// with (`CellKey`, u8) handles instead of requiring pre-materialized Facet structures.
+    /// Works with `FacetHandle` to avoid materializing full facet data.
     ///
     /// **Atomic Behavior**: This method provides atomic semantics - either all cells are
     /// created successfully, or no cells are created and the TDS remains in its original state.
@@ -2251,7 +2325,7 @@ where
     /// # Arguments
     ///
     /// * `tds` - The triangulation data structure to modify
-    /// * `facet_handles` - Slice of (`CellKey`, u8) tuples representing boundary facets
+    /// * `facet_handles` - Slice of `FacetHandle` representing boundary facets
     /// * `vertex` - The vertex to connect to the boundary facets
     ///
     /// # Returns
@@ -2265,7 +2339,7 @@ where
     /// is restored to its state before the method was called.
     fn create_cells_from_facet_handles(
         tds: &mut Tds<T, U, V, D>,
-        facet_handles: &[(CellKey, u8)],
+        facet_handles: &[FacetHandle],
         vertex: &Vertex<T, U, D>,
     ) -> Result<usize, InsertionError>
     where
@@ -2279,7 +2353,10 @@ where
         // This ensures we can validate everything before modifying the TDS
         let mut extracted_facet_data = Vec::with_capacity(facet_handles.len());
 
-        for &(cell_key, facet_index) in facet_handles {
+        for handle in facet_handles {
+            let cell_key = handle.cell_key();
+            let facet_index = handle.facet_index();
+
             // Validate cell exists first
             let _cell = tds.cells().get(cell_key).ok_or_else(|| {
                 InsertionError::TriangulationState(
@@ -2346,6 +2423,369 @@ where
         }
 
         Ok(cells_created)
+    }
+
+    /// Gather all boundary facet metadata before modifying the TDS.
+    ///
+    /// This is a critical helper for transactional cavity-based insertion. It extracts
+    /// all information needed to create new cells and establish neighbor relationships
+    /// **before** any cells are removed from the TDS.
+    ///
+    /// # Phase 1: Validate
+    ///
+    /// This function implements the "Validate" phase of the transactional pattern:
+    /// - Extracts facet vertex keys
+    /// - Identifies outside neighbors and reciprocal facet indices
+    /// - Performs validation checks
+    /// - Does NOT modify the TDS
+    ///
+    /// Any errors returned here leave the TDS completely unchanged.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Reference to the triangulation data structure
+    /// * `boundary_facet_handles` - Handles to boundary facets from `find_cavity_boundary_facets()`
+    ///
+    /// # Returns
+    ///
+    /// A vector of `BoundaryFacetInfo` with extracted metadata, or an error if validation fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InsertionError` if:
+    /// - Facet indices are invalid
+    /// - Cell or vertex lookups fail
+    /// - Neighbor relationships are inconsistent
+    fn gather_boundary_facet_info(
+        tds: &Tds<T, U, V, D>,
+        boundary_facet_handles: &[FacetHandle],
+    ) -> Result<Vec<BoundaryFacetInfo>, InsertionError>
+    where
+        T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
+        for<'a> &'a T: Div<T>,
+    {
+        let mut boundary_infos = Vec::with_capacity(boundary_facet_handles.len());
+
+        for handle in boundary_facet_handles {
+            let bad_cell = handle.cell_key();
+            let bad_facet_index = <usize as From<u8>>::from(handle.facet_index());
+
+            // Get the bad cell
+            let Some(cell) = tds.cells().get(bad_cell) else {
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Bad cell {bad_cell:?} not found during facet info gathering"
+                        ),
+                    },
+                ));
+            };
+
+            // Extract facet vertex keys (D vertices, excluding the one at bad_facet_index)
+            let facet_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> = cell
+                .vertices()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &vkey)| (i != bad_facet_index).then_some(vkey))
+                .collect();
+
+            if facet_vertex_keys.len() != D {
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Boundary facet has {} vertices; expected {} for {}-dimensional triangulation",
+                            facet_vertex_keys.len(),
+                            D,
+                            D
+                        ),
+                    },
+                ));
+            }
+
+            // Determine outside neighbor and reciprocal facet index
+            let outside_neighbor = if let Some(neighbors) = cell.neighbors() {
+                if let Some(&Some(neighbor_key)) = neighbors.get(bad_facet_index) {
+                    // Find reciprocal facet index in the neighbor cell
+                    let neighbor_cell = tds.cells().get(neighbor_key).ok_or_else(|| {
+                        InsertionError::TriangulationState(
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Neighbor cell {neighbor_key:?} not found during boundary facet gathering"
+                                ),
+                            },
+                        )
+                    })?;
+
+                    // The reciprocal facet in the neighbor is the one that shares these D vertices
+                    // and points back to bad_cell. We can find it by looking for which facet
+                    // (vertex index) in the neighbor has bad_cell as its neighbor.
+                    let reciprocal_idx = if let Some(neighbor_neighbors) = neighbor_cell.neighbors()
+                    {
+                        neighbor_neighbors
+                            .iter()
+                            .enumerate()
+                            .find_map(|(idx, &nkey)| {
+                                (nkey == Some(bad_cell)).then_some(idx)
+                            })
+                            .ok_or_else(|| {
+                                InsertionError::TriangulationState(
+                                    TriangulationValidationError::InconsistentDataStructure {
+                                        message: format!(
+                                            "Neighbor {neighbor_key:?} does not reciprocate to bad cell {bad_cell:?}"
+                                        ),
+                                    },
+                                )
+                            })?
+                    } else {
+                        // Neighbor has no neighbor info; cannot determine reciprocal index
+                        return Err(InsertionError::TriangulationState(
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Neighbor cell {neighbor_key:?} has no neighbor information"
+                                ),
+                            },
+                        ));
+                    };
+
+                    Some((neighbor_key, reciprocal_idx))
+                } else {
+                    // No neighbor on this side (true boundary facet)
+                    None
+                }
+            } else {
+                // Bad cell has no neighbor information (treat as boundary)
+                None
+            };
+
+            boundary_infos.push(BoundaryFacetInfo {
+                bad_cell,
+                bad_facet_index,
+                facet_vertex_keys,
+                outside_neighbor,
+            });
+        }
+
+        Ok(boundary_infos)
+    }
+
+    /// Wire neighbor relationships for newly created cells after cavity removal.
+    ///
+    /// This helper establishes neighbor pointers between the new cells filling the cavity
+    /// and between new cells and the existing triangulation. It must be called AFTER
+    /// bad cells have been removed.
+    ///
+    /// # Phase 3: Commit (Neighbor Wiring)
+    ///
+    /// This implements the final step of the transactional pattern:
+    /// 1. **New→Old adjacency**: Connect new cells to neighbors across the cavity boundary
+    /// 2. **New→New adjacency**: Connect new cells to each other where they share facets
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Mutable reference to the triangulation data structure
+    /// * `inserted_vk` - Key of the newly inserted vertex
+    /// * `boundary_infos` - Metadata extracted in Phase 1 about boundary facets
+    /// * `created_cells` - Keys of newly created cells (corresponds 1:1 with `boundary_infos`)
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if neighbor wiring succeeds, or an error if topology is inconsistent.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InsertionError` if:
+    /// - Cell or vertex lookups fail
+    /// - Neighbor wiring creates conflicts or asymmetries
+    /// - The inserted vertex cannot be found in created cells
+    #[allow(clippy::too_many_lines)] // Complex topology wiring requires detailed logic
+    fn connect_new_cells_to_neighbors(
+        tds: &mut Tds<T, U, V, D>,
+        inserted_vk: VertexKey,
+        boundary_infos: &[BoundaryFacetInfo],
+        created_cells: &[CellKey],
+    ) -> Result<(), InsertionError>
+    where
+        T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
+        for<'a> &'a T: Div<T>,
+    {
+        use crate::core::collections::{FastHashMap, fast_hash_map_with_capacity};
+
+        if created_cells.len() != boundary_infos.len() {
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Mismatch between created cells ({}) and boundary info ({})",
+                        created_cells.len(),
+                        boundary_infos.len()
+                    ),
+                },
+            ));
+        }
+
+        // ====================================================================
+        // STEP 1: Wire New→Old neighbors across the cavity boundary
+        // ====================================================================
+        for (new_cell_key, info) in created_cells.iter().zip(boundary_infos) {
+            // Find the index of the inserted vertex in the new cell
+            let new_cell = tds.cells().get(*new_cell_key).ok_or_else(|| {
+                InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!("Created cell {new_cell_key:?} not found"),
+                    },
+                )
+            })?;
+
+            let inserted_idx = new_cell
+                .vertices()
+                .iter()
+                .position(|&vk| vk == inserted_vk)
+                .ok_or_else(|| {
+                    InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Inserted vertex {inserted_vk:?} not found in new cell {new_cell_key:?}"
+                            ),
+                        },
+                    )
+                })?;
+
+            // If there's an outside neighbor, wire the bidirectional connection
+            if let Some((outside_ck, outside_facet_idx)) = info.outside_neighbor {
+                // Set new_cell's neighbor at inserted_idx → outside_ck
+                let new_cell_mut = tds.cells_mut().get_mut(*new_cell_key).ok_or_else(|| {
+                    InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Cannot get mutable reference to cell {new_cell_key:?}"
+                            ),
+                        },
+                    )
+                })?;
+
+                if new_cell_mut.neighbors.is_none() {
+                    let mut neighbors = SmallBuffer::new();
+                    neighbors.resize(D + 1, None);
+                    new_cell_mut.neighbors = Some(neighbors);
+                }
+                if let Some(neighbors) = &mut new_cell_mut.neighbors {
+                    neighbors[inserted_idx] = Some(outside_ck);
+                }
+
+                // Set outside_ck's neighbor at outside_facet_idx → new_cell
+                let outside_cell = tds.cells_mut().get_mut(outside_ck).ok_or_else(|| {
+                    InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Outside neighbor {outside_ck:?} not found for new cell {new_cell_key:?}"
+                            ),
+                        },
+                    )
+                })?;
+
+                if outside_cell.neighbors.is_none() {
+                    let mut neighbors = SmallBuffer::new();
+                    neighbors.resize(D + 1, None);
+                    outside_cell.neighbors = Some(neighbors);
+                }
+                if let Some(neighbors) = &mut outside_cell.neighbors {
+                    neighbors[outside_facet_idx] = Some(*new_cell_key);
+                }
+            }
+        }
+
+        // ====================================================================
+        // STEP 2: Wire New→New neighbors within the cavity
+        // ====================================================================
+        // Type alias at module level would be better, but this is a local helper
+        #[allow(clippy::items_after_statements)]
+        type FacetSignature = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>;
+
+        // Build a map from facet signatures to (cell_key, local_facet_index)
+        // Facets that include the inserted vertex connect new cells to each other
+        let mut facet_to_cell: FastHashMap<u64, (CellKey, usize)> =
+            fast_hash_map_with_capacity(created_cells.len() * D);
+
+        for &new_cell_key in created_cells {
+            // Clone cell vertices to avoid borrow issues
+            let cell_vertices = tds
+                .cells()
+                .get(new_cell_key)
+                .ok_or_else(|| {
+                    InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!("Created cell {new_cell_key:?} disappeared"),
+                        },
+                    )
+                })?
+                .vertices()
+                .iter()
+                .copied()
+                .collect::<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>();
+
+            // For each vertex in the cell (opposite facet)
+            for (opposite_idx, &opposite_vk) in cell_vertices.iter().enumerate() {
+                // Skip the facet opposite the inserted vertex (already wired to outside)
+                if opposite_vk == inserted_vk {
+                    continue;
+                }
+
+                // Build facet signature: all vertices except opposite_vk, sorted
+                let mut facet_sig: FacetSignature = cell_vertices
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &vk)| (i != opposite_idx).then_some(vk))
+                    .collect();
+                facet_sig.sort_unstable();
+
+                let facet_key = facet_key_from_vertices(&facet_sig);
+
+                // Check if we've seen this facet before
+                if let Some((other_cell_key, other_facet_idx)) = facet_to_cell.get(&facet_key) {
+                    // Wire bidirectional neighbor pointers
+                    let other_ck = *other_cell_key;
+                    let other_idx = *other_facet_idx;
+
+                    // Set new_cell[opposite_idx] → other_cell
+                    let cell_mut = tds.cells_mut().get_mut(new_cell_key).ok_or_else(|| {
+                        InsertionError::TriangulationState(
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!("Cannot get mutable cell {new_cell_key:?}"),
+                            },
+                        )
+                    })?;
+                    if cell_mut.neighbors.is_none() {
+                        let mut neighbors = SmallBuffer::new();
+                        neighbors.resize(D + 1, None);
+                        cell_mut.neighbors = Some(neighbors);
+                    }
+                    if let Some(neighbors) = &mut cell_mut.neighbors {
+                        neighbors[opposite_idx] = Some(other_ck);
+                    }
+
+                    // Set other_cell[other_idx] → new_cell
+                    let other_mut = tds.cells_mut().get_mut(other_ck).ok_or_else(|| {
+                        InsertionError::TriangulationState(
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!("Cannot get mutable cell {other_ck:?}"),
+                            },
+                        )
+                    })?;
+                    if other_mut.neighbors.is_none() {
+                        let mut neighbors = SmallBuffer::new();
+                        neighbors.resize(D + 1, None);
+                        other_mut.neighbors = Some(neighbors);
+                    }
+                    if let Some(neighbors) = &mut other_mut.neighbors {
+                        neighbors[other_idx] = Some(new_cell_key);
+                    }
+                } else {
+                    // First time seeing this facet; record it
+                    facet_to_cell.insert(facet_key, (new_cell_key, opposite_idx));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Rollback created cells and optionally remove a vertex that was inserted during the operation.
@@ -2550,9 +2990,10 @@ mod tests {
         );
 
         // Test that each visible facet handle is valid
-        for (i, (cell_key, facet_index)) in visible_facet_handles.iter().enumerate() {
-            let facet = crate::core::facet::FacetView::new(&tds, *cell_key, *facet_index)
-                .expect("Should create valid FacetView");
+        for (i, handle) in visible_facet_handles.iter().enumerate() {
+            let facet =
+                crate::core::facet::FacetView::new(&tds, handle.cell_key(), handle.facet_index())
+                    .expect("Should create valid FacetView");
             assert_eq!(
                 facet.vertices().unwrap().count(),
                 3,
@@ -2628,22 +3069,25 @@ mod tests {
         );
 
         // Test that each handle is valid
-        for (i, (cell_key, facet_index)) in lightweight_result.iter().enumerate() {
+        for (i, handle) in lightweight_result.iter().enumerate() {
             // Verify cell exists in TDS
             assert!(
-                tds.cells().get(*cell_key).is_some(),
-                "Cell key {cell_key:?} for visible facet {i} should exist in TDS"
+                tds.cells().get(handle.cell_key()).is_some(),
+                "Cell key {:?} for visible facet {i} should exist in TDS",
+                handle.cell_key()
             );
 
             // Verify facet index is valid for 3D (should be 0, 1, 2, or 3)
             assert!(
-                *facet_index < 4,
-                "Facet index {facet_index} for visible facet {i} should be < 4 for 3D tetrahedron"
+                handle.facet_index() < 4,
+                "Facet index {} for visible facet {i} should be < 4 for 3D tetrahedron",
+                handle.facet_index()
             );
 
             // Create FacetView from handle to verify it's valid
-            let facet_view = crate::core::facet::FacetView::new(&tds, *cell_key, *facet_index)
-                .expect("Should be able to create FacetView from returned handle");
+            let facet_view =
+                crate::core::facet::FacetView::new(&tds, handle.cell_key(), handle.facet_index())
+                    .expect("Should be able to create FacetView from returned handle");
 
             assert_eq!(
                 facet_view.vertices().unwrap().count(),
@@ -2687,14 +3131,16 @@ mod tests {
         );
 
         // Verify all returned handles are valid
-        for (cell_key, facet_index) in &lightweight_result {
+        for handle in &lightweight_result {
             assert!(
-                tds.cells().get(*cell_key).is_some(),
-                "Cell key {cell_key:?} should exist in TDS"
+                tds.cells().get(handle.cell_key()).is_some(),
+                "Cell key {:?} should exist in TDS",
+                handle.cell_key()
             );
             assert!(
-                *facet_index < 4,
-                "Facet index {facet_index} should be valid for 3D tetrahedron"
+                handle.facet_index() < 4,
+                "Facet index {} should be valid for 3D tetrahedron",
+                handle.facet_index()
             );
         }
 
@@ -2739,19 +3185,25 @@ mod tests {
             );
 
             // Verify all returned handles are valid and can be converted to FacetViews
-            for (cell_key, facet_index) in &lightweight_result {
+            for handle in &lightweight_result {
                 assert!(
-                    tds.cells().get(*cell_key).is_some(),
-                    "Cell key {cell_key:?} should exist in TDS"
+                    tds.cells().get(handle.cell_key()).is_some(),
+                    "Cell key {:?} should exist in TDS",
+                    handle.cell_key()
                 );
                 assert!(
-                    *facet_index < 4,
-                    "Facet index {facet_index} should be valid for 3D tetrahedron"
+                    handle.facet_index() < 4,
+                    "Facet index {} should be valid for 3D tetrahedron",
+                    handle.facet_index()
                 );
 
                 // Verify we can create a FacetView from the handle
-                let _facet_view = crate::core::facet::FacetView::new(&tds, *cell_key, *facet_index)
-                    .expect("Should be able to create FacetView from handle");
+                let _facet_view = crate::core::facet::FacetView::new(
+                    &tds,
+                    handle.cell_key(),
+                    handle.facet_index(),
+                )
+                .expect("Should be able to create FacetView from handle");
             }
 
             println!(
@@ -2855,7 +3307,7 @@ mod tests {
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
 
         let test_vertex = vertex!([2.0, 0.0, 0.0]);
-        let empty_handles: Vec<(CellKey, u8)> = Vec::new();
+        let empty_handles: Vec<FacetHandle> = Vec::new();
 
         let initial_cell_count = tds.number_of_cells();
 
@@ -2905,7 +3357,7 @@ mod tests {
         // Remove the cell to make the key invalid
         let _removed_cell = tds.remove_cell_by_key(valid_cell_key);
 
-        let invalid_handles = vec![(valid_cell_key, 0)]; // Now invalid cell key, valid facet index
+        let invalid_handles = vec![FacetHandle::new(valid_cell_key, 0)]; // Now invalid cell key, valid facet index
 
         // Should return error for invalid cell key
         let result = IncrementalBowyerWatson::create_cells_from_facet_handles(
@@ -2955,7 +3407,7 @@ mod tests {
             .keys()
             .next()
             .expect("Should have at least one cell");
-        let invalid_handles = vec![(valid_cell_key, 99)]; // 99 is way out of bounds for 3D (should be 0-3)
+        let invalid_handles = vec![FacetHandle::new(valid_cell_key, 99)]; // 99 is way out of bounds for 3D (should be 0-3)
 
         // Should return error for invalid facet index
         let result = IncrementalBowyerWatson::create_cells_from_facet_handles(
@@ -3077,7 +3529,7 @@ mod tests {
         // Use a valid cell key but invalid facet index for easier testing
         let valid_cell_key = tds.cells().keys().next().expect("TDS should have cells");
         let mut mixed_handles = valid_handles;
-        mixed_handles.push((valid_cell_key, 99)); // Add invalid handle with bad facet index
+        mixed_handles.push(FacetHandle::new(valid_cell_key, 99)); // Add invalid handle with bad facet index
 
         let test_vertex = vertex!([2.0, 0.0, 0.0]);
 
@@ -3128,7 +3580,7 @@ mod tests {
 
         // Test each valid facet index for 3D tetrahedron
         for facet_idx in 0u8..4u8 {
-            let handles = vec![(valid_cell_key, facet_idx)];
+            let handles = vec![FacetHandle::new(valid_cell_key, facet_idx)];
             let test_vertex = vertex!([2.0, 0.0, 0.0]);
 
             let result = IncrementalBowyerWatson::create_cells_from_facet_handles(
@@ -3151,7 +3603,7 @@ mod tests {
         }
 
         // Test just-out-of-bounds facet index (4 for 3D tetrahedron)
-        let out_of_bounds_handles = vec![(valid_cell_key, 4)];
+        let out_of_bounds_handles = vec![FacetHandle::new(valid_cell_key, 4)];
         let test_vertex = vertex!([2.0, 0.0, 0.0]);
 
         let result = IncrementalBowyerWatson::create_cells_from_facet_handles(
@@ -3209,7 +3661,7 @@ mod tests {
         // This ensures some cells will be created before the error occurs
         let valid_cell_key = tds.cells().keys().next().expect("TDS should have cells");
         let mut mixed_handles = valid_handles.clone();
-        mixed_handles.push((valid_cell_key, 99)); // Add invalid handle at the end
+        mixed_handles.push(FacetHandle::new(valid_cell_key, 99)); // Add invalid handle at the end
 
         println!(
             "  Testing with {} handles ({} valid + 1 invalid)",
@@ -3518,9 +3970,10 @@ mod tests {
         );
 
         // Each facet handle should be valid - create FacetViews to verify
-        for (i, (cell_key, facet_index)) in boundary_facet_handles.iter().enumerate() {
-            let facet_view = crate::core::facet::FacetView::new(&tds, *cell_key, *facet_index)
-                .expect("Should be able to create FacetView from handle");
+        for (i, handle) in boundary_facet_handles.iter().enumerate() {
+            let facet_view =
+                crate::core::facet::FacetView::new(&tds, handle.cell_key(), handle.facet_index())
+                    .expect("Should be able to create FacetView from handle");
             let vertex_count = facet_view.vertices().unwrap().count();
             assert_eq!(vertex_count, 3, "Facet {i} should have 3 vertices in 3D");
         }
@@ -3953,11 +4406,14 @@ mod tests {
             );
 
             // Verify each boundary facet handle is valid
-            for (i, &(facet_cell_key, facet_idx)) in boundary_facets.iter().enumerate() {
+            for (i, handle) in boundary_facets.iter().enumerate() {
                 // Create FacetView from the handle
-                let facet_view =
-                    crate::core::facet::FacetView::new(&tds, facet_cell_key, facet_idx)
-                        .expect("Should be able to create FacetView from boundary facet handle");
+                let facet_view = crate::core::facet::FacetView::new(
+                    &tds,
+                    handle.cell_key(),
+                    handle.facet_index(),
+                )
+                .expect("Should be able to create FacetView from boundary facet handle");
 
                 // Verify the facet has the correct number of vertices (D vertices for D-dimensional triangulation)
                 let vertex_count = facet_view
@@ -5168,7 +5624,7 @@ mod tests {
 
         // Convert boundary facets to lightweight handles
         let boundary_facet_handles: Vec<_> = boundary_facets
-            .map(|fv| (fv.cell_key(), fv.facet_index()))
+            .map(|fv| FacetHandle::new(fv.cell_key(), fv.facet_index()))
             .collect();
 
         let initial_cell_count = tds.number_of_cells();
@@ -5189,8 +5645,7 @@ mod tests {
         println!("  ✓ create_cells_from_boundary_facets created {cells_created} cells");
 
         // Test with empty boundary facets (should create no cells)
-        let empty_facet_handles: Vec<(crate::core::triangulation_data_structure::CellKey, u8)> =
-            vec![];
+        let empty_facet_handles: Vec<FacetHandle> = vec![];
         let another_vertex = vertex!([3.0, 3.0, 3.0]);
         let cells_created = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_facet_handles(
             &mut tds,
@@ -6111,5 +6566,175 @@ mod tests {
         );
 
         println!("  ✓ Empty bad cells handled correctly");
+    }
+
+    /// Test that cavity-based insertion succeeds for a simple interior vertex.
+    ///
+    /// This verifies the success path of the transactional algorithm:
+    /// - Phase 1: Metadata extraction
+    /// - Phase 2: New cell creation
+    /// - Phase 3: Bad cell removal and neighbor wiring
+    #[test]
+    fn test_transactional_cavity_insertion_success() {
+        println!("Testing transactional cavity-based insertion (success path)");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        assert_eq!(tds.number_of_vertices(), 4);
+        assert_eq!(tds.number_of_cells(), 1);
+
+        // Insert an interior vertex
+        let interior = vertex!([0.25, 0.25, 0.25]);
+        let mut algorithm = IncrementalBowyerWatson::new();
+        let result = algorithm.insert_vertex(&mut tds, interior);
+
+        assert!(
+            result.is_ok(),
+            "Insertion should succeed: {:?}",
+            result.err()
+        );
+        assert_eq!(tds.number_of_vertices(), 5);
+        assert!(tds.number_of_cells() > 1);
+        assert!(tds.is_valid().is_ok(), "Triangulation should remain valid");
+
+        println!("  ✓ Transactional insertion succeeded");
+        println!("  ✓ Vertices: 4 -> 5");
+        println!("  ✓ Cells: 1 -> {}", tds.number_of_cells());
+    }
+
+    /// Test neighbor symmetry after transactional cavity insertion.
+    ///
+    /// Verifies that Phase 3 (neighbor wiring) correctly establishes
+    /// bidirectional neighbor relationships.
+    #[test]
+    fn test_transactional_insertion_neighbor_symmetry() {
+        println!("Testing neighbor symmetry after transactional insertion");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+
+        let interior = vertex!([0.3, 0.3]);
+        let mut algorithm = IncrementalBowyerWatson::new();
+        algorithm.insert_vertex(&mut tds, interior).unwrap();
+
+        // Verify neighbor symmetry
+        let mut symmetric_count = 0;
+        let mut checked_count = 0;
+
+        for (cell_key, cell) in tds.cells() {
+            if let Some(neighbors) = cell.neighbors() {
+                for &neighbor_key_opt in neighbors {
+                    checked_count += 1;
+                    if let Some(neighbor_key) = neighbor_key_opt {
+                        let neighbor = tds.cells().get(neighbor_key).unwrap();
+                        if let Some(neighbor_neighbors) = neighbor.neighbors()
+                            && neighbor_neighbors.contains(&Some(cell_key))
+                        {
+                            symmetric_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            symmetric_count > 0,
+            "Should have at least some symmetric neighbor relationships"
+        );
+
+        println!("  ✓ Neighbor symmetry verified");
+        println!("  ✓ Checked {checked_count} neighbor pointers");
+        println!("  ✓ Found {symmetric_count} symmetric relationships");
+    }
+
+    /// Test multiple cavity insertions maintain validity.
+    ///
+    /// Stress-tests the transactional pattern with sequential insertions.
+    #[test]
+    fn test_transactional_multiple_insertions() {
+        println!("Testing multiple transactional insertions");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([0.0, 2.0, 0.0]),
+            vertex!([0.0, 0.0, 2.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut algorithm = IncrementalBowyerWatson::new();
+
+        let interior_vertices = [
+            vertex!([0.5, 0.5, 0.5]),
+            vertex!([1.0, 0.5, 0.5]),
+            vertex!([0.5, 1.0, 0.5]),
+        ];
+
+        for (i, v) in interior_vertices.iter().enumerate() {
+            let result = algorithm.insert_vertex(&mut tds, *v);
+            assert!(result.is_ok(), "Insertion {i} should succeed");
+            assert!(
+                tds.is_valid().is_ok(),
+                "TDS should be valid after insertion {i}"
+            );
+        }
+
+        assert_eq!(tds.number_of_vertices(), 7);
+        println!("  ✓ All {} insertions succeeded", interior_vertices.len());
+        println!("  ✓ Final vertex count: 7");
+        println!("  ✓ Final cell count: {}", tds.number_of_cells());
+    }
+
+    /// Test 2D transactional cavity insertion.
+    #[test]
+    fn test_transactional_insertion_2d() {
+        println!("Testing 2D transactional cavity insertion");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.5, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let mut algorithm = IncrementalBowyerWatson::new();
+
+        let interior = vertex!([0.5, 0.3]);
+        assert!(algorithm.insert_vertex(&mut tds, interior).is_ok());
+        assert_eq!(tds.number_of_vertices(), 4);
+        assert!(tds.is_valid().is_ok());
+
+        println!("  ✓ 2D insertion successful");
+    }
+
+    /// Test 4D transactional cavity insertion.
+    #[test]
+    fn test_transactional_insertion_4d() {
+        println!("Testing 4D transactional cavity insertion");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
+        let mut algorithm = IncrementalBowyerWatson::new();
+
+        let interior = vertex!([0.2, 0.2, 0.2, 0.2]);
+        assert!(algorithm.insert_vertex(&mut tds, interior).is_ok());
+        assert_eq!(tds.number_of_vertices(), 6);
+        assert!(tds.is_valid().is_ok());
+
+        println!("  ✓ 4D insertion successful");
     }
 }

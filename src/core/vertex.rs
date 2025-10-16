@@ -339,7 +339,7 @@ where
     ///
     /// let empty_vertex: Vertex<f64, Option<()>, 3> = Vertex::empty();
     /// assert_relative_eq!(
-    ///     empty_vertex.point().to_array().as_slice(),
+    ///     empty_vertex.point().coords().as_slice(),
     ///     [0.0, 0.0, 0.0].as_slice(),
     ///     epsilon = 1e-9
     /// );
@@ -387,7 +387,7 @@ where
     /// let points = vec![Point::new([1.0, 2.0, 3.0])];
     /// let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(points.clone());
     /// assert_eq!(vertices.len(), 1);
-    /// assert_eq!(vertices[0].point().to_array(), [1.0, 2.0, 3.0]);
+    /// assert_eq!(vertices[0].point().coords(), &[1.0, 2.0, 3.0]);
     /// ```
     #[inline]
     #[must_use]
@@ -444,7 +444,7 @@ where
     ///
     /// let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
     /// let retrieved_point = vertex.point();
-    /// assert_eq!(retrieved_point.to_array(), [1.0, 2.0, 3.0]);
+    /// assert_eq!(retrieved_point.coords(), &[1.0, 2.0, 3.0]);
     /// ```
     #[inline]
     pub const fn point(&self) -> &Point<T, D> {
@@ -636,7 +636,7 @@ where
 }
 
 /// Enable implicit conversion from Vertex to coordinate array
-/// This allows `vertex.point.to_array()` to be implicitly converted to `[T; D]`
+/// This allows using `Into` to convert from `Vertex` to `[T; D]`
 impl<T, U, const D: usize> From<Vertex<T, U, D>> for [T; D]
 where
     T: CoordinateScalar,
@@ -645,7 +645,7 @@ where
 {
     #[inline]
     fn from(vertex: Vertex<T, U, D>) -> [T; D] {
-        vertex.point().to_array()
+        *vertex.point().coords()
     }
 }
 
@@ -659,7 +659,7 @@ where
 {
     #[inline]
     fn from(vertex: &Vertex<T, U, D>) -> [T; D] {
-        vertex.point().to_array()
+        *vertex.point().coords()
     }
 }
 
@@ -780,7 +780,7 @@ mod tests {
         U: DataType,
         [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
-        assert_eq!(vertex.point().to_array(), expected_coords);
+        assert_eq!(vertex.point().coords(), &expected_coords);
         assert_eq!(vertex.dim(), D);
         assert!(!vertex.uuid().is_nil());
         assert!(vertex.incident_cell.is_none());
@@ -795,7 +795,7 @@ mod tests {
         // Test new macro syntax without data - no None required!
         let v1: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
         assert_relative_eq!(
-            v1.point().to_array().as_slice(),
+            v1.point().coords().as_slice(),
             [1.0, 2.0, 3.0].as_slice(),
             epsilon = 1e-9
         );
@@ -806,7 +806,7 @@ mod tests {
         // Test new macro syntax with data - no Some() required!
         let v2: Vertex<f64, i32, 2> = vertex!([0.0, 1.0], 99);
         assert_relative_eq!(
-            v2.point().to_array().as_slice(),
+            v2.point().coords().as_slice(),
             [0.0, 1.0].as_slice(),
             epsilon = 1e-9
         );
@@ -817,7 +817,7 @@ mod tests {
         // Test macro with different data type (using Copy type)
         let v3: Vertex<f64, u32, 4> = vertex!([1.0, 2.0, 3.0, 4.0], 42u32);
         assert_relative_eq!(
-            v3.point().to_array().as_slice(),
+            v3.point().coords().as_slice(),
             [1.0f64, 2.0f64, 3.0f64, 4.0f64].as_slice(),
             epsilon = 1e-9
         );
@@ -862,7 +862,7 @@ mod tests {
         let vertex: Vertex<f64, Option<()>, 3> = Vertex::empty();
 
         assert_relative_eq!(
-            vertex.point().to_array().as_slice(),
+            vertex.point().coords().as_slice(),
             [0.0, 0.0, 0.0].as_slice(),
             epsilon = 1e-9
         );
@@ -882,7 +882,7 @@ mod tests {
 
         assert_eq!(vertex, vertex_copy);
         assert_relative_eq!(
-            vertex_copy.point().to_array().as_slice(),
+            vertex_copy.point().coords().as_slice(),
             [1.0, 2.0, 3.0, 4.0].as_slice(),
             epsilon = 1e-9
         );
@@ -898,19 +898,19 @@ mod tests {
         let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(points);
 
         assert_relative_eq!(
-            vertices[0].point().to_array().as_slice(),
+            vertices[0].point().coords().as_slice(),
             [1.0, 2.0, 3.0].as_slice(),
             epsilon = 1e-9
         );
         assert_eq!(vertices[0].dim(), 3);
         assert_relative_eq!(
-            vertices[1].point().to_array().as_slice(),
+            vertices[1].point().coords().as_slice(),
             [4.0, 5.0, 6.0].as_slice(),
             epsilon = 1e-9
         );
         assert_eq!(vertices[1].dim(), 3);
         assert_relative_eq!(
-            vertices[2].point().to_array().as_slice(),
+            vertices[2].point().coords().as_slice(),
             [7.0, 8.0, 9.0].as_slice(),
             epsilon = 1e-9
         );
@@ -956,8 +956,8 @@ mod tests {
 
         // Check that deserialized vertex has same point coordinates using approx equality
         assert_relative_eq!(
-            deserialized.point().to_array().as_slice(),
-            vertex.point().to_array().as_slice(),
+            deserialized.point().coords().as_slice(),
+            vertex.point().coords().as_slice(),
             epsilon = f64::EPSILON
         );
         assert_eq!(deserialized.dim(), vertex.dim());
@@ -1030,8 +1030,8 @@ mod tests {
 
         // Behavior depends on ordered_equals implementation in Point
         // This test documents the current behavior
-        println!("v1 coordinates: {:?}", v1.point().to_array());
-        println!("v2 coordinates: {:?}", v2.point().to_array());
+        println!("v1 coordinates: {:?}", v1.point().coords());
+        println!("v2 coordinates: {:?}", v2.point().coords());
         println!("v1 == v2: {}", v1 == v2);
 
         // Test with clearly different values
@@ -1235,7 +1235,7 @@ mod tests {
         // Test that we found the right one
         let found_vertex = found.unwrap();
         assert_relative_eq!(
-            found_vertex.point().to_array().as_slice(),
+            found_vertex.point().coords().as_slice(),
             [1.0, 0.0, 0.0].as_slice(),
             epsilon = 1e-9
         );
@@ -1282,7 +1282,7 @@ mod tests {
         let vertex: Vertex<f32, Option<()>, 2> = vertex!([1.5, 2.5]);
 
         assert_relative_eq!(
-            vertex.point().to_array().as_slice(),
+            vertex.point().coords().as_slice(),
             [1.5, 2.5].as_slice(),
             epsilon = 1e-9
         );
@@ -1349,7 +1349,7 @@ mod tests {
         let vertex: Vertex<f64, Option<()>, 3> = vertex!([-1.0, -2.0, -3.0]);
 
         assert_relative_eq!(
-            vertex.point().to_array().as_slice(),
+            vertex.point().coords().as_slice(),
             [-1.0, -2.0, -3.0].as_slice(),
             epsilon = 1e-9
         );
@@ -1370,7 +1370,7 @@ mod tests {
         let vertex: Vertex<f64, Option<()>, 3> = vertex!([1e6, 2e6, 3e6]);
 
         assert_relative_eq!(
-            vertex.point().to_array().as_slice(),
+            vertex.point().coords().as_slice(),
             [1_000_000.0, 2_000_000.0, 3_000_000.0].as_slice(),
             epsilon = 1e-9
         );
@@ -1382,7 +1382,7 @@ mod tests {
         let vertex: Vertex<f64, Option<()>, 3> = vertex!([1e-6, 2e-6, 3e-6]);
 
         assert_relative_eq!(
-            vertex.point().to_array().as_slice(),
+            vertex.point().coords().as_slice(),
             [0.000_001, 0.000_002, 0.000_003].as_slice(),
             epsilon = 1e-9
         );
@@ -1394,7 +1394,7 @@ mod tests {
         let vertex: Vertex<f64, Option<()>, 4> = vertex!([1.0, -2.0, 3.0, -4.0]);
 
         assert_relative_eq!(
-            vertex.point().to_array().as_slice(),
+            vertex.point().coords().as_slice(),
             [1.0, -2.0, 3.0, -4.0].as_slice(),
             epsilon = 1e-9
         );
@@ -1420,7 +1420,7 @@ mod tests {
 
         assert_eq!(vertices.len(), 1);
         assert_relative_eq!(
-            vertices[0].point().to_array().as_slice(),
+            vertices[0].point().coords().as_slice(),
             [1.0, 2.0, 3.0].as_slice(),
             epsilon = 1e-9
         );
@@ -1446,7 +1446,7 @@ mod tests {
         assert_eq!(hashmap.len(), 1);
         assert!(hashmap.contains_key(&uuid));
         assert_relative_eq!(
-            hashmap.get(&uuid).unwrap().point().to_array().as_slice(),
+            hashmap.get(&uuid).unwrap().point().coords().as_slice(),
             [1.0, 2.0, 3.0].as_slice(),
             epsilon = 1e-9
         );
@@ -1496,7 +1496,7 @@ mod tests {
 
         // Verify the original vertex is still available after reference conversion
         assert_relative_eq!(
-            vertex_ref.point().to_array().as_slice(),
+            vertex_ref.point().coords().as_slice(),
             [4.0, 5.0, 6.0].as_slice(),
             epsilon = 1e-9
         );
@@ -1509,7 +1509,7 @@ mod tests {
         // Test implicit conversion from vertex reference to Point
         let point_from_vertex: Point<f64, 3> = (&vertex).into();
         assert_relative_eq!(
-            point_from_vertex.to_array().as_slice(),
+            point_from_vertex.coords().as_slice(),
             [1.0, 2.0, 3.0].as_slice(),
             epsilon = 1e-9
         );
@@ -1519,7 +1519,7 @@ mod tests {
 
         // Verify the original vertex is still available after conversion
         assert_relative_eq!(
-            vertex.point().to_array().as_slice(),
+            vertex.point().coords().as_slice(),
             [1.0, 2.0, 3.0].as_slice(),
             epsilon = 1e-9
         );
@@ -1529,7 +1529,7 @@ mod tests {
 
         let point_2d: Point<f64, 2> = (&vertex_2d).into();
         assert_relative_eq!(
-            point_2d.to_array().as_slice(),
+            point_2d.coords().as_slice(),
             [10.5, -5.3].as_slice(),
             epsilon = 1e-9
         );
@@ -1752,7 +1752,7 @@ mod tests {
 
         // Test that these vertices work with all normal operations
         assert_eq!(vertices_with_ids.len(), 4);
-        let coords = vertices_with_ids[0].point().to_array();
+        let coords = vertices_with_ids[0].point().coords();
         assert_abs_diff_eq!(coords[0], 0.5, epsilon = f64::EPSILON);
         assert_abs_diff_eq!(coords[1], 0.5, epsilon = f64::EPSILON);
         assert_eq!(vertices_with_ids[1].data.unwrap(), 1u32);
@@ -1946,7 +1946,7 @@ mod tests {
         assert!(result.is_ok());
         let vertex = result.unwrap();
         assert_relative_eq!(
-            vertex.point().to_array().as_slice(),
+            vertex.point().coords().as_slice(),
             [1.0, 2.0, 3.0].as_slice(),
             epsilon = 1e-9
         );
@@ -2016,7 +2016,7 @@ mod tests {
         };
 
         assert_relative_eq!(
-            vertex.point().to_array().as_slice(),
+            vertex.point().coords().as_slice(),
             [1.5, 2.5, 3.5].as_slice(),
             epsilon = 1e-9
         );
@@ -2040,7 +2040,7 @@ mod tests {
         let vertex = result.unwrap();
 
         assert_relative_eq!(
-            vertex.point().to_array().as_slice(),
+            vertex.point().coords().as_slice(),
             [10.0, 20.0].as_slice(),
             epsilon = 1e-9
         );
@@ -2189,8 +2189,8 @@ mod tests {
 
         // Verify all fields match
         assert_relative_eq!(
-            original_vertex.point().to_array().as_slice(),
-            deserialized_vertex.point().to_array().as_slice(),
+            original_vertex.point().coords().as_slice(),
+            deserialized_vertex.point().coords().as_slice(),
             epsilon = 1e-9
         );
         assert_eq!(original_vertex.uuid(), deserialized_vertex.uuid());
