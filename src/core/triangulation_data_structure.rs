@@ -3222,7 +3222,7 @@ where
                         // given the same input, which is critical for debugging and testing.
                         // Better approach would be to compute cell quality (volume, aspect ratio, etc.) and keep
                         // the two highest-quality cells. This would improve triangulation robustness.
-                        // Track with issue: #86
+                        // Track with issue: #105
                         // Deterministic ordering by stable UUID instead of SlotMap key
                         valid_cells.sort_unstable_by_key(|&k| self.cells[k].uuid());
                         // Remove all but the first two (smallest UUIDs) - deterministic selection

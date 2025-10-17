@@ -284,7 +284,7 @@ The foundation for Phase 3 has been significantly strengthened with robust infra
 
 **Status**: ✅ COMPLETE - All quality checks passing
 
-- **Test Results**: 772 unit tests passing, 194 doc tests passing
+- **Test Results**: 781 unit tests passing, 200 doc tests passing
 - **Commit**: `6f03fab` - "Changed: Refactors core TDS for key-based storage"
 - **Documentation**: Archived in `docs/archive/phase_3a_implementation_guide.md`
 - **Architecture Delivered**: TDS-centric with iterator patterns (zero-cost abstraction)
@@ -320,13 +320,13 @@ The foundation for Phase 3 has been significantly strengthened with robust infra
 - ✅ Updated `InsertionAlgorithm` trait method signatures to use `(CellKey, u8)` tuples
 - ✅ Completed `ConvexHull` module refactoring with key-based storage
 - ✅ Migrated all trait/algorithm code to use lightweight facet handles
-- ✅ All 772 tests passing with no public API breakage
+- ✅ All 781 tests passing with no public API breakage
 - ✅ Introduced `FacetHandle` for stored lightweight facet references
 - ✅ `FacetView` serves as borrowed view with lifetime parameter (no ownership)
 - ✅ **18x memory reduction** for facet structures achieved
 - ✅ Complete migration from raw `(CellKey, u8)` tuples to `FacetHandle` struct throughout codebase
 - ✅ All type aliases, method signatures, and collections updated to use `FacetHandle`
-- ✅ All 774 tests passing with full `FacetHandle` adoption
+- ✅ All 781 tests passing with full `FacetHandle` adoption
 
 **Key Design Decisions**:
 
@@ -482,7 +482,7 @@ Phase 3 was completed in October 2025 through comprehensive refactoring:
 
 ### Risk Mitigation ✅ COMPLETED
 
-- ✅ **High API impact** → Atomic migration in single commit with comprehensive testing (772 tests passing)
+- ✅ **High API impact** → Atomic migration in single commit with comprehensive testing (781 tests passing)
 - ✅ **Serialization compatibility** → Direct key-based serialization with POD types
 - ✅ **Complex refactoring** → Completed with rollback mechanisms and extensive validation
 - ✅ **Numerical stability** → Enhanced geometric predicates and error handling
@@ -656,7 +656,7 @@ type OptimizedTds<T, U, V, const D: usize> =
 
 ### Code Quality (v0.5.1 Status)
 
-- [x] **All tests passing (774/774)** ✅
+- [x] **All tests passing (781/781)** ✅
 - [x] **No clippy warnings** ✅
 - [x] **Documentation complete** ✅
 - [x] **Phase 1-2 implementation guides** ✅
@@ -691,24 +691,24 @@ type OptimizedTds<T, U, V, const D: usize> =
 ### Core Optimization Documents
 
 - **This document (`OPTIMIZATION_ROADMAP.md`)** - Comprehensive 4-phase optimization roadmap (primary reference)
-- `docs/optimization_recommendations.md` - Historical optimization analysis with detailed code examples
-  - Contains original implementation details and code samples
-  - Useful for understanding the evolution of optimizations
-  - Most recommendations have been implemented or incorporated into this roadmap
+- **`docs/numerical_robustness_guide.md`** - Numerical stability improvements (orthogonal to performance)
+- **`docs/code_organization.md`** - Project structure and architectural patterns
+- **`docs/property_testing_summary.md`** - Property-based testing patterns for geometric invariants
+- **`docs/topology.md`** - Topological invariants and geometric properties
 
-### Completed Micro-Optimizations
+### Historical Documentation (Archived)
 
-- `docs/vertex_uuid_iter_optimizations.md` - Zero-allocation UUID iteration (Phase 2)
-  - **Status**: ✅ COMPLETE
+- **`docs/archive/phase2_bowyer_watson_optimization.md`** - FacetCacheProvider implementation history
+  - **Status**: ✅ COMPLETE (v0.4.4)
+  - **Impact**: 50-90% reduction in facet mapping computation time
+- **`docs/archive/phase2_uuid_iter_optimization.md`** - Zero-allocation UUID iteration history
+  - **Status**: ✅ COMPLETE (v0.4.4)
   - **Impact**: 1.86x faster iteration, zero heap allocations
-  - **Scope**: Iterator pattern for Cell vertex UUIDs
-
-### Phase 2 Implementation Guides
-
-- `docs/OPTIMIZING_BOWYER_WATSON.md` - FacetCacheProvider implementation for Bowyer-Watson algorithms
-  - **Part of Phase 2** - ✅ IMPLEMENTED (September 2025)
-  - **Impact**: 50-90% reduction in facet mapping computation time achieved
-  - **Rationale**: Eliminates redundant computation in hot paths
+- **`docs/archive/phase_3a_implementation_guide.md`** - Phase 3A TDS-centric architecture
+  - **Status**: ✅ COMPLETE (v0.5.0)
+- **`docs/archive/phase_3c_action_plan.md`** - Phase 3C Facet migration
+  - **Status**: ✅ COMPLETE (v0.5.1)
+- **`docs/archive/optimization_recommendations_historical.md`** - Original optimization analysis
 
 ---
 
@@ -770,7 +770,7 @@ Phases 1, 2, and 3 are fully complete with robustness improvements, delivering s
 Phase 3 complete, Phase 4 planned for 2026:
 
 - **Phase 3** ✅ COMPLETE (October 2025): Structure refactoring achieved 90% memory reduction
-  - ✅ **All objectives met**: Key-based storage, FacetHandle/FacetView architecture, 774 tests passing
+  - ✅ **All objectives met**: Key-based storage, FacetHandle/FacetView architecture, 781 tests passing
   - ✅ **Documentation archived**: Implementation guides in `docs/archive/`
 - **Phase 4** 📋 PLANNED (Q1 2026): Collection abstraction for 10-15% iteration improvement
   - 📋 **Ready to begin**: Phase 3 foundation complete, trait design documented

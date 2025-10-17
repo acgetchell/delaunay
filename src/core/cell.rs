@@ -886,86 +886,6 @@ where
         self.has_vertex_in_common(other)
     }
 
-    // NOTE: Intentionally commented out; kept for reference during Phase 3A refactor.
-    // The function `from_facet_and_vertex` creates a new [Cell] object from a [Facet] and a [Vertex].
-    //
-    // # Arguments
-    //
-    // - `facet`: The [Facet] to be used to create the [Cell].
-    // - `vertex`: The [Vertex] to be added to the [Cell].
-    //
-    // # Returns
-    //
-    // A `Result` containing a new [Cell] with all vertices from the facet plus the additional vertex,
-    // or a `CellValidationError` if the vertex already exists in the facet.
-    //
-    // # Errors
-    //
-    // Returns `CellValidationError::DuplicateVertices` if the provided vertex already exists
-    // in the facet, which would result in a cell with duplicate vertices.
-    //
-    // # Example
-    //
-    // ```
-    // use delaunay::{cell, vertex};
-    // use delaunay::core::cell::Cell;
-    // use delaunay::core::facet::Facet;
-    // use delaunay::core::vertex::Vertex;
-    //
-    // let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
-    // let vertex2: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
-    // let vertex3: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
-    // let vertex4: Vertex<f64, Option<()>, 3> = vertex!([1.0, 1.0, 1.0]);
-    // let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4]);
-    // let facet = Facet::new(cell.clone(), vertex4).unwrap();
-    // let vertex5: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
-    // let new_cell = Cell::from_facet_and_vertex(&facet, vertex5).unwrap();
-    // assert!(new_cell.vertices().contains(&vertex5));
-    // ```
-    //
-    // ```should_panic
-    // use delaunay::{cell, vertex};
-    // use delaunay::core::cell::Cell;
-    // use delaunay::core::facet::Facet;
-    // use delaunay::core::vertex::Vertex;
-    //
-    // let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
-    // let vertex2: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
-    // let vertex3: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
-    // let vertex4: Vertex<f64, Option<()>, 3> = vertex!([1.0, 1.0, 1.0]);
-    // let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4]);
-    // let facet = Facet::new(cell.clone(), vertex4).unwrap();
-    // // This should fail because vertex1 is already in the facet
-    // let new_cell = Cell::from_facet_and_vertex(&facet, vertex1).unwrap();
-    // ```
-    // TODO Phase 3A.2: Reimplement with key-based API after Facet refactor
-    /* OLD CODE - TO BE REFACTORED AFTER PHASE 3A.3:
-    pub fn from_facet_and_vertex(
-        facet: &Facet<T, U, V, D>,
-        vertex: Vertex<T, U, D>,
-    ) -> Result<Self, CellValidationError> {
-        let facet_vertices = facet.vertices();
-
-        // Check if the vertex already exists in the facet
-        if facet_vertices.contains(&vertex) {
-            return Err(CellValidationError::DuplicateVertices);
-        }
-
-        let mut vertices = facet_vertices;
-        vertices.push(vertex);
-        let uuid = make_uuid();
-        let neighbors = None;
-        let data = None;
-
-        Ok(Self {
-            vertices,
-            uuid,
-            neighbors,
-            data,
-        })
-    }
-    */
-
     /// Converts a vector of cells into a `FastHashMap` indexed by their UUIDs.
     ///
     /// This utility function transforms a collection of cells into a hash map structure
@@ -1180,18 +1100,6 @@ where
     ///
     /// # Examples
     ///
-    /// Note: The old `facets()` method has been replaced with `facet_views()` which requires
-    /// TDS context. See the `facet_views()` method below for examples using the Phase 3C API.
-    ///
-    // NOTE: Intentionally commented out; kept for reference during Phase 3A refactor.
-    // TODO Phase 3A.2: Reimplement facets() with key-based API
-    // OLD CODE - TO BE REFACTORED:
-    // pub fn facets(&self) -> Result<Vec<Facet<T, U, V, D>>, FacetError> {
-    //     self.vertices
-    //         .iter()
-    //         .map(|vertex| Facet::new(self.clone(), *vertex))
-    //         .collect()
-    // }
     /// Returns all facets of this cell as lightweight `FacetView` objects.
     ///
     /// This method provides a more efficient alternative to `facets()` by returning

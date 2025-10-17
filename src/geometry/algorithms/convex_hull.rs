@@ -3996,9 +3996,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)] // Test uses deprecated method intentionally for backward compatibility
-    // TODO: Remove this test once get_or_build_facet_cache is removed after all downstreams
-    // migrate to try_get_or_build_facet_cache. Track migration via GitHub issue if needed.
+    #[allow(deprecated)]
     fn test_get_or_build_facet_cache() {
         println!("Testing get_or_build_facet_cache method");
 
@@ -4094,9 +4092,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)] // Test uses deprecated method intentionally for integration testing
-    // TODO: Migrate this test to use try_get_or_build_facet_cache once get_or_build_facet_cache
-    // is removed. Track migration via GitHub issue if needed.
+    #[allow(deprecated)]
     fn test_helper_methods_integration() {
         println!("Testing integration between helper methods");
 

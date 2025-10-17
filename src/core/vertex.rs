@@ -595,9 +595,11 @@ where
         validate_uuid(&self.uuid())?;
 
         Ok(())
-        // TODO: Additional validation can be added here:
-        // - Validate incident_cell reference if present
-        // - Validate data if needed
+        // Note: incident_cell validation is handled at the TDS level via:
+        // - Tds::assign_incident_cells() ensures proper cell assignment
+        // - Tds::is_valid() validates cell mappings and references
+        // Individual vertices cannot validate incident_cell without TDS context.
+        // User data validation (if U: DataType requires it) could be added here.
     }
 }
 

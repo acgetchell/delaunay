@@ -52,15 +52,23 @@ Completed optimization work and historical references:
 - `phase2_uuid_iter_optimization.md` - Zero-allocation UUID iteration (✅ v0.4.4)
 - `optimization_recommendations_historical.md` - Historical optimization analysis
 
+#### **[property_testing_summary.md](./property_testing_summary.md)**
+
+Property-based testing guide using proptest
+
+- Property testing patterns
+- Geometric invariant testing
+- Proptest usage and best practices
+
+#### **[topology.md](./topology.md)**
+
+Topology and geometric properties guide
+
+- Topological invariants
+- Geometric relationships
+- Structural properties
+
 ### Process Documentation
-
-#### **[optimization_recommendations.md](./optimization_recommendations.md)**
-
-Original optimization analysis with detailed code examples
-
-- Historical context of optimizations
-- Detailed implementation samples
-- Evolution of the optimization strategy
 
 #### **[RELEASING.md](./RELEASING.md)**
 
@@ -73,10 +81,10 @@ Release process and versioning guidelines
 ## 🗺️ Quick Navigation Guide
 
 1. **Starting a new optimization?** → Read [OPTIMIZATION_ROADMAP.md](./OPTIMIZATION_ROADMAP.md)
-2. **Implementing FacetCacheProvider?** → See [OPTIMIZING_BOWYER_WATSON.md](./OPTIMIZING_BOWYER_WATSON.md)
-3. **Need iterator optimization patterns?** → Check [vertex_uuid_iter_optimizations.md](./vertex_uuid_iter_optimizations.md)
-4. **Dealing with numerical issues?** → Consult [numerical_robustness_guide.md](./numerical_robustness_guide.md)
-5. **Understanding the codebase?** → Review [code_organization.md](./code_organization.md)
+2. **Dealing with numerical issues?** → Consult [numerical_robustness_guide.md](./numerical_robustness_guide.md)
+3. **Understanding the codebase?** → Review [code_organization.md](./code_organization.md)
+4. **Writing property tests?** → Check [property_testing_summary.md](./property_testing_summary.md)
+5. **Understanding topology?** → See [topology.md](./topology.md)
 6. **Preparing a release?** → Follow [RELEASING.md](./RELEASING.md)
 
 ## 📊 Current Optimization Status
@@ -99,7 +107,7 @@ Release process and versioning guidelines
 - **Improved cache locality** with direct SlotMap indexing (Phase 3)
 - **Enhanced thread safety** with RCU-based caching and atomic operations
 - **Enhanced robustness** with rollback mechanisms and comprehensive error handling
-- **772 tests passing** with no regressions
+- **781 tests passing** with no regressions
 
 ---
 

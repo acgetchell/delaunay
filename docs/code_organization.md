@@ -91,23 +91,31 @@ delaunay/
 │   ├── circumsphere_debug_tools.rs               # Interactive circumsphere testing and debugging utilities
 │   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
 │   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
+│   ├── proptest_point.rs                         # Property-based tests for Point (hashing, equality, serialization)
+│   ├── proptest_predicates.proptest-regressions  # Proptest regression test cases for geometric predicates
+│   ├── proptest_predicates.rs                    # Property-based tests for geometric predicates (orientation, insphere)
+│   ├── proptest_triangulation.rs                 # Property-based tests for triangulation invariants
 │   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
 │   ├── robust_predicates_showcase.rs             # Robust predicates demonstration tests
 │   ├── tds_basic_integration.rs                  # Basic TDS creation, neighbor assignment, and validation tests
 │   └── test_cavity_boundary_error.rs             # Cavity boundary error reproduction tests
 ├── docs/                                         # Additional documentation
+│   ├── archive/                                  # Historical documentation
+│   │   ├── optimization_recommendations_historical.md  # Historical optimization notes
+│   │   ├── phase2_bowyer_watson_optimization.md       # Phase 2 Bowyer-Watson optimization history
+│   │   ├── phase2_uuid_iter_optimization.md           # Phase 2 UUID iterator optimization history
+│   │   ├── phase_3a_implementation_guide.md           # Phase 3A implementation history
+│   │   └── phase_3c_action_plan.md                    # Phase 3C action plan history
 │   ├── templates/                                # Templates for automated generation
 │   │   ├── README.md                             # Templates documentation
 │   │   └── changelog.hbs                         # Custom changelog template
-│   ├── Cell_refactoring.md                       # Cell module refactoring documentation
 │   ├── code_organization.md                      # Code organization patterns (this file)
 │   ├── numerical_robustness_guide.md             # Numerical robustness and stability guide
-│   ├── optimization_recommendations.md           # Performance optimization guide
 │   ├── OPTIMIZATION_ROADMAP.md                   # Comprehensive 4-phase optimization strategy (primary reference)
-│   ├── OPTIMIZING_BOWYER_WATSON.md               # FacetCacheProvider implementation guide (Phase 2 - completed v0.4.4)
+│   ├── property_testing_summary.md               # Property-based testing guide
 │   ├── README.md                                 # Documentation index and navigation guide
 │   ├── RELEASING.md                              # Release process documentation
-│   └── vertex_uuid_iter_optimizations.md         # Zero-allocation UUID iteration optimization guide
+│   └── topology.md                               # Topology and geometric properties guide
 ├── scripts/                                      # Development and CI scripts
 │   ├── tests/                                    # Python utility tests
 │   │   ├── __init__.py                           # Test package initialization

@@ -503,7 +503,6 @@ mod tests {
         }
 
         let vertices = Vertex::from_points(points);
-        // TODO: Migrate to cache-backed path once Phase 3 lands.
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
         #[cfg(debug_assertions)]
@@ -541,7 +540,6 @@ mod tests {
             }
 
             // Detailed facet sharing analysis
-            // TODO: Migrate to cache-backed path once Phase 3 lands.
             eprintln!("\n=== FACET SHARING ANALYSIS ===");
             #[allow(deprecated)] // Test diagnostic - OK to use deprecated method
             let facet_to_cells = tds.build_facet_to_cells_map_lenient();
@@ -645,7 +643,6 @@ mod tests {
 
         #[cfg(debug_assertions)]
         {
-            // TODO: Migrate to cache-backed path once Phase 3 lands.
             if issues.is_empty() {
                 eprintln!("\n✅ All triangulation invariants appear to be satisfied");
             } else {
