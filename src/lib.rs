@@ -206,6 +206,8 @@ pub mod geometry {
     pub mod matrix;
     pub mod point;
     pub mod predicates;
+    /// Geometric quality measures for d-dimensional simplicial cells
+    pub mod quality;
     /// Enhanced predicates with improved numerical robustness
     pub mod robust_predicates;
     /// Geometric utility functions for d-dimensional geometry calculations
