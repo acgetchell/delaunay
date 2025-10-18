@@ -181,7 +181,9 @@ use crate::core::collections::{
     MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, UuidToCellKeyMap, UuidToVertexKeyMap,
     ValidCellsBuffer, VertexKeyBuffer, VertexKeySet, VertexToCellsMap, fast_hash_map_with_capacity,
 };
-use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::geometry::{
+    quality::radius_ratio, traits::coordinate::CoordinateScalar, util::safe_scalar_to_f64,
+};
 
 // num-traits imports
 use num_traits::cast::NumCast;
@@ -3147,6 +3149,7 @@ where
     ///    - Keep only the valid cells (up to 2) and remove invalid ones
     /// 5. Remove the excess/invalid cells and update the cell bimap accordingly
     /// 6. Clean up any resulting duplicate cells
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, TriangulationValidationError> {
         // First check if there are any facet sharing issues using the validation function
         if self.validate_facet_sharing().is_ok() {
@@ -3154,122 +3157,309 @@ where
             return Ok(0);
         }
 
-        // There are facet sharing issues, proceed with the fix
-        // Use try_build for strict error handling, but fall back to build if it fails
-        // If strict build fails, use the lenient version for repair
-        // This allows us to fix what we can even with partial data
-        let facet_to_cells = self
-            .build_facet_to_cells_map()
-            .map_err(|e| {
-                // Log the error in debug builds for troubleshooting
+        // Iterate until all facet sharing issues are resolved
+        // Multiple passes may be needed as removing cells can create new issues
+        let mut total_removed = 0;
+        let max_iterations = 10; // Safety limit to prevent infinite loops
+
+        for iteration in 0..max_iterations {
+            #[cfg(debug_assertions)]
+            eprintln!("fix_invalid_facet_sharing: Starting iteration {iteration}");
+
+            // Check if facet sharing is already valid at the start of this iteration
+            if self.validate_facet_sharing().is_ok() {
                 #[cfg(debug_assertions)]
-                eprintln!(
-                    "Warning: Strict facet map build failed during repair: {e}. \
+                if iteration > 0 {
+                    eprintln!(
+                        "✓ Fixed invalid facet sharing after {iteration} iterations, removed {total_removed} total cells"
+                    );
+                }
+                break;
+            }
+
+            // There are facet sharing issues, proceed with the fix
+            // Use try_build for strict error handling, but fall back to build if it fails
+            // If strict build fails, use the lenient version for repair
+            // This allows us to fix what we can even with partial data
+            let facet_to_cells = self
+                .build_facet_to_cells_map()
+                .map_err(|e| {
+                    // Log the error in debug builds for troubleshooting
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Warning: Strict facet map build failed during repair: {e}. \
                      Falling back to lenient builder to attempt recovery."
-                );
-                e
-            })
-            .unwrap_or_else(|_| {
-                #[allow(deprecated)] // Internal fallback for repair - lenient version needed
-                self.build_facet_to_cells_map_lenient()
-            });
-        let mut cells_to_remove: CellKeySet = CellKeySet::default();
+                    );
+                    e
+                })
+                .unwrap_or_else(|_| {
+                    #[allow(deprecated)] // Internal fallback for repair - lenient version needed
+                    self.build_facet_to_cells_map_lenient()
+                });
+            let mut cells_to_remove: CellKeySet = CellKeySet::default();
 
-        // Find facets that are shared by more than 2 cells and validate which ones are correct
-        #[allow(unused_variables)] // facet_key used in debug_assertions
-        for (facet_key, cell_facet_pairs) in facet_to_cells {
-            if cell_facet_pairs.len() > 2 {
-                let first_cell_key = cell_facet_pairs[0].cell_key();
-                let first_facet_index = cell_facet_pairs[0].facet_index();
-                if self.cells.contains_key(first_cell_key) {
-                    // Use direct key-based method with proper error propagation
-                    // The error is already TriangulationValidationError, so just propagate it
-                    let vertices = self.get_cell_vertices(first_cell_key)?;
-                    let mut facet_vertices = Vec::with_capacity(vertices.len() - 1);
-                    let idx: usize = first_facet_index.into();
-                    for (i, &key) in vertices.iter().enumerate() {
-                        if i != idx {
-                            facet_vertices.push(key);
-                        }
-                    }
+            // Find facets that are shared by more than 2 cells and validate which ones are correct
+            #[allow(unused_variables)] // facet_key used in debug_assertions
+            for (facet_key, cell_facet_pairs) in facet_to_cells {
+                #[cfg(debug_assertions)]
+                if cell_facet_pairs.len() > 2 {
+                    eprintln!(
+                        "Iteration {}: Processing facet {} with {} sharing cells",
+                        iteration,
+                        facet_key,
+                        cell_facet_pairs.len()
+                    );
+                }
 
-                    // Build the facet vertex set once, outside the loop
-                    let facet_vertices_set: VertexKeySet = facet_vertices.iter().copied().collect();
-
-                    let mut valid_cells = ValidCellsBuffer::new();
-                    for facet_handle in &cell_facet_pairs {
-                        let cell_key = facet_handle.cell_key();
-                        if self.cells.contains_key(cell_key) {
-                            // Use direct key-based method with proper error propagation
-                            // The error is already TriangulationValidationError, so just propagate it
-                            let cell_vertices_vec = self.get_cell_vertices(cell_key)?;
-                            // Use iter().copied() to avoid moving the Vec
-                            let cell_vertices: VertexKeySet =
-                                cell_vertices_vec.iter().copied().collect();
-
-                            if facet_vertices_set.is_subset(&cell_vertices) {
-                                valid_cells.push(cell_key);
-                            } else {
-                                cells_to_remove.insert(cell_key);
+                if cell_facet_pairs.len() > 2 {
+                    let first_cell_key = cell_facet_pairs[0].cell_key();
+                    let first_facet_index = cell_facet_pairs[0].facet_index();
+                    if self.cells.contains_key(first_cell_key) {
+                        // Use direct key-based method with proper error propagation
+                        // The error is already TriangulationValidationError, so just propagate it
+                        let vertices = self.get_cell_vertices(first_cell_key)?;
+                        let mut facet_vertices = Vec::with_capacity(vertices.len() - 1);
+                        let idx: usize = first_facet_index.into();
+                        for (i, &key) in vertices.iter().enumerate() {
+                            if i != idx {
+                                facet_vertices.push(key);
                             }
                         }
-                    }
 
-                    if valid_cells.len() > 2 {
-                        // TODO: Improve cell retention criteria using geometric quality measures
-                        // Current approach: Sort by UUID to ensure deterministic selection
-                        // This guarantees reproducible behavior - the same cells are always removed
-                        // given the same input, which is critical for debugging and testing.
-                        // Better approach would be to compute cell quality (volume, aspect ratio, etc.) and keep
-                        // the two highest-quality cells. This would improve triangulation robustness.
-                        // Track with issue: #105
-                        // Deterministic ordering by stable UUID instead of SlotMap key
-                        valid_cells.sort_unstable_by_key(|&k| self.cells[k].uuid());
-                        // Remove all but the first two (smallest UUIDs) - deterministic selection
-                        for &cell_key in valid_cells.iter().skip(2) {
-                            cells_to_remove.insert(cell_key);
+                        // Build the facet vertex set once, outside the loop
+                        let facet_vertices_set: VertexKeySet =
+                            facet_vertices.iter().copied().collect();
+
+                        let mut valid_cells = ValidCellsBuffer::new();
+                        for facet_handle in &cell_facet_pairs {
+                            let cell_key = facet_handle.cell_key();
+                            if self.cells.contains_key(cell_key) {
+                                // Use direct key-based method with proper error propagation
+                                // The error is already TriangulationValidationError, so just propagate it
+                                let cell_vertices_vec = self.get_cell_vertices(cell_key)?;
+                                // Use iter().copied() to avoid moving the Vec
+                                let cell_vertices: VertexKeySet =
+                                    cell_vertices_vec.iter().copied().collect();
+
+                                if facet_vertices_set.is_subset(&cell_vertices) {
+                                    valid_cells.push(cell_key);
+                                } else {
+                                    cells_to_remove.insert(cell_key);
+                                }
+                            }
                         }
-                    }
 
-                    if cfg!(debug_assertions) {
-                        let total_cells = cell_facet_pairs.len();
-                        let removed_count = total_cells - valid_cells.len().min(2);
-                        if removed_count > 0 {
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "Iteration {}: Facet {} has {} valid cells",
+                            iteration,
+                            facet_key,
+                            valid_cells.len()
+                        );
+
+                        if valid_cells.len() > 2 {
                             #[cfg(debug_assertions)]
                             eprintln!(
-                                "Warning: Facet {} was shared by {} cells, removing {} invalid cells (keeping {} valid)",
+                                "Iteration {}: Facet {} entering quality selection (need to remove {} cells)",
+                                iteration,
                                 facet_key,
-                                total_cells,
-                                removed_count,
-                                valid_cells.len().min(2)
+                                valid_cells.len() - 2
                             );
+
+                            // Use quality metrics to select the two best cells
+                            // Primary: Radius ratio (lower is better - equilateral has ratio ≈ D)
+                            // Fallback to UUID ordering for deterministic behavior when quality computation fails
+
+                            // Compute quality for each cell and sort by quality (best first)
+                            let mut cell_qualities: Vec<(CellKey, f64, Uuid)> = valid_cells
+                                .iter()
+                                .filter_map(|&cell_key| {
+                                    // Compute radius ratio quality metric (lower = better)
+                                    let quality_result = radius_ratio(self, cell_key);
+                                    let uuid = self.cells[cell_key].uuid();
+
+                                    // Convert to f64 for sorting
+                                    quality_result.ok().and_then(|ratio| {
+                                        safe_scalar_to_f64(ratio).ok().map(|r| (cell_key, r, uuid))
+                                    })
+                                })
+                                .collect();
+
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "Iteration {}: Facet {} computed qualities for {} out of {} cells",
+                                iteration,
+                                facet_key,
+                                cell_qualities.len(),
+                                valid_cells.len()
+                            );
+
+                            // Only use quality metrics if we could compute quality for ALL cells
+                            // Otherwise fall back to UUID ordering for consistency
+                            if cell_qualities.len() == valid_cells.len()
+                                && cell_qualities.len() >= 2
+                            {
+                                // Sort by quality (lower ratio = better), with UUID as tiebreaker
+                                cell_qualities.sort_unstable_by(|a, b| {
+                                    a.1.partial_cmp(&b.1)
+                                        .unwrap_or(CmpOrdering::Equal)
+                                        .then_with(|| a.2.cmp(&b.2))
+                                });
+
+                                // Keep the two best quality cells, remove the rest
+                                for (cell_key, quality, _) in cell_qualities.iter().skip(2) {
+                                    // Only mark for removal if the cell still exists
+                                    if self.cells.contains_key(*cell_key) {
+                                        cells_to_remove.insert(*cell_key);
+
+                                        #[cfg(debug_assertions)]
+                                        eprintln!(
+                                            "Removing cell {cell_key:?} with radius ratio quality {quality:.3} (worse than the best 2)"
+                                        );
+                                    } else {
+                                        #[cfg(debug_assertions)]
+                                        eprintln!(
+                                            "Cell {cell_key:?} already removed in previous iteration"
+                                        );
+                                    }
+                                }
+                            } else {
+                                // Quality computation failed for some cells, fall back to UUID ordering
+                                // This ensures deterministic behavior even when quality can't be computed
+                                #[cfg(debug_assertions)]
+                                eprintln!(
+                                    "Warning: Quality computation failed for some cells, falling back to UUID ordering"
+                                );
+
+                                valid_cells.sort_unstable_by_key(|&k| self.cells[k].uuid());
+                                for &cell_key in valid_cells.iter().skip(2) {
+                                    if self.cells.contains_key(cell_key) {
+                                        cells_to_remove.insert(cell_key);
+                                    } else {
+                                        #[cfg(debug_assertions)]
+                                        eprintln!(
+                                            "Cell {cell_key:?} already removed in previous iteration (UUID fallback)"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        if cfg!(debug_assertions) {
+                            let total_cells = cell_facet_pairs.len();
+                            let removed_count = total_cells - valid_cells.len().min(2);
+                            if removed_count > 0 {
+                                #[cfg(debug_assertions)]
+                                eprintln!(
+                                    "Warning: Facet {} was shared by {} cells, removing {} invalid cells (keeping {} valid)",
+                                    facet_key,
+                                    total_cells,
+                                    removed_count,
+                                    valid_cells.len().min(2)
+                                );
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Remove the invalid/excess cells and their UUID-to-key mapping entries
-        let mut actually_removed = 0;
-        for cell_key in cells_to_remove {
-            if let Some(removed_cell) = self.cells.remove(cell_key) {
-                self.uuid_to_cell_key.remove(&removed_cell.uuid());
-                actually_removed += 1;
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Iteration {}: Facet processing complete, {} cells marked for removal",
+                iteration,
+                cells_to_remove.len()
+            );
+
+            // Remove the invalid/excess cells and their UUID-to-key mapping entries
+            let mut actually_removed = 0;
+            for cell_key in cells_to_remove {
+                if let Some(removed_cell) = self.cells.remove(cell_key) {
+                    self.uuid_to_cell_key.remove(&removed_cell.uuid());
+                    actually_removed += 1;
+                }
             }
+
+            #[cfg(debug_assertions)]
+            eprintln!("Iteration {iteration}: Removed {actually_removed} cells directly");
+
+            // Clean up any resulting duplicate cells
+            #[cfg(debug_assertions)]
+            eprintln!("Iteration {iteration}: Calling remove_duplicate_cells");
+            let duplicate_cells_removed = self.remove_duplicate_cells()?;
+
+            #[cfg(debug_assertions)]
+            eprintln!("Iteration {iteration}: Removed {duplicate_cells_removed} duplicate cells");
+
+            // After cell removals, neighbor and incident mappings may be stale
+            // Recompute them to maintain topology consistency
+            if actually_removed > 0 || duplicate_cells_removed > 0 {
+                #[cfg(debug_assertions)]
+                eprintln!("Iteration {iteration}: Calling assign_neighbors");
+
+                // Within the iteration loop, we allow assign_neighbors to fail
+                // because we may have created temporary inconsistencies that will
+                // be fixed in subsequent iterations
+                if let Err(e) = self.assign_neighbors() {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Iteration {iteration}: assign_neighbors failed (will retry next iteration): {e}"
+                    );
+                    // Continue to next iteration to try to fix the problem
+                    continue;
+                }
+
+                #[cfg(debug_assertions)]
+                eprintln!("Iteration {iteration}: Calling assign_incident_cells");
+
+                if let Err(e) = self.assign_incident_cells() {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Iteration {iteration}: assign_incident_cells failed (will retry next iteration): {e}"
+                    );
+                    // Continue to next iteration to try to fix the problem
+                    continue;
+                }
+                // Generation already bumped by assign_neighbors(); avoid double increment
+            }
+
+            let removed_this_iteration = actually_removed + duplicate_cells_removed;
+            total_removed += removed_this_iteration;
+
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Iteration {iteration}: Removed {removed_this_iteration} cells ({actually_removed} directly, {duplicate_cells_removed} duplicates)"
+            );
+
+            // If no cells were removed this iteration, or validation passes, we're done
+            let validation_ok = self.validate_facet_sharing().is_ok();
+
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Iteration {iteration}: validation_ok={validation_ok}, removed_this_iteration={removed_this_iteration}"
+            );
+
+            if removed_this_iteration == 0 || validation_ok {
+                #[cfg(debug_assertions)]
+                if iteration > 0 {
+                    eprintln!(
+                        "✓ Fixed invalid facet sharing after {} iterations, removed {} total cells",
+                        iteration + 1,
+                        total_removed
+                    );
+                }
+                break;
+            }
+
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Iteration {}: Removed {} cells, {} total removed so far",
+                iteration + 1,
+                removed_this_iteration,
+                total_removed
+            );
         }
 
-        // Clean up any resulting duplicate cells
-        let duplicate_cells_removed = self.remove_duplicate_cells()?;
-
-        // After cell removals, neighbor and incident mappings may be stale
-        // Recompute them to maintain topology consistency
-        if actually_removed > 0 || duplicate_cells_removed > 0 {
-            self.assign_neighbors()?;
-            self.assign_incident_cells()?;
-            // Generation already bumped by assign_neighbors(); avoid double increment
-        }
-
-        Ok(actually_removed + duplicate_cells_removed)
+        Ok(total_removed)
     }
 }
 

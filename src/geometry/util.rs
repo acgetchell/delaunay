@@ -904,6 +904,307 @@ where
     Ok(distance)
 }
 
+/// Calculate the volume of a D-dimensional simplex.
+///
+/// This function computes the D-dimensional volume of a simplex formed by D+1 points.
+/// The volume is calculated using the Gram matrix determinant method, which is
+/// numerically stable and generalizes correctly to arbitrary dimensions.
+///
+/// # Mathematical Background
+///
+/// For a D-dimensional simplex with vertices p₀, p₁, ..., pD, the volume is:
+///
+/// **Volume = (1/D!) × √(det(G))**
+///
+/// where G is the Gram matrix of edge vectors from p₀ to all other vertices.
+///
+/// # Arguments
+///
+/// * `points` - Points defining the simplex (must have exactly D+1 points)
+///
+/// # Returns
+///
+/// The D-dimensional volume of the simplex, or an error if calculation fails
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Wrong number of points provided (expected D+1)
+/// - Points are degenerate (volume would be zero)
+/// - Coordinate conversion fails
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::geometry::util::simplex_volume;
+/// use approx::assert_relative_eq;
+///
+/// // 2D: Triangle area
+/// let triangle = vec![
+///     Point::new([0.0, 0.0]),
+///     Point::new([1.0, 0.0]),
+///     Point::new([0.0, 1.0]),
+/// ];
+/// let area = simplex_volume(&triangle).unwrap();
+/// assert_relative_eq!(area, 0.5, epsilon = 1e-10); // Area = 1*1/2 = 0.5
+///
+/// // 3D: Tetrahedron volume
+/// let tetrahedron = vec![
+///     Point::new([0.0, 0.0, 0.0]),
+///     Point::new([1.0, 0.0, 0.0]),
+///     Point::new([0.0, 1.0, 0.0]),
+///     Point::new([0.0, 0.0, 1.0]),
+/// ];
+/// let volume = simplex_volume(&tetrahedron).unwrap();
+/// assert_relative_eq!(volume, 1.0/6.0, epsilon = 1e-10); // Volume = 1/6
+/// ```
+pub fn simplex_volume<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
+where
+    T: CoordinateScalar + Sum + Zero,
+{
+    if points.len() != D + 1 {
+        return Err(CircumcenterError::InvalidSimplex {
+            actual: points.len(),
+            expected: D + 1,
+            dimension: D,
+        });
+    }
+
+    // Special cases for low dimensions with optimized formulas
+    match D {
+        1 => {
+            // 1D: Length of line segment
+            let p0 = points[0].coords();
+            let p1 = points[1].coords();
+            let diff = [p1[0] - p0[0]];
+            Ok(Float::abs(diff[0]))
+        }
+        2 => {
+            // 2D: Triangle area using cross product magnitude / 2
+            let p0 = points[0].coords();
+            let p1 = points[1].coords();
+            let p2 = points[2].coords();
+
+            // Vectors from p0 to p1 and p0 to p2
+            let v1 = [p1[0] - p0[0], p1[1] - p0[1]];
+            let v2 = [p2[0] - p0[0], p2[1] - p0[1]];
+
+            // 2D cross product magnitude: |v1.x * v2.y - v1.y * v2.x|
+            let cross_z = v1[0] * v2[1] - v1[1] * v2[0];
+            Ok(Float::abs(cross_z) / (T::one() + T::one())) // Divide by 2
+        }
+        3 => {
+            // 3D: Tetrahedron volume using triple scalar product / 6
+            let p0 = points[0].coords();
+            let p1 = points[1].coords();
+            let p2 = points[2].coords();
+            let p3 = points[3].coords();
+
+            // Edge vectors from p0
+            let v1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+            let v2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+            let v3 = [p3[0] - p0[0], p3[1] - p0[1], p3[2] - p0[2]];
+
+            // Triple scalar product: v1 · (v2 × v3)
+            let cross_x = v2[1] * v3[2] - v2[2] * v3[1];
+            let cross_y = v2[2] * v3[0] - v2[0] * v3[2];
+            let cross_z = v2[0] * v3[1] - v2[1] * v3[0];
+            let triple_product = v1[0] * cross_x + v1[1] * cross_y + v1[2] * cross_z;
+
+            // Volume = |triple product| / 6
+            let six = T::one() + T::one() + T::one() + T::one() + T::one() + T::one();
+            Ok(Float::abs(triple_product) / six)
+        }
+        _ => {
+            // Higher dimensions: Use Gram matrix method
+            simplex_volume_gram_matrix::<T, D>(points)
+        }
+    }
+}
+
+/// Calculate the volume of a D-dimensional simplex using the Gram matrix method.
+///
+/// This is a helper function that implements the general Gram matrix approach
+/// for computing simplex volumes in arbitrary dimensions.
+///
+/// # Arguments
+///
+/// * `points` - Points defining the simplex (must have exactly D+1 points)
+///
+/// # Returns
+///
+/// The volume of the simplex, or an error if calculation fails
+fn simplex_volume_gram_matrix<T, const D: usize>(
+    points: &[Point<T, D>],
+) -> Result<T, CircumcenterError>
+where
+    T: CoordinateScalar + Sum + Zero,
+{
+    // Convert points to f64 and create edge vectors from first point to all others
+    let p0_coords = points[0].coords();
+    let p0_f64 = safe_coords_to_f64(*p0_coords)?;
+
+    // Create matrix of edge vectors (each row is an edge vector)
+    let mut edge_matrix = zeros(D, D);
+    for i in 1..=D {
+        let point_coords = points[i].coords();
+        let point_f64 = safe_coords_to_f64(*point_coords)?;
+
+        for j in 0..D {
+            edge_matrix[(i - 1, j)] = point_f64[j] - p0_f64[j];
+        }
+    }
+
+    // Compute Gram matrix G where G[i,j] = edge_i · edge_j
+    let mut gram_matrix = zeros(D, D);
+    for i in 0..D {
+        for j in 0..D {
+            let mut dot_product = 0.0;
+            for k in 0..D {
+                dot_product += edge_matrix[(i, k)] * edge_matrix[(j, k)];
+            }
+            gram_matrix[(i, j)] = dot_product;
+        }
+    }
+
+    // Calculate determinant of Gram matrix
+    let det = gram_matrix.det();
+
+    // Volume = (1/D!) × √(det(G))
+    if det < 0.0 {
+        return Err(CircumcenterError::MatrixInversionFailed {
+            details: "Gram matrix has negative determinant (degenerate simplex)".to_string(),
+        });
+    }
+
+    let volume_f64 = if det == 0.0 {
+        0.0 // Degenerate case
+    } else {
+        let sqrt_det = det.sqrt();
+
+        // Calculate D! factorial
+        let factorial_usize = factorial(D);
+        let factorial_val = safe_usize_to_scalar::<f64>(factorial_usize).map_err(|e| {
+            CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
+                value: factorial_usize.to_string(),
+                from_type: "usize",
+                to_type: "f64",
+                details: e.to_string(),
+            })
+        })?;
+        sqrt_det / factorial_val
+    };
+
+    safe_scalar_from_f64(volume_f64).map_err(CircumcenterError::CoordinateConversion)
+}
+
+/// Calculate the inradius of a D-dimensional simplex.
+///
+/// The inradius is the radius of the largest sphere that can be inscribed
+/// within the simplex. It is computed using the formula:
+///
+/// **inradius = D × volume / `surface_area`**
+///
+/// where `surface_area` is the sum of all (D-1)-dimensional facet volumes.
+///
+/// # Arguments
+///
+/// * `points` - Points defining the simplex (must have exactly D+1 points)
+///
+/// # Returns
+///
+/// The inradius of the simplex, or an error if calculation fails
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Wrong number of points provided (expected D+1)
+/// - Simplex is degenerate (zero volume or surface area)
+/// - Coordinate conversion fails
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::geometry::util::inradius;
+/// use approx::assert_relative_eq;
+///
+/// // 2D: Equilateral triangle with side length 1
+/// let triangle = vec![
+///     Point::new([0.0, 0.0]),
+///     Point::new([1.0, 0.0]),
+///     Point::new([0.5, 0.866025]), // sqrt(3)/2 ≈ 0.866025
+/// ];
+/// let r_in = inradius(&triangle).unwrap();
+/// // For equilateral triangle: inradius ≈ 0.2887 (exact: sqrt(3)/6)
+/// assert_relative_eq!(r_in, 0.28867, epsilon = 1e-4);
+/// ```
+pub fn inradius<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
+where
+    T: CoordinateScalar + Sum + Zero + AddAssign<T>,
+{
+    if points.len() != D + 1 {
+        return Err(CircumcenterError::InvalidSimplex {
+            actual: points.len(),
+            expected: D + 1,
+            dimension: D,
+        });
+    }
+
+    // Compute volume
+    let volume = simplex_volume(points)?;
+
+    // Check for degenerate simplex
+    let epsilon = T::from(1e-10).unwrap_or_else(T::zero);
+    if volume < epsilon {
+        return Err(CircumcenterError::MatrixInversionFailed {
+            details: format!("Degenerate simplex with volume ≈ {volume:?}"),
+        });
+    }
+
+    // Compute surface area by summing all (D-1)-dimensional facet volumes
+    let mut surface_area = T::zero();
+    for i in 0..=D {
+        // Create facet by omitting vertex i
+        let facet_points: Vec<Point<T, D>> = points
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i)
+            .map(|(_, p)| *p)
+            .collect();
+
+        if facet_points.len() != D {
+            continue;
+        }
+
+        let facet_area = facet_measure(&facet_points)?;
+        surface_area += facet_area;
+    }
+
+    // Check for degenerate surface area
+    if surface_area < epsilon {
+        return Err(CircumcenterError::MatrixInversionFailed {
+            details: format!("Degenerate simplex with surface_area ≈ {surface_area:?}"),
+        });
+    }
+
+    // inradius = D * volume / surface_area
+    let d_scalar = T::from(D).ok_or_else(|| {
+        CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
+            value: D.to_string(),
+            from_type: "usize",
+            to_type: std::any::type_name::<T>(),
+            details: "Failed to convert dimension to coordinate type".to_string(),
+        })
+    })?;
+
+    let inradius = (d_scalar * volume) / surface_area;
+    Ok(inradius)
+}
+
 /// Calculate the area/volume of a facet defined by a set of points.
 ///
 /// This function calculates the (D-1)-dimensional "area" of a facet in D-dimensional space:
@@ -2106,8 +2407,151 @@ mod tests {
     }
 
     // =============================================================================
-    // COMPREHENSIVE CIRCUMCENTER TESTS
+    // SIMPLEX VOLUME TESTS
     // =============================================================================
+
+    #[test]
+    fn test_simplex_volume_1d_line_segment() {
+        // 1D: Line segment length
+        let line = vec![Point::new([0.0]), Point::new([5.0])];
+        let volume = simplex_volume(&line).unwrap();
+        assert_relative_eq!(volume, 5.0, epsilon = 1e-10);
+
+        // Negative direction
+        let line_neg = vec![Point::new([5.0]), Point::new([0.0])];
+        let volume_neg = simplex_volume(&line_neg).unwrap();
+        assert_relative_eq!(volume_neg, 5.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_simplex_volume_2d_triangle() {
+        // 2D: Right triangle with legs 3 and 4
+        let triangle = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([3.0, 0.0]),
+            Point::new([0.0, 4.0]),
+        ];
+        let area = simplex_volume(&triangle).unwrap();
+        assert_relative_eq!(area, 6.0, epsilon = 1e-10); // Area = (3*4)/2 = 6
+
+        // Equilateral triangle with side 1
+        let equilateral = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.5, 0.866_025]), // sqrt(3)/2
+        ];
+        let area_eq = simplex_volume(&equilateral).unwrap();
+        // Area = sqrt(3)/4 ≈ 0.433013
+        assert_relative_eq!(area_eq, 0.433_013, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_simplex_volume_3d_tetrahedron() {
+        // 3D: Regular tetrahedron with vertices at unit cube corners
+        let tetrahedron = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let volume = simplex_volume(&tetrahedron).unwrap();
+        assert_relative_eq!(volume, 1.0 / 6.0, epsilon = 1e-10); // Volume = 1/6
+    }
+
+    #[test]
+    fn test_simplex_volume_4d_simplex() {
+        // 4D: Regular 4-simplex
+        let simplex_4d = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 1.0]),
+        ];
+        let volume = simplex_volume(&simplex_4d).unwrap();
+        // 4D simplex volume = 1/4! = 1/24
+        assert_relative_eq!(volume, 1.0 / 24.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_simplex_volume_degenerate() {
+        // Degenerate triangle (collinear points)
+        let collinear = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 1.0]),
+            Point::new([2.0, 2.0]),
+        ];
+        let area = simplex_volume(&collinear).unwrap();
+        assert_relative_eq!(area, 0.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_simplex_volume_wrong_point_count() {
+        // Wrong number of points for 2D
+        let points = vec![Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
+        let result = simplex_volume::<f64, 2>(&points);
+        assert!(result.is_err());
+    }
+
+    // =============================================================================
+    // INRADIUS TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_inradius_2d_equilateral_triangle() {
+        // Equilateral triangle with side 1
+        let triangle = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.5, 0.866_025]), // sqrt(3)/2
+        ];
+        let r_in = inradius(&triangle).unwrap();
+        // For equilateral triangle: inradius = sqrt(3)/6 ≈ 0.28867513
+        assert_relative_eq!(r_in, 0.288_675_13, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_inradius_2d_right_triangle() {
+        // Right triangle with legs 3 and 4
+        let triangle = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([3.0, 0.0]),
+            Point::new([0.0, 4.0]),
+        ];
+        let r_in = inradius(&triangle).unwrap();
+        // For right triangle: inradius = (a+b-c)/2 = (3+4-5)/2 = 1.0
+        assert_relative_eq!(r_in, 1.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_inradius_3d_regular_tetrahedron() {
+        // Regular tetrahedron at unit cube corners
+        let tetrahedron = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let r_in = inradius(&tetrahedron).unwrap();
+        // For this tetrahedron: inradius ≈ 0.2113
+        assert_relative_eq!(r_in, 0.2113, epsilon = 1e-3);
+    }
+
+    #[test]
+    fn test_inradius_degenerate() {
+        // Degenerate triangle (collinear points)
+        let collinear = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([2.0, 0.0]),
+        ];
+        let result = inradius(&collinear);
+        assert!(result.is_err()); // Should fail for degenerate simplex
+    }
+
+    // =============================================================================
+    // COMPREHENSIVE CIRCUMCENTER TESTS
+    // ========================================
 
     #[test]
     fn test_circumcenter_regular_simplex_3d() {
