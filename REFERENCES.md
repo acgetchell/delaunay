@@ -39,6 +39,12 @@ This section contains the foundational algorithms and data structures that form 
   *Discrete & Computational Geometry* 4, no. 1 (1989): 387-421. DOI: [10.1007/BF02187740](https://doi.org/10.1007/BF02187740)
 - Guibas, L., Knuth, D., and Sharir, M. "Randomized Incremental Construction of Delaunay and Voronoi Diagrams."
   *Algorithmica* 7, no. 1-6 (1992): 381-413. DOI: [10.1007/BF01758770](https://doi.org/10.1007/BF01758770)
+- Fortune, S. "A Sweepline Algorithm for Voronoi Diagrams."
+  *Algorithmica* 2, no. 1-4 (1987): 153-174. DOI: [10.1007/BF01840357](https://doi.org/10.1007/BF01840357)
+- Guibas, L., and Stolfi, J. "Primitives for the Manipulation of General Subdivisions and the Computation of Voronoi Diagrams."
+  *ACM Transactions on Graphics* 4, no. 2 (1985): 74-123. DOI: [10.1145/282918.282923](https://doi.org/10.1145/282918.282923)
+- Shewchuk, J.R. "Delaunay Refinement Algorithms for Triangular Mesh Generation."
+  *Computational Geometry* 22, no. 1-3 (2002): 21-74. DOI: [10.1016/S0925-7721(01)00047-5](https://doi.org/10.1016/S0925-7721(01)00047-5)
 
 ### Data Structures and Implementation References
 
@@ -46,6 +52,8 @@ This section contains the foundational algorithms and data structures that form 
   Available at: <https://doc.cgal.org/6.0.1/Manual/packages.html>
 - de Berg, M., et al. "Computational Geometry: Algorithms and Applications." 3rd ed. Berlin: Springer-Verlag, 2008.
   DOI: [10.1007/978-3-540-77974-2](https://doi.org/10.1007/978-3-540-77974-2)
+- Edelsbrunner, H. "Geometry and Topology for Mesh Generation." Cambridge: Cambridge University Press, 2001.
+  ISBN: 978-0-521-79309-4
 - Blandford, D.K., Blelloch, G.E., and Kadow, C. "Engineering a Compact Parallel Delaunay Algorithm in 3D."
   *Proceedings of the Twenty-Second Annual Symposium on Computational Geometry* (2006): 292-300.
   DOI: [10.1145/1137856.1137895](https://doi.org/10.1145/1137856.1137895)
@@ -71,8 +79,12 @@ These references ensure the library's geometric computations are mathematically 
   *Discrete & Computational Geometry* 18, no. 3 (1997): 305-363. DOI: [10.1007/PL00009321](https://doi.org/10.1007/PL00009321)
 - Shewchuk, J. R. "Robust Adaptive Floating-Point Geometric Predicates."
   *Proceedings of the Twelfth Annual Symposium on Computational Geometry* (1996): 141-150.
+  DOI: [10.1145/237218.237337](https://doi.org/10.1145/237218.237337)
 - Fortune, S., and Van Wyk, C. J. "Static Analysis Yields Efficient Exact Integer Arithmetic for Computational Geometry."
   *ACM Transactions on Graphics* 15, no. 3 (1996): 223-248. DOI: [10.1145/234535.234691](https://doi.org/10.1145/234535.234691)
+- Fortune, S., and Van Wyk, C.J. "Efficient Exact Arithmetic for Computational Geometry."
+  *Proceedings of the Ninth Annual Symposium on Computational Geometry* (1993): 163-172.
+  DOI: [10.1145/160985.161140](https://doi.org/10.1145/160985.161140)
 - Karasick, M., Lieber, D., and Nackman, L. R. "Efficient Delaunay Triangulation Using Rational Arithmetic."
   *ACM Transactions on Graphics* 10, no. 1 (1991): 71-91. DOI: [10.1145/99902.99917](https://doi.org/10.1145/99902.99917)
 
@@ -96,6 +108,31 @@ These references ensure the library's geometric computations are mathematically 
 - Lévy, Bruno, and Yang Liu. "Lp Centroidal Voronoi Tessellation and Its Applications."
   *ACM Transactions on Graphics* 29, no. 4 (July 26, 2010): 119:1-119:11.
   DOI: [10.1145/1778765.1778856](https://doi.org/10.1145/1778765.1778856)
+
+## Mesh Quality Metrics
+
+These references inform the geometric quality measures used for evaluating simplex quality
+and selecting high-quality cells during triangulation repair.
+
+### Quality Measures for Simplicial Meshes
+
+- Shewchuk, J.R. "What Is a Good Linear Element? Interpolation, Conditioning, Anisotropy,
+  and Quality Measures." Eleventh International Meshing Roundtable, Ithaca, New York (2002).
+  Available at: <https://people.eecs.berkeley.edu/~jrs/papers/elemj.pdf>
+- Liu, A., and Joe, B. "Relationship between Tetrahedron Shape Measures."
+  *BIT Numerical Mathematics* 34, no. 2 (1994): 268-287. DOI: [10.1007/BF01955874](https://doi.org/10.1007/BF01955874)
+- Field, D.A. "Qualitative Measures for Initial Meshes."
+  *International Journal for Numerical Methods in Engineering* 47, no. 4 (2000): 887-906.
+  DOI: [10.1002/(SICI)1097-0207(20000210)47:4<887::AID-NME804>3.0.CO;2-H](https://doi.org/10.1002/(SICI)1097-0207(20000210)47:4<887::AID-NME804>3.0.CO;2-H)
+
+### Radius Ratio and Aspect Ratio Metrics
+
+- Parthasarathy, V.N., Graichen, C.M., and Hathaway, A.F. "A Comparison of Tetrahedron Quality Measures."
+  *Finite Elements in Analysis and Design* 15, no. 3 (1994): 255-261.
+  DOI: [10.1016/0168-874X(94)90033-7](https://doi.org/10.1016/0168-874X(94)90033-7)
+- Knupp, P.M. "Algebraic Mesh Quality Metrics."
+  *SIAM Journal on Scientific Computing* 23, no. 1 (2001): 193-218.
+  DOI: [10.1137/S1064827500371499](https://doi.org/10.1137/S1064827500371499)
 
 ## Convex Hull Algorithms
 

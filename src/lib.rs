@@ -226,6 +226,7 @@ pub mod geometry {
     pub use matrix::*;
     pub use point::*;
     pub use predicates::*;
+    pub use quality::*;
     pub use traits::*;
     pub use util::*;
 }
