@@ -40,6 +40,7 @@ uuid = { version = "1.18.1", features = ["v4", "serde"] }
 criterion = { version = "0.7", features = ["html_reports"] }
 pastey = "0.1"
 proptest = "1.4"
+sysinfo = "0.37.2"  # Process memory monitoring for benchmarks
 
 [features]
 count-allocations = ["allocation-counter"]

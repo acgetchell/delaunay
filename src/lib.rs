@@ -206,6 +206,8 @@ pub mod geometry {
     pub mod matrix;
     pub mod point;
     pub mod predicates;
+    /// Geometric quality measures for d-dimensional simplicial cells
+    pub mod quality;
     /// Enhanced predicates with improved numerical robustness
     pub mod robust_predicates;
     /// Geometric utility functions for d-dimensional geometry calculations
@@ -224,6 +226,7 @@ pub mod geometry {
     pub use matrix::*;
     pub use point::*;
     pub use predicates::*;
+    pub use quality::*;
     pub use traits::*;
     pub use util::*;
 }
@@ -250,7 +253,7 @@ pub mod prelude {
 
     // Re-export from geometry
     pub use crate::geometry::{
-        algorithms::*, matrix::*, point::*, predicates::*, robust_predicates::*,
+        algorithms::*, matrix::*, point::*, predicates::*, quality::*, robust_predicates::*,
         traits::coordinate::*, util::*,
     };
 
@@ -320,6 +323,30 @@ mod tests {
         let _facet_map: FacetToCellsMap = FacetToCellsMap::default();
         let _neighbors: CellNeighborsMap = CellNeighborsMap::default();
         let _vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
+    }
+
+    #[test]
+    fn test_prelude_quality_exports() {
+        use crate::prelude::*;
+
+        // Test that quality functions are accessible from prelude
+        // Create a simple 2D triangle
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+
+        // Get a cell to test quality functions
+        let (cell_key, _) = tds.cells().iter().next().unwrap();
+
+        // Test that quality functions are accessible
+        let ratio = radius_ratio(&tds, cell_key).unwrap();
+        assert!(ratio > 0.0);
+
+        let norm_vol = normalized_volume(&tds, cell_key).unwrap();
+        assert!(norm_vol > 0.0);
     }
 
     // =============================================================================
