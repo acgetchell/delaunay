@@ -76,7 +76,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 
-/// Memory usage information for benchmarking
+/// Memory usage information for benchmarking (in KiB)
 #[derive(Debug, Clone)]
 struct MemoryInfo {
     before: u64,
@@ -84,24 +84,24 @@ struct MemoryInfo {
     delta: i64,
 }
 
-/// Get current process memory usage in KB
+/// Get current process memory usage in KiB
 fn get_memory_usage() -> u64 {
     static SYS: OnceLock<Mutex<System>> = OnceLock::new();
     let pid = sysinfo::get_current_pid().expect("Failed to get current PID");
     let sys = SYS.get_or_init(|| {
         Mutex::new(System::new_with_specifics(
-            RefreshKind::new().with_processes(ProcessRefreshKind::new().with_memory()),
+            RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory()),
         ))
     });
     let mut system = sys.lock().expect("lock System");
     system.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         true,
-        ProcessRefreshKind::new().with_memory(),
+        ProcessRefreshKind::nothing().with_memory(),
     );
     system
         .process(pid)
-        .map_or(0, |process| process.memory() / 1024) // bytes → KB
+        .map_or(0, |process| process.memory() / 1024) // bytes → KiB
 }
 
 /// Measure memory delta during triangulation construction
@@ -192,7 +192,7 @@ where
             // Report memory usage to stderr (won't interfere with benchmark timing)
             if std::env::var_os("BENCH_PRINT_MEM").is_some() {
                 eprintln!(
-                    "Memory: before={} KB, after={} KB, delta={} KB",
+                    "Memory: before={} KiB, after={} KiB, delta={} KiB",
                     mem_info.before, mem_info.after, mem_info.delta
                 );
             }
@@ -214,7 +214,6 @@ where
 {
     let bench_name = format!("validation/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
-    group.throughput(Throughput::Elements(n_points as u64));
 
     // Adjust sample size for large cases
     if n_points >= 5000 {
@@ -227,6 +226,9 @@ where
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
     let tds: Tds<f64, Option<()>, Option<()>, D> =
         Tds::new(&vertices).expect("Failed to create triangulation");
+
+    // Throughput in terms of cells we actually validate
+    group.throughput(Throughput::Elements(tds.number_of_cells() as u64));
 
     group.bench_function("validate_topology", |b| {
         b.iter(|| {

@@ -3177,28 +3177,23 @@ where
                         "✓ Fixed invalid facet sharing after {iteration} iterations, removed {total_removed} total cells"
                     );
                 }
-                break;
+                return Ok(total_removed);
             }
 
             // There are facet sharing issues, proceed with the fix
             // Use try_build for strict error handling, but fall back to build if it fails
             // If strict build fails, use the lenient version for repair
             // This allows us to fix what we can even with partial data
-            let facet_to_cells = self
-                .build_facet_to_cells_map()
-                .map_err(|e| {
-                    // Log the error in debug builds for troubleshooting
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Warning: Strict facet map build failed during repair: {e}. \
+            let facet_to_cells = self.build_facet_to_cells_map().unwrap_or_else(|e| {
+                // Log the error in debug builds for troubleshooting
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Warning: Strict facet map build failed during repair: {e}. \
                      Falling back to lenient builder to attempt recovery."
-                    );
-                    e
-                })
-                .unwrap_or_else(|_| {
-                    #[allow(deprecated)] // Internal fallback for repair - lenient version needed
-                    self.build_facet_to_cells_map_lenient()
-                });
+                );
+                #[allow(deprecated)] // Internal fallback for repair - lenient version needed
+                self.build_facet_to_cells_map_lenient()
+            });
             let mut cells_to_remove: CellKeySet = CellKeySet::default();
 
             // Find facets that are shared by more than 2 cells and validate which ones are correct
@@ -3351,37 +3346,31 @@ where
                                         .then_with(|| a.2.cmp(&b.2))
                                 });
 
-                                // Partition: keep best 2 scored cells if possible, fill remainder with unscored
-                                let mut kept_count = 0;
+                                // Keep exactly two cells: prefer scored, fill with unscored if needed
                                 let keep_limit = 2;
+                                let mut keep: Vec<CellKey> = cell_qualities
+                                    .iter()
+                                    .take(keep_limit)
+                                    .map(|(k, _, _)| *k)
+                                    .collect();
 
-                                // Keep top scored cells first
-                                for (cell_key, _, _) in &cell_qualities {
-                                    if kept_count >= keep_limit {
-                                        if self.cells.contains_key(*cell_key) {
-                                            cells_to_remove.insert(*cell_key);
-                                        }
-                                    } else {
-                                        kept_count += 1;
-                                    }
+                                // Fill remaining slots with unscored cells if needed
+                                if keep.len() < keep_limit {
+                                    let mut unscored: Vec<CellKey> = valid_cells
+                                        .iter()
+                                        .copied()
+                                        .filter(|k| !scored_keys.contains(k))
+                                        .collect();
+                                    unscored.sort_unstable_by_key(|k| self.cells[*k].uuid());
+                                    keep.extend(unscored.into_iter().take(keep_limit - keep.len()));
                                 }
 
-                                // Handle unscored cells (sort by UUID for determinism)
-                                let mut unscored: Vec<CellKey> = valid_cells
-                                    .iter()
-                                    .copied()
-                                    .filter(|k| !scored_keys.contains(k))
-                                    .collect();
-                                unscored.sort_unstable_by_key(|k| self.cells[*k].uuid());
-
-                                // Keep unscored cells only if we haven't kept enough scored cells
-                                for cell_key in unscored {
-                                    if kept_count >= keep_limit {
-                                        if self.cells.contains_key(cell_key) {
-                                            cells_to_remove.insert(cell_key);
-                                        }
-                                    } else {
-                                        kept_count += 1;
+                                // Remove all cells not in the keep set
+                                for &cell_key in &valid_cells {
+                                    if !keep.contains(&cell_key)
+                                        && self.cells.contains_key(cell_key)
+                                    {
+                                        cells_to_remove.insert(cell_key);
                                     }
                                 }
                             } else {
