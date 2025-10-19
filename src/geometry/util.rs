@@ -981,7 +981,14 @@ where
             let length = Float::abs(diff[0]);
 
             // Check for degeneracy (coincident points)
-            let epsilon = T::from(1e-12).unwrap_or_else(T::zero);
+            let epsilon = T::from(1e-12).ok_or_else(|| {
+                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
+                    value: "1e-12".to_string(),
+                    from_type: "f64",
+                    to_type: std::any::type_name::<T>(),
+                    details: "Failed to convert epsilon threshold".to_string(),
+                })
+            })?;
             if length < epsilon {
                 return Err(CircumcenterError::MatrixInversionFailed {
                     details: "Degenerate simplex with zero volume (coincident points)".to_string(),
@@ -1005,7 +1012,14 @@ where
             let area = Float::abs(cross_z) / T::from(2).unwrap_or_else(|| T::one() + T::one());
 
             // Check for degeneracy (collinear points)
-            let epsilon = T::from(1e-12).unwrap_or_else(T::zero);
+            let epsilon = T::from(1e-12).ok_or_else(|| {
+                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
+                    value: "1e-12".to_string(),
+                    from_type: "f64",
+                    to_type: std::any::type_name::<T>(),
+                    details: "Failed to convert epsilon threshold".to_string(),
+                })
+            })?;
             if area < epsilon {
                 return Err(CircumcenterError::MatrixInversionFailed {
                     details: "Degenerate simplex with zero volume (collinear points)".to_string(),
@@ -1038,7 +1052,14 @@ where
             let volume = Float::abs(triple_product) / six;
 
             // Check for degeneracy (coplanar points)
-            let epsilon = T::from(1e-12).unwrap_or_else(T::zero);
+            let epsilon = T::from(1e-12).ok_or_else(|| {
+                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
+                    value: "1e-12".to_string(),
+                    from_type: "f64",
+                    to_type: std::any::type_name::<T>(),
+                    details: "Failed to convert epsilon threshold".to_string(),
+                })
+            })?;
             if volume < epsilon {
                 return Err(CircumcenterError::MatrixInversionFailed {
                     details: "Degenerate simplex with zero volume (coplanar points)".to_string(),
@@ -1205,8 +1226,15 @@ where
     // Compute volume
     let volume = simplex_volume(points)?;
 
-    // Check for degenerate simplex
-    let epsilon = T::from(1e-10).unwrap_or_else(T::zero);
+    // Check for degenerate simplex (using same epsilon as simplex_volume for consistency)
+    let epsilon = T::from(1e-12).ok_or_else(|| {
+        CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
+            value: "1e-12".to_string(),
+            from_type: "f64",
+            to_type: std::any::type_name::<T>(),
+            details: "Failed to convert epsilon threshold".to_string(),
+        })
+    })?;
     if volume < epsilon {
         return Err(CircumcenterError::MatrixInversionFailed {
             details: format!("Degenerate simplex with volume ≈ {volume:?}"),
