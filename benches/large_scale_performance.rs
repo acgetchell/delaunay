@@ -82,11 +82,21 @@ struct MemoryInfo {
     before: u64,
     after: u64,
     delta: i64,
+    tds_delta: i64,
 }
 
 /// Get current process memory usage in KiB
 fn get_memory_usage() -> u64 {
     static SYS: OnceLock<Mutex<System>> = OnceLock::new();
+    static UNIT_LOGGED: std::sync::Once = std::sync::Once::new();
+
+    // Log memory unit on first call if BENCH_PRINT_MEM is set
+    UNIT_LOGGED.call_once(|| {
+        if std::env::var_os("BENCH_PRINT_MEM").is_some() {
+            eprintln!("sysinfo::Process::memory unit: bytes; reporting KiB after ÷1024");
+        }
+    });
+
     let pid = sysinfo::get_current_pid().expect("Failed to get current PID");
     let sys = SYS.get_or_init(|| {
         Mutex::new(System::new_with_specifics(
@@ -111,23 +121,34 @@ where
 {
     let mem_before = get_memory_usage();
 
-    // Generate points and construct triangulation
+    // Generate points and vertices (setup overhead)
     let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed)
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
+
+    // Measure memory before Tds construction to isolate TDS allocation
+    let mem_before_tds = get_memory_usage();
 
     let _tds: Tds<f64, Option<()>, Option<()>, D> =
         Tds::new(&vertices).expect("Failed to create triangulation");
 
     let mem_after = get_memory_usage();
 
+    // Total delta includes setup + TDS
     let delta_i128 = i128::from(mem_after) - i128::from(mem_before);
     #[allow(clippy::cast_possible_truncation)] // Clamped to i64 range, safe to cast
     let delta = delta_i128.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
+
+    // TDS-only delta excludes setup overhead
+    let tds_delta_i128 = i128::from(mem_after) - i128::from(mem_before_tds);
+    #[allow(clippy::cast_possible_truncation)] // Clamped to i64 range, safe to cast
+    let tds_delta = tds_delta_i128.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
+
     MemoryInfo {
         before: mem_before,
         after: mem_after,
         delta,
+        tds_delta,
     }
 }
 
@@ -192,8 +213,8 @@ where
             // Report memory usage to stderr (won't interfere with benchmark timing)
             if std::env::var_os("BENCH_PRINT_MEM").is_some() {
                 eprintln!(
-                    "Memory: before={} KiB, after={} KiB, delta={} KiB",
-                    mem_info.before, mem_info.after, mem_info.delta
+                    "Memory: before={} KiB, after={} KiB, delta={} KiB (TDS-only: {} KiB)",
+                    mem_info.before, mem_info.after, mem_info.delta, mem_info.tds_delta
                 );
             }
             black_box(mem_info)
@@ -230,11 +251,14 @@ where
     // Throughput in terms of cells we actually validate
     group.throughput(Throughput::Elements(tds.number_of_cells() as u64));
 
+    // Collect cell keys once to avoid re-enumeration overhead in the hot loop
+    let cell_keys: Vec<_> = tds.cell_keys().collect();
+
     group.bench_function("validate_topology", |b| {
         b.iter(|| {
             // Measure validation time for all cells
             let mut all_valid = true;
-            for cell_key in tds.cell_keys() {
+            for &cell_key in &cell_keys {
                 let neighbors = tds.find_neighbors_by_key(cell_key);
                 if let Err(e) = tds.validate_neighbor_topology(cell_key, &neighbors) {
                     all_valid = false;

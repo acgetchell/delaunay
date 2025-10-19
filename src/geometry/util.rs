@@ -1487,17 +1487,10 @@ where
 
     let volume_f64 = {
         let sqrt_det = det.sqrt();
-        // Compute (D-1)! in f64 to avoid usize overflow/precision issues
+        // Compute (D-1)! in f64 using safe conversion
         let mut d_fact = 1.0f64;
         for k in 2..D {
-            let k_f64 = safe_usize_to_scalar::<f64>(k).map_err(|e| {
-                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-                    value: k.to_string(),
-                    from_type: "usize",
-                    to_type: "f64",
-                    details: e.to_string(),
-                })
-            })?;
+            let k_f64 = f64::from(u8::try_from(k).unwrap_or(u8::MAX));
             d_fact *= k_f64;
         }
         sqrt_det / d_fact
@@ -3056,7 +3049,9 @@ mod tests {
             Point::new([0.0, 1.0, 0.0]),
         ];
         let area_3d = facet_measure(&triangle_3d).unwrap();
-        println!("3D triangle area: {area_3d} (expected: 0.5)");
+        if std::env::var_os("TEST_DEBUG").is_some() {
+            println!("3D triangle area: {area_3d} (expected: 0.5)");
+        }
 
         // Test 1b: Nearly singular triangle should not error due to tiny negative det
         let eps = 1e-10;
@@ -3070,7 +3065,9 @@ mod tests {
 
         // Test 2: Same triangle but use direct Gram matrix calculation
         let area_3d_gram = facet_measure_gram_matrix::<f64, 3>(&triangle_3d).unwrap();
-        println!("3D triangle area (Gram): {area_3d_gram} (expected: 0.5)");
+        if std::env::var_os("TEST_DEBUG").is_some() {
+            println!("3D triangle area (Gram): {area_3d_gram} (expected: 0.5)");
+        }
 
         // Test 3: Unit tetrahedron in 4D - should be 1/6 ≈ 0.167
         let tetrahedron_4d = vec![
@@ -3080,19 +3077,23 @@ mod tests {
             Point::new([0.0, 0.0, 1.0, 0.0]),
         ];
         let volume_4d = facet_measure(&tetrahedron_4d).unwrap();
-        println!(
-            "4D tetrahedron volume: {} (expected: {})",
-            volume_4d,
-            1.0 / 6.0
-        );
+        if std::env::var_os("TEST_DEBUG").is_some() {
+            println!(
+                "4D tetrahedron volume: {} (expected: {})",
+                volume_4d,
+                1.0 / 6.0
+            );
+        }
 
         // Test 4: Manual calculation for the 4D tetrahedron
         let volume_4d_gram = facet_measure_gram_matrix::<f64, 4>(&tetrahedron_4d).unwrap();
-        println!(
-            "4D tetrahedron volume (Gram): {} (expected: {})",
-            volume_4d_gram,
-            1.0 / 6.0
-        );
+        if std::env::var_os("TEST_DEBUG").is_some() {
+            println!(
+                "4D tetrahedron volume (Gram): {} (expected: {})",
+                volume_4d_gram,
+                1.0 / 6.0
+            );
+        }
     }
 
     #[test]
