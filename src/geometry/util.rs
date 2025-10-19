@@ -1490,7 +1490,14 @@ where
         // Compute (D-1)! in f64 using safe conversion
         let mut d_fact = 1.0f64;
         for k in 2..D {
-            let k_f64 = f64::from(u8::try_from(k).unwrap_or(u8::MAX));
+            let k_f64 = safe_usize_to_scalar::<f64>(k).map_err(|e| {
+                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
+                    value: k.to_string(),
+                    from_type: "usize",
+                    to_type: "f64",
+                    details: e.to_string(),
+                })
+            })?;
             d_fact *= k_f64;
         }
         sqrt_det / d_fact
