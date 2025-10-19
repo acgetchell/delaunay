@@ -168,10 +168,9 @@ pub fn radius_ratio<T, U, V, const D: usize>(
     cell_key: CellKey,
 ) -> Result<T, QualityError>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast + Div<Output = T>,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    for<'a> &'a T: Div<T>,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Extract cell points using helper
@@ -264,10 +263,9 @@ pub fn normalized_volume<T, U, V, const D: usize>(
     cell_key: CellKey,
 ) -> Result<T, QualityError>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast + Div<Output = T>,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    for<'a> &'a T: Div<T>,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Extract cell points using helper
@@ -360,6 +358,7 @@ mod tests {
     // sqrt(3) constant computed at compile time
     const SQRT_3: f64 = 1.732_050_807_568_877_3;
     use proptest::prelude::*;
+    use slotmap::KeyData;
 
     // =============================================================================
     // RADIUS RATIO TESTS
@@ -964,5 +963,710 @@ mod tests {
             prop_assert!((ratio_base - ratio_rotated).abs() < 1e-9);
             prop_assert!((norm_vol_base - norm_vol_rotated).abs() < 1e-9);
         }
+
+        /// Property: Scale stability across many orders of magnitude
+        ///
+        /// Quality metrics should work correctly for very large and very small coordinates
+        #[test]
+        fn prop_quality_scale_stability(
+            scale_log in -10i32..10,
+        ) {
+            let scale = 10.0_f64.powi(scale_log);
+
+            // Equilateral triangle scaled by scale factor
+            let vertices = vec![
+                vertex!([0.0, 0.0]),
+                vertex!([scale, 0.0]),
+                vertex!([scale * 0.5, scale * 0.866_025]),
+            ];
+            let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+            let cell_key = tds.cells().keys().next().unwrap();
+
+            // Radius ratio should be ~2 regardless of scale
+            if let Ok(ratio) = radius_ratio(&tds, cell_key) {
+                prop_assert!(ratio > 1.5 && ratio < 2.5, "ratio={ratio} at scale={scale}");
+            }
+
+            // Normalized volume should be ~0.433 regardless of scale
+            if let Ok(norm_vol) = normalized_volume(&tds, cell_key) {
+                prop_assert!(norm_vol > 0.3 && norm_vol < 0.6, "norm_vol={norm_vol} at scale={scale}");
+            }
+        }
+
+        /// Property: Reflection invariance
+        ///
+        /// Reflecting a simplex across an axis should not change quality
+        #[test]
+        fn prop_quality_reflection_invariant_2d(
+            reflect_x in prop::bool::ANY,
+            reflect_y in prop::bool::ANY,
+        ) {
+            // Base equilateral triangle
+            let vertices_base = vec![
+                vertex!([0.0, 0.0]),
+                vertex!([1.0, 0.0]),
+                vertex!([0.5, SQRT_3 / 2.0]),
+            ];
+            let tds_base: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_base).unwrap();
+            let cell_key_base = tds_base.cells().keys().next().unwrap();
+
+            // Reflect triangle
+            let reflect = |p: [f64; 2]| -> [f64; 2] {
+                [
+                    if reflect_x { -p[0] } else { p[0] },
+                    if reflect_y { -p[1] } else { p[1] },
+                ]
+            };
+
+            let vertices_reflected = vec![
+                vertex!(reflect([0.0, 0.0])),
+                vertex!(reflect([1.0, 0.0])),
+                vertex!(reflect([0.5, SQRT_3 / 2.0])),
+            ];
+            let tds_reflected: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_reflected).unwrap();
+            let cell_key_reflected = tds_reflected.cells().keys().next().unwrap();
+
+            let ratio_base = radius_ratio(&tds_base, cell_key_base).unwrap();
+            let ratio_reflected = radius_ratio(&tds_reflected, cell_key_reflected).unwrap();
+
+            let norm_vol_base = normalized_volume(&tds_base, cell_key_base).unwrap();
+            let norm_vol_reflected = normalized_volume(&tds_reflected, cell_key_reflected).unwrap();
+
+            // Metrics should be invariant under reflection
+            prop_assert!((ratio_base - ratio_reflected).abs() < 1e-9);
+            prop_assert!((norm_vol_base - norm_vol_reflected).abs() < 1e-9);
+        }
+
+        /// Property: Aspect ratio monotonicity
+        ///
+        /// As aspect ratio worsens, radius_ratio increases and normalized_volume decreases
+        #[test]
+        fn prop_quality_aspect_ratio_monotonic(
+            height1 in 0.3f64..1.0,
+            height2 in 0.1f64..0.3,
+        ) {
+            // Ensure height1 > height2
+            prop_assume!(height1 > height2 + 0.05);
+
+            // Two triangles with same base, different heights
+            let vertices_better = vec![
+                vertex!([0.0, 0.0]),
+                vertex!([1.0, 0.0]),
+                vertex!([0.5, height1]), // Taller = better
+            ];
+            let vertices_worse = vec![
+                vertex!([0.0, 0.0]),
+                vertex!([1.0, 0.0]),
+                vertex!([0.5, height2]), // Flatter = worse
+            ];
+
+            let tds_better: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_better).unwrap();
+            let tds_worse: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_worse).unwrap();
+
+            let key_better = tds_better.cells().keys().next().unwrap();
+            let key_worse = tds_worse.cells().keys().next().unwrap();
+
+            if let (Ok(ratio_better), Ok(ratio_worse)) = (
+                radius_ratio(&tds_better, key_better),
+                radius_ratio(&tds_worse, key_worse),
+            ) {
+                // Worse aspect ratio → higher radius ratio
+                prop_assert!(ratio_better < ratio_worse);
+            }
+
+            if let (Ok(vol_better), Ok(vol_worse)) = (
+                normalized_volume(&tds_better, key_better),
+                normalized_volume(&tds_worse, key_worse),
+            ) {
+                // Worse aspect ratio → lower normalized volume
+                prop_assert!(vol_better > vol_worse);
+            }
+        }
+
+        /// Property: Quality ranking transitivity
+        ///
+        /// If simplex A is better than B and B is better than C, then A is better than C
+        #[test]
+        fn prop_quality_ranking_transitive(
+            h1 in 0.7f64..1.0,
+            h2 in 0.4f64..0.7,
+            h3 in 0.1f64..0.4,
+        ) {
+            // Ensure strict ordering
+            prop_assume!(h1 > h2 + 0.1 && h2 > h3 + 0.1);
+
+            let vertices_a = vec![
+                vertex!([0.0, 0.0]),
+                vertex!([1.0, 0.0]),
+                vertex!([0.5, h1]),
+            ];
+            let vertices_b = vec![
+                vertex!([0.0, 0.0]),
+                vertex!([1.0, 0.0]),
+                vertex!([0.5, h2]),
+            ];
+            let vertices_c = vec![
+                vertex!([0.0, 0.0]),
+                vertex!([1.0, 0.0]),
+                vertex!([0.5, h3]),
+            ];
+
+            let tds_a: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_a).unwrap();
+            let tds_b: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_b).unwrap();
+            let tds_c: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_c).unwrap();
+
+            let key_a = tds_a.cells().keys().next().unwrap();
+            let key_b = tds_b.cells().keys().next().unwrap();
+            let key_c = tds_c.cells().keys().next().unwrap();
+
+            if let (Ok(ratio_a), Ok(ratio_b), Ok(ratio_c)) = (
+                radius_ratio(&tds_a, key_a),
+                radius_ratio(&tds_b, key_b),
+                radius_ratio(&tds_c, key_c),
+            ) {
+                // Verify transitivity: ratio_a < ratio_b < ratio_c
+                prop_assert!(ratio_a < ratio_b);
+                prop_assert!(ratio_b < ratio_c);
+                prop_assert!(ratio_a < ratio_c);
+            }
+        }
+
+        /// Property: Normalized volume upper bound
+        ///
+        /// Normalized volume should be bounded (equilateral is optimal)
+        #[test]
+        fn prop_normalized_volume_bounded(
+            x1 in 0.5f64..2.0,
+            y1 in 0.5f64..2.0,
+            x2 in 0.5f64..2.0,
+            y2 in 0.5f64..2.0,
+        ) {
+            let vertices = vec![
+                vertex!([0.0, 0.0]),
+                vertex!([x1, y1]),
+                vertex!([x2, y2]),
+            ];
+
+            // Skip near-degenerate cases
+            let det = x1.mul_add(y2, -(x2 * y1));
+            if det.abs() < 0.2 {
+                return Ok(());
+            }
+
+            let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+            let cell_key = tds.cells().keys().next().unwrap();
+
+            if let Ok(norm_vol) = normalized_volume(&tds, cell_key) {
+                // Should not exceed equilateral value (sqrt(3)/4 ≈ 0.433)
+                prop_assert!(norm_vol <= 0.5, "norm_vol={norm_vol} exceeds reasonable bound");
+                prop_assert!(norm_vol > 0.0);
+            }
+        }
+
+        /// Property: Degeneracy detection
+        ///
+        /// Very flat simplices should be detected as degenerate or have very poor quality
+        #[test]
+        fn prop_quality_degeneracy_detection(
+            degeneracy_factor in 1e-8f64..1e-3,
+        ) {
+            // Create nearly collinear points
+            let vertices = vec![
+                vertex!([0.0, 0.0]),
+                vertex!([1.0, 0.0]),
+                vertex!([0.5, degeneracy_factor]),
+            ];
+            let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+            let cell_key = tds.cells().keys().next().unwrap();
+
+            match radius_ratio(&tds, cell_key) {
+                Ok(ratio) => {
+                    // If computed, should indicate very poor quality
+                    prop_assert!(ratio > 10.0, "ratio={ratio} should indicate poor quality");
+                }
+                Err(QualityError::DegenerateCell { .. }) => (),
+                Err(e) => return Err(proptest::test_runner::TestCaseError::fail(format!("Unexpected error: {e}")))
+            }
+
+            match normalized_volume(&tds, cell_key) {
+                Ok(norm_vol) => {
+                    // If computed, should be very small
+                    prop_assert!(norm_vol < 0.01, "norm_vol={norm_vol} should be very small");
+                }
+                Err(QualityError::DegenerateCell { .. }) => (),
+                Err(e) => return Err(proptest::test_runner::TestCaseError::fail(format!("Unexpected error: {e}")))
+            }
+        }
+
+        /// Property: 3D rotation invariance
+        ///
+        /// Rotating a 3D simplex should not change quality
+        #[test]
+        fn prop_quality_rotation_invariant_3d(
+            angle_xy in 0.0f64..std::f64::consts::TAU,
+            angle_xz in 0.0f64..std::f64::consts::TAU,
+        ) {
+            // Regular tetrahedron
+            let vertices_base = vec![
+                vertex!([0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0]),
+                vertex!([0.5, 0.866_025, 0.0]),
+                vertex!([0.5, 0.288_675, 0.816_497]),
+            ];
+            let tds_base: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_base).unwrap();
+            let cell_key_base = tds_base.cells().keys().next().unwrap();
+
+            // Rotate around x and y axes
+            let cos_xy = angle_xy.cos();
+            let sin_xy = angle_xy.sin();
+            let cos_xz = angle_xz.cos();
+            let sin_xz = angle_xz.sin();
+
+            let rotate = |p: [f64; 3]| -> [f64; 3] {
+                // Rotate in xy plane
+                let x1 = p[0].mul_add(cos_xy, -(p[1] * sin_xy));
+                let y1 = p[0].mul_add(sin_xy, p[1] * cos_xy);
+                let z1 = p[2];
+
+                // Rotate in xz plane
+                let x2 = x1.mul_add(cos_xz, -(z1 * sin_xz));
+                let y2 = y1;
+                let z2 = x1.mul_add(sin_xz, z1 * cos_xz);
+
+                [x2, y2, z2]
+            };
+
+            let vertices_rotated = vec![
+                vertex!(rotate([0.0, 0.0, 0.0])),
+                vertex!(rotate([1.0, 0.0, 0.0])),
+                vertex!(rotate([0.5, 0.866_025, 0.0])),
+                vertex!(rotate([0.5, 0.288_675, 0.816_497])),
+            ];
+            let tds_rotated: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_rotated).unwrap();
+            let cell_key_rotated = tds_rotated.cells().keys().next().unwrap();
+
+            let ratio_base = radius_ratio(&tds_base, cell_key_base).unwrap();
+            let ratio_rotated = radius_ratio(&tds_rotated, cell_key_rotated).unwrap();
+
+            // Metrics should be invariant under rotation
+            prop_assert!((ratio_base - ratio_rotated).abs() < 1e-8);
+        }
+    }
+
+    // =============================================================================
+    // EDGE CASES & BOUNDARY CONDITIONS
+    // =============================================================================
+
+    #[test]
+    fn test_radius_ratio_perfectly_collinear_3points() {
+        // Three points on a line - perfectly degenerate
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([2.0, 0.0]), // Collinear
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        let result = radius_ratio(&tds, cell_key);
+        // Should fail with degenerate or numerical error
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_quality_near_duplicate_vertices() {
+        // Two vertices very close together
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([1.000_000_1, 0.000_000_1]), // Nearly duplicate
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        // Either should error or produce very poor quality
+        if let Ok(ratio) = radius_ratio(&tds, cell_key) {
+            assert!(ratio > 100.0); // Very poor quality
+        }
+    }
+
+    #[test]
+    fn test_quality_mixed_scale_coordinates() {
+        // Mix of large and small coordinates
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1e10, 0.0]),
+            vertex!([1e-10, 1e10]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        // Should compute without panicking
+        let ratio_result = radius_ratio(&tds, cell_key);
+        let norm_vol_result = normalized_volume(&tds, cell_key);
+
+        // Either succeed or fail gracefully (no panic)
+        assert!(ratio_result.is_ok() || ratio_result.is_err());
+        assert!(norm_vol_result.is_ok() || norm_vol_result.is_err());
+    }
+
+    // =============================================================================
+    // DIMENSION-SPECIFIC TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_quality_6d_simplex() {
+        // 6D simplex at unit hypercube corners
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 6> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        let ratio = radius_ratio(&tds, cell_key).unwrap();
+        assert!(ratio > 6.0); // At least the dimension
+        assert!(ratio < 20.0); // Not too degenerate
+
+        let norm_vol = normalized_volume(&tds, cell_key).unwrap();
+        assert!(norm_vol > 0.0);
+    }
+
+    #[test]
+    fn test_quality_aspect_ratio_extremes_2d() {
+        // Very thin triangle (extreme aspect ratio)
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([100.0, 0.0]),
+            vertex!([50.0, 0.1]), // Very flat
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        // Should have very poor quality
+        let ratio = radius_ratio(&tds, cell_key).unwrap();
+        assert!(ratio > 50.0); // Very high ratio
+
+        let norm_vol = normalized_volume(&tds, cell_key).unwrap();
+        assert!(norm_vol < 0.01); // Very low normalized volume
+    }
+
+    #[test]
+    fn test_quality_aspect_ratio_extremes_3d() {
+        // Very flat tetrahedron (extreme aspect ratio)
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([10.0, 0.0, 0.0]),
+            vertex!([5.0, 8.66, 0.0]),
+            vertex!([5.0, 2.89, 0.01]), // Nearly coplanar
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        // Should have very poor quality
+        if let Ok(ratio) = radius_ratio(&tds, cell_key) {
+            assert!(ratio > 30.0);
+        }
+    }
+
+    #[test]
+    fn test_quality_aspect_ratio_extremes_4d() {
+        // 4D simplex with one vertex far from others
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.5, 0.866, 0.0, 0.0]),
+            vertex!([0.5, 0.289, 0.816, 0.0]),
+            vertex!([0.5, 0.289, 0.204, 0.001]), // Nearly in 3D subspace
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        if let Ok(ratio) = radius_ratio(&tds, cell_key) {
+            assert!(ratio > 10.0);
+        }
+    }
+
+    // =============================================================================
+    // SLIVER DETECTION
+    // =============================================================================
+
+    #[test]
+    fn test_radius_ratio_sliver_tetrahedron() {
+        // Classic sliver tetrahedron - nearly coplanar vertices
+        // but with large circumradius
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.5, 0.866_025, 0.0]),
+            vertex!([0.5, 0.288_675, 0.001]), // Barely above the plane
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        // Sliver should have very high radius ratio
+        match radius_ratio(&tds, cell_key) {
+            Ok(ratio) => {
+                assert!(ratio > 100.0, "Sliver should have very high radius ratio");
+            }
+            Err(QualityError::DegenerateCell { .. }) => (),
+            Err(e) => panic!("Unexpected error: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_quality_needle_simplex() {
+        // Needle-shaped simplex (one long edge, others short)
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([100.0, 0.0]), // Long edge
+            vertex!([0.0, 0.1]),   // Short edges
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        let ratio = radius_ratio(&tds, cell_key).unwrap();
+        assert!(ratio > 50.0); // Poor quality
+
+        let norm_vol = normalized_volume(&tds, cell_key).unwrap();
+        assert!(norm_vol < 0.01); // Low quality
+    }
+
+    #[test]
+    fn test_quality_cap_simplex() {
+        // Cap-shaped simplex in 3D
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.5, 0.866_025, 0.0]),  // Base triangle
+            vertex!([0.5, 0.288_675, 10.0]), // Very tall
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        let ratio = radius_ratio(&tds, cell_key).unwrap();
+        assert!(ratio > 10.0); // Poor quality due to extreme height
+    }
+
+    // =============================================================================
+    // ERROR PATH COVERAGE
+    // =============================================================================
+
+    #[test]
+    fn test_quality_invalid_cell_key() {
+        // Create triangulation
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.5, 0.866_025]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+
+        // Create an invalid key (not in the SlotMap)
+        let invalid_key = CellKey::from(KeyData::from_ffi(u64::MAX));
+
+        let result = radius_ratio(&tds, invalid_key);
+        assert!(matches!(result, Err(QualityError::InvalidCell { .. })));
+
+        let result = normalized_volume(&tds, invalid_key);
+        assert!(matches!(result, Err(QualityError::InvalidCell { .. })));
+    }
+
+    #[test]
+    fn test_quality_error_clone_eq() {
+        // Test that QualityError implements Clone and PartialEq correctly
+        let err1 = QualityError::InvalidCell {
+            message: "test".to_string(),
+        };
+        let err2 = err1.clone();
+        assert_eq!(err1, err2);
+
+        let err3 = QualityError::DegenerateCell {
+            detail: "volume=0".to_string(),
+        };
+        let err4 = err3.clone();
+        assert_eq!(err3, err4);
+
+        let err5 = QualityError::NumericalError {
+            message: "overflow".to_string(),
+        };
+        let err6 = err5.clone();
+        assert_eq!(err5, err6);
+
+        // Different errors should not be equal
+        assert_ne!(err1, err3);
+        assert_ne!(err3, err5);
+    }
+
+    // =============================================================================
+    // COMPARATIVE QUALITY RANKINGS
+    // =============================================================================
+
+    #[test]
+    fn test_quality_ranking_consistency() {
+        // Create simplices with known quality ordering
+        // Best: equilateral
+        let vertices_best = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.5, 0.866_025]),
+        ];
+        let tds_best: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_best).unwrap();
+        let key_best = tds_best.cells().keys().next().unwrap();
+
+        // Medium: right triangle
+        let vertices_medium = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([3.0, 0.0]),
+            vertex!([0.0, 4.0]),
+        ];
+        let tds_medium: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_medium).unwrap();
+        let key_medium = tds_medium.cells().keys().next().unwrap();
+
+        // Worst: very flat
+        let vertices_worst = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([10.0, 0.0]),
+            vertex!([5.0, 0.1]),
+        ];
+        let tds_worst: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_worst).unwrap();
+        let key_worst = tds_worst.cells().keys().next().unwrap();
+
+        let ratio_best = radius_ratio(&tds_best, key_best).unwrap();
+        let ratio_medium = radius_ratio(&tds_medium, key_medium).unwrap();
+        let ratio_worst = radius_ratio(&tds_worst, key_worst).unwrap();
+
+        let vol_best = normalized_volume(&tds_best, key_best).unwrap();
+        let vol_medium = normalized_volume(&tds_medium, key_medium).unwrap();
+        let vol_worst = normalized_volume(&tds_worst, key_worst).unwrap();
+
+        // Verify consistent ranking
+        assert!(ratio_best < ratio_medium);
+        assert!(ratio_medium < ratio_worst);
+
+        assert!(vol_best > vol_medium);
+        assert!(vol_medium > vol_worst);
+    }
+
+    #[test]
+    fn test_quality_thresholds() {
+        // Test quality thresholds for mesh generation
+        // Good quality threshold
+        let vertices_good = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.5, 0.866_025]),
+        ];
+        let tds_good: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_good).unwrap();
+        let key_good = tds_good.cells().keys().next().unwrap();
+        let ratio_good = radius_ratio(&tds_good, key_good).unwrap();
+
+        // Good quality: ratio < 4 (2D)
+        assert!(ratio_good < 4.0);
+
+        // Acceptable quality
+        let vertices_acceptable = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([3.0, 0.0]),
+            vertex!([0.0, 4.0]),
+        ];
+        let tds_acceptable: Tds<f64, Option<()>, Option<()>, 2> =
+            Tds::new(&vertices_acceptable).unwrap();
+        let key_acceptable = tds_acceptable.cells().keys().next().unwrap();
+        let ratio_acceptable = radius_ratio(&tds_acceptable, key_acceptable).unwrap();
+
+        // Acceptable: ratio < 10 (2D)
+        assert!(ratio_acceptable < 10.0);
+
+        // Poor quality
+        let vertices_poor = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([10.0, 0.0]),
+            vertex!([5.0, 0.1]),
+        ];
+        let tds_poor: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_poor).unwrap();
+        let key_poor = tds_poor.cells().keys().next().unwrap();
+        let ratio_poor = radius_ratio(&tds_poor, key_poor).unwrap();
+
+        // Poor: ratio >= 10 (2D)
+        assert!(ratio_poor >= 10.0);
+    }
+
+    // =============================================================================
+    // SPECIAL GEOMETRIC CONFIGURATIONS
+    // =============================================================================
+
+    #[test]
+    fn test_right_simplex_properties() {
+        // Right triangle (all edges orthogonal at origin)
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        let ratio = radius_ratio(&tds, cell_key).unwrap();
+        // For isosceles right triangle: ratio ≈ 2.414 (1 + sqrt(2))
+        assert_relative_eq!(ratio, 1.0 + 2.0_f64.sqrt(), epsilon = 0.1);
+
+        let norm_vol = normalized_volume(&tds, cell_key).unwrap();
+        assert!(norm_vol > 0.0);
+    }
+
+    #[test]
+    fn test_isosceles_simplex_2d() {
+        // Isosceles triangle
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([2.0, 0.0]),
+            vertex!([1.0, 2.0]), // Isosceles
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        let ratio = radius_ratio(&tds, cell_key).unwrap();
+        assert!(ratio > 2.0); // Not equilateral, so ratio > 2
+        assert!(ratio < 5.0); // But still reasonable quality
+
+        let norm_vol = normalized_volume(&tds, cell_key).unwrap();
+        assert!(norm_vol > 0.1);
+    }
+
+    // =============================================================================
+    // PRECISION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_quality_precision_f32_vs_f64() {
+        // Compare f32 and f64 precision for same simplex
+        let vertices_f32 = vec![
+            vertex!([0.0f32, 0.0f32]),
+            vertex!([1.0f32, 0.0f32]),
+            vertex!([0.5f32, 0.866f32]),
+        ];
+        let tds_f32: Tds<f32, Option<()>, Option<()>, 2> = Tds::new(&vertices_f32).unwrap();
+        let key_f32 = tds_f32.cells().keys().next().unwrap();
+
+        let vertices_f64 = vec![
+            vertex!([0.0f64, 0.0f64]),
+            vertex!([1.0f64, 0.0f64]),
+            vertex!([0.5f64, 0.866_025f64]),
+        ];
+        let tds_f64: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_f64).unwrap();
+        let key_f64 = tds_f64.cells().keys().next().unwrap();
+
+        let ratio_f32 = radius_ratio(&tds_f32, key_f32).unwrap();
+        let ratio_f64 = radius_ratio(&tds_f64, key_f64).unwrap();
+
+        // f32 and f64 should give similar results
+        let ratio_diff = (<f64 as std::convert::From<f32>>::from(ratio_f32) - ratio_f64).abs();
+        assert!(ratio_diff < 0.1, "f32/f64 precision difference too large");
     }
 }

@@ -72,6 +72,7 @@ use delaunay::vertex;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::hint::black_box;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 
@@ -85,18 +86,22 @@ struct MemoryInfo {
 
 /// Get current process memory usage in KB
 fn get_memory_usage() -> u64 {
-    let refresh_kind = RefreshKind::new().with_processes(ProcessRefreshKind::new().with_memory());
-    let mut system = System::new_with_specifics(refresh_kind);
+    static SYS: OnceLock<Mutex<System>> = OnceLock::new();
+    let pid = sysinfo::get_current_pid().expect("Failed to get current PID");
+    let sys = SYS.get_or_init(|| {
+        Mutex::new(System::new_with_specifics(
+            RefreshKind::new().with_processes(ProcessRefreshKind::new().with_memory()),
+        ))
+    });
+    let mut system = sys.lock().expect("lock System");
     system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
+        ProcessesToUpdate::Some(&[pid]),
         true,
         ProcessRefreshKind::new().with_memory(),
     );
-
-    let pid = sysinfo::get_current_pid().expect("Failed to get current PID");
     system
         .process(pid)
-        .map_or(0, |process| process.memory() / 1024) // Convert bytes to KB
+        .map_or(0, |process| process.memory() / 1024) // bytes → KB
 }
 
 /// Measure memory delta during triangulation construction
@@ -116,12 +121,13 @@ where
 
     let mem_after = get_memory_usage();
 
+    let delta_i128 = i128::from(mem_after) - i128::from(mem_before);
+    #[allow(clippy::cast_possible_truncation)] // Clamped to i64 range, safe to cast
+    let delta = delta_i128.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
     MemoryInfo {
         before: mem_before,
         after: mem_after,
-        delta: i64::try_from(mem_after)
-            .unwrap_or(i64::MAX)
-            .saturating_sub(i64::try_from(mem_before).unwrap_or(0)),
+        delta,
     }
 }
 
@@ -184,10 +190,12 @@ where
         b.iter(|| {
             let mem_info = measure_construction_with_memory::<D>(n_points, 42);
             // Report memory usage to stderr (won't interfere with benchmark timing)
-            eprintln!(
-                "Memory: before={} KB, after={} KB, delta={} KB",
-                mem_info.before, mem_info.after, mem_info.delta
-            );
+            if std::env::var_os("BENCH_PRINT_MEM").is_some() {
+                eprintln!(
+                    "Memory: before={} KB, after={} KB, delta={} KB",
+                    mem_info.before, mem_info.after, mem_info.delta
+                );
+            }
             black_box(mem_info)
         });
     });

@@ -3151,6 +3151,9 @@ where
     /// 6. Clean up any resulting duplicate cells
     #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, TriangulationValidationError> {
+        // Safety limit for iteration count to prevent infinite loops
+        const MAX_FIX_FACET_ITERATIONS: usize = 10;
+
         // First check if there are any facet sharing issues using the validation function
         if self.validate_facet_sharing().is_ok() {
             // No facet sharing issues found, no fix needed
@@ -3160,9 +3163,9 @@ where
         // Iterate until all facet sharing issues are resolved
         // Multiple passes may be needed as removing cells can create new issues
         let mut total_removed = 0;
-        let max_iterations = 10; // Safety limit to prevent infinite loops
 
-        for iteration in 0..max_iterations {
+        #[allow(unused_variables)] // iteration only used in debug_assertions
+        for iteration in 0..MAX_FIX_FACET_ITERATIONS {
             #[cfg(debug_assertions)]
             eprintln!("fix_invalid_facet_sharing: Starting iteration {iteration}");
 
@@ -3268,7 +3271,7 @@ where
                             );
 
                             // Use quality metrics to select the two best cells
-                            // Primary: Radius ratio (lower is better - equilateral has ratio ≈ D)
+                            // Primary: Radius ratio = R/r (lower is better - equilateral: 2 for triangle, 3 for tetrahedron)
                             // Fallback to UUID ordering for deterministic behavior when quality computation fails
 
                             // Compute quality for each cell and sort by quality (best first)
@@ -3298,12 +3301,11 @@ where
                                 valid_cells.len()
                             );
 
-                            // Only use quality metrics if we could compute quality for ALL cells
-                            // Otherwise fall back to UUID ordering for consistency
+                            // Use quality-based selection when available, fall back gracefully
                             if cell_qualities.len() == valid_cells.len()
                                 && cell_qualities.len() >= 2
                             {
-                                // Sort by quality (lower ratio = better), with UUID as tiebreaker
+                                // All cells have quality scores - use pure quality-based selection
                                 cell_qualities.sort_unstable_by(|a, b| {
                                     a.1.partial_cmp(&b.1)
                                         .unwrap_or(CmpOrdering::Equal)
@@ -3312,7 +3314,6 @@ where
 
                                 // Keep the two best quality cells, remove the rest
                                 for (cell_key, quality, _) in cell_qualities.iter().skip(2) {
-                                    // Only mark for removal if the cell still exists
                                     if self.cells.contains_key(*cell_key) {
                                         cells_to_remove.insert(*cell_key);
 
@@ -3327,12 +3328,67 @@ where
                                         );
                                     }
                                 }
-                            } else {
-                                // Quality computation failed for some cells, fall back to UUID ordering
-                                // This ensures deterministic behavior even when quality can't be computed
+                            } else if !cell_qualities.is_empty() && cell_qualities.len() >= 2 {
+                                // Partial quality scores available - use hybrid approach
+                                // Prefer cells with quality scores, then fall back to UUID for unscored cells
                                 #[cfg(debug_assertions)]
                                 eprintln!(
-                                    "Warning: Quality computation failed for some cells, falling back to UUID ordering"
+                                    "Warning: Quality computation succeeded for {} of {} cells, using hybrid scoring",
+                                    cell_qualities.len(),
+                                    valid_cells.len()
+                                );
+
+                                // Create scored set for quick lookup
+                                let scored_keys: CellKeySet = cell_qualities
+                                    .iter()
+                                    .map(|(k, _, _)| *k)
+                                    .collect::<CellKeySet>();
+
+                                // Sort cells: scored cells by quality+UUID, then unscored by UUID
+                                cell_qualities.sort_unstable_by(|a, b| {
+                                    a.1.partial_cmp(&b.1)
+                                        .unwrap_or(CmpOrdering::Equal)
+                                        .then_with(|| a.2.cmp(&b.2))
+                                });
+
+                                // Partition: keep best 2 scored cells if possible, fill remainder with unscored
+                                let mut kept_count = 0;
+                                let keep_limit = 2;
+
+                                // Keep top scored cells first
+                                for (cell_key, _, _) in &cell_qualities {
+                                    if kept_count >= keep_limit {
+                                        if self.cells.contains_key(*cell_key) {
+                                            cells_to_remove.insert(*cell_key);
+                                        }
+                                    } else {
+                                        kept_count += 1;
+                                    }
+                                }
+
+                                // Handle unscored cells (sort by UUID for determinism)
+                                let mut unscored: Vec<CellKey> = valid_cells
+                                    .iter()
+                                    .copied()
+                                    .filter(|k| !scored_keys.contains(k))
+                                    .collect();
+                                unscored.sort_unstable_by_key(|k| self.cells[*k].uuid());
+
+                                // Keep unscored cells only if we haven't kept enough scored cells
+                                for cell_key in unscored {
+                                    if kept_count >= keep_limit {
+                                        if self.cells.contains_key(cell_key) {
+                                            cells_to_remove.insert(cell_key);
+                                        }
+                                    } else {
+                                        kept_count += 1;
+                                    }
+                                }
+                            } else {
+                                // No quality scores available - pure UUID-based fallback
+                                #[cfg(debug_assertions)]
+                                eprintln!(
+                                    "Warning: Quality computation failed for all cells, using pure UUID ordering"
                                 );
 
                                 valid_cells.sort_unstable_by_key(|&k| self.cells[k].uuid());
@@ -3387,6 +3443,8 @@ where
             let duplicate_cells_removed = match self.remove_duplicate_cells() {
                 Ok(n) => n,
                 Err(e) => {
+                    // Count direct removals before retrying next pass
+                    total_removed += actually_removed;
                     #[cfg(debug_assertions)]
                     eprintln!(
                         "Iteration {iteration}: remove_duplicate_cells failed (will retry next iteration): {e}"
@@ -3399,6 +3457,32 @@ where
             eprintln!("Iteration {iteration}: Removed {duplicate_cells_removed} duplicate cells");
 
             // Topology was rebuilt inside remove_duplicate_cells() when duplicates were removed.
+            // If no duplicates were found but cells were removed, we must rebuild topology ourselves
+            // per the contract of remove_cells_by_keys().
+            if actually_removed > 0 && duplicate_cells_removed == 0 {
+                #[cfg(debug_assertions)]
+                eprintln!("Iteration {iteration}: Rebuilding topology after removals");
+
+                if let Err(e) = self.assign_neighbors() {
+                    // Count removals before retrying
+                    total_removed += actually_removed;
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Iteration {iteration}: assign_neighbors failed (will retry next iteration): {e}"
+                    );
+                    continue;
+                }
+
+                if let Err(e) = self.assign_incident_cells() {
+                    // Count removals before retrying
+                    total_removed += actually_removed;
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Iteration {iteration}: assign_incident_cells failed (will retry next iteration): {e}"
+                    );
+                    continue;
+                }
+            }
 
             let removed_this_iteration = actually_removed + duplicate_cells_removed;
             total_removed += removed_this_iteration;
@@ -3441,7 +3525,7 @@ where
         if self.validate_facet_sharing().is_err() {
             return Err(TriangulationValidationError::InconsistentDataStructure {
                 message: format!(
-                    "fix_invalid_facet_sharing: reached max_iterations={max_iterations} with remaining invalid facet sharing"
+                    "fix_invalid_facet_sharing: reached MAX_FIX_FACET_ITERATIONS={MAX_FIX_FACET_ITERATIONS} with remaining invalid facet sharing"
                 ),
             });
         }

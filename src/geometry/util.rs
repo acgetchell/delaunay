@@ -978,7 +978,17 @@ where
             let p0 = points[0].coords();
             let p1 = points[1].coords();
             let diff = [p1[0] - p0[0]];
-            Ok(Float::abs(diff[0]))
+            let length = Float::abs(diff[0]);
+
+            // Check for degeneracy (coincident points)
+            let epsilon = T::from(1e-12).unwrap_or_else(T::zero);
+            if length < epsilon {
+                return Err(CircumcenterError::MatrixInversionFailed {
+                    details: "Degenerate simplex with zero volume (coincident points)".to_string(),
+                });
+            }
+
+            Ok(length)
         }
         2 => {
             // 2D: Triangle area using cross product magnitude / 2
@@ -992,7 +1002,17 @@ where
 
             // 2D cross product magnitude: |v1.x * v2.y - v1.y * v2.x|
             let cross_z = v1[0] * v2[1] - v1[1] * v2[0];
-            Ok(Float::abs(cross_z) / T::from(2).unwrap_or_else(|| T::one() + T::one()))
+            let area = Float::abs(cross_z) / T::from(2).unwrap_or_else(|| T::one() + T::one());
+
+            // Check for degeneracy (collinear points)
+            let epsilon = T::from(1e-12).unwrap_or_else(T::zero);
+            if area < epsilon {
+                return Err(CircumcenterError::MatrixInversionFailed {
+                    details: "Degenerate simplex with zero volume (collinear points)".to_string(),
+                });
+            }
+
+            Ok(area)
         }
         3 => {
             // 3D: Tetrahedron volume using triple scalar product / 6
@@ -1015,7 +1035,17 @@ where
             // Volume = |triple product| / 6
             let six = T::from(6)
                 .unwrap_or_else(|| T::one() + T::one() + T::one() + T::one() + T::one() + T::one());
-            Ok(Float::abs(triple_product) / six)
+            let volume = Float::abs(triple_product) / six;
+
+            // Check for degeneracy (coplanar points)
+            let epsilon = T::from(1e-12).unwrap_or_else(T::zero);
+            if volume < epsilon {
+                return Err(CircumcenterError::MatrixInversionFailed {
+                    details: "Degenerate simplex with zero volume (coplanar points)".to_string(),
+                });
+            }
+
+            Ok(volume)
         }
         _ => {
             // Higher dimensions: Use Gram matrix method
@@ -1083,9 +1113,15 @@ where
         }
     }
 
-    let volume_f64 = if det == 0.0 {
-        0.0 // Degenerate case
-    } else {
+    // Degenerate case: zero determinant means the simplex has no volume
+    if det == 0.0 {
+        return Err(CircumcenterError::MatrixInversionFailed {
+            details: "Degenerate simplex with zero volume (collinear or coplanar points)"
+                .to_string(),
+        });
+    }
+
+    let volume_f64 = {
         let sqrt_det = det.sqrt();
         // Compute D! in f64 to avoid usize overflow/precision issues
         let mut d_fact = 1.0f64;
@@ -2493,14 +2529,14 @@ mod tests {
 
     #[test]
     fn test_simplex_volume_degenerate() {
-        // Degenerate triangle (collinear points)
+        // Degenerate triangle (collinear points) should return an error
         let collinear = vec![
             Point::new([0.0, 0.0]),
             Point::new([1.0, 1.0]),
             Point::new([2.0, 2.0]),
         ];
-        let area = simplex_volume(&collinear).unwrap();
-        assert_relative_eq!(area, 0.0, epsilon = 1e-10);
+        let result = simplex_volume(&collinear);
+        assert!(result.is_err(), "Degenerate simplex should return an error");
     }
 
     #[test]

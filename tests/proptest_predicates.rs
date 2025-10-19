@@ -9,7 +9,7 @@
 use delaunay::geometry::point::Point;
 use delaunay::geometry::predicates::{InSphere, Orientation, insphere, simplex_orientation};
 use delaunay::geometry::traits::coordinate::Coordinate;
-use delaunay::geometry::util::circumcenter;
+use delaunay::geometry::util::{circumcenter, circumradius};
 use proptest::prelude::*;
 
 // =============================================================================
@@ -271,7 +271,7 @@ proptest! {
         }
     }
 
-    /// Property: A point scaled far from the simplex centroid should be OUTSIDE.
+    /// Property: A point scaled far from the circumcenter (relative to circumradius) should be OUTSIDE.
     /// This tests that the insphere predicate correctly identifies distant points.
     #[test]
     fn prop_insphere_distant_point_is_outside_2d(
@@ -281,31 +281,39 @@ proptest! {
     ) {
         let simplex = vec![p0, p1, p2];
 
-        // Compute simplex centroid
-        let coords0: [f64; 2] = p0.into();
-        let coords1: [f64; 2] = p1.into();
-        let coords2: [f64; 2] = p2.into();
+        // Compute circumcenter and circumradius
+        if let (Ok(center), Ok(radius)) = (circumcenter(&simplex), circumradius(&simplex)) {
+            let center_coords: [f64; 2] = center.into();
 
-        let centroid = [
-            (coords0[0] + coords1[0] + coords2[0]) / 3.0,
-            (coords0[1] + coords1[1] + coords2[1]) / 3.0,
-        ];
+            // Skip degenerate or near-degenerate simplices
+            if radius < 1e-6 || !radius.is_finite() {
+                return Ok(());
+            }
 
-        // Create a point far from the centroid by scaling the centroid direction
-        // Use a large scaling factor to ensure it's outside
-        let scale = 10000.0;
-        let far_point = Point::new([
-            centroid[0] * scale,
-            centroid[1] * scale,
-        ]);
+            // Create a direction vector from circumcenter
+            // Use a fixed direction if circumcenter is at origin
+            let (dir_x, dir_y) = if center_coords[0].abs() > 0.01 || center_coords[1].abs() > 0.01 {
+                let norm = center_coords[0].hypot(center_coords[1]);
+                (center_coords[0] / norm, center_coords[1] / norm)
+            } else {
+                (1.0, 0.0) // Fixed direction
+            };
 
-        if let Ok(result) = insphere(&simplex, far_point) {
-            // The scaled point should be OUTSIDE (unless centroid is near zero)
-            if centroid[0].abs() > 0.01 || centroid[1].abs() > 0.01 {
+            // Place point at 10x the circumradius away from circumcenter
+            let distance = radius * 10.0;
+            let far_point = Point::new([
+                dir_x.mul_add(distance, center_coords[0]),
+                dir_y.mul_add(distance, center_coords[1]),
+            ]);
+
+            if let Ok(result) = insphere(&simplex, far_point) {
                 prop_assert!(
                     result == InSphere::OUTSIDE,
-                    "Expected scaled point to be OUTSIDE, got {:?}",
-                    result
+                    "Point at 10x circumradius from center should be OUTSIDE, got {:?}. Center: {:?}, Radius: {}, Far point: {:?}",
+                    result,
+                    center_coords,
+                    radius,
+                    far_point
                 );
             }
         }
