@@ -6,7 +6,6 @@
 
 use num_traits::{Float, Zero};
 use peroxide::fuga::{LinearAlgebra, MatrixTrait, zeros};
-use peroxide::statistics::ops::factorial;
 use rand::Rng;
 use rand::distr::uniform::SampleUniform;
 use serde::{Serialize, de::DeserializeOwned};
@@ -993,7 +992,7 @@ where
 
             // 2D cross product magnitude: |v1.x * v2.y - v1.y * v2.x|
             let cross_z = v1[0] * v2[1] - v1[1] * v2[0];
-            Ok(Float::abs(cross_z) / (T::one() + T::one())) // Divide by 2
+            Ok(Float::abs(cross_z) / T::from(2).unwrap_or_else(|| T::one() + T::one()))
         }
         3 => {
             // 3D: Tetrahedron volume using triple scalar product / 6
@@ -1014,7 +1013,8 @@ where
             let triple_product = v1[0] * cross_x + v1[1] * cross_y + v1[2] * cross_z;
 
             // Volume = |triple product| / 6
-            let six = T::one() + T::one() + T::one() + T::one() + T::one() + T::one();
+            let six = T::from(6)
+                .unwrap_or_else(|| T::one() + T::one() + T::one() + T::one() + T::one() + T::one());
             Ok(Float::abs(triple_product) / six)
         }
         _ => {
@@ -1070,31 +1070,37 @@ where
     }
 
     // Calculate determinant of Gram matrix
-    let det = gram_matrix.det();
+    let mut det = gram_matrix.det();
 
-    // Volume = (1/D!) × √(det(G))
+    // Clamp small negative values to zero (numerical tolerance)
     if det < 0.0 {
-        return Err(CircumcenterError::MatrixInversionFailed {
-            details: "Gram matrix has negative determinant (degenerate simplex)".to_string(),
-        });
+        if det > -1e-12 {
+            det = 0.0;
+        } else {
+            return Err(CircumcenterError::MatrixInversionFailed {
+                details: "Gram matrix has negative determinant (degenerate simplex)".to_string(),
+            });
+        }
     }
 
     let volume_f64 = if det == 0.0 {
         0.0 // Degenerate case
     } else {
         let sqrt_det = det.sqrt();
-
-        // Calculate D! factorial
-        let factorial_usize = factorial(D);
-        let factorial_val = safe_usize_to_scalar::<f64>(factorial_usize).map_err(|e| {
-            CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-                value: factorial_usize.to_string(),
-                from_type: "usize",
-                to_type: "f64",
-                details: e.to_string(),
-            })
-        })?;
-        sqrt_det / factorial_val
+        // Compute D! in f64 to avoid usize overflow/precision issues
+        let mut d_fact = 1.0f64;
+        for k in 2..=D {
+            let k_f64 = safe_usize_to_scalar::<f64>(k).map_err(|e| {
+                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
+                    value: k.to_string(),
+                    from_type: "usize",
+                    to_type: "f64",
+                    details: e.to_string(),
+                })
+            })?;
+            d_fact *= k_f64;
+        }
+        sqrt_det / d_fact
     };
 
     safe_scalar_from_f64(volume_f64).map_err(CircumcenterError::CoordinateConversion)
@@ -1152,6 +1158,12 @@ where
             expected: D + 1,
             dimension: D,
         });
+    }
+
+    // Special-case 1D: segment inradius is half the length
+    if D == 1 {
+        let length = simplex_volume(points)?; // 1D volume = segment length
+        return Ok(length / T::from(2).unwrap_or_else(|| T::one() + T::one()));
     }
 
     // Compute volume
@@ -1397,31 +1409,37 @@ where
     }
 
     // Calculate determinant of Gram matrix
-    let det = gram_matrix.det();
+    let mut det = gram_matrix.det();
 
-    // Volume = (1/(D-1)!) × √(det(G))
+    // Clamp small negative values to zero (numerical tolerance)
     if det < 0.0 {
-        return Err(CircumcenterError::MatrixInversionFailed {
-            details: "Gram matrix has negative determinant (degenerate simplex)".to_string(),
-        });
+        if det > -1e-12 {
+            det = 0.0;
+        } else {
+            return Err(CircumcenterError::MatrixInversionFailed {
+                details: "Gram matrix has negative determinant (degenerate simplex)".to_string(),
+            });
+        }
     }
 
     let volume_f64 = if det == 0.0 {
         0.0 // Degenerate case
     } else {
         let sqrt_det = det.sqrt();
-
-        // Calculate (D-1)! factorial - peroxide's factorial function returns usize
-        let factorial_usize = factorial(D - 1);
-        let factorial_val = safe_usize_to_scalar::<f64>(factorial_usize).map_err(|e| {
-            CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-                value: factorial_usize.to_string(),
-                from_type: "usize",
-                to_type: "f64",
-                details: e.to_string(),
-            })
-        })?;
-        sqrt_det / factorial_val
+        // Compute (D-1)! in f64 to avoid usize overflow/precision issues
+        let mut d_fact = 1.0f64;
+        for k in 2..D {
+            let k_f64 = safe_usize_to_scalar::<f64>(k).map_err(|e| {
+                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
+                    value: k.to_string(),
+                    from_type: "usize",
+                    to_type: "f64",
+                    details: e.to_string(),
+                })
+            })?;
+            d_fact *= k_f64;
+        }
+        sqrt_det / d_fact
     };
 
     safe_scalar_from_f64(volume_f64).map_err(CircumcenterError::CoordinateConversion)
@@ -2970,7 +2988,7 @@ mod tests {
     fn test_gram_matrix_debug() {
         // Test the Gram matrix method against known simple cases
 
-        // Test 1: Unit right triangle in 3D - we know this should be 0.5
+        // Test 1: Unit right triangle in 3D - area 0.5
         let triangle_3d = vec![
             Point::new([0.0, 0.0, 0.0]),
             Point::new([1.0, 0.0, 0.0]),
@@ -2978,6 +2996,16 @@ mod tests {
         ];
         let area_3d = facet_measure(&triangle_3d).unwrap();
         println!("3D triangle area: {area_3d} (expected: 0.5)");
+
+        // Test 1b: Nearly singular triangle should not error due to tiny negative det
+        let eps = 1e-10;
+        let near_singular = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([1.0, eps, 0.0]),
+        ];
+        let area_ns = facet_measure(&near_singular).unwrap();
+        assert!(area_ns >= 0.0);
 
         // Test 2: Same triangle but use direct Gram matrix calculation
         let area_3d_gram = facet_measure_gram_matrix::<f64, 3>(&triangle_3d).unwrap();

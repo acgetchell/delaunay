@@ -3218,6 +3218,7 @@ where
                         // Use direct key-based method with proper error propagation
                         // The error is already TriangulationValidationError, so just propagate it
                         let vertices = self.get_cell_vertices(first_cell_key)?;
+                        // Allocate facet_vertices buffer once, reuse for all facets
                         let mut facet_vertices = Vec::with_capacity(vertices.len() - 1);
                         let idx: usize = first_facet_index.into();
                         for (i, &key) in vertices.iter().enumerate() {
@@ -3278,9 +3279,12 @@ where
                                     let quality_result = radius_ratio(self, cell_key);
                                     let uuid = self.cells[cell_key].uuid();
 
-                                    // Convert to f64 for sorting
+                                    // Convert to f64 for sorting, filtering out non-finite values
                                     quality_result.ok().and_then(|ratio| {
-                                        safe_scalar_to_f64(ratio).ok().map(|r| (cell_key, r, uuid))
+                                        safe_scalar_to_f64(ratio)
+                                            .ok()
+                                            .filter(|r| r.is_finite())
+                                            .map(|r| (cell_key, r, uuid))
                                     })
                                 })
                                 .collect();
@@ -3370,14 +3374,9 @@ where
                 cells_to_remove.len()
             );
 
-            // Remove the invalid/excess cells and their UUID-to-key mapping entries
-            let mut actually_removed = 0;
-            for cell_key in cells_to_remove {
-                if let Some(removed_cell) = self.cells.remove(cell_key) {
-                    self.uuid_to_cell_key.remove(&removed_cell.uuid());
-                    actually_removed += 1;
-                }
-            }
+            // Remove the invalid/excess cells using batch API (handles UUID mapping and generation)
+            let to_remove: Vec<CellKey> = cells_to_remove.into_iter().collect();
+            let actually_removed = self.remove_cells_by_keys(&to_remove);
 
             #[cfg(debug_assertions)]
             eprintln!("Iteration {iteration}: Removed {actually_removed} cells directly");
@@ -3385,42 +3384,21 @@ where
             // Clean up any resulting duplicate cells
             #[cfg(debug_assertions)]
             eprintln!("Iteration {iteration}: Calling remove_duplicate_cells");
-            let duplicate_cells_removed = self.remove_duplicate_cells()?;
+            let duplicate_cells_removed = match self.remove_duplicate_cells() {
+                Ok(n) => n,
+                Err(e) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Iteration {iteration}: remove_duplicate_cells failed (will retry next iteration): {e}"
+                    );
+                    continue; // try again next pass
+                }
+            };
 
             #[cfg(debug_assertions)]
             eprintln!("Iteration {iteration}: Removed {duplicate_cells_removed} duplicate cells");
 
-            // After cell removals, neighbor and incident mappings may be stale
-            // Recompute them to maintain topology consistency
-            if actually_removed > 0 || duplicate_cells_removed > 0 {
-                #[cfg(debug_assertions)]
-                eprintln!("Iteration {iteration}: Calling assign_neighbors");
-
-                // Within the iteration loop, we allow assign_neighbors to fail
-                // because we may have created temporary inconsistencies that will
-                // be fixed in subsequent iterations
-                if let Err(e) = self.assign_neighbors() {
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Iteration {iteration}: assign_neighbors failed (will retry next iteration): {e}"
-                    );
-                    // Continue to next iteration to try to fix the problem
-                    continue;
-                }
-
-                #[cfg(debug_assertions)]
-                eprintln!("Iteration {iteration}: Calling assign_incident_cells");
-
-                if let Err(e) = self.assign_incident_cells() {
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Iteration {iteration}: assign_incident_cells failed (will retry next iteration): {e}"
-                    );
-                    // Continue to next iteration to try to fix the problem
-                    continue;
-                }
-                // Generation already bumped by assign_neighbors(); avoid double increment
-            }
+            // Topology was rebuilt inside remove_duplicate_cells() when duplicates were removed.
 
             let removed_this_iteration = actually_removed + duplicate_cells_removed;
             total_removed += removed_this_iteration;
@@ -3457,6 +3435,15 @@ where
                 removed_this_iteration,
                 total_removed
             );
+        }
+
+        // After loop, verify that facet sharing is actually fixed
+        if self.validate_facet_sharing().is_err() {
+            return Err(TriangulationValidationError::InconsistentDataStructure {
+                message: format!(
+                    "fix_invalid_facet_sharing: reached max_iterations={max_iterations} with remaining invalid facet sharing"
+                ),
+            });
         }
 
         Ok(total_removed)

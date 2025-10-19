@@ -10,8 +10,8 @@
 //! - **Radius Ratio**: Circumradius divided by inradius. Lower values indicate
 //!   better-shaped cells. An equilateral simplex has a radius ratio close to
 //!   the dimension-dependent optimal value.
-//! - **Normalized Volume**: Volume normalized by edge lengths. Provides a
-//!   scale-invariant measure of cell shape quality.
+//! - **Normalized Volume**: Volume divided by the D-th power of the average edge length.
+//!   Provides a scale-invariant measure of cell shape quality.
 //!
 //! # References
 //!
@@ -59,8 +59,8 @@ pub enum QualityError {
     },
     /// Cell is degenerate (zero or near-zero volume)
     DegenerateCell {
-        /// Approximate measure of degeneracy
-        volume: String,
+        /// Measure/context of degeneracy (e.g., "volume=…", "inradius=…")
+        detail: String,
     },
     /// Numerical computation failed
     NumericalError {
@@ -73,8 +73,8 @@ impl fmt::Display for QualityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidCell { message } => write!(f, "Invalid cell: {message}"),
-            Self::DegenerateCell { volume } => {
-                write!(f, "Degenerate cell with volume ≈ {volume}")
+            Self::DegenerateCell { detail } => {
+                write!(f, "Degenerate cell: {detail}")
             }
             Self::NumericalError { message } => write!(f, "Numerical error: {message}"),
         }
@@ -83,11 +83,43 @@ impl fmt::Display for QualityError {
 
 impl Error for QualityError {}
 
+/// Helper function to extract cell points from a triangulation.
+///
+/// This centralizes the vertex-to-point extraction logic used by quality metrics.
+fn cell_points<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+) -> Result<Vec<Point<T, D>>, QualityError>
+where
+    T: CoordinateScalar,
+    U: DataType + DeserializeOwned,
+    V: DataType + DeserializeOwned,
+    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+{
+    let vertex_keys = tds
+        .get_cell_vertices(cell_key)
+        .map_err(|e| QualityError::InvalidCell {
+            message: format!("Failed to get cell vertices: {e}"),
+        })?;
+    let points = vertex_keys
+        .iter()
+        .map(|&vkey| {
+            tds.vertices()
+                .get(vkey)
+                .map(|v| *v.point())
+                .ok_or_else(|| QualityError::InvalidCell {
+                    message: format!("Vertex {vkey:?} not found in triangulation"),
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(points)
+}
+
 /// Computes the radius ratio quality metric for a cell.
 ///
 /// The radius ratio is defined as the circumradius divided by the inradius.
-/// Lower values indicate better cell quality. An equilateral simplex in d dimensions
-/// has a radius ratio of d, which is optimal.
+/// Lower values indicate better cell quality. For a regular simplex in D dimensions,
+/// the circumradius-to-inradius ratio satisfies R/r = D, which is optimal.
 ///
 /// # Quality Interpretation
 ///
@@ -142,25 +174,8 @@ where
     for<'a> &'a T: Div<T>,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
-    // Get cell vertex keys
-    let vertex_keys = tds
-        .get_cell_vertices(cell_key)
-        .map_err(|e| QualityError::InvalidCell {
-            message: format!("Failed to get cell vertices: {e}"),
-        })?;
-
-    // Get vertex points
-    let points: Vec<Point<T, D>> = vertex_keys
-        .iter()
-        .map(|&vkey| {
-            tds.vertices()
-                .get(vkey)
-                .map(|v| *v.point())
-                .ok_or_else(|| QualityError::InvalidCell {
-                    message: format!("Vertex {vkey:?} not found in triangulation"),
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    // Extract cell points using helper
+    let points = cell_points(tds, cell_key)?;
 
     if points.len() != D + 1 {
         return Err(QualityError::InvalidCell {
@@ -183,10 +198,12 @@ where
     })?;
 
     // Check for near-zero inradius (degenerate cell)
-    let epsilon = T::from(1e-10).unwrap_or_else(T::zero);
+    let epsilon = NumCast::from(1e-10).ok_or_else(|| QualityError::NumericalError {
+        message: "Failed to convert epsilon (1e-10) to coordinate type".to_string(),
+    })?;
     if inradius_val < epsilon {
         return Err(QualityError::DegenerateCell {
-            volume: format!("inradius={inradius_val:?}"),
+            detail: format!("inradius={inradius_val:?}"),
         });
     }
 
@@ -198,14 +215,14 @@ where
 
 /// Computes the normalized volume quality metric for a cell.
 ///
-/// This metric provides a scale-invariant measure of cell quality by normalizing
-/// the volume by the product of edge lengths. It avoids the numerical issues that
-/// can arise when computing inradius for very small cells.
+/// This metric provides a scale-invariant measure of cell quality by dividing
+/// the volume by the D-th power of the average edge length. It avoids the numerical
+/// issues that can arise when computing inradius for very small cells.
 ///
 /// # Quality Interpretation
 ///
 /// - **Higher values** = better quality
-/// - **Optimal** (equilateral): ≈ 1.0 (normalized)
+/// - **Optimal** (equilateral 2D): ≈ 0.433 (sqrt(3)/4)
 /// - **Poor**: < 0.1 (flat or sliver cell)
 ///
 /// # Arguments
@@ -253,25 +270,8 @@ where
     for<'a> &'a T: Div<T>,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
-    // Get cell vertex keys
-    let vertex_keys = tds
-        .get_cell_vertices(cell_key)
-        .map_err(|e| QualityError::InvalidCell {
-            message: format!("Failed to get cell vertices: {e}"),
-        })?;
-
-    // Get vertex points
-    let points: Vec<Point<T, D>> = vertex_keys
-        .iter()
-        .map(|&vkey| {
-            tds.vertices()
-                .get(vkey)
-                .map(|v| *v.point())
-                .ok_or_else(|| QualityError::InvalidCell {
-                    message: format!("Vertex {vkey:?} not found in triangulation"),
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    // Extract cell points using helper
+    let points = cell_points(tds, cell_key)?;
 
     if points.len() != D + 1 {
         return Err(QualityError::InvalidCell {
@@ -289,10 +289,12 @@ where
     })?;
 
     // Check for degenerate cell
-    let epsilon = T::from(1e-10).unwrap_or_else(T::zero);
+    let epsilon = NumCast::from(1e-10).ok_or_else(|| QualityError::NumericalError {
+        message: "Failed to convert epsilon (1e-10) to coordinate type".to_string(),
+    })?;
     if volume < epsilon {
         return Err(QualityError::DegenerateCell {
-            volume: format!("{volume:?}"),
+            detail: format!("volume={volume:?}"),
         });
     }
 
@@ -327,19 +329,19 @@ where
 
     if avg_edge_length < epsilon {
         return Err(QualityError::DegenerateCell {
-            volume: format!("avg_edge_length={avg_edge_length:?}"),
+            detail: format!("avg_edge_length={avg_edge_length:?}"),
         });
     }
 
-    // Normalize volume by edge_length^D for scale invariance
-    let mut edge_length_power = T::one();
-    for _ in 0..D {
-        edge_length_power = edge_length_power * avg_edge_length;
-    }
+    // Normalize volume by (avg_edge_length)^D for scale invariance
+    let d_i32 = i32::try_from(D).map_err(|_| QualityError::NumericalError {
+        message: format!("Dimension {D} too large to convert to i32"),
+    })?;
+    let edge_length_power = avg_edge_length.powi(d_i32);
 
     if edge_length_power < epsilon {
         return Err(QualityError::DegenerateCell {
-            volume: format!("edge_length_power={edge_length_power:?}"),
+            detail: format!("edge_length_power={edge_length_power:?}"),
         });
     }
 
@@ -568,10 +570,10 @@ mod tests {
         assert!(format!("{err}").contains("test message"));
 
         let err = QualityError::DegenerateCell {
-            volume: "0.0".to_string(),
+            detail: "volume=0.0".to_string(),
         };
         assert!(format!("{err}").contains("Degenerate"));
-        assert!(format!("{err}").contains("0.0"));
+        assert!(format!("{err}").contains("volume=0.0"));
 
         let err = QualityError::NumericalError {
             message: "test error".to_string(),
@@ -690,6 +692,33 @@ mod tests {
         let norm_vol = normalized_volume(&tds, cell_key).unwrap();
         assert!(norm_vol > 0.0);
         assert!(norm_vol < 1.0);
+    }
+
+    // =============================================================================
+    // f32 COMPATIBILITY TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_quality_metrics_f32_compatibility() {
+        // Test that quality metrics work with f32 coordinate type
+        // 2D equilateral triangle
+        let vertices = vec![
+            vertex!([0.0f32, 0.0f32]),
+            vertex!([1.0f32, 0.0f32]),
+            vertex!([0.5f32, 0.866f32]), // approximately sqrt(3)/2
+        ];
+        let tds: Tds<f32, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cells().keys().next().unwrap();
+
+        // Test radius_ratio
+        let ratio = radius_ratio(&tds, cell_key).unwrap();
+        // For equilateral triangle: R/r = 2
+        assert!(ratio > 1.5 && ratio < 2.5, "ratio={ratio}");
+
+        // Test normalized_volume
+        let norm_vol = normalized_volume(&tds, cell_key).unwrap();
+        // For 2D equilateral: sqrt(3)/4 ≈ 0.433
+        assert!(norm_vol > 0.3 && norm_vol < 0.6, "norm_vol={norm_vol}");
     }
 
     // =============================================================================

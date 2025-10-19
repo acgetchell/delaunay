@@ -1409,12 +1409,9 @@ where
             // Use SmallVec for positions to avoid heap allocation for typical small collections
             // Size 8 should cover most practical dimensions (up to 7D vertices per facet)
             //
-            // TODO: Optimize for high-dimensional cases (D > 7)
-            // Consider using conditional buffer type based on dimension:
-            // - if D <= 8: use SmallBuffer<usize, 8> for stack allocation
-            // - if D > 8: use Vec<usize> directly to avoid wasted stack space
-            // This could be implemented with const generics when SmallVec supports it,
-            // or with a runtime check using an enum wrapper.
+            // Deferred to v0.6.0 or later; see Issue #106.
+            // Current behavior is correct but not optimized for D > 7.
+            // For D > 7, SmallBuffer heap-allocates; dimension-aware allocation could improve performance.
             let mut uuid_to_positions: FastHashMap<uuid::Uuid, SmallBuffer<usize, 8>> =
                 FastHashMap::default();
             for (position, vertex) in vertices.iter().enumerate() {
