@@ -4,12 +4,15 @@
 //! in the delaunay triangulation library, particularly those that are performance-critical:
 //!
 //! 1. **`Tds::new` (Bowyer-Watson triangulation)**: Complete triangulation creation
-//! 2. **`assign_neighbors`**: Neighbor relationship assignment between cells
-//! 3. **`remove_duplicate_cells`**: Duplicate cell removal and cleanup
-//! 4. **`is_valid`**: Complete triangulation validation performance
-//! 5. **Individual validation components**: Mapping validation, duplicate detection, etc.
-//! 6. **Incremental construction**: Performance of `add()` method for vertex insertion
-//! 7. **Memory usage patterns**: Allocation and deallocation patterns
+//! 2. **`remove_duplicate_cells`**: Duplicate cell removal and cleanup
+//! 3. **`is_valid`**: Complete triangulation validation performance
+//! 4. **Individual validation components**: Mapping validation, duplicate detection, etc.
+//! 5. **Incremental construction**: Performance of `add()` method for vertex insertion
+//! 6. **Memory usage patterns**: Allocation and deallocation patterns
+//!
+//! **Note:** `assign_neighbors` benchmarks have been moved to `assign_neighbors_performance.rs`
+//! for more comprehensive testing with multiple distributions (random, grid, spherical) and
+//! scaling analysis. Use that benchmark file for `assign_neighbors` performance evaluation.
 //!
 //! These benchmarks measure the effectiveness of the optimization implementations
 //! completed as part of the Pure Incremental Delaunay Triangulation refactoring project.
@@ -47,43 +50,6 @@ macro_rules! generate_dimensional_benchmarks {
                                     points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                                 },
                                 |vertices| black_box(Tds::<f64, (), (), $dim>::new(&vertices).unwrap()),
-                            );
-                        },
-                    );
-                }
-
-                group.finish();
-            }
-
-            /// Benchmark `assign_neighbors` for [<$dim>]D
-            fn [<benchmark_assign_neighbors_ $dim d>](c: &mut Criterion) {
-                let point_counts = [10, 25, 50, 100];
-
-                let mut group = c.benchmark_group(concat!("assign_neighbors_", stringify!([<$dim>]), "d"));
-
-                for &n_points in &point_counts {
-                    #[allow(clippy::cast_sign_loss)]
-                    let throughput = n_points as u64;
-                    group.throughput(Throughput::Elements(throughput));
-
-                    group.bench_with_input(
-                        BenchmarkId::new("assign_neighbors", n_points),
-                        &n_points,
-                        |b, &n_points| {
-                            b.iter_with_setup(
-                                || {
-                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
-                                    let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                    let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
-                                    // Clear existing neighbors to benchmark the assignment process
-                                    tds.clear_all_neighbors();
-                                    tds
-                                },
-                                |mut tds| {
-                                    tds.assign_neighbors()
-                                        .expect("assign_neighbors failed");
-                                    black_box(tds);
-                                },
                             );
                         },
                     );
@@ -151,11 +117,6 @@ generate_dimensional_benchmarks!(5);
 // Legacy 3D benchmark function for backward compatibility
 fn benchmark_bowyer_watson_triangulation(c: &mut Criterion) {
     benchmark_bowyer_watson_triangulation_3d(c);
-}
-
-// Legacy 3D benchmark function for backward compatibility
-fn benchmark_assign_neighbors(c: &mut Criterion) {
-    benchmark_assign_neighbors_3d(c);
 }
 
 // Legacy 3D benchmark function for backward compatibility
@@ -397,10 +358,6 @@ criterion_group!(
         benchmark_bowyer_watson_triangulation_3d,
         benchmark_bowyer_watson_triangulation_4d,
         benchmark_bowyer_watson_triangulation_5d,
-        benchmark_assign_neighbors_2d,
-        benchmark_assign_neighbors_3d,
-        benchmark_assign_neighbors_4d,
-        benchmark_assign_neighbors_5d,
         benchmark_remove_duplicate_cells_2d,
         benchmark_remove_duplicate_cells_3d,
         benchmark_remove_duplicate_cells_4d,
@@ -430,7 +387,6 @@ criterion_group!(
 
         // Legacy wrappers for backward compatibility
         benchmark_bowyer_watson_triangulation,
-        benchmark_assign_neighbors,
         benchmark_remove_duplicate_cells,
         benchmark_2d_triangulation,
         benchmark_4d_triangulation,

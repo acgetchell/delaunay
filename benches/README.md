@@ -1,7 +1,88 @@
 # Performance Benchmarks
 
-This directory contains performance benchmarks for the delaunay library, including circumsphere containment algorithms,
-triangulation data structure operations, and small-scale triangulation performance testing.
+This directory contains performance benchmarks for the delaunay library, organized by purpose:
+
+- **CI Regression Detection**: Fast benchmarks for every PR
+- **Phase 4 SlotMap Evaluation**: Large-scale iteration and query performance
+- **Comprehensive Profiling**: Deep analysis for optimization work
+- **Algorithm Comparison**: Comparing different implementations
+- **Specialized Benchmarks**: Focused testing of specific operations
+
+## Benchmark Suite Overview
+
+| Benchmark | Purpose | Scale | Runtime | Used By |
+|-----------|---------|-------|---------|----------|
+| `ci_performance_suite.rs` | **CI regression detection** | 10-50 pts | ~5-10 min | CI workflows, baseline generation |
+| `large_scale_performance.rs` | **Phase 4 SlotMap evaluation** | 1K-10K vertices | ~10-30 min | Manual (should be Phase 4 primary) |
+| `profiling_suite.rs` | Comprehensive profiling | 10³-10⁶ pts | 1-2 hours | Monthly profiling, manual |
+| `circumsphere_containment.rs` | Algorithm comparison | Random queries | ~5 min | Performance summary generation |
+| `assign_neighbors_performance.rs` | Neighbor assignment | 10-50 pts | ~5 min | Manual |
+| `microbenchmarks.rs` | Core operations | Various | ~10 min | Manual |
+| ~~`triangulation_creation.rs`~~ | ~~Simple construction~~ | ~~1000 pts~~ | ~~N/A~~ | **DEPRECATED** |
+
+### Benchmark Selection Guide
+
+| Use Case | Benchmark | Command |
+|----------|-----------|----------|
+| Quick CI regression check | `ci_performance_suite.rs` | `just bench` or `cargo bench --bench ci_performance_suite` |
+| Phase 4 SlotMap evaluation | `large_scale_performance.rs` | `cargo bench --bench large_scale_performance` |
+| Deep profiling (1-2 hours) | `profiling_suite.rs` | `cargo bench --bench profiling_suite` |
+| Memory analysis | `profiling_suite.rs` (memory groups) | `cargo bench --bench profiling_suite -- memory` |
+| Algorithm comparison | `circumsphere_containment.rs` | `cargo bench --bench circumsphere_containment` |
+| Neighbor assignment | `assign_neighbors_performance.rs` | `cargo bench --bench assign_neighbors_performance` |
+
+## Phase 4 SlotMap Evaluation
+
+**Status:** Planning phase - benchmark consolidation in progress  
+**Primary Benchmark:** `large_scale_performance.rs`  
+**Documentation:** See `docs/phase4.md` for detailed plan
+
+### Purpose
+
+Phase 4 aims to abstract SlotMap usage behind traits to enable swapping implementations
+(SlotMap → DenseSlotMap → HopSlotMap) without code changes, targeting **10-15% iteration
+performance improvement**.
+
+### Key Metrics
+
+1. **Iteration Performance** (10-15% improvement target)
+   - Full vertex/cell traversals
+   - Neighbor-following patterns
+   - Filtered iteration
+
+2. **Memory Efficiency**
+   - Peak RSS during construction
+   - Per-element footprint
+
+3. **Cache Locality** (5-10% cache miss reduction target)
+   - Sequential vs random access
+   - BFS traversal patterns
+
+4. **Query Performance** (maintain or improve)
+   - Key lookups
+   - Neighbor queries
+
+### Running Phase 4 Benchmarks
+
+```bash
+# Run large-scale performance benchmarks (Phase 4 primary)
+cargo bench --bench large_scale_performance
+
+# Run specific test categories
+cargo bench --bench large_scale_performance -- "construction/3D"
+cargo bench --bench large_scale_performance -- "queries/neighbors"
+cargo bench --bench large_scale_performance -- "iteration/vertices"
+
+# Future: Phase 4 baseline/comparison tools (coming soon)
+# just bench-phase4-baseline
+# just bench-phase4-compare
+```
+
+**Note:** `large_scale_performance.rs` was specifically designed for Phase 4 evaluation.
+It measures iteration speed, memory usage, query performance, and validation - all critical
+for SlotMap comparison.
+
+---
 
 ## Running Benchmarks
 

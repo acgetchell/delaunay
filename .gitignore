@@ -7,6 +7,7 @@
 /coverage
 /*.profraw
 /cobertura.xml
+/logs
 # Keep tarpaulin.toml but ignore generated files
 !/tarpaulin.toml
 /tarpaulin-report.*

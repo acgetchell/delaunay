@@ -5,8 +5,8 @@
 //!
 //! # Benchmark Coverage
 //!
-//! - **Dimensions**: 2D, 3D, 4D (practical range)
-//! - **Vertex counts**: 1,000, 5,000, 10,000 (scalability testing)
+//! - **Dimensions**: 2D, 3D, 4D, 5D (complete coverage)
+//! - **Vertex counts**: 1K-10K (2D/3D), 1K-3K (4D default), 500-1K (5D)
 //! - **Measurements**:
 //!   - Construction time (Bowyer-Watson algorithm)
 //!   - Memory usage delta during construction (process RSS)
@@ -49,19 +49,27 @@
 //! just bench-compare
 //! ```
 //!
-//! # Performance Notes
+//! # Performance Notes & Scaling Strategy
 //!
-//! - 2D/3D with 10,000 vertices: ~1-10 seconds construction
-//! - 4D with 10,000 vertices: ~30-120 seconds construction (complexity increases rapidly)
-//! - Memory usage scales with O(n^⌈d/2⌉) cells in d dimensions
-//! - Query performance depends on `SlotMap` implementation efficiency
+//! **Timing Estimates (per dimension suite):**
+//! - 2D: [1K, 5K, 10K] → ~15-30 minutes
+//! - 3D: [1K, 5K, 10K] → ~20-40 minutes  
+//! - 4D: [1K, 3K] (default) → ~30-60 minutes
+//! - 4D: [1K, 5K, 10K] (large scale) → ~2-4 hours
+//! - 5D: [500, 1K] → ~30-60 minutes
 //!
-//! # CI Considerations
+//! **Total benchmark runtime:**
+//! - Default (local): ~2-3 hours (2D/3D/4D/5D, recommended for development)
+//! - Large scale: ~4-6 hours (includes 4D@10K, requires compute cluster)
 //!
-//! For CI runs with time constraints:
-//! - Set `CRITERION_SAMPLE_SIZE=10` environment variable
-//! - Run smaller configurations: `cargo bench -- "1000"`
-//! - Consider skipping 4D/10000 for faster CI: `cargo bench -- "/2D|3D/"`
+//! **Scaling for Large Runs:**
+//! ```bash
+//! # Enable 10K points for 4D (use on compute cluster)
+//! BENCH_LARGE_SCALE=1 cargo bench --bench large_scale_performance
+//! ```
+//!
+//! **Memory complexity:** O(n^⌈d/2⌉) cells in d dimensions
+//! **Query performance:** Directly measures `SlotMap` iteration efficiency
 
 #![allow(missing_docs)]
 
@@ -401,9 +409,15 @@ fn bench_3d_suite(c: &mut Criterion) {
 }
 
 fn bench_4d_suite(c: &mut Criterion) {
-    // Note: 4D with 10,000 vertices can be very slow (30-120 seconds)
-    // Consider reducing to [1000, 5000] for faster CI runs
-    for &n_points in &[1000, 5000, 10_000] {
+    // 4D scaling: Default uses smaller sizes for reasonable runtime (~30-60 min total)
+    // Set BENCH_LARGE_SCALE=1 for 10K points (requires compute cluster, ~2-4 hours)
+    let point_counts: &[usize] = if std::env::var_os("BENCH_LARGE_SCALE").is_some() {
+        &[1000, 5000, 10_000] // Full scale for cluster runs
+    } else {
+        &[1000, 3000] // Reduced scale for local development (<2 hours total)
+    };
+
+    for &n_points in point_counts {
         bench_construction::<4>(c, "4D", n_points);
         bench_memory_usage::<4>(c, "4D", n_points);
         bench_validation::<4>(c, "4D", n_points);
@@ -413,10 +427,23 @@ fn bench_4d_suite(c: &mut Criterion) {
     }
 }
 
+fn bench_5d_suite(c: &mut Criterion) {
+    // 5D scaling: Very small sizes due to extreme computational cost
+    // Complexity grows as O(n^⌈5/2⌉) ≈ O(n³) for cells
+    for &n_points in &[500, 1000] {
+        bench_construction::<5>(c, "5D", n_points);
+        bench_memory_usage::<5>(c, "5D", n_points);
+        bench_validation::<5>(c, "5D", n_points);
+        bench_neighbor_queries::<5>(c, "5D", n_points);
+        bench_vertex_iteration::<5>(c, "5D", n_points);
+        bench_cell_iteration::<5>(c, "5D", n_points);
+    }
+}
+
 criterion_group!(
     name = large_scale_benches;
     config = Criterion::default();
-    targets = bench_2d_suite, bench_3d_suite, bench_4d_suite
+    targets = bench_2d_suite, bench_3d_suite, bench_4d_suite, bench_5d_suite
 );
 
 criterion_main!(large_scale_benches);

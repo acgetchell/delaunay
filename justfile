@@ -201,6 +201,13 @@ perf-help:
     @echo "  just perf-check 10.0       # Check with 10% threshold"
     @echo "  just bench-dev             # Quick benchmark iteration"
 
+# Profiling
+profile:
+    samply record cargo bench --bench profiling_suite -- triangulation_scaling
+
+profile-dev:
+    PROFILING_DEV_MODE=1 samply record cargo bench --bench profiling_suite -- triangulation_scaling
+
 # Python code quality
 python-lint:
     uv run ruff check scripts/ --fix
@@ -212,26 +219,52 @@ quality: lint-code lint-docs lint-config test-all
 
 # Development setup
 setup:
-    @echo "Setting up delaunay development environment..."
-    @echo "Note: Rust toolchain and components managed by rust-toolchain.toml (if present)"
-    @echo ""
-    @echo "Installing Rust components..."
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Setting up delaunay development environment..."
+    echo "Note: Rust toolchain and components managed by rust-toolchain.toml (if present)"
+    echo ""
+    echo "Installing Rust components..."
     rustup component add clippy rustfmt rust-docs rust-src
-    @echo ""
-    @echo "Additional tools required (install separately):"
-    @echo "  - uv: https://github.com/astral-sh/uv"
-    @echo "  - actionlint: https://github.com/rhysd/actionlint"
-    @echo "  - shfmt, shellcheck: via package manager (brew install shfmt shellcheck)"
-    @echo "  - jq: via package manager (brew install jq)"
-    @echo "  - Node.js (for npx/cspell): https://nodejs.org"
-    @echo "  - cargo-tarpaulin: cargo install cargo-tarpaulin"
-    @echo ""
-    @echo "Installing Python tooling..."
+    echo ""
+    echo "Installing Rust tools..."
+    # Install cargo tools if not already installed
+    if ! command -v cargo-tarpaulin &> /dev/null; then
+        echo "Installing cargo-tarpaulin..."
+        cargo install cargo-tarpaulin
+    else
+        echo "cargo-tarpaulin already installed"
+    fi
+    if ! command -v samply &> /dev/null; then
+        echo "Installing samply..."
+        cargo install samply
+    else
+        echo "samply already installed"
+    fi
+    echo ""
+    echo "Additional tools (will check if installed):"
+    # Check for system tools
+    for tool in uv actionlint shfmt shellcheck jq node; do
+        if command -v "$tool" &> /dev/null; then
+            echo "  ✓ $tool installed"
+        else
+            echo "  ✗ $tool NOT installed"
+            case "$tool" in
+                uv) echo "    Install: https://github.com/astral-sh/uv" ;;
+                actionlint) echo "    Install: https://github.com/rhysd/actionlint" ;;
+                shfmt|shellcheck) echo "    Install: brew install $tool" ;;
+                jq) echo "    Install: brew install jq" ;;
+                node) echo "    Install: https://nodejs.org" ;;
+            esac
+        fi
+    done
+    echo ""
+    echo "Installing Python tooling..."
     uv sync --group dev
-    @echo ""
-    @echo "Building project..."
+    echo ""
+    echo "Building project..."
     cargo build
-    @echo "✅ Setup complete! Run 'just help-workflows' to see available commands."
+    echo "✅ Setup complete! Run 'just help-workflows' to see available commands."
 
 shell-lint:
     #!/usr/bin/env bash
