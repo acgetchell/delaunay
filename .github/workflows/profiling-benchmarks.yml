@@ -69,7 +69,9 @@ jobs:
       - name: Set profiling mode
         run: |
           INPUT_MODE="${{ github.event.inputs.mode }}"
-          if [[ "$INPUT_MODE" == "development" ]]; then
+          # Use development mode for tag pushes to keep runtime reasonable (~1-2 hours)
+          # Full production mode only for manual dispatch or scheduled runs
+          if [[ "$INPUT_MODE" == "development" ]] || [[ "${{ github.event_name }}" == "push" ]]; then
             echo "PROFILING_DEV_MODE=1" >> "$GITHUB_ENV"
             echo "Running in development mode (reduced scale)"
           else
@@ -222,8 +224,8 @@ jobs:
 
       - name: Run memory scaling benchmarks
         run: |
-          echo "Running memory scaling analysis..."
-          CRITERION_QUIET_MODE=1 cargo bench --bench memory_scaling --features count-allocations
+          echo "Running memory profiling analysis..."
+          CRITERION_QUIET_MODE=1 cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
       - name: Upload memory test results
         uses: actions/upload-artifact@v4
         with:

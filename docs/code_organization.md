@@ -76,14 +76,13 @@ delaunay/
 ├── benches/                                      # Performance benchmarks
 │   ├── README.md                                 # Benchmarking guide and usage instructions
 │   ├── PERFORMANCE_RESULTS.md                    # Auto-generated performance results and analysis
-│   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
+│   ├── assign_neighbors_performance.rs           # Neighbor assignment comprehensive benchmarks
 │   ├── ci_performance_suite.rs                   # CI-optimized performance suite (2D-5D regression testing)
 │   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
-│   ├── memory_scaling.rs                         # Memory usage scaling benchmarks
-│   ├── microbenchmarks.rs                        # Fine-grained performance tests
-│   ├── profiling_suite.rs                        # Comprehensive profiling suite with allocation counting support
-│   ├── triangulation_creation.rs                 # Triangulation creation benchmarks
-│   └── triangulation_vs_hull_memory.rs           # Memory comparison benchmarks
+│   ├── large_scale_performance.rs                # **Phase 4 primary**: Large-scale SlotMap evaluation (2D-5D)
+│   ├── microbenchmarks.rs                        # Core operation benchmarks (Bowyer-Watson, validation, incremental)
+│   ├── profiling_suite.rs                        # Comprehensive profiling suite with memory tracking
+│   └── triangulation_creation.rs                 # **DEPRECATED**: Use ci_performance_suite.rs or large_scale_performance.rs
 ├── tests/                                        # Integration tests
 │   ├── README.md                                 # Integration tests guide and usage instructions
 │   ├── COVERAGE.md                               # Test coverage tracking and analysis
@@ -112,6 +111,7 @@ delaunay/
 │   ├── code_organization.md                      # Code organization patterns (this file)
 │   ├── numerical_robustness_guide.md             # Numerical robustness and stability guide
 │   ├── OPTIMIZATION_ROADMAP.md                   # Comprehensive 4-phase optimization strategy (primary reference)
+│   ├── phase4.md                                 # Phase 4 benchmark consolidation plan and progress
 │   ├── property_testing_summary.md               # Property-based testing guide
 │   ├── README.md                                 # Documentation index and navigation guide
 │   ├── RELEASING.md                              # Release process documentation

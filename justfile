@@ -33,6 +33,19 @@ bench-compile:
 bench-dev:
     uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
 
+# Phase 4 SlotMap evaluation benchmarks
+bench-phase4:
+    @echo "🔬 Running Phase 4 SlotMap evaluation benchmarks (~2-3 hours)"
+    cargo bench --bench large_scale_performance
+
+bench-phase4-large:
+    @echo "🔬 Running Phase 4 large-scale benchmarks (~4-6 hours, use on compute cluster)"
+    BENCH_LARGE_SCALE=1 cargo bench --bench large_scale_performance
+
+bench-phase4-quick:
+    @echo "🔬 Running Phase 4 quick smoke test (~5-10 min)"
+    cargo bench --bench large_scale_performance -- "2D/1000" "3D/1000" --sample-size 10
+
 # Build commands
 build:
     cargo build
@@ -126,6 +139,11 @@ help-workflows:
     @echo "  just bench-baseline # Generate performance baseline"
     @echo "  just bench-compare # Compare against baseline"
     @echo "  just bench-dev     # Development mode (10x faster)"
+    @echo ""
+    @echo "Phase 4 SlotMap Evaluation:"
+    @echo "  just bench-phase4       # Run Phase 4 benchmarks (~2-3 hours)"
+    @echo "  just bench-phase4-large # Large scale (~4-6 hours, compute cluster)"
+    @echo "  just bench-phase4-quick # Quick smoke test (~5-10 min)"
     @echo ""
     @echo "Performance Analysis:"
     @echo "  just perf-help     # Show performance analysis commands"

@@ -46,6 +46,7 @@ sysinfo = "0.37.2"  # Process memory monitoring for benchmarks
 count-allocations = ["allocation-counter"]
 bench = []  # Enable benchmark-style tests and performance analysis
 test-debug = []  # Enable verbose debug output in tests for development
+dense-slotmap = []  # Use DenseSlotMap instead of SlotMap for performance comparison
 
 [[bench]]
 name = "circumsphere_containment"

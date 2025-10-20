@@ -283,9 +283,9 @@ fn get_memory_usage() -> u64 {
 
 ---
 
-### ☐ 10. Add Phase 4 Helpers to benchmark_utils.py and justfile
+### ◔ 10. Add Phase 4 Helpers to benchmark_utils.py and justfile
 
-**Status:** Not Started
+**Status:** Partial - Justfile targets completed (2025-10-20)
 
 **Python Script Commands (uv run):**
 
@@ -356,9 +356,9 @@ bench-phase4:
 
 ---
 
-### ☐ 11. Update GitHub Actions Workflows
+### ✅ 11. Update GitHub Actions Workflows
 
-**Status:** Not Started
+**Status:** ✅ Completed (2025-10-20)
 
 **benchmarks.yml (Performance Regression Testing):**
 
@@ -403,9 +403,9 @@ phase4-smoke-test:
 
 ---
 
-### ☐ 12. Documentation and Changelog Updates
+### ✅ 12. Documentation and Changelog Updates
 
-**Status:** Not Started
+**Status:** ✅ Completed (2025-10-20)
 
 **benches/README.md:**
 
@@ -685,7 +685,7 @@ Once the benchmark consolidation is complete, Phase 4 will evaluate these metric
 
 **Last Updated:** 2025-10-20 18:39
 
-**Overall Status:** In Progress - Deprecations Started
+**Overall Status:** ✅ Core Consolidation Complete (Steps 6-9, 11-12)
 
 **Completed Steps:**
 
@@ -696,14 +696,18 @@ Once the benchmark consolidation is complete, Phase 4 will evaluate these metric
 - ✅ Step 7: Consolidate memory benchmarks
 - ✅ Step 8: Deduplicate `assign_neighbors` benchmarks
 - ✅ Step 9: Elevate `large_scale_performance.rs` for Phase 4
+- ◔ Step 10: Add Phase 4 tooling (justfile targets complete, Python scripts deferred)
+- ✅ Step 11: Update GitHub Actions workflows
+- ✅ Step 12: Final documentation updates
 - ✅ Updated `benches/README.md` with comprehensive overview
 - ✅ Quality checks passing (fmt, clippy, markdown lint, spell check)
 - ✅ Quality checks passing (markdown lint, spell check)
 
 **Next Steps:**
 
-1. ☐ Design consolidation plan and get approval (step 5)
-2. ☐ Add Phase 4 tooling to scripts/justfile (step 10)
+1. ☐ Design consolidation plan and get approval (step 5 - optional)
+2. ☐ Complete Python script tooling for Phase 4 (step 10 remainder - optional)
+3. ☐ Update CHANGELOG.md before next release
 5. ☐ Add Phase 4 tooling to scripts/justfile (step 10)
 6. ☐ Update GitHub Actions workflows (step 11)
 7. ☐ Final documentation and changelog (step 12)
@@ -774,6 +778,26 @@ Once the benchmark consolidation is complete, Phase 4 will evaluate these metric
   - Point count strategy: 1K-10K (2D/3D), 1K-3K (4D default), 500-1K (5D)
   - Complete dimensional coverage: 2D, 3D, 4D, 5D
   - All Phase 4 metrics covered: construction, memory, iteration, queries, validation
+
+- **Step 10 Justfile Targets (Partial):**
+  - Added `bench-phase4`: Run Phase 4 benchmarks (~2-3 hours)
+  - Added `bench-phase4-large`: Large scale with 4D@10K (~4-6 hours, cluster)
+  - Added `bench-phase4-quick`: Quick smoke test (~5-10 min)
+  - Updated help-workflows with Phase 4 section
+  - Python script commands deferred (require deeper integration with benchmark_utils.py)
+
+- **Step 11 GitHub Actions Workflows:**
+  - Updated profiling-benchmarks.yml: memory_scaling → profiling_suite (memory_profiling)
+  - Set development mode for tag pushes to keep runtime reasonable (~1-2 hours vs 4-6 hours)
+  - Full production profiling only for manual dispatch or scheduled monthly runs
+  - Verified benchmarks.yml and generate-baseline.yml use benchmark-utils (no changes needed)
+  - All workflows now reference correct benchmark files after consolidation
+
+- **Step 12 Documentation Updates:**
+  - Updated docs/code_organization.md: Removed deleted benchmarks, added large_scale_performance.rs, marked triangulation_creation.rs as deprecated
+  - Added phase4.md to documentation tree
+  - benches/README.md already updated in earlier steps
+  - CHANGELOG.md update deferred to next release
 
 **Blockers:**
 

@@ -171,9 +171,16 @@ use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, DeserializeOwned, MapAccess, Visitor},
 };
-use slotmap::{SlotMap, new_key_type};
+use slotmap::new_key_type;
 use thiserror::Error;
 use uuid::Uuid;
+
+// Conditional compilation: SlotMap (default) vs DenseSlotMap (feature flag)
+#[cfg(not(feature = "dense-slotmap"))]
+use slotmap::SlotMap as StorageMap;
+
+#[cfg(feature = "dense-slotmap")]
+use slotmap::DenseSlotMap as StorageMap;
 
 // Crate-internal imports
 use crate::core::collections::{
@@ -370,22 +377,22 @@ pub enum TriangulationValidationError {
 // These macros create unique, type-safe keys for accessing elements in SlotMaps
 
 new_key_type! {
-    /// Key type for accessing vertices in SlotMap.
+    /// Key type for accessing vertices in the storage map.
     ///
     /// This creates a unique, type-safe identifier for vertices stored in the
-    /// triangulation's vertex SlotMap. Each VertexKey corresponds to exactly
-    /// one vertex and provides efficient, stable access even as vertices are
-    /// added or removed from the triangulation.
+    /// triangulation's vertex storage (SlotMap or DenseSlotMap). Each VertexKey
+    /// corresponds to exactly one vertex and provides efficient, stable access
+    /// even as vertices are added or removed from the triangulation.
     pub struct VertexKey;
 }
 
 new_key_type! {
-    /// Key type for accessing cells in SlotMap.
+    /// Key type for accessing cells in the storage map.
     ///
     /// This creates a unique, type-safe identifier for cells stored in the
-    /// triangulation's cell SlotMap. Each CellKey corresponds to exactly
-    /// one cell and provides efficient, stable access even as cells are
-    /// added or removed during triangulation operations.
+    /// triangulation's cell storage (SlotMap or DenseSlotMap). Each CellKey
+    /// corresponds to exactly one cell and provides efficient, stable access
+    /// even as cells are added or removed during triangulation operations.
     pub struct CellKey;
 }
 
@@ -395,9 +402,9 @@ new_key_type! {
 ///
 /// # Properties
 ///
-/// - `vertices`: A [`SlotMap`] that stores vertices with stable keys for efficient access.
+/// - `vertices`: A storage map (`SlotMap` or `DenseSlotMap`) that stores vertices with stable keys for efficient access.
 ///   Each [`Vertex`] has a [`Point`](crate::geometry::point::Point) of type T, vertex data of type U, and a constant D representing the dimension.
-/// - `cells`: The `cells` property is a [`SlotMap`] that stores [`Cell`] objects with stable keys.
+/// - `cells`: The `cells` property is a storage map (`SlotMap` or `DenseSlotMap`) that stores [`Cell`] objects with stable keys.
 ///   Each [`Cell`] has one or more [`Vertex`] objects with cell data of type V.
 ///   Note the dimensionality of the cell may differ from D, though the [`Tds`]
 ///   only stores cells of maximal dimensionality D and infers other lower
@@ -448,15 +455,17 @@ where
     V: DataType + DeserializeOwned,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
-    /// `SlotMap` for storing vertices, allowing stable keys and efficient access.
-    vertices: SlotMap<VertexKey, Vertex<T, U, D>>,
+    /// Storage map for vertices, allowing stable keys and efficient access.
+    /// Uses `SlotMap` by default, or `DenseSlotMap` with the `dense-slotmap` feature.
+    vertices: StorageMap<VertexKey, Vertex<T, U, D>>,
 
-    /// `SlotMap` for storing cells, providing stable keys and efficient access.
-    cells: SlotMap<CellKey, Cell<T, U, V, D>>,
+    /// Storage map for cells, providing stable keys and efficient access.
+    /// Uses `SlotMap` by default, or `DenseSlotMap` with the `dense-slotmap` feature.
+    cells: StorageMap<CellKey, Cell<T, U, V, D>>,
 
     /// Fast mapping from Vertex UUIDs to their `VertexKeys` for efficient UUID → Key lookups.
     /// This optimizes the common operation of looking up vertex keys by UUID.
-    /// For reverse Key → UUID lookups, we use direct `SlotMap` access: `vertices[key].uuid()`.
+    /// For reverse Key → UUID lookups, we use direct storage map access: `vertices[key].uuid()`.
     ///
     /// SAFETY: External mutation of this map will violate TDS invariants.
     /// This should only be modified through TDS methods that maintain consistency.
@@ -466,7 +475,7 @@ where
 
     /// Fast mapping from Cell UUIDs to their `CellKeys` for efficient UUID → Key lookups.
     /// This optimizes the common operation of looking up cell keys by UUID.
-    /// For reverse Key → UUID lookups, we use direct `SlotMap` access: `cells[key].uuid()`.
+    /// For reverse Key → UUID lookups, we use direct storage map access: `cells[key].uuid()`.
     ///
     /// SAFETY: External mutation of this map will violate TDS invariants.
     /// This should only be modified through TDS methods that maintain consistency.
@@ -506,7 +515,7 @@ where
     V: DataType,
     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
-    /// Returns a reference to the cells `SlotMap`.
+    /// Returns a reference to the cells storage map.
     ///
     /// This method provides read-only access to the internal cells collection,
     /// allowing external code to iterate over or access specific cells by their keys.
@@ -515,7 +524,7 @@ where
     ///
     /// # Returns
     ///
-    /// A reference to the `SlotMap<CellKey, Cell<T, U, V, D>>` storing all cells
+    /// A reference to the storage map (`SlotMap` or `DenseSlotMap`) storing all cells
     /// in the triangulation.
     ///
     /// # Example
@@ -538,11 +547,11 @@ where
     /// }
     /// ```
     #[must_use]
-    pub const fn cells(&self) -> &SlotMap<CellKey, Cell<T, U, V, D>> {
+    pub const fn cells(&self) -> &StorageMap<CellKey, Cell<T, U, V, D>> {
         &self.cells
     }
 
-    /// Returns a reference to the vertices `SlotMap`.
+    /// Returns a reference to the vertices storage map.
     ///
     /// This method provides read-only access to the internal vertices collection,
     /// allowing external code to iterate over or access specific vertices by their keys.
@@ -551,7 +560,7 @@ where
     ///
     /// # Returns
     ///
-    /// A reference to the `SlotMap<VertexKey, Vertex<T, U, D>>` storing all vertices
+    /// A reference to the storage map (`SlotMap` or `DenseSlotMap`) storing all vertices
     /// in the triangulation.
     ///
     /// # Example
@@ -573,7 +582,7 @@ where
     /// }
     /// ```
     #[must_use]
-    pub const fn vertices(&self) -> &SlotMap<VertexKey, Vertex<T, U, D>> {
+    pub const fn vertices(&self) -> &StorageMap<VertexKey, Vertex<T, U, D>> {
         &self.vertices
     }
 
@@ -949,7 +958,7 @@ where
     ///
     /// # Returns
     ///
-    /// A mutable reference to the `SlotMap<VertexKey, Vertex<T, U, D>>` containing all vertices
+    /// A mutable reference to the storage map containing all vertices
     /// in the triangulation data structure.
     ///
     /// # Warning
@@ -983,7 +992,7 @@ where
     /// }
     /// ```
     #[allow(clippy::missing_const_for_fn)]
-    pub fn vertices_mut(&mut self) -> &mut SlotMap<VertexKey, Vertex<T, U, D>> {
+    pub fn vertices_mut(&mut self) -> &mut StorageMap<VertexKey, Vertex<T, U, D>> {
         &mut self.vertices
     }
 
@@ -996,7 +1005,7 @@ where
     ///
     /// # Returns
     ///
-    /// A mutable reference to the `SlotMap<CellKey, Cell<T, U, V, D>>` containing all cells
+    /// A mutable reference to the storage map containing all cells
     /// in the triangulation data structure.
     ///
     /// # Warning
@@ -1026,7 +1035,7 @@ where
     /// // Note: Use clear_all_neighbors() method instead for clearing neighbors
     /// ```
     #[allow(clippy::missing_const_for_fn)]
-    pub fn cells_mut(&mut self) -> &mut SlotMap<CellKey, Cell<T, U, V, D>> {
+    pub fn cells_mut(&mut self) -> &mut StorageMap<CellKey, Cell<T, U, V, D>> {
         &mut self.cells
     }
 
@@ -1195,8 +1204,8 @@ where
     /// Gets vertex keys for a cell via UUID→Key mapping.
     ///
     /// This method eliminates UUID→Key lookups for cell access by working directly with keys, providing:
-    /// - Zero UUID mapping lookups for cell access (O(1) `SlotMap` lookup instead of O(1) hash lookup)
-    /// - Direct `SlotMap` access for maximum performance
+    /// - Zero UUID mapping lookups for cell access (O(1) storage map lookup instead of O(1) hash lookup)
+    /// - Direct storage map access for maximum performance
     /// - Avoids per-cell UUID lookups by resolving vertex keys through internal UUID→Key mapping
     ///
     /// Note: Currently still performs O(D) UUID→Key lookups for vertices. This will be
@@ -1224,7 +1233,7 @@ where
     ///
     /// # Performance
     ///
-    /// This uses direct `SlotMap` access with O(1) key lookup for the cell, though vertex
+    /// This uses direct storage map access with O(1) key lookup for the cell, though vertex
     /// lookups still require O(D) UUID→Key mappings until Phase 3.
     /// Uses stack-allocated buffer for D ≤ 7 to avoid heap allocation in the hot path.
     #[inline]
@@ -1234,7 +1243,7 @@ where
     ) -> Result<VertexKeyBuffer, TriangulationValidationError> {
         let cell = self.cells.get(cell_key).ok_or_else(|| {
             TriangulationValidationError::InconsistentDataStructure {
-                message: format!("Cell key {cell_key:?} not found in cells SlotMap"),
+                message: format!("Cell key {cell_key:?} not found in cells storage map"),
             }
         })?;
 
@@ -2064,7 +2073,7 @@ where
     /// Returns a `TriangulationValidationError` if:
     /// - A vertex UUID in a cell cannot be found in the vertex UUID-to-key mapping (`InconsistentDataStructure`)
     /// - A cell key cannot be found in the cell UUID-to-key mapping (`InconsistentDataStructure`)
-    /// - A vertex key cannot be found in the vertices `SlotMap` (`InconsistentDataStructure`)
+    /// - A vertex key cannot be found in the vertices storage map (`InconsistentDataStructure`)
     ///
     /// # Algorithm
     ///
@@ -2104,7 +2113,7 @@ where
                 if !self.cells.contains_key(cell_key) {
                     return Err(TriangulationValidationError::InconsistentDataStructure {
                         message: format!(
-                            "Cell key {cell_key:?} not found in cells SlotMap during incident cell assignment"
+                            "Cell key {cell_key:?} not found in cells storage map during incident cell assignment"
                         ),
                     });
                 }
@@ -2113,7 +2122,7 @@ where
                 let vertex = self.vertices.get_mut(vertex_key)
                     .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
                         message: format!(
-                            "Vertex key {vertex_key:?} not found in vertices SlotMap during incident cell assignment"
+                            "Vertex key {vertex_key:?} not found in vertices storage map during incident cell assignment"
                         ),
                     })?;
                 vertex.incident_cell = Some(cell_key);
@@ -2165,8 +2174,8 @@ where
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            vertices: SlotMap::with_key(),
-            cells: SlotMap::with_key(),
+            vertices: StorageMap::with_key(),
+            cells: StorageMap::with_key(),
             uuid_to_vertex_key: UuidToVertexKeyMap::default(),
             uuid_to_cell_key: UuidToCellKeyMap::default(),
             construction_state: TriangulationConstructionState::Incomplete(0),
@@ -2270,8 +2279,8 @@ where
         T: NumCast,
     {
         let mut tds = Self {
-            vertices: SlotMap::with_key(),
-            cells: SlotMap::with_key(),
+            vertices: StorageMap::with_key(),
+            cells: StorageMap::with_key(),
             uuid_to_vertex_key: UuidToVertexKeyMap::default(),
             uuid_to_cell_key: UuidToCellKeyMap::default(),
             // Initialize construction state based on number of vertices
@@ -2285,7 +2294,7 @@ where
             generation: Arc::new(AtomicU64::new(0)),
         };
 
-        // Add vertices to SlotMap and create bidirectional UUID-to-key mappings
+        // Add vertices to storage map and create bidirectional UUID-to-key mappings
         for vertex in vertices {
             let key = tds.vertices.insert(*vertex);
             let uuid = vertex.uuid();
@@ -2293,7 +2302,7 @@ where
         }
 
         // Initialize cells using Bowyer-Watson triangulation
-        // Note: bowyer_watson_logic now populates the SlotMaps internally
+        // Note: bowyer_watson_logic now populates the storage maps internally
         tds.bowyer_watson()?;
 
         Ok(tds)
@@ -4194,8 +4203,8 @@ where
             where
                 A: MapAccess<'de>,
             {
-                let mut vertices: Option<SlotMap<VertexKey, Vertex<T, U, D>>> = None;
-                let mut cells: Option<SlotMap<CellKey, Cell<T, U, V, D>>> = None;
+                let mut vertices: Option<StorageMap<VertexKey, Vertex<T, U, D>>> = None;
+                let mut cells: Option<StorageMap<CellKey, Cell<T, U, V, D>>> = None;
                 let mut cell_vertices: Option<FastHashMap<Uuid, Vec<Uuid>>> = None;
 
                 while let Some(key) = map.next_key()? {
