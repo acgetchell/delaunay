@@ -35,7 +35,7 @@ This directory contains performance benchmarks for the delaunay library, organiz
 
 **Status:** Active - just targets completed (2025-10-20)  
 **Primary Benchmark:** `large_scale_performance.rs`  
-**Documentation:** See `docs/phase4.md` for detailed plan
+**Documentation:** See [docs/phase4.md](../docs/phase4.md) for detailed consolidation plan and implementation progress
 
 ### Purpose
 

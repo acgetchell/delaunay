@@ -95,6 +95,13 @@
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
 
+// Import slotmap types for storage backend
+#[cfg(not(feature = "dense-slotmap"))]
+use slotmap::SlotMap;
+
+#[cfg(feature = "dense-slotmap")]
+use slotmap::DenseSlotMap;
+
 // Import key types for use in type aliases
 use crate::core::facet::FacetHandle;
 use crate::core::triangulation_data_structure::{CellKey, VertexKey};
@@ -128,6 +135,40 @@ pub type FacetIndex = u8;
 
 // Re-export UUID for convenience in type aliases
 pub use uuid::Uuid;
+
+// =============================================================================
+// STORAGE BACKEND
+// =============================================================================
+
+/// Internal storage backend for triangulation data structures.
+///
+/// This type alias abstracts over the concrete storage implementation,
+/// allowing the choice between `SlotMap` (default) and `DenseSlotMap`
+/// (via the `dense-slotmap` feature flag) without exposing the choice
+/// in public APIs.
+///
+/// # Feature Flags
+///
+/// - **default**: Uses `SlotMap` for balanced performance
+/// - **dense-slotmap**: Uses `DenseSlotMap` for denser memory layout
+///
+/// # Internal Use Only
+///
+/// This type should not be exposed in public API signatures. Instead,
+/// public methods should return iterators or use other abstractions
+/// that hide the concrete storage backend.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// // Internal use - not exposed in public API
+/// let vertices: StorageMap<VertexKey, Vertex<f64, (), 3>> = StorageMap::with_key();
+/// ```
+#[cfg(not(feature = "dense-slotmap"))]
+pub(crate) type StorageMap<K, V> = SlotMap<K, V>;
+
+#[cfg(feature = "dense-slotmap")]
+pub(crate) type StorageMap<K, V> = DenseSlotMap<K, V>;
 
 // =============================================================================
 // CORE OPTIMIZED TYPES
@@ -510,8 +551,8 @@ pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
 /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 ///
 /// // Get first vertex key and its UUID
-/// let (vertex_key, _) = tds.vertices().iter().next().unwrap();
-/// let vertex_uuid = tds.vertices()[vertex_key].uuid();
+/// let (vertex_key, _) = tds.vertices().next().unwrap();
+/// let vertex_uuid = tds.get_vertex_by_key(vertex_key).unwrap().uuid();
 /// ```
 pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 
@@ -541,8 +582,8 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 ///
 /// // Get first cell key and its UUID
-/// let (cell_key, _) = tds.cells().iter().next().unwrap();
-/// let cell_uuid = tds.cells()[cell_key].uuid();
+/// let (cell_key, _) = tds.cells().next().unwrap();
+/// let cell_uuid = tds.get_cell(cell_key).unwrap().uuid();
 /// ```
 pub type UuidToCellKeyMap = FastHashMap<Uuid, CellKey>;
 

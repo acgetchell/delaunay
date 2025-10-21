@@ -511,12 +511,12 @@ mod tests {
         #[cfg(debug_assertions)]
         {
             eprintln!("\n=== CELL ANALYSIS ===");
-            for (i, cell) in tds.cells().values().enumerate() {
+            for (i, cell) in tds.cells().map(|(_, cell)| cell).enumerate() {
                 let vertex_coords: Vec<&[f64; 3]> = cell
                     .vertices()
                     .iter()
                     .map(|vk| {
-                        let v = &tds.vertices()[*vk];
+                        let v = &tds.get_vertex_by_key(*vk).unwrap();
                         v.point().coords()
                     })
                     .collect();
@@ -551,7 +551,7 @@ mod tests {
                         invalid_sharing += 1;
                         eprintln!("❌ INVALID: Facet {facet_key} shared by {cell_count} cells");
                         for facet_handle in cells {
-                            if let Some(cell) = tds.cells().get(facet_handle.cell_key()) {
+                            if let Some(cell) = tds.get_cell(facet_handle.cell_key()) {
                                 eprintln!(
                                     "   Cell {:?} at facet index {}",
                                     cell.uuid(),
@@ -841,12 +841,12 @@ mod tests {
             };
         println!("Bad cells found: {} cells", bad_cells.len());
         for &cell_key in &bad_cells {
-            if let Some(cell) = tds.cells().get(cell_key) {
+            if let Some(cell) = tds.get_cell(cell_key) {
                 let coords: Vec<&[f64; 3]> = cell
                     .vertices()
                     .iter()
                     .map(|vk| {
-                        let v = &tds.vertices()[*vk];
+                        let v = &tds.get_vertex_by_key(*vk).unwrap();
                         v.point().coords()
                     })
                     .collect();

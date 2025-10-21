@@ -50,7 +50,6 @@ use super::{
     vertex::VertexValidationError,
 };
 
-#[cfg(test)]
 use super::vertex::Vertex;
 use crate::core::collections::{
     FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
@@ -129,6 +128,12 @@ pub enum CellValidationError {
         /// The dimension D.
         dimension: usize,
     },
+    /// A vertex key referenced by the cell was not found in the TDS.
+    #[error("Vertex key {key:?} not found in TDS (indicates TDS corruption or inconsistency)")]
+    VertexKeyNotFound {
+        /// The vertex key that was not found.
+        key: VertexKey,
+    },
 }
 
 // =============================================================================
@@ -188,7 +193,7 @@ macro_rules! cell {
         use $crate::core::triangulation_data_structure::Tds;
         let tds = Tds::new(&$vertices).expect("Failed to create triangulation from vertices");
         tds.cells()
-            .values()
+            .map(|(_, cell)| cell)
             .next()
             .expect("No cells created - need at least D+1 vertices")
             .clone()
@@ -200,7 +205,7 @@ macro_rules! cell {
         let tds = Tds::new(&$vertices).expect("Failed to create triangulation from vertices");
         let mut cell = tds
             .cells()
-            .values()
+            .map(|(_, cell)| cell)
             .next()
             .expect("No cells created - need at least D+1 vertices")
             .clone();
@@ -248,9 +253,9 @@ pub use crate::cell;
 /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
 ///
 /// // Get first cell and iterate over vertex keys
-/// let (cell_key, cell) = tds.cells().iter().next().unwrap();
+/// let (cell_key, cell) = tds.cells().next().unwrap();
 /// for &vertex_key in cell.vertices() {
-///     let vertex = &tds.vertices()[vertex_key];
+///     let vertex = &tds.get_vertex_by_key(vertex_key).unwrap();
 ///     // use vertex...
 ///     assert!(vertex.uuid() != uuid::Uuid::nil());
 /// }
@@ -394,9 +399,8 @@ where
                 }
 
                 let uuid: Uuid = uuid.ok_or_else(|| de::Error::missing_field("uuid"))?;
-                if uuid.is_nil() {
-                    return Err(de::Error::custom("uuid cannot be nil"));
-                }
+                crate::core::util::validate_uuid(&uuid)
+                    .map_err(|e| de::Error::custom(format!("invalid uuid: {e}")))?;
                 let data = data.unwrap_or(None);
 
                 // Phase 3A: vertices and neighbors are not serialized
@@ -500,7 +504,7 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    /// let (_, cell) = tds.cells().iter().next().unwrap();
+    /// let (_, cell) = tds.cells().next().unwrap();
     /// let vkey = cell.vertices()[0];
     ///
     /// if cell.contains_vertex(vkey) {
@@ -536,7 +540,7 @@ where
     ///     vertex!([1.0, 1.0]),
     /// ];
     /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    /// let mut cells_iter = tds.cells().values();
+    /// let mut cells_iter = tds.cells().map(|(_, cell)| cell);
     /// let cell1 = cells_iter.next().unwrap();
     /// let cell2 = cells_iter.next().unwrap();
     ///
@@ -570,7 +574,7 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    /// let (_, cell) = tds.cells().iter().next().unwrap();
+    /// let (_, cell) = tds.cells().next().unwrap();
     ///
     /// for (idx, &vkey) in cell.vertices_enumerated() {
     ///     println!("Vertex {:?} at position {}", vkey, idx);
@@ -603,12 +607,12 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    /// let (_, cell) = tds.cells().iter().next().unwrap();
+    /// let (_, cell) = tds.cells().next().unwrap();
     ///
     /// if let Some(neighbors) = cell.neighbors() {
     ///     for (i, neighbor_key_opt) in neighbors.iter().enumerate() {
     ///         if let Some(neighbor_key) = neighbor_key_opt {
-    ///             let neighbor_cell = &tds.cells()[*neighbor_key];
+    ///             let neighbor_cell = &tds.get_cell(*neighbor_key).unwrap();
     ///             // neighbor_cell is opposite to vertex i
     ///         }
     ///     }
@@ -635,10 +639,10 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    /// let (_, cell) = tds.cells().iter().next().unwrap();
+    /// let (_, cell) = tds.cells().next().unwrap();
     ///
     /// for &vkey in cell.vertices() {
-    ///     let vertex = &tds.vertices()[vkey];
+    ///     let vertex = &tds.get_vertex_by_key(vkey).unwrap();
     ///     // use vertex data...
     ///     assert!(vertex.uuid() != uuid::Uuid::nil());
     /// }
@@ -693,8 +697,8 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    /// let cell_key = tds.cells().iter().next().unwrap().0;
-    /// let cell = &tds.cells()[cell_key];
+    /// let cell_key = tds.cells().next().unwrap().0;
+    /// let cell = &tds.get_cell(cell_key).unwrap();
     /// assert_eq!(cell.number_of_vertices(), 4);
     /// ```
     #[inline]
@@ -746,9 +750,9 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    /// let cell_key = tds.cells().iter().next().unwrap().0;
+    /// let cell_key = tds.cells().next().unwrap().0;
     /// tds.cells_mut()[cell_key].clear_neighbors();
-    /// assert!(tds.cells()[cell_key].neighbors().is_none());
+    /// assert!(tds.get_cell(cell_key).unwrap().neighbors().is_none());
     /// ```
     #[inline]
     pub fn clear_neighbors(&mut self) {
@@ -767,7 +771,13 @@ where
     ///
     /// # Returns
     ///
-    /// A `Vec<Uuid>` containing the UUIDs of all vertices in this cell.
+    /// A `Result<Vec<Uuid>, CellValidationError>` containing the UUIDs of all vertices in this cell,
+    /// or an error if a vertex key is not found in the TDS.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CellValidationError::VertexKeyNotFound` if a vertex key in the cell
+    /// does not exist in the TDS. This indicates TDS corruption or inconsistency.
     ///
     /// # Examples
     ///
@@ -781,16 +791,20 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    /// let cell_key = tds.cells().iter().next().unwrap().0;
-    /// let cell = &tds.cells()[cell_key];
-    /// let uuids = cell.vertex_uuids(&tds);
+    /// let cell_key = tds.cells().next().unwrap().0;
+    /// let cell = &tds.get_cell(cell_key).unwrap();
+    /// let uuids = cell.vertex_uuids(&tds).unwrap();
     /// assert_eq!(uuids.len(), 4);
     /// ```
     #[inline]
-    pub fn vertex_uuids(&self, tds: &Tds<T, U, V, D>) -> Vec<Uuid> {
+    pub fn vertex_uuids(&self, tds: &Tds<T, U, V, D>) -> Result<Vec<Uuid>, CellValidationError> {
         self.vertices
             .iter()
-            .map(|&vkey| tds.vertices()[vkey].uuid())
+            .map(|&vkey| {
+                tds.get_vertex_by_key(vkey)
+                    .map(Vertex::uuid)
+                    .ok_or(CellValidationError::VertexKeyNotFound { key: vkey })
+            })
             .collect()
     }
 
@@ -806,7 +820,12 @@ where
     ///
     /// # Returns
     ///
-    /// An iterator that yields [`Uuid`] values for each vertex in the cell.
+    /// An iterator that yields `Result<Uuid, CellValidationError>` for each vertex in the cell.
+    ///
+    /// # Errors
+    ///
+    /// The iterator yields `CellValidationError::VertexKeyNotFound` for any vertex key
+    /// that does not exist in the TDS. This indicates TDS corruption or inconsistency.
     ///
     /// # Examples
     ///
@@ -819,19 +838,21 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    /// let cell_key = tds.cells().iter().next().unwrap().0;
-    /// let cell = &tds.cells()[cell_key];
-    /// let uuids: Vec<_> = cell.vertex_uuid_iter(&tds).collect();
+    /// let cell_key = tds.cells().next().unwrap().0;
+    /// let cell = &tds.get_cell(cell_key).unwrap();
+    /// let uuids: Vec<_> = cell.vertex_uuid_iter(&tds).collect::<Result<Vec<_>, _>>().unwrap();
     /// assert_eq!(uuids.len(), 3);
     /// ```
     #[inline]
     pub fn vertex_uuid_iter<'a>(
         &'a self,
         tds: &'a Tds<T, U, V, D>,
-    ) -> impl ExactSizeIterator<Item = Uuid> + 'a {
-        self.vertices
-            .iter()
-            .map(move |&vkey| tds.vertices()[vkey].uuid())
+    ) -> impl ExactSizeIterator<Item = Result<Uuid, CellValidationError>> + 'a {
+        self.vertices.iter().map(move |&vkey| {
+            tds.get_vertex_by_key(vkey)
+                .map(Vertex::uuid)
+                .ok_or(CellValidationError::VertexKeyNotFound { key: vkey })
+        })
     }
 
     /// The `dim` function returns the dimensionality of the [Cell].
@@ -884,7 +905,7 @@ where
     ///     vertex!([1.0, 1.0]),
     /// ];
     /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    /// let mut cells_iter = tds.cells().values();
+    /// let mut cells_iter = tds.cells().map(|(_, cell)| cell);
     /// let cell1 = cells_iter.next().unwrap();
     /// let cell2 = cells_iter.next().unwrap();
     ///
@@ -1179,18 +1200,17 @@ where
     ) -> Result<Vec<crate::core::facet::FacetView<'tds, T, U, V, D>>, FacetError> {
         // Derive facet count from the TDS cell to avoid relying on D at runtime
         let cell = tds
-            .cells()
-            .get(cell_key)
+            .get_cell(cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
         // Verify consistency between self and the cell retrieved by cell_key
         debug_assert_eq!(
-            cell.vertices().len(),
-            self.vertices().len(),
+            cell.number_of_vertices(),
+            self.number_of_vertices(),
             "Cell/CellKey mismatch: vertex count differs between `self` and `tds[cell_key]`"
         );
 
-        let vertex_count = cell.vertices().len();
+        let vertex_count = cell.number_of_vertices();
         if vertex_count > u8::MAX as usize {
             return Err(FacetError::InvalidFacetIndex {
                 index: u8::MAX,
@@ -1260,11 +1280,10 @@ where
     ) -> Result<Vec<crate::core::facet::FacetView<'_, T, U, V, D>>, FacetError> {
         // Get the cell from the TDS using the key
         let cell = tds
-            .cells()
-            .get(cell_key)
+            .get_cell(cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
-        let vertex_count = cell.vertices().len();
+        let vertex_count = cell.number_of_vertices();
         if vertex_count > u8::MAX as usize {
             return Err(FacetError::InvalidFacetIndex {
                 index: u8::MAX,
@@ -1365,11 +1384,10 @@ where
     > {
         // Get the cell from the TDS using the key
         let cell = tds
-            .cells()
-            .get(cell_key)
+            .get_cell(cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
-        let vertex_count = cell.vertices().len();
+        let vertex_count = cell.number_of_vertices();
         if vertex_count > u8::MAX as usize {
             return Err(FacetError::InvalidFacetIndex {
                 index: u8::MAX,
@@ -1580,7 +1598,7 @@ mod tests {
 
         // Phase 3A: Create TDS to get cell with context
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().iter().next().unwrap();
+        let (_, cell) = tds.cells().next().unwrap();
 
         assert_eq!(cell.number_of_vertices(), 4);
         assert_eq!(cell.dim(), 3);
@@ -1589,7 +1607,7 @@ mod tests {
 
         // Verify vertices match what we put in - need TDS to resolve keys
         for (original, &vkey) in vertices.iter().zip(cell.vertices().iter()) {
-            let result = &tds.vertices()[vkey];
+            let result = &tds.get_vertex_by_key(vkey).unwrap();
             assert_relative_eq!(
                 original.point().coords().as_slice(),
                 result.point().coords().as_slice(),
@@ -1622,7 +1640,7 @@ mod tests {
         // so we need a new one with the same vertices to resolve keys
         let tds: Tds<f64, Option<()>, i32, 3> = Tds::new(&vertices).unwrap();
         for (original, &vkey) in vertices.iter().zip(cell.vertices().iter()) {
-            let result = &tds.vertices()[vkey];
+            let result = &tds.get_vertex_by_key(vkey).unwrap();
             assert_relative_eq!(
                 original.point().coords().as_slice(),
                 result.point().coords().as_slice(),
@@ -1647,14 +1665,14 @@ mod tests {
 
         // Create TDS which creates cells from vertices
         let tds: Tds<f64, i32, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().iter().next().unwrap();
+        let (_, cell) = tds.cells().next().unwrap();
 
         assert_eq!(cell.number_of_vertices(), 4);
         assert_eq!(cell.dim(), 3);
 
         // Check vertex data through TDS - vertices() returns keys
         for (expected_data, &vkey) in [1, 2, 3, 4].iter().zip(cell.vertices().iter()) {
-            let vertex = &tds.vertices()[vkey];
+            let vertex = &tds.get_vertex_by_key(vkey).unwrap();
             assert_eq!(vertex.data.unwrap(), *expected_data);
         }
     }
@@ -1701,7 +1719,7 @@ mod tests {
             vertex!([1.0, 1.0, 1.0]),
         ];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&all_vertices).unwrap();
-        let cells: Vec<_> = tds.cells().values().collect();
+        let cells: Vec<_> = tds.cells().map(|(_, cell)| cell).collect();
 
         if cells.len() >= 2 {
             // Test ordering between different cells
@@ -1860,11 +1878,11 @@ mod tests {
         // Create TDS to get VertexKeys
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let tds = Tds::<f64, i32, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Get vertex keys from TDS
-        let vertex_keys: Vec<_> = tds.vertices().iter().map(|(k, _)| k).collect();
+        let vertex_keys: Vec<_> = tds.vertices().map(|(k, _)| k).collect();
 
         assert!(cell.contains_vertex(vertex_keys[0]));
         assert!(cell.contains_vertex(vertex_keys[1]));
@@ -1905,8 +1923,8 @@ mod tests {
 
         // Create TDS to get proper cell and facet views
         let tds = Tds::<f64, i32, i32, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         let facets = cell
             .facet_views(&tds, cell_key)
@@ -1947,16 +1965,16 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let tds = Tds::<f64, i32, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Get vertex UUIDs
-        let vertex_uuids = cell.vertex_uuids(&tds);
+        let vertex_uuids = cell.vertex_uuids(&tds).unwrap();
         assert_eq!(cell.vertex_uuid_iter(&tds).count(), 4);
 
         // Verify UUIDs match the cell's vertices using iterator
         for (expected_uuid, returned_uuid) in cell.vertex_uuid_iter(&tds).zip(vertex_uuids.iter()) {
-            assert_eq!(expected_uuid, *returned_uuid);
+            assert_eq!(expected_uuid.unwrap(), *returned_uuid);
         }
 
         // Verify all UUIDs are unique
@@ -1965,7 +1983,7 @@ mod tests {
 
         // Verify no nil UUIDs using iterator
         for uuid in cell.vertex_uuid_iter(&tds) {
-            assert_ne!(uuid, Uuid::nil());
+            assert_ne!(uuid.unwrap(), Uuid::nil());
         }
 
         println!("✓ vertex_uuids method returns correct vertex UUIDs");
@@ -1995,16 +2013,16 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let tds = Tds::<f64, i32, Option<()>, 2>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Get vertex UUIDs
-        let vertex_uuids = cell.vertex_uuids(&tds);
+        let vertex_uuids = cell.vertex_uuids(&tds).unwrap();
         assert_eq!(cell.vertex_uuid_iter(&tds).count(), 3);
 
         // Verify UUIDs match the cell's vertices using iterator
         for (expected_uuid, returned_uuid) in cell.vertex_uuid_iter(&tds).zip(vertex_uuids.iter()) {
-            assert_eq!(expected_uuid, *returned_uuid);
+            assert_eq!(expected_uuid.unwrap(), *returned_uuid);
         }
 
         // Verify all UUIDs are unique
@@ -2013,7 +2031,7 @@ mod tests {
 
         // Verify no nil UUIDs using iterator
         for uuid in cell.vertex_uuid_iter(&tds) {
-            assert_ne!(uuid, Uuid::nil());
+            assert_ne!(uuid.unwrap(), Uuid::nil());
         }
 
         println!("✓ vertex_uuids works correctly for 2D cells");
@@ -2031,16 +2049,16 @@ mod tests {
         ];
 
         let tds = Tds::<f64, i32, Option<()>, 4>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Get vertex UUIDs
-        let vertex_uuids = cell.vertex_uuids(&tds);
+        let vertex_uuids = cell.vertex_uuids(&tds).unwrap();
         assert_eq!(cell.vertex_uuid_iter(&tds).count(), 5);
 
         // Verify UUIDs match the cell's vertices using iterator
         for (expected_uuid, returned_uuid) in cell.vertex_uuid_iter(&tds).zip(vertex_uuids.iter()) {
-            assert_eq!(expected_uuid, *returned_uuid);
+            assert_eq!(expected_uuid.unwrap(), *returned_uuid);
         }
 
         // Verify all UUIDs are unique
@@ -2049,13 +2067,13 @@ mod tests {
 
         // Verify vertex data integrity alongside UUIDs
         for (i, vertex_key) in cell.vertices().iter().enumerate() {
-            let vertex = &tds.vertices()[*vertex_key];
+            let vertex = &tds.get_vertex_by_key(*vertex_key).unwrap();
             assert_eq!(vertex.data, Some(i32::try_from(i + 1).unwrap()));
         }
 
         // Verify no nil UUIDs using iterator
         for uuid in cell.vertex_uuid_iter(&tds) {
-            assert_ne!(uuid, Uuid::nil());
+            assert_ne!(uuid.unwrap(), Uuid::nil());
         }
 
         println!("✓ vertex_uuids works correctly for 4D cells");
@@ -2072,16 +2090,16 @@ mod tests {
         ];
 
         let tds = Tds::<f32, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Get vertex UUIDs
-        let vertex_uuids = cell.vertex_uuids(&tds);
+        let vertex_uuids = cell.vertex_uuids(&tds).unwrap();
         assert_eq!(cell.vertex_uuid_iter(&tds).count(), 4);
 
         // Verify coordinate type is preserved
         let first_vertex_key = cell.vertices()[0];
-        let first_vertex = &tds.vertices()[first_vertex_key];
+        let first_vertex = &tds.get_vertex_by_key(first_vertex_key).unwrap();
         assert_relative_eq!(
             first_vertex.point().coords()[0],
             0.0f32,
@@ -2090,7 +2108,7 @@ mod tests {
 
         // Verify UUIDs match the cell's vertices using iterator
         for (expected_uuid, returned_uuid) in cell.vertex_uuid_iter(&tds).zip(vertex_uuids.iter()) {
-            assert_eq!(expected_uuid, *returned_uuid);
+            assert_eq!(expected_uuid.unwrap(), *returned_uuid);
         }
 
         // Verify all UUIDs are unique
@@ -2099,7 +2117,7 @@ mod tests {
 
         // Verify no nil UUIDs using iterator
         for uuid in cell.vertex_uuid_iter(&tds) {
-            assert_ne!(uuid, Uuid::nil());
+            assert_ne!(uuid.unwrap(), Uuid::nil());
         }
 
         println!("✓ vertex_uuids works correctly with f32 coordinates");
@@ -2154,7 +2172,7 @@ mod tests {
                         // Test serialization with Some data
                         let vertices = $vertices;
                         let tds: Tds<f64, Option<()>, i32, $dim> = Tds::new(&vertices).unwrap();
-                        let (_, cell) = tds.cells().iter().next().unwrap();
+                        let (_, cell) = tds.cells().next().unwrap();
                         let mut cell = cell.clone();
                         cell.data = Some(99);
 
@@ -2167,7 +2185,7 @@ mod tests {
                         // Test serialization with None data
                         let vertices = $vertices;
                         let tds: Tds<f64, Option<()>, Option<i32>, $dim> = Tds::new(&vertices).unwrap();
-                        let (_, cell) = tds.cells().iter().next().unwrap();
+                        let (_, cell) = tds.cells().next().unwrap();
 
                         let serialized = serde_json::to_string(&cell).unwrap();
                         assert!(!serialized.contains("\"data\":"));
@@ -2395,7 +2413,7 @@ mod tests {
         assert_eq!(deserialized.dim(), tds.dim());
 
         // Verify cells within TDS can be accessed
-        assert!(!deserialized.cells().is_empty());
+        assert_ne!(deserialized.number_of_cells(), 0);
         for (_cell_key, cell) in deserialized.cells() {
             assert_eq!(cell.dim(), 3);
             assert_eq!(cell.number_of_vertices(), 4);
@@ -2488,7 +2506,7 @@ mod tests {
             vertex!([10.0, 11.0, 12.0]),
         ];
         let tds: Tds<f64, Option<()>, i32, 3> = Tds::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().iter().next().unwrap();
+        let (_, cell) = tds.cells().next().unwrap();
         let mut cell = cell.clone();
         cell.data = Some(42);
 
@@ -2518,7 +2536,7 @@ mod tests {
             vertex!([10.0, 11.0, 12.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<i32>, 3> = Tds::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().iter().next().unwrap();
+        let (_, cell) = tds.cells().next().unwrap();
 
         let serialized = serde_json::to_string(&cell).unwrap();
 
@@ -2604,14 +2622,14 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Resolve VertexKeys to actual vertices
         let vertex_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.vertices()[*vk].point())
+            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
             .collect();
         let circumradius = circumradius(&vertex_points).unwrap();
 
@@ -2645,8 +2663,8 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Create a vertex key for the outside vertex - it won't be in the cell
         let outside_key = tds.vertex_key_from_uuid(&vertex_outside.uuid());
@@ -2702,7 +2720,7 @@ mod tests {
         assert_eq!(tds.number_of_vertices(), 3);
         // Should create one 2D cell
         assert_eq!(tds.number_of_cells(), 1);
-        let cell = tds.cells().values().next().unwrap();
+        let cell = tds.cells().map(|(_, cell)| cell).next().unwrap();
         assert_eq!(cell.number_of_vertices(), 3);
     }
 
@@ -2717,8 +2735,8 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let tds = Tds::<f64, i32, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Test vertex clearly outside circumsphere
         let vertex_far_outside: Vertex<f64, i32, 3> = vertex!([10.0, 10.0, 10.0], 4);
@@ -2726,7 +2744,7 @@ mod tests {
         let vertex_points: Vec<Point<f64, 3>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.vertices()[*vk].point())
+            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
             .collect();
         let result = insphere(&vertex_points, *vertex_far_outside.point());
         assert!(result.is_ok());
@@ -2736,7 +2754,7 @@ mod tests {
         let vertex_points: Vec<Point<f64, 3>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.vertices()[*vk].point())
+            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
             .collect();
         let result_origin = insphere(&vertex_points, *origin.point());
         assert!(result_origin.is_ok());
@@ -2751,15 +2769,15 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Test vertex far outside circumcircle
         let vertex_far_outside: Vertex<f64, Option<()>, 2> = vertex!([10.0, 10.0]);
         let vertex_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.vertices()[*vk].point())
+            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
             .collect();
         let result = insphere(&vertex_points, *vertex_far_outside.point());
         assert!(result.is_ok());
@@ -2769,7 +2787,7 @@ mod tests {
         let vertex_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.vertices()[*vk].point())
+            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
             .collect();
         let result_center = insphere(&vertex_points, *center.point());
         assert!(result_center.is_ok());
@@ -2785,13 +2803,13 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         let vertex_points: Vec<Point<f64, 3>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.vertices()[*vk].point())
+            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
             .collect();
 
         let circumcenter = circumcenter(&vertex_points).unwrap();
@@ -2811,8 +2829,8 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         let facets = cell
             .facet_views(&tds, cell_key)
@@ -2875,8 +2893,8 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Test that we can get facet views for all facets
         let facet_views = cell
@@ -2920,8 +2938,8 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Get all facet views
         let facet_views = cell
@@ -2985,8 +3003,8 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4, vertex5, vertex6];
         let tds = Tds::<f64, Option<()>, Option<()>, 5>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         assert_eq!(cell.number_of_vertices(), 6);
         assert_eq!(cell.dim(), 5);
@@ -3008,20 +3026,44 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let mut tds = Tds::<f64, i32, u32, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
+        let cell_key = tds.cells().next().unwrap().0;
 
         // Set the cell data to a known value
         if let Some(cell) = tds.cells_mut().get_mut(cell_key) {
             cell.data = Some(42u32);
         }
 
-        let cell = &tds.cells()[cell_key];
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Resolve VertexKeys to vertices to check data using the key-based API
-        assert_eq!(tds.vertices()[cell.vertices()[0]].data.unwrap(), 1);
-        assert_eq!(tds.vertices()[cell.vertices()[1]].data.unwrap(), 2);
-        assert_eq!(tds.vertices()[cell.vertices()[2]].data.unwrap(), 3);
-        assert_eq!(tds.vertices()[cell.vertices()[3]].data.unwrap(), 4);
+        assert_eq!(
+            tds.get_vertex_by_key(cell.vertices()[0])
+                .unwrap()
+                .data
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            tds.get_vertex_by_key(cell.vertices()[1])
+                .unwrap()
+                .data
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            tds.get_vertex_by_key(cell.vertices()[2])
+                .unwrap()
+                .data
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            tds.get_vertex_by_key(cell.vertices()[3])
+                .unwrap()
+                .data
+                .unwrap(),
+            4
+        );
         assert_eq!(cell.data.unwrap(), 42u32);
 
         // Also verify we can access vertex data through facet_views
@@ -3053,8 +3095,8 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices).unwrap();
-        let cell_key = tds.cells().iter().next().unwrap().0;
-        let cell = &tds.cells()[cell_key];
+        let cell_key = tds.cells().next().unwrap().0;
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Test that the methods run without error
         let test_point: Vertex<f64, Option<()>, 2> = vertex!([0.5, 0.5]);
@@ -3062,7 +3104,7 @@ mod tests {
         let vertex_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.vertices()[*vk].point())
+            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
             .collect();
 
         let circumsphere_result = insphere_distance(&vertex_points, *test_point.point());
@@ -3077,7 +3119,7 @@ mod tests {
         let vertex_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.vertices()[*vk].point())
+            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
             .collect();
 
         let circumsphere_far = insphere_distance(&vertex_points, *far_point.point());
@@ -3364,7 +3406,7 @@ mod tests {
             vertex!([2.0, 0.0, 0.0]),
         ];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&all_vertices).unwrap();
-        let cells: Vec<_> = tds.cells().values().collect();
+        let cells: Vec<_> = tds.cells().map(|(_, cell)| cell).collect();
 
         // With 5 vertices in 3D, we get multiple cells with different vertex sets
         if cells.len() >= 2 {
@@ -3466,8 +3508,8 @@ mod tests {
 
         // Note: We can't directly compare cells of different dimensions with ==
         // since they are different types, but this test documents the expected behavior
-        assert_eq!(cell_3d.vertices().len(), 4);
-        assert_eq!(cell_2d.vertices().len(), 3);
+        assert_eq!(cell_3d.number_of_vertices(), 4);
+        assert_eq!(cell_2d.number_of_vertices(), 3);
 
         println!("✓ Cells of different dimensions have different vertex counts as expected");
     }
@@ -3777,12 +3819,12 @@ mod tests {
         let tds: crate::core::triangulation_data_structure::Tds<f64, Option<()>, Option<()>, 3> =
             crate::core::triangulation_data_structure::Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
-        let cell = &tds.cells()[cell_key];
+        let cell = &tds.get_cell(cell_key).unwrap();
 
         println!("\nAPI Ergonomics Test:");
 
         // Test 1: Direct comparison (by value - current implementation)
-        let first_uuid = cell.vertex_uuid_iter(&tds).next().unwrap();
+        let first_uuid = cell.vertex_uuid_iter(&tds).next().unwrap().unwrap();
         assert_ne!(first_uuid, Uuid::nil());
         println!("  ✓ By value: Direct comparison works: uuid != Uuid::nil()");
 
@@ -3791,7 +3833,7 @@ mod tests {
         let uuid_values: Vec<Uuid> = cell
             .vertices()
             .iter()
-            .map(|&vkey| tds.vertices()[vkey].uuid())
+            .map(|&vkey| tds.get_vertex_by_key(vkey).unwrap().uuid())
             .collect();
         let uuid_refs: Vec<&Uuid> = uuid_values.iter().collect();
         let first_uuid_ref = uuid_refs[0];
@@ -3806,7 +3848,7 @@ mod tests {
         let mut by_value_count = 0;
         for _ in 0..iterations {
             for uuid in cell.vertex_uuid_iter(&tds) {
-                if uuid != Uuid::nil() {
+                if uuid.unwrap() != Uuid::nil() {
                     by_value_count += 1;
                 }
             }
@@ -3821,7 +3863,7 @@ mod tests {
             let uuid_values: Vec<Uuid> = cell
                 .vertices()
                 .iter()
-                .map(|&vkey| tds.vertices()[vkey].uuid())
+                .map(|&vkey| tds.get_vertex_by_key(vkey).unwrap().uuid())
                 .collect();
             for uuid_ref in &uuid_values {
                 if *uuid_ref != Uuid::nil() {
@@ -3873,7 +3915,10 @@ mod tests {
         assert_eq!(cell.vertex_uuid_iter(&tds).count(), 4);
 
         // Test that we can directly use values in hashmaps, comparisons, etc.
-        let unique_uuids: HashSet<_> = cell.vertex_uuid_iter(&tds).collect();
+        let unique_uuids: HashSet<_> = cell
+            .vertex_uuid_iter(&tds)
+            .collect::<Result<HashSet<_>, _>>()
+            .unwrap();
         assert_eq!(unique_uuids.len(), 4);
 
         println!("  ✓ Current API validation passed");

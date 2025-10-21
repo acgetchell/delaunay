@@ -334,7 +334,7 @@ where
         b.iter(|| {
             // Iterate through all vertices - measures `SlotMap` iteration performance
             let mut count = 0;
-            for vertex in tds.vertex_iter() {
+            for (_, vertex) in tds.vertices() {
                 black_box(vertex);
                 count += 1;
             }

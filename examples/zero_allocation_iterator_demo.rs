@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Get the first cell from the triangulation
-    let Some(cell) = tds.cells().values().next() else {
+    let Some(cell) = tds.cells().map(|(_, cell)| cell).next() else {
         eprintln!("No cells in triangulation; nothing to demo.");
         return Ok(());
     };
@@ -37,8 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Functional Equivalence Test:");
     println!("===========================");
 
-    let vec_uuids = cell.vertex_uuids(&tds);
-    let iter_uuids: Vec<_> = cell.vertex_uuid_iter(&tds).collect();
+    let vec_uuids = cell.vertex_uuids(&tds)?;
+    let iter_uuids: Vec<_> = cell.vertex_uuid_iter(&tds).collect::<Result<Vec<_>, _>>()?;
 
     println!("  vertex_uuids() returned {} UUIDs", vec_uuids.len());
     println!(
@@ -58,8 +58,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let mut total_count = 0;
     for _ in 0..iterations {
-        let uuids = cell.vertex_uuids(&tds); // Allocates Vec
-        total_count += black_box(uuids.len()); // Prevent optimization
+        if let Ok(uuids) = cell.vertex_uuids(&tds) {
+            // Allocates Vec
+            total_count += black_box(uuids.len()); // Prevent optimization
+        }
     }
     let vec_duration = start.elapsed();
 
@@ -95,7 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Can be used in for loops
     let mut count = 0;
-    for uuid in cell.vertex_uuid_iter(&tds) {
+    for uuid in cell.vertex_uuid_iter(&tds).flatten() {
         if !uuid.is_nil() {
             count += 1;
         }
@@ -105,6 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Can be chained with other iterator methods
     let valid_uuid_count = cell
         .vertex_uuid_iter(&tds)
+        .filter_map(Result::ok)
         .filter(|uuid| !uuid.is_nil())
         .count();
     println!("  Valid UUIDs via iterator chain: {valid_uuid_count}");

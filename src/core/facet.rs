@@ -431,12 +431,11 @@ where
     ) -> Result<Self, FacetError> {
         // Validate cell exists
         let cell = tds
-            .cells()
-            .get(cell_key)
+            .get_cell(cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
         // Validate facet index
-        let vertex_count = cell.vertices().len();
+        let vertex_count = cell.number_of_vertices();
         if usize::from(facet_index) >= vertex_count {
             return Err(FacetError::InvalidFacetIndex {
                 index: facet_index,
@@ -494,22 +493,20 @@ where
     pub fn vertices(&self) -> Result<impl Iterator<Item = &'tds Vertex<T, U, D>>, FacetError> {
         let cell = self
             .tds
-            .cells()
-            .get(self.cell_key)
+            .get_cell(self.cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
         let facet_index = usize::from(self.facet_index);
 
         // Collect first so missing vertex keys become an error, not silent drops.
         let mut refs: Vec<&'tds Vertex<T, U, D>> =
-            Vec::with_capacity(cell.vertices().len().saturating_sub(1));
+            Vec::with_capacity(cell.number_of_vertices().saturating_sub(1));
         for (i, &vkey) in cell.vertices().iter().enumerate() {
             if i == facet_index {
                 continue;
             }
             refs.push(
                 self.tds
-                    .vertices()
-                    .get(vkey)
+                    .get_vertex_by_key(vkey)
                     .ok_or(FacetError::VertexKeyNotFoundInTriangulation { key: vkey })?,
             );
         }
@@ -528,8 +525,7 @@ where
     pub fn opposite_vertex(&self) -> Result<&'tds Vertex<T, U, D>, FacetError> {
         let cell = self
             .tds
-            .cells()
-            .get(self.cell_key)
+            .get_cell(self.cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
         // Phase 3A: Use vertices and resolve via TDS
@@ -545,8 +541,7 @@ where
 
         // Use get() to safely handle potentially invalid vertex keys
         self.tds
-            .vertices()
-            .get(*vkey)
+            .get_vertex_by_key(*vkey)
             .ok_or(FacetError::VertexKeyNotFoundInTriangulation { key: *vkey })
     }
 
@@ -561,8 +556,7 @@ where
     /// Returns `FacetError::CellNotFoundInTriangulation` if the cell is no longer in the TDS.
     pub fn cell(&self) -> Result<&'tds Cell<T, U, V, D>, FacetError> {
         self.tds
-            .cells()
-            .get(self.cell_key)
+            .get_cell(self.cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)
     }
 
@@ -695,11 +689,10 @@ where
     V: DataType,
 {
     let cell = tds
-        .cells()
-        .get(cell_key)
+        .get_cell(cell_key)
         .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
-    let vertex_count = cell.vertices().len();
+    let vertex_count = cell.number_of_vertices();
     let mut facet_views = Vec::with_capacity(vertex_count);
 
     for facet_index in 0..vertex_count {
@@ -793,10 +786,10 @@ where
 
             // Move to next cell
             if let Some(next_cell_key) = self.cell_keys.next() {
-                if let Some(cell) = self.tds.cells().get(next_cell_key) {
+                if let Some(cell) = self.tds.get_cell(next_cell_key) {
                     self.current_cell_key = Some(next_cell_key);
                     self.current_facet_index = 0;
-                    self.current_cell_facet_count = cell.vertices().len();
+                    self.current_cell_facet_count = cell.number_of_vertices();
                     // Continue loop to process first facet of new cell
                 } else {
                     // Cell not found, skip to next (continue is implicit at end of loop)
@@ -1568,7 +1561,7 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         // Test valid facet creation
         let facet_view = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -1590,7 +1583,7 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view = FacetView::new(&tds, cell_key, 0).unwrap();
 
@@ -1620,17 +1613,16 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view = FacetView::new(&tds, cell_key, 1).unwrap();
         let opposite = facet_view.opposite_vertex().unwrap();
 
         // The opposite vertex should be the vertex at index 1
-        let cell = tds.cells().get(cell_key).expect("cell exists");
+        let cell = tds.get_cell(cell_key).expect("cell exists");
         let cell_vertex_keys = cell.vertices();
         let expected_vertex = tds
-            .vertices()
-            .get(cell_vertex_keys[1])
+            .get_vertex_by_key(cell_vertex_keys[1])
             .expect("vertex exists");
         assert_eq!(opposite.uuid(), expected_vertex.uuid());
     }
@@ -1645,7 +1637,7 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view = FacetView::new(&tds, cell_key, 0).unwrap();
         let key = facet_view.key().unwrap();
@@ -1664,7 +1656,7 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_views = all_facets_for_cell(&tds, cell_key).unwrap();
 
@@ -1691,7 +1683,7 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view1 = FacetView::new(&tds, cell_key, 0).unwrap();
         let facet_view2 = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -1714,7 +1706,7 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view = FacetView::new(&tds, cell_key, 1).unwrap();
         let debug_str = format!("{facet_view:?}");

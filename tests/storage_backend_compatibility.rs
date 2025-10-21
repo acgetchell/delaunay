@@ -78,7 +78,7 @@ macro_rules! test_vertex_iteration {
             let vertices: Vec<_> = $vertices;
             let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
 
-            let vertex_count = tds.vertices().iter().count();
+            let vertex_count = tds.vertices().count();
             assert_eq!(vertex_count, vertices.len());
 
             for (_key, vertex) in tds.vertices() {
@@ -97,7 +97,7 @@ macro_rules! test_cell_iteration {
             let vertices: Vec<_> = $vertices;
             let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
 
-            let cell_count = tds.cells().iter().count();
+            let cell_count = tds.cells().count();
             assert!(cell_count > 0);
 
             for (_key, cell) in tds.cells() {
@@ -124,7 +124,7 @@ macro_rules! test_neighbor_access {
 
                     // Verify all neighbors are valid
                     for neighbor_key in neighbors.iter().flatten() {
-                        assert!(tds.cells().get(*neighbor_key).is_some(),
+                        assert!(tds.get_cell(*neighbor_key).is_some(),
                                 "Invalid neighbor reference in {}D", $dim);
                     }
 
@@ -381,7 +381,7 @@ fn test_storage_backend_large_scale_2d() {
     assert_eq!(tds.number_of_vertices(), 900);
     assert!(tds.number_of_cells() > 0);
 
-    let vertex_count = tds.vertices().iter().count();
+    let vertex_count = tds.vertices().count();
     assert_eq!(vertex_count, 900);
 }
 
@@ -413,7 +413,7 @@ fn test_storage_backend_large_scale_3d() {
     assert_eq!(tds.number_of_vertices(), 900);
     assert!(tds.number_of_cells() > 0);
 
-    let vertex_count = tds.vertices().iter().count();
+    let vertex_count = tds.vertices().count();
     assert_eq!(vertex_count, 900);
 }
 
@@ -446,7 +446,7 @@ fn test_storage_backend_large_scale_4d() {
     assert_eq!(tds.number_of_vertices(), 500);
     assert!(tds.number_of_cells() > 0);
 
-    let vertex_count = tds.vertices().iter().count();
+    let vertex_count = tds.vertices().count();
     assert_eq!(vertex_count, 500);
 }
 
@@ -480,7 +480,7 @@ fn test_storage_backend_large_scale_5d() {
     assert_eq!(tds.number_of_vertices(), 256);
     assert!(tds.number_of_cells() > 0);
 
-    let vertex_count = tds.vertices().iter().count();
+    let vertex_count = tds.vertices().count();
     assert_eq!(vertex_count, 256);
 }
 

@@ -11,7 +11,7 @@
 //! - **Unique Identification**: Each vertex has a UUID for consistent identification
 //! - **Optional Data Storage**: Supports attaching user data of any type `U` that implements [`DataType`]
 //! - **Incident Cell Tracking**: Maintains references to containing cells
-//! - **Serialization Support**: Full serde support for persistence
+//! - **Serialization Support**: Serde support for persistence (`incident_cell` is reconstructed by TDS)
 //! - **Builder Pattern**: Convenient vertex construction using `VertexBuilder`
 //!
 //! # Examples
@@ -307,9 +307,8 @@ where
 
                 let point = point.ok_or_else(|| de::Error::missing_field("point"))?;
                 let uuid: Uuid = uuid.ok_or_else(|| de::Error::missing_field("uuid"))?;
-                if uuid.is_nil() {
-                    return Err(de::Error::custom("uuid cannot be nil"));
-                }
+                validate_uuid(&uuid)
+                    .map_err(|e| de::Error::custom(format!("invalid uuid: {e}")))?;
                 let incident_cell = incident_cell.unwrap_or(None);
                 let data = data.unwrap_or(None);
 

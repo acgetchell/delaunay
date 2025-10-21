@@ -427,7 +427,7 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 ///
 /// // Get facet vertex keys from a cell - no need to materialize Vertex objects
-/// if let Some(cell) = tds.cells().values().next() {
+/// if let Some(cell) = tds.cells().map(|(_, cell)| cell).next() {
 ///     let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect(); // Skip 1 vertex to get D vertices
 ///     assert_eq!(facet_vertex_keys.len(), 3); // For 3D triangulation, facet has 3 vertices
 ///     let facet_key = derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys).unwrap();
@@ -548,12 +548,10 @@ where
 
     // Get both cells
     let cell1 = tds
-        .cells()
-        .get(cell1_key)
+        .get_cell(cell1_key)
         .ok_or(FacetError::CellNotFoundInTriangulation)?;
     let cell2 = tds
-        .cells()
-        .get(cell2_key)
+        .get_cell(cell2_key)
         .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
     // Get facet views from both cells
@@ -1144,7 +1142,7 @@ mod tests {
 
         // Test 1: Basic functionality - successful key derivation
         println!("  Testing basic functionality...");
-        let cell = tds.cells().values().next().unwrap();
+        let cell = tds.cells().map(|(_, cell)| cell).next().unwrap();
         let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect();
 
         let result =
@@ -1249,7 +1247,7 @@ mod tests {
         let mut keys_found = 0;
         let mut keys_tested = 0;
 
-        for cell in tds.cells().values() {
+        for cell in tds.cells().map(|(_, cell)| cell) {
             let cell_vertex_keys = cell.vertices();
             for skip_vertex_idx in 0..cell_vertex_keys.len() {
                 let facet_vertex_keys: Vec<_> = cell_vertex_keys

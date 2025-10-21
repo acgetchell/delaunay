@@ -332,7 +332,9 @@ development tooling and clear architectural guidance).
 Version 0.4.4 includes comprehensive memory profiling capabilities:
 
 - **Allocation Tracking**: Optional `count-allocations` feature using the `allocation-counter` crate
-- **Memory Benchmarks**: Dedicated benchmarks for memory scaling analysis (`profiling_suite.rs`)
+- **Memory Benchmarks**: Dedicated benchmarks for memory scaling analysis (`profiling_suite.rs`) - comprehensive profiling suite
+  with typical runtime of 1-2 hours (10³-10⁶ points). **Recommended for manual profiling runs** rather than CI due to
+  long execution time. Use `PROFILING_DEV_MODE=1` for faster iteration (10x speedup).
 - **Profiling Examples**: `memory_analysis.rs` demonstrates allocation counting across different operations
 - **Integration Testing**: `allocation_api.rs` provides utilities for testing memory usage in various scenarios
 - **CI Integration**: Automated profiling benchmarks with detailed allocation reports

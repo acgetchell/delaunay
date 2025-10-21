@@ -46,7 +46,7 @@ use std::{
 /// use std::sync::atomic::{AtomicU64, Ordering};
 /// use std::ops::{AddAssign, SubAssign, Div};
 /// use std::iter::Sum;
-/// use serde::{Serialize, de::DeserializeOwned};
+/// use serde::de::DeserializeOwned;
 /// use arc_swap::ArcSwapOption;
 ///
 /// struct MyAlgorithm {

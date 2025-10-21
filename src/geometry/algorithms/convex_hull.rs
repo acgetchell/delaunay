@@ -849,7 +849,7 @@ where
         // Phase 3A: Derive facet vertex keys directly from the cell to avoid UUID↔key roundtrips.
         // This eliminates the need to convert vertex UUIDs back to keys later.
         let (facet_cell_key, facet_index) = (facet_handle.cell_key(), facet_handle.facet_index());
-        let cell = tds.cells().get(facet_cell_key).ok_or(
+        let cell = tds.get_cell(facet_cell_key).ok_or(
             ConvexHullConstructionError::FacetDataAccessFailed {
                 source: FacetError::CellNotFoundInTriangulation,
             },

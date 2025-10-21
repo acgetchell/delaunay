@@ -16,14 +16,39 @@
 //!
 //! These benchmarks measure the effectiveness of the optimization implementations
 //! completed as part of the Pure Incremental Delaunay Triangulation refactoring project.
+//!
+//! # Safety and Invariant Violations
+//!
+//! **WARNING**: Some benchmarks in this file intentionally violate TDS invariants for
+//! performance testing purposes. Specifically:
+//!
+//! - `remove_duplicate_cells` benchmarks directly insert duplicate cells without updating
+//!   UUID mappings to create test scenarios for the cleanup algorithm.
+//!
+//! **THESE PATTERNS MUST NEVER BE USED IN**:
+//! - Production code
+//! - Correctness tests
+//! - Example code
+//! - Library documentation
+//!
+//! They exist solely for microbenchmarking internal cleanup performance.
 
 #![allow(missing_docs)] // Criterion macros generate undocumented functions
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::geometry::util::generate_random_points;
+use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::*;
-use delaunay::{cell, vertex};
+use delaunay::vertex;
 use std::hint::black_box;
+
+/// Get the seed for deterministic random point generation.
+/// Checks `DELAUNAY_BENCH_SEED` environment variable, defaults to 0xD1EA ("DEEA" - Delaunay).
+fn get_benchmark_seed() -> u64 {
+    std::env::var("DELAUNAY_BENCH_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0xD1EA)
+}
 
 /// Macro to generate comprehensive dimensional benchmarks for core algorithms
 macro_rules! generate_dimensional_benchmarks {
@@ -46,7 +71,7 @@ macro_rules! generate_dimensional_benchmarks {
                         |b, &n_points| {
                             b.iter_with_setup(
                                 || {
-                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                     points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                                 },
                                 |vertices| black_box(Tds::<f64, (), (), $dim>::new(&vertices).unwrap()),
@@ -75,25 +100,42 @@ macro_rules! generate_dimensional_benchmarks {
                         |b, &n_points| {
                             b.iter_with_setup(
                                 || {
-                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                    // Note: tds must be mutable for cells_mut() access in the invariant violation zone
+                                    #[allow(unused_mut)] // mut required when cfg is active
                                     let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
-                                    // WARNING: This benchmark intentionally violates TDS invariants by
+                                    // ============================================================
+                                    // BENCH-ONLY INVARIANT VIOLATION ZONE - DO NOT COPY
+                                    // ============================================================
+                                    // WARNING: This code intentionally violates TDS invariants by
                                     // directly inserting duplicate cells without updating UUID mappings.
                                     // This is ONLY for performance testing of `remove_duplicate_cells`.
-                                    // DO NOT use this pattern in correctness tests or production code.
-                                    let cell_vertices: Vec<_> = tds.vertices().values().copied().collect();
-                                    if cell_vertices.len() >= ($dim + 1) {
-                                        // Create a few duplicate cells
-                                        for _ in 0..3 {
-                                            let duplicate_cell = cell!(cell_vertices[0..($dim + 1)].to_vec());
-                                            let cell_key = tds.cells_mut().insert(duplicate_cell);
-                                            let cell_uuid = tds.cells_mut()[cell_key].uuid();
-                                            // Note: Intentionally not updating UUID mappings to create true duplicates for testing
-                                            let _ = cell_uuid; // Suppress unused variable warning
+                                    // DO NOT use this pattern in:
+                                    // - Production code
+                                    // - Correctness tests
+                                    // - Examples
+                                    // - Documentation
+                                    // ============================================================
+                                    {
+                                        // Scoped import to avoid items_after_statements warning
+                                        use delaunay::cell;
+                                        let cell_vertices: Vec<_> = tds.vertices().map(|(_, v)| *v).collect();
+                                        if cell_vertices.len() >= ($dim + 1) {
+                                            // SAFETY(BENCH-ONLY): Deliberately create duplicates for perf testing
+                                            for _ in 0..3 {
+                                                let duplicate_cell = cell!(cell_vertices[0..($dim + 1)].to_vec());
+                                                let cell_key = tds.cells_mut().insert(duplicate_cell);
+                                                let cell_uuid = tds.cells_mut()[cell_key].uuid();
+                                                // Intentionally not updating UUID mappings to create true duplicates
+                                                let _ = cell_uuid; // Suppress unused variable warning
+                                            }
                                         }
                                     }
+                                    // ============================================================
+                                    // END INVARIANT VIOLATION ZONE
+                                    // ============================================================
                                     tds
                                 },
                                 |mut tds| {
@@ -157,7 +199,7 @@ macro_rules! generate_memory_usage_benchmarks {
                         |b, &n_points| {
                             b.iter(|| {
                                 // Measure complete triangulation creation and destruction
-                                let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                                 let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
                                 black_box((tds.number_of_vertices(), tds.number_of_cells()))
@@ -204,7 +246,7 @@ macro_rules! generate_validation_benchmarks {
                         |b, &n_points| {
                             b.iter_with_setup(
                                 || {
-                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                                     Tds::<f64, (), (), $dim>::new(&vertices).unwrap()
                                 },
@@ -223,7 +265,7 @@ macro_rules! generate_validation_benchmarks {
             /// Benchmark individual validation components for [<$dim>]D
             fn [<benchmark_validation_components_ $dim d>](c: &mut Criterion) {
                 let n_points = if $dim <= 3 { 50 } else { 25 }; // Fixed size for component benchmarks
-                let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                 let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
@@ -319,7 +361,7 @@ macro_rules! generate_incremental_construction_benchmarks {
                             b.iter_with_setup(
                                 || {
                                     let tds = Tds::<f64, (), (), $dim>::new(&initial_vertices).unwrap();
-                                    let additional_points: Vec<Point<f64, $dim>> = generate_random_points(count, (-100.0, 100.0)).unwrap();
+                                    let additional_points: Vec<Point<f64, $dim>> = generate_random_points_seeded(count, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                     let additional_vertices: Vec<_> =
                                         additional_points.iter().map(|p| vertex!(*p)).collect();
                                     (tds, additional_vertices)

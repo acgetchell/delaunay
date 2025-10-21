@@ -586,7 +586,7 @@ where
 
             // Phase 3A: Access vertices via TDS using vertices
             for &vkey in cell.vertices() {
-                if let Some(v) = tds.vertices().get(vkey) {
+                if let Some(v) = tds.get_vertex_by_key(vkey) {
                     vertex_points.push(*v.point());
                 }
             }
@@ -659,9 +659,9 @@ where
         let mut first_facet_error: Option<(CellKey, usize, &'static str)> = None;
 
         for &bad_cell_key in bad_cells {
-            if let Some(bad_cell) = tds.cells().get(bad_cell_key) {
+            if let Some(bad_cell) = tds.get_cell(bad_cell_key) {
                 // Phase 3A: Use vertices() to get the facet count
-                let facet_count = bad_cell.vertices().len();
+                let facet_count = bad_cell.number_of_vertices();
                 for facet_idx in 0..facet_count {
                     let Ok(facet_idx_u8) = u8::try_from(facet_idx) else {
                         continue;
@@ -863,7 +863,7 @@ where
         [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         // Get the adjacent cell to this boundary facet
-        let Some(adjacent_cell) = tds.cells().get(facet_view.cell_key()) else {
+        let Some(adjacent_cell) = tds.get_cell(facet_view.cell_key()) else {
             return false;
         };
 
@@ -877,7 +877,7 @@ where
         let cell_vertices: Vec<_> = adjacent_cell
             .vertices()
             .iter()
-            .filter_map(|&vkey| tds.vertices().get(vkey))
+            .filter_map(|&vkey| tds.get_vertex_by_key(vkey))
             .collect();
 
         let mut opposite_vertex = None;
@@ -1065,12 +1065,12 @@ where
 
         // Also check if we're in a high-density area
         // Guard for large triangulations: limit proximity scan to prevent O(n) overhead
-        let vertex_count = tds.vertices().len();
+        let vertex_count = tds.number_of_vertices();
         let nearby_vertices = if vertex_count > 1000 {
             // For large triangulations, use early exit after finding sufficient nearby vertices
             let mut count = 0;
             let max_scan = 100; // Early exit threshold
-            for (i, v) in tds.vertices().values().enumerate() {
+            for (i, (_vkey, v)) in tds.vertices().enumerate() {
                 if i >= max_scan {
                     break; // Early exit to bound computational cost
                 }
@@ -1094,8 +1094,7 @@ where
         } else {
             // For smaller triangulations, do the full scan
             tds.vertices()
-                .values()
-                .filter(|v| {
+                .filter(|(_vkey, v)| {
                     let v_coords: [T; D] = v.point().into();
                     let distance_squared: f64 = coords
                         .iter()
@@ -1600,7 +1599,7 @@ mod tests {
                 if let Some(neighbors) = &cell.neighbors {
                     for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
                         if let Some(neighbor_key) = neighbor_key_opt
-                            && let Some(neighbor) = tds.cells().get(*neighbor_key)
+                            && let Some(neighbor) = tds.get_cell(*neighbor_key)
                             && let Some(neighbor_neighbors) = &neighbor.neighbors
                         {
                             // Each neighbor should also reference this cell as a neighbor
@@ -1770,7 +1769,7 @@ mod tests {
                 if let Some(neighbors) = &cell.neighbors {
                     for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
                         if let Some(neighbor_key) = neighbor_key_opt
-                            && let Some(neighbor) = tds.cells().get(*neighbor_key)
+                            && let Some(neighbor) = tds.get_cell(*neighbor_key)
                             && let Some(neighbor_neighbors) = &neighbor.neighbors
                         {
                             // Each neighbor should also reference this cell as a neighbor
@@ -1842,7 +1841,7 @@ mod tests {
                 }
 
                 // The newly inserted vertex should be in the triangulation
-                let vertex_found = tds.vertices().values().any(|v| {
+                let vertex_found = tds.vertices().any(|(_vkey, v)| {
                     let v_coords = v.point().coords();
                     let test_coords = test_vertex.point().coords();
                     v_coords
@@ -1913,8 +1912,10 @@ mod tests {
             let mut cell_signatures = FastHashSet::default();
             for (_, cell) in tds.cells() {
                 // Create efficient signature using sorted UUID array instead of string formatting
-                let mut vertex_uuids: SmallBuffer<uuid::Uuid, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    cell.vertex_uuid_iter(&tds).collect();
+                let mut vertex_uuids: SmallBuffer<uuid::Uuid, MAX_PRACTICAL_DIMENSION_SIZE> = cell
+                    .vertex_uuid_iter(&tds)
+                    .collect::<Result<_, _>>()
+                    .unwrap();
                 vertex_uuids.sort_unstable();
 
                 let inserted = cell_signatures.insert(vertex_uuids.clone());
@@ -1948,7 +1949,7 @@ mod tests {
                     let cell2_key = cells[1].cell_key();
 
                     if let (Some(cell1), Some(cell2)) =
-                        (tds.cells().get(cell1_key), tds.cells().get(cell2_key))
+                        (tds.get_cell(cell1_key), tds.get_cell(cell2_key))
                         && let (Some(neighbors1), Some(neighbors2)) =
                             (&cell1.neighbors, &cell2.neighbors)
                     {
@@ -1997,7 +1998,7 @@ mod tests {
             // Phase 3: incident_cell is now a CellKey, not UUID
             for (vertex_key, vertex) in tds.vertices() {
                 if let Some(incident_cell_key) = vertex.incident_cell
-                    && let Some(incident_cell) = tds.cells().get(incident_cell_key)
+                    && let Some(incident_cell) = tds.get_cell(incident_cell_key)
                 {
                     let cell_vertex_keys = incident_cell.vertices();
                     let vertex_is_in_cell = cell_vertex_keys.contains(&vertex_key);
@@ -2312,8 +2313,9 @@ mod tests {
         // Should either succeed with robust handling or fail gracefully
         match result {
             Ok(tds) => {
-                assert!(
-                    !tds.cells().is_empty(),
+                assert_ne!(
+                    tds.number_of_cells(),
+                    0,
                     "Should create some triangulation even from coplanar points"
                 );
                 println!("  ✓ Coplanar configuration handled robustly");
@@ -2425,7 +2427,7 @@ mod tests {
         let result_2d = Tds::<f64, Option<()>, Option<()>, 2>::new(&nearly_collinear_2d);
         match result_2d {
             Ok(tds) => {
-                assert!(!tds.cells().is_empty());
+                assert_ne!(tds.number_of_cells(), 0);
                 println!("  ✓ Nearly collinear 2D points handled");
             }
             Err(_) => println!("  ✓ Nearly collinear 2D points failed gracefully"),
@@ -2441,7 +2443,7 @@ mod tests {
         let result_3d = Tds::<f64, Option<()>, Option<()>, 3>::new(&nearly_coplanar_3d);
         match result_3d {
             Ok(tds) => {
-                assert!(!tds.cells().is_empty());
+                assert_ne!(tds.number_of_cells(), 0);
                 println!("  ✓ Nearly coplanar 3D points handled");
             }
             Err(_) => println!("  ✓ Nearly coplanar 3D points failed gracefully"),
@@ -2457,7 +2459,7 @@ mod tests {
         let result_extreme = Tds::<f64, Option<()>, Option<()>, 3>::new(&extreme_coords);
         match result_extreme {
             Ok(tds) => {
-                assert!(!tds.cells().is_empty());
+                assert_ne!(tds.number_of_cells(), 0);
                 println!("  ✓ Extreme coordinate points handled");
             }
             Err(_) => println!("  ✓ Extreme coordinate points failed gracefully"),
@@ -3390,7 +3392,7 @@ mod tests {
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
 
         // Get a subset of cells as "bad cells"
-        let all_cell_keys: Vec<_> = tds.cells().keys().collect();
+        let all_cell_keys: Vec<_> = tds.cell_keys().collect();
         let bad_cells = &all_cell_keys[..1];
 
         let result = algorithm.robust_find_cavity_boundary_facets(&tds, bad_cells);
@@ -3624,7 +3626,7 @@ mod tests {
                 if !visible_facet_handles.is_empty() {
                     for handle in &visible_facet_handles {
                         assert!(
-                            tds.cells().get(handle.cell_key()).is_some(),
+                            tds.get_cell(handle.cell_key()).is_some(),
                             "Cell key {:?} should exist in TDS",
                             handle.cell_key()
                         );
@@ -3880,7 +3882,7 @@ mod tests {
 
         // Test Case 1: Successful atomic operation (new vertex)
         let new_vertex = vertex!([3.0, 3.0, 3.0]);
-        let bad_cells: Vec<_> = tds.cells().keys().take(1).collect(); // Take one cell to "remove"
+        let bad_cells: Vec<_> = tds.cell_keys().take(1).collect(); // Take one cell to "remove"
 
         assert!(
             !bad_cells.is_empty(),
@@ -3962,7 +3964,7 @@ mod tests {
         let current_generation = tds.generation();
 
         // Get remaining cells for this test
-        let remaining_bad_cells: Vec<_> = tds.cells().keys().take(1).collect();
+        let remaining_bad_cells: Vec<_> = tds.cell_keys().take(1).collect();
 
         if remaining_bad_cells.is_empty() {
             println!("  ✓ Test 2 SKIPPED: No remaining cells to test with");
@@ -4065,7 +4067,7 @@ mod tests {
 
         // Manually set the UUID to match existing vertex to force a conflict
         // Note: This is a conceptual test - actual implementation might handle this differently
-        let bad_cells: Vec<_> = tds.cells().keys().take(1).collect();
+        let bad_cells: Vec<_> = tds.cell_keys().take(1).collect();
 
         println!("  Testing error propagation with potential duplicate UUID scenario");
 
@@ -4247,7 +4249,7 @@ mod tests {
         let initial_vertex_count = tds.number_of_vertices();
         let initial_cell_count = tds.number_of_cells();
         let initial_generation = tds.generation();
-        let initial_vertex_uuids: Vec<_> = tds.vertices().values().map(Vertex::uuid).collect();
+        let initial_vertex_uuids: Vec<_> = tds.vertices().map(|(_vkey, v)| v.uuid()).collect();
 
         println!(
             "Initial state: {initial_vertex_count} vertices, {initial_cell_count} cells, generation {initial_generation}"
@@ -4318,7 +4320,7 @@ mod tests {
                 // Verify all original vertices are still there
                 for uuid in &initial_vertex_uuids {
                     assert!(
-                        tds.vertices().values().any(|v| v.uuid() == *uuid),
+                        tds.vertices().any(|(_vkey, v)| v.uuid() == *uuid),
                         "Original vertex should still be in TDS after failed insertion"
                     );
                 }
