@@ -1221,24 +1221,134 @@ mod tests {
         assert!(facet_vertices.iter().any(|v| v.data == Some(4)));
     }
 
-    #[test]
-    fn facet_2d_triangle() {
-        // Create 2D triangulation (triangle)
-        let vertices = vec![
+    /// Macro to generate dimension-specific facet tests for dimensions 2D-5D.
+    ///
+    /// This macro reduces test duplication by generating consistent tests across
+    /// multiple dimensions. It creates tests for:
+    /// - Basic facet view creation and vertex count validation
+    /// - `FacetKey` computation and consistency
+    /// - Facet equality tests
+    ///
+    /// For a D-dimensional cell, a facet is (D-1)-dimensional and has D vertices.
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// test_facet_dimensions! {
+    ///     facet_2d => 2 => "triangle" => 2 => vec![vertex!([0.0, 0.0]), ...],
+    /// }
+    /// ```
+    macro_rules! test_facet_dimensions {
+        ($(
+            $test_name:ident => $dim:expr => $desc:expr => $expected_facet_vertices:expr => $vertices:expr
+        ),+ $(,)?) => {
+            $(
+                #[test]
+                fn $test_name() {
+                    // Test basic facet view creation
+                    let vertices = $vertices;
+                    let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                    let cell_key = tds.cell_keys().next().unwrap();
+
+                    // Create facet view for facet 0 (excludes vertex 0)
+                    let facet = FacetView::new(&tds, cell_key, 0).unwrap();
+
+                    // Facet of D-dimensional cell is (D-1)-dimensional with D vertices
+                    assert_eq!(facet.vertices().unwrap().count(), $expected_facet_vertices,
+                        "Facet of {}D {} should have {} vertices", $dim, $desc, $expected_facet_vertices);
+                }
+
+                pastey::paste! {
+                    #[test]
+                    fn [<$test_name _key_consistency>]() {
+                        // Test FacetKey computation consistency
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let cell_key = tds.cell_keys().next().unwrap();
+
+                        // Create same facet twice
+                        let facet1 = FacetView::new(&tds, cell_key, 0).unwrap();
+                        let facet2 = FacetView::new(&tds, cell_key, 0).unwrap();
+
+                        assert_eq!(facet1.key().unwrap(), facet2.key().unwrap(),
+                            "Same facet should produce same key");
+
+                        // Create different facet
+                        let facet3 = FacetView::new(&tds, cell_key, 1).unwrap();
+                        assert_ne!(facet1.key().unwrap(), facet3.key().unwrap(),
+                            "Different facets should produce different keys");
+                    }
+
+                    #[test]
+                    fn [<$test_name _equality>]() {
+                        // Test facet equality comparison
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let cell_key = tds.cell_keys().next().unwrap();
+
+                        let facet1 = FacetView::new(&tds, cell_key, 0).unwrap();
+                        let facet2 = FacetView::new(&tds, cell_key, 0).unwrap();
+                        let facet3 = FacetView::new(&tds, cell_key, 1).unwrap();
+
+                        assert_eq!(facet1, facet2, "Same facet should be equal");
+                        assert_ne!(facet1, facet3, "Different facets should not be equal");
+                    }
+
+                    #[test]
+                    fn [<$test_name _all_facets>]() {
+                        // Test iterating through all facets of a cell
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let cell_key = tds.cell_keys().next().unwrap();
+
+                        // D+1 dimensional cell should have D+1 facets (one opposite each vertex)
+                        let expected_facets = $dim + 1;
+                        let mut facet_keys = std::collections::HashSet::new();
+
+                        for i in 0..expected_facets {
+                            let facet = FacetView::new(&tds, cell_key, u8::try_from(i).unwrap()).unwrap();
+                            facet_keys.insert(facet.key().unwrap());
+                        }
+
+                        assert_eq!(facet_keys.len(), expected_facets,
+                            "{}D cell should have {} unique facets", $dim, expected_facets);
+                    }
+                }
+            )+
+        };
+    }
+
+    // Generate tests for dimensions 2D through 5D
+    test_facet_dimensions! {
+        facet_2d_triangle => 2 => "triangle" => 2 => vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.5, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
-
-        // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::new(&tds, cell_key, 0).unwrap();
-
-        // Facet of 2D triangle is an edge (1D) with 2 vertices
-        assert_eq!(facet.vertices().unwrap().count(), 2);
+        ],
+        facet_3d_tetrahedron => 3 => "tetrahedron" => 3 => vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ],
+        facet_4d_simplex => 4 => "4-simplex" => 4 => vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+        ],
+        facet_5d_simplex => 5 => "5-simplex" => 5 => vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+        ],
     }
 
+    // Keep 1D test separate as it's less common
     #[test]
     fn facet_1d_edge() {
         // Create 1D triangulation (edge with 2 vertices)
@@ -1251,26 +1361,6 @@ mod tests {
 
         // Facet of 1D edge is a point (0D) with 1 vertex
         assert_eq!(facet.vertices().unwrap().count(), 1);
-    }
-
-    #[test]
-    fn facet_4d_simplex() {
-        // Create 4D triangulation (4-simplex with 5 vertices)
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
-
-        // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::new(&tds, cell_key, 0).unwrap();
-
-        // Facet of 4D simplex is a 3D tetrahedron with 4 vertices
-        assert_eq!(facet.vertices().unwrap().count(), 4);
     }
 
     // =============================================================================

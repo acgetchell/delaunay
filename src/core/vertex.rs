@@ -306,7 +306,10 @@ where
                 }
 
                 let point = point.ok_or_else(|| de::Error::missing_field("point"))?;
-                let uuid = uuid.ok_or_else(|| de::Error::missing_field("uuid"))?;
+                let uuid: Uuid = uuid.ok_or_else(|| de::Error::missing_field("uuid"))?;
+                if uuid.is_nil() {
+                    return Err(de::Error::custom("uuid cannot be nil"));
+                }
                 let incident_cell = incident_cell.unwrap_or(None);
                 let data = data.unwrap_or(None);
 
@@ -1254,31 +1257,89 @@ mod tests {
     // DIMENSION-SPECIFIC TESTS
     // =============================================================================
 
+    /// Macro to generate dimension-specific vertex tests for dimensions 2D-5D.
+    ///
+    /// This macro reduces test duplication by generating consistent tests across
+    /// multiple dimensions. It creates tests for:
+    /// - Basic vertex creation and property validation
+    /// - Serialization roundtrip (Some and None data)
+    /// - UUID validation
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// test_vertex_dimensions! {
+    ///     vertex_2d => 2 => [1.0, 2.0],
+    ///     vertex_3d => 3 => [1.0, 2.0, 3.0],
+    /// }
+    /// ```
+    macro_rules! test_vertex_dimensions {
+        ($(
+            $test_name:ident => $dim:expr => [$($coord:expr),+ $(,)?]
+        ),+ $(,)?) => {
+            $(
+                #[test]
+                fn $test_name() {
+                    // Test basic vertex creation
+                    let vertex: Vertex<f64, Option<()>, $dim> = vertex!([$($coord),+]);
+                    assert_vertex_properties(&vertex, [$($coord),+]);
+                    assert!(vertex.data.is_none());
+                }
+
+                pastey::paste! {
+                    #[test]
+                    fn [<$test_name _with_data>]() {
+                        // Test vertex with data
+                        let vertex: Vertex<f64, i32, $dim> = vertex!([$($coord),+], 42);
+                        assert_vertex_properties(&vertex, [$($coord),+]);
+                        assert_eq!(vertex.data, Some(42));
+                    }
+
+                    #[test]
+                    fn [<$test_name _serialization_roundtrip>]() {
+                        // Test serialization with Some data
+                        let vertex_with_data: Vertex<f64, i32, $dim> = vertex!([$($coord),+], 99);
+                        let serialized = serde_json::to_string(&vertex_with_data).unwrap();
+                        assert!(serialized.contains("\"data\":"));
+                        let deserialized: Vertex<f64, i32, $dim> = serde_json::from_str(&serialized).unwrap();
+                        assert_eq!(deserialized.data, Some(99));
+                        assert_vertex_properties(&deserialized, [$($coord),+]);
+
+                        // Test serialization with None data
+                        let vertex_no_data: Vertex<f64, Option<i32>, $dim> = vertex!([$($coord),+]);
+                        let serialized = serde_json::to_string(&vertex_no_data).unwrap();
+                        assert!(!serialized.contains("\"data\":"));
+                        let deserialized: Vertex<f64, Option<i32>, $dim> = serde_json::from_str(&serialized).unwrap();
+                        assert_eq!(deserialized.data, None);
+                    }
+
+                    #[test]
+                    fn [<$test_name _uuid_uniqueness>]() {
+                        // Test UUID uniqueness for same coordinates
+                        let v1: Vertex<f64, Option<()>, $dim> = vertex!([$($coord),+]);
+                        let v2: Vertex<f64, Option<()>, $dim> = vertex!([$($coord),+]);
+                        assert_ne!(v1.uuid(), v2.uuid());
+                        assert!(!v1.uuid().is_nil());
+                        assert!(!v2.uuid().is_nil());
+                    }
+                }
+            )+
+        };
+    }
+
+    // Generate tests for dimensions 2D through 5D
+    test_vertex_dimensions! {
+        vertex_2d => 2 => [1.0, 2.0],
+        vertex_3d => 3 => [1.0, 2.0, 3.0],
+        vertex_4d => 4 => [1.0, 2.0, 3.0, 4.0],
+        vertex_5d => 5 => [1.0, 2.0, 3.0, 4.0, 5.0],
+    }
+
+    // Keep 1D test separate as it's less common
     #[test]
     fn vertex_1d() {
         let vertex: Vertex<f64, Option<()>, 1> = vertex!([42.0]);
         assert_vertex_properties(&vertex, [42.0]);
-        assert!(vertex.data.is_none());
-    }
-
-    #[test]
-    fn vertex_2d() {
-        let vertex: Vertex<f64, Option<()>, 2> = vertex!([1.0, 2.0]);
-        assert_vertex_properties(&vertex, [1.0, 2.0]);
-        assert!(vertex.data.is_none());
-    }
-
-    #[test]
-    fn vertex_4d() {
-        let vertex: Vertex<f64, Option<()>, 4> = vertex!([1.0, 2.0, 3.0, 4.0]);
-        assert_vertex_properties(&vertex, [1.0, 2.0, 3.0, 4.0]);
-        assert!(vertex.data.is_none());
-    }
-
-    #[test]
-    fn vertex_5d() {
-        let vertex: Vertex<f64, Option<()>, 5> = vertex!([1.0, 2.0, 3.0, 4.0, 5.0]);
-        assert_vertex_properties(&vertex, [1.0, 2.0, 3.0, 4.0, 5.0]);
         assert!(vertex.data.is_none());
     }
 
@@ -2205,5 +2266,65 @@ mod tests {
             deserialized_vertex.incident_cell
         );
         assert_eq!(original_vertex.data, deserialized_vertex.data);
+    }
+
+    #[test]
+    fn test_serialization_with_some_data_includes_field() {
+        // Test that when data is Some, the JSON includes the data field
+        let vertex: Vertex<f64, i32, 3> = vertex!([1.0, 2.0, 3.0], 42);
+        let serialized = serde_json::to_string(&vertex).unwrap();
+
+        // Verify JSON contains "data" field
+        assert!(
+            serialized.contains("\"data\":"),
+            "JSON should include data field when Some"
+        );
+        assert!(serialized.contains("42"), "JSON should include data value");
+
+        // Roundtrip test
+        let deserialized: Vertex<f64, i32, 3> = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.data, Some(42));
+        assert_relative_eq!(
+            vertex.point().coords().as_slice(),
+            deserialized.point().coords().as_slice(),
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn test_serialization_with_none_data_omits_field() {
+        // Test that when data is None, the JSON omits the data field entirely
+        let vertex: Vertex<f64, Option<i32>, 3> = vertex!([1.0, 2.0, 3.0]);
+        let serialized = serde_json::to_string(&vertex).unwrap();
+
+        // Verify JSON does NOT contain "data" field (optimization)
+        assert!(
+            !serialized.contains("\"data\":"),
+            "JSON should omit data field when None"
+        );
+
+        // Roundtrip test - missing data field should deserialize as None
+        let deserialized: Vertex<f64, Option<i32>, 3> = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.data, None);
+        assert_relative_eq!(
+            vertex.point().coords().as_slice(),
+            deserialized.point().coords().as_slice(),
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn test_deserialization_with_explicit_null_data() {
+        // Test backward compatibility: explicit "data": null should still work
+        let json_with_null =
+            r#"{"point":[1.0,2.0,3.0],"uuid":"550e8400-e29b-41d4-a716-446655440000","data":null}"#;
+        let vertex: Vertex<f64, Option<i32>, 3> = serde_json::from_str(json_with_null).unwrap();
+
+        assert_eq!(vertex.data, None);
+        assert_relative_eq!(
+            vertex.point().coords().as_slice(),
+            [1.0, 2.0, 3.0].as_slice(),
+            epsilon = 1e-9
+        );
     }
 }

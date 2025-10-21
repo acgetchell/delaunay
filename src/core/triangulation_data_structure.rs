@@ -4864,231 +4864,129 @@ mod tests {
         );
     }
 
-    #[test]
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
-    fn test_multidimensional_triangulations_2d_to_5d() {
-        // Test 2D triangulation (triangle)
-        {
-            let vertices_2d = vec![
-                vertex!([0.0, 0.0]),
-                vertex!([1.0, 0.0]),
-                vertex!([0.5, 1.0]),
-            ];
-            let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+    /// Macro to generate dimension-specific TDS tests for dimensions 2D-5D.
+    ///
+    /// This macro reduces test duplication by generating consistent tests across
+    /// multiple dimensions. It creates tests for:
+    /// - Basic TDS creation with D+1 vertices
+    /// - Validation (dim, vertex count, cell count)
+    /// - Serialization roundtrip
+    /// - Incremental vertex addition
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// test_tds_dimensions! {
+    ///     tds_2d => 2 => "triangle" => vec![vertex!([0.0, 0.0]), ...],
+    /// }
+    /// ```
+    macro_rules! test_tds_dimensions {
+        ($(
+            $test_name:ident => $dim:expr => $desc:expr => $vertices:expr
+        ),+ $(,)?) => {
+            $(
+                #[test]
+                fn $test_name() {
+                    // Test basic TDS creation
+                    let vertices = $vertices;
+                    let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
 
-            assert_eq!(tds_2d.dim(), 2, "2D triangulation should have dimension 2");
-            assert_eq!(
-                tds_2d.number_of_vertices(),
-                3,
-                "2D triangle should have 3 vertices"
-            );
-            assert_eq!(
-                tds_2d.number_of_cells(),
-                1,
-                "2D triangle should have 1 cell (triangle)"
-            );
-            assert!(
-                tds_2d.is_valid().is_ok(),
-                "2D triangulation should be valid"
-            );
+                    assert_eq!(tds.dim(), $dim as i32,
+                        "{}D triangulation should have dimension {}", $dim, $dim);
+                    assert_eq!(tds.number_of_vertices(), $dim + 1,
+                        "{}D {} should have {} vertices (D+1)", $dim, $desc, $dim + 1);
+                    assert_eq!(tds.number_of_cells(), 1,
+                        "{}D {} should have 1 cell (single simplex)", $dim, $desc);
+                    assert!(tds.is_valid().is_ok(),
+                        "{}D triangulation should be valid", $dim);
+                }
 
-            // Test vertex counts match expected D+1 formula
-            assert_eq!(
-                tds_2d.number_of_vertices(),
-                2 + 1,
-                "2D should have D+1=3 vertices for one simplex"
-            );
-        }
+                pastey::paste! {
+                    #[test]
+                    fn [<$test_name _serialization>]() {
+                        // Test TDS serialization roundtrip
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
 
-        // Test 3D triangulation (tetrahedron)
-        {
-            let vertices_3d = vec![
-                vertex!([0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0]),
-                vertex!([0.5, 1.0, 0.0]),
-                vertex!([0.5, 0.5, 1.0]),
-            ];
-            let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
+                        let serialized = serde_json::to_string(&tds).unwrap();
+                        let deserialized: Tds<f64, Option<()>, Option<()>, $dim> =
+                            serde_json::from_str(&serialized).unwrap();
 
-            assert_eq!(tds_3d.dim(), 3, "3D triangulation should have dimension 3");
-            assert_eq!(
-                tds_3d.number_of_vertices(),
-                4,
-                "3D tetrahedron should have 4 vertices"
-            );
-            assert_eq!(
-                tds_3d.number_of_cells(),
-                1,
-                "3D tetrahedron should have 1 cell (tetrahedron)"
-            );
-            assert!(
-                tds_3d.is_valid().is_ok(),
-                "3D triangulation should be valid"
-            );
+                        assert_eq!(deserialized.dim(), tds.dim());
+                        assert_eq!(deserialized.number_of_vertices(), tds.number_of_vertices());
+                        assert_eq!(deserialized.number_of_cells(), tds.number_of_cells());
+                        assert!(deserialized.is_valid().is_ok());
+                    }
 
-            // Test vertex counts match expected D+1 formula
-            assert_eq!(
-                tds_3d.number_of_vertices(),
-                3 + 1,
-                "3D should have D+1=4 vertices for one simplex"
-            );
-        }
+                    #[test]
+                    fn [<$test_name _incremental>]() {
+                        // Test incremental vertex addition
+                        let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::empty();
+                        let vertices = $vertices;
 
-        // Test 4D triangulation (4-simplex)
-        {
-            let vertices_4d = vec![
-                vertex!([0.0, 0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 0.0, 1.0]),
-            ];
-            let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+                        for (i, vertex) in vertices.iter().enumerate() {
+                            tds.add(*vertex).unwrap();
+                            assert_eq!(tds.number_of_vertices(), i + 1,
+                                "{}D: Vertex count should increase incrementally", $dim);
 
-            assert_eq!(tds_4d.dim(), 4, "4D triangulation should have dimension 4");
-            assert_eq!(
-                tds_4d.number_of_vertices(),
-                5,
-                "4D 4-simplex should have 5 vertices"
-            );
-            assert_eq!(
-                tds_4d.number_of_cells(),
-                1,
-                "4D 4-simplex should have 1 cell (4-simplex)"
-            );
-            assert!(
-                tds_4d.is_valid().is_ok(),
-                "4D triangulation should be valid"
-            );
+                            let expected_dim = std::cmp::min(i32::try_from(i).unwrap(), $dim as i32);
+                            assert_eq!(tds.dim(), expected_dim,
+                                "{}D: Dimension should be {} after {} vertices", $dim, expected_dim, i + 1);
+                        }
 
-            // Test vertex counts match expected D+1 formula
-            assert_eq!(
-                tds_4d.number_of_vertices(),
-                4 + 1,
-                "4D should have D+1=5 vertices for one simplex"
-            );
-        }
+                        assert_eq!(tds.number_of_vertices(), $dim + 1);
+                        assert_eq!(tds.dim(), $dim as i32);
+                        assert!(tds.is_valid().is_ok(),
+                            "{}D incremental triangulation should be valid", $dim);
+                    }
 
-        // Test 5D triangulation (5-simplex)
-        {
-            let vertices_5d = vec![
-                vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
-                vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
-            ];
-            let tds_5d: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices_5d).unwrap();
+                    #[test]
+                    fn [<$test_name _empty>]() {
+                        // Test empty TDS for this dimension
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::empty();
 
-            assert_eq!(tds_5d.dim(), 5, "5D triangulation should have dimension 5");
-            assert_eq!(
-                tds_5d.number_of_vertices(),
-                6,
-                "5D 5-simplex should have 6 vertices"
-            );
-            assert_eq!(
-                tds_5d.number_of_cells(),
-                1,
-                "5D 5-simplex should have 1 cell (5-simplex)"
-            );
-            assert!(
-                tds_5d.is_valid().is_ok(),
-                "5D triangulation should be valid"
-            );
+                        assert_eq!(tds.number_of_vertices(), 0,
+                            "{}D empty TDS should have 0 vertices", $dim);
+                        assert_eq!(tds.number_of_cells(), 0,
+                            "{}D empty TDS should have 0 cells", $dim);
+                        assert_eq!(tds.dim(), -1,
+                            "{}D empty TDS should have dim -1", $dim);
+                        assert!(matches!(tds.construction_state,
+                            TriangulationConstructionState::Incomplete(0)));
+                    }
+                }
+            )+
+        };
+    }
 
-            // Test vertex counts match expected D+1 formula
-            assert_eq!(
-                tds_5d.number_of_vertices(),
-                5 + 1,
-                "5D should have D+1=6 vertices for one simplex"
-            );
-        }
-
-        // Test incremental construction across dimensions
-        {
-            // Test 2D incremental construction
-            let mut tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
-            let vertices_2d = [
-                vertex!([0.0, 0.0]),
-                vertex!([1.0, 0.0]),
-                vertex!([0.5, 1.0]),
-            ];
-            for (i, &vertex) in vertices_2d.iter().enumerate() {
-                tds_2d.add(vertex).unwrap();
-                assert_eq!(
-                    tds_2d.number_of_vertices(),
-                    i + 1,
-                    "2D: Vertex count should increase incrementally"
-                );
-                assert_eq!(
-                    tds_2d.dim(),
-                    std::cmp::min(i32::try_from(i).unwrap_or(i32::MAX), 2),
-                    "2D: Dimension should increase up to 2"
-                );
-            }
-            assert!(
-                tds_2d.is_valid().is_ok(),
-                "2D incremental triangulation should be valid"
-            );
-
-            // Test 3D incremental construction
-            let mut tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
-            let vertices_3d = [
-                vertex!([0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0]),
-                vertex!([0.5, 1.0, 0.0]),
-                vertex!([0.5, 0.5, 1.0]),
-            ];
-            for (i, &vertex) in vertices_3d.iter().enumerate() {
-                tds_3d.add(vertex).unwrap();
-                assert_eq!(
-                    tds_3d.number_of_vertices(),
-                    i + 1,
-                    "3D: Vertex count should increase incrementally"
-                );
-                assert_eq!(
-                    tds_3d.dim(),
-                    std::cmp::min(i32::try_from(i).unwrap_or(i32::MAX), 3),
-                    "3D: Dimension should increase up to 3"
-                );
-            }
-            assert!(
-                tds_3d.is_valid().is_ok(),
-                "3D incremental triangulation should be valid"
-            );
-
-            // Test 4D incremental construction
-            let mut tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
-            let vertices_4d = [
-                vertex!([0.0, 0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 0.0, 1.0]),
-            ];
-            for (i, &vertex) in vertices_4d.iter().enumerate() {
-                tds_4d.add(vertex).unwrap();
-                assert_eq!(
-                    tds_4d.number_of_vertices(),
-                    i + 1,
-                    "4D: Vertex count should increase incrementally"
-                );
-                assert_eq!(
-                    tds_4d.dim(),
-                    std::cmp::min(i32::try_from(i).unwrap_or(i32::MAX), 4),
-                    "4D: Dimension should increase up to 4"
-                );
-            }
-            assert!(
-                tds_4d.is_valid().is_ok(),
-                "4D incremental triangulation should be valid"
-            );
-        }
-
-        println!(
-            "✓ Multi-dimensional triangulations (2D-5D) work correctly with proper vertex counts and validation"
-        );
+    // Generate tests for dimensions 2D through 5D
+    test_tds_dimensions! {
+        tds_2d_triangle => 2 => "triangle" => vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.5, 1.0]),
+        ],
+        tds_3d_tetrahedron => 3 => "tetrahedron" => vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.5, 1.0, 0.0]),
+            vertex!([0.5, 0.5, 1.0]),
+        ],
+        tds_4d_simplex => 4 => "4-simplex" => vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+        ],
+        tds_5d_simplex => 5 => "5-simplex" => vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+        ],
     }
 
     // =============================================================================

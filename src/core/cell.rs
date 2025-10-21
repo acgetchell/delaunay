@@ -318,9 +318,12 @@ where
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Cell", 2)?;
+        let field_count = if self.data.is_some() { 2 } else { 1 };
+        let mut state = serializer.serialize_struct("Cell", field_count)?;
         state.serialize_field("uuid", &self.uuid)?;
-        state.serialize_field("data", &self.data)?;
+        if self.data.is_some() {
+            state.serialize_field("data", &self.data)?;
+        }
         state.end()
     }
 }
@@ -2108,38 +2111,122 @@ mod tests {
     // Tests covering cells in different dimensions (1D, 2D, 3D, 4D+) and
     // various coordinate types (f32, f64) to ensure dimensional flexibility.
 
-    #[test]
-    fn cell_1d() {
-        let vertices = vec![vertex!([0.0]), vertex!([1.0])];
-        let cell: Cell<f64, Option<()>, Option<()>, 1> = cell!(vertices);
+    /// Macro to generate dimension-specific cell tests for dimensions 2D-5D.
+    ///
+    /// This macro reduces test duplication by generating consistent tests across
+    /// multiple dimensions. It creates tests for:
+    /// - Basic cell creation and property validation
+    /// - Serialization roundtrip (Some and None data)
+    /// - UUID validation
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// test_cell_dimensions! {
+    ///     cell_2d => 2 => vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])],
+    /// }
+    /// ```
+    macro_rules! test_cell_dimensions {
+        ($(
+            $test_name:ident => $dim:expr => $vertices:expr
+        ),+ $(,)?) => {
+            $(
+                #[test]
+                fn $test_name() {
+                    // Test basic cell creation
+                    let vertices = $vertices;
+                    let cell: Cell<f64, Option<()>, Option<()>, $dim> = cell!(vertices);
+                    assert_cell_properties(&cell, $dim + 1, $dim);
+                }
 
-        assert_cell_properties(&cell, 2, 1);
+                pastey::paste! {
+                    #[test]
+                    fn [<$test_name _with_data>]() {
+                        // Test cell with data
+                        let vertices = $vertices;
+                        let cell: Cell<f64, Option<()>, i32, $dim> = cell!(vertices, 42);
+                        assert_cell_properties(&cell, $dim + 1, $dim);
+                        assert_eq!(cell.data, Some(42));
+                    }
+
+                    #[test]
+                    fn [<$test_name _serialization_roundtrip>]() {
+                        // Test serialization with Some data
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, i32, $dim> = Tds::new(&vertices).unwrap();
+                        let (_, cell) = tds.cells().iter().next().unwrap();
+                        let mut cell = cell.clone();
+                        cell.data = Some(99);
+
+                        let serialized = serde_json::to_string(&cell).unwrap();
+                        assert!(serialized.contains("\"data\":"));
+                        let deserialized: Cell<f64, Option<()>, i32, $dim> = serde_json::from_str(&serialized).unwrap();
+                        assert_eq!(deserialized.data, Some(99));
+                        assert_eq!(deserialized.uuid(), cell.uuid());
+
+                        // Test serialization with None data
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, Option<i32>, $dim> = Tds::new(&vertices).unwrap();
+                        let (_, cell) = tds.cells().iter().next().unwrap();
+
+                        let serialized = serde_json::to_string(&cell).unwrap();
+                        assert!(!serialized.contains("\"data\":"));
+                        let deserialized: Cell<f64, Option<()>, Option<i32>, $dim> = serde_json::from_str(&serialized).unwrap();
+                        assert_eq!(deserialized.data, None);
+                    }
+
+                    #[test]
+                    fn [<$test_name _uuid_uniqueness>]() {
+                        // Test UUID uniqueness for same vertices
+                        let vertices1 = $vertices;
+                        let vertices2 = $vertices;
+                        let cell1: Cell<f64, Option<()>, Option<()>, $dim> = cell!(vertices1);
+                        let cell2: Cell<f64, Option<()>, Option<()>, $dim> = cell!(vertices2);
+                        assert_ne!(cell1.uuid(), cell2.uuid());
+                        assert!(!cell1.uuid().is_nil());
+                        assert!(!cell2.uuid().is_nil());
+                    }
+                }
+            )+
+        };
     }
 
-    #[test]
-    fn cell_2d() {
-        let vertices = vec![
+    // Generate tests for dimensions 2D through 5D
+    test_cell_dimensions! {
+        cell_2d => 2 => vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
-        ];
-        let cell: Cell<f64, Option<()>, Option<()>, 2> = cell!(vertices);
-
-        assert_cell_properties(&cell, 3, 2);
-    }
-
-    #[test]
-    fn cell_4d() {
-        let vertices = vec![
+        ],
+        cell_3d => 3 => vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ],
+        cell_4d => 4 => vec![
             vertex!([0.0, 0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0, 0.0]),
             vertex!([0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 1.0]),
-        ];
-        let cell: Cell<f64, Option<()>, Option<()>, 4> = cell!(vertices);
+        ],
+        cell_5d => 5 => vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+        ],
+    }
 
-        assert_cell_properties(&cell, 5, 4);
+    // Keep 1D test separate as it's less common
+    #[test]
+    fn cell_1d() {
+        let vertices = vec![vertex!([0.0]), vertex!([1.0])];
+        let cell: Cell<f64, Option<()>, Option<()>, 1> = cell!(vertices);
+        assert_cell_properties(&cell, 2, 1);
     }
 
     #[test]
@@ -2318,41 +2405,6 @@ mod tests {
     }
 
     #[test]
-    fn cell_serialization_different_dimensions() {
-        // Phase 3A: Test TDS serialization for different dimensions
-
-        // Test 2D
-        let vertices_2d = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
-        let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
-        let serialized_2d = serde_json::to_string(&tds_2d).unwrap();
-        let deserialized_2d: Tds<f64, Option<()>, Option<()>, 2> =
-            serde_json::from_str(&serialized_2d).unwrap();
-        assert_eq!(deserialized_2d.dim(), 2);
-        assert_eq!(deserialized_2d.number_of_vertices(), 3);
-
-        // Test 4D
-        let vertices_4d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
-        ];
-        let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
-        let serialized_4d = serde_json::to_string(&tds_4d).unwrap();
-        let deserialized_4d: Tds<f64, Option<()>, Option<()>, 4> =
-            serde_json::from_str(&serialized_4d).unwrap();
-        assert_eq!(deserialized_4d.dim(), 4);
-        assert_eq!(deserialized_4d.number_of_vertices(), 5);
-
-        println!("Multi-dimensional TDS serialization test passed");
-    }
-
-    #[test]
     fn cell_deserialization_error_cases() {
         // Test realistic JSON deserialization errors that users might encounter
 
@@ -2424,6 +2476,77 @@ mod tests {
         let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
             serde_json::from_str(json_with_data);
         assert!(result.is_ok(), "JSON with null data should succeed");
+    }
+
+    #[test]
+    fn cell_serialization_with_some_data_includes_field() {
+        // Test that when data is Some, the JSON includes the data field
+        let vertices = vec![
+            vertex!([1.0, 2.0, 3.0]),
+            vertex!([4.0, 5.0, 6.0]),
+            vertex!([7.0, 8.0, 9.0]),
+            vertex!([10.0, 11.0, 12.0]),
+        ];
+        let tds: Tds<f64, Option<()>, i32, 3> = Tds::new(&vertices).unwrap();
+        let (_, cell) = tds.cells().iter().next().unwrap();
+        let mut cell = cell.clone();
+        cell.data = Some(42);
+
+        let serialized = serde_json::to_string(&cell).unwrap();
+
+        // Verify JSON contains "data" field
+        assert!(
+            serialized.contains("\"data\":"),
+            "JSON should include data field when Some"
+        );
+        assert!(serialized.contains("42"), "JSON should include data value");
+
+        // Roundtrip test
+        let deserialized: Cell<f64, Option<()>, i32, 3> =
+            serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.data, Some(42));
+        assert_eq!(deserialized.uuid(), cell.uuid());
+    }
+
+    #[test]
+    fn cell_serialization_with_none_data_omits_field() {
+        // Test that when data is None, the JSON omits the data field entirely
+        let vertices = vec![
+            vertex!([1.0, 2.0, 3.0]),
+            vertex!([4.0, 5.0, 6.0]),
+            vertex!([7.0, 8.0, 9.0]),
+            vertex!([10.0, 11.0, 12.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<i32>, 3> = Tds::new(&vertices).unwrap();
+        let (_, cell) = tds.cells().iter().next().unwrap();
+
+        let serialized = serde_json::to_string(&cell).unwrap();
+
+        // Verify JSON does NOT contain "data" field (optimization)
+        assert!(
+            !serialized.contains("\"data\":"),
+            "JSON should omit data field when None"
+        );
+
+        // Roundtrip test - missing data field should deserialize as None
+        let deserialized: Cell<f64, Option<()>, Option<i32>, 3> =
+            serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.data, None);
+        assert_eq!(deserialized.uuid(), cell.uuid());
+    }
+
+    #[test]
+    fn cell_deserialization_with_explicit_null_data() {
+        // Test backward compatibility: explicit "data": null should still work
+        let json_with_null = r#"{"uuid":"550e8400-e29b-41d4-a716-446655440000","data":null}"#;
+        let cell: Cell<f64, Option<()>, Option<i32>, 3> =
+            serde_json::from_str(json_with_null).unwrap();
+
+        assert_eq!(cell.data, None);
+        assert_eq!(
+            cell.uuid().to_string(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
     }
 
     // =============================================================================
