@@ -43,8 +43,17 @@ bench-phase4-large:
     BENCH_LARGE_SCALE=1 cargo bench --bench large_scale_performance
 
 bench-phase4-quick:
-    @echo "🔬 Running Phase 4 quick smoke test (~5-10 min)"
-    cargo bench --bench large_scale_performance -- "2D/1000" "3D/1000" --sample-size 10
+    @echo "⚡ Quick Phase 4 validation tests (~90 seconds)"
+    cargo test --release --test storage_backend_compatibility -- --ignored
+
+# Compare SlotMap vs DenseSlotMap storage backends
+compare-storage:
+    @echo "📊 Comparing SlotMap vs DenseSlotMap performance (~4-6 hours)"
+    uv run compare-storage-backends --bench large_scale_performance
+
+compare-storage-large:
+    @echo "📊 Comparing storage backends at large scale (~8-12 hours, use on compute cluster)"
+    BENCH_LARGE_SCALE=1 uv run compare-storage-backends --bench large_scale_performance
 
 # Build commands
 build:
@@ -143,7 +152,11 @@ help-workflows:
     @echo "Phase 4 SlotMap Evaluation:"
     @echo "  just bench-phase4       # Run Phase 4 benchmarks (~2-3 hours)"
     @echo "  just bench-phase4-large # Large scale (~4-6 hours, compute cluster)"
-    @echo "  just bench-phase4-quick # Quick smoke test (~5-10 min)"
+    @echo "  just bench-phase4-quick # Quick validation tests (~90 seconds)"
+    @echo ""
+    @echo "Storage Backend Comparison:"
+    @echo "  just compare-storage       # Compare SlotMap vs DenseSlotMap (~4-6 hours)"
+    @echo "  just compare-storage-large # Large scale comparison (~8-12 hours, compute cluster)"
     @echo ""
     @echo "Performance Analysis:"
     @echo "  just perf-help     # Show performance analysis commands"

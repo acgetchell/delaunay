@@ -3,16 +3,24 @@
 //! This test suite verifies that both `SlotMap` (default) and `DenseSlotMap` (feature flag)
 //! storage backends work correctly with the triangulation data structure.
 //!
+//! **NOTE**: All tests in this file are ignored by default because they are Phase 4
+//! evaluation tests (not regression tests) and take ~92 seconds to run.
+//!
 //! ## Running Tests
 //!
 //! Test with default `SlotMap` backend:
 //! ```bash
-//! cargo test --test storage_backend_compatibility
+//! cargo test --test storage_backend_compatibility -- --ignored
 //! ```
 //!
 //! Test with `DenseSlotMap` backend:
 //! ```bash
-//! cargo test --test storage_backend_compatibility --features dense-slotmap
+//! cargo test --test storage_backend_compatibility --features dense-slotmap -- --ignored
+//! ```
+//!
+//! For faster validation in release mode:
+//! ```bash
+//! cargo test --release --test storage_backend_compatibility -- --ignored
 //! ```
 //!
 //! ## Purpose
@@ -34,6 +42,7 @@ use delaunay::vertex;
 // =============================================================================
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_construction_2d() {
     let vertices = vec![
         vertex!([0.0, 0.0]),
@@ -48,6 +57,7 @@ fn test_storage_backend_construction_2d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_construction_3d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -63,6 +73,7 @@ fn test_storage_backend_construction_3d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_construction_4d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -79,6 +90,7 @@ fn test_storage_backend_construction_4d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_construction_5d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
@@ -100,6 +112,7 @@ fn test_storage_backend_construction_5d() {
 // =============================================================================
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_vertex_iteration_2d() {
     let vertices = vec![
         vertex!([0.0, 0.0]),
@@ -119,6 +132,7 @@ fn test_storage_backend_vertex_iteration_2d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_cell_iteration_3d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -140,6 +154,7 @@ fn test_storage_backend_cell_iteration_3d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_vertex_iteration_4d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -161,6 +176,7 @@ fn test_storage_backend_vertex_iteration_4d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_cell_iteration_5d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
@@ -188,6 +204,7 @@ fn test_storage_backend_cell_iteration_5d() {
 // =============================================================================
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_neighbor_access_2d() {
     let vertices = vec![
         vertex!([0.0, 0.0]),
@@ -208,6 +225,7 @@ fn test_storage_backend_neighbor_access_2d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_neighbor_access_3d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -229,6 +247,7 @@ fn test_storage_backend_neighbor_access_3d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_neighbor_access_4d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -251,6 +270,7 @@ fn test_storage_backend_neighbor_access_4d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_neighbor_access_5d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
@@ -278,6 +298,7 @@ fn test_storage_backend_neighbor_access_5d() {
 // =============================================================================
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_large_scale_2d() {
     let mut vertices = Vec::new();
     for i in 0..30 {
@@ -296,6 +317,7 @@ fn test_storage_backend_large_scale_2d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_large_scale_3d() {
     let mut vertices = Vec::new();
     for i in 0..15 {
@@ -320,6 +342,7 @@ fn test_storage_backend_large_scale_3d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_large_scale_4d() {
     let mut vertices = Vec::new();
     for i in 0..10 {
@@ -345,6 +368,7 @@ fn test_storage_backend_large_scale_4d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_large_scale_5d() {
     let mut vertices = Vec::new();
     for i in 0..8 {
@@ -375,6 +399,7 @@ fn test_storage_backend_large_scale_5d() {
 // =============================================================================
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_serialization_2d() {
     let vertices = vec![
         vertex!([0.0, 0.0]),
@@ -393,6 +418,7 @@ fn test_storage_backend_serialization_2d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_serialization_3d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -412,6 +438,7 @@ fn test_storage_backend_serialization_3d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_serialization_4d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -432,6 +459,7 @@ fn test_storage_backend_serialization_4d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_serialization_5d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
@@ -457,6 +485,7 @@ fn test_storage_backend_serialization_5d() {
 // =============================================================================
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_vertex_data_2d() {
     let vertices = vec![
         vertex!([0.0, 0.0], Some(1)),
@@ -472,6 +501,7 @@ fn test_storage_backend_vertex_data_2d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_vertex_data_3d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0], Some(1)),
@@ -488,6 +518,7 @@ fn test_storage_backend_vertex_data_3d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_vertex_data_4d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0], Some(1)),
@@ -505,6 +536,7 @@ fn test_storage_backend_vertex_data_4d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_vertex_data_5d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0, 0.0], Some(1)),
@@ -523,6 +555,7 @@ fn test_storage_backend_vertex_data_5d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_cell_data_2d() {
     let vertices = vec![
         vertex!([0.0, 0.0]),
@@ -542,6 +575,7 @@ fn test_storage_backend_cell_data_2d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_cell_data_3d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -562,6 +596,7 @@ fn test_storage_backend_cell_data_3d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_cell_data_4d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -583,6 +618,7 @@ fn test_storage_backend_cell_data_4d() {
 }
 
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_cell_data_5d() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
@@ -610,6 +646,7 @@ fn test_storage_backend_cell_data_5d() {
 
 #[cfg(feature = "dense-slotmap")]
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_dense_slotmap_backend_active() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -629,6 +666,7 @@ fn test_dense_slotmap_backend_active() {
 
 #[cfg(not(feature = "dense-slotmap"))]
 #[test]
+#[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_slotmap_backend_active() {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),

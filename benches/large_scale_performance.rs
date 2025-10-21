@@ -442,7 +442,25 @@ fn bench_5d_suite(c: &mut Criterion) {
 
 criterion_group!(
     name = large_scale_benches;
-    config = Criterion::default();
+    config = {
+        let sample_size = std::env::var("BENCH_SAMPLE_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(100);
+        let warm_up_secs = std::env::var("BENCH_WARMUP_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3);
+        let measurement_secs = std::env::var("BENCH_MEASUREMENT_TIME")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
+
+        Criterion::default()
+            .sample_size(sample_size)
+            .warm_up_time(Duration::from_secs(warm_up_secs))
+            .measurement_time(Duration::from_secs(measurement_secs))
+    };
     targets = bench_2d_suite, bench_3d_suite, bench_4d_suite, bench_5d_suite
 );
 
