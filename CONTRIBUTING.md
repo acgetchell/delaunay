@@ -189,7 +189,7 @@ This is normal and only happens once. After that, the correct toolchain is used 
 
 ```bash
 rustup show
-# Should show: active toolchain: 1.89.0-<platform> (overridden by '/path/to/delaunay/rust-toolchain.toml')
+# Should show: active toolchain: 1.90.0-<platform> (overridden by '/path/to/delaunay/rust-toolchain.toml')
 ```
 
 ### Python Development Environment

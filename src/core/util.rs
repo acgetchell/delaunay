@@ -1,6 +1,5 @@
 //! General helper utilities
 
-use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -153,7 +152,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     use crate::core::collections::FastHashSet;
 
@@ -223,7 +221,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     Ok(facet_view.vertices()?.copied().collect())
 }
@@ -272,7 +269,6 @@ pub fn generate_combinations<T, U, const D: usize>(
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     let mut combinations = Vec::new();
 
@@ -547,7 +543,6 @@ where
     T: crate::geometry::traits::coordinate::CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     use crate::core::facet::FacetError;
 

@@ -79,7 +79,10 @@ macro_rules! generate_dimensional_benchmarks {
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                                     let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
-                                    // Add some duplicate cells to make the benchmark meaningful
+                                    // WARNING: This benchmark intentionally violates TDS invariants by
+                                    // directly inserting duplicate cells without updating UUID mappings.
+                                    // This is ONLY for performance testing of `remove_duplicate_cells`.
+                                    // DO NOT use this pattern in correctness tests or production code.
                                     let cell_vertices: Vec<_> = tds.vertices().values().copied().collect();
                                     if cell_vertices.len() >= ($dim + 1) {
                                         // Create a few duplicate cells

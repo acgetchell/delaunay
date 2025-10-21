@@ -70,7 +70,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 use approx::abs_diff_eq;
 use num_traits::NumCast;
 use num_traits::{One, Zero, cast};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use smallvec::SmallVec;
 use std::iter::Sum;
 use std::marker::PhantomData;
@@ -476,7 +476,6 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Buffer for storing bad cell keys during cavity detection
     bad_cells_buffer: SmallBuffer<crate::core::triangulation_data_structure::CellKey, 16>,
@@ -495,7 +494,6 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn default() -> Self {
         Self::new()
@@ -507,7 +505,6 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Create new empty buffers
     #[must_use]
@@ -760,7 +757,6 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Insert a single vertex into the triangulation
     ///
@@ -918,7 +914,6 @@ where
     fn is_vertex_interior(&self, tds: &Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) -> bool
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         use crate::geometry::predicates::{InSphere, insphere};
 
@@ -1548,7 +1543,6 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Get visible boundary facets using lightweight handles
         let visible_facet_handles = self.find_visible_boundary_facets_lightweight(tds, vertex)?;
@@ -1614,7 +1608,6 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Conservative fallback: try to connect to any existing boundary facet
         // This avoids creating invalid geometry by arbitrary vertex replacement
@@ -1750,7 +1743,6 @@ where
         U: DeserializeOwned,
         V: DeserializeOwned,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         if vertices.is_empty() {
             return Ok(());
@@ -1953,7 +1945,6 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Get the adjacent cell to this boundary facet
         let Some(adjacent_cell) = tds.cells().get(adjacent_cell_key) else {
@@ -2102,7 +2093,6 @@ where
         U: DeserializeOwned,
         V: DeserializeOwned,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Default implementation: use the regular Tds::new constructor
         Tds::new(vertices)

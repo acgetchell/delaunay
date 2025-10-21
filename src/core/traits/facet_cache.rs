@@ -11,7 +11,7 @@ use crate::core::{
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use arc_swap::ArcSwapOption;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
@@ -86,7 +86,6 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Returns a reference to the facet cache storage.
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap>;

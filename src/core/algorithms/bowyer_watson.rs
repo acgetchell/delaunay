@@ -107,7 +107,6 @@ use crate::core::{
 use crate::geometry::{algorithms::convex_hull::ConvexHull, traits::coordinate::CoordinateScalar};
 use arc_swap::ArcSwapOption;
 use num_traits::NumCast;
-use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
@@ -126,7 +125,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Unified statistics tracking
     stats: InsertionStatistics,
@@ -157,10 +155,9 @@ pub type IncrementalBoyerWatson<T, U, V, const D: usize> = IncrementalBowyerWats
 impl<T, U, V, const D: usize> IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
+    U: DataType,
+    V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Creates a new incremental Bowyer-Watson algorithm instance
     ///
@@ -222,10 +219,9 @@ where
 impl<T, U, V, const D: usize> Default for IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
+    U: DataType,
+    V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn default() -> Self {
         Self::new()
@@ -235,10 +231,9 @@ where
 impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
+    U: DataType,
+    V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
@@ -254,10 +249,9 @@ where
 impl<T, U, V, const D: usize> InsertionAlgorithm<T, U, V, D> for IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
+    U: DataType,
+    V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Insert a single vertex into the triangulation
     fn insert_vertex(

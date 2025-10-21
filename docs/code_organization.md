@@ -67,11 +67,11 @@ delaunay/
 │   └── lib.rs                                    # Main library file with module declarations and prelude
 ├── examples/                                     # Usage examples and demonstrations
 │   ├── README.md                                 # Examples documentation
-│   ├── convex_hull_3d_50_points.rs               # 3D convex hull extraction and analysis example
+│   ├── convex_hull_3d_100_points.rs              # 3D convex hull extraction and analysis example
 │   ├── into_from_conversions.rs                  # Into/From trait conversion examples
 │   ├── memory_analysis.rs                        # Memory usage analysis example with allocation counting
 │   ├── point_comparison_and_hashing.rs           # Point operations examples
-│   ├── triangulation_3d_50_points.rs             # 3D triangulation example
+│   ├── triangulation_3d_100_points.rs            # 3D triangulation example
 │   └── zero_allocation_iterator_demo.rs          # Zero-allocation iterator performance demonstration
 ├── benches/                                      # Performance benchmarks
 │   ├── README.md                                 # Benchmarking guide and usage instructions
@@ -332,7 +332,7 @@ development tooling and clear architectural guidance).
 Version 0.4.4 includes comprehensive memory profiling capabilities:
 
 - **Allocation Tracking**: Optional `count-allocations` feature using the `allocation-counter` crate
-- **Memory Benchmarks**: Dedicated benchmarks for memory scaling analysis (`memory_scaling.rs`, `triangulation_vs_hull_memory.rs`)
+- **Memory Benchmarks**: Dedicated benchmarks for memory scaling analysis (`profiling_suite.rs`)
 - **Profiling Examples**: `memory_analysis.rs` demonstrates allocation counting across different operations
 - **Integration Testing**: `allocation_api.rs` provides utilities for testing memory usage in various scenarios
 - **CI Integration**: Automated profiling benchmarks with detailed allocation reports

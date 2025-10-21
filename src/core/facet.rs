@@ -68,7 +68,6 @@ use super::{
     vertex::Vertex,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use serde::{Serialize, de::DeserializeOwned};
 use slotmap::Key;
 use std::fmt::{self, Debug};
 use thiserror::Error;
@@ -368,7 +367,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Reference to the triangulation data structure.
     tds: &'tds Tds<T, U, V, D>,
@@ -387,7 +385,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Returns the cell key for this facet.
     #[inline]
@@ -612,7 +609,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FacetView")
@@ -630,7 +626,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Serialize + DeserializeOwned,
 {
     fn clone(&self) -> Self {
         Self {
@@ -646,7 +641,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
 }
 
@@ -655,7 +649,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn eq(&self, other: &Self) -> bool {
         // Two facet views are equal if they reference the same facet
@@ -670,7 +663,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
 }
 
@@ -701,7 +693,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     let cell = tds
         .cells()
@@ -731,7 +722,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     tds: &'tds Tds<T, U, V, D>,
     cell_keys: std::vec::IntoIter<CellKey>,
@@ -745,7 +735,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Creates a new iterator over all facets in the TDS.
     ///
@@ -779,7 +768,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     type Item = FacetView<'tds, T, U, V, D>;
 
@@ -831,7 +819,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     all_facets: AllFacetsIter<'tds, T, U, V, D>,
     facet_to_cells_map: crate::core::collections::FacetToCellsMap,
@@ -842,7 +829,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Creates a new iterator over boundary facets.
     #[must_use]
@@ -862,7 +848,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     type Item = FacetView<'tds, T, U, V, D>;
 

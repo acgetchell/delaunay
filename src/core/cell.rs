@@ -57,7 +57,7 @@ use crate::core::collections::{
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use serde::{
     Deserialize, Deserializer, Serialize,
-    de::{self, DeserializeOwned, IgnoredAny, MapAccess, Visitor},
+    de::{self, IgnoredAny, MapAccess, Visitor},
 };
 use std::{
     cmp,
@@ -215,7 +215,7 @@ pub use crate::cell;
 // CELL STRUCT DEFINITION
 // =============================================================================
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 /// The [Cell] struct represents a d-dimensional
 /// [simplex](https://en.wikipedia.org/wiki/Simplex) with vertices, a unique
 /// identifier, optional neighbors, and optional data.
@@ -259,7 +259,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Keys to the vertices forming this cell.
     /// Phase 3A: Changed from `Vec<Vertex>` to `SmallBuffer<VertexKey, 8>` for:
@@ -269,7 +268,6 @@ where
     ///
     /// Note: Not serialized - vertices are serialized separately and keys
     /// are reconstructed during deserialization.
-    #[serde(skip)]
     vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
 
     /// The unique identifier of the cell.
@@ -289,7 +287,6 @@ where
     ///
     /// Note: Not serialized - neighbors are serialized and reconstructed during deserialization.
     /// Access via `neighbors()` method. Writable by TDS for neighbor assignment.
-    #[serde(skip)]
     pub(crate) neighbors: Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>>,
 
     /// The optional data associated with the cell.
@@ -297,8 +294,34 @@ where
 
     /// Phantom data to maintain type parameters T and U for coordinate and vertex data types.
     /// These are needed because cells store keys to vertices, not the vertices themselves.
-    #[serde(skip)]
     _phantom: PhantomData<(T, U)>,
+}
+
+// =============================================================================
+// SERIALIZATION IMPLEMENTATION
+// =============================================================================
+
+/// Manual implementation of Serialize for Cell.
+///
+/// This implementation handles serialization of Cell fields. The `vertices` and `neighbors`
+/// fields are skipped as they contain keys that are only valid within the current `SlotMap`.
+/// During deserialization, these are reconstructed by the TDS.
+impl<T, U, V, const D: usize> Serialize for Cell<T, U, V, D>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Cell", 2)?;
+        state.serialize_field("uuid", &self.uuid)?;
+        state.serialize_field("data", &self.data)?;
+        state.end()
+    }
 }
 
 // =============================================================================
@@ -311,7 +334,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
     where
@@ -322,7 +344,6 @@ where
             T: CoordinateScalar,
             U: DataType,
             V: DataType,
-            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
         {
             _phantom: PhantomData<(T, U, V)>,
         }
@@ -332,7 +353,6 @@ where
             T: CoordinateScalar,
             U: DataType,
             V: DataType,
-            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
         {
             type Value = Cell<T, U, V, D>;
 
@@ -404,13 +424,11 @@ where
 // =============================================================================
 
 // Minimal trait bounds impl block
-// Note: [T; D] bounds required due to struct's Serialize/Deserialize derives
 impl<T, U, V, const D: usize> Cell<T, U, V, D>
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Internal constructor for TDS use only.
     ///
@@ -643,13 +661,12 @@ where
     }
 }
 
-// Standard trait bounds impl block - for methods needing serialization support
+// Standard trait bounds impl block
 impl<T, U, V, const D: usize> Cell<T, U, V, D>
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// The function returns the number of vertices in the [Cell].
     ///
@@ -1041,7 +1058,6 @@ where
     T: CoordinateScalar + Clone + PartialEq + PartialOrd,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Returns all facets (faces) of the cell.
     ///
@@ -1378,7 +1394,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -1404,7 +1419,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
@@ -1435,7 +1449,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
 }
 
@@ -1453,7 +1466,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash sorted vertex keys for consistent ordering
@@ -1509,7 +1521,6 @@ mod tests {
         T: CoordinateScalar,
         U: DataType,
         V: DataType,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         assert_eq!(cell.number_of_vertices(), expected_vertices);
         assert_eq!(cell.dim(), expected_dim);

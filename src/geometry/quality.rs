@@ -41,7 +41,7 @@ use crate::geometry::{
     util::{circumradius, hypot, inradius as simplex_inradius, simplex_volume},
 };
 use num_traits::NumCast;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use std::{
     error::Error,
     fmt,
@@ -94,7 +94,6 @@ where
     T: CoordinateScalar,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     let vertex_keys = tds
         .get_cell_vertices(cell_key)
@@ -171,7 +170,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast + Div<Output = T>,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Extract cell points using helper
     let points = cell_points(tds, cell_key)?;
@@ -266,7 +264,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast + Div<Output = T>,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Extract cell points using helper
     let points = cell_points(tds, cell_key)?;

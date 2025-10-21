@@ -176,11 +176,12 @@ use thiserror::Error;
 use uuid::Uuid;
 
 // Conditional compilation: SlotMap (default) vs DenseSlotMap (feature flag)
+// Public re-export to avoid private type in public API signatures
 #[cfg(not(feature = "dense-slotmap"))]
-use slotmap::SlotMap as StorageMap;
+pub use slotmap::SlotMap as StorageMap;
 
 #[cfg(feature = "dense-slotmap")]
-use slotmap::DenseSlotMap as StorageMap;
+pub use slotmap::DenseSlotMap as StorageMap;
 
 // Crate-internal imports
 use crate::core::collections::{
@@ -450,10 +451,9 @@ new_key_type! {
 /// ```
 pub struct Tds<T, U, V, const D: usize>
 where
-    T: CoordinateScalar + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
 {
     /// Storage map for vertices, allowing stable keys and efficient access.
     /// Uses `SlotMap` by default, or `DenseSlotMap` with the `dense-slotmap` feature.
@@ -513,7 +513,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Returns a reference to the cells storage map.
     ///
@@ -526,6 +525,14 @@ where
     ///
     /// A reference to the storage map (`SlotMap` or `DenseSlotMap`) storing all cells
     /// in the triangulation.
+    ///
+    /// # Future API Considerations
+    ///
+    /// TODO(Phase 4): Consider abstracting this API to avoid exposing the concrete
+    /// storage backend. Returning `&StorageMap<...>` makes the feature toggle observable
+    /// and tightly couples consumers to SlotMap/DenseSlotMap specifics. Future iterations
+    /// could provide stable accessors (iterators, read-only views, thin wrappers) to
+    /// decouple callers from the storage implementation while preserving current ergonomics.
     ///
     /// # Example
     ///
@@ -562,6 +569,11 @@ where
     ///
     /// A reference to the storage map (`SlotMap` or `DenseSlotMap`) storing all vertices
     /// in the triangulation.
+    ///
+    /// # Future API Considerations
+    ///
+    /// TODO(Phase 4): Consider abstracting this API to avoid exposing the concrete
+    /// storage backend (see `cells()` documentation for details).
     ///
     /// # Example
     ///
@@ -719,7 +731,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// The function returns the number of vertices in the triangulation
     /// data structure.
@@ -947,7 +958,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Returns a mutable reference to the vertices `SlotMap`.
     ///
@@ -966,6 +976,12 @@ where
     /// This method provides direct mutable access to the internal vertex storage.
     /// Modifying vertices through this method can break triangulation invariants
     /// and should only be used for testing or when you understand the implications.
+    ///
+    /// # Future API Considerations
+    ///
+    /// TODO(Phase 4): Consider restricting or removing this method, or providing
+    /// a safer abstraction layer. Exposing mutable storage backend leaks implementation
+    /// details and makes refactoring difficult.
     ///
     /// # Examples
     ///
@@ -1013,6 +1029,11 @@ where
     /// This method provides direct mutable access to the internal cell storage.
     /// Modifying cells through this method can break triangulation invariants
     /// and should only be used for testing or when you understand the implications.
+    ///
+    /// # Future API Considerations
+    ///
+    /// TODO(Phase 4): Consider restricting or removing this method, or providing
+    /// a safer abstraction layer (see `vertices_mut()` documentation for details).
     ///
     /// # Examples
     ///
@@ -2143,7 +2164,6 @@ where
     U: DataType,
     V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Creates a new empty triangulation data structure.
     ///
@@ -2779,7 +2799,6 @@ where
     U: DataType,
     V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Clears all neighbor relationships between cells in the triangulation.
     ///
@@ -2847,7 +2866,6 @@ where
     U: DataType,
     V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Remove duplicate cells (cells with identical vertex sets)
     ///
@@ -2980,7 +2998,7 @@ where
     /// processing when cells have missing vertex keys. For strict error handling that fails
     /// on any missing data, use `build_facet_to_cells_map` instead.
     ///
-    /// NOTE: This method is deprecated and will be removed in v1.0.0.
+    /// NOTE: This method is deprecated and will be removed in v0.6.0.
     /// Use `build_facet_to_cells_map` for strict error handling or
     /// `FacetCacheProvider` trait methods for cached access.
     #[deprecated(
@@ -3018,7 +3036,7 @@ where
                 continue; // Skip cells with missing vertex keys
             };
 
-            // Phase 3A: Use vertices().len() instead of vertices().len()
+            // Phase 3A: Use vertices.len() (keys buffer length) instead of any UUID-based length
             for i in 0..vertices.len() {
                 // Clear and reuse the buffer instead of allocating a new one
                 facet_vertices.clear();
@@ -3542,7 +3560,6 @@ where
     U: DataType,
     V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Validates the consistency of vertex UUID-to-key mappings.
     ///
@@ -3944,7 +3961,7 @@ where
         }
 
         for (cell_key, cell) in &self.cells {
-            // Phase 3A: Use neighbors instead of neighbors
+            // Phase 3A: Use neighbors (CellKey-based) instead of neighbor UUIDs
             let Some(neighbors_buf) = &cell.neighbors else {
                 continue; // Skip cells without neighbors
             };
@@ -3972,7 +3989,7 @@ where
                 };
 
                 // Early termination: mutual neighbor check using linear search (faster for small neighbor lists)
-                // Phase 3A: Check neighbors instead of neighbors
+                // Phase 3A: Check neighbors (CellKey-based) instead of neighbor UUIDs
                 if let Some(neighbor_neighbors) = &neighbor_cell.neighbors {
                     if !neighbor_neighbors.contains(&Some(cell_key)) {
                         return Err(TriangulationValidationError::InvalidNeighbors {
@@ -4028,10 +4045,9 @@ where
 /// Note: Buffer fields are ignored since they are transient data structures.
 impl<T, U, V, const D: usize> PartialEq for Tds<T, U, V, D>
 where
-    T: CoordinateScalar + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
 {
     fn eq(&self, other: &Self) -> bool {
         // Early exit if the basic counts don't match
@@ -4120,10 +4136,9 @@ where
 /// the `PartialEq` relation is indeed an equivalence relation.
 impl<T, U, V, const D: usize> Eq for Tds<T, U, V, D>
 where
-    T: CoordinateScalar + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
 {
 }
 
@@ -4134,10 +4149,9 @@ where
 /// to rebuild the vertex keys for each cell.
 impl<T, U, V, const D: usize> Serialize for Tds<T, U, V, D>
 where
-    T: CoordinateScalar + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -4167,10 +4181,9 @@ where
 /// Manual implementation of Deserialize for Tds to handle trait bound conflicts
 impl<'de, T, U, V, const D: usize> Deserialize<'de> for Tds<T, U, V, D>
 where
-    T: CoordinateScalar + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
 {
     fn deserialize<D2>(deserializer: D2) -> Result<Self, D2::Error>
     where
@@ -4188,10 +4201,9 @@ where
 
         impl<'de, T, U, V, const D: usize> Visitor<'de> for TdsVisitor<T, U, V, D>
         where
-            T: CoordinateScalar + DeserializeOwned,
-            U: DataType + DeserializeOwned,
-            V: DataType + DeserializeOwned,
-            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+            T: CoordinateScalar,
+            U: DataType,
+            V: DataType,
         {
             type Value = Tds<T, U, V, D>;
 
@@ -4341,7 +4353,6 @@ mod tests {
     where
         T: CoordinateScalar,
         U: DataType,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         let mut vertex = data.map_or_else(
             || {

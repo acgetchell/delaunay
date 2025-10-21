@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""
-compare_storage_backends.py - Compare SlotMap vs DenseSlotMap performance
+"""compare_storage_backends.py - Compare SlotMap vs DenseSlotMap performance
 
 This script runs Phase 4 benchmarks with both storage backends and generates
 a detailed comparison report showing performance differences in:
 - Construction time
 - Iteration speed (vertices, cells, neighbors)
-- Memory usage (RSS)
 - Query performance
 - Validation overhead
+
+Note: The benchmarks measure memory usage (RSS) internally, but this script
+currently only parses and reports timing metrics from Criterion output.
 
 Usage:
     # Run comparison with default settings
@@ -29,6 +30,7 @@ import logging
 import re
 import sys
 from datetime import UTC, datetime
+from json import loads
 from pathlib import Path
 
 try:
@@ -52,6 +54,7 @@ class StorageBackendComparator:
         benchmark_name: str = "large_scale_performance",
         dev_mode: bool = False,
         output_path: Path | None = None,
+        extra_args: list[str] | None = None,
     ) -> bool:
         """
         Run benchmarks with both storage backends and generate comparison report.
@@ -60,6 +63,7 @@ class StorageBackendComparator:
             benchmark_name: Name of benchmark to run (default: large_scale_performance)
             dev_mode: Use reduced scale for faster iteration
             output_path: Output file path (defaults to artifacts/storage_comparison.md)
+            extra_args: Additional arguments to pass to cargo bench
 
         Returns:
             True if successful, False otherwise
@@ -78,7 +82,8 @@ class StorageBackendComparator:
 
             # Run benchmarks with SlotMap (default)
             print("📊 Running benchmarks with SlotMap backend...")
-            slotmap_results = self._run_benchmark(benchmark_name, use_dense_slotmap=False, dev_mode=dev_mode)
+            logger.debug("Running SlotMap benchmarks with extra_args=%s", extra_args)
+            slotmap_results = self._run_benchmark(benchmark_name, use_dense_slotmap=False, dev_mode=dev_mode, extra_args=extra_args)
 
             if slotmap_results is None:
                 print("❌ SlotMap benchmark failed", file=sys.stderr)
@@ -86,7 +91,8 @@ class StorageBackendComparator:
 
             # Run benchmarks with DenseSlotMap
             print("\n📊 Running benchmarks with DenseSlotMap backend...")
-            denseslotmap_results = self._run_benchmark(benchmark_name, use_dense_slotmap=True, dev_mode=dev_mode)
+            logger.debug("Running DenseSlotMap benchmarks with extra_args=%s", extra_args)
+            denseslotmap_results = self._run_benchmark(benchmark_name, use_dense_slotmap=True, dev_mode=dev_mode, extra_args=extra_args)
 
             if denseslotmap_results is None:
                 print("❌ DenseSlotMap benchmark failed", file=sys.stderr)
@@ -94,6 +100,11 @@ class StorageBackendComparator:
 
             # Generate comparison report
             print("\n📝 Generating comparison report...")
+            logger.debug(
+                "Generating comparison report with %d SlotMap and %d DenseSlotMap benchmarks",
+                len(slotmap_results.get("benchmarks", [])),
+                len(denseslotmap_results.get("benchmarks", [])),
+            )
             report = self._generate_comparison_report(slotmap_results, denseslotmap_results, benchmark_name, dev_mode)
 
             # Write report to file
@@ -108,7 +119,7 @@ class StorageBackendComparator:
             logging.exception("Comparison failed")
             return False
 
-    def _run_benchmark(self, benchmark_name: str, use_dense_slotmap: bool, dev_mode: bool) -> dict | None:
+    def _run_benchmark(self, benchmark_name: str, use_dense_slotmap: bool, dev_mode: bool, extra_args: list[str] | None = None) -> dict | None:
         """
         Run benchmark with specified storage backend.
 
@@ -116,6 +127,7 @@ class StorageBackendComparator:
             benchmark_name: Name of benchmark to run
             use_dense_slotmap: Whether to use DenseSlotMap feature
             dev_mode: Use reduced scale for faster iteration
+            extra_args: Additional arguments to pass to cargo bench
 
         Returns:
             Dictionary of benchmark results, or None if failed
@@ -127,23 +139,36 @@ class StorageBackendComparator:
             if use_dense_slotmap:
                 args.extend(["--features", "dense-slotmap"])
 
-            # Add development mode arguments
-            if dev_mode:
-                args.append("--")
-                args.extend(
-                    [
-                        "--sample-size",
-                        "10",
-                        "--measurement-time",
-                        "2",
-                        "--warm-up-time",
-                        "1",
-                        "--noplot",
-                    ]
-                )
+            # Add development mode arguments or extra args
+            if dev_mode or extra_args:
+                if "--" not in args:
+                    args.append("--")
+
+                if dev_mode:
+                    args.extend(
+                        [
+                            "--sample-size",
+                            "10",
+                            "--measurement-time",
+                            "2",
+                            "--warm-up-time",
+                            "1",
+                            "--noplot",
+                        ]
+                    )
+
+                if extra_args:
+                    args.extend(extra_args)
 
             # Run benchmark
-            success, stdout, stderr = run_cargo_command(args, check=False)
+            result = run_cargo_command(
+                args,
+                cwd=self.project_root,
+                check=False,
+            )
+            success = result.returncode == 0
+            stdout = result.stdout or ""
+            stderr = result.stderr or ""
 
             if not success:
                 print(f"   ⚠️ Benchmark failed for {'DenseSlotMap' if use_dense_slotmap else 'SlotMap'}", file=sys.stderr)
@@ -167,6 +192,8 @@ class StorageBackendComparator:
     def _parse_criterion_output(self, output: str) -> dict:
         """
         Parse Criterion benchmark output.
+        Prefers JSON from target/criterion/**/new/estimates.json for robustness,
+        falls back to regex parsing stdout if JSON not available.
 
         Args:
             output: Raw stdout from cargo bench
@@ -179,28 +206,62 @@ class StorageBackendComparator:
             "raw_output": output,
         }
 
-        # Parse individual benchmark results
-        # Format: "benchmark_name          time:   [12.345 ms 12.456 ms 12.567 ms]"
-        pattern = r"(\S+)\s+time:\s+\[([0-9.]+)\s+(\w+)\s+([0-9.]+)\s+(\w+)\s+([0-9.]+)\s+(\w+)\]"
+        # Attempt JSON parsing from target/criterion (more robust)
+        json_found = False
+        try:
+            criterion_path = self.criterion_dir
+            if criterion_path.exists():
+                # Use Path.rglob for recursive glob matching
+                for path in criterion_path.rglob("new/estimates.json"):
+                    try:
+                        data = loads(path.read_text(encoding="utf-8"))
+                        estimate = data["mean"]["point_estimate"]
+                        # Infer name from parent directory
+                        name = path.parent.parent.name
+                        lower_bound = float(data["mean"]["confidence_interval"]["lower_bound"])
+                        upper_bound = float(data["mean"]["confidence_interval"]["upper_bound"])
 
-        for match in re.finditer(pattern, output):
-            name = match.group(1)
-            lower_value = float(match.group(2))
-            lower_unit = match.group(3)
-            estimate = float(match.group(4))
-            estimate_unit = match.group(5)
-            upper_value = float(match.group(6))
-            upper_unit = match.group(7)
+                        results["benchmarks"].append(
+                            {
+                                "name": name,
+                                "estimate": float(estimate),
+                                "unit": "ns",  # Criterion estimates.json uses nanoseconds
+                                "lower": lower_bound,
+                                "upper": upper_bound,
+                            }
+                        )
+                        json_found = True
+                        logger.debug("Parsed JSON for benchmark: %s", name)
+                    except Exception as e:
+                        logger.debug("Failed to parse JSON from %s: %s", path, e)
+                        continue
+        except Exception as e:
+            logger.debug("JSON parsing failed, falling back to regex: %s", e)
 
-            results["benchmarks"].append(
-                {
-                    "name": name,
-                    "estimate": estimate,
-                    "unit": estimate_unit,
-                    "lower": lower_value,
-                    "upper": upper_value,
-                }
-            )
+        # Fallback to stdout regex parsing if no JSON found
+        if not json_found:
+            logger.debug("Using regex fallback for Criterion output parsing")
+            # Format: "benchmark_name          time:   [12.345 ms 12.456 ms 12.567 ms]"
+            pattern = r"(\S+)\s+time:\s+\[([0-9.]+)\s+(\w+)\s+([0-9.]+)\s+(\w+)\s+([0-9.]+)\s+(\w+)\]"
+
+            for match in re.finditer(pattern, output):
+                name = match.group(1)
+                lower_value = float(match.group(2))
+                lower_unit = match.group(3)
+                estimate = float(match.group(4))
+                estimate_unit = match.group(5)
+                upper_value = float(match.group(6))
+                upper_unit = match.group(7)
+
+                results["benchmarks"].append(
+                    {
+                        "name": name,
+                        "estimate": estimate,
+                        "unit": estimate_unit,
+                        "lower": lower_value,
+                        "upper": upper_value,
+                    }
+                )
 
         return results
 
@@ -220,13 +281,13 @@ class StorageBackendComparator:
                 diff_pct = ((denseslotmap_time - slotmap_time) / slotmap_time) * 100
                 diffs.append(diff_pct)
 
-                # Determine winner
+                # Determine winner (green=faster, yellow=same, red=slower)
                 if abs(diff_pct) < 2.0:
                     winner, emoji = "~Same", "🟡"
                 elif diff_pct < 0:
                     winner, emoji = "✅ DenseSlotMap", "🟢"
                 else:
-                    winner, emoji = "✅ SlotMap", "🔴"
+                    winner, emoji = "✅ SlotMap", "🟢"
 
                 lines.append(f"| {name} | {slotmap_time:.2f} {unit} | {denseslotmap_time:.2f} {unit} | {diff_pct:+.1f}% {emoji} | {winner} |")
             elif slotmap_bench:
@@ -402,6 +463,11 @@ def main():
         help="Enable verbose logging",
     )
 
+    parser.add_argument(
+        "--filter",
+        help="Pass filter to Criterion benchmarks (e.g., 'construction')",
+    )
+
     args = parser.parse_args()
 
     # Configure logging
@@ -416,10 +482,15 @@ def main():
 
         # Create comparator and run comparison
         comparator = StorageBackendComparator(project_root)
+
+        # Build extra args if filter provided
+        extra_args = [args.filter] if args.filter else None
+
         success = comparator.run_comparison(
             benchmark_name=args.bench,
             dev_mode=args.dev,
             output_path=args.output,
+            extra_args=extra_args,
         )
 
         sys.exit(0 if success else 1)

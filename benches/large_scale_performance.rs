@@ -77,8 +77,6 @@ use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_mai
 use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::vertex;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use std::hint::black_box;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -98,11 +96,9 @@ fn get_memory_usage() -> u64 {
     static SYS: OnceLock<Mutex<System>> = OnceLock::new();
     static UNIT_LOGGED: std::sync::Once = std::sync::Once::new();
 
-    // Log memory unit on first call if BENCH_PRINT_MEM is set
+    // Log memory unit on first call for clarity in all benchmark runs
     UNIT_LOGGED.call_once(|| {
-        if std::env::var_os("BENCH_PRINT_MEM").is_some() {
-            eprintln!("sysinfo::Process::memory unit: bytes; reporting KiB after ÷1024");
-        }
+        eprintln!("[INFO] Memory measurements in KiB (sysinfo::Process::memory() / 1024)");
     });
 
     let pid = sysinfo::get_current_pid().expect("Failed to get current PID");
@@ -125,7 +121,7 @@ fn get_memory_usage() -> u64 {
 /// Measure memory delta during triangulation construction
 fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) -> MemoryInfo
 where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Copy + Sized,
 {
     let mem_before = get_memory_usage();
 
@@ -167,7 +163,7 @@ where
 /// Benchmark: Triangulation construction time
 fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
 where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Copy + Sized,
 {
     let bench_name = format!("construction/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
@@ -207,7 +203,7 @@ where
 /// Benchmark: Memory usage measurement (informational, not timing-focused)
 fn bench_memory_usage<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
 where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Copy + Sized,
 {
     let bench_name = format!("memory/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
@@ -239,7 +235,7 @@ where
 /// Benchmark: Topology validation time
 fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
 where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Copy + Sized,
 {
     let bench_name = format!("validation/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
@@ -287,7 +283,7 @@ where
 /// Benchmark: Neighbor query performance (critical for `SlotMap` evaluation)
 fn bench_neighbor_queries<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
 where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Copy + Sized,
 {
     let bench_name = format!("queries/neighbors/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
@@ -321,7 +317,7 @@ where
 /// Benchmark: Vertex iteration performance (tests `SlotMap` iteration efficiency)
 fn bench_vertex_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
 where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Copy + Sized,
 {
     let bench_name = format!("queries/vertices/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
@@ -352,7 +348,7 @@ where
 /// Benchmark: Cell iteration performance (tests `SlotMap` cell iteration)
 fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
 where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
+    [f64; D]: Copy + Sized,
 {
     let bench_name = format!("queries/cells/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);

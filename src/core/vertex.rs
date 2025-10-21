@@ -42,7 +42,7 @@ use crate::geometry::{
 };
 use serde::{
     Deserialize, Serialize,
-    de::{self, DeserializeOwned, IgnoredAny, MapAccess, Visitor},
+    de::{self, IgnoredAny, MapAccess, Visitor},
 };
 use std::{
     cmp::Ordering,
@@ -140,7 +140,7 @@ pub use crate::vertex;
 // VERTEX STRUCT DEFINITION
 // =============================================================================
 
-#[derive(Builder, Clone, Copy, Debug, Serialize)]
+#[derive(Builder, Clone, Copy, Debug)]
 /// The `Vertex` struct represents a vertex in a triangulation with geometric
 /// coordinates, unique identification, and optional metadata.
 ///
@@ -161,7 +161,6 @@ pub use crate::vertex;
 ///
 /// - `T` must implement `CoordinateScalar` (floating-point operations, validation, etc.)
 /// - `U` must implement `DataType` (serialization, equality, hashing, etc.)
-/// - `[T; D]` must support required serialization and copying operations
 ///
 /// # Usage
 ///
@@ -177,7 +176,6 @@ pub struct Vertex<T, U, const D: usize>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// The coordinates of the vertex as a D-dimensional Point.
     point: Point<T, D>,
@@ -191,11 +189,37 @@ where
     /// the current `SlotMap` instance. During deserialization, the TDS automatically
     /// reconstructs `incident_cell` mappings via `assign_incident_cells()`.
     #[builder(setter(skip), default = "None")]
-    #[serde(skip)]
     pub incident_cell: Option<CellKey>,
     /// Optional data associated with the vertex.
     #[builder(setter(into, strip_option), default)]
     pub data: Option<U>,
+}
+
+// =============================================================================
+// SERIALIZATION IMPLEMENTATION
+// =============================================================================
+
+/// Manual implementation of Serialize for Vertex.
+///
+/// This implementation handles serialization of all vertex fields. The `incident_cell`
+/// field is skipped as it's a runtime-only reference that gets reconstructed during
+/// deserialization.
+impl<T, U, const D: usize> Serialize for Vertex<T, U, D>
+where
+    T: CoordinateScalar,
+    U: DataType,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Vertex", 3)?;
+        state.serialize_field("point", &self.point)?;
+        state.serialize_field("uuid", &self.uuid)?;
+        state.serialize_field("data", &self.data)?;
+        state.end()
+    }
 }
 
 // =============================================================================
@@ -210,7 +234,6 @@ impl<'de, T, U, const D: usize> Deserialize<'de> for Vertex<T, U, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
     where
@@ -220,7 +243,6 @@ where
         where
             T: CoordinateScalar,
             U: DataType,
-            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
         {
             _phantom: PhantomData<(T, U)>,
         }
@@ -229,7 +251,6 @@ where
         where
             T: CoordinateScalar,
             U: DataType,
-            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
         {
             type Value = Vertex<T, U, D>;
 
@@ -319,7 +340,6 @@ impl<T, U, const D: usize> Vertex<T, U, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Creates an empty vertex at the origin with nil UUID and default data.
     ///
@@ -610,7 +630,6 @@ impl<T, U, const D: usize> PartialEq for Vertex<T, U, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Equality of vertices is based on ordered equality of coordinates using the Coordinate trait.
     #[inline]
@@ -626,7 +645,6 @@ impl<T, U, const D: usize> PartialOrd for Vertex<T, U, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Order of vertices is based on lexicographic order of coordinates using Point's `partial_cmp`.
     /// This ensures consistent ordering with special floating-point values (NaN, infinity)
@@ -643,7 +661,6 @@ impl<T, U, const D: usize> From<Vertex<T, U, D>> for [T; D]
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn from(vertex: Vertex<T, U, D>) -> [T; D] {
@@ -657,7 +674,6 @@ impl<T, U, const D: usize> From<&Vertex<T, U, D>> for [T; D]
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn from(vertex: &Vertex<T, U, D>) -> [T; D] {
@@ -671,7 +687,6 @@ impl<T, U, const D: usize> From<&Vertex<T, U, D>> for Point<T, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     #[inline]
     fn from(vertex: &Vertex<T, U, D>) -> Self {
@@ -686,7 +701,6 @@ impl<T, U, const D: usize> Eq for Vertex<T, U, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Generic Eq implementation for Vertex based on point equality
 }
@@ -695,7 +709,6 @@ impl<T, U, const D: usize> Hash for Vertex<T, U, D>
 where
     T: CoordinateScalar,
     U: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     Point<T, D>: Hash,
 {
     /// Hash implementation for Vertex using only coordinates for consistency with `PartialEq`.
@@ -784,7 +797,6 @@ mod tests {
     ) where
         T: CoordinateScalar,
         U: DataType,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         assert_eq!(vertex.point().coords(), &expected_coords);
         assert_eq!(vertex.dim(), D);
