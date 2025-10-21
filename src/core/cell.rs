@@ -12,7 +12,8 @@
 //! - **Vertices Management**: Stores vertices that form the simplex
 //! - **Neighbor Tracking**: Maintains references to neighboring cells
 //! - **Optional Data Storage**: Supports attaching arbitrary user data of type `V`
-//! - **Serialization Support**: Full serde support for persistence
+//! - **Serialization Support**: Manual serde for `uuid` and `data`; vertex/neighbor keys are
+//!   omitted and reconstructed during TDS (de)serialization
 //! - **Macro-based Construction**: Convenient cell creation using the `cell!` macro.
 //!
 //! # Examples
@@ -389,7 +390,10 @@ where
                     }
                 }
 
-                let uuid = uuid.ok_or_else(|| de::Error::missing_field("uuid"))?;
+                let uuid: Uuid = uuid.ok_or_else(|| de::Error::missing_field("uuid"))?;
+                if uuid.is_nil() {
+                    return Err(de::Error::custom("uuid cannot be nil"));
+                }
                 let data = data.unwrap_or(None);
 
                 // Phase 3A: vertices and neighbors are not serialized
@@ -855,7 +859,7 @@ where
 
     /// Deprecated alias for `has_vertex_in_common`.
     ///
-    /// This method will be removed in v0.7.0. Use `has_vertex_in_common` instead.
+    /// This method will be removed in v0.6.0. Use `has_vertex_in_common` instead.
     ///
     /// # Arguments
     ///

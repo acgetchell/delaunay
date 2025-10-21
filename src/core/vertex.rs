@@ -214,10 +214,13 @@ where
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Vertex", 3)?;
+        let field_count = if self.data.is_some() { 3 } else { 2 };
+        let mut state = serializer.serialize_struct("Vertex", field_count)?;
         state.serialize_field("point", &self.point)?;
         state.serialize_field("uuid", &self.uuid)?;
-        state.serialize_field("data", &self.data)?;
+        if self.data.is_some() {
+            state.serialize_field("data", &self.data)?;
+        }
         state.end()
     }
 }

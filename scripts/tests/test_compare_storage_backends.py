@@ -188,7 +188,7 @@ class TestStorageBackendComparator:
 
         all_names = ["test"]
 
-        lines, diffs = comparator._build_comparison_table(slotmap_by_name, denseslotmap_by_name, all_names)
+        lines, _ = comparator._build_comparison_table(slotmap_by_name, denseslotmap_by_name, all_names)
 
         assert len(lines) == 1
         assert "~Same" in lines[0]

@@ -69,7 +69,7 @@ use std::{
 ///     U: DataType + DeserializeOwned,
 ///     V: DataType + DeserializeOwned,
 ///     for<'a> &'a T: Div<T>,
-///     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+///     [T; D]: Copy + DeserializeOwned + Sized,
 /// {
 ///     fn facet_cache(&self) -> &ArcSwapOption<delaunay::core::collections::FacetToCellsMap> {
 ///         &self.facet_to_cells_cache

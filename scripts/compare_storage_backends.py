@@ -185,7 +185,7 @@ class StorageBackendComparator:
 
             return results
 
-        except Exception as e:
+        except Exception:
             logging.exception("Benchmark execution failed")
             return None
 
@@ -235,23 +235,24 @@ class StorageBackendComparator:
                     except Exception as e:
                         logger.debug("Failed to parse JSON from %s: %s", path, e)
                         continue
-        except Exception as e:
-            logger.debug("JSON parsing failed, falling back to regex: %s", e)
+        except Exception:
+            logger.debug("JSON parsing failed, falling back to regex")
 
         # Fallback to stdout regex parsing if no JSON found
         if not json_found:
             logger.debug("Using regex fallback for Criterion output parsing")
             # Format: "benchmark_name          time:   [12.345 ms 12.456 ms 12.567 ms]"
-            pattern = r"(\S+)\s+time:\s+\[([0-9.]+)\s+(\w+)\s+([0-9.]+)\s+(\w+)\s+([0-9.]+)\s+(\w+)\]"
+            # Pattern allows hyphens, colons, slashes for scoped names (e.g., "construction/2D/1000v")
+            pattern = r"([A-Za-z0-9_:\-./]+)\s+time:\s+\[([0-9.]+)\s+(\w+)\s+([0-9.]+)\s+(\w+)\s+([0-9.]+)\s+(\w+)\]"
 
             for match in re.finditer(pattern, output):
                 name = match.group(1)
                 lower_value = float(match.group(2))
-                lower_unit = match.group(3)
+                # lower_unit = match.group(3)  # Same as estimate_unit
                 estimate = float(match.group(4))
                 estimate_unit = match.group(5)
                 upper_value = float(match.group(6))
-                upper_unit = match.group(7)
+                # upper_unit = match.group(7)  # Same as estimate_unit
 
                 results["benchmarks"].append(
                     {
@@ -281,7 +282,7 @@ class StorageBackendComparator:
                 diff_pct = ((denseslotmap_time - slotmap_time) / slotmap_time) * 100
                 diffs.append(diff_pct)
 
-                # Determine winner (green=faster, yellow=same, red=slower)
+                # Determine winner (green=faster, yellow=same)
                 if abs(diff_pct) < 2.0:
                     winner, emoji = "~Same", "🟡"
                 elif diff_pct < 0:
@@ -333,7 +334,6 @@ class StorageBackendComparator:
             "",
             "- **Construction**: Time to build triangulation",
             "- **Iteration**: Speed of vertex/cell/neighbor traversals",
-            "- **Memory**: Peak RSS during operations",
             "- **Queries**: Lookup and contains-key performance",
             "",
             "## Detailed Results",
