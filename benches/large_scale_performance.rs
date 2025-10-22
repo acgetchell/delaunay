@@ -21,9 +21,14 @@
 //! - Memory measurements show allocation patterns
 //! - Scalability tests (1K→5K→10K) reveal growth patterns
 //!
+//! # Point Distribution
+//!
+//! - **Current**: Uniform random distribution (seeded for reproducibility)
+//! - **Future**: Grid and Poisson disk distributions planned but not yet implemented
+//!
 //! # Reproducibility
 //!
-//! All benchmarks use seeded RNG (`StdRng::seed_from_u64`) for deterministic results.
+//! All benchmarks use seeded RNG for deterministic results via `generate_random_points_seeded()`.
 //! Points are generated within bounded coordinates (-100.0, 100.0) to avoid degeneracies.
 //!
 //! # Running Benchmarks
@@ -289,10 +294,10 @@ where
     let bench_name = format!("queries/neighbors/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
 
-    // Adjust sample size for 5D to bound execution time
-    if D == 5 {
+    // Adjust sample size for very heavy cases (5D or large 4D)
+    if D == 5 || (D == 4 && n_points >= 5000) {
         group.sample_size(10);
-        group.measurement_time(Duration::from_secs(60));
+        group.measurement_time(Duration::from_secs(120));
     }
 
     // Pre-generate triangulation
@@ -330,10 +335,10 @@ where
     let mut group = c.benchmark_group(&bench_name);
     group.throughput(Throughput::Elements(n_points as u64));
 
-    // Adjust sample size for 5D to bound execution time
-    if D == 5 {
+    // Adjust sample size for very heavy cases (5D or large 4D)
+    if D == 5 || (D == 4 && n_points >= 5000) {
         group.sample_size(10);
-        group.measurement_time(Duration::from_secs(60));
+        group.measurement_time(Duration::from_secs(120));
     }
 
     // Pre-generate triangulation
@@ -366,10 +371,10 @@ where
     let bench_name = format!("queries/cells/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
 
-    // Adjust sample size for 5D to bound execution time
-    if D == 5 {
+    // Adjust sample size for very heavy cases (5D or large 4D)
+    if D == 5 || (D == 4 && n_points >= 5000) {
         group.sample_size(10);
-        group.measurement_time(Duration::from_secs(60));
+        group.measurement_time(Duration::from_secs(120));
     }
 
     // Pre-generate triangulation

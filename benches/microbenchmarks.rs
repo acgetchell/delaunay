@@ -109,8 +109,7 @@ macro_rules! generate_dimensional_benchmarks {
                                 || {
                                     let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                    // Note: tds must be mutable for cells_mut() access in the invariant violation zone
-                                    #[allow(unused_mut)] // mut required when cfg is active
+                                    // Note: tds must be mutable for cells_mut() access below (line 137)
                                     let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
                                     // ============================================================
@@ -126,6 +125,7 @@ macro_rules! generate_dimensional_benchmarks {
                                     // - Documentation
                                     // Note: This code only runs in benchmarks and is clearly documented as
                                     // bench-only invariant violation. No additional cfg guard is needed.
+                                    #[allow(deprecated)]
                                     {
                                         // Scoped import to avoid items_after_statements warning
                                         use delaunay::cell;
@@ -134,9 +134,8 @@ macro_rules! generate_dimensional_benchmarks {
                                             // SAFETY(BENCH-ONLY): Deliberately create duplicates for perf testing
                                             for _ in 0..3 {
                                                 let duplicate_cell = cell!(cell_vertices[0..($dim + 1)].to_vec());
-                                                let cell_key = tds.cells_mut().insert(duplicate_cell);
+                                                let _cell_key = tds.cells_mut().insert(duplicate_cell);
                                                 // Intentionally not updating UUID mappings to create true duplicates
-                                                let _ = tds.cells_mut()[cell_key].uuid();
                                             }
                                         }
                                     }

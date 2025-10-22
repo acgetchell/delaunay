@@ -142,50 +142,54 @@ pub enum CellValidationError {
 
 /// Convenience macro for creating cells with less boilerplate.
 ///
-/// # Phase 3A Update
+/// # ⚠️ Deprecated
 ///
-/// This macro now creates cells through a TDS context to be compatible with the
-/// key-based architecture. It creates a minimal triangulation from the vertices
-/// and returns a clone of the first cell.
+/// **This macro is deprecated and will be removed in v0.6.0.**
 ///
-/// **Note**: This is primarily for testing. In production code, create cells through
-/// `Tds::new()` and work with cells in their TDS context.
+/// ## Why It's Being Removed
 ///
-/// # Returns
+/// In Phase 3A, cells store `VertexKey`s that are only valid within a specific TDS context.
+/// This macro creates a temporary TDS, clones a cell with its keys, then discards the TDS,
+/// leaving a cell with "dangling" keys that cannot be used with any TDS operations.
 ///
-/// Returns `Cell<T, U, V, D>` where:
-/// - `T` is the coordinate scalar type
-/// - `U` is the vertex data type
-/// - `V` is the cell data type  
-/// - `D` is the spatial dimension
+/// This violates the Phase 3A architecture where **cells cannot exist independently from a TDS**.
 ///
-/// # Panics
+/// ## Migration Guide
 ///
-/// Panics if:
-/// - The triangulation creation fails (invalid vertices)
-/// - No cells are created (fewer than D+1 vertices)
-///
-/// # Usage
-///
-/// ```rust
+/// Instead of:
+/// ```rust,ignore
 /// use delaunay::{cell, vertex};
-/// use delaunay::core::cell::Cell;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// let vertices = vec![vertex!([0.0, 0.0, 0.0]), ...];
+/// let c: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
+/// // c.vertices() contains keys that reference a dropped TDS!
+/// ```
 ///
-/// // Create vertices using the vertex! macro (need 4 vertices for 3D simplex)
+/// Use:
+/// ```rust
+/// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-///
-/// // Create a cell without data (explicit type annotation required)
-/// let c1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices.clone());
-///
-/// // Create a cell with data (explicit type annotation required)
-/// let c2: Cell<f64, Option<()>, i32, 3> = cell!(vertices, 42);
+/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let (cell_key, cell) = tds.cells().next().unwrap();
+/// // Now cell's keys are valid within tds context
 /// ```
+///
+/// # For Existing Code
+///
+/// This macro still works for basic property testing (UUID, dimension, etc.) but
+/// **DO NOT use the returned cell's `VertexKeys` with any TDS operations** - they
+/// reference a TDS that no longer exists.
+#[deprecated(
+    since = "0.5.2",
+    note = "Cells cannot exist independently from a TDS in Phase 3A. \
+            Create cells through Tds::new() and work with them in TDS context. \
+            This macro will be removed in v0.6.0. See macro documentation for migration guide."
+)]
 #[macro_export]
 macro_rules! cell {
     // Pattern 1: Just vertices - creates via TDS
@@ -669,6 +673,18 @@ where
     #[inline]
     pub(crate) fn push_vertex_key(&mut self, vertex_key: VertexKey) {
         self.vertices.push(vertex_key);
+    }
+
+    /// Clears all vertex keys from this cell.
+    ///
+    /// # Phase 3A: Internal Use Only
+    ///
+    /// This method is used internally by TDS deserialization to clear stale vertex keys
+    /// before rebuilding them from the serialized `cell_vertices` mapping.
+    /// It should not be used outside of TDS serialization/deserialization code.
+    #[inline]
+    pub(crate) fn clear_vertex_keys(&mut self) {
+        self.vertices.clear();
     }
 }
 
@@ -1185,7 +1201,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// let cell_key = tds.cell_keys().next().unwrap();
-    /// let cell = tds.get_cell_by_key(cell_key).unwrap();
+    /// let cell = tds.get_cell(cell_key).unwrap();
     /// let facet_views = cell.facet_views(&tds, cell_key).expect("Failed to get facet views");
     ///
     /// // Each facet should have 3 vertices (triangular faces of tetrahedron)
@@ -1503,8 +1519,6 @@ mod tests {
     use std::{cmp, collections::hash_map::DefaultHasher, hash::Hasher};
 
     // Type aliases for commonly used types to reduce repetition
-    type TestCell3D = Cell<f64, Option<()>, Option<()>, 3>;
-    type TestCell2D = Cell<f64, Option<()>, Option<()>, 2>;
     type TestVertex3D = Vertex<f64, Option<()>, 3>;
     type TestVertex2D = Vertex<f64, Option<()>, 2>;
 
@@ -1529,7 +1543,7 @@ mod tests {
         assert!(!cell.uuid().is_nil());
     }
 
-    // Helper functions for creating common test data using macros
+    // Helper functions for creating common test data
     fn create_test_vertices_3d() -> Vec<TestVertex3D> {
         vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -1547,14 +1561,35 @@ mod tests {
         ]
     }
 
-    fn create_tetrahedron() -> TestCell3D {
+    /// Helper to create a TDS with a standard 3D tetrahedron and return (TDS, `CellKey`, Cell reference)
+    fn create_test_tds_3d() -> (Tds<f64, Option<()>, Option<()>, 3>, CellKey) {
         let vertices = create_test_vertices_3d();
-        cell!(vertices)
+        let tds = Tds::new(&vertices).expect("Failed to create TDS");
+        let cell_key = tds.cell_keys().next().expect("No cells in TDS");
+        (tds, cell_key)
     }
 
-    fn create_triangle() -> TestCell2D {
+    /// Helper to create a TDS with a standard 2D triangle and return (TDS, `CellKey`)
+    fn create_test_tds_2d() -> (Tds<f64, Option<()>, Option<()>, 2>, CellKey) {
         let vertices = create_test_vertices_2d();
-        cell!(vertices)
+        let tds = Tds::new(&vertices).expect("Failed to create TDS");
+        let cell_key = tds.cell_keys().next().expect("No cells in TDS");
+        (tds, cell_key)
+    }
+
+    /// Helper to create a TDS with custom 3D vertices and cell data
+    #[allow(dead_code)]
+    fn create_test_tds_3d_with_cell_data<V: DataType>(
+        cell_data: V,
+    ) -> (Tds<f64, Option<()>, V, 3>, CellKey) {
+        let vertices = create_test_vertices_3d();
+        let mut tds = Tds::new(&vertices).expect("Failed to create TDS");
+        let cell_key = tds.cell_keys().next().expect("No cells in TDS");
+        // Set cell data
+        if let Some(cell) = tds.cells_mut().get_mut(cell_key) {
+            cell.data = Some(cell_data);
+        }
+        (tds, cell_key)
     }
 
     // =============================================================================
@@ -1829,19 +1864,23 @@ mod tests {
 
     #[test]
     fn cell_number_of_vertices() {
-        let triangle = create_triangle();
+        let (tds_2d, cell_key_2d) = create_test_tds_2d();
+        let triangle = tds_2d.get_cell(cell_key_2d).unwrap();
         assert_eq!(triangle.number_of_vertices(), 3);
 
-        let tetrahedron = create_tetrahedron();
+        let (tds_3d, cell_key_3d) = create_test_tds_3d();
+        let tetrahedron = tds_3d.get_cell(cell_key_3d).unwrap();
         assert_eq!(tetrahedron.number_of_vertices(), 4);
     }
 
     #[test]
     fn cell_dim() {
-        let triangle = create_triangle();
+        let (tds_2d, cell_key_2d) = create_test_tds_2d();
+        let triangle = tds_2d.get_cell(cell_key_2d).unwrap();
         assert_eq!(triangle.dim(), 2);
 
-        let tetrahedron = create_tetrahedron();
+        let (tds_3d, cell_key_3d) = create_test_tds_3d();
+        let tetrahedron = tds_3d.get_cell(cell_key_3d).unwrap();
         assert_eq!(tetrahedron.dim(), 3);
     }
 
@@ -3625,7 +3664,7 @@ mod tests {
         }
 
         // Test with the instance method for comparison
-        let cell = tds.get_cell_by_key(cell_key).unwrap();
+        let cell = tds.get_cell(cell_key).unwrap();
         let instance_facet_views = cell
             .facet_views(&tds, cell_key)
             .expect("Failed to get facet views from instance method");
@@ -3899,5 +3938,69 @@ mod tests {
         assert_eq!(unique_uuids.len(), 4);
 
         println!("  ✓ Current API validation passed");
+    }
+
+    #[test]
+    fn test_clear_vertex_keys() {
+        // Test the clear_vertex_keys method used in deserialization
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Get a cell and clone it (since we need mutable access)
+        let (_cell_key, original_cell) = tds.cells().next().unwrap();
+        let mut test_cell = original_cell.clone();
+
+        // Verify the cell has 4 vertices initially
+        assert_eq!(
+            test_cell.number_of_vertices(),
+            4,
+            "Cell should start with 4 vertices"
+        );
+
+        // Clear the vertex keys
+        test_cell.clear_vertex_keys();
+
+        // Verify the cell now has 0 vertices
+        assert_eq!(
+            test_cell.number_of_vertices(),
+            0,
+            "Cell should have 0 vertices after clearing"
+        );
+        assert_eq!(
+            test_cell.vertices().len(),
+            0,
+            "Vertices slice should be empty after clearing"
+        );
+
+        // Test that we can rebuild vertex keys after clearing (simulating deserialization)
+        for &vkey in original_cell.vertices() {
+            test_cell.push_vertex_key(vkey);
+        }
+
+        // Verify we've restored the correct number of vertices
+        assert_eq!(
+            test_cell.number_of_vertices(),
+            4,
+            "Cell should have 4 vertices after rebuilding"
+        );
+
+        // Verify the vertex keys match the original
+        for (original_vkey, rebuilt_vkey) in original_cell
+            .vertices()
+            .iter()
+            .zip(test_cell.vertices().iter())
+        {
+            assert_eq!(
+                original_vkey, rebuilt_vkey,
+                "Rebuilt vertex keys should match original keys"
+            );
+        }
+
+        println!("✓ clear_vertex_keys() correctly clears and allows rebuilding of vertex keys");
     }
 }

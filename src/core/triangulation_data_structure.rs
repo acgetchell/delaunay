@@ -1556,8 +1556,8 @@ where
 
     /// Gets a cell directly by its key without UUID lookup.
     ///
-    /// This is a key-based optimization of the UUID-based cell access.
-    /// Use this method in internal algorithms to avoid UUID→Key conversion overhead.
+    /// **Deprecated**: Use [`get_cell()`](Self::get_cell) instead. This method is identical to `get_cell()`
+    /// and exists only for backward compatibility. It will be removed in v0.6.0.
     ///
     /// # Arguments
     ///
@@ -1566,14 +1566,14 @@ where
     /// # Returns
     ///
     /// An `Option` containing a reference to the cell if it exists, `None` otherwise.
-    ///
-    /// # Performance
-    ///
-    /// Direct `storage map` indexing for O(1) access without hash lookup.
+    #[deprecated(
+        since = "0.5.2",
+        note = "Use `get_cell()` instead. This method is identical and will be removed in v0.6.0."
+    )]
     #[inline]
     #[must_use]
     pub fn get_cell_by_key(&self, cell_key: CellKey) -> Option<&Cell<T, U, V, D>> {
-        self.cells.get(cell_key)
+        self.get_cell(cell_key)
     }
 
     /// Gets a mutable reference to a cell directly by its key.
@@ -1786,7 +1786,7 @@ where
     pub fn find_neighbors_by_key(&self, cell_key: CellKey) -> Vec<Option<CellKey>> {
         let mut neighbors = vec![None; D + 1];
 
-        let Some(cell) = self.get_cell_by_key(cell_key) else {
+        let Some(cell) = self.get_cell(cell_key) else {
             return neighbors;
         };
 
@@ -4273,6 +4273,10 @@ where
                 for (_cell_key, cell) in &mut cells {
                     let cell_uuid = cell.uuid();
                     if let Some(vertex_uuids) = cell_vertices.get(&cell_uuid) {
+                        // Clear stale vertex keys from serialized data before rebuilding
+                        // This prevents duplication: serialized keys + reconstructed keys
+                        cell.clear_vertex_keys();
+
                         // Convert vertex UUIDs to vertex keys
                         for &vertex_uuid in vertex_uuids {
                             if let Some(&vertex_key) = uuid_to_vertex_key.get(&vertex_uuid) {

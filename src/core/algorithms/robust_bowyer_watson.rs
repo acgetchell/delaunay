@@ -452,28 +452,38 @@ where
         [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         // First try to find bad cells using the trait's method
-        let mut bad_cells =
-            match InsertionAlgorithm::<T, U, V, D>::find_bad_cells(self, tds, vertex) {
-                Ok(cells) => cells,
-                Err(crate::core::traits::insertion_algorithm::BadCellsError::AllCellsBad {
-                    ..
-                }) => {
-                    // All cells marked as bad - try robust method to get a better result
-                    self.robust_find_bad_cells(tds, vertex)
-                }
-                Err(
-                    crate::core::traits::insertion_algorithm::BadCellsError::TooManyDegenerateCells(
-                        _,
-                    ),
-                ) => {
-                    // Too many degenerate cells - try robust method as fallback
-                    self.robust_find_bad_cells(tds, vertex)
-                }
-                Err(crate::core::traits::insertion_algorithm::BadCellsError::NoCells) => {
-                    // No cells - return empty
-                    return Vec::new();
-                }
-            };
+        let mut bad_cells = match InsertionAlgorithm::<T, U, V, D>::find_bad_cells(
+            self, tds, vertex,
+        ) {
+            Ok(cells) => cells,
+            Err(crate::core::traits::insertion_algorithm::BadCellsError::AllCellsBad {
+                ..
+            }) => {
+                // All cells marked as bad - try robust method to get a better result
+                self.robust_find_bad_cells(tds, vertex)
+            }
+            Err(
+                crate::core::traits::insertion_algorithm::BadCellsError::TooManyDegenerateCells(_),
+            ) => {
+                // Too many degenerate cells - try robust method as fallback
+                self.robust_find_bad_cells(tds, vertex)
+            }
+            Err(crate::core::traits::insertion_algorithm::BadCellsError::NoCells) => {
+                // No cells - return empty
+                return Vec::new();
+            }
+            Err(crate::core::traits::insertion_algorithm::BadCellsError::TdsCorruption {
+                cell_key,
+                vertex_key,
+            }) => {
+                // TDS corruption detected - this is a fatal error, propagate it
+                // by returning empty vec and letting caller handle the corruption
+                eprintln!(
+                    "TDS corruption: Cell {cell_key:?} references non-existent vertex {vertex_key:?}"
+                );
+                return Vec::new();
+            }
+        };
 
         // If the standard method doesn't find any bad cells (likely a degenerate case)
         // or we're using the robust configuration, supplement with robust predicates

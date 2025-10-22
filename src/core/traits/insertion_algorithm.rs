@@ -70,7 +70,6 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 use approx::abs_diff_eq;
 use num_traits::NumCast;
 use num_traits::{One, Zero, cast};
-use serde::de::DeserializeOwned;
 use smallvec::SmallVec;
 use std::iter::Sum;
 use std::marker::PhantomData;
@@ -130,6 +129,19 @@ pub enum BadCellsError {
     /// No cells exist to test
     #[error("No cells exist to test")]
     NoCells,
+    /// TDS corruption detected: cell references vertex key that doesn't exist
+    #[error(
+        "TDS corruption: Cell {:?} references vertex key {:?} which is not in TDS. \
+         This indicates data structure corruption. Run tds.is_valid() to diagnose.",
+        cell_key,
+        vertex_key
+    )]
+    TdsCorruption {
+        /// The cell key that contains the invalid reference
+        cell_key: CellKey,
+        /// The vertex key that was not found
+        vertex_key: VertexKey,
+    },
 }
 
 /// Comprehensive error type for vertex insertion operations
@@ -1106,17 +1118,16 @@ where
             cells_tested += 1;
             // Reuse buffer by clearing and repopulating
             vertex_points.clear();
-            // Phase 3A: Get vertices via TDS using vertices
+            // Phase 3A: Get vertices via TDS using vertex keys
+            // Missing vertex keys indicate TDS corruption, not geometric degeneracy
             for &vkey in cell.vertices() {
-                if let Some(v) = tds.get_vertex_by_key(vkey) {
-                    vertex_points.push(*v.point());
-                }
-            }
-
-            // Skip cells with incomplete vertex sets (missing vertex lookups)
-            if vertex_points.len() != D + 1 {
-                degenerate_count += 1;
-                continue;
+                let v = tds
+                    .get_vertex_by_key(vkey)
+                    .ok_or(BadCellsError::TdsCorruption {
+                        cell_key,
+                        vertex_key: vkey,
+                    })?;
+                vertex_points.push(*v.point());
             }
 
             // Test circumsphere containment
@@ -1239,7 +1250,8 @@ where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
-        let mut boundary_facet_handles = Vec::new();
+        // Pre-allocate capacity: each bad cell can contribute up to D+1 boundary facets
+        let mut boundary_facet_handles = Vec::with_capacity(bad_cells.len() * (D + 1));
 
         if bad_cells.is_empty() {
             return Ok(boundary_facet_handles);
@@ -1406,6 +1418,20 @@ where
                     TriangulationValidationError::FailedToCreateCell {
                         message: "Cavity-based insertion failed: no cells exist in triangulation."
                             .to_string(),
+                    },
+                ));
+            }
+            Err(BadCellsError::TdsCorruption {
+                cell_key,
+                vertex_key,
+            }) => {
+                // TDS corruption detected - this is a fatal structural error
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "TDS corruption detected: Cell {cell_key:?} references vertex key {vertex_key:?} which doesn't exist. \
+                             Run tds.is_valid() to diagnose."
+                        ),
                     },
                 ));
             }
@@ -1744,9 +1770,7 @@ where
         vertices: &[Vertex<T, U, D>],
     ) -> Result<(), TriangulationConstructionError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + DeserializeOwned,
-        U: DeserializeOwned,
-        V: DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         if vertices.is_empty() {
@@ -1812,9 +1836,7 @@ where
         vertices: Vec<Vertex<T, U, D>>,
     ) -> Result<(), TriangulationConstructionError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + DeserializeOwned,
-        U: DeserializeOwned,
-        V: DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         if vertices.len() != D + 1 {
@@ -1891,9 +1913,7 @@ where
         tds: &mut Tds<T, U, V, D>,
     ) -> Result<(), TriangulationConstructionError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + DeserializeOwned,
-        U: DeserializeOwned,
-        V: DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         // Remove duplicate cells
@@ -2102,9 +2122,7 @@ where
         vertices: &[Vertex<T, U, D>],
     ) -> Result<Tds<T, U, V, D>, TriangulationConstructionError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + DeserializeOwned,
-        U: DeserializeOwned,
-        V: DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         // Default implementation: use the regular Tds::new constructor
@@ -2572,6 +2590,35 @@ where
         Ok(boundary_infos)
     }
 
+    /// Ensures a cell has a properly initialized neighbors buffer of size D+1.
+    ///
+    /// This helper function centralizes neighbor buffer initialization logic to avoid
+    /// code duplication and reduce the error surface for off-by-one bugs.
+    ///
+    /// # Arguments
+    ///
+    /// * `cell` - Mutable reference to the cell
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the neighbors buffer, guaranteed to be sized D+1 with all None values.
+    ///
+    /// # Performance
+    ///
+    /// Inline to zero cost in release builds. Only allocates if the buffer doesn't exist.
+    #[inline]
+    fn ensure_neighbors_buffer<const DIM: usize>(
+        cell: &mut Cell<T, U, V, DIM>,
+    ) -> &mut SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> {
+        if cell.neighbors.is_none() {
+            let mut buffer = SmallBuffer::new();
+            buffer.resize(DIM + 1, None);
+            cell.neighbors = Some(buffer);
+        }
+        // SAFETY: We just ensured neighbors is Some above
+        cell.neighbors.as_mut().unwrap()
+    }
+
     /// Wire neighbor relationships for newly created cells after cavity removal.
     ///
     /// This helper establishes neighbor pointers between the new cells filling the cavity
@@ -2666,14 +2713,8 @@ where
                     )
                 })?;
 
-                if new_cell_mut.neighbors.is_none() {
-                    let mut neighbors = SmallBuffer::new();
-                    neighbors.resize(D + 1, None);
-                    new_cell_mut.neighbors = Some(neighbors);
-                }
-                if let Some(neighbors) = &mut new_cell_mut.neighbors {
-                    neighbors[inserted_idx] = Some(outside_ck);
-                }
+                let neighbors = Self::ensure_neighbors_buffer::<D>(new_cell_mut);
+                neighbors[inserted_idx] = Some(outside_ck);
 
                 // Set outside_ck's neighbor at outside_facet_idx → new_cell
                 let outside_cell = tds.cells_mut().get_mut(outside_ck).ok_or_else(|| {
@@ -2686,14 +2727,8 @@ where
                     )
                 })?;
 
-                if outside_cell.neighbors.is_none() {
-                    let mut neighbors = SmallBuffer::new();
-                    neighbors.resize(D + 1, None);
-                    outside_cell.neighbors = Some(neighbors);
-                }
-                if let Some(neighbors) = &mut outside_cell.neighbors {
-                    neighbors[outside_facet_idx] = Some(*new_cell_key);
-                }
+                let neighbors = Self::ensure_neighbors_buffer::<D>(outside_cell);
+                neighbors[outside_facet_idx] = Some(*new_cell_key);
             }
         }
 
@@ -2756,14 +2791,8 @@ where
                             },
                         )
                     })?;
-                    if cell_mut.neighbors.is_none() {
-                        let mut neighbors = SmallBuffer::new();
-                        neighbors.resize(D + 1, None);
-                        cell_mut.neighbors = Some(neighbors);
-                    }
-                    if let Some(neighbors) = &mut cell_mut.neighbors {
-                        neighbors[opposite_idx] = Some(other_ck);
-                    }
+                    let neighbors = Self::ensure_neighbors_buffer::<D>(cell_mut);
+                    neighbors[opposite_idx] = Some(other_ck);
 
                     // Set other_cell[other_idx] → new_cell
                     let other_mut = tds.cells_mut().get_mut(other_ck).ok_or_else(|| {
@@ -2773,14 +2802,8 @@ where
                             },
                         )
                     })?;
-                    if other_mut.neighbors.is_none() {
-                        let mut neighbors = SmallBuffer::new();
-                        neighbors.resize(D + 1, None);
-                        other_mut.neighbors = Some(neighbors);
-                    }
-                    if let Some(neighbors) = &mut other_mut.neighbors {
-                        neighbors[other_idx] = Some(new_cell_key);
-                    }
+                    let neighbors = Self::ensure_neighbors_buffer::<D>(other_mut);
+                    neighbors[other_idx] = Some(new_cell_key);
                 } else {
                     // First time seeing this facet; record it
                     facet_to_cell.insert(facet_key, (new_cell_key, opposite_idx));
@@ -3700,7 +3723,7 @@ mod tests {
         // Verify the exact same cells exist (no cells added or removed)
         for initial_key in &initial_cell_keys {
             assert!(
-                tds.get_cell_by_key(*initial_key).is_some(),
+                tds.get_cell(*initial_key).is_some(),
                 "All initial cells should still exist after rollback"
             );
         }
@@ -4881,7 +4904,8 @@ mod tests {
             Err(
                 BadCellsError::NoCells
                 | BadCellsError::AllCellsBad { .. }
-                | BadCellsError::TooManyDegenerateCells(_),
+                | BadCellsError::TooManyDegenerateCells(_)
+                | BadCellsError::TdsCorruption { .. },
             )
             | Ok(_) => {
                 // All these cases are valid - main test is that we don't panic with extreme input

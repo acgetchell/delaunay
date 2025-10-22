@@ -78,8 +78,22 @@ jobs:
           if [[ "$INPUT_MODE" == "development" ]] || [[ "${{ github.event_name }}" == "push" ]]; then
             echo "PROFILING_DEV_MODE=1" >> "$GITHUB_ENV"
             echo "Running in development mode (reduced scale)"
+            # Smaller, faster dev runs
+            {
+              echo "BENCH_SAMPLE_SIZE=30"
+              echo "BENCH_WARMUP_SECS=2"
+              echo "BENCH_MEASUREMENT_TIME=3"
+              # Keep 4D reduced set (no BENCH_LARGE_SCALE)
+            } >> "$GITHUB_ENV"
           else
             echo "Running in production mode (full scale)"
+            # Heavier production runs
+            {
+              echo "BENCH_SAMPLE_SIZE=100"
+              echo "BENCH_WARMUP_SECS=5"
+              echo "BENCH_MEASUREMENT_TIME=10"
+              echo "BENCH_LARGE_SCALE=1"  # enable 4D @ 10K
+            } >> "$GITHUB_ENV"
           fi
 
       - name: Build profiling suite
@@ -112,7 +126,7 @@ jobs:
             2>&1 | tee profiling-results/profiling_output.log
 
       - name: Run profiling with memory allocation tracking (if not already done)
-        if: ${{ !contains(github.event.inputs.benchmark_filter, 'memory') && env.MEMORY_BENCHMARKS_RUN != 'true' }}
+        if: ${{ (github.event_name != 'workflow_dispatch' || !contains(github.event.inputs.benchmark_filter, 'memory')) && env.MEMORY_BENCHMARKS_RUN != 'true' }}
         run: |
           echo "Running memory-specific profiling with allocation tracking..."
           cargo bench --bench profiling_suite --features count-allocations -- memory_profiling \
@@ -162,8 +176,11 @@ jobs:
           - \`criterion/\`: HTML reports and detailed timing data
 
           EOF
+          
+          # Publish summary to job summary UI for quick visibility
+          cat profiling-results/profiling_summary.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Check for performance regressions (if baseline exists)
+      - name: Save profiling baseline for tagged release
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           # For tagged releases, save as new baseline
