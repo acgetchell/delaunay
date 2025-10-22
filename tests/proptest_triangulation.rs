@@ -230,7 +230,7 @@ proptest! {
         use std::collections::HashSet;
 
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices) {
-            let all_vertex_keys: HashSet<_> = tds.vertices().map(|(key, _)| key).collect();
+            let all_vertex_keys: HashSet<_> = tds.vertex_keys().collect();
 
             for (_cell_key, cell) in tds.cells() {
                 // Get all vertex keys from the cell
@@ -254,7 +254,7 @@ proptest! {
         use std::collections::HashSet;
 
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
-            let all_vertex_keys: HashSet<_> = tds.vertices().map(|(key, _)| key).collect();
+            let all_vertex_keys: HashSet<_> = tds.vertex_keys().collect();
 
             for (_cell_key, cell) in tds.cells() {
                 let cell_vertex_keys = cell.vertices();
@@ -275,7 +275,7 @@ proptest! {
         use std::collections::HashSet;
 
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices) {
-            let all_vertex_keys: HashSet<_> = tds.vertices().map(|(key, _)| key).collect();
+            let all_vertex_keys: HashSet<_> = tds.vertex_keys().collect();
 
             for (_cell_key, cell) in tds.cells() {
                 let cell_vertex_keys = cell.vertices();
@@ -296,7 +296,7 @@ proptest! {
         use std::collections::HashSet;
 
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 5>::new(&vertices) {
-            let all_vertex_keys: HashSet<_> = tds.vertices().map(|(key, _)| key).collect();
+            let all_vertex_keys: HashSet<_> = tds.vertex_keys().collect();
 
             for (_cell_key, cell) in tds.cells() {
                 let cell_vertex_keys = cell.vertices();
@@ -578,7 +578,7 @@ proptest! {
     #[test]
     fn prop_vertex_count_consistency_2d(vertices in small_vertex_set_2d()) {
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices) {
-            let vertex_keys_count = tds.vertices().count();
+            let vertex_keys_count = tds.number_of_vertices();
             let number_of_vertices = tds.number_of_vertices();
 
             prop_assert_eq!(
@@ -595,7 +595,7 @@ proptest! {
     #[test]
     fn prop_vertex_count_consistency_3d(vertices in small_vertex_set_3d()) {
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
-            let vertex_keys_count = tds.vertices().count();
+            let vertex_keys_count = tds.number_of_vertices();
             let number_of_vertices = tds.number_of_vertices();
 
             prop_assert_eq!(
@@ -610,7 +610,7 @@ proptest! {
     #[test]
     fn prop_vertex_count_consistency_4d(vertices in small_vertex_set_4d()) {
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices) {
-            let vertex_keys_count = tds.vertices().count();
+            let vertex_keys_count = tds.number_of_vertices();
             let number_of_vertices = tds.number_of_vertices();
 
             prop_assert_eq!(
@@ -625,7 +625,7 @@ proptest! {
     #[test]
     fn prop_vertex_count_consistency_5d(vertices in small_vertex_set_5d()) {
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 5>::new(&vertices) {
-            let vertex_keys_count = tds.vertices().count();
+            let vertex_keys_count = tds.number_of_vertices();
             let number_of_vertices = tds.number_of_vertices();
 
             prop_assert_eq!(

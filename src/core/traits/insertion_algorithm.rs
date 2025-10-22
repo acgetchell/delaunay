@@ -930,6 +930,11 @@ where
                 }
             }
 
+            // Skip cells with incomplete vertex sets to avoid misleading predicate results
+            if vertex_points.len() != D + 1 {
+                continue;
+            }
+
             if matches!(
                 insphere(&vertex_points, *vertex.point()),
                 Ok(InSphere::INSIDE)
@@ -1106,6 +1111,12 @@ where
                 if let Some(v) = tds.get_vertex_by_key(vkey) {
                     vertex_points.push(*v.point());
                 }
+            }
+
+            // Skip cells with incomplete vertex sets (missing vertex lookups)
+            if vertex_points.len() != D + 1 {
+                degenerate_count += 1;
+                continue;
             }
 
             // Test circumsphere containment
@@ -1635,29 +1646,26 @@ where
                 let cell_key = facet_handle.cell_key();
                 let facet_index = facet_handle.facet_index();
                 let _fi = <usize as From<_>>::from(facet_index);
-                if let Some(_cell) = tds.get_cell(cell_key) {
-                    // Phase 3A: Use lightweight facet handles directly
-                    // Try to create a cell from this facet handle and the vertex
-                    if Self::create_cell_from_facet_handle(tds, cell_key, facet_index, vertex)
-                        .is_ok()
-                    {
-                        // Finalize the triangulation after insertion to fix any invalid states
-                        Self::finalize_after_insertion(tds).map_err(|e| {
-                            TriangulationValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Failed to finalize triangulation after fallback insertion: {e}"
-                                ),
-                            }
-                        })?;
+                // Phase 3A: Use lightweight facet handles directly
+                // Try to create a cell from this facet handle and the vertex
+                // Note: create_cell_from_facet_handle validates cell existence internally
+                if Self::create_cell_from_facet_handle(tds, cell_key, facet_index, vertex).is_ok() {
+                    // Finalize the triangulation after insertion to fix any invalid states
+                    Self::finalize_after_insertion(tds).map_err(|e| {
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Failed to finalize triangulation after fallback insertion: {e}"
+                            ),
+                        }
+                    })?;
 
-                        return Ok(InsertionInfo {
-                            strategy: InsertionStrategy::Fallback,
-                            cells_removed: 0,
-                            cells_created: 1,
-                            success: true,
-                            degenerate_case_handled: false,
-                        });
-                    }
+                    return Ok(InsertionInfo {
+                        strategy: InsertionStrategy::Fallback,
+                        cells_removed: 0,
+                        cells_created: 1,
+                        success: true,
+                        degenerate_case_handled: false,
+                    });
                 }
             }
         }
@@ -1668,29 +1676,26 @@ where
                 let cell_key = facet_handle.cell_key();
                 let facet_index = facet_handle.facet_index();
                 let _fi = <usize as From<_>>::from(facet_index);
-                if let Some(_cell) = tds.get_cell(cell_key) {
-                    // Phase 3A: Use lightweight facet handles directly
-                    // Try to create a cell from this facet handle and the vertex
-                    if Self::create_cell_from_facet_handle(tds, cell_key, facet_index, vertex)
-                        .is_ok()
-                    {
-                        // Finalize the triangulation after insertion to fix any invalid states
-                        Self::finalize_after_insertion(tds).map_err(|e| {
-                            TriangulationValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Failed to finalize triangulation after fallback insertion: {e}"
-                                ),
-                            }
-                        })?;
+                // Phase 3A: Use lightweight facet handles directly
+                // Try to create a cell from this facet handle and the vertex
+                // Note: create_cell_from_facet_handle validates cell existence internally
+                if Self::create_cell_from_facet_handle(tds, cell_key, facet_index, vertex).is_ok() {
+                    // Finalize the triangulation after insertion to fix any invalid states
+                    Self::finalize_after_insertion(tds).map_err(|e| {
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Failed to finalize triangulation after fallback insertion: {e}"
+                            ),
+                        }
+                    })?;
 
-                        return Ok(InsertionInfo {
-                            strategy: InsertionStrategy::Fallback,
-                            cells_removed: 0,
-                            cells_created: 1,
-                            success: true,
-                            degenerate_case_handled: false,
-                        });
-                    }
+                    return Ok(InsertionInfo {
+                        strategy: InsertionStrategy::Fallback,
+                        cells_removed: 0,
+                        cells_created: 1,
+                        success: true,
+                        degenerate_case_handled: false,
+                    });
                 }
             }
         }
@@ -1976,7 +1981,15 @@ where
         let mut opposite_vertex = None;
         for &vkey in cell_vertices {
             let Some(cell_vertex) = tds.get_vertex_by_key(vkey) else {
-                continue;
+                // Missing vertex mapping indicates TDS inconsistency - return error for diagnosability
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Vertex key {vkey:?} from cell {adjacent_cell_key:?} not found in TDS during visibility test. \
+                             This indicates mapping inconsistency."
+                        ),
+                    },
+                ));
             };
             // Check membership using cached UUIDs instead of calling facet.vertices() repeatedly
             let is_in_facet = facet_vertex_uuids.contains(&cell_vertex.uuid());

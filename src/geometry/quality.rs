@@ -32,6 +32,7 @@
 //!   DOI: [10.1137/S1064827500371499](https://doi.org/10.1137/S1064827500371499)
 
 use crate::core::{
+    collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer},
     traits::data_type::DataType,
     triangulation_data_structure::{CellKey, Tds},
 };
@@ -85,10 +86,11 @@ impl Error for QualityError {}
 /// Helper function to extract cell points from a triangulation.
 ///
 /// This centralizes the vertex-to-point extraction logic used by quality metrics.
+/// Uses `SmallBuffer` to avoid heap allocation for typical cell sizes (D+1 vertices).
 fn cell_points<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
-) -> Result<Vec<Point<T, D>>, QualityError>
+) -> Result<SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>, QualityError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -99,16 +101,18 @@ where
         .map_err(|e| QualityError::InvalidCell {
             message: format!("Failed to get cell vertices: {e}"),
         })?;
-    let points = vertex_keys
-        .iter()
-        .map(|&vkey| {
-            tds.get_vertex_by_key(vkey)
-                .map(|v| *v.point())
-                .ok_or_else(|| QualityError::InvalidCell {
-                    message: format!("Vertex {vkey:?} not found in triangulation"),
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+
+    // Use SmallBuffer to avoid heap allocation (cells have D+1 vertices, D ≤ MAX_PRACTICAL_DIMENSION_SIZE)
+    let mut points = SmallBuffer::new();
+    for &vkey in &vertex_keys {
+        let point = tds
+            .get_vertex_by_key(vkey)
+            .map(|v| *v.point())
+            .ok_or_else(|| QualityError::InvalidCell {
+                message: format!("Vertex {vkey:?} not found in triangulation"),
+            })?;
+        points.push(point);
+    }
     Ok(points)
 }
 
@@ -192,13 +196,32 @@ where
         message: format!("Inradius computation failed: {e}"),
     })?;
 
-    // Check for near-zero inradius (degenerate cell)
-    let epsilon = NumCast::from(1e-10).ok_or_else(|| QualityError::NumericalError {
-        message: "Failed to convert epsilon (1e-10) to coordinate type".to_string(),
+    // Check for near-zero inradius (degenerate cell) using scale-aware tolerance
+    // Compute scale from average coordinate magnitude to handle varying data scales
+    let mut coord_sum = T::zero();
+    for point in &points {
+        for &coord in point.coords() {
+            coord_sum += coord.abs();
+        }
+    }
+    let total_coords =
+        NumCast::from(points.len() * D).ok_or_else(|| QualityError::NumericalError {
+            message: "Failed to convert total coordinate count to type T".to_string(),
+        })?;
+    let scale = coord_sum / total_coords;
+
+    // Use relative epsilon with a minimum floor to handle both tiny and huge simplices
+    let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
+        message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
     })?;
+    let relative_factor: T = NumCast::from(1e-8).ok_or_else(|| QualityError::NumericalError {
+        message: "Failed to convert relative factor (1e-8) to coordinate type".to_string(),
+    })?;
+    let epsilon = floor.max(scale * relative_factor);
+
     if inradius_val < epsilon {
         return Err(QualityError::DegenerateCell {
-            detail: format!("inradius={inradius_val:?}"),
+            detail: format!("inradius={inradius_val:?}, epsilon={epsilon:?}, scale={scale:?}"),
         });
     }
 
@@ -281,13 +304,32 @@ where
         message: format!("Volume computation failed: {e}"),
     })?;
 
-    // Check for degenerate cell
-    let epsilon = NumCast::from(1e-10).ok_or_else(|| QualityError::NumericalError {
-        message: "Failed to convert epsilon (1e-10) to coordinate type".to_string(),
+    // Check for degenerate cell using scale-aware tolerance
+    // Compute scale from average coordinate magnitude
+    let mut coord_sum = T::zero();
+    for point in &points {
+        for &coord in point.coords() {
+            coord_sum += coord.abs();
+        }
+    }
+    let total_coords =
+        NumCast::from(points.len() * D).ok_or_else(|| QualityError::NumericalError {
+            message: "Failed to convert total coordinate count to type T".to_string(),
+        })?;
+    let scale = coord_sum / total_coords;
+
+    // Use relative epsilon with a minimum floor
+    let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
+        message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
     })?;
+    let relative_factor: T = NumCast::from(1e-8).ok_or_else(|| QualityError::NumericalError {
+        message: "Failed to convert relative factor (1e-8) to coordinate type".to_string(),
+    })?;
+    let epsilon = floor.max(scale * relative_factor);
+
     if volume < epsilon {
         return Err(QualityError::DegenerateCell {
-            detail: format!("volume={volume:?}"),
+            detail: format!("volume={volume:?}, epsilon={epsilon:?}, scale={scale:?}"),
         });
     }
 
@@ -320,9 +362,10 @@ where
 
     let avg_edge_length = total_edge_length / edge_count_t;
 
+    // Check avg_edge_length using the same scale-aware epsilon
     if avg_edge_length < epsilon {
         return Err(QualityError::DegenerateCell {
-            detail: format!("avg_edge_length={avg_edge_length:?}"),
+            detail: format!("avg_edge_length={avg_edge_length:?}, epsilon={epsilon:?}"),
         });
     }
 
@@ -332,9 +375,10 @@ where
     })?;
     let edge_length_power = avg_edge_length.powi(d_i32);
 
+    // Check edge_length_power using scale-aware epsilon
     if edge_length_power < epsilon {
         return Err(QualityError::DegenerateCell {
-            detail: format!("edge_length_power={edge_length_power:?}"),
+            detail: format!("edge_length_power={edge_length_power:?}, epsilon={epsilon:?}"),
         });
     }
 

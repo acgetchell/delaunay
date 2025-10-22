@@ -538,6 +538,38 @@ where
         self.cells.iter()
     }
 
+    /// Returns an iterator over all cell values (without keys) in the triangulation.
+    ///
+    /// This is a convenience method that simplifies the common pattern of iterating over
+    /// `cells().map(|(_, cell)| cell)`. It provides read-only access to cell objects
+    /// when you don't need the cell keys.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over `&Cell<T, U, V, D>` references.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// for cell in tds.cells_values() {
+    ///     println!("Cell has {} vertices", cell.number_of_vertices());
+    /// }
+    /// ```
+    pub fn cells_values(&self) -> impl Iterator<Item = &Cell<T, U, V, D>> {
+        self.cells.values()
+    }
+
     /// Returns an iterator over all vertices in the triangulation.
     ///
     /// This method provides read-only access to the vertices collection without
@@ -4025,42 +4057,78 @@ where
             return false;
         }
 
-        // Compare cells by collecting them into sorted vectors
-        // We sort by the sorted vertex UUIDs to make comparison order-independent
-        let mut self_cells: Vec<_> = self.cells.values().collect();
-        let mut other_cells: Vec<_> = other.cells.values().collect();
+        // Compare cells by converting them to coordinate-based representations
+        // Since vertices in different TDS objects have different UUIDs even with same coordinates,
+        // we must compare cells by their vertex coordinates, not UUIDs.
+        let self_cells: Vec<_> = self.cells.values().collect();
+        let other_cells: Vec<_> = other.cells.values().collect();
 
-        // Sort cells by their vertex UUIDs
-        self_cells.sort_by(|a, b| {
-            let mut a_vertex_uuids: Vec<Uuid> = a
-                .vertex_uuid_iter(self)
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap_or_default();
-            let mut b_vertex_uuids: Vec<Uuid> = b
-                .vertex_uuid_iter(self)
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap_or_default();
-            a_vertex_uuids.sort_unstable();
-            b_vertex_uuids.sort_unstable();
-            a_vertex_uuids.cmp(&b_vertex_uuids)
+        // Build coordinate-based cell representations for comparison
+        // Each cell is represented as a sorted vector of its vertex coordinates
+        let self_cell_coords: Result<Vec<Vec<[T; D]>>, CellValidationError> = self_cells
+            .iter()
+            .map(|cell| {
+                let mut coords: Vec<[T; D]> = cell
+                    .vertices()
+                    .iter()
+                    .map(|&vkey| {
+                        self.get_vertex_by_key(vkey)
+                            .map(|v| (*v).into())
+                            .ok_or(CellValidationError::VertexKeyNotFound { key: vkey })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                coords.sort_by(|a, b| a.partial_cmp(b).unwrap_or(CmpOrdering::Equal));
+                Ok(coords)
+            })
+            .collect();
+
+        let other_cell_coords: Result<Vec<Vec<[T; D]>>, CellValidationError> = other_cells
+            .iter()
+            .map(|cell| {
+                let mut coords: Vec<[T; D]> = cell
+                    .vertices()
+                    .iter()
+                    .map(|&vkey| {
+                        other
+                            .get_vertex_by_key(vkey)
+                            .map(|v| (*v).into())
+                            .ok_or(CellValidationError::VertexKeyNotFound { key: vkey })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                coords.sort_by(|a, b| a.partial_cmp(b).unwrap_or(CmpOrdering::Equal));
+                Ok(coords)
+            })
+            .collect();
+
+        // Return false if coordinate collection failed for either TDS
+        let (Ok(mut self_cell_coords), Ok(mut other_cell_coords)) =
+            (self_cell_coords, other_cell_coords)
+        else {
+            return false;
+        };
+
+        // Sort the cell coordinate vectors for order-independent comparison
+        self_cell_coords.sort_by(|a, b| {
+            a.iter()
+                .zip(b.iter())
+                .map(|(coord_a, coord_b)| {
+                    coord_a.partial_cmp(coord_b).unwrap_or(CmpOrdering::Equal)
+                })
+                .find(|&ord| ord != CmpOrdering::Equal)
+                .unwrap_or(CmpOrdering::Equal)
+        });
+        other_cell_coords.sort_by(|a, b| {
+            a.iter()
+                .zip(b.iter())
+                .map(|(coord_a, coord_b)| {
+                    coord_a.partial_cmp(coord_b).unwrap_or(CmpOrdering::Equal)
+                })
+                .find(|&ord| ord != CmpOrdering::Equal)
+                .unwrap_or(CmpOrdering::Equal)
         });
 
-        other_cells.sort_by(|a, b| {
-            let mut a_vertex_uuids: Vec<Uuid> = a
-                .vertex_uuid_iter(other)
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap_or_default();
-            let mut b_vertex_uuids: Vec<Uuid> = b
-                .vertex_uuid_iter(other)
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap_or_default();
-            a_vertex_uuids.sort_unstable();
-            b_vertex_uuids.sort_unstable();
-            a_vertex_uuids.cmp(&b_vertex_uuids)
-        });
-
-        // Compare sorted cell lists
-        if self_cells != other_cells {
+        // Compare sorted cell coordinate vectors
+        if self_cell_coords != other_cell_coords {
             return false;
         }
 
@@ -4106,13 +4174,12 @@ where
         let cell_vertices: FastHashMap<Uuid, Vec<Uuid>> = self
             .cells
             .iter()
-            .filter_map(|(_cell_key, cell)| {
+            .map(|(_cell_key, cell)| {
                 let cell_uuid = cell.uuid();
-                cell.vertex_uuids(self)
-                    .ok()
-                    .map(|vertex_uuids| (cell_uuid, vertex_uuids))
+                let vertex_uuids = cell.vertex_uuids(self).map_err(serde::ser::Error::custom)?;
+                Ok((cell_uuid, vertex_uuids))
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
 
         let mut state = serializer.serialize_struct("Tds", 3)?;
         state.serialize_field("vertices", &self.vertices)?;

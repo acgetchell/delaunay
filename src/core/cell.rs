@@ -1193,40 +1193,17 @@ where
     ///     assert_eq!(facet_view.vertices().unwrap().count(), 3);
     /// }
     /// ```
+    #[deprecated(
+        since = "0.5.2",
+        note = "Use `Cell::facet_views_from_tds(tds, cell_key)` instead. This instance method will be removed in 0.6.0. The static method is more direct and avoids redundant parameters."
+    )]
     pub fn facet_views<'tds>(
         &self,
         tds: &'tds Tds<T, U, V, D>,
         cell_key: CellKey,
     ) -> Result<Vec<crate::core::facet::FacetView<'tds, T, U, V, D>>, FacetError> {
-        // Derive facet count from the TDS cell to avoid relying on D at runtime
-        let cell = tds
-            .get_cell(cell_key)
-            .ok_or(FacetError::CellNotFoundInTriangulation)?;
-
-        // Verify consistency between self and the cell retrieved by cell_key
-        debug_assert_eq!(
-            cell.number_of_vertices(),
-            self.number_of_vertices(),
-            "Cell/CellKey mismatch: vertex count differs between `self` and `tds[cell_key]`"
-        );
-
-        let vertex_count = cell.number_of_vertices();
-        if vertex_count > u8::MAX as usize {
-            return Err(FacetError::InvalidFacetIndex {
-                index: u8::MAX,
-                facet_count: vertex_count,
-            });
-        }
-        let mut facet_views = Vec::with_capacity(vertex_count);
-        for idx in 0..vertex_count {
-            let facet_index = crate::core::util::usize_to_u8(idx, vertex_count)?;
-            facet_views.push(crate::core::facet::FacetView::new(
-                tds,
-                cell_key,
-                facet_index,
-            )?);
-        }
-        Ok(facet_views)
+        // Delegate to the static method to avoid code duplication
+        Self::facet_views_from_tds(tds, cell_key)
     }
 
     /// Returns all facets of a cell as lightweight `FacetView` objects using only TDS and cell key.

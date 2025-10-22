@@ -35,7 +35,7 @@
 
 #![allow(missing_docs)] // Criterion macros generate undocumented functions
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::*;
 use delaunay::vertex;
@@ -43,10 +43,16 @@ use std::hint::black_box;
 
 /// Get the seed for deterministic random point generation.
 /// Checks `DELAUNAY_BENCH_SEED` environment variable, defaults to 0xD1EA ("DEEA" - Delaunay).
+/// Supports both decimal and hexadecimal (0x-prefixed) seeds.
 fn get_benchmark_seed() -> u64 {
     std::env::var("DELAUNAY_BENCH_SEED")
         .ok()
-        .and_then(|s| s.parse().ok())
+        .map(|s| s.trim().to_string())
+        .and_then(|s| {
+            s.strip_prefix("0x")
+                .or_else(|| s.strip_prefix("0X"))
+                .map_or_else(|| s.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok())
+        })
         .unwrap_or(0xD1EA)
 }
 
@@ -69,12 +75,13 @@ macro_rules! generate_dimensional_benchmarks {
                         BenchmarkId::new("tds_new", n_points),
                         &n_points,
                         |b, &n_points| {
-                            b.iter_with_setup(
+                            b.iter_batched(
                                 || {
                                     let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                     points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                                 },
                                 |vertices| black_box(Tds::<f64, (), (), $dim>::new(&vertices).unwrap()),
+                                BatchSize::LargeInput,
                             );
                         },
                     );
@@ -98,7 +105,7 @@ macro_rules! generate_dimensional_benchmarks {
                         BenchmarkId::new("remove_duplicate_cells", n_points),
                         &n_points,
                         |b, &n_points| {
-                            b.iter_with_setup(
+                            b.iter_batched(
                                 || {
                                     let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
@@ -117,7 +124,8 @@ macro_rules! generate_dimensional_benchmarks {
                                     // - Correctness tests
                                     // - Examples
                                     // - Documentation
-                                    // ============================================================
+                                    // Note: This code only runs in benchmarks and is clearly documented as
+                                    // bench-only invariant violation. No additional cfg guard is needed.
                                     {
                                         // Scoped import to avoid items_after_statements warning
                                         use delaunay::cell;
@@ -127,9 +135,8 @@ macro_rules! generate_dimensional_benchmarks {
                                             for _ in 0..3 {
                                                 let duplicate_cell = cell!(cell_vertices[0..($dim + 1)].to_vec());
                                                 let cell_key = tds.cells_mut().insert(duplicate_cell);
-                                                let cell_uuid = tds.cells_mut()[cell_key].uuid();
                                                 // Intentionally not updating UUID mappings to create true duplicates
-                                                let _ = cell_uuid; // Suppress unused variable warning
+                                                let _ = tds.cells_mut()[cell_key].uuid();
                                             }
                                         }
                                     }
@@ -142,6 +149,7 @@ macro_rules! generate_dimensional_benchmarks {
                                     let removed = tds.remove_duplicate_cells().expect("remove_duplicate_cells failed");
                                     black_box((tds, removed));
                                 },
+                                BatchSize::LargeInput,
                             );
                         },
                     );
@@ -244,7 +252,7 @@ macro_rules! generate_validation_benchmarks {
                         BenchmarkId::new("is_valid", n_points),
                         &n_points,
                         |b, &n_points| {
-                            b.iter_with_setup(
+                            b.iter_batched(
                                 || {
                                     let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
@@ -254,6 +262,7 @@ macro_rules! generate_validation_benchmarks {
                                     tds.is_valid().unwrap();
                                     black_box(tds);
                                 },
+                                BatchSize::LargeInput,
                             );
                         },
                     );
@@ -342,12 +351,13 @@ macro_rules! generate_incremental_construction_benchmarks {
                 let additional_vertex = vertex!(additional_array);
 
                 group.bench_function("single_vertex_addition", |b| {
-                    b.iter_with_setup(
+                    b.iter_batched(
                         || Tds::<f64, (), (), $dim>::new(&initial_vertices).unwrap(),
                         |mut tds| {
                             tds.add(additional_vertex).unwrap();
                             black_box(tds);
                         },
+                        BatchSize::SmallInput,
                     );
                 });
 
@@ -358,7 +368,7 @@ macro_rules! generate_incremental_construction_benchmarks {
                         BenchmarkId::new("multiple_vertex_addition", count),
                         &count,
                         |b, &count| {
-                            b.iter_with_setup(
+                            b.iter_batched(
                                 || {
                                     let tds = Tds::<f64, (), (), $dim>::new(&initial_vertices).unwrap();
                                     let additional_points: Vec<Point<f64, $dim>> = generate_random_points_seeded(count, (-100.0, 100.0), get_benchmark_seed()).unwrap();
@@ -372,6 +382,7 @@ macro_rules! generate_incremental_construction_benchmarks {
                                     }
                                     black_box(tds);
                                 },
+                                BatchSize::SmallInput,
                             );
                         },
                     );

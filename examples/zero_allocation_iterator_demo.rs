@@ -58,6 +58,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let mut total_count = 0;
     for _ in 0..iterations {
+        // Note: Errors are intentionally ignored in this timing loop for fair comparison.
+        // In a well-formed triangulation with valid cell references, errors should not occur.
         if let Ok(uuids) = cell.vertex_uuids(&tds) {
             // Allocates Vec
             total_count += black_box(uuids.len()); // Prevent optimization
@@ -69,6 +71,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let mut total_count_iter = 0;
     for _ in 0..iterations {
+        // Note: count() on Iterator<Item = Result<Uuid, _>> counts all items (both Ok and Err).
+        // This is appropriate for performance comparison since errors should not occur here.
         let count = cell.vertex_uuid_iter(&tds).count(); // No allocation
         total_count_iter += black_box(count);
     }
@@ -92,6 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=====================");
 
     // ExactSizeIterator
+    // Note: len() returns the total number of items (including any errors in Results)
     let iter = cell.vertex_uuid_iter(&tds);
     println!("  Length via ExactSizeIterator: {}", iter.len());
 
@@ -113,6 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Valid UUIDs via iterator chain: {valid_uuid_count}");
 
     // Can be used with iterator combinators
+    // Note: take(3).count() counts items in the iterator (including Results with Err if any)
     let first_few_count = cell.vertex_uuid_iter(&tds).take(3).count();
     println!("  First 3 UUIDs: {first_few_count} collected");
 

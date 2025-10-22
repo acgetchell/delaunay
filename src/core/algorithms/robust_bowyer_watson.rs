@@ -871,14 +871,20 @@ where
         let Ok(facet_vertex_iter) = facet_view.vertices() else {
             return false;
         };
-        let facet_vertices: Vec<_> = facet_vertex_iter.collect();
+        // Use SmallBuffer to avoid heap allocation in hot path (facets have at most D vertices)
+        let mut facet_vertices: SmallBuffer<&Vertex<T, U, D>, { MAX_PRACTICAL_DIMENSION_SIZE }> =
+            SmallBuffer::new();
+        facet_vertices.extend(facet_vertex_iter);
 
         // Get cell vertices via TDS using vertices
-        let cell_vertices: Vec<_> = adjacent_cell
-            .vertices()
-            .iter()
-            .filter_map(|&vkey| tds.get_vertex_by_key(vkey))
-            .collect();
+        let mut cell_vertices: SmallBuffer<&Vertex<T, U, D>, { MAX_PRACTICAL_DIMENSION_SIZE }> =
+            SmallBuffer::new();
+        cell_vertices.extend(
+            adjacent_cell
+                .vertices()
+                .iter()
+                .filter_map(|&vkey| tds.get_vertex_by_key(vkey)),
+        );
 
         let mut opposite_vertex = None;
         for cell_vertex in cell_vertices {
@@ -961,7 +967,10 @@ where
         let Ok(facet_vertex_iter) = facet_view.vertices() else {
             return false; // Conservatively treat as not visible if we cannot get vertices
         };
-        let facet_vertices: Vec<_> = facet_vertex_iter.collect();
+        // Use SmallBuffer to avoid heap allocation in hot path (facets have at most D vertices)
+        let mut facet_vertices: SmallBuffer<&Vertex<T, U, D>, { MAX_PRACTICAL_DIMENSION_SIZE }> =
+            SmallBuffer::new();
+        facet_vertices.extend(facet_vertex_iter);
         if facet_vertices.is_empty() {
             // Conservatively treat as not visible if we cannot compute a centroid
             return false;

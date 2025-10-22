@@ -169,8 +169,8 @@ where
     let mut group = c.benchmark_group(&bench_name);
     group.throughput(Throughput::Elements(n_points as u64));
 
-    // Adjust sample size for 4D large cases to bound execution time
-    if D == 4 && n_points >= 5000 {
+    // Adjust sample size for heavy cases to bound execution time
+    if (D == 4 && n_points >= 5000) || D == 5 {
         group.sample_size(10);
         group.measurement_time(Duration::from_secs(120));
     }
@@ -240,9 +240,10 @@ where
     let bench_name = format!("validation/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
 
-    // Adjust sample size for large cases
-    if n_points >= 5000 {
+    // Adjust sample size for large cases and 5D
+    if n_points >= 5000 || D == 5 {
         group.sample_size(10);
+        group.measurement_time(Duration::from_secs(120));
     }
 
     // Pre-generate triangulation for validation benchmarks
@@ -288,6 +289,12 @@ where
     let bench_name = format!("queries/neighbors/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
 
+    // Adjust sample size for 5D to bound execution time
+    if D == 5 {
+        group.sample_size(10);
+        group.measurement_time(Duration::from_secs(60));
+    }
+
     // Pre-generate triangulation
     let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
         .expect("Failed to generate points");
@@ -323,6 +330,12 @@ where
     let mut group = c.benchmark_group(&bench_name);
     group.throughput(Throughput::Elements(n_points as u64));
 
+    // Adjust sample size for 5D to bound execution time
+    if D == 5 {
+        group.sample_size(10);
+        group.measurement_time(Duration::from_secs(60));
+    }
+
     // Pre-generate triangulation
     let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
         .expect("Failed to generate points");
@@ -352,6 +365,12 @@ where
 {
     let bench_name = format!("queries/cells/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
+
+    // Adjust sample size for 5D to bound execution time
+    if D == 5 {
+        group.sample_size(10);
+        group.measurement_time(Duration::from_secs(60));
+    }
 
     // Pre-generate triangulation
     let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)

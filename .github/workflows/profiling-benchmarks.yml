@@ -1,7 +1,9 @@
 name: Comprehensive Profiling Benchmarks
 
 on:
-  # Manual trigger for on-demand profiling runs
+
+# Manual trigger for on-demand profiling runs
+
   workflow_dispatch:
     inputs:
       mode:
@@ -18,12 +20,14 @@ on:
         default: ''
         type: string
 
-  # Monthly scheduled run for trend monitoring
+# Monthly scheduled run for trend monitoring
+
   schedule:
     # First Sunday of each month at 2 AM UTC
     - cron: '0 2 1-7 * 0'
 
-  # Trigger on release tags for baseline profiling data
+# Trigger on release tags for baseline profiling data
+
   push:
     tags:
       - 'v*.*.*'
@@ -95,22 +99,17 @@ jobs:
 
           # Run profiling (timing-focused)
           echo "Starting comprehensive profiling benchmarks..."
-          if [[ -z "$BENCH_FILTER" ]] || [[ "$BENCH_FILTER" != *"memory"* ]]; then
-            if [[ -z "$BENCH_FILTER" ]]; then
-              cargo bench --bench profiling_suite \
-                2>&1 | tee profiling-results/profiling_output.log
-            else
-              # shellcheck disable=SC2086
-              cargo bench --bench profiling_suite $BENCH_FILTER \
-                2>&1 | tee profiling-results/profiling_output.log
-            fi
-          else
-            # If filter contains memory, run only the filtered benchmarks
-            # shellcheck disable=SC2086
-            cargo bench --bench profiling_suite --features count-allocations $BENCH_FILTER \
-              2>&1 | tee profiling-results/profiling_output.log
+          
+          # Determine if memory profiling is requested
+          MEMORY_FEATURES=""
+          if [[ "$BENCH_FILTER" == *"memory"* ]]; then
+            MEMORY_FEATURES="--features count-allocations"
             echo "MEMORY_BENCHMARKS_RUN=true" >> "$GITHUB_ENV"
           fi
+          
+          # shellcheck disable=SC2086
+          cargo bench --bench profiling_suite $MEMORY_FEATURES ${BENCH_FILTER:-} \
+            2>&1 | tee profiling-results/profiling_output.log
 
       - name: Run profiling with memory allocation tracking (if not already done)
         if: ${{ !contains(github.event.inputs.benchmark_filter, 'memory') && env.MEMORY_BENCHMARKS_RUN != 'true' }}
