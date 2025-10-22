@@ -197,31 +197,39 @@ where
     })?;
 
     // Check for near-zero inradius (degenerate cell) using scale-aware tolerance
-    // Compute scale from average coordinate magnitude to handle varying data scales
-    let mut coord_sum = T::zero();
-    for point in &points {
-        for &coord in point.coords() {
-            coord_sum += coord.abs();
+    // Compute scale from average edge length (translation-invariant measure)
+    let mut total_edge_length = T::zero();
+    let mut edge_count = 0;
+    for i in 0..points.len() {
+        for j in (i + 1)..points.len() {
+            let mut diff_coords = [T::zero(); D];
+            for (idx, diff) in diff_coords.iter_mut().enumerate() {
+                *diff = points[i].coords()[idx] - points[j].coords()[idx];
+            }
+            let dist = hypot(diff_coords);
+            total_edge_length += dist;
+            edge_count += 1;
         }
     }
-    let total_coords =
-        NumCast::from(points.len() * D).ok_or_else(|| QualityError::NumericalError {
-            message: "Failed to convert total coordinate count to type T".to_string(),
-        })?;
-    let scale = coord_sum / total_coords;
+    let edge_count_t = NumCast::from(edge_count).ok_or_else(|| QualityError::NumericalError {
+        message: "Failed to convert edge count to type T".to_string(),
+    })?;
+    let avg_edge_length = total_edge_length / edge_count_t;
 
-    // Use relative epsilon with a minimum floor to handle both tiny and huge simplices
+    // Use relative epsilon based on average edge length with a minimum floor
     let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
         message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
     })?;
     let relative_factor: T = NumCast::from(1e-8).ok_or_else(|| QualityError::NumericalError {
         message: "Failed to convert relative factor (1e-8) to coordinate type".to_string(),
     })?;
-    let epsilon = floor.max(scale * relative_factor);
+    let epsilon = floor.max(avg_edge_length * relative_factor);
 
     if inradius_val < epsilon {
         return Err(QualityError::DegenerateCell {
-            detail: format!("inradius={inradius_val:?}, epsilon={epsilon:?}, scale={scale:?}"),
+            detail: format!(
+                "inradius={inradius_val:?}, epsilon={epsilon:?}, avg_edge_length={avg_edge_length:?}"
+            ),
         });
     }
 
@@ -305,31 +313,40 @@ where
     })?;
 
     // Check for degenerate cell using scale-aware tolerance
-    // Compute scale from average coordinate magnitude
-    let mut coord_sum = T::zero();
-    for point in &points {
-        for &coord in point.coords() {
-            coord_sum += coord.abs();
+    // Compute average edge length (translation-invariant measure) for scale
+    let mut total_edge_length_vol = T::zero();
+    let mut edge_count_vol = 0;
+    for i in 0..points.len() {
+        for j in (i + 1)..points.len() {
+            let mut diff_coords = [T::zero(); D];
+            for (idx, diff) in diff_coords.iter_mut().enumerate() {
+                *diff = points[i].coords()[idx] - points[j].coords()[idx];
+            }
+            let dist = hypot(diff_coords);
+            total_edge_length_vol += dist;
+            edge_count_vol += 1;
         }
     }
-    let total_coords =
-        NumCast::from(points.len() * D).ok_or_else(|| QualityError::NumericalError {
-            message: "Failed to convert total coordinate count to type T".to_string(),
+    let edge_count_vol_t =
+        NumCast::from(edge_count_vol).ok_or_else(|| QualityError::NumericalError {
+            message: "Failed to convert edge count to type T".to_string(),
         })?;
-    let scale = coord_sum / total_coords;
+    let avg_edge_length = total_edge_length_vol / edge_count_vol_t;
 
-    // Use relative epsilon with a minimum floor
+    // Use relative epsilon based on average edge length with a minimum floor
     let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
         message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
     })?;
     let relative_factor: T = NumCast::from(1e-8).ok_or_else(|| QualityError::NumericalError {
         message: "Failed to convert relative factor (1e-8) to coordinate type".to_string(),
     })?;
-    let epsilon = floor.max(scale * relative_factor);
+    let epsilon = floor.max(avg_edge_length * relative_factor);
 
     if volume < epsilon {
         return Err(QualityError::DegenerateCell {
-            detail: format!("volume={volume:?}, epsilon={epsilon:?}, scale={scale:?}"),
+            detail: format!(
+                "volume={volume:?}, epsilon={epsilon:?}, avg_edge_length={avg_edge_length:?}"
+            ),
         });
     }
 

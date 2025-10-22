@@ -295,7 +295,7 @@ where
     /// - `neighbors[2]` is opposite `vertices[2]` (shares vertices 0, 1, 3)
     /// - `neighbors[3]` is opposite `vertices[3]` (shares vertices 0, 1, 2)
     ///
-    /// Note: Not serialized - neighbors are serialized and reconstructed during deserialization.
+    /// Note: Not serialized — neighbors are reconstructed during deserialization by the TDS.
     /// Access via `neighbors()` method. Writable by TDS for neighbor assignment.
     pub(crate) neighbors: Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>>,
 
@@ -409,8 +409,8 @@ where
 
                 // Phase 3A: vertices and neighbors are not serialized
                 // They will be reconstructed by TDS deserialization using:
-                // - vertices: rebuilt from vertex UUIDs stored in serialized Cell data
-                // - neighbors: rebuilt via assign_neighbors()
+                // - vertices: rebuilt by the TDS using its serialized cell→vertex mapping
+                // - neighbors: rebuilt by the TDS via assign_neighbors()
                 let vertices = SmallBuffer::new();
 
                 Ok(Cell {

@@ -38,8 +38,7 @@ uv.lock
 .claude/
 
 # macOS Instruments trace directories and files
-*.trace
-*.trace/**
+*.trace/
 Trace*.run/
 
 # Samply profiling output (if any temp files created)

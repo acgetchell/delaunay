@@ -948,10 +948,13 @@ where
     /// ```
     #[must_use]
     pub fn dim(&self) -> i32 {
-        let len = i32::try_from(self.number_of_vertices()).unwrap_or(i32::MAX);
-        // We need at least D+1 vertices to form a simplex in D dimensions
+        let n = self.number_of_vertices();
+        if n == 0 {
+            return -1;
+        }
+        let len = i32::try_from(n).unwrap_or(i32::MAX);
         let max_dim = i32::try_from(D).unwrap_or(i32::MAX);
-        min(len.saturating_sub(1), max_dim)
+        min(len - 1, max_dim)
     }
 
     /// The function `number_of_cells` returns the number of cells in the [Tds].

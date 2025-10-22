@@ -208,10 +208,9 @@ where
         T: NumCast,
     {
         // Check if vertex is inside any existing cell's circumsphere
-        if <Self as InsertionAlgorithm<T, U, V, D>>::is_vertex_interior(self, tds, vertex) {
-            InsertionStrategy::CavityBased
-        } else {
-            InsertionStrategy::HullExtension
+        match <Self as InsertionAlgorithm<T, U, V, D>>::is_vertex_interior(self, tds, vertex) {
+            Ok(true) => InsertionStrategy::CavityBased,
+            Ok(false) | Err(_) => InsertionStrategy::HullExtension, // On error, fallback to hull extension
         }
     }
 }
@@ -516,7 +515,9 @@ mod tests {
                     .vertices()
                     .iter()
                     .map(|vk| {
-                        let v = &tds.get_vertex_by_key(*vk).unwrap();
+                        let v = &tds
+                            .get_vertex_by_key(*vk)
+                            .expect("Cell should reference valid vertex key");
                         v.point().coords()
                     })
                     .collect();
@@ -846,7 +847,9 @@ mod tests {
                     .vertices()
                     .iter()
                     .map(|vk| {
-                        let v = &tds.get_vertex_by_key(*vk).unwrap();
+                        let v = &tds
+                            .get_vertex_by_key(*vk)
+                            .expect("Bad cell should reference valid vertex key");
                         v.point().coords()
                     })
                     .collect();

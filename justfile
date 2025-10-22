@@ -3,6 +3,12 @@
 # Install just: https://github.com/casey/just
 # Usage: just <command> or just --list
 
+# Internal helper: ensure uv is installed
+_ensure-uv:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
+
 # GitHub Actions workflow validation
 action-lint:
     #!/usr/bin/env bash
@@ -21,16 +27,16 @@ action-lint:
 bench:
     cargo bench --workspace
 
-bench-baseline:
+bench-baseline: _ensure-uv
     uv run benchmark-utils generate-baseline
 
-bench-compare:
+bench-compare: _ensure-uv
     uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 
 bench-compile:
     cargo bench --workspace --no-run
 
-bench-dev:
+bench-dev: _ensure-uv
     uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
 
 # Phase 4 SlotMap evaluation benchmarks
@@ -47,11 +53,11 @@ bench-phase4-quick:
     cargo test --release --test storage_backend_compatibility -- --ignored
 
 # Compare SlotMap vs DenseSlotMap storage backends
-compare-storage:
+compare-storage: _ensure-uv
     @echo "📊 Comparing SlotMap vs DenseSlotMap performance (~4-6 hours)"
     uv run compare-storage-backends --bench large_scale_performance
 
-compare-storage-large:
+compare-storage-large: _ensure-uv
     @echo "📊 Comparing storage backends at large scale (~8-12 hours, use on compute cluster)"
     BENCH_LARGE_SCALE=1 uv run compare-storage-backends --bench large_scale_performance
 
@@ -63,10 +69,10 @@ build-release:
     cargo build --release
 
 # Changelog management
-changelog:
+changelog: _ensure-uv
     uv run changelog-utils generate
 
-changelog-tag version:
+changelog-tag version: _ensure-uv
     uv run changelog-utils tag {{version}}
 
 changelog-update: changelog
@@ -192,7 +198,7 @@ markdown-lint:
     fi
 
 # Performance analysis framework
-perf-baseline tag="":
+perf-baseline tag="": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     tag_value="{{tag}}"
@@ -202,7 +208,7 @@ perf-baseline tag="":
         uv run benchmark-utils generate-baseline
     fi
 
-perf-check threshold="5.0":
+perf-check threshold="5.0": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -f "baseline-artifact/baseline_results.txt" ]; then
@@ -212,7 +218,7 @@ perf-check threshold="5.0":
         exit 1
     fi
 
-perf-compare file:
+perf-compare file: _ensure-uv
     uv run benchmark-utils compare --baseline "{{file}}"
 
 perf-help:
@@ -221,6 +227,11 @@ perf-help:
     @echo "  just perf-check [threshold] # Check for regressions (default: 5% threshold)"
     @echo "  just perf-compare <file>    # Compare with specific baseline file"
     @echo "  just bench-dev             # Development mode benchmarks (10x faster)"
+    @echo ""
+    @echo "Profiling Commands:"
+    @echo "  just profile               # Profile full triangulation_scaling benchmark"
+    @echo "  just profile-dev           # Profile 3D dev mode (faster iteration)"
+    @echo "  just profile-mem           # Profile memory allocations (with count-allocations feature)"
     @echo ""
     @echo "Benchmark System (Delaunay-specific):"
     @echo "  just bench-baseline        # Generate baseline via benchmark-utils"
@@ -239,8 +250,11 @@ profile:
 profile-dev:
     PROFILING_DEV_MODE=1 samply record cargo bench --bench profiling_suite -- "triangulation_scaling_3d/tds_new/random_3d"
 
+profile-mem:
+    samply record cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
+
 # Python code quality
-python-lint:
+python-lint: _ensure-uv
     uv run ruff check scripts/ --fix
     uv run ruff format scripts/
 

@@ -922,8 +922,16 @@ where
     ///
     /// # Returns
     ///
-    /// `true` if the vertex is interior, `false` otherwise.
-    fn is_vertex_interior(&self, tds: &Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) -> bool
+    /// `Ok(true)` if the vertex is interior, `Ok(false)` if exterior.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if TDS is corrupted (missing vertex keys referenced by cells).
+    fn is_vertex_interior(
+        &self,
+        tds: &Tds<T, U, V, D>,
+        vertex: &Vertex<T, U, D>,
+    ) -> Result<bool, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
@@ -932,29 +940,44 @@ where
         // Reserve exact capacity once; keep on stack for typical small D
         let mut vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
 
-        for (_cell_key, cell) in tds.cells() {
+        for (cell_key, cell) in tds.cells() {
             // Clear and reuse the buffer - capacity is already preallocated
             vertex_points.clear();
             // Phase 3A: Get vertices via TDS using vertices
             for &vkey in cell.vertices() {
-                if let Some(v) = tds.get_vertex_by_key(vkey) {
-                    vertex_points.push(*v.point());
-                }
+                let v = tds.get_vertex_by_key(vkey).ok_or_else(|| {
+                    InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "TDS corruption: cell {cell_key:?} references missing vertex key {vkey:?}"
+                            ),
+                        },
+                    )
+                })?;
+                vertex_points.push(*v.point());
             }
 
-            // Skip cells with incomplete vertex sets to avoid misleading predicate results
+            // Validate we got all D+1 vertices
             if vertex_points.len() != D + 1 {
-                continue;
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell {cell_key:?} has {} vertices, expected {}",
+                            vertex_points.len(),
+                            D + 1
+                        ),
+                    },
+                ));
             }
 
             if matches!(
                 insphere(&vertex_points, *vertex.point()),
                 Ok(InSphere::INSIDE)
             ) {
-                return true;
+                return Ok(true);
             }
         }
-        false
+        Ok(false)
     }
 
     /// Helper method to determine if a vertex is likely exterior to the current triangulation
@@ -1991,7 +2014,9 @@ where
             })?
             .copied()
             .collect();
-        let facet_vertex_uuids: SmallVec<[uuid::Uuid; 8]> =
+
+        // Build HashSet for O(1) UUID lookups (more efficient than SmallVec::contains for D > 2)
+        let facet_vertex_uuids: FastHashSet<uuid::Uuid> =
             facet_vertices_vec.iter().map(Vertex::uuid).collect();
 
         // Find the vertex in the adjacent cell that is NOT part of the facet
@@ -2011,7 +2036,7 @@ where
                     },
                 ));
             };
-            // Check membership using cached UUIDs instead of calling facet.vertices() repeatedly
+            // Check membership with O(1) HashSet lookup instead of O(D) SmallVec contains
             let is_in_facet = facet_vertex_uuids.contains(&cell_vertex.uuid());
             if !is_in_facet {
                 opposite_vertex = Some(cell_vertex);
@@ -5967,16 +5992,16 @@ mod tests {
         // Test is_vertex_interior method edge cases
         let interior_test_vertex = vertex!([0.25, 0.25, 0.25]);
         let is_interior = algorithm.is_vertex_interior(&tds, &interior_test_vertex);
-        println!("  ✓ Interior vertex test: {is_interior}");
+        println!("  ✓ Interior vertex test: {is_interior:?}");
 
         let exterior_test_vertex = vertex!([10.0, 10.0, 10.0]);
         let is_interior = algorithm.is_vertex_interior(&tds, &exterior_test_vertex);
-        println!("  ✓ Exterior vertex interior test: {is_interior}");
+        println!("  ✓ Exterior vertex interior test: {is_interior:?}");
 
         // Test with vertex at circumsphere boundary
         let boundary_test_vertex = vertex!([0.5, 0.5, 0.0]); // On edge/boundary
         let is_interior = algorithm.is_vertex_interior(&tds, &boundary_test_vertex);
-        println!("  ✓ Boundary vertex interior test: {is_interior}");
+        println!("  ✓ Boundary vertex interior test: {is_interior:?}");
 
         println!("✓ Visibility computation with potential facet issues handled correctly");
     }

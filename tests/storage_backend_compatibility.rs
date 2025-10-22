@@ -126,6 +126,8 @@ macro_rules! test_neighbor_access {
                     for neighbor_key in neighbors.iter().flatten() {
                         assert!(tds.get_cell(*neighbor_key).is_some(),
                                 "Invalid neighbor reference in {}D", $dim);
+                        assert_ne!(*neighbor_key, _key,
+                                   "Self-referential neighbor in {}D", $dim);
                     }
 
                     // In a D-dimensional simplex, there are at most D+1 facets (neighbors)
@@ -363,7 +365,7 @@ test_neighbor_access!(
 #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_large_scale_2d() {
     // Check environment gate (optional, for extra safety)
-    if std::env::var("RUN_LARGE_SCALE_TESTS").is_err() {
+    if std::env::var("RUN_LARGE_SCALE_TESTS").ok().as_deref() != Some("1") {
         eprintln!("⚠️  Large-scale test skipped (set RUN_LARGE_SCALE_TESTS=1 to enable)");
         eprintln!("   Expected: ~900 vertices, <1s runtime, ~10MB memory");
         return;
@@ -389,7 +391,7 @@ fn test_storage_backend_large_scale_2d() {
 #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_large_scale_3d() {
     // Check environment gate (optional, for extra safety)
-    if std::env::var("RUN_LARGE_SCALE_TESTS").is_err() {
+    if std::env::var("RUN_LARGE_SCALE_TESTS").ok().as_deref() != Some("1") {
         eprintln!("⚠️  Large-scale test skipped (set RUN_LARGE_SCALE_TESTS=1 to enable)");
         eprintln!("   Expected: ~900 vertices, ~2s runtime, ~50MB memory");
         return;
@@ -421,7 +423,7 @@ fn test_storage_backend_large_scale_3d() {
 #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_large_scale_4d() {
     // Check environment gate (optional, for extra safety)
-    if std::env::var("RUN_LARGE_SCALE_TESTS").is_err() {
+    if std::env::var("RUN_LARGE_SCALE_TESTS").ok().as_deref() != Some("1") {
         eprintln!("⚠️  Large-scale test skipped (set RUN_LARGE_SCALE_TESTS=1 to enable)");
         eprintln!("   Expected: ~500 vertices, ~5s runtime, ~100MB memory");
         return;
@@ -454,7 +456,7 @@ fn test_storage_backend_large_scale_4d() {
 #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_storage_backend_large_scale_5d() {
     // Check environment gate (optional, for extra safety)
-    if std::env::var("RUN_LARGE_SCALE_TESTS").is_err() {
+    if std::env::var("RUN_LARGE_SCALE_TESTS").ok().as_deref() != Some("1") {
         eprintln!("⚠️  Large-scale test skipped (set RUN_LARGE_SCALE_TESTS=1 to enable)");
         eprintln!("   Expected: ~256 vertices, ~10s runtime, ~150MB memory");
         return;

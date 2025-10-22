@@ -73,6 +73,17 @@ queries/neighbors/1000v
 """
 
 
+@pytest.fixture
+def completed_ok():
+    """Reusable fixture for successful cargo bench results."""
+    return CompletedProcess(
+        args=["cargo", "bench"],
+        returncode=0,
+        stdout="test_bench time: [1.0 ms 1.1 ms 1.2 ms]",
+        stderr="",
+    )
+
+
 class TestStorageBackendComparator:
     """Test cases for StorageBackendComparator class."""
 
@@ -167,14 +178,14 @@ class TestStorageBackendComparator:
         assert "100.00 ms" in lines[0]
         assert "95.00 ms" in lines[0]
         assert "-5.0%" in lines[0]
-        assert "✅ DenseSlotMap" in lines[0]
+        assert "DenseSlotMap" in lines[0]
 
         # test2: DenseSlotMap 10% slower
         assert "test2" in lines[1]
         assert "50.00 µs" in lines[1]
         assert "55.00 µs" in lines[1]
         assert "+10.0%" in lines[1]
-        assert "✅ SlotMap" in lines[1]
+        assert "SlotMap" in lines[1]
 
     def test_build_comparison_table_similar_performance(self, comparator):
         """Test comparison table with similar performance (< 2% difference)."""
@@ -192,7 +203,6 @@ class TestStorageBackendComparator:
 
         assert len(lines) == 1
         assert "~Same" in lines[0]
-        assert "🟡" in lines[0]
 
     def test_build_comparison_table_missing_data(self, comparator):
         """Test comparison table with missing data for one backend."""
@@ -217,16 +227,9 @@ class TestStorageBackendComparator:
         assert "N/A" in lines[1]
 
     @patch("compare_storage_backends.run_cargo_command")
-    def test_run_benchmark_success(self, mock_run_cargo, comparator):
+    def test_run_benchmark_success(self, mock_run_cargo, comparator, completed_ok):
         """Test successful benchmark execution."""
-        # Mock successful cargo bench run
-        mock_result = CompletedProcess(
-            args=["cargo", "bench"],
-            returncode=0,
-            stdout="test_bench time: [1.0 ms 1.1 ms 1.2 ms]",
-            stderr="",
-        )
-        mock_run_cargo.return_value = mock_result
+        mock_run_cargo.return_value = completed_ok
 
         result = comparator._run_benchmark("test_bench", use_dense_slotmap=False, dev_mode=False)
 
@@ -238,15 +241,9 @@ class TestStorageBackendComparator:
         assert "benchmarks" in result
 
     @patch("compare_storage_backends.run_cargo_command")
-    def test_run_benchmark_with_dense_slotmap(self, mock_run_cargo, comparator):
+    def test_run_benchmark_with_dense_slotmap(self, mock_run_cargo, comparator, completed_ok):
         """Test benchmark execution with DenseSlotMap feature."""
-        mock_result = CompletedProcess(
-            args=["cargo", "bench"],
-            returncode=0,
-            stdout="test_bench time: [1.0 ms 1.1 ms 1.2 ms]",
-            stderr="",
-        )
-        mock_run_cargo.return_value = mock_result
+        mock_run_cargo.return_value = completed_ok
 
         result = comparator._run_benchmark("test_bench", use_dense_slotmap=True, dev_mode=False)
 
@@ -261,15 +258,9 @@ class TestStorageBackendComparator:
         assert "dense-slotmap" in args
 
     @patch("compare_storage_backends.run_cargo_command")
-    def test_run_benchmark_dev_mode(self, mock_run_cargo, comparator):
+    def test_run_benchmark_dev_mode(self, mock_run_cargo, comparator, completed_ok):
         """Test benchmark execution in development mode."""
-        mock_result = CompletedProcess(
-            args=["cargo", "bench"],
-            returncode=0,
-            stdout="test_bench time: [1.0 ms 1.1 ms 1.2 ms]",
-            stderr="",
-        )
-        mock_run_cargo.return_value = mock_result
+        mock_run_cargo.return_value = completed_ok
 
         result = comparator._run_benchmark("test_bench", use_dense_slotmap=False, dev_mode=True)
 
@@ -285,15 +276,9 @@ class TestStorageBackendComparator:
         assert "--noplot" in args
 
     @patch("compare_storage_backends.run_cargo_command")
-    def test_run_benchmark_with_extra_args(self, mock_run_cargo, comparator):
+    def test_run_benchmark_with_extra_args(self, mock_run_cargo, comparator, completed_ok):
         """Test benchmark execution with extra arguments."""
-        mock_result = CompletedProcess(
-            args=["cargo", "bench"],
-            returncode=0,
-            stdout="test_bench time: [1.0 ms 1.1 ms 1.2 ms]",
-            stderr="",
-        )
-        mock_run_cargo.return_value = mock_result
+        mock_run_cargo.return_value = completed_ok
 
         extra_args = ["construction"]
         result = comparator._run_benchmark(

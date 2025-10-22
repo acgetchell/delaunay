@@ -90,10 +90,10 @@ performance improvement.
 
 **Tasks:**
 
-- [ ] Scan workflows: `rg -n "bench" .github/workflows/benchmarks.yml .github/workflows/profiling-benchmarks.yml .github/workflows/generate-baseline.yml`
-- [ ] Scan Python scripts: `rg -n "(cargo bench|criterion|bench.*filter|--bench)" scripts/`
-- [ ] Scan justfile: `rg -n "(cargo bench|criterion|bench.*filter|--bench)" justfile`
-- [ ] Review `scripts/benchmark_utils.py` for hardcoded bench names, filters, baselines
+- [x] Scan workflows: `rg -n "bench" .github/workflows/benchmarks.yml .github/workflows/profiling-benchmarks.yml .github/workflows/generate-baseline.yml`
+- [x] Scan Python scripts: `rg -n "(cargo bench|criterion|bench.*filter|--bench)" scripts/`
+- [x] Scan justfile: `rg -n "(cargo bench|criterion|bench.*filter|--bench)" justfile`
+- [x] Review `scripts/benchmark_utils.py` for hardcoded bench names, filters, baselines
 
 **Deliverable:** `benches/USAGE_MAP.md` (temporary) - matrix of: benchmark file ↔ workflow job(s) ↔ script command(s) ↔ just targets
 

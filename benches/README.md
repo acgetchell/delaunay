@@ -12,13 +12,13 @@ This directory contains performance benchmarks for the delaunay library, organiz
 
 | Benchmark | Purpose | Scale | Runtime | Used By |
 |-----------|---------|-------|---------|----------|
-| `ci_performance_suite.rs` | **CI regression detection** | 10-50 pts | ~5-10 min | CI workflows, baseline generation |
-| `large_scale_performance.rs` | **Phase 4 SlotMap evaluation** | 1K-10K vertices | ~10-30 min | Manual (should be Phase 4 primary) |
-| `profiling_suite.rs` | Comprehensive profiling | 10³-10⁶ pts | 1-2 hours | Monthly profiling, manual |
+| `ci_performance_suite.rs` | **CI regression detection** | 10–50 vertices | ~5-10 min | CI workflows, baseline generation |
+| `large_scale_performance.rs` | **Phase 4 SlotMap evaluation** | 1k–10k vertices | ~10-30 min | Manual |
+| `profiling_suite.rs` | Comprehensive profiling | 10³–10⁶ vertices | 1-2 hours | Monthly profiling, manual |
 | `circumsphere_containment.rs` | Algorithm comparison | Random queries | ~5 min | Performance summary generation |
-| `assign_neighbors_performance.rs` | Neighbor assignment | 10-50 pts | ~5 min | Manual |
+| `assign_neighbors_performance.rs` | Neighbor assignment | 10–50 vertices | ~5 min | Manual |
 | `microbenchmarks.rs` | Core operations | Various | ~10 min | Manual |
-| ~~`triangulation_creation.rs`~~ | ~~Simple construction~~ | ~~1000 pts~~ | ~~N/A~~ | **DEPRECATED** |
+| ~~`triangulation_creation.rs`~~ | ~~Simple construction~~ | ~~1000 vertices~~ | ~~N/A~~ | **DEPRECATED** |
 
 ### Benchmark Selection Guide
 
@@ -27,7 +27,7 @@ This directory contains performance benchmarks for the delaunay library, organiz
 | Quick CI regression check | `ci_performance_suite.rs` | `just bench` or `cargo bench --bench ci_performance_suite` |
 | Phase 4 SlotMap evaluation | `large_scale_performance.rs` | `cargo bench --bench large_scale_performance` |
 | Deep profiling (1-2 hours) | `profiling_suite.rs` | `cargo bench --bench profiling_suite` |
-| Memory analysis | `profiling_suite.rs` (memory groups) | `cargo bench --bench profiling_suite -- memory` |
+| Memory analysis | `profiling_suite.rs` (memory groups) | `cargo bench --bench profiling_suite -- memory_profiling` |
 | Algorithm comparison | `circumsphere_containment.rs` | `cargo bench --bench circumsphere_containment` |
 | Neighbor assignment | `assign_neighbors_performance.rs` | `cargo bench --bench assign_neighbors_performance` |
 
@@ -121,7 +121,7 @@ The CI Performance Suite is the primary benchmarking suite used for automated pe
 ### Profiling Suite (comprehensive)
 
 ```bash
-# Run comprehensive profiling suite (1-2 hours, 10³-10⁶ points)
+# Run comprehensive profiling suite (1-2 hours, 10³-10⁶ vertices)
 cargo bench --bench profiling_suite --features count-allocations
 
 # Development mode (faster, reduced scale)
@@ -139,7 +139,7 @@ cargo bench --bench profiling_suite --features count-allocations -- algorithmic_
 
 The **Profiling Suite** provides comprehensive performance analysis for optimization work:
 
-- **Large-scale triangulation performance** (10³ to 10⁶ points across multiple decades)
+- **Large-scale triangulation performance** (10³ to 10⁶ vertices across multiple decades)
 - **Complete dimensional coverage** (2D through 5D triangulation scaling)
 - **Multiple point distributions** (random, grid, Poisson disk)
 - **Memory allocation tracking** with 95th percentile statistics (requires `--features count-allocations`)
@@ -157,7 +157,7 @@ The **Profiling Suite** provides comprehensive performance analysis for optimiza
 **⚠️ Performance & Hardware Considerations**:
 
 - **Feature Overhead**: The `count-allocations` feature can materially slow benchmark runs (20-50% overhead) and increase memory usage for allocation tracking
-- **Hardware Requirements**: Recommend ≥16GB RAM and ≥4 CPU cores to prevent timeouts during large-scale runs (10⁶ points)
+- **Hardware Requirements**: Recommend ≥16GB RAM and ≥4 CPU cores to prevent timeouts during large-scale runs (10⁶ vertices)
 - **CI/Local Timeouts**: Without adequate resources, runs may exceed typical CI timeouts (30-60 minutes) or cause local system slowdowns
 - **Development Mode**: Use `PROFILING_DEV_MODE=1` for faster iteration during optimization work
 - **Flexible Timing**: Use `BENCH_MEASUREMENT_TIME=N` to set measurement time in seconds for all benchmark groups

@@ -124,7 +124,7 @@ jobs:
 
           # Run profiling (timing-focused)
           echo "Starting comprehensive profiling benchmarks..."
-          
+
           # Determine if memory profiling is requested via filter
           # If filter contains "memory", enable count-allocations feature and set flag
           MEMORY_FEATURES=""
@@ -132,7 +132,7 @@ jobs:
             MEMORY_FEATURES="--features count-allocations"
             echo "MEMORY_BENCHMARKS_RUN=true" >> "$GITHUB_ENV"
           fi
-          
+
           # shellcheck disable=SC2086
           cargo bench --bench profiling_suite $MEMORY_FEATURES ${BENCH_FILTER:-} \
             2>&1 | tee profiling-results/profiling_output.log
@@ -191,7 +191,7 @@ jobs:
           - \`criterion/\`: HTML reports and detailed timing data
 
           EOF
-          
+
           # Publish summary to job summary UI for quick visibility
           cat profiling-results/profiling_summary.md >> "$GITHUB_STEP_SUMMARY"
 
