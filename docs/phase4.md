@@ -14,8 +14,8 @@ Phase 4 SlotMap evaluation** and measures:
 - ✅ Validation stress-testing (topology checks)
 - ✅ 1K-10K scale appropriate for SlotMap comparisons
 
-**Phase 4 Goal:** Abstract SlotMap usage behind traits to enable swapping implementations
-(SlotMap → DenseSlotMap → HopSlotMap) without code changes, targeting 10-15% iteration
+**Phase 4 Goal:** Enable swapping SlotMap implementations via feature flags
+(SlotMap → DenseSlotMap → HopSlotMap) for benchmarking, targeting 10-15% iteration
 performance improvement.
 
 ## Current Benchmark Suite Issues
@@ -56,7 +56,7 @@ performance improvement.
 **Notes:**
 
 - Phase 4 targets 10-15% iteration improvement with DenseSlotMap
-- SlotMap abstraction will be behind `StableKeyCollection` trait
+- SlotMap implementations selected via feature flags (no runtime abstraction)
 - Need to maintain baseline compatibility across changes
 
 ---
@@ -268,10 +268,16 @@ fn get_memory_usage() -> u64 {
 - [ ] **Support SlotMap vs alternative comparison:**
 
   ```rust
-  // Behind feature flags to compare backends:
-  // - default: SlotMap
-  // - dense-slotmap: DenseSlotMap
-  // - hop-slotmap: HopSlotMap
+  // Use feature flags + type aliases for zero-cost abstraction:
+  #[cfg(feature = "dense-slotmap")]
+  type StorageBackend<K, V> = DenseSlotMap<K, V>;
+  
+  #[cfg(not(feature = "dense-slotmap"))]
+  type StorageBackend<K, V> = SlotMap<K, V>;
+  
+  // Benchmark with:
+  // cargo bench --bench large_scale_performance
+  // cargo bench --bench large_scale_performance --features dense-slotmap
   ```
 
 **Key Metrics for Phase 4:**

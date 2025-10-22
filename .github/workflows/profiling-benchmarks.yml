@@ -3,6 +3,7 @@ name: Comprehensive Profiling Benchmarks
 on:
 
 # Manual trigger for on-demand profiling runs
+# Allows developers to run full production mode or quick development mode with optional filters
 
   workflow_dispatch:
     inputs:
@@ -21,12 +22,15 @@ on:
         type: string
 
 # Monthly scheduled run for trend monitoring
+# Uses production mode for comprehensive long-term performance tracking
 
   schedule:
     # First Sunday of each month at 2 AM UTC
     - cron: '0 2 1-7 * 0'
 
 # Trigger on release tags for baseline profiling data
+# Uses development mode to keep runtime reasonable (~1-2 hours) while still capturing performance snapshots
+# Full production profiling can be triggered manually if needed for specific releases
 
   push:
     tags:
@@ -73,8 +77,15 @@ jobs:
       - name: Set profiling mode
         run: |
           INPUT_MODE="${{ github.event.inputs.mode }}"
-          # Use development mode for tag pushes to keep runtime reasonable (~1-2 hours)
-          # Full production mode only for manual dispatch or scheduled runs
+          # Profiling mode determination:
+          # 1. Tag pushes (github.event_name == "push"): Always use development mode
+          #    - Avoids CI timeout issues on release tag creation
+          #    - Provides quick performance snapshot (~1-2 hours runtime)
+          #    - Full profiling can be triggered manually if needed
+          # 2. Manual dispatch with mode="development": Use development mode
+          # 3. Scheduled runs and manual dispatch with mode="production": Use production mode
+          #    - Full scale testing (10³-10⁶ points)
+          #    - May take 4-6 hours
           if [[ "$INPUT_MODE" == "development" ]] || [[ "${{ github.event_name }}" == "push" ]]; then
             echo "PROFILING_DEV_MODE=1" >> "$GITHUB_ENV"
             echo "Running in development mode (reduced scale)"
@@ -114,7 +125,8 @@ jobs:
           # Run profiling (timing-focused)
           echo "Starting comprehensive profiling benchmarks..."
           
-          # Determine if memory profiling is requested
+          # Determine if memory profiling is requested via filter
+          # If filter contains "memory", enable count-allocations feature and set flag
           MEMORY_FEATURES=""
           if [[ "$BENCH_FILTER" == *"memory"* ]]; then
             MEMORY_FEATURES="--features count-allocations"
@@ -125,8 +137,11 @@ jobs:
           cargo bench --bench profiling_suite $MEMORY_FEATURES ${BENCH_FILTER:-} \
             2>&1 | tee profiling-results/profiling_output.log
 
+      # Run dedicated memory profiling if not already executed above
+      # Skip if: MEMORY_BENCHMARKS_RUN=true (memory benchmarks already ran with filter)
+      # This prevents redundant memory profiling runs
       - name: Run profiling with memory allocation tracking (if not already done)
-        if: ${{ (github.event_name != 'workflow_dispatch' || !contains(github.event.inputs.benchmark_filter, 'memory')) && env.MEMORY_BENCHMARKS_RUN != 'true' }}
+        if: env.MEMORY_BENCHMARKS_RUN != 'true'
         run: |
           echo "Running memory-specific profiling with allocation tracking..."
           cargo bench --bench profiling_suite --features count-allocations -- memory_profiling \

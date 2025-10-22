@@ -237,7 +237,7 @@ profile:
     samply record cargo bench --bench profiling_suite -- triangulation_scaling
 
 profile-dev:
-    PROFILING_DEV_MODE=1 samply record cargo bench --bench profiling_suite -- triangulation_scaling
+    PROFILING_DEV_MODE=1 samply record cargo bench --bench profiling_suite -- "triangulation_scaling_3d/tds_new/random_3d"
 
 # Python code quality
 python-lint:

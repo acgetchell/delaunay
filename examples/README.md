@@ -214,7 +214,7 @@ cargo run --release --example memory_analysis --features count-allocations
 
 For comprehensive memory scaling analysis, see:
 
-- `cargo bench --bench memory_scaling --features count-allocations`  
+- `cargo bench --bench profiling_suite --features count-allocations -- memory_profiling`  
 - `cargo bench --bench triangulation_vs_hull_memory --features count-allocations`
 
 **Run with:** `cargo run --release --example memory_analysis`

@@ -273,7 +273,7 @@ where
 
         // If standard method fails, try with robust predicates as fallback
         // This adds tolerance and multiple predicate strategies for degenerate cases
-        let bad_cells = self.find_bad_cells_with_robust_fallback(tds, vertex);
+        let bad_cells = self.find_bad_cells_with_robust_fallback(tds, vertex)?;
 
         if bad_cells.is_empty() {
             return result; // No bad cells with robust method either, return original error
@@ -438,11 +438,15 @@ where
     ///
     /// This approach integrates the trait's `find_bad_cells` method with the robust predicates
     /// to provide a more reliable cell detection method, especially for degenerate cases.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if TDS corruption is detected (missing vertex keys).
     fn find_bad_cells_with_robust_fallback(
         &mut self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Vec<CellKey>
+    ) -> Result<Vec<CellKey>, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
@@ -470,18 +474,20 @@ where
             }
             Err(crate::core::traits::insertion_algorithm::BadCellsError::NoCells) => {
                 // No cells - return empty
-                return Vec::new();
+                return Ok(Vec::new());
             }
             Err(crate::core::traits::insertion_algorithm::BadCellsError::TdsCorruption {
                 cell_key,
                 vertex_key,
             }) => {
-                // TDS corruption detected - this is a fatal error, propagate it
-                // by returning empty vec and letting caller handle the corruption
-                eprintln!(
-                    "TDS corruption: Cell {cell_key:?} references non-existent vertex {vertex_key:?}"
-                );
-                return Vec::new();
+                // TDS corruption detected - this is a fatal error that must be propagated
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "TDS corruption: Cell {cell_key:?} references non-existent vertex {vertex_key:?}"
+                        ),
+                    },
+                ));
             }
         };
 
@@ -500,7 +506,7 @@ where
             }
         }
 
-        bad_cells
+        Ok(bad_cells)
     }
 
     /// Find cavity boundary facets using lightweight handles with robust fallback.
@@ -3599,7 +3605,9 @@ mod tests {
 
         // Test with vertex that should be inside circumsphere
         let interior_vertex = vertex!([0.25, 0.25, 0.25]);
-        let bad_cells = algorithm.find_bad_cells_with_robust_fallback(&tds, &interior_vertex);
+        let bad_cells = algorithm
+            .find_bad_cells_with_robust_fallback(&tds, &interior_vertex)
+            .expect("Should find bad cells for interior vertex");
 
         println!("Found {} bad cells for interior vertex", bad_cells.len());
         // Should find at least the containing cell as "bad"
@@ -3607,8 +3615,9 @@ mod tests {
 
         // Test with vertex outside all circumspheres
         let exterior_vertex = vertex!([10.0, 10.0, 10.0]);
-        let bad_cells_exterior =
-            algorithm.find_bad_cells_with_robust_fallback(&tds, &exterior_vertex);
+        let bad_cells_exterior = algorithm
+            .find_bad_cells_with_robust_fallback(&tds, &exterior_vertex)
+            .expect("Should find bad cells for exterior vertex");
 
         println!(
             "Found {} bad cells for exterior vertex",

@@ -36,3 +36,11 @@ uv.lock
 
 # Claude AI configuration (user-specific settings)
 .claude/
+
+# macOS Instruments trace directories and files
+*.trace
+*.trace/**
+Trace*.run/
+
+# Samply profiling output (if any temp files created)
+*.samply

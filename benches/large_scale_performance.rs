@@ -124,10 +124,7 @@ fn get_memory_usage() -> u64 {
 }
 
 /// Measure memory delta during triangulation construction
-fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) -> MemoryInfo
-where
-    [f64; D]: Copy + Sized,
-{
+fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) -> MemoryInfo {
     let mem_before = get_memory_usage();
 
     // Generate points and vertices (setup overhead)
@@ -166,10 +163,7 @@ where
 // =============================================================================
 
 /// Benchmark: Triangulation construction time
-fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
-where
-    [f64; D]: Copy + Sized,
-{
+fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
     let bench_name = format!("construction/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
     group.throughput(Throughput::Elements(n_points as u64));
@@ -206,10 +200,7 @@ where
 // =============================================================================
 
 /// Benchmark: Memory usage measurement (informational, not timing-focused)
-fn bench_memory_usage<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
-where
-    [f64; D]: Copy + Sized,
-{
+fn bench_memory_usage<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
     let bench_name = format!("memory/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
 
@@ -238,10 +229,7 @@ where
 // =============================================================================
 
 /// Benchmark: Topology validation time
-fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
-where
-    [f64; D]: Copy + Sized,
-{
+fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
     let bench_name = format!("validation/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
 
@@ -287,10 +275,11 @@ where
 // =============================================================================
 
 /// Benchmark: Neighbor query performance (critical for `SlotMap` evaluation)
-fn bench_neighbor_queries<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
-where
-    [f64; D]: Copy + Sized,
-{
+fn bench_neighbor_queries<const D: usize>(
+    c: &mut Criterion,
+    dimension_name: &str,
+    n_points: usize,
+) {
     let bench_name = format!("queries/neighbors/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
 
@@ -327,10 +316,11 @@ where
 }
 
 /// Benchmark: Vertex iteration performance (tests `SlotMap` iteration efficiency)
-fn bench_vertex_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
-where
-    [f64; D]: Copy + Sized,
-{
+fn bench_vertex_iteration<const D: usize>(
+    c: &mut Criterion,
+    dimension_name: &str,
+    n_points: usize,
+) {
     let bench_name = format!("queries/vertices/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
     group.throughput(Throughput::Elements(n_points as u64));
@@ -364,10 +354,7 @@ where
 }
 
 /// Benchmark: Cell iteration performance (tests `SlotMap` cell iteration)
-fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
-where
-    [f64; D]: Copy + Sized,
-{
+fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
     let bench_name = format!("queries/cells/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
 
@@ -430,8 +417,13 @@ fn bench_3d_suite(c: &mut Criterion) {
 
 fn bench_4d_suite(c: &mut Criterion) {
     // 4D scaling: Default uses smaller sizes for reasonable runtime (~30-60 min total)
-    // Set BENCH_LARGE_SCALE=1 for 10K points (requires compute cluster, ~2-4 hours)
-    let point_counts: &[usize] = if std::env::var_os("BENCH_LARGE_SCALE").is_some() {
+    // Set BENCH_LARGE_SCALE=1 (or any truthy value) for 10K points (requires compute cluster, ~2-4 hours)
+    // Note: BENCH_LARGE_SCALE=0 or BENCH_LARGE_SCALE=false will disable large scale mode
+    let large_scale_enabled = std::env::var("BENCH_LARGE_SCALE")
+        .ok()
+        .is_some_and(|v| !v.is_empty() && v != "0" && v != "false");
+
+    let point_counts: &[usize] = if large_scale_enabled {
         &[1000, 5000, 10_000] // Full scale for cluster runs
     } else {
         &[1000, 3000] // Reduced scale for local development (<2 hours total)

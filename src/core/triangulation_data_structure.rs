@@ -693,7 +693,19 @@ where
                     }
                 }
                 let facet_key = facet_key_from_vertices(&facet_vertices);
-                facet_map.entry(facet_key).or_default().push((cell_key, i));
+                let facet_entry = facet_map.entry(facet_key).or_default();
+                // Detect degenerate case early: more than 2 cells sharing a facet
+                if facet_entry.len() >= 2 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Facet with key {} already shared by {} cells; cannot add cell {} (would violate 2-manifold property)",
+                            facet_key,
+                            facet_entry.len(),
+                            cell.uuid()
+                        ),
+                    });
+                }
+                facet_entry.push((cell_key, i));
             }
         }
 
@@ -2484,6 +2496,9 @@ where
             self.assign_incident_cells()
                 .map_err(TriangulationConstructionError::ValidationError)?;
             // Topology already changed in insert_cell_with_mapping; no need to bump again
+
+            // Update construction state now that we have a valid D-simplex
+            self.construction_state = TriangulationConstructionState::Constructed;
             return Ok(());
         }
 
@@ -4312,12 +4327,10 @@ where
                     generation: Arc::new(AtomicU64::new(0)),
                 };
 
-                // Rebuild incident_cell CellKey references
-                // This is safe to ignore errors since we're deserializing a validated triangulation
-                let _ = tds.assign_incident_cells();
-
-                // Rebuild neighbor relationships
-                let _ = tds.assign_neighbors();
+                // Rebuild topology; fail fast on any inconsistency.
+                // Order: neighbors first, then incident cells (consistent with other call sites).
+                tds.assign_neighbors().map_err(de::Error::custom)?;
+                tds.assign_incident_cells().map_err(de::Error::custom)?;
 
                 Ok(tds)
             }
