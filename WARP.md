@@ -8,6 +8,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 - **DO NOT** issue `git commit` or `git push` commands
 - **DO NOT** use `git push --force` or modify tags (`git tag`, `git push --tags`)
+- **ALWAYS** use `git --no-pager` when reviewing changes (e.g., `git --no-pager diff`, `git --no-pager log`)
 - Let the user handle all git operations manually
 - You may suggest git commands for the user to run, but never execute them
 - This ensures the user maintains full control over version control operations

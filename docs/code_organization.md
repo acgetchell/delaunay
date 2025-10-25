@@ -67,23 +67,22 @@ delaunay/
 │   └── lib.rs                                    # Main library file with module declarations and prelude
 ├── examples/                                     # Usage examples and demonstrations
 │   ├── README.md                                 # Examples documentation
-│   ├── convex_hull_3d_50_points.rs               # 3D convex hull extraction and analysis example
+│   ├── convex_hull_3d_100_points.rs              # 3D convex hull extraction and analysis example
 │   ├── into_from_conversions.rs                  # Into/From trait conversion examples
 │   ├── memory_analysis.rs                        # Memory usage analysis example with allocation counting
 │   ├── point_comparison_and_hashing.rs           # Point operations examples
-│   ├── triangulation_3d_50_points.rs             # 3D triangulation example
+│   ├── triangulation_3d_100_points.rs            # 3D triangulation example
 │   └── zero_allocation_iterator_demo.rs          # Zero-allocation iterator performance demonstration
 ├── benches/                                      # Performance benchmarks
 │   ├── README.md                                 # Benchmarking guide and usage instructions
 │   ├── PERFORMANCE_RESULTS.md                    # Auto-generated performance results and analysis
-│   ├── assign_neighbors_performance.rs           # Neighbor assignment benchmarks
+│   ├── assign_neighbors_performance.rs           # Neighbor assignment comprehensive benchmarks
 │   ├── ci_performance_suite.rs                   # CI-optimized performance suite (2D-5D regression testing)
 │   ├── circumsphere_containment.rs               # Circumsphere predicate benchmarks
-│   ├── memory_scaling.rs                         # Memory usage scaling benchmarks
-│   ├── microbenchmarks.rs                        # Fine-grained performance tests
-│   ├── profiling_suite.rs                        # Comprehensive profiling suite with allocation counting support
-│   ├── triangulation_creation.rs                 # Triangulation creation benchmarks
-│   └── triangulation_vs_hull_memory.rs           # Memory comparison benchmarks
+│   ├── large_scale_performance.rs                # **Phase 4 primary**: Large-scale SlotMap evaluation (2D-5D)
+│   ├── microbenchmarks.rs                        # Core operation benchmarks (Bowyer-Watson, validation, incremental)
+│   ├── profiling_suite.rs                        # Comprehensive profiling suite with memory tracking
+│   └── triangulation_creation.rs                 # **DEPRECATED**: Use ci_performance_suite.rs or large_scale_performance.rs
 ├── tests/                                        # Integration tests
 │   ├── README.md                                 # Integration tests guide and usage instructions
 │   ├── COVERAGE.md                               # Test coverage tracking and analysis
@@ -112,6 +111,7 @@ delaunay/
 │   ├── code_organization.md                      # Code organization patterns (this file)
 │   ├── numerical_robustness_guide.md             # Numerical robustness and stability guide
 │   ├── OPTIMIZATION_ROADMAP.md                   # Comprehensive 4-phase optimization strategy (primary reference)
+│   ├── phase4.md                                 # Phase 4 benchmark consolidation plan and progress
 │   ├── property_testing_summary.md               # Property-based testing guide
 │   ├── README.md                                 # Documentation index and navigation guide
 │   ├── RELEASING.md                              # Release process documentation
@@ -332,7 +332,9 @@ development tooling and clear architectural guidance).
 Version 0.4.4 includes comprehensive memory profiling capabilities:
 
 - **Allocation Tracking**: Optional `count-allocations` feature using the `allocation-counter` crate
-- **Memory Benchmarks**: Dedicated benchmarks for memory scaling analysis (`memory_scaling.rs`, `triangulation_vs_hull_memory.rs`)
+- **Memory Benchmarks**: Dedicated benchmarks for memory scaling analysis (`profiling_suite.rs`) - comprehensive profiling suite
+  with typical runtime of 1-2 hours (10³-10⁶ points). **Recommended for manual profiling runs** rather than CI due to
+  long execution time. Use `PROFILING_DEV_MODE=1` for faster iteration (10x speedup).
 - **Profiling Examples**: `memory_analysis.rs` demonstrates allocation counting across different operations
 - **Integration Testing**: `allocation_api.rs` provides utilities for testing memory usage in various scenarios
 - **CI Integration**: Automated profiling benchmarks with detailed allocation reports

@@ -107,7 +107,6 @@ use crate::core::{
 use crate::geometry::{algorithms::convex_hull::ConvexHull, traits::coordinate::CoordinateScalar};
 use arc_swap::ArcSwapOption;
 use num_traits::NumCast;
-use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
@@ -126,7 +125,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Unified statistics tracking
     stats: InsertionStatistics,
@@ -157,10 +155,9 @@ pub type IncrementalBoyerWatson<T, U, V, const D: usize> = IncrementalBowyerWats
 impl<T, U, V, const D: usize> IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
+    U: DataType,
+    V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Creates a new incremental Bowyer-Watson algorithm instance
     ///
@@ -202,6 +199,12 @@ where
     /// # Returns
     ///
     /// The recommended insertion strategy.
+    ///
+    /// # Implementation Note
+    ///
+    /// If interior testing fails (geometry error), falls back to hull extension strategy
+    /// rather than masking the error. This ensures that geometric failures are visible
+    /// through the insertion attempt rather than being silently ignored.
     fn determine_insertion_strategy(
         &self,
         tds: &Tds<T, U, V, D>,
@@ -211,10 +214,15 @@ where
         T: NumCast,
     {
         // Check if vertex is inside any existing cell's circumsphere
-        if <Self as InsertionAlgorithm<T, U, V, D>>::is_vertex_interior(self, tds, vertex) {
-            InsertionStrategy::CavityBased
-        } else {
-            InsertionStrategy::HullExtension
+        match <Self as InsertionAlgorithm<T, U, V, D>>::is_vertex_interior(self, tds, vertex) {
+            Ok(true) => InsertionStrategy::CavityBased,
+            Ok(false) => InsertionStrategy::HullExtension,
+            Err(_) => {
+                // On geometry error, use Fallback strategy which tries multiple approaches
+                // This prevents silently treating errors as "exterior" and gives fallback
+                // mechanisms a chance to handle degenerate cases
+                InsertionStrategy::Fallback
+            }
         }
     }
 }
@@ -222,10 +230,9 @@ where
 impl<T, U, V, const D: usize> Default for IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
+    U: DataType,
+    V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn default() -> Self {
         Self::new()
@@ -235,10 +242,9 @@ where
 impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
+    U: DataType,
+    V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
@@ -254,10 +260,9 @@ where
 impl<T, U, V, const D: usize> InsertionAlgorithm<T, U, V, D> for IncrementalBowyerWatson<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
+    U: DataType,
+    V: DataType,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Insert a single vertex into the triangulation
     fn insert_vertex(
@@ -517,12 +522,14 @@ mod tests {
         #[cfg(debug_assertions)]
         {
             eprintln!("\n=== CELL ANALYSIS ===");
-            for (i, cell) in tds.cells().values().enumerate() {
+            for (i, cell) in tds.cells().map(|(_, cell)| cell).enumerate() {
                 let vertex_coords: Vec<&[f64; 3]> = cell
                     .vertices()
                     .iter()
                     .map(|vk| {
-                        let v = &tds.vertices()[*vk];
+                        let v = &tds
+                            .get_vertex_by_key(*vk)
+                            .expect("Cell should reference valid vertex key");
                         v.point().coords()
                     })
                     .collect();
@@ -557,7 +564,7 @@ mod tests {
                         invalid_sharing += 1;
                         eprintln!("❌ INVALID: Facet {facet_key} shared by {cell_count} cells");
                         for facet_handle in cells {
-                            if let Some(cell) = tds.cells().get(facet_handle.cell_key()) {
+                            if let Some(cell) = tds.get_cell(facet_handle.cell_key()) {
                                 eprintln!(
                                     "   Cell {:?} at facet index {}",
                                     cell.uuid(),
@@ -847,12 +854,14 @@ mod tests {
             };
         println!("Bad cells found: {} cells", bad_cells.len());
         for &cell_key in &bad_cells {
-            if let Some(cell) = tds.cells().get(cell_key) {
+            if let Some(cell) = tds.get_cell(cell_key) {
                 let coords: Vec<&[f64; 3]> = cell
                     .vertices()
                     .iter()
                     .map(|vk| {
-                        let v = &tds.vertices()[*vk];
+                        let v = &tds
+                            .get_vertex_by_key(*vk)
+                            .expect("Bad cell should reference valid vertex key");
                         v.point().coords()
                     })
                     .collect();

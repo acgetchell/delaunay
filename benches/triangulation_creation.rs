@@ -1,125 +1,70 @@
-//! Benchmarks for d-dimensional Delaunay triangulation creation.
-#![allow(missing_docs)] // Criterion macros generate undocumented functions
+//! DEPRECATED: This benchmark is deprecated and will be removed in the next release.
 //!
-//! This benchmark suite measures the performance of creating Delaunay triangulations
-//! across different dimensions (2D, 3D, 4D, 5D) using 1,000 randomly generated vertices.
+//! # Migration Guide
 //!
-//! # Benchmark Design
-//!
-//! - Uses seeded random point generation for reproducible results in CI
-//! - Measures triangulation creation time and throughput (elements/second)
-//! - Higher dimensions (≥5D) use reduced sample sizes to bound execution time
-//! - Points are generated in the range (-100.0, 100.0) for each coordinate
-//!
-//! # Usage
-//!
+//! **For CI/regression testing:** Use `ci_performance_suite.rs`
 //! ```bash
-//! # Run all triangulation creation benchmarks
-//! cargo bench --bench triangulation_creation
-//!
-//! # Run specific dimension
-//! cargo bench --bench triangulation_creation "2d_triangulation_creation"
+//! cargo bench --bench ci_performance_suite
+//! # or
+//! just bench
 //! ```
 //!
-//! # Performance Characteristics
+//! **For Phase 4 `SlotMap` evaluation:** Use `large_scale_performance.rs`
+//! ```bash
+//! cargo bench --bench large_scale_performance
+//! ```
 //!
-//! Triangulation creation complexity grows significantly with dimension:
-//! - 2D: O(n log n) expected, very fast
-//! - 3D: O(n log n) expected, moderate
-//! - 4D: O(n²) worst case, slower
-//! - 5D: O(n²) worst case, much slower
+//! See `benches/README.md` for detailed benchmark selection guidance.
+//!
+//! # Deprecation Rationale
+//!
+//! This benchmark (1,000 vertices per dimension) has been intentionally split into two
+//! specialized benchmarks with different purposes and scales:
+//!
+//! - **`ci_performance_suite.rs`**: Small-scale regression testing (10-50 vertices)
+//!   optimized for fast CI execution and baseline generation
+//! - **`large_scale_performance.rs`**: Large-scale Phase 4 evaluation (1K-10K vertices)
+//!   focused on `SlotMap` comparison with memory/validation/iteration metrics
+//!
+//! The original 1,000-vertex scale is no longer needed as a standalone benchmark:
+//! - Fast regression detection is better served by smaller scales in CI suite
+//! - Phase 4 evaluation requires larger scales with comprehensive metrics
+//! - Maintaining three overlapping benchmarks creates unnecessary CI overhead
+//!
+//! Migration depends on your use case (see Migration Guide above).
 
-use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::geometry::util::generate_random_triangulation;
+#![allow(missing_docs)]
 
-// =============================================================================
-// TRIANGULATION BENCHMARKS
-// =============================================================================
+use criterion::{Criterion, criterion_group, criterion_main};
 
-/// Generic function to benchmark triangulation creation for a given dimension.
-///
-/// This function:
-/// - Uses the `generate_random_triangulation` utility for consistent setup
-/// - Measures triangulation creation time excluding Drop overhead via `iter_batched`
-/// - Configures appropriate sample sizes based on dimension
-///
-/// # Parameters
-/// - `D`: The dimension (const generic parameter)
-/// - `c`: Criterion benchmark context
-/// - `benchmark_name`: Name for the benchmark group
-///
-/// # Benchmark Structure
-/// 1. Uses seeded random generation for reproducible results
-/// 2. Creates 1,000 points in (-100.0, 100.0)ᴰ coordinate space
-/// 3. Times triangulation creation excluding Drop via `iter_batched`
-/// 4. Reports time and throughput metrics
-fn bench_triangulation_creation_generic<const D: usize>(c: &mut Criterion, benchmark_name: &str)
-where
-    [f64; D]: Copy + serde::de::DeserializeOwned + serde::Serialize + Sized,
-{
-    let mut group = c.benchmark_group(benchmark_name);
-    // Reduce sample size for higher dimensions to bound runtime
-    if D >= 5 {
-        group.sample_size(10);
-    }
-    group.throughput(Throughput::Elements(1_000u64));
-    group.bench_function("triangulation", |b| {
-        b.iter_batched(
-            || (),
-            |()| {
-                generate_random_triangulation::<f64, (), (), D>(
-                    1_000,
-                    (-100.0, 100.0),
-                    None,
-                    Some(10_864 + D as u64),
-                )
-                .expect("Failed to generate triangulation")
-            },
-            BatchSize::SmallInput,
-        );
-    });
-    group.finish();
+/// Deprecated benchmark - prints migration notice
+fn deprecated_notice(_c: &mut Criterion) {
+    eprintln!();
+    eprintln!("==============================================================================");
+    eprintln!("  ⚠️  WARNING: triangulation_creation benchmark is DEPRECATED");
+    eprintln!("==============================================================================");
+    eprintln!();
+    eprintln!("This benchmark (1,000 vertices) has been split into specialized benchmarks:");
+    eprintln!();
+    eprintln!("  - ci_performance_suite (10-50 vertices): Fast CI regression testing");
+    eprintln!("  - large_scale_performance (1K-10K vertices): Phase 4 evaluation");
+    eprintln!();
+    eprintln!("Migration guide:");
+    eprintln!();
+    eprintln!("  For CI/regression testing (fast, small scale):");
+    eprintln!("    cargo bench --bench ci_performance_suite");
+    eprintln!("    # or");
+    eprintln!("    just bench");
+    eprintln!();
+    eprintln!("  For Phase 4 SlotMap evaluation (large scale + metrics):");
+    eprintln!("    cargo bench --bench large_scale_performance");
+    eprintln!();
+    eprintln!("  The original 1,000-vertex scale is not directly replicated.");
+    eprintln!("  Choose based on your use case (see benches/README.md for guidance).");
+    eprintln!();
+    eprintln!("==============================================================================");
+    eprintln!();
 }
 
-// Benchmark functions using the generic implementation
-// Each function benchmarks triangulation creation for a specific dimension
-
-/// Benchmark 2D Delaunay triangulation creation with 1,000 vertices.
-/// Expected to be very fast with O(n log n) complexity.
-fn bench_triangulation_creation_2d(c: &mut Criterion) {
-    bench_triangulation_creation_generic::<2>(c, "2d_triangulation_creation");
-}
-
-/// Benchmark 3D Delaunay triangulation creation with 1,000 vertices.
-/// Moderate performance with O(n log n) expected complexity.
-fn bench_triangulation_creation_3d(c: &mut Criterion) {
-    bench_triangulation_creation_generic::<3>(c, "3d_triangulation_creation");
-}
-
-/// Benchmark 4D Delaunay triangulation creation with 1,000 vertices.
-/// Slower performance with O(n²) worst-case complexity.
-fn bench_triangulation_creation_4d(c: &mut Criterion) {
-    bench_triangulation_creation_generic::<4>(c, "4d_triangulation_creation");
-}
-
-/// Benchmark 5D Delaunay triangulation creation with 1,000 vertices.
-/// Much slower performance with O(n²) worst-case complexity.
-/// Uses reduced sample size (10) to bound execution time.
-fn bench_triangulation_creation_5d(c: &mut Criterion) {
-    bench_triangulation_creation_generic::<5>(c, "5d_triangulation_creation");
-}
-
-// Criterion benchmark group containing all triangulation creation benchmarks.
-// This group includes benchmarks for 2D, 3D, 4D, and 5D triangulation creation,
-// each measuring the performance of creating a Delaunay triangulation from 1,000
-// randomly generated vertices.
-criterion_group!(
-    benches,
-    bench_triangulation_creation_2d,
-    bench_triangulation_creation_3d,
-    bench_triangulation_creation_4d,
-    bench_triangulation_creation_5d
-);
-
-// Main entry point for the triangulation creation benchmark suite.
+criterion_group!(benches, deprecated_notice);
 criterion_main!(benches);

@@ -51,38 +51,32 @@ We welcome contributions! Here's a 30-second quickstart:
 git clone https://github.com/acgetchell/delaunay.git
 cd delaunay
 
-# Traditional approach
-cargo build && cargo test
-
-# Modern approach (recommended) - install just command runner
+# Setup development environment (installs tools, builds project)
 cargo install just
-just dev              # Quick development cycle: format, lint, test
-just --list           # See all available development commands
+just setup            # Installs all development tools and dependencies
 
-# Run examples
-just examples         # Run all examples
-# Or run specific examples:
-cargo run --example triangulation_3d_50_points
-cargo run --example convex_hull_3d_50_points
-cargo run --example memory_analysis
-cargo run --example zero_allocation_iterator_demo
+# Development workflow
+just dev              # Quick development cycle: format, lint, test
+just quality          # Comprehensive quality checks before pushing
+just commit-check     # Verify your changes will pass CI
+just --list           # See all available commands
 ```
 
-**Just Workflows:**
+**Try the examples:**
 
-- `just dev` - Quick development cycle (format, lint, test)
-- `just quality` - All quality checks + tests (comprehensive)
-- `just ci` - CI simulation (quality + release tests + benchmark compilation)
-- `just commit-check` - Pre-commit validation (most thorough: CI + examples)
-- `just lint` - All linting (code + docs + config)
-- `just --list` or `just help-workflows` - See all available commands
+```bash
+just examples         # Run all examples
+# Or run specific examples:
+cargo run --release --example triangulation_3d_100_points
+cargo run --release --example convex_hull_3d_100_points
+```
 
 ## 📋 Examples
 
 The `examples/` directory contains several demonstrations:
 
-- **`triangulation_3d_50_points`**: Complete 3D Delaunay triangulation with 50 random points
-- **`convex_hull_3d_50_points`**: 3D convex hull extraction and analysis with performance benchmarks
+- **`triangulation_3d_100_points`**: Complete 3D Delaunay triangulation with 100 random points
+- **`convex_hull_3d_100_points`**: 3D convex hull extraction and analysis with performance benchmarks
 - **`into_from_conversions`**: Demonstrates Into/From trait conversions and utilities
 - **`point_comparison_and_hashing`**: Demonstrates point comparison and hashing behavior
 - **`memory_analysis`**: Memory usage analysis for triangulations across dimensions with allocation tracking

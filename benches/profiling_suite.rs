@@ -681,7 +681,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
                             SIMPLEX_VERTICES_BUFFER_SIZE,
                         > = SmallBuffer::new();
                         for vkey in vertex_keys {
-                            if let Some(vertex) = tds.vertices().get(*vkey) {
+                            if let Some(vertex) = tds.get_vertex_by_key(*vkey) {
                                 vertex_points.push(*vertex.point());
                             }
                         }

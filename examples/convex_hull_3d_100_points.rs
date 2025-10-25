@@ -1,7 +1,7 @@
-//! # 3D Convex Hull Example with 50 Points
+//! # 3D Convex Hull Example with 100 Points
 //!
 //! This example demonstrates extracting and analyzing a 3D convex hull from a Delaunay
-//! triangulation using 50 randomly generated points. It showcases:
+//! triangulation using 100 randomly generated points. It showcases:
 //!
 //! - Using the `generate_random_triangulation` utility function for convenience
 //! - Building a Delaunay triangulation using the Bowyer-Watson algorithm
@@ -15,7 +15,7 @@
 //! ## Usage
 //!
 //! ```bash
-//! cargo run --example convex_hull_3d_50_points
+//! cargo run --example convex_hull_3d_100_points
 //! ```
 //!
 //! ## Output
@@ -38,15 +38,15 @@ use std::time::Instant;
 
 fn main() {
     println!("=================================================================");
-    println!("3D Convex Hull Example - 50 Random Points");
+    println!("3D Convex Hull Example - 100 Random Points");
     println!("=================================================================\n");
 
     // Create Delaunay triangulation with timing using the utility function
-    println!("Creating 3D Delaunay triangulation with 50 random points...");
+    println!("Creating 3D Delaunay triangulation with 100 random points...");
     let start = Instant::now();
 
     let tds: Tds<f64, (), (), 3> = match generate_random_triangulation(
-        50,            // Number of points
+        100,           // Number of points
         (-10.0, 10.0), // Coordinate bounds
         None,          // No vertex data
         Some(42),      // Fixed seed for reproducibility
@@ -66,7 +66,7 @@ fn main() {
     let vertex_count = tds.number_of_vertices();
     println!("Generated {vertex_count} vertices");
     println!("First few vertices:");
-    for (displayed, (_key, vertex)) in tds.vertices().iter().enumerate() {
+    for (displayed, (_key, vertex)) in tds.vertices().enumerate() {
         if displayed >= 10 {
             break;
         }
@@ -249,7 +249,7 @@ fn test_point_containment(
     // Test 3: Sample triangulation vertices (should be on boundary or inside)
     println!("\n  Testing triangulation vertices:");
     let sample_vertices = std::cmp::min(3, vertex_count);
-    for (i, (_, vertex)) in tds.vertices().iter().enumerate().take(sample_vertices) {
+    for (i, (_, vertex)) in tds.vertices().enumerate().take(sample_vertices) {
         let point: Point<f64, 3> = vertex.into();
         test_point_containment_single(
             &hull,

@@ -394,7 +394,7 @@ fn triangulation_scenario_demo() {
 
     println!(
         "✅ Created initial tetrahedron with {} cells",
-        tds.cells().len()
+        tds.number_of_cells()
     );
 
     let mut robust_algorithm = RobustBowyerWatson::for_degenerate_cases();
@@ -415,7 +415,7 @@ fn triangulation_scenario_demo() {
         ("Another near-degenerate", vertex!([0.25, 0.25, 1e-16])),
     ];
 
-    let total_cells_before = tds.cells().len();
+    let total_cells_before = tds.number_of_cells();
     let mut successful_insertions = 0;
 
     for (description, vertex) in challenging_insertions {
@@ -425,7 +425,7 @@ fn triangulation_scenario_demo() {
             vertex.point().to_array()
         );
 
-        let cells_before = tds.cells().len();
+        let cells_before = tds.number_of_cells();
         let start_time = Instant::now();
 
         match robust_algorithm.insert_vertex(&mut tds, vertex) {
@@ -456,7 +456,7 @@ fn triangulation_scenario_demo() {
         }
     }
 
-    let total_cells_after = tds.cells().len();
+    let total_cells_after = tds.number_of_cells();
 
     println!("\n{}", "=".repeat(50));
     println!("🏁 TRIANGULATION COMPLETE:");

@@ -4,23 +4,57 @@
 //! in the delaunay triangulation library, particularly those that are performance-critical:
 //!
 //! 1. **`Tds::new` (Bowyer-Watson triangulation)**: Complete triangulation creation
-//! 2. **`assign_neighbors`**: Neighbor relationship assignment between cells
-//! 3. **`remove_duplicate_cells`**: Duplicate cell removal and cleanup
-//! 4. **`is_valid`**: Complete triangulation validation performance
-//! 5. **Individual validation components**: Mapping validation, duplicate detection, etc.
-//! 6. **Incremental construction**: Performance of `add()` method for vertex insertion
-//! 7. **Memory usage patterns**: Allocation and deallocation patterns
+//! 2. **`remove_duplicate_cells`**: Duplicate cell removal and cleanup
+//! 3. **`is_valid`**: Complete triangulation validation performance
+//! 4. **Individual validation components**: Mapping validation, duplicate detection, etc.
+//! 5. **Incremental construction**: Performance of `add()` method for vertex insertion
+//! 6. **Memory usage patterns**: Allocation and deallocation patterns
+//!
+//! **Note:** `assign_neighbors` benchmarks have been moved to `assign_neighbors_performance.rs`
+//! for more comprehensive testing with multiple distributions (random, grid, spherical) and
+//! scaling analysis. Use that benchmark file for `assign_neighbors` performance evaluation.
 //!
 //! These benchmarks measure the effectiveness of the optimization implementations
 //! completed as part of the Pure Incremental Delaunay Triangulation refactoring project.
+//!
+//! # Safety and Invariant Violations
+//!
+//! **WARNING**: Some benchmarks in this file intentionally violate TDS invariants for
+//! performance testing purposes. Specifically:
+//!
+//! - `remove_duplicate_cells` benchmarks directly insert duplicate cells without updating
+//!   UUID mappings to create test scenarios for the cleanup algorithm.
+//!
+//! **THESE PATTERNS MUST NEVER BE USED IN**:
+//! - Production code
+//! - Correctness tests
+//! - Example code
+//! - Library documentation
+//!
+//! They exist solely for microbenchmarking internal cleanup performance.
 
 #![allow(missing_docs)] // Criterion macros generate undocumented functions
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::geometry::util::generate_random_points;
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::*;
-use delaunay::{cell, vertex};
+use delaunay::vertex;
 use std::hint::black_box;
+
+/// Get the seed for deterministic random point generation.
+/// Checks `DELAUNAY_BENCH_SEED` environment variable, defaults to 0xD1EA ("DEEA" - Delaunay).
+/// Supports both decimal and hexadecimal (0x-prefixed) seeds.
+fn get_benchmark_seed() -> u64 {
+    std::env::var("DELAUNAY_BENCH_SEED")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .and_then(|s| {
+            s.strip_prefix("0x")
+                .or_else(|| s.strip_prefix("0X"))
+                .map_or_else(|| s.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok())
+        })
+        .unwrap_or(0xD1EA)
+}
 
 /// Macro to generate comprehensive dimensional benchmarks for core algorithms
 macro_rules! generate_dimensional_benchmarks {
@@ -41,49 +75,13 @@ macro_rules! generate_dimensional_benchmarks {
                         BenchmarkId::new("tds_new", n_points),
                         &n_points,
                         |b, &n_points| {
-                            b.iter_with_setup(
+                            b.iter_batched(
                                 || {
-                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                     points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                                 },
                                 |vertices| black_box(Tds::<f64, (), (), $dim>::new(&vertices).unwrap()),
-                            );
-                        },
-                    );
-                }
-
-                group.finish();
-            }
-
-            /// Benchmark `assign_neighbors` for [<$dim>]D
-            fn [<benchmark_assign_neighbors_ $dim d>](c: &mut Criterion) {
-                let point_counts = [10, 25, 50, 100];
-
-                let mut group = c.benchmark_group(concat!("assign_neighbors_", stringify!([<$dim>]), "d"));
-
-                for &n_points in &point_counts {
-                    #[allow(clippy::cast_sign_loss)]
-                    let throughput = n_points as u64;
-                    group.throughput(Throughput::Elements(throughput));
-
-                    group.bench_with_input(
-                        BenchmarkId::new("assign_neighbors", n_points),
-                        &n_points,
-                        |b, &n_points| {
-                            b.iter_with_setup(
-                                || {
-                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
-                                    let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                    let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
-                                    // Clear existing neighbors to benchmark the assignment process
-                                    tds.clear_all_neighbors();
-                                    tds
-                                },
-                                |mut tds| {
-                                    tds.assign_neighbors()
-                                        .expect("assign_neighbors failed");
-                                    black_box(tds);
-                                },
+                                BatchSize::LargeInput,
                             );
                         },
                     );
@@ -107,30 +105,50 @@ macro_rules! generate_dimensional_benchmarks {
                         BenchmarkId::new("remove_duplicate_cells", n_points),
                         &n_points,
                         |b, &n_points| {
-                            b.iter_with_setup(
+                            b.iter_batched(
                                 || {
-                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                    // Note: tds must be mutable for cells_mut() access below (line 137)
                                     let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
-                                    // Add some duplicate cells to make the benchmark meaningful
-                                    let cell_vertices: Vec<_> = tds.vertices().values().copied().collect();
-                                    if cell_vertices.len() >= ($dim + 1) {
-                                        // Create a few duplicate cells
-                                        for _ in 0..3 {
-                                            let duplicate_cell = cell!(cell_vertices[0..($dim + 1)].to_vec());
-                                            let cell_key = tds.cells_mut().insert(duplicate_cell);
-                                            let cell_uuid = tds.cells_mut()[cell_key].uuid();
-                                            // Note: Intentionally not updating UUID mappings to create true duplicates for testing
-                                            let _ = cell_uuid; // Suppress unused variable warning
+                                    // ============================================================
+                                    // BENCH-ONLY INVARIANT VIOLATION ZONE - DO NOT COPY
+                                    // ============================================================
+                                    // WARNING: This code intentionally violates TDS invariants by
+                                    // directly inserting duplicate cells without updating UUID mappings.
+                                    // This is ONLY for performance testing of `remove_duplicate_cells`.
+                                    // DO NOT use this pattern in:
+                                    // - Production code
+                                    // - Correctness tests
+                                    // - Examples
+                                    // - Documentation
+                                    // Note: This code only runs in benchmarks and is clearly documented as
+                                    // bench-only invariant violation. No additional cfg guard is needed.
+                                    #[allow(deprecated)]
+                                    {
+                                        // Scoped import to avoid items_after_statements warning
+                                        use delaunay::cell;
+                                        let cell_vertices: Vec<_> = tds.vertices().map(|(_, v)| *v).collect();
+                                        if cell_vertices.len() >= ($dim + 1) {
+                                            // SAFETY(BENCH-ONLY): Deliberately create duplicates for perf testing
+                                            for _ in 0..3 {
+                                                let duplicate_cell = cell!(cell_vertices[0..($dim + 1)].to_vec());
+                                                let _cell_key = tds.insert_cell_unchecked(duplicate_cell);
+                                                // Intentionally not updating UUID mappings to create true duplicates
+                                            }
                                         }
                                     }
+                                    // ============================================================
+                                    // END INVARIANT VIOLATION ZONE
+                                    // ============================================================
                                     tds
                                 },
                                 |mut tds| {
                                     let removed = tds.remove_duplicate_cells().expect("remove_duplicate_cells failed");
                                     black_box((tds, removed));
                                 },
+                                BatchSize::LargeInput,
                             );
                         },
                     );
@@ -151,11 +169,6 @@ generate_dimensional_benchmarks!(5);
 // Legacy 3D benchmark function for backward compatibility
 fn benchmark_bowyer_watson_triangulation(c: &mut Criterion) {
     benchmark_bowyer_watson_triangulation_3d(c);
-}
-
-// Legacy 3D benchmark function for backward compatibility
-fn benchmark_assign_neighbors(c: &mut Criterion) {
-    benchmark_assign_neighbors_3d(c);
 }
 
 // Legacy 3D benchmark function for backward compatibility
@@ -193,7 +206,7 @@ macro_rules! generate_memory_usage_benchmarks {
                         |b, &n_points| {
                             b.iter(|| {
                                 // Measure complete triangulation creation and destruction
-                                let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                                 let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
                                 black_box((tds.number_of_vertices(), tds.number_of_cells()))
@@ -238,9 +251,9 @@ macro_rules! generate_validation_benchmarks {
                         BenchmarkId::new("is_valid", n_points),
                         &n_points,
                         |b, &n_points| {
-                            b.iter_with_setup(
+                            b.iter_batched(
                                 || {
-                                    let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                                     Tds::<f64, (), (), $dim>::new(&vertices).unwrap()
                                 },
@@ -248,6 +261,7 @@ macro_rules! generate_validation_benchmarks {
                                     tds.is_valid().unwrap();
                                     black_box(tds);
                                 },
+                                BatchSize::LargeInput,
                             );
                         },
                     );
@@ -259,7 +273,7 @@ macro_rules! generate_validation_benchmarks {
             /// Benchmark individual validation components for [<$dim>]D
             fn [<benchmark_validation_components_ $dim d>](c: &mut Criterion) {
                 let n_points = if $dim <= 3 { 50 } else { 25 }; // Fixed size for component benchmarks
-                let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                 let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
@@ -336,12 +350,13 @@ macro_rules! generate_incremental_construction_benchmarks {
                 let additional_vertex = vertex!(additional_array);
 
                 group.bench_function("single_vertex_addition", |b| {
-                    b.iter_with_setup(
+                    b.iter_batched(
                         || Tds::<f64, (), (), $dim>::new(&initial_vertices).unwrap(),
                         |mut tds| {
                             tds.add(additional_vertex).unwrap();
                             black_box(tds);
                         },
+                        BatchSize::SmallInput,
                     );
                 });
 
@@ -352,10 +367,10 @@ macro_rules! generate_incremental_construction_benchmarks {
                         BenchmarkId::new("multiple_vertex_addition", count),
                         &count,
                         |b, &count| {
-                            b.iter_with_setup(
+                            b.iter_batched(
                                 || {
                                     let tds = Tds::<f64, (), (), $dim>::new(&initial_vertices).unwrap();
-                                    let additional_points: Vec<Point<f64, $dim>> = generate_random_points(count, (-100.0, 100.0)).unwrap();
+                                    let additional_points: Vec<Point<f64, $dim>> = generate_random_points_seeded(count, (-100.0, 100.0), get_benchmark_seed()).unwrap();
                                     let additional_vertices: Vec<_> =
                                         additional_points.iter().map(|p| vertex!(*p)).collect();
                                     (tds, additional_vertices)
@@ -366,6 +381,7 @@ macro_rules! generate_incremental_construction_benchmarks {
                                     }
                                     black_box(tds);
                                 },
+                                BatchSize::SmallInput,
                             );
                         },
                     );
@@ -397,10 +413,6 @@ criterion_group!(
         benchmark_bowyer_watson_triangulation_3d,
         benchmark_bowyer_watson_triangulation_4d,
         benchmark_bowyer_watson_triangulation_5d,
-        benchmark_assign_neighbors_2d,
-        benchmark_assign_neighbors_3d,
-        benchmark_assign_neighbors_4d,
-        benchmark_assign_neighbors_5d,
         benchmark_remove_duplicate_cells_2d,
         benchmark_remove_duplicate_cells_3d,
         benchmark_remove_duplicate_cells_4d,
@@ -430,7 +442,6 @@ criterion_group!(
 
         // Legacy wrappers for backward compatibility
         benchmark_bowyer_watson_triangulation,
-        benchmark_assign_neighbors,
         benchmark_remove_duplicate_cells,
         benchmark_2d_triangulation,
         benchmark_4d_triangulation,

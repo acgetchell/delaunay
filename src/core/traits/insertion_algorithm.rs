@@ -70,7 +70,6 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 use approx::abs_diff_eq;
 use num_traits::NumCast;
 use num_traits::{One, Zero, cast};
-use serde::{Serialize, de::DeserializeOwned};
 use smallvec::SmallVec;
 use std::iter::Sum;
 use std::marker::PhantomData;
@@ -130,6 +129,19 @@ pub enum BadCellsError {
     /// No cells exist to test
     #[error("No cells exist to test")]
     NoCells,
+    /// TDS corruption detected: cell references vertex key that doesn't exist
+    #[error(
+        "TDS corruption: Cell {:?} references vertex key {:?} which is not in TDS. \
+         This indicates data structure corruption. Run tds.is_valid() to diagnose.",
+        cell_key,
+        vertex_key
+    )]
+    TdsCorruption {
+        /// The cell key that contains the invalid reference
+        cell_key: CellKey,
+        /// The vertex key that was not found
+        vertex_key: VertexKey,
+    },
 }
 
 /// Comprehensive error type for vertex insertion operations
@@ -270,7 +282,28 @@ const MARGIN_FACTOR: f64 = 0.1;
 /// Currently set to 0.5 (50%), which means if more than half the cells are degenerate,
 /// we consider the results unreliable. This threshold can be adjusted based on the
 /// tolerance for degenerate cases in specific applications.
+///
+/// **IMPORTANT**: The integer arithmetic optimization in `find_bad_cells` is specifically
+/// designed for a threshold of 0.5. If you change this value, update the optimization logic
+/// accordingly or remove the compile-time assertion below.
 const DEGENERATE_CELL_THRESHOLD: f64 = 0.5;
+
+// Compile-time assertion: ensure integer optimization remains valid
+// This guard catches changes to DEGENERATE_CELL_THRESHOLD that would invalidate
+// the optimized `degenerate_count * 2 > total` check in find_bad_cells.
+const _: () = {
+    // Note: We use a const function to perform the check at compile time
+    const fn assert_threshold_is_half() {
+        // Bit-level comparison for exact 0.5 value
+        // 0.5 in f64 is exactly representable: sign=0, exp=1022, mantissa=0
+        assert!(
+            DEGENERATE_CELL_THRESHOLD.to_bits() == 0.5_f64.to_bits(),
+            "DEGENERATE_CELL_THRESHOLD must be exactly 0.5 for the integer optimization in find_bad_cells(). \
+             If you need a different threshold, update the integer-optimized comparison (degenerate_count * 2 > total) in find_bad_cells()."
+        );
+    }
+    assert_threshold_is_half();
+};
 
 /// Metadata for a single boundary facet during transactional cavity-based insertion.
 ///
@@ -476,7 +509,6 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Buffer for storing bad cell keys during cavity detection
     bad_cells_buffer: SmallBuffer<crate::core::triangulation_data_structure::CellKey, 16>,
@@ -495,7 +527,6 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn default() -> Self {
         Self::new()
@@ -507,7 +538,6 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Create new empty buffers
     #[must_use]
@@ -760,7 +790,6 @@ where
     T: CoordinateScalar,
     U: crate::core::traits::data_type::DataType,
     V: crate::core::traits::data_type::DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Insert a single vertex into the triangulation
     ///
@@ -914,35 +943,62 @@ where
     ///
     /// # Returns
     ///
-    /// `true` if the vertex is interior, `false` otherwise.
-    fn is_vertex_interior(&self, tds: &Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) -> bool
+    /// `Ok(true)` if the vertex is interior, `Ok(false)` if exterior.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if TDS is corrupted (missing vertex keys referenced by cells).
+    fn is_vertex_interior(
+        &self,
+        tds: &Tds<T, U, V, D>,
+        vertex: &Vertex<T, U, D>,
+    ) -> Result<bool, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
-        use crate::geometry::predicates::{InSphere, insphere};
+        // InSphere and insphere are already imported at module top
 
         // Reserve exact capacity once; keep on stack for typical small D
         let mut vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
 
-        for (_cell_key, cell) in tds.cells() {
+        for (cell_key, cell) in tds.cells() {
             // Clear and reuse the buffer - capacity is already preallocated
             vertex_points.clear();
             // Phase 3A: Get vertices via TDS using vertices
             for &vkey in cell.vertices() {
-                if let Some(v) = tds.vertices().get(vkey) {
-                    vertex_points.push(*v.point());
-                }
+                let v = tds.get_vertex_by_key(vkey).ok_or_else(|| {
+                    InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "TDS corruption: cell {cell_key:?} references missing vertex key {vkey:?}"
+                            ),
+                        },
+                    )
+                })?;
+                vertex_points.push(*v.point());
+            }
+
+            // Validate we got all D+1 vertices
+            if vertex_points.len() != D + 1 {
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell {cell_key:?} has {} vertices, expected {}",
+                            vertex_points.len(),
+                            D + 1
+                        ),
+                    },
+                ));
             }
 
             if matches!(
                 insphere(&vertex_points, *vertex.point()),
                 Ok(InSphere::INSIDE)
             ) {
-                return true;
+                return Ok(true);
             }
         }
-        false
+        Ok(false)
     }
 
     /// Helper method to determine if a vertex is likely exterior to the current triangulation
@@ -971,7 +1027,7 @@ where
         let mut initialized = false;
         let mut vertex_count = 0;
 
-        for existing_vertex in tds.vertices().values() {
+        for (_vkey, existing_vertex) in tds.vertices() {
             let coords: [T; D] = existing_vertex.point().into();
             vertex_count += 1;
 
@@ -996,39 +1052,31 @@ where
         }
 
         // Calculate bounding box margins (10% expansion)
-        // Precompute 10 for integer division fallback
-        let ten: T = cast(10).unwrap_or_else(T::one);
+        // Robust fallback for "10" if NumCast fails
+        let ten: T = cast(10).unwrap_or_else(|| {
+            let mut t = T::zero();
+            for _ in 0..10 {
+                t += T::one();
+            }
+            t
+        });
         let mut expanded_min = [T::zero(); D];
         let mut expanded_max = [T::zero(); D];
 
         for i in 0..D {
             let range = max_coords[i] - min_coords[i];
 
-            // For floats: use 10% expansion (0.1 * range)
-            // For integers: use range/10 with minimum of 1
-            // Note: cast::<f64, i32>(0.1) returns Some(0), not None!
+            // Integer types: cast::<f64, T>(0.1) will be None -> divide by 10, min 1
+            // Float types: cast succeeds -> multiply by 0.1
             let margin = cast::<f64, T>(MARGIN_FACTOR).map_or_else(
                 || {
-                    // Fallback: divide by 10 with minimum of 1
                     let mut m = range / ten;
                     if m == T::zero() {
                         m = T::one();
                     }
                     m
                 },
-                |mf| {
-                    if mf == T::zero() {
-                        // Integer case: divide by 10, ensure at least 1 unit
-                        let mut m = range / ten;
-                        if m == T::zero() {
-                            m = T::one();
-                        }
-                        m
-                    } else {
-                        // Float case: multiply by margin factor
-                        range * mf
-                    }
-                },
+                |mf| range * mf,
             );
 
             // Use simple arithmetic for bounding box expansion
@@ -1083,7 +1131,7 @@ where
         for<'a> &'a T: Div<T>,
     {
         // Check if there are any cells to test
-        if tds.cells().is_empty() {
+        if tds.number_of_cells() == 0 {
             return Err(BadCellsError::NoCells);
         }
 
@@ -1096,7 +1144,7 @@ where
         // Only consider cells that have a valid circumsphere and strict containment
         for (cell_key, cell) in tds.cells() {
             // Phase 3A: Use cell.vertices() to get vertex keys from TDS (avoids materializing Vertex objects)
-            let v_count = cell.vertices().len();
+            let v_count = cell.number_of_vertices();
             // Treat non-D+1 vertex counts as degenerate
             if v_count != D + 1 {
                 degenerate_count += 1;
@@ -1106,11 +1154,16 @@ where
             cells_tested += 1;
             // Reuse buffer by clearing and repopulating
             vertex_points.clear();
-            // Phase 3A: Get vertices via TDS using vertices
+            // Phase 3A: Get vertices via TDS using vertex keys
+            // Missing vertex keys indicate TDS corruption, not geometric degeneracy
             for &vkey in cell.vertices() {
-                if let Some(v) = tds.vertices().get(vkey) {
-                    vertex_points.push(*v.point());
-                }
+                let v = tds
+                    .get_vertex_by_key(vkey)
+                    .ok_or(BadCellsError::TdsCorruption {
+                        cell_key,
+                        vertex_key: vkey,
+                    })?;
+                vertex_points.push(*v.point());
             }
 
             // Test circumsphere containment
@@ -1233,7 +1286,8 @@ where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
-        let mut boundary_facet_handles = Vec::new();
+        // Pre-allocate capacity: each bad cell can contribute up to D+1 boundary facets
+        let mut boundary_facet_handles = Vec::with_capacity(bad_cells.len() * (D + 1));
 
         if bad_cells.is_empty() {
             return Ok(boundary_facet_handles);
@@ -1255,9 +1309,13 @@ where
         let mut seen_facet_keys: FastHashSet<u64> =
             fast_hash_set_with_capacity(bad_cells.len() * (D + 1));
 
+        // Reusable buffer for facet vertices to avoid per-facet allocations
+        let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D);
+
         // Scan each bad cell's D+1 facets
         for &bad_cell_key in bad_cells {
-            let Some(bad_cell) = tds.cells().get(bad_cell_key) else {
+            let Some(bad_cell) = tds.get_cell(bad_cell_key) else {
                 continue;
             };
 
@@ -1266,12 +1324,14 @@ where
                 for facet_idx in 0..=D {
                     if let Ok(facet_idx_u8) = usize_to_u8(facet_idx, D + 1) {
                         // Compute canonical facet key for deduplication
-                        let facet_vertices: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> = bad_cell
-                            .vertices()
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, &v)| (i != facet_idx).then_some(v))
-                            .collect();
+                        facet_vertices.clear();
+                        facet_vertices.extend(
+                            bad_cell
+                                .vertices()
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, &v)| (i != facet_idx).then_some(v)),
+                        );
                         let canonical_key = facet_key_from_vertices(&facet_vertices);
 
                         if seen_facet_keys.insert(canonical_key) {
@@ -1301,12 +1361,14 @@ where
                 };
 
                 // Compute canonical facet key: sorted vertex keys of the D vertices
-                let facet_vertices: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> = bad_cell
-                    .vertices()
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, &v)| (i != facet_idx).then_some(v))
-                    .collect();
+                facet_vertices.clear();
+                facet_vertices.extend(
+                    bad_cell
+                        .vertices()
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, &v)| (i != facet_idx).then_some(v)),
+                );
                 let canonical_key = facet_key_from_vertices(&facet_vertices);
 
                 // Insert only if not already seen (deduplication)
@@ -1400,6 +1462,20 @@ where
                     TriangulationValidationError::FailedToCreateCell {
                         message: "Cavity-based insertion failed: no cells exist in triangulation."
                             .to_string(),
+                    },
+                ));
+            }
+            Err(BadCellsError::TdsCorruption {
+                cell_key,
+                vertex_key,
+            }) => {
+                // TDS corruption detected - this is a fatal structural error
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "TDS corruption detected: Cell {cell_key:?} references vertex key {vertex_key:?} which doesn't exist. \
+                             Run tds.is_valid() to diagnose."
+                        ),
                     },
                 ));
             }
@@ -1548,7 +1624,6 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Get visible boundary facets using lightweight handles
         let visible_facet_handles = self.find_visible_boundary_facets_lightweight(tds, vertex)?;
@@ -1614,7 +1689,6 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Conservative fallback: try to connect to any existing boundary facet
         // This avoids creating invalid geometry by arbitrary vertex replacement
@@ -1642,29 +1716,26 @@ where
                 let cell_key = facet_handle.cell_key();
                 let facet_index = facet_handle.facet_index();
                 let _fi = <usize as From<_>>::from(facet_index);
-                if let Some(_cell) = tds.cells().get(cell_key) {
-                    // Phase 3A: Use lightweight facet handles directly
-                    // Try to create a cell from this facet handle and the vertex
-                    if Self::create_cell_from_facet_handle(tds, cell_key, facet_index, vertex)
-                        .is_ok()
-                    {
-                        // Finalize the triangulation after insertion to fix any invalid states
-                        Self::finalize_after_insertion(tds).map_err(|e| {
-                            TriangulationValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Failed to finalize triangulation after fallback insertion: {e}"
-                                ),
-                            }
-                        })?;
+                // Phase 3A: Use lightweight facet handles directly
+                // Try to create a cell from this facet handle and the vertex
+                // Note: create_cell_from_facet_handle validates cell existence internally
+                if Self::create_cell_from_facet_handle(tds, cell_key, facet_index, vertex).is_ok() {
+                    // Finalize the triangulation after insertion to fix any invalid states
+                    Self::finalize_after_insertion(tds).map_err(|e| {
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Failed to finalize triangulation after fallback insertion: {e}"
+                            ),
+                        }
+                    })?;
 
-                        return Ok(InsertionInfo {
-                            strategy: InsertionStrategy::Fallback,
-                            cells_removed: 0,
-                            cells_created: 1,
-                            success: true,
-                            degenerate_case_handled: false,
-                        });
-                    }
+                    return Ok(InsertionInfo {
+                        strategy: InsertionStrategy::Fallback,
+                        cells_removed: 0,
+                        cells_created: 1,
+                        success: true,
+                        degenerate_case_handled: false,
+                    });
                 }
             }
         }
@@ -1675,29 +1746,26 @@ where
                 let cell_key = facet_handle.cell_key();
                 let facet_index = facet_handle.facet_index();
                 let _fi = <usize as From<_>>::from(facet_index);
-                if let Some(_cell) = tds.cells().get(cell_key) {
-                    // Phase 3A: Use lightweight facet handles directly
-                    // Try to create a cell from this facet handle and the vertex
-                    if Self::create_cell_from_facet_handle(tds, cell_key, facet_index, vertex)
-                        .is_ok()
-                    {
-                        // Finalize the triangulation after insertion to fix any invalid states
-                        Self::finalize_after_insertion(tds).map_err(|e| {
-                            TriangulationValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Failed to finalize triangulation after fallback insertion: {e}"
-                                ),
-                            }
-                        })?;
+                // Phase 3A: Use lightweight facet handles directly
+                // Try to create a cell from this facet handle and the vertex
+                // Note: create_cell_from_facet_handle validates cell existence internally
+                if Self::create_cell_from_facet_handle(tds, cell_key, facet_index, vertex).is_ok() {
+                    // Finalize the triangulation after insertion to fix any invalid states
+                    Self::finalize_after_insertion(tds).map_err(|e| {
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Failed to finalize triangulation after fallback insertion: {e}"
+                            ),
+                        }
+                    })?;
 
-                        return Ok(InsertionInfo {
-                            strategy: InsertionStrategy::Fallback,
-                            cells_removed: 0,
-                            cells_created: 1,
-                            success: true,
-                            degenerate_case_handled: false,
-                        });
-                    }
+                    return Ok(InsertionInfo {
+                        strategy: InsertionStrategy::Fallback,
+                        cells_removed: 0,
+                        cells_created: 1,
+                        success: true,
+                        degenerate_case_handled: false,
+                    });
                 }
             }
         }
@@ -1746,11 +1814,8 @@ where
         vertices: &[Vertex<T, U, D>],
     ) -> Result<(), TriangulationConstructionError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + DeserializeOwned,
-        U: DeserializeOwned,
-        V: DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         if vertices.is_empty() {
             return Ok(());
@@ -1815,9 +1880,7 @@ where
         vertices: Vec<Vertex<T, U, D>>,
     ) -> Result<(), TriangulationConstructionError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + DeserializeOwned,
-        U: DeserializeOwned,
-        V: DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         if vertices.len() != D + 1 {
@@ -1894,9 +1957,7 @@ where
         tds: &mut Tds<T, U, V, D>,
     ) -> Result<(), TriangulationConstructionError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + DeserializeOwned,
-        U: DeserializeOwned,
-        V: DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
     {
         // Remove duplicate cells
@@ -1953,10 +2014,9 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Get the adjacent cell to this boundary facet
-        let Some(adjacent_cell) = tds.cells().get(adjacent_cell_key) else {
+        let Some(adjacent_cell) = tds.get_cell(adjacent_cell_key) else {
             return Err(InsertionError::TriangulationState(
                 TriangulationValidationError::InconsistentDataStructure {
                     message: format!(
@@ -1975,7 +2035,9 @@ where
             })?
             .copied()
             .collect();
-        let facet_vertex_uuids: SmallVec<[uuid::Uuid; 8]> =
+
+        // Build HashSet for O(1) UUID lookups (more efficient than SmallVec::contains for D > 2)
+        let facet_vertex_uuids: FastHashSet<uuid::Uuid> =
             facet_vertices_vec.iter().map(Vertex::uuid).collect();
 
         // Find the vertex in the adjacent cell that is NOT part of the facet
@@ -1984,10 +2046,18 @@ where
 
         let mut opposite_vertex = None;
         for &vkey in cell_vertices {
-            let Some(cell_vertex) = tds.vertices().get(vkey) else {
-                continue;
+            let Some(cell_vertex) = tds.get_vertex_by_key(vkey) else {
+                // Missing vertex mapping indicates TDS inconsistency - return error for diagnosability
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Vertex key {vkey:?} from cell {adjacent_cell_key:?} not found in TDS during visibility test. \
+                             This indicates mapping inconsistency."
+                        ),
+                    },
+                ));
             };
-            // Check membership using cached UUIDs instead of calling facet.vertices() repeatedly
+            // Check membership with O(1) HashSet lookup instead of O(D) SmallVec contains
             let is_in_facet = facet_vertex_uuids.contains(&cell_vertex.uuid());
             if !is_in_facet {
                 opposite_vertex = Some(cell_vertex);
@@ -2098,11 +2168,8 @@ where
         vertices: &[Vertex<T, U, D>],
     ) -> Result<Tds<T, U, V, D>, TriangulationConstructionError>
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + DeserializeOwned,
-        U: DeserializeOwned,
-        V: DeserializeOwned,
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
         for<'a> &'a T: Div<T>,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         // Default implementation: use the regular Tds::new constructor
         Tds::new(vertices)
@@ -2359,7 +2426,7 @@ where
             let facet_index = handle.facet_index();
 
             // Validate cell exists first
-            let _cell = tds.cells().get(cell_key).ok_or_else(|| {
+            let _cell = tds.get_cell(cell_key).ok_or_else(|| {
                 InsertionError::TriangulationState(
                     TriangulationValidationError::InconsistentDataStructure {
                         message: format!(
@@ -2472,7 +2539,7 @@ where
             let bad_facet_index = <usize as From<u8>>::from(handle.facet_index());
 
             // Get the bad cell
-            let Some(cell) = tds.cells().get(bad_cell) else {
+            let Some(cell) = tds.get_cell(bad_cell) else {
                 return Err(InsertionError::TriangulationState(
                     TriangulationValidationError::InconsistentDataStructure {
                         message: format!(
@@ -2507,7 +2574,7 @@ where
             let outside_neighbor = if let Some(neighbors) = cell.neighbors() {
                 if let Some(&Some(neighbor_key)) = neighbors.get(bad_facet_index) {
                     // Find reciprocal facet index in the neighbor cell
-                    let neighbor_cell = tds.cells().get(neighbor_key).ok_or_else(|| {
+                    let neighbor_cell = tds.get_cell(neighbor_key).ok_or_else(|| {
                         InsertionError::TriangulationState(
                             TriangulationValidationError::InconsistentDataStructure {
                                 message: format!(
@@ -2628,7 +2695,7 @@ where
         // ====================================================================
         for (new_cell_key, info) in created_cells.iter().zip(boundary_infos) {
             // Find the index of the inserted vertex in the new cell
-            let new_cell = tds.cells().get(*new_cell_key).ok_or_else(|| {
+            let new_cell = tds.get_cell(*new_cell_key).ok_or_else(|| {
                 InsertionError::TriangulationState(
                     TriangulationValidationError::InconsistentDataStructure {
                         message: format!("Created cell {new_cell_key:?} not found"),
@@ -2663,14 +2730,19 @@ where
                     )
                 })?;
 
-                if new_cell_mut.neighbors.is_none() {
-                    let mut neighbors = SmallBuffer::new();
-                    neighbors.resize(D + 1, None);
-                    new_cell_mut.neighbors = Some(neighbors);
+                let neighbors = new_cell_mut.ensure_neighbors_buffer_mut();
+                if neighbors.len() != D + 1 {
+                    return Err(InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Neighbor buffer size {} != D+1 ({}) for cell {new_cell_key:?}",
+                                neighbors.len(),
+                                D + 1
+                            ),
+                        },
+                    ));
                 }
-                if let Some(neighbors) = &mut new_cell_mut.neighbors {
-                    neighbors[inserted_idx] = Some(outside_ck);
-                }
+                neighbors[inserted_idx] = Some(outside_ck);
 
                 // Set outside_ck's neighbor at outside_facet_idx → new_cell
                 let outside_cell = tds.cells_mut().get_mut(outside_ck).ok_or_else(|| {
@@ -2683,14 +2755,19 @@ where
                     )
                 })?;
 
-                if outside_cell.neighbors.is_none() {
-                    let mut neighbors = SmallBuffer::new();
-                    neighbors.resize(D + 1, None);
-                    outside_cell.neighbors = Some(neighbors);
+                let neighbors = outside_cell.ensure_neighbors_buffer_mut();
+                if neighbors.len() != D + 1 {
+                    return Err(InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Neighbor buffer size {} != D+1 ({}) for outside cell {outside_ck:?}",
+                                neighbors.len(),
+                                D + 1
+                            ),
+                        },
+                    ));
                 }
-                if let Some(neighbors) = &mut outside_cell.neighbors {
-                    neighbors[outside_facet_idx] = Some(*new_cell_key);
-                }
+                neighbors[outside_facet_idx] = Some(*new_cell_key);
             }
         }
 
@@ -2709,8 +2786,7 @@ where
         for &new_cell_key in created_cells {
             // Clone cell vertices to avoid borrow issues
             let cell_vertices = tds
-                .cells()
-                .get(new_cell_key)
+                .get_cell(new_cell_key)
                 .ok_or_else(|| {
                     InsertionError::TriangulationState(
                         TriangulationValidationError::InconsistentDataStructure {
@@ -2754,14 +2830,19 @@ where
                             },
                         )
                     })?;
-                    if cell_mut.neighbors.is_none() {
-                        let mut neighbors = SmallBuffer::new();
-                        neighbors.resize(D + 1, None);
-                        cell_mut.neighbors = Some(neighbors);
+                    let neighbors = cell_mut.ensure_neighbors_buffer_mut();
+                    if neighbors.len() != D + 1 {
+                        return Err(InsertionError::TriangulationState(
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Neighbor buffer size {} != D+1 ({}) for cell {new_cell_key:?}",
+                                    neighbors.len(),
+                                    D + 1
+                                ),
+                            },
+                        ));
                     }
-                    if let Some(neighbors) = &mut cell_mut.neighbors {
-                        neighbors[opposite_idx] = Some(other_ck);
-                    }
+                    neighbors[opposite_idx] = Some(other_ck);
 
                     // Set other_cell[other_idx] → new_cell
                     let other_mut = tds.cells_mut().get_mut(other_ck).ok_or_else(|| {
@@ -2771,14 +2852,19 @@ where
                             },
                         )
                     })?;
-                    if other_mut.neighbors.is_none() {
-                        let mut neighbors = SmallBuffer::new();
-                        neighbors.resize(D + 1, None);
-                        other_mut.neighbors = Some(neighbors);
+                    let neighbors = other_mut.ensure_neighbors_buffer_mut();
+                    if neighbors.len() != D + 1 {
+                        return Err(InsertionError::TriangulationState(
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Neighbor buffer size {} != D+1 ({}) for cell {other_ck:?}",
+                                    neighbors.len(),
+                                    D + 1
+                                ),
+                            },
+                        ));
                     }
-                    if let Some(neighbors) = &mut other_mut.neighbors {
-                        neighbors[other_idx] = Some(new_cell_key);
-                    }
+                    neighbors[other_idx] = Some(new_cell_key);
                 } else {
                     // First time seeing this facet; record it
                     facet_to_cell.insert(facet_key, (new_cell_key, opposite_idx));
@@ -3073,7 +3159,7 @@ mod tests {
         for (i, handle) in lightweight_result.iter().enumerate() {
             // Verify cell exists in TDS
             assert!(
-                tds.cells().get(handle.cell_key()).is_some(),
+                tds.get_cell(handle.cell_key()).is_some(),
                 "Cell key {:?} for visible facet {i} should exist in TDS",
                 handle.cell_key()
             );
@@ -3134,7 +3220,7 @@ mod tests {
         // Verify all returned handles are valid
         for handle in &lightweight_result {
             assert!(
-                tds.cells().get(handle.cell_key()).is_some(),
+                tds.get_cell(handle.cell_key()).is_some(),
                 "Cell key {:?} should exist in TDS",
                 handle.cell_key()
             );
@@ -3188,7 +3274,7 @@ mod tests {
             // Verify all returned handles are valid and can be converted to FacetViews
             for handle in &lightweight_result {
                 assert!(
-                    tds.cells().get(handle.cell_key()).is_some(),
+                    tds.get_cell(handle.cell_key()).is_some(),
                     "Cell key {:?} should exist in TDS",
                     handle.cell_key()
                 );
@@ -3353,7 +3439,7 @@ mod tests {
         // Create an invalid handle by using a valid cell key but then removing that cell.
         // This simulates realistic stale handle scenarios that can occur during triangulation
         // operations when handles are stored but cells are removed before handle use.
-        let valid_cell_key = tds.cells().keys().next().expect("TDS should have cells");
+        let valid_cell_key = tds.cell_keys().next().expect("TDS should have cells");
 
         // Remove the cell to make the key invalid
         let _removed_cell = tds.remove_cell_by_key(valid_cell_key);
@@ -3404,8 +3490,7 @@ mod tests {
 
         // Get a valid cell key but use invalid facet index
         let valid_cell_key = tds
-            .cells()
-            .keys()
+            .cell_keys()
             .next()
             .expect("Should have at least one cell");
         let invalid_handles = vec![FacetHandle::new(valid_cell_key, 99)]; // 99 is way out of bounds for 3D (should be 0-3)
@@ -3528,7 +3613,7 @@ mod tests {
 
         // Mix valid handles with invalid ones
         // Use a valid cell key but invalid facet index for easier testing
-        let valid_cell_key = tds.cells().keys().next().expect("TDS should have cells");
+        let valid_cell_key = tds.cell_keys().next().expect("TDS should have cells");
         let mut mixed_handles = valid_handles;
         mixed_handles.push(FacetHandle::new(valid_cell_key, 99)); // Add invalid handle with bad facet index
 
@@ -3574,8 +3659,7 @@ mod tests {
 
         // Test with valid cell key but boundary facet indices (0, 1, 2, 3 for 3D tetrahedron)
         let valid_cell_key = tds
-            .cells()
-            .keys()
+            .cell_keys()
             .next()
             .expect("Should have at least one cell");
 
@@ -3654,13 +3738,13 @@ mod tests {
 
         // Record initial state
         let initial_cell_count = tds.number_of_cells();
-        let initial_cell_keys: Vec<_> = tds.cells().keys().collect();
+        let initial_cell_keys: Vec<_> = tds.cell_keys().collect();
         println!("  Initial cell count: {initial_cell_count}");
         println!("  Initial cell keys: {}", initial_cell_keys.len());
 
         // Create a handle list with valid handles followed by an invalid one
         // This ensures some cells will be created before the error occurs
-        let valid_cell_key = tds.cells().keys().next().expect("TDS should have cells");
+        let valid_cell_key = tds.cell_keys().next().expect("TDS should have cells");
         let mut mixed_handles = valid_handles.clone();
         mixed_handles.push(FacetHandle::new(valid_cell_key, 99)); // Add invalid handle at the end
 
@@ -3690,7 +3774,7 @@ mod tests {
         println!("  ✓ Cell count unchanged: {initial_cell_count}");
 
         // Verify no new cells were added (all created cells were rolled back)
-        let final_cell_keys: Vec<_> = tds.cells().keys().collect();
+        let final_cell_keys: Vec<_> = tds.cell_keys().collect();
         assert_eq!(
             final_cell_keys.len(),
             initial_cell_keys.len(),
@@ -3700,7 +3784,7 @@ mod tests {
         // Verify the exact same cells exist (no cells added or removed)
         for initial_key in &initial_cell_keys {
             assert!(
-                tds.get_cell_by_key(*initial_key).is_some(),
+                tds.get_cell(*initial_key).is_some(),
                 "All initial cells should still exist after rollback"
             );
         }
@@ -3955,7 +4039,7 @@ mod tests {
         let algorithm = IncrementalBowyerWatson::new();
 
         // Get the single cell as a "bad cell"
-        let cell_keys: Vec<_> = tds.cells().keys().collect();
+        let cell_keys: Vec<_> = tds.cell_keys().collect();
         assert_eq!(cell_keys.len(), 1, "Should have exactly one cell");
 
         let bad_cells = vec![cell_keys[0]];
@@ -4344,7 +4428,7 @@ mod tests {
         let algorithm = IncrementalBowyerWatson::new();
 
         // Get cell keys to work with
-        let cell_keys: Vec<_> = tds.cells().keys().collect();
+        let cell_keys: Vec<_> = tds.cell_keys().collect();
         assert!(!cell_keys.is_empty(), "Should have at least one cell");
 
         // Test 1: Verify that FacetView properly validates facet indices
@@ -4881,7 +4965,8 @@ mod tests {
             Err(
                 BadCellsError::NoCells
                 | BadCellsError::AllCellsBad { .. }
-                | BadCellsError::TooManyDegenerateCells(_),
+                | BadCellsError::TooManyDegenerateCells(_)
+                | BadCellsError::TdsCorruption { .. },
             )
             | Ok(_) => {
                 // All these cases are valid - main test is that we don't panic with extreme input
@@ -5722,7 +5807,7 @@ mod tests {
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
         let initial_cell_count = tds.number_of_cells();
-        let cell_keys: Vec<_> = tds.cells().keys().take(1).collect(); // Take one cell to remove
+        let cell_keys: Vec<_> = tds.cell_keys().take(1).collect(); // Take one cell to remove
 
         assert!(
             !cell_keys.is_empty(),
@@ -5943,16 +6028,16 @@ mod tests {
         // Test is_vertex_interior method edge cases
         let interior_test_vertex = vertex!([0.25, 0.25, 0.25]);
         let is_interior = algorithm.is_vertex_interior(&tds, &interior_test_vertex);
-        println!("  ✓ Interior vertex test: {is_interior}");
+        println!("  ✓ Interior vertex test: {is_interior:?}");
 
         let exterior_test_vertex = vertex!([10.0, 10.0, 10.0]);
         let is_interior = algorithm.is_vertex_interior(&tds, &exterior_test_vertex);
-        println!("  ✓ Exterior vertex interior test: {is_interior}");
+        println!("  ✓ Exterior vertex interior test: {is_interior:?}");
 
         // Test with vertex at circumsphere boundary
         let boundary_test_vertex = vertex!([0.5, 0.5, 0.0]); // On edge/boundary
         let is_interior = algorithm.is_vertex_interior(&tds, &boundary_test_vertex);
-        println!("  ✓ Boundary vertex interior test: {is_interior}");
+        println!("  ✓ Boundary vertex interior test: {is_interior:?}");
 
         println!("✓ Visibility computation with potential facet issues handled correctly");
     }
@@ -6423,7 +6508,7 @@ mod tests {
         let initial_cell_count = tds.number_of_cells();
 
         // Get some cells to remove (simulate bad cells)
-        let cell_keys: Vec<_> = tds.cells().keys().take(1).collect();
+        let cell_keys: Vec<_> = tds.cell_keys().take(1).collect();
         assert!(!cell_keys.is_empty(), "Should have at least one cell");
 
         // Create a new vertex to insert
@@ -6499,7 +6584,7 @@ mod tests {
         let existing_vertex = vertices[0]; // Should already be in TDS
 
         // Get some cells to remove
-        let cell_keys: Vec<_> = tds.cells().keys().take(1).collect();
+        let cell_keys: Vec<_> = tds.cell_keys().take(1).collect();
 
         // Test atomic operation (should succeed since existing vertex handling is valid)
         let result =
@@ -6637,7 +6722,7 @@ mod tests {
                 for &neighbor_key_opt in neighbors {
                     checked_count += 1;
                     if let Some(neighbor_key) = neighbor_key_opt {
-                        let neighbor = tds.cells().get(neighbor_key).unwrap();
+                        let neighbor = tds.get_cell(neighbor_key).unwrap();
                         if let Some(neighbor_neighbors) = neighbor.neighbors()
                             && neighbor_neighbors.contains(&Some(cell_key))
                         {

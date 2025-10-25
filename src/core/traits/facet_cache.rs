@@ -11,7 +11,7 @@ use crate::core::{
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use arc_swap::ArcSwapOption;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
@@ -46,7 +46,7 @@ use std::{
 /// use std::sync::atomic::{AtomicU64, Ordering};
 /// use std::ops::{AddAssign, SubAssign, Div};
 /// use std::iter::Sum;
-/// use serde::{Serialize, de::DeserializeOwned};
+/// use serde::de::DeserializeOwned;
 /// use arc_swap::ArcSwapOption;
 ///
 /// struct MyAlgorithm {
@@ -69,7 +69,7 @@ use std::{
 ///     U: DataType + DeserializeOwned,
 ///     V: DataType + DeserializeOwned,
 ///     for<'a> &'a T: Div<T>,
-///     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+///     [T; D]: Copy + DeserializeOwned + Sized,
 /// {
 ///     fn facet_cache(&self) -> &ArcSwapOption<delaunay::core::collections::FacetToCellsMap> {
 ///         &self.facet_to_cells_cache
@@ -86,7 +86,6 @@ where
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
     for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Returns a reference to the facet cache storage.
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap>;

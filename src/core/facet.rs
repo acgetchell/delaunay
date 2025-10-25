@@ -68,7 +68,6 @@ use super::{
     vertex::Vertex,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use serde::{Serialize, de::DeserializeOwned};
 use slotmap::Key;
 use std::fmt::{self, Debug};
 use thiserror::Error;
@@ -368,7 +367,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Reference to the triangulation data structure.
     tds: &'tds Tds<T, U, V, D>,
@@ -387,7 +385,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Returns the cell key for this facet.
     #[inline]
@@ -434,12 +431,11 @@ where
     ) -> Result<Self, FacetError> {
         // Validate cell exists
         let cell = tds
-            .cells()
-            .get(cell_key)
+            .get_cell(cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
         // Validate facet index
-        let vertex_count = cell.vertices().len();
+        let vertex_count = cell.number_of_vertices();
         if usize::from(facet_index) >= vertex_count {
             return Err(FacetError::InvalidFacetIndex {
                 index: facet_index,
@@ -497,22 +493,20 @@ where
     pub fn vertices(&self) -> Result<impl Iterator<Item = &'tds Vertex<T, U, D>>, FacetError> {
         let cell = self
             .tds
-            .cells()
-            .get(self.cell_key)
+            .get_cell(self.cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
         let facet_index = usize::from(self.facet_index);
 
         // Collect first so missing vertex keys become an error, not silent drops.
         let mut refs: Vec<&'tds Vertex<T, U, D>> =
-            Vec::with_capacity(cell.vertices().len().saturating_sub(1));
+            Vec::with_capacity(cell.number_of_vertices().saturating_sub(1));
         for (i, &vkey) in cell.vertices().iter().enumerate() {
             if i == facet_index {
                 continue;
             }
             refs.push(
                 self.tds
-                    .vertices()
-                    .get(vkey)
+                    .get_vertex_by_key(vkey)
                     .ok_or(FacetError::VertexKeyNotFoundInTriangulation { key: vkey })?,
             );
         }
@@ -531,8 +525,7 @@ where
     pub fn opposite_vertex(&self) -> Result<&'tds Vertex<T, U, D>, FacetError> {
         let cell = self
             .tds
-            .cells()
-            .get(self.cell_key)
+            .get_cell(self.cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
         // Phase 3A: Use vertices and resolve via TDS
@@ -548,8 +541,7 @@ where
 
         // Use get() to safely handle potentially invalid vertex keys
         self.tds
-            .vertices()
-            .get(*vkey)
+            .get_vertex_by_key(*vkey)
             .ok_or(FacetError::VertexKeyNotFoundInTriangulation { key: *vkey })
     }
 
@@ -564,8 +556,7 @@ where
     /// Returns `FacetError::CellNotFoundInTriangulation` if the cell is no longer in the TDS.
     pub fn cell(&self) -> Result<&'tds Cell<T, U, V, D>, FacetError> {
         self.tds
-            .cells()
-            .get(self.cell_key)
+            .get_cell(self.cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)
     }
 
@@ -612,7 +603,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FacetView")
@@ -630,7 +620,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Serialize + DeserializeOwned,
 {
     fn clone(&self) -> Self {
         Self {
@@ -646,7 +635,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
 }
 
@@ -655,7 +643,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     fn eq(&self, other: &Self) -> bool {
         // Two facet views are equal if they reference the same facet
@@ -670,7 +657,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
 }
 
@@ -701,14 +687,12 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     let cell = tds
-        .cells()
-        .get(cell_key)
+        .get_cell(cell_key)
         .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
-    let vertex_count = cell.vertices().len();
+    let vertex_count = cell.number_of_vertices();
     let mut facet_views = Vec::with_capacity(vertex_count);
 
     for facet_index in 0..vertex_count {
@@ -731,7 +715,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     tds: &'tds Tds<T, U, V, D>,
     cell_keys: std::vec::IntoIter<CellKey>,
@@ -745,7 +728,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Creates a new iterator over all facets in the TDS.
     ///
@@ -779,7 +761,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     type Item = FacetView<'tds, T, U, V, D>;
 
@@ -805,10 +786,10 @@ where
 
             // Move to next cell
             if let Some(next_cell_key) = self.cell_keys.next() {
-                if let Some(cell) = self.tds.cells().get(next_cell_key) {
+                if let Some(cell) = self.tds.get_cell(next_cell_key) {
                     self.current_cell_key = Some(next_cell_key);
                     self.current_facet_index = 0;
-                    self.current_cell_facet_count = cell.vertices().len();
+                    self.current_cell_facet_count = cell.number_of_vertices();
                     // Continue loop to process first facet of new cell
                 } else {
                     // Cell not found, skip to next (continue is implicit at end of loop)
@@ -831,7 +812,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     all_facets: AllFacetsIter<'tds, T, U, V, D>,
     facet_to_cells_map: crate::core::collections::FacetToCellsMap,
@@ -842,7 +822,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Creates a new iterator over boundary facets.
     #[must_use]
@@ -862,7 +841,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     type Item = FacetView<'tds, T, U, V, D>;
 
@@ -1236,24 +1214,134 @@ mod tests {
         assert!(facet_vertices.iter().any(|v| v.data == Some(4)));
     }
 
-    #[test]
-    fn facet_2d_triangle() {
-        // Create 2D triangulation (triangle)
-        let vertices = vec![
+    /// Macro to generate dimension-specific facet tests for dimensions 2D-5D.
+    ///
+    /// This macro reduces test duplication by generating consistent tests across
+    /// multiple dimensions. It creates tests for:
+    /// - Basic facet view creation and vertex count validation
+    /// - `FacetKey` computation and consistency
+    /// - Facet equality tests
+    ///
+    /// For a D-dimensional cell, a facet is (D-1)-dimensional and has D vertices.
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// test_facet_dimensions! {
+    ///     facet_2d => 2 => "triangle" => 2 => vec![vertex!([0.0, 0.0]), ...],
+    /// }
+    /// ```
+    macro_rules! test_facet_dimensions {
+        ($(
+            $test_name:ident => $dim:expr => $desc:expr => $expected_facet_vertices:expr => $vertices:expr
+        ),+ $(,)?) => {
+            $(
+                #[test]
+                fn $test_name() {
+                    // Test basic facet view creation
+                    let vertices = $vertices;
+                    let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                    let cell_key = tds.cell_keys().next().unwrap();
+
+                    // Create facet view for facet 0 (excludes vertex 0)
+                    let facet = FacetView::new(&tds, cell_key, 0).unwrap();
+
+                    // Facet of D-dimensional cell is (D-1)-dimensional with D vertices
+                    assert_eq!(facet.vertices().unwrap().count(), $expected_facet_vertices,
+                        "Facet of {}D {} should have {} vertices", $dim, $desc, $expected_facet_vertices);
+                }
+
+                pastey::paste! {
+                    #[test]
+                    fn [<$test_name _key_consistency>]() {
+                        // Test FacetKey computation consistency
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let cell_key = tds.cell_keys().next().unwrap();
+
+                        // Create same facet twice
+                        let facet1 = FacetView::new(&tds, cell_key, 0).unwrap();
+                        let facet2 = FacetView::new(&tds, cell_key, 0).unwrap();
+
+                        assert_eq!(facet1.key().unwrap(), facet2.key().unwrap(),
+                            "Same facet should produce same key");
+
+                        // Create different facet
+                        let facet3 = FacetView::new(&tds, cell_key, 1).unwrap();
+                        assert_ne!(facet1.key().unwrap(), facet3.key().unwrap(),
+                            "Different facets should produce different keys");
+                    }
+
+                    #[test]
+                    fn [<$test_name _equality>]() {
+                        // Test facet equality comparison
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let cell_key = tds.cell_keys().next().unwrap();
+
+                        let facet1 = FacetView::new(&tds, cell_key, 0).unwrap();
+                        let facet2 = FacetView::new(&tds, cell_key, 0).unwrap();
+                        let facet3 = FacetView::new(&tds, cell_key, 1).unwrap();
+
+                        assert_eq!(facet1, facet2, "Same facet should be equal");
+                        assert_ne!(facet1, facet3, "Different facets should not be equal");
+                    }
+
+                    #[test]
+                    fn [<$test_name _all_facets>]() {
+                        // Test iterating through all facets of a cell
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let cell_key = tds.cell_keys().next().unwrap();
+
+                        // D+1 dimensional cell should have D+1 facets (one opposite each vertex)
+                        let expected_facets = $dim + 1;
+                        let mut facet_keys = std::collections::HashSet::new();
+
+                        for i in 0..expected_facets {
+                            let facet = FacetView::new(&tds, cell_key, u8::try_from(i).unwrap()).unwrap();
+                            facet_keys.insert(facet.key().unwrap());
+                        }
+
+                        assert_eq!(facet_keys.len(), expected_facets,
+                            "{}D cell should have {} unique facets", $dim, expected_facets);
+                    }
+                }
+            )+
+        };
+    }
+
+    // Generate tests for dimensions 2D through 5D
+    test_facet_dimensions! {
+        facet_2d_triangle => 2 => "triangle" => 2 => vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.5, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
-
-        // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::new(&tds, cell_key, 0).unwrap();
-
-        // Facet of 2D triangle is an edge (1D) with 2 vertices
-        assert_eq!(facet.vertices().unwrap().count(), 2);
+        ],
+        facet_3d_tetrahedron => 3 => "tetrahedron" => 3 => vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ],
+        facet_4d_simplex => 4 => "4-simplex" => 4 => vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+        ],
+        facet_5d_simplex => 5 => "5-simplex" => 5 => vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+        ],
     }
 
+    // Keep 1D test separate as it's less common
     #[test]
     fn facet_1d_edge() {
         // Create 1D triangulation (edge with 2 vertices)
@@ -1266,26 +1354,6 @@ mod tests {
 
         // Facet of 1D edge is a point (0D) with 1 vertex
         assert_eq!(facet.vertices().unwrap().count(), 1);
-    }
-
-    #[test]
-    fn facet_4d_simplex() {
-        // Create 4D triangulation (4-simplex with 5 vertices)
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
-
-        // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::new(&tds, cell_key, 0).unwrap();
-
-        // Facet of 4D simplex is a 3D tetrahedron with 4 vertices
-        assert_eq!(facet.vertices().unwrap().count(), 4);
     }
 
     // =============================================================================
@@ -1493,7 +1561,7 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         // Test valid facet creation
         let facet_view = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -1515,7 +1583,7 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view = FacetView::new(&tds, cell_key, 0).unwrap();
 
@@ -1545,17 +1613,16 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view = FacetView::new(&tds, cell_key, 1).unwrap();
         let opposite = facet_view.opposite_vertex().unwrap();
 
         // The opposite vertex should be the vertex at index 1
-        let cell = tds.cells().get(cell_key).expect("cell exists");
+        let cell = tds.get_cell(cell_key).expect("cell exists");
         let cell_vertex_keys = cell.vertices();
         let expected_vertex = tds
-            .vertices()
-            .get(cell_vertex_keys[1])
+            .get_vertex_by_key(cell_vertex_keys[1])
             .expect("vertex exists");
         assert_eq!(opposite.uuid(), expected_vertex.uuid());
     }
@@ -1570,7 +1637,7 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view = FacetView::new(&tds, cell_key, 0).unwrap();
         let key = facet_view.key().unwrap();
@@ -1589,7 +1656,7 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_views = all_facets_for_cell(&tds, cell_key).unwrap();
 
@@ -1616,7 +1683,7 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view1 = FacetView::new(&tds, cell_key, 0).unwrap();
         let facet_view2 = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -1639,7 +1706,7 @@ mod tests {
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cells().keys().next().unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view = FacetView::new(&tds, cell_key, 1).unwrap();
         let debug_str = format!("{facet_view:?}");

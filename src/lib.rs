@@ -339,7 +339,7 @@ mod tests {
         let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
 
         // Get a cell to test quality functions
-        let (cell_key, _) = tds.cells().iter().next().unwrap();
+        let (cell_key, _) = tds.cells().next().unwrap();
 
         // Test that quality functions are accessible
         let ratio = radius_ratio(&tds, cell_key).unwrap();
