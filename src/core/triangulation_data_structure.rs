@@ -670,8 +670,10 @@ where
         // Build facet mapping with vertex index information using optimized collections
         // facet_key -> [(cell_key, vertex_index_opposite_to_facet)]
         type FacetInfo = (CellKey, usize);
+        // Use saturating arithmetic to avoid potential overflow on adversarial inputs
+        let cap = self.cells.len().saturating_mul(D.saturating_add(1));
         let mut facet_map: FastHashMap<u64, SmallBuffer<FacetInfo, 2>> =
-            fast_hash_map_with_capacity(self.cells.len() * (D + 1));
+            fast_hash_map_with_capacity(cap);
 
         for (cell_key, cell) in &self.cells {
             let vertices = self.get_cell_vertices(cell_key).map_err(|err| {
@@ -695,6 +697,7 @@ where
                 let facet_key = facet_key_from_vertices(&facet_vertices);
                 let facet_entry = facet_map.entry(facet_key).or_default();
                 // Detect degenerate case early: more than 2 cells sharing a facet
+                // Note: Check happens before push, so len() reflects current sharing count
                 if facet_entry.len() >= 2 {
                     return Err(TriangulationValidationError::InconsistentDataStructure {
                         message: format!(
@@ -940,10 +943,11 @@ where
     #[must_use]
     pub fn dim(&self) -> i32 {
         let n = self.number_of_vertices();
-        if n == 0 {
-            return -1;
-        }
-        let len = i32::try_from(n).unwrap_or(i32::MAX);
+        let len = if n == 0 {
+            0
+        } else {
+            i32::try_from(n).unwrap_or(i32::MAX)
+        };
         let max_dim = i32::try_from(D).unwrap_or(i32::MAX);
         min(len - 1, max_dim)
     }
@@ -1256,8 +1260,9 @@ where
         })?;
 
         // Phase 3A: Cell now stores vertex keys directly
-        // Validate that all vertex keys are valid before returning them
+        // Validate and collect keys in one pass to avoid redundant iteration
         let cell_vertices = cell.vertices();
+        let mut keys = VertexKeyBuffer::with_capacity(D + 1);
         for (idx, &vertex_key) in cell_vertices.iter().enumerate() {
             if !self.vertices.contains_key(vertex_key) {
                 return Err(TriangulationValidationError::InconsistentDataStructure {
@@ -1267,10 +1272,8 @@ where
                     ),
                 });
             }
+            keys.push(vertex_key);
         }
-
-        let mut keys = VertexKeyBuffer::with_capacity(D + 1);
-        keys.extend_from_slice(cell_vertices);
         Ok(keys)
     }
 

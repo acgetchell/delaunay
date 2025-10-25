@@ -67,7 +67,6 @@ use crate::core::{
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{InSphere, Orientation, insphere, simplex_orientation};
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use approx::abs_diff_eq;
 use num_traits::NumCast;
 use num_traits::{One, Zero, cast};
 use smallvec::SmallVec;
@@ -1207,36 +1206,18 @@ where
             // is equivalent to degenerate_count * 2 > total
             let total_cells = cells_tested.saturating_add(degenerate_count);
 
-            // NOTE: The integer arithmetic optimization below is specifically designed for
-            // DEGENERATE_CELL_THRESHOLD = 0.5. This avoids floating-point operations for
-            // the common 50% threshold case. To generalize for arbitrary rational thresholds,
-            // we would compare: degenerate_count * denominator > total * numerator
-            // For now, we detect the 0.5 case and optimize it; other values fall back to FP.
-            if abs_diff_eq!(DEGENERATE_CELL_THRESHOLD, 0.5, epsilon = f64::EPSILON) {
-                // Use optimized integer arithmetic for 50% threshold
-                let threshold_exceeded = degenerate_count.saturating_mul(2) > total_cells;
+            // Use integer arithmetic optimization for 50% threshold
+            // (guaranteed by compile-time assertion at module level)
+            // For threshold = 0.5: degenerate_count / total > 0.5 ⟺ degenerate_count * 2 > total
+            let threshold_exceeded = degenerate_count.saturating_mul(2) > total_cells;
 
-                if threshold_exceeded {
-                    return Err(BadCellsError::TooManyDegenerateCells(
-                        TooManyDegenerateCellsError {
-                            degenerate_count,
-                            total_tested: cells_tested,
-                        },
-                    ));
-                }
-            } else {
-                // For non-0.5 thresholds, we must use floating point comparison
-                // We accept the precision loss here as it's unavoidable for large usize values
-                #[allow(clippy::cast_precision_loss)]
-                let degenerate_ratio = (degenerate_count as f64) / (total_cells as f64);
-                if degenerate_ratio > DEGENERATE_CELL_THRESHOLD {
-                    return Err(BadCellsError::TooManyDegenerateCells(
-                        TooManyDegenerateCellsError {
-                            degenerate_count,
-                            total_tested: cells_tested,
-                        },
-                    ));
-                }
+            if threshold_exceeded {
+                return Err(BadCellsError::TooManyDegenerateCells(
+                    TooManyDegenerateCellsError {
+                        degenerate_count,
+                        total_tested: cells_tested,
+                    },
+                ));
             }
         }
 
@@ -2636,6 +2617,50 @@ where
         Ok(boundary_infos)
     }
 
+    /// Helper function to set a neighbor pointer with validation.
+    ///
+    /// Reduces code duplication by encapsulating the ensure+validate+set pattern.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Mutable reference to the triangulation
+    /// * `cell_key` - Key of the cell to modify
+    /// * `neighbor_idx` - Index in the neighbor array to set
+    /// * `neighbor_key` - Key of the neighbor cell to set
+    ///
+    /// # Errors
+    ///
+    /// Returns `InsertionError` if the cell is not found or neighbor buffer size is invalid.
+    fn set_neighbor_with_validation(
+        tds: &mut Tds<T, U, V, D>,
+        cell_key: CellKey,
+        neighbor_idx: usize,
+        neighbor_key: CellKey,
+    ) -> Result<(), InsertionError> {
+        let cell_mut = tds.cells_mut().get_mut(cell_key).ok_or_else(|| {
+            InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Cannot get mutable reference to cell {cell_key:?}"),
+                },
+            )
+        })?;
+
+        let neighbors = cell_mut.ensure_neighbors_buffer_mut();
+        if neighbors.len() != D + 1 {
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Neighbor buffer size {} != D+1 ({}) for cell {cell_key:?}",
+                        neighbors.len(),
+                        D + 1
+                    ),
+                },
+            ));
+        }
+        neighbors[neighbor_idx] = Some(neighbor_key);
+        Ok(())
+    }
+
     /// Wire neighbor relationships for newly created cells after cavity removal.
     ///
     /// This helper establishes neighbor pointers between the new cells filling the cavity
@@ -2720,54 +2745,15 @@ where
             // If there's an outside neighbor, wire the bidirectional connection
             if let Some((outside_ck, outside_facet_idx)) = info.outside_neighbor {
                 // Set new_cell's neighbor at inserted_idx → outside_ck
-                let new_cell_mut = tds.cells_mut().get_mut(*new_cell_key).ok_or_else(|| {
-                    InsertionError::TriangulationState(
-                        TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Cannot get mutable reference to cell {new_cell_key:?}"
-                            ),
-                        },
-                    )
-                })?;
-
-                let neighbors = new_cell_mut.ensure_neighbors_buffer_mut();
-                if neighbors.len() != D + 1 {
-                    return Err(InsertionError::TriangulationState(
-                        TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Neighbor buffer size {} != D+1 ({}) for cell {new_cell_key:?}",
-                                neighbors.len(),
-                                D + 1
-                            ),
-                        },
-                    ));
-                }
-                neighbors[inserted_idx] = Some(outside_ck);
+                Self::set_neighbor_with_validation(tds, *new_cell_key, inserted_idx, outside_ck)?;
 
                 // Set outside_ck's neighbor at outside_facet_idx → new_cell
-                let outside_cell = tds.cells_mut().get_mut(outside_ck).ok_or_else(|| {
-                    InsertionError::TriangulationState(
-                        TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Outside neighbor {outside_ck:?} not found for new cell {new_cell_key:?}"
-                            ),
-                        },
-                    )
-                })?;
-
-                let neighbors = outside_cell.ensure_neighbors_buffer_mut();
-                if neighbors.len() != D + 1 {
-                    return Err(InsertionError::TriangulationState(
-                        TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Neighbor buffer size {} != D+1 ({}) for outside cell {outside_ck:?}",
-                                neighbors.len(),
-                                D + 1
-                            ),
-                        },
-                    ));
-                }
-                neighbors[outside_facet_idx] = Some(*new_cell_key);
+                Self::set_neighbor_with_validation(
+                    tds,
+                    outside_ck,
+                    outside_facet_idx,
+                    *new_cell_key,
+                )?;
             }
         }
 
@@ -2823,48 +2809,10 @@ where
                     let other_idx = *other_facet_idx;
 
                     // Set new_cell[opposite_idx] → other_cell
-                    let cell_mut = tds.cells_mut().get_mut(new_cell_key).ok_or_else(|| {
-                        InsertionError::TriangulationState(
-                            TriangulationValidationError::InconsistentDataStructure {
-                                message: format!("Cannot get mutable cell {new_cell_key:?}"),
-                            },
-                        )
-                    })?;
-                    let neighbors = cell_mut.ensure_neighbors_buffer_mut();
-                    if neighbors.len() != D + 1 {
-                        return Err(InsertionError::TriangulationState(
-                            TriangulationValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Neighbor buffer size {} != D+1 ({}) for cell {new_cell_key:?}",
-                                    neighbors.len(),
-                                    D + 1
-                                ),
-                            },
-                        ));
-                    }
-                    neighbors[opposite_idx] = Some(other_ck);
+                    Self::set_neighbor_with_validation(tds, new_cell_key, opposite_idx, other_ck)?;
 
                     // Set other_cell[other_idx] → new_cell
-                    let other_mut = tds.cells_mut().get_mut(other_ck).ok_or_else(|| {
-                        InsertionError::TriangulationState(
-                            TriangulationValidationError::InconsistentDataStructure {
-                                message: format!("Cannot get mutable cell {other_ck:?}"),
-                            },
-                        )
-                    })?;
-                    let neighbors = other_mut.ensure_neighbors_buffer_mut();
-                    if neighbors.len() != D + 1 {
-                        return Err(InsertionError::TriangulationState(
-                            TriangulationValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Neighbor buffer size {} != D+1 ({}) for cell {other_ck:?}",
-                                    neighbors.len(),
-                                    D + 1
-                                ),
-                            },
-                        ));
-                    }
-                    neighbors[other_idx] = Some(new_cell_key);
+                    Self::set_neighbor_with_validation(tds, other_ck, other_idx, new_cell_key)?;
                 } else {
                     // First time seeing this facet; record it
                     facet_to_cell.insert(facet_key, (new_cell_key, opposite_idx));

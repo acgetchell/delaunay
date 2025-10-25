@@ -63,6 +63,7 @@ macro_rules! generate_dimensional_benchmarks {
             /// Benchmark Bowyer-Watson triangulation for [<$dim>]D
             fn [<benchmark_bowyer_watson_triangulation_ $dim d>](c: &mut Criterion) {
                 let point_counts = [10, 25, 50, 100, 250];
+                let seed = get_benchmark_seed(); // Cache seed to avoid repeated env var parsing
 
                 let mut group = c.benchmark_group(concat!("bowyer_watson_triangulation_", stringify!([<$dim>]), "d"));
 
@@ -77,7 +78,7 @@ macro_rules! generate_dimensional_benchmarks {
                         |b, &n_points| {
                             b.iter_batched(
                                 || {
-                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                                     points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                                 },
                                 |vertices| black_box(Tds::<f64, (), (), $dim>::new(&vertices).unwrap()),
@@ -93,6 +94,7 @@ macro_rules! generate_dimensional_benchmarks {
             /// Benchmark `remove_duplicate_cells` for [<$dim>]D
             fn [<benchmark_remove_duplicate_cells_ $dim d>](c: &mut Criterion) {
                 let point_counts = [10, 25, 50, 100];
+                let seed = get_benchmark_seed(); // Cache seed to avoid repeated env var parsing
 
                 let mut group = c.benchmark_group(concat!("remove_duplicate_cells_", stringify!([<$dim>]), "d"));
 
@@ -107,9 +109,9 @@ macro_rules! generate_dimensional_benchmarks {
                         |b, &n_points| {
                             b.iter_batched(
                                 || {
-                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                    // Note: tds must be mutable for cells_mut() access below (line 137)
+                                    // Note: tds must be mutable for insert_cell_unchecked() calls below
                                     let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
                                     // ============================================================
@@ -196,6 +198,7 @@ macro_rules! generate_memory_usage_benchmarks {
             /// Benchmark memory allocation patterns for [<$dim>]D
             fn [<benchmark_memory_usage_ $dim d>](c: &mut Criterion) {
                 let point_counts: &[usize] = if $dim <= 3 { &[50, 100, 200] } else { &[20, 50, 100] };
+                let seed = get_benchmark_seed(); // Cache seed to avoid repeated env var parsing
 
                 let mut group = c.benchmark_group(&format!("memory_usage_{}d", $dim));
 
@@ -206,7 +209,7 @@ macro_rules! generate_memory_usage_benchmarks {
                         |b, &n_points| {
                             b.iter(|| {
                                 // Measure complete triangulation creation and destruction
-                                let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
+                                let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                                 let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
                                 black_box((tds.number_of_vertices(), tds.number_of_cells()))
@@ -239,6 +242,7 @@ macro_rules! generate_validation_benchmarks {
             /// Benchmark validation methods performance for [<$dim>]D
             fn [<benchmark_validation_methods_ $dim d>](c: &mut Criterion) {
                 let point_counts: &[usize] = if $dim <= 3 { &[10, 25, 50, 100] } else { &[10, 25, 50] };
+                let seed = get_benchmark_seed(); // Cache seed to avoid repeated env var parsing
 
                 let mut group = c.benchmark_group(&format!("validation_methods_{}d", $dim));
 
@@ -253,7 +257,7 @@ macro_rules! generate_validation_benchmarks {
                         |b, &n_points| {
                             b.iter_batched(
                                 || {
-                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                                     Tds::<f64, (), (), $dim>::new(&vertices).unwrap()
                                 },
@@ -272,8 +276,9 @@ macro_rules! generate_validation_benchmarks {
 
             /// Benchmark individual validation components for [<$dim>]D
             fn [<benchmark_validation_components_ $dim d>](c: &mut Criterion) {
+                let seed = get_benchmark_seed(); // Cache seed to avoid repeated env var parsing
                 let n_points = if $dim <= 3 { 50 } else { 25 }; // Fixed size for component benchmarks
-                let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), get_benchmark_seed()).unwrap();
+                let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                 let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
@@ -323,6 +328,7 @@ macro_rules! generate_incremental_construction_benchmarks {
         pastey::paste! {
             /// Benchmark incremental vertex addition for [<$dim>]D
             fn [<benchmark_incremental_construction_ $dim d>](c: &mut Criterion) {
+                let seed = get_benchmark_seed(); // Cache seed to avoid repeated env var parsing
                 let mut group = c.benchmark_group(&format!("incremental_construction_{}d", $dim));
 
                 // Generate initial simplex for the given dimension
@@ -370,7 +376,7 @@ macro_rules! generate_incremental_construction_benchmarks {
                             b.iter_batched(
                                 || {
                                     let tds = Tds::<f64, (), (), $dim>::new(&initial_vertices).unwrap();
-                                    let additional_points: Vec<Point<f64, $dim>> = generate_random_points_seeded(count, (-100.0, 100.0), get_benchmark_seed()).unwrap();
+                                    let additional_points: Vec<Point<f64, $dim>> = generate_random_points_seeded(count, (-100.0, 100.0), seed).unwrap();
                                     let additional_vertices: Vec<_> =
                                         additional_points.iter().map(|p| vertex!(*p)).collect();
                                     (tds, additional_vertices)

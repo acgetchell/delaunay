@@ -410,7 +410,9 @@ where
                 let uuid: Uuid = uuid.ok_or_else(|| de::Error::missing_field("uuid"))?;
                 crate::core::util::validate_uuid(&uuid)
                     .map_err(|e| de::Error::custom(format!("invalid uuid: {e}")))?;
-                let data = data.unwrap_or(None);
+                // data is Option<Option<V>>: None if field missing, Some(inner) if present
+                // flatten() converts None -> None and Some(inner) -> inner
+                let data = data.flatten();
 
                 // Phase 3A: vertices and neighbors are not serialized
                 // They will be reconstructed by TDS deserialization using:
