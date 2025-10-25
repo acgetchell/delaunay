@@ -312,51 +312,13 @@ where
         message: format!("Volume computation failed: {e}"),
     })?;
 
-    // Check for degenerate cell using scale-aware tolerance
-    // Compute average edge length (translation-invariant measure) for scale
-    let mut total_edge_length_vol = T::zero();
-    let mut edge_count_vol = 0;
-    for i in 0..points.len() {
-        for j in (i + 1)..points.len() {
-            let mut diff_coords = [T::zero(); D];
-            for (idx, diff) in diff_coords.iter_mut().enumerate() {
-                *diff = points[i].coords()[idx] - points[j].coords()[idx];
-            }
-            let dist = hypot(diff_coords);
-            total_edge_length_vol += dist;
-            edge_count_vol += 1;
-        }
-    }
-    let edge_count_vol_t =
-        NumCast::from(edge_count_vol).ok_or_else(|| QualityError::NumericalError {
-            message: "Failed to convert edge count to type T".to_string(),
-        })?;
-    let avg_edge_length = total_edge_length_vol / edge_count_vol_t;
-
-    // Use relative epsilon based on average edge length with a minimum floor
-    let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
-        message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
-    })?;
-    let relative_factor: T = NumCast::from(1e-8).ok_or_else(|| QualityError::NumericalError {
-        message: "Failed to convert relative factor (1e-8) to coordinate type".to_string(),
-    })?;
-    let epsilon = floor.max(avg_edge_length * relative_factor);
-
-    if volume < epsilon {
-        return Err(QualityError::DegenerateCell {
-            detail: format!(
-                "volume={volume:?}, epsilon={epsilon:?}, avg_edge_length={avg_edge_length:?}"
-            ),
-        });
-    }
-
-    // Compute average edge length for normalization
+    // Compute average edge length once for both degeneracy check and normalization
+    // This avoids O((D+1)^2) duplicate computation
     let mut total_edge_length = T::zero();
     let mut edge_count = 0;
 
     for i in 0..points.len() {
         for j in (i + 1)..points.len() {
-            // Compute distance between points i and j using hypot for numerical stability
             let mut diff_coords = [T::zero(); D];
             for (idx, diff) in diff_coords.iter_mut().enumerate() {
                 *diff = points[i].coords()[idx] - points[j].coords()[idx];
@@ -373,11 +335,28 @@ where
         });
     }
 
-    let edge_count_t = T::from(edge_count).ok_or_else(|| QualityError::NumericalError {
+    let edge_count_t = NumCast::from(edge_count).ok_or_else(|| QualityError::NumericalError {
         message: format!("Failed to convert edge count {edge_count} to coordinate type"),
     })?;
-
     let avg_edge_length = total_edge_length / edge_count_t;
+
+    // Use relative epsilon based on average edge length with a minimum floor
+    let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
+        message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
+    })?;
+    let relative_factor: T = NumCast::from(1e-8).ok_or_else(|| QualityError::NumericalError {
+        message: "Failed to convert relative factor (1e-8) to coordinate type".to_string(),
+    })?;
+    let epsilon = floor.max(avg_edge_length * relative_factor);
+
+    // Check for degenerate cell (volume too small)
+    if volume < epsilon {
+        return Err(QualityError::DegenerateCell {
+            detail: format!(
+                "volume={volume:?}, epsilon={epsilon:?}, avg_edge_length={avg_edge_length:?}"
+            ),
+        });
+    }
 
     // Check avg_edge_length using the same scale-aware epsilon
     if avg_edge_length < epsilon {

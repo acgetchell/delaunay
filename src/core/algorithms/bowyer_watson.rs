@@ -199,6 +199,12 @@ where
     /// # Returns
     ///
     /// The recommended insertion strategy.
+    ///
+    /// # Implementation Note
+    ///
+    /// If interior testing fails (geometry error), falls back to hull extension strategy
+    /// rather than masking the error. This ensures that geometric failures are visible
+    /// through the insertion attempt rather than being silently ignored.
     fn determine_insertion_strategy(
         &self,
         tds: &Tds<T, U, V, D>,
@@ -210,7 +216,13 @@ where
         // Check if vertex is inside any existing cell's circumsphere
         match <Self as InsertionAlgorithm<T, U, V, D>>::is_vertex_interior(self, tds, vertex) {
             Ok(true) => InsertionStrategy::CavityBased,
-            Ok(false) | Err(_) => InsertionStrategy::HullExtension, // On error, fallback to hull extension
+            Ok(false) => InsertionStrategy::HullExtension,
+            Err(_) => {
+                // On geometry error, use Fallback strategy which tries multiple approaches
+                // This prevents silently treating errors as "exterior" and gives fallback
+                // mechanisms a chance to handle degenerate cases
+                InsertionStrategy::Fallback
+            }
         }
     }
 }

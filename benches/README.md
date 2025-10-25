@@ -13,7 +13,7 @@ This directory contains performance benchmarks for the delaunay library, organiz
 | Benchmark | Purpose | Scale | Runtime | Used By |
 |-----------|---------|-------|---------|----------|
 | `ci_performance_suite.rs` | **CI regression detection** | 10–50 vertices | ~5-10 min | CI workflows, baseline generation |
-| `large_scale_performance.rs` | **Phase 4 SlotMap evaluation** | 1k–10k vertices | ~10-30 min | Manual |
+| `large_scale_performance.rs` | **Phase 4 SlotMap evaluation** | 1k–10k vertices | ~10-30 min (default); ~2-3 hours (BENCH_LARGE_SCALE=1) | Manual |
 | `profiling_suite.rs` | Comprehensive profiling | 10³–10⁶ vertices | 1-2 hours | Monthly profiling, manual |
 | `circumsphere_containment.rs` | Algorithm comparison | Random queries | ~5 min | Performance summary generation |
 | `assign_neighbors_performance.rs` | Neighbor assignment | 10–50 vertices | ~5 min | Manual |
@@ -74,8 +74,8 @@ cargo bench --bench large_scale_performance -- "queries/neighbors"
 cargo bench --bench large_scale_performance -- "iteration/vertices"
 
 # Phase 4 just targets (available now)
-just bench-phase4        # Run Phase 4 benchmarks (~2-3 hours)
-just bench-phase4-large  # Large scale (~4-6 hours, compute cluster)
+just bench-phase4        # Run Phase 4 benchmarks (~10-30 min default scale)
+just bench-phase4-large  # Large scale with BENCH_LARGE_SCALE=1 (~2-3 hours)
 just bench-phase4-quick  # Quick validation tests (~90 seconds)
 
 # Storage backend comparison
@@ -135,6 +135,9 @@ cargo bench --bench profiling_suite --features count-allocations -- triangulatio
 cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
 cargo bench --bench profiling_suite --features count-allocations -- query_latency
 cargo bench --bench profiling_suite --features count-allocations -- algorithmic_bottlenecks
+
+# Run only memory profiling group (useful for focused analysis)
+cargo bench --bench profiling_suite --features count-allocations -- "memory_profiling"
 ```
 
 The **Profiling Suite** provides comprehensive performance analysis for optimization work:

@@ -364,27 +364,22 @@ class TestStorageBackendComparator:
     def test_run_comparison_denseslotmap_failure(self, mock_run_cargo, comparator):
         """Test comparison when DenseSlotMap benchmark fails."""
         # Mock successful SlotMap, failed DenseSlotMap
-        call_count = [0]
-
-        def side_effect(*args, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                # First call (SlotMap) succeeds
-                return CompletedProcess(
-                    args=["cargo", "bench"],
-                    returncode=0,
-                    stdout="test_bench time: [1.0 ms 1.1 ms 1.2 ms]",
-                    stderr="",
-                )
+        mock_run_cargo.side_effect = [
+            # First call (SlotMap) succeeds
+            CompletedProcess(
+                args=["cargo", "bench"],
+                returncode=0,
+                stdout="test_bench time: [1.0 ms 1.1 ms 1.2 ms]",
+                stderr="",
+            ),
             # Second call (DenseSlotMap) fails
-            return CompletedProcess(
+            CompletedProcess(
                 args=["cargo", "bench"],
                 returncode=1,
                 stdout="",
                 stderr="error",
-            )
-
-        mock_run_cargo.side_effect = side_effect
+            ),
+        ]
 
         success = comparator.run_comparison(benchmark_name="test_bench")
 

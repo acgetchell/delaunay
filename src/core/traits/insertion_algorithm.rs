@@ -282,7 +282,28 @@ const MARGIN_FACTOR: f64 = 0.1;
 /// Currently set to 0.5 (50%), which means if more than half the cells are degenerate,
 /// we consider the results unreliable. This threshold can be adjusted based on the
 /// tolerance for degenerate cases in specific applications.
+///
+/// **IMPORTANT**: The integer arithmetic optimization in `find_bad_cells` is specifically
+/// designed for a threshold of 0.5. If you change this value, update the optimization logic
+/// accordingly or remove the compile-time assertion below.
 const DEGENERATE_CELL_THRESHOLD: f64 = 0.5;
+
+// Compile-time assertion: ensure integer optimization remains valid
+// This guard catches changes to DEGENERATE_CELL_THRESHOLD that would invalidate
+// the optimized `degenerate_count * 2 > total` check in find_bad_cells.
+const _: () = {
+    // Note: We use a const function to perform the check at compile time
+    const fn assert_threshold_is_half() {
+        // Bit-level comparison for exact 0.5 value
+        // 0.5 in f64 is exactly representable: sign=0, exp=1022, mantissa=0
+        assert!(
+            DEGENERATE_CELL_THRESHOLD.to_bits() == 0.5_f64.to_bits(),
+            "DEGENERATE_CELL_THRESHOLD must be exactly 0.5 for the integer optimization in find_bad_cells(). \
+             If you need a different threshold, update the optimization logic at lines 1202-1213."
+        );
+    }
+    assert_threshold_is_half();
+};
 
 /// Metadata for a single boundary facet during transactional cavity-based insertion.
 ///
@@ -2615,35 +2636,6 @@ where
         Ok(boundary_infos)
     }
 
-    /// Ensures a cell has a properly initialized neighbors buffer of size D+1.
-    ///
-    /// This helper function centralizes neighbor buffer initialization logic to avoid
-    /// code duplication and reduce the error surface for off-by-one bugs.
-    ///
-    /// # Arguments
-    ///
-    /// * `cell` - Mutable reference to the cell
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the neighbors buffer, guaranteed to be sized D+1 with all None values.
-    ///
-    /// # Performance
-    ///
-    /// Inline to zero cost in release builds. Only allocates if the buffer doesn't exist.
-    #[inline]
-    fn ensure_neighbors_buffer<const DIM: usize>(
-        cell: &mut Cell<T, U, V, DIM>,
-    ) -> &mut SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> {
-        if cell.neighbors.is_none() {
-            let mut buffer = SmallBuffer::new();
-            buffer.resize(DIM + 1, None);
-            cell.neighbors = Some(buffer);
-        }
-        // SAFETY: We just ensured neighbors is Some above
-        cell.neighbors.as_mut().unwrap()
-    }
-
     /// Wire neighbor relationships for newly created cells after cavity removal.
     ///
     /// This helper establishes neighbor pointers between the new cells filling the cavity
@@ -2738,7 +2730,7 @@ where
                     )
                 })?;
 
-                let neighbors = Self::ensure_neighbors_buffer::<D>(new_cell_mut);
+                let neighbors = new_cell_mut.ensure_neighbors_buffer_mut();
                 neighbors[inserted_idx] = Some(outside_ck);
 
                 // Set outside_ck's neighbor at outside_facet_idx → new_cell
@@ -2752,7 +2744,7 @@ where
                     )
                 })?;
 
-                let neighbors = Self::ensure_neighbors_buffer::<D>(outside_cell);
+                let neighbors = outside_cell.ensure_neighbors_buffer_mut();
                 neighbors[outside_facet_idx] = Some(*new_cell_key);
             }
         }
@@ -2816,7 +2808,7 @@ where
                             },
                         )
                     })?;
-                    let neighbors = Self::ensure_neighbors_buffer::<D>(cell_mut);
+                    let neighbors = cell_mut.ensure_neighbors_buffer_mut();
                     neighbors[opposite_idx] = Some(other_ck);
 
                     // Set other_cell[other_idx] → new_cell
@@ -2827,7 +2819,7 @@ where
                             },
                         )
                     })?;
-                    let neighbors = Self::ensure_neighbors_buffer::<D>(other_mut);
+                    let neighbors = other_mut.ensure_neighbors_buffer_mut();
                     neighbors[other_idx] = Some(new_cell_key);
                 } else {
                     // First time seeing this facet; record it

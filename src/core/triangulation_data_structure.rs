@@ -735,17 +735,8 @@ where
         }
 
         // For each facet that is shared by exactly two cells, establish neighbor relationships
-        for (facet_key, facet_infos) in facet_map {
-            if facet_infos.len() > 2 {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Facet with key {} is shared by {} cells, but should be shared by at most 2 cells in a valid triangulation",
-                        facet_key,
-                        facet_infos.len()
-                    ),
-                });
-            }
-
+        // Note: >2 cells per facet already caught by early check during map build (above)
+        for (_facet_key, facet_infos) in facet_map {
             if facet_infos.len() != 2 {
                 continue;
             }
@@ -1029,36 +1020,18 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Returns a mutable reference to the internal vertices storage.
-    ///
-    /// # ⚠️ Warning: Internal API
-    ///
-    /// This method exposes the concrete storage backend and is intended for
-    /// internal use and testing only. External code should avoid relying on this
-    /// method as it may be removed or restricted in future versions.
-    ///
-    /// Modifying vertices through this method can break triangulation invariants.
-    /// Use at your own risk.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the storage map containing all vertices.
-    #[doc(hidden)]
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn vertices_mut(&mut self) -> &mut StorageMap<VertexKey, Vertex<T, U, D>> {
-        &mut self.vertices
-    }
-
     /// Returns a mutable reference to the internal cells storage.
     ///
-    /// # ⚠️ Warning: Internal API
+    /// # ⚠️ Warning: Dangerous Internal API
     ///
-    /// This method exposes the concrete storage backend and is intended for
-    /// internal use and testing only. External code should avoid relying on this
-    /// method as it may be removed or restricted in future versions.
+    /// This method exposes the concrete storage backend and **WILL BREAK TRIANGULATION INVARIANTS**
+    /// if used incorrectly. It is intended **ONLY** for:
+    /// - Internal crate implementation
+    /// - Performance benchmarks that need to violate invariants deliberately
+    /// - Integration tests validating storage backend behavior
     ///
-    /// Modifying cells through this method can break triangulation invariants.
-    /// Use at your own risk.
+    /// **DO NOT** use this in production code. Modifying cells through this method bypasses
+    /// all safety checks and can leave the triangulation in an inconsistent state.
     ///
     /// # Returns
     ///
@@ -1101,9 +1074,7 @@ where
     /// Atomically inserts a vertex and creates the UUID-to-key mapping.
     ///
     /// This method ensures that both the vertex insertion and UUID mapping are
-    /// performed together, maintaining data structure invariants. This is preferred
-    /// over separate `vertices_mut().insert()` + `uuid_to_vertex_key.insert()` calls
-    /// which can leave the data structure in an inconsistent state if interrupted.
+    /// performed together, maintaining data structure invariants.
     ///
     /// **⚠️ INTERNAL API WARNING**: This method bypasses atomicity guarantees for topology
     /// assignment operations (`assign_neighbors()` and `assign_incident_cells()`). It only
@@ -1745,8 +1716,6 @@ where
     ///
     /// This method atomically removes a vertex from both the vertex storage and
     /// the UUID→key mapping, ensuring the data structure remains consistent.
-    /// This is the preferred way to remove a vertex compared to directly manipulating
-    /// `vertices_mut()` and `uuid_to_vertex_key`, as it maintains invariants.
     ///
     /// **Internal API**: This method is intended for internal use only (e.g., rollback
     /// operations in insertion algorithms). It does not maintain triangulation topology
@@ -1976,21 +1945,11 @@ where
         neighbors: Vec<Option<CellKey>>,
     ) -> Result<(), TriangulationValidationError> {
         // Validate the topological invariant before applying changes
+        // (includes length check: neighbors.len() == D+1)
         self.validate_neighbor_topology(cell_key, &neighbors)?;
 
         // Phase 3A: Store CellKeys directly, no UUID conversion needed
         let neighbors_vec = neighbors;
-
-        // Enforce positional semantics: neighbors.len() must be D+1
-        if neighbors_vec.len() != D + 1 {
-            return Err(TriangulationValidationError::InvalidNeighbors {
-                message: format!(
-                    "Invalid neighbor vector length: got {}, expected {}",
-                    neighbors_vec.len(),
-                    D + 1
-                ),
-            });
-        }
 
         // Get mutable reference and update, or return error if not found
         let cell = self.get_cell_by_key_mut(cell_key).ok_or_else(|| {
@@ -2404,7 +2363,8 @@ where
     /// assert_eq!(tds.number_of_vertices(), 1);
     /// assert_eq!(tds.number_of_cells(), 0);  // No cells yet
     /// assert_eq!(tds.dim(), 0);
-    /// // Note: construction_state is not updated by add() - it tracks initial state
+    /// // Note: add() sets `construction_state` to `Constructed` once the initial D-simplex is formed.
+    /// //       Before that, the triangulation remains in an incomplete state.
     ///
     /// // Add second vertex: still unconstructed
     /// tds.add(vertex!([1.0, 0.0, 0.0])).unwrap();
@@ -2500,7 +2460,9 @@ where
                 .map_err(TriangulationConstructionError::ValidationError)?;
             // Topology already changed in insert_cell_with_mapping; no need to bump again
 
-            // Update construction state now that we have a valid D-simplex
+            // Update construction state: we now have a valid initial D-simplex.
+            // This transitions from Incomplete state to Constructed state.
+            // Note: This only happens once when the first cell is created (Case 2).
             self.construction_state = TriangulationConstructionState::Constructed;
             return Ok(());
         }
@@ -3000,8 +2962,9 @@ where
         let mut facet_to_cells: FacetToCellsMap =
             fast_hash_map_with_capacity(self.cells.len() * (D + 1));
 
-        // Preallocate facet_vertices buffer outside the loops to avoid per-iteration allocations
-        let mut facet_vertices = Vec::with_capacity(D);
+        // Use SmallBuffer to avoid heap allocations for facet vertices (same as assign_neighbors)
+        let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D);
         #[cfg(debug_assertions)]
         let mut skipped_cells = 0usize;
 
@@ -5074,26 +5037,6 @@ mod tests {
 
             // Test cell accessor
             assert_eq!(tds.number_of_cells(), 1, "Tetrahedron should have 1 cell");
-        }
-
-        // Test mutable accessors
-        {
-            let points = vec![
-                Point::new([0.0, 0.0, 0.0]),
-                Point::new([1.0, 0.0, 0.0]),
-                Point::new([0.0, 1.0, 0.0]),
-                Point::new([0.0, 0.0, 1.0]),
-            ];
-            let vertices = Vertex::from_points(points);
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-
-            let vertices_count = tds.vertices_mut().len();
-            let cells_count = tds.cells_mut().len();
-
-            assert_eq!(vertices_count, 4);
-            assert_eq!(cells_count, 1);
-            assert_eq!(tds.number_of_vertices(), vertices_count);
-            assert_eq!(tds.number_of_cells(), cells_count);
         }
 
         // Test accessors after incremental additions

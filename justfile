@@ -3,6 +3,9 @@
 # Install just: https://github.com/casey/just
 # Usage: just <command> or just --list
 
+# Use bash with strict error handling for all recipes
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
 # Internal helper: ensure uv is installed
 _ensure-uv:
     #!/usr/bin/env bash
@@ -13,6 +16,10 @@ _ensure-uv:
 action-lint:
     #!/usr/bin/env bash
     set -euo pipefail
+    if ! command -v actionlint >/dev/null; then
+        echo "⚠️ 'actionlint' not found. See 'just setup' or https://github.com/rhysd/actionlint"
+        exit 0
+    fi
     files=()
     while IFS= read -r -d '' file; do
         files+=("$file")
@@ -41,11 +48,11 @@ bench-dev: _ensure-uv
 
 # Phase 4 SlotMap evaluation benchmarks
 bench-phase4:
-    @echo "🔬 Running Phase 4 SlotMap evaluation benchmarks (~2-3 hours)"
+    @echo "🔬 Running Phase 4 SlotMap evaluation benchmarks (~10-30 min default scale)"
     cargo bench --bench large_scale_performance
 
 bench-phase4-large:
-    @echo "🔬 Running Phase 4 large-scale benchmarks (~4-6 hours, use on compute cluster)"
+    @echo "🔬 Running Phase 4 large-scale benchmarks with BENCH_LARGE_SCALE=1 (~2-3 hours)"
     BENCH_LARGE_SCALE=1 cargo bench --bench large_scale_performance
 
 bench-phase4-quick:
@@ -156,8 +163,8 @@ help-workflows:
     @echo "  just bench-dev     # Development mode (10x faster)"
     @echo ""
     @echo "Phase 4 SlotMap Evaluation:"
-    @echo "  just bench-phase4       # Run Phase 4 benchmarks (~2-3 hours)"
-    @echo "  just bench-phase4-large # Large scale (~4-6 hours, compute cluster)"
+    @echo "  just bench-phase4       # Run Phase 4 benchmarks (~10-30 min default)"
+    @echo "  just bench-phase4-large # Large scale with BENCH_LARGE_SCALE=1 (~2-3 hours)"
     @echo "  just bench-phase4-quick # Quick validation tests (~90 seconds)"
     @echo ""
     @echo "Storage Backend Comparison:"
