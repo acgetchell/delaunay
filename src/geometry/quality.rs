@@ -116,6 +116,61 @@ where
     Ok(points)
 }
 
+/// Computes scale-aware epsilon and average edge length for degeneracy detection.
+///
+/// This helper centralizes the epsilon calculation logic used by both `radius_ratio`
+/// and `normalized_volume` to ensure consistent degeneracy detection across metrics.
+///
+/// # Arguments
+///
+/// * `points` - The cell vertices
+///
+/// # Returns
+///
+/// A tuple of `(avg_edge_length, epsilon)` where:
+/// - `avg_edge_length`: Translation-invariant geometric scale
+/// - `epsilon`: Relative tolerance (1e-8 × `avg_edge_length`) with 1e-12 floor
+///
+/// # Errors
+///
+/// Returns `QualityError` if edge count conversion or epsilon conversion fails.
+fn compute_scale_aware_epsilon<T, const D: usize>(
+    points: &SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>,
+) -> Result<(T, T), QualityError>
+where
+    T: CoordinateScalar + AddAssign<T> + Sum + NumCast,
+{
+    let mut total_edge_length = T::zero();
+    let mut edge_count = 0;
+
+    for i in 0..points.len() {
+        for j in (i + 1)..points.len() {
+            let mut diff_coords = [T::zero(); D];
+            for (idx, diff) in diff_coords.iter_mut().enumerate() {
+                *diff = points[i].coords()[idx] - points[j].coords()[idx];
+            }
+            let dist = hypot(diff_coords);
+            total_edge_length += dist;
+            edge_count += 1;
+        }
+    }
+
+    let edge_count_t = NumCast::from(edge_count).ok_or_else(|| QualityError::NumericalError {
+        message: "Failed to convert edge count to type T".to_string(),
+    })?;
+    let avg_edge_length = total_edge_length / edge_count_t;
+
+    let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
+        message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
+    })?;
+    let relative_factor: T = NumCast::from(1e-8).ok_or_else(|| QualityError::NumericalError {
+        message: "Failed to convert relative factor (1e-8) to coordinate type".to_string(),
+    })?;
+    let epsilon = floor.max(avg_edge_length * relative_factor);
+
+    Ok((avg_edge_length, epsilon))
+}
+
 /// Computes the radius ratio quality metric for a cell.
 ///
 /// The radius ratio is defined as the circumradius divided by the inradius.
@@ -197,33 +252,7 @@ where
     })?;
 
     // Check for near-zero inradius (degenerate cell) using scale-aware tolerance
-    // Compute scale from average edge length (translation-invariant measure)
-    let mut total_edge_length = T::zero();
-    let mut edge_count = 0;
-    for i in 0..points.len() {
-        for j in (i + 1)..points.len() {
-            let mut diff_coords = [T::zero(); D];
-            for (idx, diff) in diff_coords.iter_mut().enumerate() {
-                *diff = points[i].coords()[idx] - points[j].coords()[idx];
-            }
-            let dist = hypot(diff_coords);
-            total_edge_length += dist;
-            edge_count += 1;
-        }
-    }
-    let edge_count_t = NumCast::from(edge_count).ok_or_else(|| QualityError::NumericalError {
-        message: "Failed to convert edge count to type T".to_string(),
-    })?;
-    let avg_edge_length = total_edge_length / edge_count_t;
-
-    // Use relative epsilon based on average edge length with a minimum floor
-    let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
-        message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
-    })?;
-    let relative_factor: T = NumCast::from(1e-8).ok_or_else(|| QualityError::NumericalError {
-        message: "Failed to convert relative factor (1e-8) to coordinate type".to_string(),
-    })?;
-    let epsilon = floor.max(avg_edge_length * relative_factor);
+    let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points)?;
 
     if inradius_val < epsilon {
         return Err(QualityError::DegenerateCell {
@@ -312,42 +341,8 @@ where
         message: format!("Volume computation failed: {e}"),
     })?;
 
-    // Compute average edge length once for both degeneracy check and normalization
-    // This avoids O((D+1)^2) duplicate computation
-    let mut total_edge_length = T::zero();
-    let mut edge_count = 0;
-
-    for i in 0..points.len() {
-        for j in (i + 1)..points.len() {
-            let mut diff_coords = [T::zero(); D];
-            for (idx, diff) in diff_coords.iter_mut().enumerate() {
-                *diff = points[i].coords()[idx] - points[j].coords()[idx];
-            }
-            let dist = hypot(diff_coords);
-            total_edge_length += dist;
-            edge_count += 1;
-        }
-    }
-
-    if edge_count == 0 {
-        return Err(QualityError::InvalidCell {
-            message: "No edges found in cell".to_string(),
-        });
-    }
-
-    let edge_count_t = NumCast::from(edge_count).ok_or_else(|| QualityError::NumericalError {
-        message: format!("Failed to convert edge count {edge_count} to coordinate type"),
-    })?;
-    let avg_edge_length = total_edge_length / edge_count_t;
-
-    // Use relative epsilon based on average edge length with a minimum floor
-    let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
-        message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
-    })?;
-    let relative_factor: T = NumCast::from(1e-8).ok_or_else(|| QualityError::NumericalError {
-        message: "Failed to convert relative factor (1e-8) to coordinate type".to_string(),
-    })?;
-    let epsilon = floor.max(avg_edge_length * relative_factor);
+    // Compute scale-aware epsilon and average edge length
+    let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points)?;
 
     // Check for degenerate cell (volume too small)
     if volume < epsilon {
@@ -371,7 +366,10 @@ where
     })?;
     let edge_length_power = avg_edge_length.powi(d_i32);
 
-    // Check edge_length_power using scale-aware epsilon
+    // Check edge_length_power for numerical underflow.
+    // Although avg_edge_length >= epsilon is verified above, for small avg_edge_length
+    // close to epsilon and large D, raising to power D can underflow to < epsilon.
+    // This catches numerical precision loss during exponentiation.
     if edge_length_power < epsilon {
         return Err(QualityError::DegenerateCell {
             detail: format!("edge_length_power={edge_length_power:?}, epsilon={epsilon:?}"),

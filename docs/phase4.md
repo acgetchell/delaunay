@@ -149,10 +149,10 @@ performance improvement.
 
 **Implementation: Option A (One-Cycle Deprecation)** ✅
 
-- [ ] Replace contents with minimal harness that:
+- [x] Replace contents with minimal harness that:
   - Prints clear deprecation message pointing to `large_scale_performance.rs` (Phase 4) and `ci_performance_suite.rs` (CI)
   - Exits early to avoid wasting CI time
-- [ ] Keep file for one release cycle
+- [x] Keep file for one release cycle
 
 **Option B (Immediate Removal):**
 
@@ -161,9 +161,9 @@ performance improvement.
 
 **Tasks:**
 
-- [ ] Update `scripts/benchmark_utils.py` to stop referencing `triangulation_creation`
-- [ ] Update CI workflows if any reference it
-- [ ] Update `justfile` if any targets reference it
+- [x] Update `scripts/benchmark_utils.py` to stop referencing `triangulation_creation`
+- [x] Update CI workflows if any reference it
+- [x] Update `justfile` if any targets reference it
 
 ---
 
@@ -707,14 +707,13 @@ Once the benchmark consolidation is complete, Phase 4 will evaluate these metric
 - ✅ Step 12: Final documentation updates
 - ✅ Updated `benches/README.md` with comprehensive overview
 - ✅ Quality checks passing (fmt, clippy, markdown lint, spell check)
-- ✅ Quality checks passing (markdown lint, spell check)
 
 **Next Steps:**
 
 1. ☐ Design consolidation plan and get approval (step 5 - optional)
-1. ☐ Complete Python script tooling for Phase 4 (step 10 remainder - optional)
-1. ☐ Update CHANGELOG.md before next release
-1. ☐ Quality validation and sign-off (steps 14-15)
+2. ☐ Complete Python script tooling for Phase 4 (step 10 remainder - optional)
+3. ☐ Update CHANGELOG.md before next release
+4. ☐ Quality validation and sign-off (steps 14-15)
 
 ---
 

@@ -796,8 +796,9 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// // Use clear_all_neighbors() which is the public API for this operation
+    /// tds.clear_all_neighbors();
     /// let cell_key = tds.cells().next().unwrap().0;
-    /// tds.cells_mut()[cell_key].clear_neighbors();
     /// assert!(tds.get_cell(cell_key).unwrap().neighbors().is_none());
     /// ```
     #[inline]

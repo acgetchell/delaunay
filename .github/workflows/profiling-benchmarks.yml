@@ -137,9 +137,9 @@ jobs:
           echo "Starting comprehensive profiling benchmarks..."
 
           # Determine if memory profiling is requested via filter
-          # If filter contains "memory", enable count-allocations feature and set flag
+          # Match memory_profiling group specifically (not just any "memory" substring)
           MEMORY_FEATURES=""
-          if [[ "$BENCH_FILTER" == *"memory"* ]]; then
+          if [[ "$BENCH_FILTER" =~ (^|[[:space:]])memory_profiling($|[[:space:]]) ]]; then
             MEMORY_FEATURES="--features count-allocations"
             echo "MEMORY_BENCHMARKS_RUN=true" >> "$GITHUB_ENV"
           fi

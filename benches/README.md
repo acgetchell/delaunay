@@ -24,7 +24,7 @@ This directory contains performance benchmarks for the delaunay library, organiz
 
 | Use Case | Benchmark | Command |
 |----------|-----------|----------|
-| Quick CI regression check | `ci_performance_suite.rs` | `just bench` or `cargo bench --bench ci_performance_suite` |
+| Quick CI regression check | `ci_performance_suite.rs` | `just bench-ci` or `cargo bench --bench ci_performance_suite` |
 | Phase 4 SlotMap evaluation | `large_scale_performance.rs` | `cargo bench --bench large_scale_performance` |
 | Deep profiling (1-2 hours) | `profiling_suite.rs` | `cargo bench --bench profiling_suite` |
 | Memory analysis | `profiling_suite.rs` (memory groups) | `cargo bench --bench profiling_suite -- memory_profiling` |
@@ -114,7 +114,7 @@ cargo bench --bench ci_performance_suite
 The CI Performance Suite is the primary benchmarking suite used for automated performance-regression testing:
 
 - **Dimensions**: 2D–5D triangulations
-- **Point counts**: 10, 25, 50 per dimension
+- **Vertex counts**: 10, 25, 50 per dimension
 - **Runtime**: ~5–10 minutes (hardware dependent)
 - **Integration**: Used by GitHub Actions for automated baseline generation and comparison
 
@@ -160,8 +160,9 @@ The **Profiling Suite** provides comprehensive performance analysis for optimiza
 **⚠️ Performance & Hardware Considerations**:
 
 - **Feature Overhead**: The `count-allocations` feature can materially slow benchmark runs (20-50% overhead) and increase memory usage for allocation tracking
-- **Hardware Requirements**: Recommend ≥16GB RAM and ≥4 CPU cores to prevent timeouts during large-scale runs (10⁶ vertices)
-- **CI/Local Timeouts**: Without adequate resources, runs may exceed typical CI timeouts (30-60 minutes) or cause local system slowdowns
+- **Hardware Requirements**: Recommend ≥16 GB RAM and ≥4 CPU cores to prevent timeouts during large-scale runs (10⁶ vertices)
+- **CI/Local Timeouts**: Without adequate resources, runs may exceed typical CI timeouts (30-60 minutes).
+  Note that 10⁶ vertex benchmarks can take several hours and are not suitable for standard CI environments
 - **Development Mode**: Use `PROFILING_DEV_MODE=1` for faster iteration during optimization work
 - **Flexible Timing**: Use `BENCH_MEASUREMENT_TIME=N` to set measurement time in seconds for all benchmark groups
 

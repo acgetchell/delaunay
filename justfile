@@ -34,6 +34,10 @@ action-lint:
 bench:
     cargo bench --workspace
 
+# CI regression benchmarks (fast, suitable for CI)
+bench-ci:
+    cargo bench --bench ci_performance_suite
+
 bench-baseline: _ensure-uv
     uv run benchmark-utils generate-baseline
 
@@ -158,6 +162,7 @@ help-workflows:
     @echo ""
     @echo "Benchmark System:"
     @echo "  just bench         # Run all benchmarks"
+    @echo "  just bench-ci      # CI regression benchmarks (fast, ~5-10 min)"
     @echo "  just bench-baseline # Generate performance baseline"
     @echo "  just bench-compare # Compare against baseline"
     @echo "  just bench-dev     # Development mode (10x faster)"
@@ -302,7 +307,11 @@ setup:
         else
             echo "  ✗ $tool NOT installed"
             case "$tool" in
-                uv) echo "    Install: https://github.com/astral-sh/uv" ;;
+                uv)
+                    echo "    Install: https://github.com/astral-sh/uv"
+                    echo "    macOS: brew install uv"
+                    echo "    Linux/WSL: curl -LsSf https://astral.sh/uv/install.sh | sh"
+                    ;;
                 actionlint) echo "    Install: https://github.com/rhysd/actionlint" ;;
                 shfmt|shellcheck) echo "    Install: brew install $tool" ;;
                 jq) echo "    Install: brew install jq" ;;

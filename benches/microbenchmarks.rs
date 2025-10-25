@@ -134,7 +134,7 @@ macro_rules! generate_dimensional_benchmarks {
                                             // SAFETY(BENCH-ONLY): Deliberately create duplicates for perf testing
                                             for _ in 0..3 {
                                                 let duplicate_cell = cell!(cell_vertices[0..($dim + 1)].to_vec());
-                                                let _cell_key = tds.cells_mut().insert(duplicate_cell);
+                                                let _cell_key = tds.insert_cell_unchecked(duplicate_cell);
                                                 // Intentionally not updating UUID mappings to create true duplicates
                                             }
                                         }

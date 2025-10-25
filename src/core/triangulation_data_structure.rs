@@ -1038,8 +1038,15 @@ where
     /// A mutable reference to the storage map containing all cells.
     #[doc(hidden)]
     #[allow(clippy::missing_const_for_fn)]
-    pub fn cells_mut(&mut self) -> &mut StorageMap<CellKey, Cell<T, U, V, D>> {
+    pub(crate) fn cells_mut(&mut self) -> &mut StorageMap<CellKey, Cell<T, U, V, D>> {
         &mut self.cells
+    }
+
+    /// Test/benchmark helper: Insert cell without updating UUID mappings.
+    /// VIOLATES INVARIANTS - only for testing duplicate cleanup algorithms.
+    #[doc(hidden)]
+    pub fn insert_cell_unchecked(&mut self, cell: Cell<T, U, V, D>) -> CellKey {
+        self.cells.insert(cell)
     }
 
     /// Increments the generation counter to invalidate dependent caches.
@@ -3710,7 +3717,7 @@ where
     /// **Phase 1 Migration**: This method now uses the optimized `get_cell_vertices`
     /// method to eliminate UUID→Key hash lookups, improving performance.
     fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError> {
-        let mut unique_cells = FastHashMap::default();
+        let mut unique_cells: FastHashMap<Vec<Uuid>, CellKey> = FastHashMap::default();
         let mut duplicates = Vec::new();
 
         for (cell_key, _cell) in &self.cells {
@@ -3718,23 +3725,23 @@ where
             // The error is already TriangulationValidationError, so just propagate it
             let vertices = self.get_cell_vertices(cell_key)?;
 
-            let mut sorted_keys = vertices;
-            sorted_keys.sort_unstable();
+            // Canonicalize by vertex UUIDs for backend-agnostic equality
+            // Note: Don't sort by VertexKey as slotmap::Key's Ord is implementation-defined
+            let mut vertex_uuids: Vec<Uuid> =
+                vertices.iter().map(|&k| self.vertices[k].uuid()).collect();
+            vertex_uuids.sort_unstable();
 
-            if let Some(existing_cell_key) = unique_cells.get(&sorted_keys) {
-                duplicates.push((cell_key, *existing_cell_key, sorted_keys.clone()));
+            if let Some(existing_cell_key) = unique_cells.get(&vertex_uuids) {
+                duplicates.push((cell_key, *existing_cell_key, vertex_uuids.clone()));
             } else {
-                unique_cells.insert(sorted_keys, cell_key);
+                unique_cells.insert(vertex_uuids, cell_key);
             }
         }
 
         if !duplicates.is_empty() {
             let duplicate_descriptions: Vec<String> = duplicates
                 .iter()
-                .map(|(cell1, cell2, vertices)| {
-                    let mut vertex_uuids: Vec<Uuid> =
-                        vertices.iter().map(|&k| self.vertices[k].uuid()).collect();
-                    vertex_uuids.sort_unstable();
+                .map(|(cell1, cell2, vertex_uuids)| {
                     format!("cells {cell1:?} and {cell2:?} with vertex UUIDs {vertex_uuids:?}")
                 })
                 .collect();
@@ -4013,8 +4020,9 @@ where
             let a_coords: [T; D] = (*a).into();
             let b_coords: [T; D] = (*b).into();
             debug_assert!(
-                a_coords.iter().all(|x| x.is_finite()) && b_coords.iter().all(|x| x.is_finite()),
-                "Coordinates must be finite for deterministic ordering"
+                a_coords.iter().all(|x| x.partial_cmp(x).is_some())
+                    && b_coords.iter().all(|x| x.partial_cmp(x).is_some()),
+                "Coordinates must be comparable (no NaNs) for deterministic ordering"
             );
             a_coords
                 .partial_cmp(&b_coords)
@@ -4025,8 +4033,9 @@ where
             let a_coords: [T; D] = (*a).into();
             let b_coords: [T; D] = (*b).into();
             debug_assert!(
-                a_coords.iter().all(|x| x.is_finite()) && b_coords.iter().all(|x| x.is_finite()),
-                "Coordinates must be finite for deterministic ordering"
+                a_coords.iter().all(|x| x.partial_cmp(x).is_some())
+                    && b_coords.iter().all(|x| x.partial_cmp(x).is_some()),
+                "Coordinates must be comparable (no NaNs) for deterministic ordering"
             );
             a_coords
                 .partial_cmp(&b_coords)

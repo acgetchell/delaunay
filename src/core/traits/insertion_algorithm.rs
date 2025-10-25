@@ -299,7 +299,7 @@ const _: () = {
         assert!(
             DEGENERATE_CELL_THRESHOLD.to_bits() == 0.5_f64.to_bits(),
             "DEGENERATE_CELL_THRESHOLD must be exactly 0.5 for the integer optimization in find_bad_cells(). \
-             If you need a different threshold, update the optimization logic at lines 1202-1213."
+             If you need a different threshold, update the integer-optimized comparison (degenerate_count * 2 > total) in find_bad_cells()."
         );
     }
     assert_threshold_is_half();
@@ -956,7 +956,7 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
-        use crate::geometry::predicates::{InSphere, insphere};
+        // InSphere and insphere are already imported at module top
 
         // Reserve exact capacity once; keep on stack for typical small D
         let mut vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
@@ -1052,39 +1052,31 @@ where
         }
 
         // Calculate bounding box margins (10% expansion)
-        // Precompute 10 for integer division fallback
-        let ten: T = cast(10).unwrap_or_else(T::one);
+        // Robust fallback for "10" if NumCast fails
+        let ten: T = cast(10).unwrap_or_else(|| {
+            let mut t = T::zero();
+            for _ in 0..10 {
+                t += T::one();
+            }
+            t
+        });
         let mut expanded_min = [T::zero(); D];
         let mut expanded_max = [T::zero(); D];
 
         for i in 0..D {
             let range = max_coords[i] - min_coords[i];
 
-            // For floats: use 10% expansion (0.1 * range)
-            // For integers: use range/10 with minimum of 1
-            // Note: cast::<f64, i32>(0.1) returns Some(0), not None!
+            // Integer types: cast::<f64, T>(0.1) will be None -> divide by 10, min 1
+            // Float types: cast succeeds -> multiply by 0.1
             let margin = cast::<f64, T>(MARGIN_FACTOR).map_or_else(
                 || {
-                    // Fallback: divide by 10 with minimum of 1
                     let mut m = range / ten;
                     if m == T::zero() {
                         m = T::one();
                     }
                     m
                 },
-                |mf| {
-                    if mf == T::zero() {
-                        // Integer case: divide by 10, ensure at least 1 unit
-                        let mut m = range / ten;
-                        if m == T::zero() {
-                            m = T::one();
-                        }
-                        m
-                    } else {
-                        // Float case: multiply by margin factor
-                        range * mf
-                    }
-                },
+                |mf| range * mf,
             );
 
             // Use simple arithmetic for bounding box expansion
@@ -1317,6 +1309,10 @@ where
         let mut seen_facet_keys: FastHashSet<u64> =
             fast_hash_set_with_capacity(bad_cells.len() * (D + 1));
 
+        // Reusable buffer for facet vertices to avoid per-facet allocations
+        let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D);
+
         // Scan each bad cell's D+1 facets
         for &bad_cell_key in bad_cells {
             let Some(bad_cell) = tds.get_cell(bad_cell_key) else {
@@ -1328,12 +1324,14 @@ where
                 for facet_idx in 0..=D {
                     if let Ok(facet_idx_u8) = usize_to_u8(facet_idx, D + 1) {
                         // Compute canonical facet key for deduplication
-                        let facet_vertices: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> = bad_cell
-                            .vertices()
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, &v)| (i != facet_idx).then_some(v))
-                            .collect();
+                        facet_vertices.clear();
+                        facet_vertices.extend(
+                            bad_cell
+                                .vertices()
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, &v)| (i != facet_idx).then_some(v)),
+                        );
                         let canonical_key = facet_key_from_vertices(&facet_vertices);
 
                         if seen_facet_keys.insert(canonical_key) {
@@ -1363,12 +1361,14 @@ where
                 };
 
                 // Compute canonical facet key: sorted vertex keys of the D vertices
-                let facet_vertices: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> = bad_cell
-                    .vertices()
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, &v)| (i != facet_idx).then_some(v))
-                    .collect();
+                facet_vertices.clear();
+                facet_vertices.extend(
+                    bad_cell
+                        .vertices()
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, &v)| (i != facet_idx).then_some(v)),
+                );
                 let canonical_key = facet_key_from_vertices(&facet_vertices);
 
                 // Insert only if not already seen (deduplication)
@@ -2731,6 +2731,17 @@ where
                 })?;
 
                 let neighbors = new_cell_mut.ensure_neighbors_buffer_mut();
+                if neighbors.len() != D + 1 {
+                    return Err(InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Neighbor buffer size {} != D+1 ({}) for cell {new_cell_key:?}",
+                                neighbors.len(),
+                                D + 1
+                            ),
+                        },
+                    ));
+                }
                 neighbors[inserted_idx] = Some(outside_ck);
 
                 // Set outside_ck's neighbor at outside_facet_idx → new_cell
@@ -2745,6 +2756,17 @@ where
                 })?;
 
                 let neighbors = outside_cell.ensure_neighbors_buffer_mut();
+                if neighbors.len() != D + 1 {
+                    return Err(InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Neighbor buffer size {} != D+1 ({}) for outside cell {outside_ck:?}",
+                                neighbors.len(),
+                                D + 1
+                            ),
+                        },
+                    ));
+                }
                 neighbors[outside_facet_idx] = Some(*new_cell_key);
             }
         }
@@ -2809,6 +2831,17 @@ where
                         )
                     })?;
                     let neighbors = cell_mut.ensure_neighbors_buffer_mut();
+                    if neighbors.len() != D + 1 {
+                        return Err(InsertionError::TriangulationState(
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Neighbor buffer size {} != D+1 ({}) for cell {new_cell_key:?}",
+                                    neighbors.len(),
+                                    D + 1
+                                ),
+                            },
+                        ));
+                    }
                     neighbors[opposite_idx] = Some(other_ck);
 
                     // Set other_cell[other_idx] → new_cell
@@ -2820,6 +2853,17 @@ where
                         )
                     })?;
                     let neighbors = other_mut.ensure_neighbors_buffer_mut();
+                    if neighbors.len() != D + 1 {
+                        return Err(InsertionError::TriangulationState(
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Neighbor buffer size {} != D+1 ({}) for cell {other_ck:?}",
+                                    neighbors.len(),
+                                    D + 1
+                                ),
+                            },
+                        ));
+                    }
                     neighbors[other_idx] = Some(new_cell_key);
                 } else {
                     // First time seeing this facet; record it

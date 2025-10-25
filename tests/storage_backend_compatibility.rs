@@ -183,8 +183,12 @@ macro_rules! test_cell_data {
             let vertices: Vec<_> = $vertices;
             let mut tds: Tds<f64, (), i32, $dim> = Tds::new(&vertices).unwrap();
 
-            for (_key, cell) in tds.cells_mut() {
-                cell.data = Some(42);
+            // Collect cell keys first to avoid borrow checker issues
+            let cell_keys: Vec<_> = tds.cells().map(|(key, _)| key).collect();
+            for key in cell_keys {
+                if let Some(cell) = tds.get_cell_by_key_mut(key) {
+                    cell.data = Some(42);
+                }
             }
 
             for (_key, cell) in tds.cells() {
