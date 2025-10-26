@@ -47,8 +47,13 @@ bench-compare: _ensure-uv
 bench-compile:
     cargo bench --workspace --no-run
 
+# Development mode benchmarks: fast iteration with reduced sample sizes
 bench-dev: _ensure-uv
-    uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
+    CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=1000 CRIT_WARMUP_MS=500 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
+
+# Quick benchmark validation: minimal samples for sanity checking
+bench-quick:
+    CRIT_SAMPLE_SIZE=5 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace
 
 # Phase 4 SlotMap evaluation benchmarks
 bench-phase4:
@@ -165,7 +170,8 @@ help-workflows:
     @echo "  just bench-ci      # CI regression benchmarks (fast, ~5-10 min)"
     @echo "  just bench-baseline # Generate performance baseline"
     @echo "  just bench-compare # Compare against baseline"
-    @echo "  just bench-dev     # Development mode (10x faster)"
+    @echo "  just bench-dev     # Development mode (10x faster, ~1-2 min)"
+    @echo "  just bench-quick   # Quick validation (minimal samples, ~30 sec)"
     @echo ""
     @echo "Phase 4 SlotMap Evaluation:"
     @echo "  just bench-phase4       # Run Phase 4 benchmarks (~10-30 min default)"
@@ -239,6 +245,7 @@ perf-help:
     @echo "  just perf-check [threshold] # Check for regressions (default: 5% threshold)"
     @echo "  just perf-compare <file>    # Compare with specific baseline file"
     @echo "  just bench-dev             # Development mode benchmarks (10x faster)"
+    @echo "  just bench-quick           # Quick validation benchmarks (minimal samples)"
     @echo ""
     @echo "Profiling Commands:"
     @echo "  just profile               # Profile full triangulation_scaling benchmark"
@@ -249,11 +256,19 @@ perf-help:
     @echo "  just bench-baseline        # Generate baseline via benchmark-utils"
     @echo "  just bench-compare         # Compare against stored baseline"
     @echo "  just bench-dev             # Fast development comparison"
+    @echo "  just bench-quick           # Quick validation (minimal samples)"
+    @echo ""
+    @echo "Environment Variables (Benchmark Configuration):"
+    @echo "  CRIT_SAMPLE_SIZE=N         # Number of samples per benchmark"
+    @echo "  CRIT_MEASUREMENT_MS=N      # Measurement time in milliseconds"
+    @echo "  CRIT_WARMUP_MS=N           # Warm-up time in milliseconds"
+    @echo "  DELAUNAY_BENCH_SEED=N      # Random seed (decimal or 0x-hex)"
     @echo ""
     @echo "Examples:"
     @echo "  just perf-baseline v1.0.0  # Save tagged baseline"
     @echo "  just perf-check 10.0       # Check with 10% threshold"
     @echo "  just bench-dev             # Quick benchmark iteration"
+    @echo "  CRIT_SAMPLE_SIZE=100 just bench  # Custom sample size"
 
 # Profiling
 profile:

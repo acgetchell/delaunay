@@ -290,19 +290,13 @@ const DEGENERATE_CELL_THRESHOLD: f64 = 0.5;
 // Compile-time assertion: ensure integer optimization remains valid
 // This guard catches changes to DEGENERATE_CELL_THRESHOLD that would invalidate
 // the optimized `degenerate_count * 2 > total` check in find_bad_cells.
-// MSRV note: Requires const panic/assert (stable in Rust 1.57+, well below our MSRV of 1.90)
+// MSRV note: f64 comparisons in const context stabilized in Rust 1.83.0; project MSRV 1.90.0 satisfies this.
 const _: () = {
-    // Note: We use a const function to perform the check at compile time
-    const fn assert_threshold_is_half() {
-        // Bit-level comparison for exact 0.5 value
-        // 0.5 in f64 is exactly representable: sign=0, exp=1022, mantissa=0
-        assert!(
-            DEGENERATE_CELL_THRESHOLD.to_bits() == 0.5_f64.to_bits(),
-            "DEGENERATE_CELL_THRESHOLD must be exactly 0.5 for the integer optimization in find_bad_cells(). \
-             If you need a different threshold, update the integer-optimized comparison (degenerate_count * 2 > total) in find_bad_cells()."
-        );
-    }
-    assert_threshold_is_half();
+    assert!(
+        DEGENERATE_CELL_THRESHOLD == 0.5,
+        "DEGENERATE_CELL_THRESHOLD must be exactly 0.5 for the integer optimization in find_bad_cells(). \
+         If you need a different threshold, update the integer-optimized comparison (degenerate_count * 2 > total) in find_bad_cells()."
+    );
 };
 
 /// Metadata for a single boundary facet during transactional cavity-based insertion.
@@ -956,6 +950,11 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
+        // Early return for empty triangulation (symmetry with find_bad_cells)
+        if tds.number_of_cells() == 0 {
+            return Ok(false);
+        }
+
         // InSphere and insphere are already imported at module top
 
         // Reserve exact capacity once; keep on stack for typical small D
@@ -1275,7 +1274,8 @@ where
         for<'a> &'a T: Div<T>,
     {
         // Pre-allocate capacity: each bad cell can contribute up to D+1 boundary facets
-        let mut boundary_facet_handles = Vec::with_capacity(bad_cells.len() * (D + 1));
+        let cap = bad_cells.len().saturating_mul(D.saturating_add(1));
+        let mut boundary_facet_handles = Vec::with_capacity(cap);
 
         if bad_cells.is_empty() {
             return Ok(boundary_facet_handles);
@@ -1294,8 +1294,8 @@ where
         // can be seen from multiple bad cells sharing it.
 
         // Track seen boundary facets by canonical key to avoid duplicates
-        let mut seen_facet_keys: FastHashSet<u64> =
-            fast_hash_set_with_capacity(bad_cells.len() * (D + 1));
+        let cap_seen = bad_cells.len().saturating_mul(D.saturating_add(1));
+        let mut seen_facet_keys: FastHashSet<u64> = fast_hash_set_with_capacity(cap_seen);
 
         // Reusable buffer for facet vertices to avoid per-facet allocations
         let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -1304,7 +1304,13 @@ where
         // Scan each bad cell's D+1 facets
         for &bad_cell_key in bad_cells {
             let Some(bad_cell) = tds.get_cell(bad_cell_key) else {
-                continue;
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Bad cell key {bad_cell_key:?} not found during cavity boundary detection"
+                        ),
+                    },
+                ));
             };
 
             let Some(neighbors) = bad_cell.neighbors() else {

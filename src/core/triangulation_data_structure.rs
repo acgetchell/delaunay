@@ -155,7 +155,7 @@
 
 // Standard library imports
 use std::{
-    cmp::{Ordering as CmpOrdering, min},
+    cmp::Ordering as CmpOrdering,
     fmt::{self, Debug},
     iter::Sum,
     marker::PhantomData,
@@ -942,10 +942,11 @@ where
     /// ```
     #[must_use]
     pub fn dim(&self) -> i32 {
-        let n = self.number_of_vertices();
-        let nv = i32::try_from(n).unwrap_or(i32::MAX);
-        let d = i32::try_from(D).unwrap_or(i32::MAX);
-        min(nv.saturating_sub(1), d)
+        let nv = self.number_of_vertices();
+        // Convert to i32 first, then subtract to handle empty case (0 - 1 = -1)
+        let nv_i32 = i32::try_from(nv).unwrap_or(i32::MAX);
+        let d_i32 = i32::try_from(D).unwrap_or(i32::MAX);
+        nv_i32.saturating_sub(1).min(d_i32)
     }
 
     /// The function `number_of_cells` returns the number of cells in the [Tds].
@@ -1043,8 +1044,40 @@ where
     }
 
     /// Test/benchmark helper: Insert cell without updating UUID mappings.
-    /// VIOLATES INVARIANTS - only for testing duplicate cleanup algorithms.
+    ///
+    /// # ⚠️ DANGER: VIOLATES INVARIANTS - DO NOT USE
+    ///
+    /// This method intentionally bypasses UUID mapping and is **ONLY** for:
+    /// - Internal benchmarks testing `remove_duplicate_cells()` performance
+    /// - Creating intentionally corrupted test scenarios
+    ///
+    /// **This method is deprecated and will be removed in v0.6.0.**
+    /// It exists only for backward compatibility with existing benchmarks.
+    ///
+    /// # Why This Exists
+    ///
+    /// Performance benchmarks for `remove_duplicate_cells()` need to create
+    /// duplicate cells without triggering UUID uniqueness checks. This method
+    /// allows benchmarks to create invalid states for performance testing.
+    ///
+    /// # Safety
+    ///
+    /// This method:
+    /// - Does NOT update UUID mappings
+    /// - Does NOT maintain triangulation invariants  
+    /// - WILL corrupt the triangulation if used incorrectly
+    /// - Should NEVER be used in production code
+    ///
+    /// # Alternatives
+    ///
+    /// Use the validated insertion methods:
+    /// - [`add()`](Self::add) for vertex insertion
+    /// - [`insert_cell_with_mapping()`](Self::insert_cell_with_mapping) for cells (internal)
     #[doc(hidden)]
+    #[deprecated(
+        since = "0.5.2",
+        note = "This method violates invariants and will be removed in v0.6.0. Only use in controlled benchmarks."
+    )]
     pub fn insert_cell_unchecked(&mut self, cell: Cell<T, U, V, D>) -> CellKey {
         self.cells.insert(cell)
     }
@@ -1258,7 +1291,7 @@ where
         // Phase 3A: Cell now stores vertex keys directly
         // Validate and collect keys in one pass to avoid redundant iteration
         let cell_vertices = cell.vertices();
-        let mut keys = VertexKeyBuffer::with_capacity(D + 1);
+        let mut keys = VertexKeyBuffer::with_capacity(cell_vertices.len());
         for (idx, &vertex_key) in cell_vertices.iter().enumerate() {
             if !self.vertices.contains_key(vertex_key) {
                 return Err(TriangulationValidationError::InconsistentDataStructure {
@@ -2969,8 +3002,8 @@ where
             "Dimension D must be <= 255 to fit facet indices in u8 (indices 0..=D)"
         );
 
-        let mut facet_to_cells: FacetToCellsMap =
-            fast_hash_map_with_capacity(self.cells.len() * (D + 1));
+        let cap = self.cells.len().saturating_mul(D.saturating_add(1));
+        let mut facet_to_cells: FacetToCellsMap = fast_hash_map_with_capacity(cap);
 
         // Use SmallBuffer to avoid heap allocations for facet vertices (same as assign_neighbors)
         let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -3064,8 +3097,8 @@ where
             "Dimension D must be <= 255 to fit facet indices in u8 (indices 0..=D)"
         );
 
-        let mut facet_to_cells: FacetToCellsMap =
-            fast_hash_map_with_capacity(self.cells.len() * (D + 1));
+        let cap = self.cells.len().saturating_mul(D.saturating_add(1));
+        let mut facet_to_cells: FacetToCellsMap = fast_hash_map_with_capacity(cap);
 
         // Preallocate facet_vertices buffer outside the loops to avoid per-iteration allocations
         let mut facet_vertices = Vec::with_capacity(D);

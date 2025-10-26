@@ -40,32 +40,26 @@ use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::*;
 use delaunay::vertex;
 use std::hint::black_box;
+use std::sync::OnceLock;
 
-/// Get the seed for deterministic random point generation.
-/// Checks `DELAUNAY_BENCH_SEED` environment variable, defaults to 0xD1EA ("DEEA" - Delaunay).
-/// Supports both decimal and hexadecimal (0x-prefixed) seeds.
-///
-/// The resolved seed is printed once at module initialization for reproducibility in CI logs.
+/// Get the deterministic seed for random point generation.
+/// Reads `DELAUNAY_BENCH_SEED` (decimal or 0x-hex). Defaults to 0xD1EA.
+/// Prints the resolved seed once on first use for CI reproducibility.
 fn get_benchmark_seed() -> u64 {
-    // Log seed once at first call for reproducibility
-    #[allow(clippy::items_after_statements)] // Static needed after seed calculation
-    static SEED_LOGGED: std::sync::Once = std::sync::Once::new();
-
-    let seed = std::env::var("DELAUNAY_BENCH_SEED")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .and_then(|s| {
-            s.strip_prefix("0x")
-                .or_else(|| s.strip_prefix("0X"))
-                .map_or_else(|| s.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok())
-        })
-        .unwrap_or(0xD1EA);
-
-    SEED_LOGGED.call_once(|| {
+    static SEED: OnceLock<u64> = OnceLock::new();
+    *SEED.get_or_init(|| {
+        let seed = std::env::var("DELAUNAY_BENCH_SEED")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .and_then(|s| {
+                s.strip_prefix("0x")
+                    .or_else(|| s.strip_prefix("0X"))
+                    .map_or_else(|| s.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok())
+            })
+            .unwrap_or(0xD1EA);
         eprintln!("Benchmark seed: 0x{seed:X} ({seed})");
-    });
-
-    seed
+        seed
+    })
 }
 
 /// Macro to generate comprehensive dimensional benchmarks for core algorithms
@@ -383,9 +377,45 @@ generate_incremental_construction_benchmarks!(3);
 generate_incremental_construction_benchmarks!(4);
 generate_incremental_construction_benchmarks!(5);
 
+/// Build Criterion configuration with optional environment variable overrides.
+///
+/// Supports:
+/// - `CRIT_SAMPLE_SIZE`: Number of samples per benchmark (default: Criterion's default)
+/// - `CRIT_MEASUREMENT_MS`: Measurement time in milliseconds (default: Criterion's default)
+/// - `CRIT_WARMUP_MS`: Warm-up time in milliseconds (default: Criterion's default)
+///
+/// This allows CI and local tuning without code changes.
+fn bench_config() -> Criterion {
+    use std::time::Duration;
+    let mut c = Criterion::default();
+
+    if let Some(v) = std::env::var("CRIT_SAMPLE_SIZE")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+    {
+        c = c.sample_size(v);
+    }
+
+    if let Some(v) = std::env::var("CRIT_MEASUREMENT_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+    {
+        c = c.measurement_time(Duration::from_millis(v));
+    }
+
+    if let Some(v) = std::env::var("CRIT_WARMUP_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+    {
+        c = c.warm_up_time(Duration::from_millis(v));
+    }
+
+    c
+}
+
 criterion_group!(
     name = benches;
-    config = Criterion::default();
+    config = bench_config();
     targets =
         // Core triangulation benchmarks (2D-5D)
         benchmark_bowyer_watson_triangulation_2d,

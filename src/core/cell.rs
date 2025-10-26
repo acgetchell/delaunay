@@ -321,6 +321,11 @@ where
 /// This implementation handles serialization of Cell fields. The `vertices` and `neighbors`
 /// fields are skipped as they contain keys that are only valid within the current `SlotMap`.
 /// During deserialization, these are reconstructed by the TDS.
+///
+/// **Field Count Optimization**: We dynamically adjust the field count and conditionally
+/// serialize `data` to omit it from JSON when None (reducing output size). The second
+/// `is_some()` check matches the field count logic—both could be removed to always
+/// serialize "data": null, but tests explicitly verify the field is omitted when None.
 impl<T, U, V, const D: usize> Serialize for Cell<T, U, V, D>
 where
     T: CoordinateScalar,
@@ -781,6 +786,11 @@ where
 
     /// Clears the neighbors of the [Cell].
     ///
+    /// **Internal API**: This method is `pub(crate)` to enforce that all neighbor
+    /// modifications go through validated TDS methods. External code should use
+    /// [`Tds::clear_all_neighbors()`](crate::core::triangulation_data_structure::Tds::clear_all_neighbors)
+    /// which properly invalidates caches and maintains triangulation consistency.
+    ///
     /// This method sets the `neighbors` field to `None`, effectively removing all
     /// neighbor relationships. This is useful for benchmarking neighbor assignment
     /// or when rebuilding neighbor relationships from scratch.
@@ -802,7 +812,7 @@ where
     /// assert!(tds.get_cell(cell_key).unwrap().neighbors().is_none());
     /// ```
     #[inline]
-    pub fn clear_neighbors(&mut self) {
+    pub(crate) fn clear_neighbors(&mut self) {
         self.neighbors = None;
     }
 

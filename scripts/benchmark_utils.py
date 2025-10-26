@@ -69,6 +69,11 @@ except ModuleNotFoundError:
 
 # Development mode arguments - centralized to keep baseline generation and comparison in sync
 # Reduces samples for faster iteration during development (10x faster than full benchmarks)
+#
+# Note: These are Criterion CLI arguments. Alternatively, benchmarks can be configured via
+# environment variables (see benches/microbenchmarks.rs bench_config()):
+#   CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=2000 CRIT_WARMUP_MS=1000
+# The CLI arguments take precedence over env vars when both are present.
 DEV_MODE_BENCH_ARGS = [
     "--sample-size",
     "10",
