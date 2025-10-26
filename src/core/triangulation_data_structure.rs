@@ -159,7 +159,7 @@ use std::{
     fmt::{self, Debug},
     iter::Sum,
     marker::PhantomData,
-    ops::{AddAssign, Div, SubAssign},
+    ops::{AddAssign, SubAssign},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -2131,7 +2131,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
 {
     /// Creates a new empty triangulation data structure.
     ///
@@ -2787,7 +2786,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
 {
     /// Clears all neighbor relationships between cells in the triangulation.
     ///
@@ -2854,7 +2852,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
 {
     /// Remove duplicate cells (cells with identical vertex sets)
     ///
@@ -3549,7 +3546,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
 {
     /// Validates the consistency of vertex UUID-to-key mappings.
     ///

@@ -12,7 +12,7 @@ use crate::core::facet::FacetHandle;
 use crate::core::traits::facet_cache::FacetCacheProvider;
 use arc_swap::ArcSwapOption;
 use std::marker::PhantomData;
-use std::ops::{AddAssign, Div, DivAssign, SubAssign};
+use std::ops::{AddAssign, DivAssign, SubAssign};
 use std::sync::{Arc, atomic::AtomicU64};
 
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
@@ -177,7 +177,6 @@ where
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
         [f64; D]: DeserializeOwned + Serialize + Sized,
@@ -254,7 +253,6 @@ where
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
         [f64; D]: DeserializeOwned + Serialize + Sized,
@@ -387,7 +385,6 @@ where
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
         [f64; D]: DeserializeOwned + Serialize + Sized,
@@ -450,7 +447,6 @@ where
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
         [f64; D]: DeserializeOwned + Serialize + Sized,
@@ -528,7 +524,6 @@ where
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
     {
         // First try to find boundary facets using the lightweight trait method
@@ -560,7 +555,6 @@ where
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
         [f64; D]: DeserializeOwned + Serialize + Sized,
     {
@@ -874,7 +868,6 @@ where
             + From<f64>
             + DivAssign<T>,
         f64: From<T>,
-        for<'a> &'a T: Div<T>,
         ordered_float::OrderedFloat<f64>: From<T>,
         [f64; D]: DeserializeOwned + Serialize + Sized,
     {

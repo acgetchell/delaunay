@@ -20,7 +20,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::iter::Sum;
 use std::marker::PhantomData;
-use std::ops::{AddAssign, Div, DivAssign, Sub, SubAssign};
+use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
 use std::sync::{
     Arc, OnceLock,
     atomic::{AtomicU64, Ordering},
@@ -599,8 +599,6 @@ where
     V: DataType,
     [T; D]: Copy + Sized + Serialize + DeserializeOwned,
     f64: From<T>,
-    // Required by nalgebra's ComplexField trait used in geometric predicates
-    for<'a> &'a T: Div<T>,
 {
     /// Creates a new convex hull from a d-dimensional triangulation
     ///
@@ -1448,7 +1446,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
     U: DataType + DeserializeOwned,
     V: DataType + DeserializeOwned,
-    for<'a> &'a T: Div<T>,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache

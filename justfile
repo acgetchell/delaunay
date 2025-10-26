@@ -335,6 +335,12 @@ setup:
         fi
     done
     echo ""
+    # Ensure uv is installed before proceeding
+    if ! command -v uv &> /dev/null; then
+        echo "❌ 'uv' is required but not installed. Please install it first (see instructions above)."
+        exit 1
+    fi
+    echo ""
     echo "Installing Python tooling..."
     uv sync --group dev
     echo ""
@@ -395,7 +401,7 @@ test-allocation:
 test-debug:
     cargo test --test circumsphere_debug_tools -- --nocapture
 
-test-python:
+test-python: _ensure-uv
     uv run pytest
 
 test-release:
@@ -415,7 +421,7 @@ validate-json:
         echo "No JSON files found to validate."
     fi
 
-validate-toml:
+validate-toml: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     files=()

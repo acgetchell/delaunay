@@ -109,7 +109,7 @@ use arc_swap::ArcSwapOption;
 use num_traits::NumCast;
 use std::{
     iter::Sum,
-    ops::{AddAssign, Div, SubAssign},
+    ops::{AddAssign, SubAssign},
     sync::{Arc, atomic::AtomicU64},
 };
 
@@ -157,7 +157,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
 {
     /// Creates a new incremental Bowyer-Watson algorithm instance
     ///
@@ -232,7 +231,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
 {
     fn default() -> Self {
         Self::new()
@@ -244,7 +242,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
@@ -262,7 +259,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
 {
     /// Insert a single vertex into the triangulation
     fn insert_vertex(

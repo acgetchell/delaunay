@@ -873,7 +873,6 @@ where
     ) -> InsertionStrategy
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast + One + Zero + PartialEq + Div<Output = T>,
-        for<'a> &'a T: Div<T>,
     {
         // Default implementation provides basic strategy determination
         Self::determine_strategy_default(tds, vertex)
@@ -899,7 +898,6 @@ where
     ) -> InsertionStrategy
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast + One + Zero + PartialEq + Div<Output = T>,
-        for<'a> &'a T: Div<T>,
     {
         // If the triangulation is empty or has very few cells, use standard approach
         if tds.number_of_cells() == 0 {
@@ -1071,18 +1069,29 @@ where
         for i in 0..D {
             let range = max_coords[i] - min_coords[i];
 
-            // Integer types: cast::<f64, T>(0.1) will be None -> divide by 10, min 1
-            // Float types: cast succeeds -> multiply by 0.1
-            let margin = margin_factor_as_t.map_or_else(
-                || {
+            // Fallback for integer-like T where cast(0.1) == Some(0): use range/10 with min 1
+            let margin = match margin_factor_as_t {
+                None => {
+                    // Cast failed (shouldn't happen for standard numeric types)
                     let mut m = range / ten;
                     if m == T::zero() {
                         m = T::one();
                     }
                     m
-                },
-                |mf| range * mf,
-            );
+                }
+                Some(mf) if mf == T::zero() => {
+                    // Integer case: cast(0.1) → Some(0), use integer division
+                    let mut m = range / ten;
+                    if m == T::zero() {
+                        m = T::one();
+                    }
+                    m
+                }
+                Some(mf) => {
+                    // Float case: use the margin factor directly
+                    range * mf
+                }
+            };
 
             // Use simple arithmetic for bounding box expansion
             // For floating-point types, overflow goes to infinity (acceptable for heuristic)
@@ -1133,7 +1142,6 @@ where
     ) -> Result<Vec<crate::core::triangulation_data_structure::CellKey>, BadCellsError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Check if there are any cells to test
         if tds.number_of_cells() == 0 {
@@ -1271,7 +1279,6 @@ where
     ) -> Result<Vec<FacetHandle>, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Pre-allocate capacity: each bad cell can contribute up to D+1 boundary facets
         let cap = bad_cells.len().saturating_mul(D.saturating_add(1));
@@ -1417,7 +1424,6 @@ where
     ) -> Result<InsertionInfo, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Find bad cells - use match to convert error to appropriate validation error
         let bad_cells = match self.find_bad_cells(tds, vertex) {
@@ -1617,7 +1623,6 @@ where
     ) -> Result<InsertionInfo, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Get visible boundary facets using lightweight handles
         let visible_facet_handles = self.find_visible_boundary_facets_lightweight(tds, vertex)?;
@@ -1682,7 +1687,6 @@ where
     ) -> Result<InsertionInfo, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Conservative fallback: try to connect to any existing boundary facet
         // This avoids creating invalid geometry by arbitrary vertex replacement
@@ -1809,7 +1813,6 @@ where
     ) -> Result<(), TriangulationConstructionError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         if vertices.is_empty() {
             return Ok(());
@@ -1875,7 +1878,6 @@ where
     ) -> Result<(), TriangulationConstructionError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         if vertices.len() != D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
@@ -1952,7 +1954,6 @@ where
     ) -> Result<(), TriangulationConstructionError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Remove duplicate cells
         tds.remove_duplicate_cells()
@@ -2007,7 +2008,6 @@ where
     ) -> Result<bool, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Get the adjacent cell to this boundary facet
         let Some(adjacent_cell) = tds.get_cell(adjacent_cell_key) else {
@@ -2163,7 +2163,6 @@ where
     ) -> Result<Tds<T, U, V, D>, TriangulationConstructionError>
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Default implementation: use the regular Tds::new constructor
         Tds::new(vertices)
@@ -2240,7 +2239,6 @@ where
     ) -> Result<CellKey, TriangulationValidationError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Create FacetView from the handle
         let facet_view = FacetView::new(tds, cell_key, facet_index)
@@ -2286,7 +2284,6 @@ where
     ) -> Result<CellKey, TriangulationValidationError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Reject duplicate vertex to avoid degenerate cell
         if facet_vertices.iter().any(|v| v.uuid() == vertex.uuid()) {
@@ -2351,7 +2348,6 @@ where
     ) -> Result<Vec<FacetHandle>, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         let mut visible_facet_handles = Vec::new();
 
@@ -2406,7 +2402,6 @@ where
     ) -> Result<usize, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Track whether vertex existed before this operation for atomic rollback
         let vertex_existed_before = tds.vertex_key_from_uuid(&vertex.uuid()).is_some();
@@ -2524,7 +2519,6 @@ where
     ) -> Result<Vec<BoundaryFacetInfo>, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         let mut boundary_infos = Vec::with_capacity(boundary_facet_handles.len());
 
@@ -2728,7 +2722,6 @@ where
     ) -> Result<(), InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         use crate::core::collections::{FastHashMap, fast_hash_map_with_capacity};
 
@@ -2871,7 +2864,6 @@ where
         vertex_existed_before: bool,
     ) where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Rollback created cells
         if !created_cell_keys.is_empty() {
@@ -2898,7 +2890,6 @@ where
         bad_cells: &[crate::core::triangulation_data_structure::CellKey],
     ) where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Use the optimized batch removal method that handles UUID mapping
         // and generation counter updates internally
@@ -2943,7 +2934,6 @@ where
     ) -> Result<(), InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Ensure vertex is in TDS before destructive operations
         Self::ensure_vertex_in_tds(tds, vertex).map_err(InsertionError::TriangulationState)?;
@@ -2988,7 +2978,6 @@ where
     ) -> Result<(), TriangulationValidationError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
-        for<'a> &'a T: Div<T>,
     {
         // Remove duplicate cells first
         tds.remove_duplicate_cells()?;

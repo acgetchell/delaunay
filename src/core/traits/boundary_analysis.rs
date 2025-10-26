@@ -8,7 +8,7 @@ use crate::core::{
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use num_traits::NumCast;
 use std::iter::Sum;
-use std::ops::{AddAssign, Div, SubAssign};
+use std::ops::{AddAssign, SubAssign};
 
 /// Trait for boundary analysis operations on triangulations.
 ///
@@ -45,7 +45,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
 {
     /// Identifies all boundary facets in the triangulation.
     ///

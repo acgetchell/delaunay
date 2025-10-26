@@ -194,6 +194,12 @@ just bench-dev       # Development mode (10x faster for iteration)
 
 ### Changelog Management
 
+- **DO NOT** edit `CHANGELOG.md` directly
+- **AUTOMATED**: Changelog is generated automatically using `scripts/changelog_utils.py`
+- **PREFERRED**: Use `just changelog` or `just changelog-update` to regenerate the changelog
+- **REASON**: Manual edits will be overwritten by the next automated changelog generation
+- **FOR NEW ENTRIES**: Write clear, descriptive commit messages - they become changelog entries
+
 ```bash
 # Generate enhanced changelog with AI categorization
 just changelog       # Generate changelog
