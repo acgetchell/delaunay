@@ -290,6 +290,7 @@ const DEGENERATE_CELL_THRESHOLD: f64 = 0.5;
 // Compile-time assertion: ensure integer optimization remains valid
 // This guard catches changes to DEGENERATE_CELL_THRESHOLD that would invalidate
 // the optimized `degenerate_count * 2 > total` check in find_bad_cells.
+// MSRV note: Requires const panic/assert (stable in Rust 1.57+, well below our MSRV of 1.90)
 const _: () = {
     // Note: We use a const function to perform the check at compile time
     const fn assert_threshold_is_half() {
@@ -964,6 +965,9 @@ where
             // Clear and reuse the buffer - capacity is already preallocated
             vertex_points.clear();
             // Phase 3A: Get vertices via TDS using vertices
+            // Note: We fail on corrupted cells (missing vertex keys) rather than skipping them.
+            // This strictness ensures we detect and report TDS corruption immediately.
+            // For recovery-friendly behavior, consider using is_valid() to detect corruption separately.
             for &vkey in cell.vertices() {
                 let v = tds.get_vertex_by_key(vkey).ok_or_else(|| {
                     InsertionError::TriangulationState(
@@ -1059,6 +1063,9 @@ where
             }
             t
         });
+        // Cache margin factor cast to avoid repeated calls
+        let margin_factor_as_t: Option<T> = cast::<f64, T>(MARGIN_FACTOR);
+
         let mut expanded_min = [T::zero(); D];
         let mut expanded_max = [T::zero(); D];
 
@@ -1067,7 +1074,7 @@ where
 
             // Integer types: cast::<f64, T>(0.1) will be None -> divide by 10, min 1
             // Float types: cast succeeds -> multiply by 0.1
-            let margin = cast::<f64, T>(MARGIN_FACTOR).map_or_else(
+            let margin = margin_factor_as_t.map_or_else(
                 || {
                     let mut m = range / ten;
                     if m == T::zero() {
@@ -2586,7 +2593,10 @@ where
                                 )
                             })?
                     } else {
-                        // Neighbor has no neighbor info; cannot determine reciprocal index
+                        // Neighbor has no neighbor info; this is a hard invariant failure.
+                        // The triangulation should maintain neighbor information consistently.
+                        // Note: If recovery-friendly behavior is needed, this could treat missing
+                        // neighbor info as a boundary (None), but current design prefers strict validation.
                         return Err(InsertionError::TriangulationState(
                             TriangulationValidationError::InconsistentDataStructure {
                                 message: format!(
@@ -2637,6 +2647,19 @@ where
         neighbor_idx: usize,
         neighbor_key: CellKey,
     ) -> Result<(), InsertionError> {
+        // Validate neighbor index is within bounds for D+1 neighbors
+        if neighbor_idx > D {
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Neighbor index {} out of bounds for D+1 ({}) in cell {cell_key:?}",
+                        neighbor_idx,
+                        D + 1
+                    ),
+                },
+            ));
+        }
+
         let cell_mut = tds.cells_mut().get_mut(cell_key).ok_or_else(|| {
             InsertionError::TriangulationState(
                 TriangulationValidationError::InconsistentDataStructure {

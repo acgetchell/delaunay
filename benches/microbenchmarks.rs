@@ -44,8 +44,14 @@ use std::hint::black_box;
 /// Get the seed for deterministic random point generation.
 /// Checks `DELAUNAY_BENCH_SEED` environment variable, defaults to 0xD1EA ("DEEA" - Delaunay).
 /// Supports both decimal and hexadecimal (0x-prefixed) seeds.
+///
+/// The resolved seed is printed once at module initialization for reproducibility in CI logs.
 fn get_benchmark_seed() -> u64 {
-    std::env::var("DELAUNAY_BENCH_SEED")
+    // Log seed once at first call for reproducibility
+    #[allow(clippy::items_after_statements)] // Static needed after seed calculation
+    static SEED_LOGGED: std::sync::Once = std::sync::Once::new();
+
+    let seed = std::env::var("DELAUNAY_BENCH_SEED")
         .ok()
         .map(|s| s.trim().to_string())
         .and_then(|s| {
@@ -53,7 +59,13 @@ fn get_benchmark_seed() -> u64 {
                 .or_else(|| s.strip_prefix("0X"))
                 .map_or_else(|| s.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok())
         })
-        .unwrap_or(0xD1EA)
+        .unwrap_or(0xD1EA);
+
+    SEED_LOGGED.call_once(|| {
+        eprintln!("Benchmark seed: 0x{seed:X} ({seed})");
+    });
+
+    seed
 }
 
 /// Macro to generate comprehensive dimensional benchmarks for core algorithms
@@ -168,29 +180,6 @@ generate_dimensional_benchmarks!(3);
 generate_dimensional_benchmarks!(4);
 generate_dimensional_benchmarks!(5);
 
-// Legacy 3D benchmark function for backward compatibility
-fn benchmark_bowyer_watson_triangulation(c: &mut Criterion) {
-    benchmark_bowyer_watson_triangulation_3d(c);
-}
-
-// Legacy 3D benchmark function for backward compatibility
-fn benchmark_remove_duplicate_cells(c: &mut Criterion) {
-    benchmark_remove_duplicate_cells_3d(c);
-}
-
-// Legacy dimensional benchmark functions for backward compatibility
-fn benchmark_2d_triangulation(c: &mut Criterion) {
-    benchmark_bowyer_watson_triangulation_2d(c);
-}
-
-fn benchmark_4d_triangulation(c: &mut Criterion) {
-    benchmark_bowyer_watson_triangulation_4d(c);
-}
-
-fn benchmark_5d_triangulation(c: &mut Criterion) {
-    benchmark_bowyer_watson_triangulation_5d(c);
-}
-
 /// Macro to generate memory usage benchmarks for all dimensions
 macro_rules! generate_memory_usage_benchmarks {
     ($dim:literal) => {
@@ -229,11 +218,6 @@ generate_memory_usage_benchmarks!(2);
 generate_memory_usage_benchmarks!(3);
 generate_memory_usage_benchmarks!(4);
 generate_memory_usage_benchmarks!(5);
-
-// Legacy wrapper for backward compatibility
-fn benchmark_memory_usage(c: &mut Criterion) {
-    benchmark_memory_usage_3d(c);
-}
 
 /// Macro to generate validation method benchmarks for all dimensions
 macro_rules! generate_validation_benchmarks {
@@ -286,15 +270,17 @@ macro_rules! generate_validation_benchmarks {
 
                 group.bench_function("validate_vertex_mappings", |b| {
                     b.iter(|| {
-                        tds.validate_vertex_mappings().unwrap();
-                        black_box(&tds);
+                        let result = tds.validate_vertex_mappings().unwrap();
+                        // Black box both result and vertex count to prevent elision
+                        black_box((result, tds.number_of_vertices()));
                     });
                 });
 
                 group.bench_function("validate_cell_mappings", |b| {
                     b.iter(|| {
-                        tds.validate_cell_mappings().unwrap();
-                        black_box(&tds);
+                        let result = tds.validate_cell_mappings().unwrap();
+                        // Black box both result and cell count to prevent elision
+                        black_box((result, tds.number_of_cells()));
                     });
                 });
 
@@ -312,15 +298,6 @@ generate_validation_benchmarks!(2);
 generate_validation_benchmarks!(3);
 generate_validation_benchmarks!(4);
 generate_validation_benchmarks!(5);
-
-// Legacy wrappers for backward compatibility
-fn benchmark_validation_methods(c: &mut Criterion) {
-    benchmark_validation_methods_3d(c);
-}
-
-fn benchmark_validation_components(c: &mut Criterion) {
-    benchmark_validation_components_3d(c);
-}
 
 /// Macro to generate incremental construction benchmarks for all dimensions
 macro_rules! generate_incremental_construction_benchmarks {
@@ -353,6 +330,7 @@ macro_rules! generate_incremental_construction_benchmarks {
                 let additional_coords = vec![0.5; $dim];
                 let mut additional_array = [0.0; $dim];
                 additional_array.copy_from_slice(&additional_coords);
+                // Note: additional_vertex is Copy, so it can be reused across iterations
                 let additional_vertex = vertex!(additional_array);
 
                 group.bench_function("single_vertex_addition", |b| {
@@ -405,11 +383,6 @@ generate_incremental_construction_benchmarks!(3);
 generate_incremental_construction_benchmarks!(4);
 generate_incremental_construction_benchmarks!(5);
 
-// Legacy wrapper for backward compatibility
-fn benchmark_incremental_construction(c: &mut Criterion) {
-    benchmark_incremental_construction_3d(c);
-}
-
 criterion_group!(
     name = benches;
     config = Criterion::default();
@@ -444,17 +417,6 @@ criterion_group!(
         benchmark_incremental_construction_2d,
         benchmark_incremental_construction_3d,
         benchmark_incremental_construction_4d,
-        benchmark_incremental_construction_5d,
-
-        // Legacy wrappers for backward compatibility
-        benchmark_bowyer_watson_triangulation,
-        benchmark_remove_duplicate_cells,
-        benchmark_2d_triangulation,
-        benchmark_4d_triangulation,
-        benchmark_5d_triangulation,
-        benchmark_validation_methods,
-        benchmark_validation_components,
-        benchmark_incremental_construction,
-        benchmark_memory_usage
+        benchmark_incremental_construction_5d
 );
 criterion_main!(benches);

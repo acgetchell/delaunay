@@ -943,13 +943,9 @@ where
     #[must_use]
     pub fn dim(&self) -> i32 {
         let n = self.number_of_vertices();
-        let len = if n == 0 {
-            0
-        } else {
-            i32::try_from(n).unwrap_or(i32::MAX)
-        };
-        let max_dim = i32::try_from(D).unwrap_or(i32::MAX);
-        min(len - 1, max_dim)
+        let nv = i32::try_from(n).unwrap_or(i32::MAX);
+        let d = i32::try_from(D).unwrap_or(i32::MAX);
+        min(nv.saturating_sub(1), d)
     }
 
     /// The function `number_of_cells` returns the number of cells in the [Tds].
@@ -1573,6 +1569,10 @@ where
     }
 
     /// Gets a mutable reference to a cell directly by its key.
+    ///
+    /// This method provides direct mutable access to cells, similar to [`get_vertex_by_key_mut()`](Self::get_vertex_by_key_mut).
+    /// While this allows modifying cell data fields, callers should use safe topology setter APIs
+    /// like [`set_neighbors_by_key()`](Self::set_neighbors_by_key) when modifying neighbor relationships.
     ///
     /// # Arguments
     ///
@@ -4019,14 +4019,10 @@ where
         let mut other_vertices: Vec<_> = other.vertices.values().collect();
 
         // Sort vertices by their coordinates for consistent comparison
+        // CoordinateScalar guarantees PartialOrd; NaN validation occurs at construction time
         self_vertices.sort_by(|a, b| {
             let a_coords: [T; D] = (*a).into();
             let b_coords: [T; D] = (*b).into();
-            debug_assert!(
-                a_coords.iter().all(|x| x.partial_cmp(x).is_some())
-                    && b_coords.iter().all(|x| x.partial_cmp(x).is_some()),
-                "Coordinates must be comparable (no NaNs) for deterministic ordering"
-            );
             a_coords
                 .partial_cmp(&b_coords)
                 .unwrap_or(CmpOrdering::Equal)
@@ -4035,11 +4031,6 @@ where
         other_vertices.sort_by(|a, b| {
             let a_coords: [T; D] = (*a).into();
             let b_coords: [T; D] = (*b).into();
-            debug_assert!(
-                a_coords.iter().all(|x| x.partial_cmp(x).is_some())
-                    && b_coords.iter().all(|x| x.partial_cmp(x).is_some()),
-                "Coordinates must be comparable (no NaNs) for deterministic ordering"
-            );
             a_coords
                 .partial_cmp(&b_coords)
                 .unwrap_or(CmpOrdering::Equal)

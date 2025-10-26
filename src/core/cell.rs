@@ -710,13 +710,11 @@ where
     pub(crate) fn ensure_neighbors_buffer_mut(
         &mut self,
     ) -> &mut SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> {
-        if self.neighbors.is_none() {
+        self.neighbors.get_or_insert_with(|| {
             let mut buffer = SmallBuffer::new();
             buffer.resize(D + 1, None);
-            self.neighbors = Some(buffer);
-        }
-        // SAFETY: We just ensured neighbors is Some above
-        self.neighbors.as_mut().unwrap()
+            buffer
+        })
     }
 }
 
