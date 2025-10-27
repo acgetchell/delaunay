@@ -1242,20 +1242,16 @@ where
         }
     }
 
-    /// Gets vertex keys for a cell via UUID→Key mapping.
+    /// Gets vertex keys for a cell.
     ///
-    /// This method eliminates UUID→Key lookups for cell access by working directly with keys, providing:
-    /// - Zero UUID mapping lookups for cell access (O(1) storage map lookup instead of O(1) hash lookup)
-    /// - Direct storage map access for maximum performance
-    /// - Avoids per-cell UUID lookups by resolving vertex keys through internal UUID→Key mapping
+    /// **Phase 3A**: Cells now store `VertexKey` directly. This method performs O(D) validation
+    /// and copying of keys for the requested cell and returns a stack-friendly buffer.
     ///
-    /// Note: Currently still performs O(D) UUID→Key lookups for vertices. This will be
-    /// optimized in Phase 3 when Cell stores vertex keys directly.
-    ///
-    /// NOTE: Phase 2 optimization completed. The key-based infrastructure is in place.
-    /// Future optimization (Phase 3): Migrate Cell to store `VertexKey` directly instead of Vertex with UUIDs
-    /// to eliminate the remaining O(D) UUID→Key lookups. This requires significant Cell API changes.
-    /// Track progress in future development cycles.
+    /// This method provides:
+    /// - O(1) cell lookup via storage map key
+    /// - O(D) validation that all vertex keys exist in the triangulation
+    /// - Direct key access without UUID→Key lookups (Phase 3A completed)
+    /// - Stack-allocated buffer for D ≤ 7 to avoid heap allocation
     ///
     /// # Arguments
     ///
@@ -1270,13 +1266,13 @@ where
     ///
     /// Returns a `TriangulationValidationError` if:
     /// - The cell with the given key doesn't exist
-    /// - A vertex UUID from the cell cannot be found in the vertex mapping
+    /// - A vertex key from the cell doesn't exist in the vertex storage (TDS corruption)
     ///
     /// # Performance
     ///
-    /// This uses direct storage map access with O(1) key lookup for the cell, though vertex
-    /// lookups still require O(D) UUID→Key mappings until Phase 3.
-    /// Uses stack-allocated buffer for D ≤ 7 to avoid heap allocation in the hot path.
+    /// This uses direct storage map access with O(1) key lookup for the cell and O(D)
+    /// validation for vertex keys. Uses stack-allocated buffer for D ≤ 7 to avoid heap
+    /// allocation in the hot path.
     #[inline]
     pub fn get_cell_vertices(
         &self,
@@ -4070,79 +4066,50 @@ where
             return false;
         }
 
-        // Compare cells by converting them to coordinate-based representations
-        // Since vertices in different TDS objects have different UUIDs even with same coordinates,
-        // we must compare cells by their vertex coordinates, not UUIDs.
-        let self_cells: Vec<_> = self.cells.values().collect();
-        let other_cells: Vec<_> = other.cells.values().collect();
+        // Compare cells using Cell::eq_by_vertices() which uses Vertex::PartialEq
+        // This provides consistent behavior: Tds uses Vertex::PartialEq and Cell::eq_by_vertices()
+        // which internally uses Vertex::PartialEq for semantic equality across TDS instances.
 
-        // Build coordinate-based cell representations for comparison
-        // Each cell is represented as a sorted vector of its vertex coordinates
-        let self_cell_coords: Result<Vec<Vec<[T; D]>>, CellValidationError> = self_cells
-            .iter()
-            .map(|cell| {
-                let mut coords: Vec<[T; D]> = cell
-                    .vertices()
-                    .iter()
-                    .map(|&vkey| {
-                        self.get_vertex_by_key(vkey)
-                            .map(|v| (*v).into())
-                            .ok_or(CellValidationError::VertexKeyNotFound { key: vkey })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                coords.sort_by(|a, b| a.partial_cmp(b).unwrap_or(CmpOrdering::Equal));
-                Ok(coords)
-            })
-            .collect();
+        // Collect cells into vectors for sorting
+        let mut self_cells: Vec<_> = self.cells.values().collect();
+        let mut other_cells: Vec<_> = other.cells.values().collect();
 
-        let other_cell_coords: Result<Vec<Vec<[T; D]>>, CellValidationError> = other_cells
-            .iter()
-            .map(|cell| {
-                let mut coords: Vec<[T; D]> = cell
-                    .vertices()
-                    .iter()
-                    .map(|&vkey| {
-                        other
-                            .get_vertex_by_key(vkey)
-                            .map(|v| (*v).into())
-                            .ok_or(CellValidationError::VertexKeyNotFound { key: vkey })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                coords.sort_by(|a, b| a.partial_cmp(b).unwrap_or(CmpOrdering::Equal));
-                Ok(coords)
-            })
-            .collect();
-
-        // Return false if coordinate collection failed for either TDS
-        let (Ok(mut self_cell_coords), Ok(mut other_cell_coords)) =
-            (self_cell_coords, other_cell_coords)
-        else {
-            return false;
+        // Sort cells for order-independent comparison using coordinate-based keys
+        // We create owned coordinate vectors to avoid lifetime issues
+        let sort_key = |cell: &Cell<T, U, V, D>, tds: &Self| -> Vec<Vec<T>> {
+            let mut vertex_coords: Vec<Vec<T>> = cell
+                .vertices()
+                .iter()
+                .filter_map(|&vkey| {
+                    tds.get_vertex_by_key(vkey)
+                        .map(|v| v.point().coords().to_vec())
+                })
+                .collect();
+            vertex_coords.sort_by(|a, b| a.partial_cmp(b).unwrap_or(CmpOrdering::Equal));
+            vertex_coords
         };
 
-        // Sort the cell coordinate vectors for order-independent comparison
-        self_cell_coords.sort_by(|a, b| {
-            a.iter()
-                .zip(b.iter())
-                .map(|(coord_a, coord_b)| {
-                    coord_a.partial_cmp(coord_b).unwrap_or(CmpOrdering::Equal)
-                })
-                .find(|&ord| ord != CmpOrdering::Equal)
-                .unwrap_or(CmpOrdering::Equal)
-        });
-        other_cell_coords.sort_by(|a, b| {
-            a.iter()
-                .zip(b.iter())
-                .map(|(coord_a, coord_b)| {
-                    coord_a.partial_cmp(coord_b).unwrap_or(CmpOrdering::Equal)
-                })
-                .find(|&ord| ord != CmpOrdering::Equal)
+        self_cells.sort_by(|a, b| {
+            sort_key(a, self)
+                .partial_cmp(&sort_key(b, self))
                 .unwrap_or(CmpOrdering::Equal)
         });
 
-        // Compare sorted cell coordinate vectors
-        if self_cell_coords != other_cell_coords {
+        other_cells.sort_by(|a, b| {
+            sort_key(a, other)
+                .partial_cmp(&sort_key(b, other))
+                .unwrap_or(CmpOrdering::Equal)
+        });
+
+        // Compare sorted cell lists using Cell::eq_by_vertices
+        if self_cells.len() != other_cells.len() {
             return false;
+        }
+
+        for (self_cell, other_cell) in self_cells.iter().zip(other_cells.iter()) {
+            if !self_cell.eq_by_vertices(self, other_cell, other) {
+                return false;
+            }
         }
 
         // If we get here, the triangulations have the same structure

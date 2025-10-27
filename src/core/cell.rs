@@ -337,10 +337,11 @@ where
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let field_count = if self.data.is_some() { 2 } else { 1 };
+        let has_data = self.data.is_some();
+        let field_count = if has_data { 2 } else { 1 };
         let mut state = serializer.serialize_struct("Cell", field_count)?;
         state.serialize_field("uuid", &self.uuid)?;
-        if self.data.is_some() {
+        if has_data {
             state.serialize_field("data", &self.data)?;
         }
         state.end()
@@ -1337,6 +1338,102 @@ where
         Ok(facet_views)
     }
 
+    /// Compare two cells by their vertex sets (using `Vertex::PartialEq`) for cross-TDS equality checking.
+    ///
+    /// This method enables semantic comparison of cells from different TDS instances by comparing
+    /// the actual Vertex objects using `Vertex::PartialEq` (coordinate-based comparison).
+    /// Two cells are considered equal if they contain the same set of vertices (by coordinates),
+    /// regardless of order. This mirrors `Cell::PartialEq` semantics but works across TDS boundaries.
+    ///
+    /// # Arguments
+    ///
+    /// * `self_tds` - The TDS containing `self`
+    /// * `other` - The other cell to compare against
+    /// * `other_tds` - The TDS containing `other`
+    ///
+    /// # Returns
+    ///
+    /// `true` if both cells contain the same set of vertices (by coordinates), `false` otherwise.
+    /// Returns `false` if any vertex keys cannot be resolved.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::{core::triangulation_data_structure::Tds, vertex};
+    ///
+    /// // Example 1: Comparing cells from different TDS instances with same coordinates
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let tds1: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds2: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    ///
+    /// let cell1 = tds1.cells().next().unwrap().1;
+    /// let cell2 = tds2.cells().next().unwrap().1;
+    ///
+    /// // Different TDS instances, but same vertex coordinates
+    /// assert!(cell1.eq_by_vertices(&tds1, cell2, &tds2));
+    /// ```
+    ///
+    /// ```
+    /// use delaunay::{core::triangulation_data_structure::Tds, vertex};
+    ///
+    /// // Example 2: Comparing cells with different coordinates returns false
+    /// let vertices1 = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let vertices2 = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([2.0, 0.0]),  // Different coordinate
+    ///     vertex!([0.0, 2.0]),  // Different coordinate
+    /// ];
+    /// let tds1: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices1).unwrap();
+    /// let tds2: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices2).unwrap();
+    ///
+    /// let cell1 = tds1.cells().next().unwrap().1;
+    /// let cell2 = tds2.cells().next().unwrap().1;
+    ///
+    /// // Different coordinates mean cells are not equal
+    /// assert!(!cell1.eq_by_vertices(&tds1, cell2, &tds2));
+    /// ```
+    pub fn eq_by_vertices(
+        &self,
+        self_tds: &Tds<T, U, V, D>,
+        other: &Self,
+        other_tds: &Tds<T, U, V, D>,
+    ) -> bool {
+        // Get vertices for both cells
+        let self_vertices: Option<Vec<_>> = self
+            .vertices()
+            .iter()
+            .map(|&vkey| self_tds.get_vertex_by_key(vkey))
+            .collect();
+
+        let other_vertices: Option<Vec<_>> = other
+            .vertices()
+            .iter()
+            .map(|&vkey| other_tds.get_vertex_by_key(vkey))
+            .collect();
+
+        // If we couldn't resolve all vertex keys, cells are not equal
+        let (Some(mut self_vertices), Some(mut other_vertices)) = (self_vertices, other_vertices)
+        else {
+            return false;
+        };
+
+        // Sort vertices for order-independent comparison (matches Cell::PartialEq semantics)
+        // Use Vertex::PartialOrd which compares coordinates
+        self_vertices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        other_vertices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Compare using Vertex::PartialEq (coordinate-based)
+        self_vertices == other_vertices
+    }
+
     /// Returns an iterator over all facets of a cell as lightweight `FacetView` objects.
     ///
     /// This is a zero-allocation alternative to `facet_views_from_tds()` that returns an iterator
@@ -1670,6 +1767,164 @@ mod tests {
 
         // Human readable output for cargo test -- --nocapture
         println!("Cell without data: {cell:?}");
+    }
+
+    // =============================================================================
+    // CELL EQUALITY TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_eq_by_vertices_same_coordinates_different_tds() {
+        println!("Testing eq_by_vertices with same coordinates across different TDS");
+
+        // Create two separate TDS instances with identical vertex coordinates
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        let cell1 = tds1.cells().next().unwrap().1;
+        let cell2 = tds2.cells().next().unwrap().1;
+
+        // Despite different TDS instances (and thus different vertex keys),
+        // cells should be equal by coordinates
+        assert!(cell1.eq_by_vertices(&tds1, cell2, &tds2));
+        println!("  ✓ Cells from different TDS with same coordinates are equal");
+    }
+
+    #[test]
+    fn test_eq_by_vertices_different_coordinates() {
+        println!("Testing eq_by_vertices with different coordinates");
+
+        let vertices1 = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let vertices2 = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]), // Different
+            vertex!([0.0, 2.0, 0.0]), // Different
+            vertex!([0.0, 0.0, 2.0]), // Different
+        ];
+        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+
+        let cell1 = tds1.cells().next().unwrap().1;
+        let cell2 = tds2.cells().next().unwrap().1;
+
+        // Cells with different coordinates should not be equal
+        assert!(!cell1.eq_by_vertices(&tds1, cell2, &tds2));
+        println!("  ✓ Cells with different coordinates are not equal");
+    }
+
+    #[test]
+    fn test_eq_by_vertices_2d() {
+        println!("Testing eq_by_vertices in 2D");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds1: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+
+        let cell1 = tds1.cells().next().unwrap().1;
+        let cell2 = tds2.cells().next().unwrap().1;
+
+        assert!(cell1.eq_by_vertices(&tds1, cell2, &tds2));
+        println!("  ✓ 2D cells with same coordinates are equal");
+    }
+
+    #[test]
+    fn test_eq_by_vertices_order_independence() {
+        println!("Testing eq_by_vertices is order-independent");
+
+        // Create two TDS with vertices in different orders
+        let vertices1 = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        // Different order but same coordinates
+        let vertices2 = vec![
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+        ];
+        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+
+        // Both should create the same cell structure (same simplex)
+        let cell1 = tds1.cells().next().unwrap().1;
+        let cell2 = tds2.cells().next().unwrap().1;
+
+        // Should be equal regardless of vertex order in input
+        assert!(cell1.eq_by_vertices(&tds1, cell2, &tds2));
+        println!("  ✓ Cell comparison is order-independent");
+    }
+
+    #[test]
+    fn test_eq_by_vertices_same_tds() {
+        println!("Testing eq_by_vertices on cells from same TDS");
+
+        // Create TDS with multiple cells
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]), // Extra vertex to create multiple cells
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Get two different cells
+        let mut cells = tds.cells();
+        let cell1 = cells.next().unwrap().1;
+        let cell2 = cells.next().unwrap().1;
+
+        // They should not be equal (different vertex sets)
+        assert!(!cell1.eq_by_vertices(&tds, cell2, &tds));
+
+        // A cell should be equal to itself
+        assert!(cell1.eq_by_vertices(&tds, cell1, &tds));
+        println!("  ✓ Cell equality within same TDS works correctly");
+    }
+
+    #[test]
+    fn test_eq_by_vertices_with_floating_point_precision() {
+        println!("Testing eq_by_vertices respects Vertex::PartialEq precision");
+
+        // Vertex::PartialEq uses ordered_equals which handles floating point comparison
+        let vertices1 = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        // Exact same coordinates
+        let vertices2 = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+
+        let cell1 = tds1.cells().next().unwrap().1;
+        let cell2 = tds2.cells().next().unwrap().1;
+
+        assert!(cell1.eq_by_vertices(&tds1, cell2, &tds2));
+        println!("  ✓ Exact floating point values are equal");
     }
 
     #[test]

@@ -302,7 +302,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
 {
     /// Returns the number of hull facets
     ///
@@ -854,12 +853,13 @@ where
         )?;
 
         // Extract vertex keys for all vertices except the one at facet_index
-        let facet_vertex_keys: Vec<_> = cell
-            .vertices()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &k)| (i != facet_index as usize).then_some(k))
-            .collect();
+        // Pre-allocate to avoid iterator overhead in hot path
+        let mut facet_vertex_keys = Vec::with_capacity(D);
+        for (i, &k) in cell.vertices().iter().enumerate() {
+            if i != facet_index as usize {
+                facet_vertex_keys.push(k);
+            }
+        }
 
         if facet_vertex_keys.len() != D {
             return Err(ConvexHullConstructionError::VisibilityCheckFailed {
@@ -1444,8 +1444,8 @@ where
 impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for ConvexHull<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
+    U: DataType,
+    V: DataType,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache

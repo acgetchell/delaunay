@@ -44,7 +44,7 @@ use std::sync::OnceLock;
 
 /// Get the deterministic seed for random point generation.
 /// Reads `DELAUNAY_BENCH_SEED` (decimal or 0x-hex). Defaults to 0xD1EA.
-/// Prints the resolved seed once on first use for CI reproducibility.
+/// Prints the resolved seed once on first use if `PRINT_BENCH_SEED` is set.
 fn get_benchmark_seed() -> u64 {
     static SEED: OnceLock<u64> = OnceLock::new();
     *SEED.get_or_init(|| {
@@ -57,7 +57,9 @@ fn get_benchmark_seed() -> u64 {
                     .map_or_else(|| s.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok())
             })
             .unwrap_or(0xD1EA);
-        eprintln!("Benchmark seed: 0x{seed:X} ({seed})");
+        if std::env::var("PRINT_BENCH_SEED").is_ok() {
+            eprintln!("Benchmark seed: 0x{seed:X} ({seed})");
+        }
         seed
     })
 }
@@ -137,11 +139,11 @@ macro_rules! generate_dimensional_benchmarks {
                                     {
                                         // Scoped import to avoid items_after_statements warning
                                         use delaunay::cell;
-                                        let cell_vertices: Vec<_> = tds.vertices().map(|(_, v)| *v).collect();
-                                        if cell_vertices.len() >= ($dim + 1) {
+                                        // Use deterministic vertex selection from input vertices (not tds.vertices())
+                                        if vertices.len() >= ($dim + 1) {
                                             // SAFETY(BENCH-ONLY): Deliberately create duplicates for perf testing
                                             for _ in 0..3 {
-                                                let duplicate_cell = cell!(cell_vertices[0..($dim + 1)].to_vec());
+                                                let duplicate_cell = cell!(vertices[0..($dim + 1)].to_vec());
                                                 let _cell_key = tds.insert_cell_unchecked(duplicate_cell);
                                                 // Intentionally not updating UUID mappings to create true duplicates
                                             }
@@ -265,16 +267,16 @@ macro_rules! generate_validation_benchmarks {
                 group.bench_function("validate_vertex_mappings", |b| {
                     b.iter(|| {
                         tds.validate_vertex_mappings().unwrap();
-                        // Black box vertex count to prevent elision
-                        black_box(tds.number_of_vertices());
+                        // Black box to prevent dead code elimination
+                        black_box(());
                     });
                 });
 
                 group.bench_function("validate_cell_mappings", |b| {
                     b.iter(|| {
                         tds.validate_cell_mappings().unwrap();
-                        // Black box cell count to prevent elision
-                        black_box(tds.number_of_cells());
+                        // Black box to prevent dead code elimination
+                        black_box(());
                     });
                 });
 

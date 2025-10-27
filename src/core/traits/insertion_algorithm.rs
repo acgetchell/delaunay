@@ -276,6 +276,63 @@ impl InsertionError {
 /// Margin factor used for bounding box expansion in exterior vertex detection
 const MARGIN_FACTOR: f64 = 0.1;
 
+/// Calculate margin for bounding box expansion, handling both float and integer coordinate types.
+///
+/// This helper encapsulates the margin calculation logic used by `is_vertex_likely_exterior`,
+/// ensuring consistent behavior across the codebase and avoiding drift with tests.
+///
+/// # Arguments
+///
+/// * `range` - The range (max - min) for a coordinate dimension
+///
+/// # Returns
+///
+/// The margin to add/subtract from the bounding box, computed as:
+/// - `range * 0.1` for floating-point types
+/// - `range / 10` (minimum 1) for integer types where `cast(0.1)` produces 0
+#[inline]
+fn calculate_margin<T>(range: T) -> T
+where
+    T: Zero
+        + One
+        + Div<Output = T>
+        + PartialEq
+        + NumCast
+        + core::ops::Mul<Output = T>
+        + Copy
+        + AddAssign,
+{
+    let ten: T = cast(10).unwrap_or_else(|| {
+        let mut t = T::zero();
+        for _ in 0..10 {
+            t += T::one();
+        }
+        t
+    });
+    match cast::<f64, T>(MARGIN_FACTOR) {
+        None => {
+            // Cast failed (shouldn't happen for standard numeric types)
+            let mut m = range / ten;
+            if m == T::zero() {
+                m = T::one();
+            }
+            m
+        }
+        Some(mf) if mf == T::zero() => {
+            // Integer case: cast(0.1) → Some(0), use integer division
+            let mut m = range / ten;
+            if m == T::zero() {
+                m = T::one();
+            }
+            m
+        }
+        Some(mf) => {
+            // Float case: use the margin factor directly
+            range * mf
+        }
+    }
+}
+
 /// Threshold for determining when too many degenerate cells make results unreliable.
 /// If more than this fraction of cells are degenerate, the results are considered unreliable.
 /// Currently set to 0.5 (50%), which means if more than half the cells are degenerate,
@@ -1052,46 +1109,12 @@ where
         }
 
         // Calculate bounding box margins (10% expansion)
-        // Robust fallback for "10" if NumCast fails
-        let ten: T = cast(10).unwrap_or_else(|| {
-            let mut t = T::zero();
-            for _ in 0..10 {
-                t += T::one();
-            }
-            t
-        });
-        // Cache margin factor cast to avoid repeated calls
-        let margin_factor_as_t: Option<T> = cast::<f64, T>(MARGIN_FACTOR);
-
         let mut expanded_min = [T::zero(); D];
         let mut expanded_max = [T::zero(); D];
 
         for i in 0..D {
             let range = max_coords[i] - min_coords[i];
-
-            // Fallback for integer-like T where cast(0.1) == Some(0): use range/10 with min 1
-            let margin = match margin_factor_as_t {
-                None => {
-                    // Cast failed (shouldn't happen for standard numeric types)
-                    let mut m = range / ten;
-                    if m == T::zero() {
-                        m = T::one();
-                    }
-                    m
-                }
-                Some(mf) if mf == T::zero() => {
-                    // Integer case: cast(0.1) → Some(0), use integer division
-                    let mut m = range / ten;
-                    if m == T::zero() {
-                        m = T::one();
-                    }
-                    m
-                }
-                Some(mf) => {
-                    // Float case: use the margin factor directly
-                    range * mf
-                }
-            };
+            let margin = calculate_margin(range);
 
             // Use simple arithmetic for bounding box expansion
             // For floating-point types, overflow goes to infinity (acceptable for heuristic)
@@ -2641,6 +2664,13 @@ where
     /// # Errors
     ///
     /// Returns `InsertionError` if the cell is not found or neighbor buffer size is invalid.
+    ///
+    /// # Note on Overwrites
+    ///
+    /// This function may overwrite existing neighbor pointers during cavity-based insertion.
+    /// This is intentional: when removing bad cells and creating new ones, the neighbor
+    /// relationships must be updated to point to the new cells. The algorithm ensures
+    /// correctness through its transactional validate-create-commit pattern.
     fn set_neighbor_with_validation(
         tds: &mut Tds<T, U, V, D>,
         cell_key: CellKey,
