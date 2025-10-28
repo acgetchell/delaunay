@@ -50,8 +50,8 @@ fn get_benchmark_seed() -> u64 {
     *SEED.get_or_init(|| {
         let seed = std::env::var("DELAUNAY_BENCH_SEED")
             .ok()
-            .map(|s| s.trim().to_string())
             .and_then(|s| {
+                let s = s.trim();
                 s.strip_prefix("0x")
                     .or_else(|| s.strip_prefix("0X"))
                     .map_or_else(|| s.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok())
@@ -71,7 +71,7 @@ macro_rules! generate_dimensional_benchmarks {
             /// Benchmark Bowyer-Watson triangulation for [<$dim>]D
             fn [<benchmark_bowyer_watson_triangulation_ $dim d>](c: &mut Criterion) {
                 let point_counts = [10, 25, 50, 100, 250];
-                let seed = get_benchmark_seed(); // Cache seed locally to avoid repeated function calls
+                let seed = get_benchmark_seed(); // Cache seed locally for consistency across iterations
 
                 let mut group = c.benchmark_group(concat!("bowyer_watson_triangulation_", stringify!([<$dim>]), "d"));
 
@@ -102,7 +102,7 @@ macro_rules! generate_dimensional_benchmarks {
             /// Benchmark `remove_duplicate_cells` for [<$dim>]D
             fn [<benchmark_remove_duplicate_cells_ $dim d>](c: &mut Criterion) {
                 let point_counts = [10, 25, 50, 100];
-                let seed = get_benchmark_seed(); // Cache seed locally to avoid repeated function calls
+                let seed = get_benchmark_seed(); // Cache seed locally for consistency across iterations
 
                 let mut group = c.benchmark_group(concat!("remove_duplicate_cells_", stringify!([<$dim>]), "d"));
 
@@ -185,7 +185,7 @@ macro_rules! generate_memory_usage_benchmarks {
             /// Benchmark memory allocation patterns for [<$dim>]D
             fn [<benchmark_memory_usage_ $dim d>](c: &mut Criterion) {
                 let point_counts: &[usize] = if $dim <= 3 { &[50, 100, 200] } else { &[20, 50, 100] };
-                let seed = get_benchmark_seed(); // Cache seed locally to avoid repeated function calls
+                let seed = get_benchmark_seed(); // Cache seed locally for consistency across iterations
 
                 let mut group = c.benchmark_group(&format!("memory_usage_{}d", $dim));
 
@@ -224,7 +224,7 @@ macro_rules! generate_validation_benchmarks {
             /// Benchmark validation methods performance for [<$dim>]D
             fn [<benchmark_validation_methods_ $dim d>](c: &mut Criterion) {
                 let point_counts: &[usize] = if $dim <= 3 { &[10, 25, 50, 100] } else { &[10, 25, 50] };
-                let seed = get_benchmark_seed(); // Cache seed locally to avoid repeated function calls
+                let seed = get_benchmark_seed(); // Cache seed locally for consistency across iterations
 
                 let mut group = c.benchmark_group(&format!("validation_methods_{}d", $dim));
 
@@ -258,7 +258,7 @@ macro_rules! generate_validation_benchmarks {
 
             /// Benchmark individual validation components for [<$dim>]D
             fn [<benchmark_validation_components_ $dim d>](c: &mut Criterion) {
-                let seed = get_benchmark_seed(); // Cache seed locally to avoid repeated function calls
+                let seed = get_benchmark_seed(); // Cache seed locally for consistency across iterations
                 let n_points = if $dim <= 3 { 50 } else { 25 }; // Fixed size for component benchmarks
                 let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
@@ -303,7 +303,7 @@ macro_rules! generate_incremental_construction_benchmarks {
         pastey::paste! {
             /// Benchmark incremental vertex addition for [<$dim>]D
             fn [<benchmark_incremental_construction_ $dim d>](c: &mut Criterion) {
-                let seed = get_benchmark_seed(); // Cache seed locally to avoid repeated function calls
+                let seed = get_benchmark_seed(); // Cache seed locally for consistency across iterations
                 let mut group = c.benchmark_group(&format!("incremental_construction_{}d", $dim));
 
                 // Generate initial simplex for the given dimension
@@ -398,6 +398,8 @@ fn bench_config() -> Criterion {
         .and_then(|s| s.parse::<usize>().ok())
     {
         c = c.sample_size(v);
+    } else if std::env::var("CRIT_SAMPLE_SIZE").is_ok() {
+        eprintln!("Warning: Failed to parse CRIT_SAMPLE_SIZE, using default");
     }
 
     if let Some(v) = std::env::var("CRIT_MEASUREMENT_MS")
@@ -405,6 +407,8 @@ fn bench_config() -> Criterion {
         .and_then(|s| s.parse::<u64>().ok())
     {
         c = c.measurement_time(Duration::from_millis(v));
+    } else if std::env::var("CRIT_MEASUREMENT_MS").is_ok() {
+        eprintln!("Warning: Failed to parse CRIT_MEASUREMENT_MS, using default");
     }
 
     if let Some(v) = std::env::var("CRIT_WARMUP_MS")
@@ -412,6 +416,8 @@ fn bench_config() -> Criterion {
         .and_then(|s| s.parse::<u64>().ok())
     {
         c = c.warm_up_time(Duration::from_millis(v));
+    } else if std::env::var("CRIT_WARMUP_MS").is_ok() {
+        eprintln!("Warning: Failed to parse CRIT_WARMUP_MS, using default");
     }
 
     c

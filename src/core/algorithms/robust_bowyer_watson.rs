@@ -346,7 +346,7 @@ where
         <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &bad_cells);
 
         // Invalidate cache after TDS structural changes
-        self.invalidate_cache_atomically();
+        self.invalidate_facet_cache();
 
         // Phase 4: Connect neighbor relationships
         <Self as InsertionAlgorithm<T, U, V, D>>::connect_new_cells_to_neighbors(
@@ -1098,7 +1098,13 @@ where
         let threshold = {
             let scale = self.predicate_config.perturbation_scale;
             let multiplier = self.predicate_config.visibility_threshold_multiplier;
-            let th = scale * scale * multiplier;
+            // Guard against negative multipliers - clamp to zero minimum
+            let clamped_multiplier = if f64::from(multiplier) < 0.0 {
+                <T as From<f64>>::from(0.0)
+            } else {
+                multiplier
+            };
+            let th = scale * scale * clamped_multiplier;
             // Best-effort clamp: treat non-finite as "very large"
             // If T is float-like, this avoids NaN/Inf comparisons.
             if (f64::from(th)).is_finite() {
@@ -1324,20 +1330,6 @@ where
             )
         })
     }
-
-    fn invalidate_cache_atomically(&mut self) {
-        // Invalidate our facet cache using direct ArcSwapOption operations
-        // This is more efficient than generation-based tracking
-        self.facet_to_cells_cache.store(None);
-
-        // Optional: Log cache invalidation for debugging
-        #[cfg(debug_assertions)]
-        {
-            eprintln!(
-                "RobustBowyerWatson: Cache invalidated atomically using ArcSwapOption::store(None)"
-            );
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1346,7 +1338,7 @@ mod tests {
     use crate::core::facet::FacetView;
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
     use crate::core::traits::facet_cache::FacetCacheProvider;
-    use crate::core::traits::insertion_algorithm::InsertionError;
+    use crate::core::traits::insertion_algorithm::{InsertionAlgorithm, InsertionError};
     use crate::core::util::{derive_facet_key_from_vertex_keys, verify_facet_index_consistency};
     use crate::core::vertex::VertexBuilder;
     use crate::vertex;
@@ -4903,11 +4895,12 @@ mod tests {
         println!("✓ All three refactored methods properly return Result types");
     }
 
-    /// Verify that error handling doesn't introduce performance regressions
+    /// Verify that Result-based error handling works correctly with multiple insertions
+    ///
+    /// This test validates the functional correctness of error handling across multiple
+    /// vertex insertions. Performance regression detection should use the benchmark suite.
     #[test]
-    fn test_error_handling_has_no_performance_regression() {
-        use std::time::Instant;
-
+    fn test_result_based_error_handling_with_multiple_insertions() {
         let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         let vertices = vec![
@@ -4918,8 +4911,6 @@ mod tests {
         ];
         let mut tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
 
-        // Measure time for multiple insertions with Result-based error handling
-        let start = Instant::now();
         let test_vertices = [
             vertex!([0.1, 0.1, 0.1]),
             vertex!([0.2, 0.2, 0.2]),
@@ -4934,20 +4925,19 @@ mod tests {
                 successful += 1;
             }
         }
-        let duration = start.elapsed();
 
-        println!(
-            "✓ Completed {} insertions in {duration:?}",
-            test_vertices.len()
-        );
-        println!("  Successful: {successful}/{}", test_vertices.len());
-        let num_tests = u32::try_from(test_vertices.len()).unwrap_or(1);
-        println!("  Average: {:?} per insertion", duration / num_tests);
-
-        // Verify performance is reasonable (should complete quickly even with error handling)
+        // Verify functional correctness: at least some insertions should succeed
         assert!(
-            duration.as_secs() < 1,
-            "Should complete quickly with Result-based error handling (took {duration:?})"
+            successful > 0,
+            "At least one insertion should succeed with valid vertices"
+        );
+        assert!(
+            tds.is_valid().is_ok(),
+            "TDS should remain valid after insertions"
+        );
+        println!(
+            "✓ Successfully completed {successful}/{} insertions with Result-based error handling",
+            test_vertices.len()
         );
     }
 

@@ -15,12 +15,8 @@ use crate::geometry::traits::coordinate::{
 };
 use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
 use arc_swap::ArcSwapOption;
-use nalgebra::ComplexField;
 use num_traits::NumCast;
-use num_traits::{One, Zero};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
-use std::iter::Sum;
+use num_traits::Zero;
 use std::marker::PhantomData;
 use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
 use std::sync::{
@@ -581,7 +577,7 @@ where
     }
 }
 
-// Full impl block with complex bounds for construction and geometric operations
+// Full impl block for construction and geometric operations
 impl<T, U, V, const D: usize> ConvexHull<T, U, V, D>
 where
     T: CoordinateScalar
@@ -590,16 +586,12 @@ where
         + Sub<Output = T>
         + DivAssign<T>
         + Zero
-        + One
         + NumCast
         + Copy
-        + Sum
-        + ComplexField<RealField = T>
-        + From<f64>,
+        + std::iter::Sum,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
-    f64: From<T>,
+    [T; D]: Copy + Sized,
 {
     /// Creates a new convex hull from a d-dimensional triangulation
     ///
@@ -785,6 +777,16 @@ where
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
     ) -> Result<bool, ConvexHullConstructionError> {
+        // Staleness guard: fail fast before any cache work
+        let creation_gen = self.creation_generation.get().copied().unwrap_or(0);
+        let tds_gen = tds.generation();
+        if creation_gen != tds_gen {
+            return Err(ConvexHullConstructionError::StaleHull {
+                hull_generation: creation_gen,
+                tds_generation: tds_gen,
+            });
+        }
+
         // Get or build the cached facet-to-cells mapping
         let facet_to_cells_arc = self
             .try_get_or_build_facet_cache(tds)
@@ -1453,13 +1455,13 @@ where
 }
 
 // Implementation of FacetCacheProvider trait for ConvexHull
-// Reduced constraint set - removed ComplexField, From<f64>, f64: From<T>, and OrderedFloat bounds
-// which are not required by the trait or the implementation
+// Separate impl block with FacetCacheProvider-specific trait bounds
+// (main impl block has simpler bounds that don't include Sum, DeserializeOwned, etc.)
 impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for ConvexHull<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
-    U: DataType,
-    V: DataType,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum + num_traits::NumCast,
+    U: DataType + serde::de::DeserializeOwned,
+    V: DataType + serde::de::DeserializeOwned,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
@@ -1475,7 +1477,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
+    [T; D]: Copy + Sized,
 {
     fn default() -> Self {
         Self {
@@ -1503,6 +1505,8 @@ mod tests {
     use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
     use crate::core::util::{derive_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::vertex;
+    use serde::Serialize;
+    use serde::de::DeserializeOwned;
     use std::error::Error;
     use std::sync::atomic::Ordering;
     use std::thread;
