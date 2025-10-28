@@ -35,7 +35,7 @@ use crate::geometry::{
     util::safe_usize_to_scalar,
 };
 use nalgebra::{self as na, ComplexField};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use std::iter::Sum;
 
 /// Enhanced Bowyer-Watson algorithm with robust geometric predicates.
@@ -68,8 +68,6 @@ where
     V: crate::core::traits::data_type::DataType + DeserializeOwned,
     f64: From<T>,
     for<'a> &'a T: std::ops::Div<T>,
-    ordered_float::OrderedFloat<f64>: From<T>,
-    [f64; D]: DeserializeOwned + Serialize + Sized,
     na::OPoint<T, na::Const<D>>: From<[f64; D]>,
 {
     /// Create a new robust Bowyer-Watson algorithm instance.
@@ -177,9 +175,7 @@ where
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
-        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         // Determine the best strategy using trait method
         let strategy = self.determine_strategy(tds, vertex);
@@ -253,9 +249,7 @@ where
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
-        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         // Try the standard trait method first
         // The trait's implementation now correctly handles the Phase 3A lightweight approach:
@@ -385,9 +379,7 @@ where
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
-        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         // Use visibility detection with robust fallback
         #[allow(clippy::collapsible_if)] // Can't collapse due to if-let chain guard limitations
@@ -447,9 +439,7 @@ where
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
-        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         // First try to find bad cells using the trait's method
         let mut bad_cells = match InsertionAlgorithm::<T, U, V, D>::find_bad_cells(
@@ -524,7 +514,6 @@ where
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
     {
         // First try to find boundary facets using the lightweight trait method
         match InsertionAlgorithm::<T, U, V, D>::find_cavity_boundary_facets(self, tds, bad_cells) {
@@ -555,8 +544,6 @@ where
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         // First try the lightweight method that avoids heavy cloning
         match <Self as InsertionAlgorithm<T, U, V, D>>::find_visible_boundary_facets_lightweight(
@@ -885,8 +872,6 @@ where
             + From<f64>
             + DivAssign<T>,
         f64: From<T>,
-        ordered_float::OrderedFloat<f64>: From<T>,
-        [f64; D]: DeserializeOwned + Serialize + Sized,
     {
         // Get the adjacent cell to this boundary facet
         let Some(adjacent_cell) = tds.get_cell(facet_view.cell_key()) else {
@@ -1232,7 +1217,6 @@ where
     V: crate::core::traits::data_type::DataType + DeserializeOwned,
     f64: From<T>,
     for<'a> &'a T: std::ops::Div<T>,
-    ordered_float::OrderedFloat<f64>: From<T>,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
@@ -1250,8 +1234,6 @@ where
     V: crate::core::traits::data_type::DataType + DeserializeOwned,
     f64: From<T>,
     for<'a> &'a T: std::ops::Div<T>,
-    ordered_float::OrderedFloat<f64>: From<T>,
-    [f64; D]: DeserializeOwned + Serialize + Sized,
     na::OPoint<T, na::Const<D>>: From<[f64; D]>,
 {
     fn default() -> Self {
@@ -1281,8 +1263,6 @@ where
     V: crate::core::traits::data_type::DataType + DeserializeOwned,
     f64: From<T>,
     for<'a> &'a T: std::ops::Div<T>,
-    ordered_float::OrderedFloat<f64>: From<T>,
-    [f64; D]: DeserializeOwned + Serialize + Sized,
     na::OPoint<T, na::Const<D>>: From<[f64; D]>,
 {
     fn insert_vertex(

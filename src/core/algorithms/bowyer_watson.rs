@@ -208,10 +208,7 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> InsertionStrategy
-    where
-        T: NumCast,
-    {
+    ) -> InsertionStrategy {
         // Check if vertex is inside any existing cell's circumsphere
         match <Self as InsertionAlgorithm<T, U, V, D>>::is_vertex_interior(self, tds, vertex) {
             Ok(true) => InsertionStrategy::CavityBased,

@@ -1704,18 +1704,18 @@ mod tests {
         );
 
         // Test cache behavior on empty hull
-        let empty_cache = empty_hull.facet_to_cells_cache.load();
+        let empty_cache = empty_hull.facet_cache().load();
         assert!(
             empty_cache.is_none(),
             "Empty hull should have no cache initially"
         );
 
-        let empty_generation = empty_hull.cached_generation.load(Ordering::Acquire);
+        let empty_generation = empty_hull.cached_generation().load(Ordering::Acquire);
         assert_eq!(empty_generation, 0, "Empty hull should have generation 0");
 
         // Test invalidation on empty hull
         empty_hull.invalidate_cache();
-        let invalidated_generation = empty_hull.cached_generation.load(Ordering::Acquire);
+        let invalidated_generation = empty_hull.cached_generation().load(Ordering::Acquire);
         assert_eq!(
             invalidated_generation, 0,
             "Empty hull generation should remain 0 after invalidation"
@@ -2016,8 +2016,8 @@ mod tests {
         let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&tds).unwrap();
 
-        assert!(!hull.hull_facets.is_empty(), "Hull should have facets");
-        let test_facet_vertices = extract_facet_vertices(&hull.hull_facets[0], &tds).unwrap();
+        assert!(hull.facet_count() > 0, "Hull should have facets");
+        let test_facet_vertices = extract_facet_vertices(hull.get_facet(0).unwrap(), &tds).unwrap();
 
         // Test with points at various distances to verify scale-adaptive threshold
         let distance_test_points = vec![
@@ -3515,7 +3515,7 @@ mod tests {
 
         // Get initial generation values
         let initial_tds_generation = tds.generation();
-        let initial_hull_generation = hull.cached_generation.load(Ordering::Acquire);
+        let initial_hull_generation = hull.cached_generation().load(Ordering::Acquire);
 
         println!("  Initial TDS generation: {initial_tds_generation}");
         println!("  Initial hull cached generation: {initial_hull_generation}");
@@ -3532,7 +3532,7 @@ mod tests {
 
         // Test initial cache building - first visibility test should build the cache
         let test_point = Point::new([2.0, 2.0, 2.0]);
-        let facet = &hull.hull_facets[0];
+        let facet = hull.get_facet(0).unwrap();
 
         println!("  Performing initial visibility test to build cache...");
         let result1 = hull.is_facet_visible_from_point(facet, &test_point, &tds);
@@ -3540,7 +3540,7 @@ mod tests {
 
         // Cache should now be built, generations should still match
         let post_cache_tds_gen = tds.generation();
-        let post_cache_hull_gen = hull.cached_generation.load(Ordering::Acquire);
+        let post_cache_hull_gen = hull.cached_generation().load(Ordering::Acquire);
 
         println!(
             "  After cache build - TDS gen: {post_cache_tds_gen}, Hull gen: {post_cache_hull_gen}"
@@ -3551,7 +3551,7 @@ mod tests {
         );
 
         // Verify cache was built
-        let cache_arc = hull.facet_to_cells_cache.load();
+        let cache_arc = hull.facet_cache().load();
         assert!(
             cache_arc.is_some(),
             "Cache should exist after first visibility test"
@@ -3569,7 +3569,7 @@ mod tests {
         // Test TDS modification by adding a new vertex
         println!("  Testing TDS modification and hull invalidation...");
         let old_generation = tds.generation();
-        let stale_hull_gen = hull.cached_generation.load(Ordering::Acquire);
+        let stale_hull_gen = hull.cached_generation().load(Ordering::Acquire);
 
         // Add a new vertex to the TDS - this will bump the generation
         let new_vertex = vertex!([0.5, 0.5, 0.5]); // Interior point
@@ -3609,7 +3609,7 @@ mod tests {
             new_hull.is_valid_for_tds(&tds),
             "New hull should be valid for modified TDS"
         );
-        let new_hull_gen = new_hull.cached_generation.load(Ordering::Acquire);
+        let new_hull_gen = new_hull.cached_generation().load(Ordering::Acquire);
         println!("    New hull generation: {new_hull_gen}");
         assert_eq!(
             new_hull_gen, modified_tds_gen,
@@ -3617,7 +3617,7 @@ mod tests {
         );
 
         // Get a fresh facet handle from the new hull
-        let new_facet = &new_hull.hull_facets[0];
+        let new_facet = new_hull.get_facet(0).unwrap();
 
         // Test visibility with the new hull and fresh facet handle
         println!("  Testing visibility with rebuilt hull...");
@@ -3628,7 +3628,7 @@ mod tests {
         );
 
         // Verify the cache was built for the new hull
-        let cache_arc = new_hull.facet_to_cells_cache.load();
+        let cache_arc = new_hull.facet_cache().load();
         assert!(
             cache_arc.is_some(),
             "Cache should exist after visibility test on new hull"
@@ -3640,20 +3640,20 @@ mod tests {
         println!("  Testing manual cache invalidation...");
 
         // Store current generation
-        let pre_invalidation_gen = new_hull.cached_generation.load(Ordering::Acquire);
+        let pre_invalidation_gen = new_hull.cached_generation().load(Ordering::Acquire);
 
         // Manually invalidate cache
         new_hull.invalidate_cache();
 
         // Check that cache was cleared
-        let post_invalidation_cache = new_hull.facet_to_cells_cache.load();
+        let post_invalidation_cache = new_hull.facet_cache().load();
         assert!(
             post_invalidation_cache.is_none(),
             "Cache should be None after manual invalidation"
         );
 
         // Check that generation was reset to 0
-        let post_invalidation_gen = new_hull.cached_generation.load(Ordering::Acquire);
+        let post_invalidation_gen = new_hull.cached_generation().load(Ordering::Acquire);
         assert_eq!(
             post_invalidation_gen, 0,
             "Generation should be reset to 0 after manual invalidation"
@@ -3670,14 +3670,14 @@ mod tests {
         );
 
         // Cache should be rebuilt
-        let rebuilt_cache = new_hull.facet_to_cells_cache.load();
+        let rebuilt_cache = new_hull.facet_cache().load();
         assert!(
             rebuilt_cache.is_some(),
             "Cache should be rebuilt after visibility test"
         );
 
         // Generation should be updated to current TDS generation
-        let final_hull_gen = new_hull.cached_generation.load(Ordering::Acquire);
+        let final_hull_gen = new_hull.cached_generation().load(Ordering::Acquire);
         let final_tds_gen = tds.generation();
         assert_eq!(
             final_hull_gen, final_tds_gen,
@@ -3754,7 +3754,7 @@ mod tests {
             ConvexHull::from_triangulation(&tds).unwrap();
 
         // Initially, cache should be empty
-        let initial_cache = hull.facet_to_cells_cache.load();
+        let initial_cache = hull.facet_cache().load();
         assert!(initial_cache.is_none(), "Cache should be empty initially");
 
         // First call should build the cache
@@ -3766,7 +3766,7 @@ mod tests {
         );
 
         // Verify cache is now stored
-        let stored_cache = hull.facet_to_cells_cache.load();
+        let stored_cache = hull.facet_cache().load();
         assert!(
             stored_cache.is_some(),
             "Cache should be stored after building"
@@ -3824,7 +3824,7 @@ mod tests {
         );
 
         // Verify generation was updated
-        let updated_generation = hull.cached_generation.load(Ordering::Acquire);
+        let updated_generation = hull.cached_generation().load(Ordering::Acquire);
         assert_eq!(
             updated_generation, new_generation,
             "Hull generation should match TDS generation after rebuild"
@@ -3855,7 +3855,8 @@ mod tests {
 
         // For each facet in the hull, derive its key and check it exists in cache
         let mut keys_found = 0usize;
-        for (i, facet_handle) in hull.hull_facets.iter().enumerate() {
+        for i in 0..hull.facet_count() {
+            let facet_handle = hull.get_facet(i).unwrap();
             // Create FacetView to get vertices
             let facet_view =
                 FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index()).unwrap();
@@ -3889,7 +3890,7 @@ mod tests {
 
         println!(
             "  Found {keys_found}/{} hull facet keys in cache",
-            hull.hull_facets.len()
+            hull.facet_count()
         );
 
         // Cache should be non-empty (contains facets from the TDS)
@@ -3899,14 +3900,14 @@ mod tests {
         );
         assert_eq!(
             keys_found,
-            hull.hull_facets.len(),
+            hull.facet_count(),
             "Every hull facet key should be present in the cache"
         );
 
         // Test that helper methods work correctly together in visibility testing
         println!("  Testing helper methods in visibility context...");
         let test_point = Point::new([2.0, 2.0, 2.0]);
-        let test_facet = &hull.hull_facets[0];
+        let test_facet = hull.get_facet(0).unwrap();
 
         let visibility_result = hull.is_facet_visible_from_point(test_facet, &test_point, &tds);
         assert!(
@@ -3938,7 +3939,7 @@ mod tests {
             ConvexHull::from_triangulation(&tds).unwrap();
 
         // Test that normal cache building succeeds and returns the right error type
-        let test_facet = &hull.hull_facets[0];
+        let test_facet = hull.get_facet(0).unwrap();
         let test_point = Point::new([2.0, 2.0, 2.0]);
 
         // Call the method that should propagate TriangulationValidationError as FacetCacheBuildFailed
@@ -4006,7 +4007,7 @@ mod tests {
                 println!("  ✓ Found nearest facet at index: {facet_index}");
 
                 // Verify the facet is actually visible
-                let selected_facet = &hull.hull_facets[facet_index];
+                let selected_facet = hull.get_facet(facet_index).unwrap();
                 let is_visible =
                     hull.is_facet_visible_from_point(selected_facet, &equidistant_point, &tds);
                 assert!(
@@ -4195,11 +4196,11 @@ mod tests {
         );
 
         // Verify cache is stored
-        let stored_cache = hull.facet_to_cells_cache.load();
+        let stored_cache = hull.facet_cache().load();
         assert!(stored_cache.is_some(), "Cache should be stored");
 
         // Check initial generation
-        let initial_gen = hull.cached_generation.load(Ordering::Acquire);
+        let initial_gen = hull.cached_generation().load(Ordering::Acquire);
         let expected_gen = tds.generation();
         assert_eq!(
             initial_gen, expected_gen,
@@ -4211,14 +4212,14 @@ mod tests {
         hull.invalidate_cache();
 
         // Verify cache is cleared
-        let cleared_cache = hull.facet_to_cells_cache.load();
+        let cleared_cache = hull.facet_cache().load();
         assert!(
             cleared_cache.is_none(),
             "Cache should be cleared after invalidation"
         );
 
         // Verify generation is reset
-        let reset_gen = hull.cached_generation.load(Ordering::Acquire);
+        let reset_gen = hull.cached_generation().load(Ordering::Acquire);
         assert_eq!(
             reset_gen, 0,
             "Generation should be reset to 0 after invalidation"
@@ -4233,14 +4234,14 @@ mod tests {
         );
 
         // Verify cache is stored again
-        let restored_cache = hull.facet_to_cells_cache.load();
+        let restored_cache = hull.facet_cache().load();
         assert!(
             restored_cache.is_some(),
             "Cache should be restored after rebuild"
         );
 
         // Generation should be updated to TDS generation
-        let final_gen = hull.cached_generation.load(Ordering::Acquire);
+        let final_gen = hull.cached_generation().load(Ordering::Acquire);
         let tds_gen = tds.generation();
         assert_eq!(
             final_gen, tds_gen,
@@ -4283,7 +4284,7 @@ mod tests {
         println!("  Testing error types are properly propagated...");
 
         let test_point = Point::new([2.0, 2.0, 2.0]);
-        let test_facet = &hull.hull_facets[0];
+        let test_facet = hull.get_facet(0).unwrap();
 
         // Test is_facet_visible_from_point returns ConvexHullConstructionError
         let visibility_result = hull.is_facet_visible_from_point(test_facet, &test_point, &tds);
@@ -4350,7 +4351,7 @@ mod tests {
 
         // Test normal case to verify the error type is available
         let test_point = Point::new([2.0, 2.0, 2.0]);
-        let test_facet = &hull.hull_facets[0];
+        let test_facet = hull.get_facet(0).unwrap();
 
         // This should succeed in normal cases
         let visibility_result = hull.is_facet_visible_from_point(test_facet, &test_point, &tds);
@@ -4792,7 +4793,7 @@ mod tests {
         let normal_hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&normal_tds).unwrap();
         let test_facet_vertices =
-            extract_facet_vertices(&normal_hull.hull_facets[0], &normal_tds).unwrap();
+            extract_facet_vertices(normal_hull.get_facet(0).unwrap(), &normal_tds).unwrap();
 
         let extreme_points = [
             Point::new([1e-100, 1e-100, 1e-100]), // Extremely small
@@ -4843,7 +4844,7 @@ mod tests {
 
         println!("  Testing fallback with points at various distances...");
 
-        let facet_handle = &hull.hull_facets[0];
+        let facet_handle = hull.get_facet(0).unwrap();
         let facet_view =
             FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index()).unwrap();
         let test_facet_vertices = crate::core::util::facet_view_to_vertices(&facet_view).unwrap();
@@ -4933,9 +4934,11 @@ mod tests {
                     Ok(collinear_hull) => {
                         println!("    ✓ Near-collinear triangulation created successfully");
 
-                        let collinear_facet_vertices =
-                            extract_facet_vertices(&collinear_hull.hull_facets[0], &collinear_tds)
-                                .unwrap();
+                        let collinear_facet_vertices = extract_facet_vertices(
+                            collinear_hull.get_facet(0).unwrap(),
+                            &collinear_tds,
+                        )
+                        .unwrap();
                         let test_point = Point::new([1.5, 0.5, 0.5]);
 
                         let collinear_result =
@@ -4981,7 +4984,8 @@ mod tests {
                         println!("    ✓ Tiny area triangulation created successfully");
 
                         let tiny_facet_vertices =
-                            extract_facet_vertices(&tiny_hull.hull_facets[0], &tiny_tds).unwrap();
+                            extract_facet_vertices(tiny_hull.get_facet(0).unwrap(), &tiny_tds)
+                                .unwrap();
                         let test_point = Point::new([1e-3, 1e-3, 1e-3]);
 
                         let tiny_result =
@@ -5029,7 +5033,7 @@ mod tests {
         let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&tds).unwrap();
 
-        let test_facet_vertices = extract_facet_vertices(&hull.hull_facets[0], &tds).unwrap();
+        let test_facet_vertices = extract_facet_vertices(hull.get_facet(0).unwrap(), &tds).unwrap();
 
         println!("  Testing threshold behavior with systematic point placement...");
 
@@ -5132,7 +5136,8 @@ mod tests {
                 Ok(edge_tds) => match ConvexHull::from_triangulation(&edge_tds) {
                     Ok(edge_hull) => {
                         let edge_facet_vertices =
-                            extract_facet_vertices(&edge_hull.hull_facets[0], &edge_tds).unwrap();
+                            extract_facet_vertices(edge_hull.get_facet(0).unwrap(), &edge_tds)
+                                .unwrap();
                         let test_point = Point::new([5.0, 5.0, 5.0]);
 
                         let edge_result =
@@ -5798,7 +5803,7 @@ mod tests {
 
         // Record initial generation
         let initial_generation = tds.generation();
-        let initial_hull_generation = hull.cached_generation.load(Ordering::Acquire);
+        let initial_hull_generation = hull.cached_generation().load(Ordering::Acquire);
 
         println!("    Initial TDS generation: {initial_generation}");
         println!("    Initial hull generation: {initial_hull_generation}");
@@ -5811,7 +5816,7 @@ mod tests {
                 println!("    After modification {i}: TDS generation = {current_gen}");
 
                 // Test that hull detects staleness
-                let hull_gen = hull.cached_generation.load(Ordering::Acquire);
+                let hull_gen = hull.cached_generation().load(Ordering::Acquire);
                 if hull_gen > 0 && hull_gen < current_gen {
                     println!(
                         "      ✓ Hull generation ({hull_gen}) correctly behind TDS ({current_gen})"
@@ -5832,7 +5837,7 @@ mod tests {
         let visibility_result = hull.is_point_outside(&test_point, &tds);
         match visibility_result {
             Ok(is_outside) => {
-                let updated_hull_gen = hull.cached_generation.load(Ordering::Acquire);
+                let updated_hull_gen = hull.cached_generation().load(Ordering::Acquire);
                 println!("    After cache rebuild: hull generation = {updated_hull_gen}");
                 assert_eq!(
                     updated_hull_gen, final_generation,
@@ -5851,7 +5856,7 @@ mod tests {
 
         // Test manual invalidation
         hull.invalidate_cache();
-        let invalidated_gen = hull.cached_generation.load(Ordering::Acquire);
+        let invalidated_gen = hull.cached_generation().load(Ordering::Acquire);
         assert_eq!(
             invalidated_gen, 0,
             "Generation should be reset to 0 after manual invalidation"
@@ -5862,7 +5867,7 @@ mod tests {
         let rebuild_result = hull.is_point_outside(&test_point, &tds);
         match rebuild_result {
             Ok(_) => {
-                let rebuilt_gen = hull.cached_generation.load(Ordering::Acquire);
+                let rebuilt_gen = hull.cached_generation().load(Ordering::Acquire);
                 assert_eq!(
                     rebuilt_gen, final_generation,
                     "Generation should match TDS after rebuild from manual invalidation"
@@ -5906,13 +5911,13 @@ mod tests {
             hull.invalidate_cache();
 
             // Verify cache is cleared
-            let cache_after_invalidation = hull.facet_to_cells_cache.load();
+            let cache_after_invalidation = hull.facet_cache().load();
             assert!(
                 cache_after_invalidation.is_none(),
                 "Cache should be None after invalidation"
             );
 
-            let generation_after_invalidation = hull.cached_generation.load(Ordering::Acquire);
+            let generation_after_invalidation = hull.cached_generation().load(Ordering::Acquire);
             assert_eq!(
                 generation_after_invalidation, 0,
                 "Generation should be 0 after invalidation"
@@ -5925,14 +5930,14 @@ mod tests {
                     Ok(is_outside) => {
                         // After first operation, cache should be rebuilt
                         if i == 0 {
-                            let cache_after_rebuild = hull.facet_to_cells_cache.load();
+                            let cache_after_rebuild = hull.facet_cache().load();
                             assert!(
                                 cache_after_rebuild.is_some(),
                                 "Cache should exist after first operation"
                             );
 
                             let generation_after_rebuild =
-                                hull.cached_generation.load(Ordering::Acquire);
+                                hull.cached_generation().load(Ordering::Acquire);
                             assert!(
                                 generation_after_rebuild > 0,
                                 "Generation should be updated after rebuild"
@@ -5948,10 +5953,10 @@ mod tests {
             }
 
             // Verify cache remains consistent throughout the cycle
-            let final_cache = hull.facet_to_cells_cache.load();
+            let final_cache = hull.facet_cache().load();
             assert!(final_cache.is_some(), "Cache should exist at end of cycle");
 
-            let final_generation = hull.cached_generation.load(Ordering::Acquire);
+            let final_generation = hull.cached_generation().load(Ordering::Acquire);
             let tds_generation = tds.generation();
             assert_eq!(
                 final_generation, tds_generation,
@@ -5968,8 +5973,8 @@ mod tests {
         println!("  Testing cache reuse efficiency...");
 
         // Test that cache is reused when generation hasn't changed
-        let cache_before = hull.facet_to_cells_cache.load();
-        let generation_before = hull.cached_generation.load(Ordering::Acquire);
+        let cache_before = hull.facet_cache().load();
+        let generation_before = hull.cached_generation().load(Ordering::Acquire);
 
         // Perform multiple operations without TDS changes
         for i in 0..10 {
@@ -5978,8 +5983,8 @@ mod tests {
             assert!(result.is_ok(), "Visibility test {i} should succeed");
         }
 
-        let cache_after = hull.facet_to_cells_cache.load();
-        let generation_after = hull.cached_generation.load(Ordering::Acquire);
+        let cache_after = hull.facet_cache().load();
+        let generation_after = hull.cached_generation().load(Ordering::Acquire);
 
         // Cache should exist before and after operations
         assert!(
@@ -6033,7 +6038,7 @@ mod tests {
         let _ = hull.is_point_outside(&test_point, &tds);
 
         // Verify cache exists
-        let cache_exists = hull.facet_to_cells_cache.load();
+        let cache_exists = hull.facet_cache().load();
         assert!(
             cache_exists.is_some(),
             "Cache should exist after visibility test"
@@ -6041,7 +6046,7 @@ mod tests {
 
         // Manual invalidation should clear the cache
         hull.invalidate_cache();
-        let cache_after_invalidation = hull.facet_to_cells_cache.load();
+        let cache_after_invalidation = hull.facet_cache().load();
         assert!(
             cache_after_invalidation.is_none(),
             "Cache should be None after invalidation"
@@ -6049,7 +6054,7 @@ mod tests {
 
         // Cache should rebuild on next operation
         let _ = hull.is_point_outside(&test_point, &tds);
-        let cache_rebuilt = hull.facet_to_cells_cache.load();
+        let cache_rebuilt = hull.facet_cache().load();
         assert!(
             cache_rebuilt.is_some(),
             "Cache should be rebuilt after invalidation"
@@ -6069,8 +6074,8 @@ mod tests {
         let _ = hull1.is_point_outside(&test_point, &tds);
         let _ = hull2.is_point_outside(&test_point, &tds);
 
-        let cache1 = hull1.facet_to_cells_cache.load();
-        let cache2 = hull2.facet_to_cells_cache.load();
+        let cache1 = hull1.facet_cache().load();
+        let cache2 = hull2.facet_cache().load();
 
         if let (Some(cache1_arc), Some(cache2_arc)) = (&*cache1, &*cache2) {
             // Caches should be independent (different Arc instances)
@@ -6092,8 +6097,8 @@ mod tests {
         // Test that invalidating one doesn't affect the other
         hull1.invalidate_cache();
 
-        let hull1_cache_after_invalidation = hull1.facet_to_cells_cache.load();
-        let hull2_cache_after_hull1_invalidation = hull2.facet_to_cells_cache.load();
+        let hull1_cache_after_invalidation = hull1.facet_cache().load();
+        let hull2_cache_after_hull1_invalidation = hull2.facet_cache().load();
 
         assert!(
             hull1_cache_after_invalidation.is_none(),
