@@ -3,10 +3,23 @@
 # Install just: https://github.com/casey/just
 # Usage: just <command> or just --list
 
+# Use bash with strict error handling for all recipes
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# Internal helper: ensure uv is installed
+_ensure-uv:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
+
 # GitHub Actions workflow validation
 action-lint:
     #!/usr/bin/env bash
     set -euo pipefail
+    if ! command -v actionlint >/dev/null; then
+        echo "⚠️ 'actionlint' not found. See 'just setup' or https://github.com/rhysd/actionlint"
+        exit 0
+    fi
     files=()
     while IFS= read -r -d '' file; do
         files+=("$file")
@@ -21,17 +34,48 @@ action-lint:
 bench:
     cargo bench --workspace
 
-bench-baseline:
+# CI regression benchmarks (fast, suitable for CI)
+bench-ci:
+    cargo bench --bench ci_performance_suite
+
+bench-baseline: _ensure-uv
     uv run benchmark-utils generate-baseline
 
-bench-compare:
+bench-compare: _ensure-uv
     uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 
 bench-compile:
     cargo bench --workspace --no-run
 
-bench-dev:
-    uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
+# Development mode benchmarks: fast iteration with reduced sample sizes
+bench-dev: _ensure-uv
+    CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=1000 CRIT_WARMUP_MS=500 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
+
+# Quick benchmark validation: minimal samples for sanity checking
+bench-quick:
+    CRIT_SAMPLE_SIZE=5 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace
+
+# Phase 4 SlotMap evaluation benchmarks
+bench-phase4:
+    @echo "🔬 Running Phase 4 SlotMap evaluation benchmarks (~10-30 min default scale)"
+    cargo bench --bench large_scale_performance
+
+bench-phase4-large:
+    @echo "🔬 Running Phase 4 large-scale benchmarks with BENCH_LARGE_SCALE=1 (~2-3 hours)"
+    BENCH_LARGE_SCALE=1 cargo bench --bench large_scale_performance
+
+bench-phase4-quick:
+    @echo "⚡ Quick Phase 4 validation tests (~90 seconds)"
+    cargo test --release --test storage_backend_compatibility -- --ignored
+
+# Compare SlotMap vs DenseSlotMap storage backends
+compare-storage: _ensure-uv
+    @echo "📊 Comparing SlotMap vs DenseSlotMap performance (~4-6 hours)"
+    uv run compare-storage-backends --bench large_scale_performance
+
+compare-storage-large: _ensure-uv
+    @echo "📊 Comparing storage backends at large scale (~8-12 hours, use on compute cluster)"
+    BENCH_LARGE_SCALE=1 uv run compare-storage-backends --bench large_scale_performance
 
 # Build commands
 build:
@@ -41,10 +85,10 @@ build-release:
     cargo build --release
 
 # Changelog management
-changelog:
+changelog: _ensure-uv
     uv run changelog-utils generate
 
-changelog-tag version:
+changelog-tag version: _ensure-uv
     uv run changelog-utils tag {{version}}
 
 changelog-update: changelog
@@ -123,9 +167,20 @@ help-workflows:
     @echo ""
     @echo "Benchmark System:"
     @echo "  just bench         # Run all benchmarks"
+    @echo "  just bench-ci      # CI regression benchmarks (fast, ~5-10 min)"
     @echo "  just bench-baseline # Generate performance baseline"
     @echo "  just bench-compare # Compare against baseline"
-    @echo "  just bench-dev     # Development mode (10x faster)"
+    @echo "  just bench-dev     # Development mode (10x faster, ~1-2 min)"
+    @echo "  just bench-quick   # Quick validation (minimal samples, ~30 sec)"
+    @echo ""
+    @echo "Phase 4 SlotMap Evaluation:"
+    @echo "  just bench-phase4       # Run Phase 4 benchmarks (~10-30 min default)"
+    @echo "  just bench-phase4-large # Large scale with BENCH_LARGE_SCALE=1 (~2-3 hours)"
+    @echo "  just bench-phase4-quick # Quick validation tests (~90 seconds)"
+    @echo ""
+    @echo "Storage Backend Comparison:"
+    @echo "  just compare-storage       # Compare SlotMap vs DenseSlotMap (~4-6 hours)"
+    @echo "  just compare-storage-large # Large scale comparison (~8-12 hours, compute cluster)"
     @echo ""
     @echo "Performance Analysis:"
     @echo "  just perf-help     # Show performance analysis commands"
@@ -161,7 +216,7 @@ markdown-lint:
     fi
 
 # Performance analysis framework
-perf-baseline tag="":
+perf-baseline tag="": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     tag_value="{{tag}}"
@@ -171,7 +226,7 @@ perf-baseline tag="":
         uv run benchmark-utils generate-baseline
     fi
 
-perf-check threshold="5.0":
+perf-check threshold="5.0": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -f "baseline-artifact/baseline_results.txt" ]; then
@@ -181,7 +236,7 @@ perf-check threshold="5.0":
         exit 1
     fi
 
-perf-compare file:
+perf-compare file: _ensure-uv
     uv run benchmark-utils compare --baseline "{{file}}"
 
 perf-help:
@@ -190,19 +245,43 @@ perf-help:
     @echo "  just perf-check [threshold] # Check for regressions (default: 5% threshold)"
     @echo "  just perf-compare <file>    # Compare with specific baseline file"
     @echo "  just bench-dev             # Development mode benchmarks (10x faster)"
+    @echo "  just bench-quick           # Quick validation benchmarks (minimal samples)"
+    @echo ""
+    @echo "Profiling Commands:"
+    @echo "  just profile               # Profile full triangulation_scaling benchmark"
+    @echo "  just profile-dev           # Profile 3D dev mode (faster iteration)"
+    @echo "  just profile-mem           # Profile memory allocations (with count-allocations feature)"
     @echo ""
     @echo "Benchmark System (Delaunay-specific):"
     @echo "  just bench-baseline        # Generate baseline via benchmark-utils"
     @echo "  just bench-compare         # Compare against stored baseline"
     @echo "  just bench-dev             # Fast development comparison"
+    @echo "  just bench-quick           # Quick validation (minimal samples)"
+    @echo ""
+    @echo "Environment Variables (Benchmark Configuration):"
+    @echo "  CRIT_SAMPLE_SIZE=N         # Number of samples per benchmark"
+    @echo "  CRIT_MEASUREMENT_MS=N      # Measurement time in milliseconds"
+    @echo "  CRIT_WARMUP_MS=N           # Warm-up time in milliseconds"
+    @echo "  DELAUNAY_BENCH_SEED=N      # Random seed (decimal or 0x-hex)"
     @echo ""
     @echo "Examples:"
     @echo "  just perf-baseline v1.0.0  # Save tagged baseline"
     @echo "  just perf-check 10.0       # Check with 10% threshold"
     @echo "  just bench-dev             # Quick benchmark iteration"
+    @echo "  CRIT_SAMPLE_SIZE=100 just bench  # Custom sample size"
+
+# Profiling
+profile:
+    samply record cargo bench --bench profiling_suite -- triangulation_scaling
+
+profile-dev:
+    PROFILING_DEV_MODE=1 samply record cargo bench --bench profiling_suite -- "triangulation_scaling_3d/tds_new/random_3d"
+
+profile-mem:
+    samply record cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
 
 # Python code quality
-python-lint:
+python-lint: _ensure-uv
     uv run ruff check scripts/ --fix
     uv run ruff format scripts/
 
@@ -212,26 +291,62 @@ quality: lint-code lint-docs lint-config test-all
 
 # Development setup
 setup:
-    @echo "Setting up delaunay development environment..."
-    @echo "Note: Rust toolchain and components managed by rust-toolchain.toml (if present)"
-    @echo ""
-    @echo "Installing Rust components..."
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Setting up delaunay development environment..."
+    echo "Note: Rust toolchain and components managed by rust-toolchain.toml (if present)"
+    echo ""
+    echo "Installing Rust components..."
     rustup component add clippy rustfmt rust-docs rust-src
-    @echo ""
-    @echo "Additional tools required (install separately):"
-    @echo "  - uv: https://github.com/astral-sh/uv"
-    @echo "  - actionlint: https://github.com/rhysd/actionlint"
-    @echo "  - shfmt, shellcheck: via package manager (brew install shfmt shellcheck)"
-    @echo "  - jq: via package manager (brew install jq)"
-    @echo "  - Node.js (for npx/cspell): https://nodejs.org"
-    @echo "  - cargo-tarpaulin: cargo install cargo-tarpaulin"
-    @echo ""
-    @echo "Installing Python tooling..."
+    echo ""
+    echo "Installing Rust tools..."
+    # Install cargo tools if not already installed
+    if ! command -v cargo-tarpaulin &> /dev/null; then
+        echo "Installing cargo-tarpaulin..."
+        cargo install cargo-tarpaulin
+    else
+        echo "cargo-tarpaulin already installed"
+    fi
+    if ! command -v samply &> /dev/null; then
+        echo "Installing samply..."
+        cargo install samply
+    else
+        echo "samply already installed"
+    fi
+    echo ""
+    echo "Additional tools (will check if installed):"
+    # Check for system tools
+    for tool in uv actionlint shfmt shellcheck jq node; do
+        if command -v "$tool" &> /dev/null; then
+            echo "  ✓ $tool installed"
+        else
+            echo "  ✗ $tool NOT installed"
+            case "$tool" in
+                uv)
+                    echo "    Install: https://github.com/astral-sh/uv"
+                    echo "    macOS: brew install uv"
+                    echo "    Linux/WSL: curl -LsSf https://astral.sh/uv/install.sh | sh"
+                    ;;
+                actionlint) echo "    Install: https://github.com/rhysd/actionlint" ;;
+                shfmt|shellcheck) echo "    Install: brew install $tool" ;;
+                jq) echo "    Install: brew install jq" ;;
+                node) echo "    Install: https://nodejs.org" ;;
+            esac
+        fi
+    done
+    echo ""
+    # Ensure uv is installed before proceeding
+    if ! command -v uv &> /dev/null; then
+        echo "❌ 'uv' is required but not installed. Please install it first (see instructions above)."
+        exit 1
+    fi
+    echo ""
+    echo "Installing Python tooling..."
     uv sync --group dev
-    @echo ""
-    @echo "Building project..."
+    echo ""
+    echo "Building project..."
     cargo build
-    @echo "✅ Setup complete! Run 'just help-workflows' to see available commands."
+    echo "✅ Setup complete! Run 'just help-workflows' to see available commands."
 
 shell-lint:
     #!/usr/bin/env bash
@@ -286,7 +401,7 @@ test-allocation:
 test-debug:
     cargo test --test circumsphere_debug_tools -- --nocapture
 
-test-python:
+test-python: _ensure-uv
     uv run pytest
 
 test-release:
@@ -306,7 +421,7 @@ validate-json:
         echo "No JSON files found to validate."
     fi
 
-validate-toml:
+validate-toml: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     files=()

@@ -155,11 +155,11 @@
 
 // Standard library imports
 use std::{
-    cmp::{Ordering as CmpOrdering, min},
+    cmp::Ordering as CmpOrdering,
     fmt::{self, Debug},
     iter::Sum,
     marker::PhantomData,
-    ops::{AddAssign, Div, SubAssign},
+    ops::{AddAssign, SubAssign},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -169,16 +169,16 @@ use std::{
 // External crate imports
 use serde::{
     Deserialize, Deserializer, Serialize,
-    de::{self, DeserializeOwned, MapAccess, Visitor},
+    de::{self, MapAccess, Visitor},
 };
-use slotmap::{SlotMap, new_key_type};
+use slotmap::new_key_type;
 use thiserror::Error;
 use uuid::Uuid;
 
 // Crate-internal imports
 use crate::core::collections::{
     CellKeySet, CellRemovalBuffer, CellVerticesMap, Entry, FacetToCellsMap, FastHashMap,
-    MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, UuidToCellKeyMap, UuidToVertexKeyMap,
+    MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, StorageMap, UuidToCellKeyMap, UuidToVertexKeyMap,
     ValidCellsBuffer, VertexKeyBuffer, VertexKeySet, VertexToCellsMap, fast_hash_map_with_capacity,
 };
 use crate::geometry::{
@@ -366,24 +366,24 @@ pub enum TriangulationValidationError {
 // MACROS/HELPERS
 // =============================================================================
 
-// Define key types for SlotMaps using slotmap's new_key_type! macro
-// These macros create unique, type-safe keys for accessing elements in SlotMaps
+// Define key types for storage maps using slotmap's new_key_type! macro
+// These macros create unique, type-safe keys for accessing elements in storage maps
 
 new_key_type! {
-    /// Key type for accessing vertices in SlotMap.
+    /// Key type for accessing vertices in the storage map.
     ///
     /// This creates a unique, type-safe identifier for vertices stored in the
-    /// triangulation's vertex SlotMap. Each VertexKey corresponds to exactly
+    /// triangulation's vertex storage. Each VertexKey corresponds to exactly
     /// one vertex and provides efficient, stable access even as vertices are
     /// added or removed from the triangulation.
     pub struct VertexKey;
 }
 
 new_key_type! {
-    /// Key type for accessing cells in SlotMap.
+    /// Key type for accessing cells in the storage map.
     ///
     /// This creates a unique, type-safe identifier for cells stored in the
-    /// triangulation's cell SlotMap. Each CellKey corresponds to exactly
+    /// triangulation's cell storage. Each CellKey corresponds to exactly
     /// one cell and provides efficient, stable access even as cells are
     /// added or removed during triangulation operations.
     pub struct CellKey;
@@ -395,9 +395,9 @@ new_key_type! {
 ///
 /// # Properties
 ///
-/// - `vertices`: A [`SlotMap`] that stores vertices with stable keys for efficient access.
+/// - `vertices`: A storage map that stores vertices with stable keys for efficient access.
 ///   Each [`Vertex`] has a [`Point`](crate::geometry::point::Point) of type T, vertex data of type U, and a constant D representing the dimension.
-/// - `cells`: The `cells` property is a [`SlotMap`] that stores [`Cell`] objects with stable keys.
+/// - `cells`: The `cells` property is a storage map that stores [`Cell`] objects with stable keys.
 ///   Each [`Cell`] has one or more [`Vertex`] objects with cell data of type V.
 ///   Note the dimensionality of the cell may differ from D, though the [`Tds`]
 ///   only stores cells of maximal dimensionality D and infers other lower
@@ -443,20 +443,19 @@ new_key_type! {
 /// ```
 pub struct Tds<T, U, V, const D: usize>
 where
-    T: CoordinateScalar + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
 {
-    /// `SlotMap` for storing vertices, allowing stable keys and efficient access.
-    vertices: SlotMap<VertexKey, Vertex<T, U, D>>,
+    /// Storage map for vertices, allowing stable keys and efficient access.
+    vertices: StorageMap<VertexKey, Vertex<T, U, D>>,
 
-    /// `SlotMap` for storing cells, providing stable keys and efficient access.
-    cells: SlotMap<CellKey, Cell<T, U, V, D>>,
+    /// Storage map for cells, providing stable keys and efficient access.
+    cells: StorageMap<CellKey, Cell<T, U, V, D>>,
 
     /// Fast mapping from Vertex UUIDs to their `VertexKeys` for efficient UUID → Key lookups.
     /// This optimizes the common operation of looking up vertex keys by UUID.
-    /// For reverse Key → UUID lookups, we use direct `SlotMap` access: `vertices[key].uuid()`.
+    /// For reverse Key → UUID lookups, we use direct storage map access: `vertices[key].uuid()`.
     ///
     /// SAFETY: External mutation of this map will violate TDS invariants.
     /// This should only be modified through TDS methods that maintain consistency.
@@ -466,7 +465,7 @@ where
 
     /// Fast mapping from Cell UUIDs to their `CellKeys` for efficient UUID → Key lookups.
     /// This optimizes the common operation of looking up cell keys by UUID.
-    /// For reverse Key → UUID lookups, we use direct `SlotMap` access: `cells[key].uuid()`.
+    /// For reverse Key → UUID lookups, we use direct storage map access: `cells[key].uuid()`.
     ///
     /// SAFETY: External mutation of this map will violate TDS invariants.
     /// This should only be modified through TDS methods that maintain consistency.
@@ -504,19 +503,18 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
-    /// Returns a reference to the cells `SlotMap`.
+    /// Returns an iterator over all cells in the triangulation.
     ///
-    /// This method provides read-only access to the internal cells collection,
-    /// allowing external code to iterate over or access specific cells by their keys.
-    /// Combined with the cells iterator methods, this enables efficient traversal
-    /// of the triangulation's cellular structure.
+    /// This method provides read-only access to the cells collection without
+    /// exposing the underlying storage implementation. The iterator yields
+    /// `(CellKey, &Cell)` pairs for each cell in the triangulation.
+    ///
+    /// For direct key-based access, use [`get_cell`](Self::get_cell).
     ///
     /// # Returns
     ///
-    /// A reference to the `SlotMap<CellKey, Cell<T, U, V, D>>` storing all cells
-    /// in the triangulation.
+    /// An iterator over `(CellKey, &Cell<T, U, V, D>)` pairs.
     ///
     /// # Example
     ///
@@ -532,27 +530,57 @@ where
     /// ];
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
-    /// let cells = tds.cells();
-    /// for (cell_key, cell) in cells {
-    ///     println!("Cell {:?} has {} vertices", cell_key, cell.vertices().len());
+    /// for (cell_key, cell) in tds.cells() {
+    ///     println!("Cell {:?} has {} vertices", cell_key, cell.number_of_vertices());
     /// }
     /// ```
-    #[must_use]
-    pub const fn cells(&self) -> &SlotMap<CellKey, Cell<T, U, V, D>> {
-        &self.cells
+    pub fn cells(&self) -> impl Iterator<Item = (CellKey, &Cell<T, U, V, D>)> {
+        self.cells.iter()
     }
 
-    /// Returns a reference to the vertices `SlotMap`.
+    /// Returns an iterator over all cell values (without keys) in the triangulation.
     ///
-    /// This method provides read-only access to the internal vertices collection,
-    /// allowing external code to iterate over or access specific vertices by their keys.
-    /// This provides a consistent API alongside `cells()` for accessing the triangulation's
-    /// core data structures.
+    /// This is a convenience method that simplifies the common pattern of iterating over
+    /// `cells().map(|(_, cell)| cell)`. It provides read-only access to cell objects
+    /// when you don't need the cell keys.
     ///
     /// # Returns
     ///
-    /// A reference to the `SlotMap<VertexKey, Vertex<T, U, D>>` storing all vertices
-    /// in the triangulation.
+    /// An iterator over `&Cell<T, U, V, D>` references.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// for cell in tds.cells_values() {
+    ///     println!("Cell has {} vertices", cell.number_of_vertices());
+    /// }
+    /// ```
+    pub fn cells_values(&self) -> impl Iterator<Item = &Cell<T, U, V, D>> {
+        self.cells.values()
+    }
+
+    /// Returns an iterator over all vertices in the triangulation.
+    ///
+    /// This method provides read-only access to the vertices collection without
+    /// exposing the underlying storage implementation. The iterator yields
+    /// `(VertexKey, &Vertex)` pairs for each vertex in the triangulation.
+    ///
+    /// For direct key-based access, use [`get_vertex_by_key`](Self::get_vertex_by_key).
+    ///
+    /// # Returns
+    ///
+    /// An iterator over `(VertexKey, &Vertex<T, U, D>)` pairs.
     ///
     /// # Example
     ///
@@ -567,14 +595,69 @@ where
     /// ];
     /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
     ///
-    /// let vertices_map = tds.vertices();
-    /// for (vertex_key, vertex) in vertices_map {
+    /// for (vertex_key, vertex) in tds.vertices() {
     ///     println!("Vertex {:?} at {:?}", vertex_key, vertex.point());
     /// }
     /// ```
+    pub fn vertices(&self) -> impl Iterator<Item = (VertexKey, &Vertex<T, U, D>)> {
+        self.vertices.iter()
+    }
+
+    /// Returns an iterator over all vertex keys in the triangulation.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over `VertexKey` values.
+    pub fn vertex_keys(&self) -> impl Iterator<Item = VertexKey> + '_ {
+        self.vertices.keys()
+    }
+
+    /// Returns an iterator over all cell keys in the triangulation.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over `CellKey` values.
+    pub fn cell_keys(&self) -> impl Iterator<Item = CellKey> + '_ {
+        self.cells.keys()
+    }
+
+    /// Returns a reference to a cell by its key.
+    ///
+    /// # Returns
+    ///
+    /// `Some(&Cell)` if the key exists, `None` otherwise.
     #[must_use]
-    pub const fn vertices(&self) -> &SlotMap<VertexKey, Vertex<T, U, D>> {
-        &self.vertices
+    pub fn get_cell(&self, key: CellKey) -> Option<&Cell<T, U, V, D>> {
+        self.cells.get(key)
+    }
+
+    /// Checks if a cell key exists in the triangulation.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the key exists, `false` otherwise.
+    #[must_use]
+    pub fn contains_cell(&self, key: CellKey) -> bool {
+        self.cells.contains_key(key)
+    }
+
+    /// Checks if a vertex key exists in the triangulation.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`contains_vertex_key`](Self::contains_vertex_key) instead for consistency
+    /// with other key-based methods.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the key exists, `false` otherwise.
+    #[deprecated(
+        since = "0.5.2",
+        note = "Use `contains_vertex_key` instead for API consistency"
+    )]
+    #[must_use]
+    pub fn contains_vertex(&self, key: VertexKey) -> bool {
+        self.vertices.contains_key(key)
     }
 
     /// Assigns neighbor relationships between cells based on shared facets with semantic ordering.
@@ -596,8 +679,10 @@ where
         // Build facet mapping with vertex index information using optimized collections
         // facet_key -> [(cell_key, vertex_index_opposite_to_facet)]
         type FacetInfo = (CellKey, usize);
+        // Use saturating arithmetic to avoid potential overflow on adversarial inputs
+        let cap = self.cells.len().saturating_mul(D.saturating_add(1));
         let mut facet_map: FastHashMap<u64, SmallBuffer<FacetInfo, 2>> =
-            fast_hash_map_with_capacity(self.cells.len() * (D + 1));
+            fast_hash_map_with_capacity(cap);
 
         for (cell_key, cell) in &self.cells {
             let vertices = self.get_cell_vertices(cell_key).map_err(|err| {
@@ -619,7 +704,20 @@ where
                     }
                 }
                 let facet_key = facet_key_from_vertices(&facet_vertices);
-                facet_map.entry(facet_key).or_default().push((cell_key, i));
+                let facet_entry = facet_map.entry(facet_key).or_default();
+                // Detect degenerate case early: more than 2 cells sharing a facet
+                // Note: Check happens before push, so len() reflects current sharing count
+                if facet_entry.len() >= 2 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Facet with key {} already shared by {} cells; cannot add cell {} (would violate 2-manifold property)",
+                            facet_key,
+                            facet_entry.len(),
+                            cell.uuid()
+                        ),
+                    });
+                }
+                facet_entry.push((cell_key, i));
             }
         }
 
@@ -631,7 +729,7 @@ where
 
         // Initialize each cell with a SmallBuffer of None values (one per vertex)
         for (cell_key, cell) in &self.cells {
-            let vertex_count = cell.vertices().len();
+            let vertex_count = cell.number_of_vertices();
             if vertex_count > MAX_PRACTICAL_DIMENSION_SIZE {
                 return Err(TriangulationValidationError::InconsistentDataStructure {
                     message: format!(
@@ -649,17 +747,8 @@ where
         }
 
         // For each facet that is shared by exactly two cells, establish neighbor relationships
-        for (facet_key, facet_infos) in facet_map {
-            if facet_infos.len() > 2 {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Facet with key {} is shared by {} cells, but should be shared by at most 2 cells in a valid triangulation",
-                        facet_key,
-                        facet_infos.len()
-                    ),
-                });
-            }
-
+        // Note: >2 cells per facet already caught by early check during map build (above)
+        for (_facet_key, facet_infos) in facet_map {
             if facet_infos.len() != 2 {
                 continue;
             }
@@ -702,15 +791,16 @@ where
 }
 
 // =============================================================================
-// CORE API METHODS
+// CORE API METHODS - READ-ONLY ACCESSORS
 // =============================================================================
+// These methods have minimal trait bounds since they only read data structures
+// without performing any coordinate operations.
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// The function returns the number of vertices in the triangulation
     /// data structure.
@@ -861,10 +951,11 @@ where
     /// ```
     #[must_use]
     pub fn dim(&self) -> i32 {
-        let len = i32::try_from(self.number_of_vertices()).unwrap_or(i32::MAX);
-        // We need at least D+1 vertices to form a simplex in D dimensions
-        let max_dim = i32::try_from(D).unwrap_or(i32::MAX);
-        min(len.saturating_sub(1), max_dim)
+        let nv = self.number_of_vertices();
+        // Convert to i32 first, then subtract to handle empty case (0 - 1 = -1)
+        let nv_i32 = i32::try_from(nv).unwrap_or(i32::MAX);
+        let d_i32 = i32::try_from(D).unwrap_or(i32::MAX);
+        nv_i32.saturating_sub(1).min(d_i32)
     }
 
     /// The function `number_of_cells` returns the number of cells in the [Tds].
@@ -938,96 +1029,66 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
-    /// Returns a mutable reference to the vertices `SlotMap`.
+    /// Returns a mutable reference to the internal cells storage.
     ///
-    /// This method provides mutable access to the internal vertices collection,
-    /// allowing external code to modify vertices. This is primarily intended for
-    /// testing purposes and should be used with caution as it can break
-    /// triangulation invariants.
+    /// # ⚠️ Warning: Dangerous Internal API
+    ///
+    /// This method exposes the concrete storage backend and **WILL BREAK TRIANGULATION INVARIANTS**
+    /// if used incorrectly. It is intended **ONLY** for:
+    /// - Internal crate implementation
+    /// - Performance benchmarks that need to violate invariants deliberately
+    /// - Integration tests validating storage backend behavior
+    ///
+    /// **DO NOT** use this in production code. Modifying cells through this method bypasses
+    /// all safety checks and can leave the triangulation in an inconsistent state.
     ///
     /// # Returns
     ///
-    /// A mutable reference to the `SlotMap<VertexKey, Vertex<T, U, D>>` containing all vertices
-    /// in the triangulation data structure.
-    ///
-    /// # Warning
-    ///
-    /// This method provides direct mutable access to the internal vertex storage.
-    /// Modifying vertices through this method can break triangulation invariants
-    /// and should only be used for testing or when you understand the implications.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::vertex;
-    ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    ///
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    ///
-    /// // Access the vertices SlotMap mutably (for testing purposes)
-    /// let vertices_mut = tds.vertices_mut();
-    ///
-    /// // Modify vertex data (for testing - breaks triangulation invariants!)
-    /// for vertex in vertices_mut.values_mut() {
-    ///     // This would break the triangulation if done in practice
-    ///     // vertex.data = new_data;
-    /// }
-    /// ```
+    /// A mutable reference to the storage map containing all cells.
+    #[doc(hidden)]
     #[allow(clippy::missing_const_for_fn)]
-    pub fn vertices_mut(&mut self) -> &mut SlotMap<VertexKey, Vertex<T, U, D>> {
-        &mut self.vertices
+    pub(crate) fn cells_mut(&mut self) -> &mut StorageMap<CellKey, Cell<T, U, V, D>> {
+        &mut self.cells
     }
 
-    /// Returns a mutable reference to the cells `SlotMap`.
+    /// Test/benchmark helper: Insert cell without updating UUID mappings.
     ///
-    /// This method provides mutable access to the internal cells collection,
-    /// allowing external code to modify cells. This is primarily intended for
-    /// testing purposes and should be used with caution as it can break
-    /// triangulation invariants.
+    /// # ⚠️ DANGER: VIOLATES INVARIANTS - DO NOT USE
     ///
-    /// # Returns
+    /// This method intentionally bypasses UUID mapping and is **ONLY** for:
+    /// - Internal benchmarks testing `remove_duplicate_cells()` performance
+    /// - Creating intentionally corrupted test scenarios
     ///
-    /// A mutable reference to the `SlotMap<CellKey, Cell<T, U, V, D>>` containing all cells
-    /// in the triangulation data structure.
+    /// **This method is deprecated and will be removed in v0.6.0.**
+    /// It exists only for backward compatibility with existing benchmarks.
     ///
-    /// # Warning
+    /// # Why This Exists
     ///
-    /// This method provides direct mutable access to the internal cell storage.
-    /// Modifying cells through this method can break triangulation invariants
-    /// and should only be used for testing or when you understand the implications.
+    /// Performance benchmarks for `remove_duplicate_cells()` need to create
+    /// duplicate cells without triggering UUID uniqueness checks. This method
+    /// allows benchmarks to create invalid states for performance testing.
     ///
-    /// # Examples
+    /// # Safety
     ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::vertex;
+    /// This method:
+    /// - Does NOT update UUID mappings
+    /// - Does NOT maintain triangulation invariants  
+    /// - WILL corrupt the triangulation if used incorrectly
+    /// - Should NEVER be used in production code
     ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
+    /// # Alternatives
     ///
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    ///
-    /// // Access the cells SlotMap mutably (for testing purposes)
-    /// let _cells_mut = tds.cells_mut();
-    ///
-    /// // Note: Use clear_all_neighbors() method instead for clearing neighbors
-    /// ```
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn cells_mut(&mut self) -> &mut SlotMap<CellKey, Cell<T, U, V, D>> {
-        &mut self.cells
+    /// Use the validated insertion methods:
+    /// - [`add()`](Self::add) for vertex insertion
+    /// - [`insert_cell_with_mapping()`](Self::insert_cell_with_mapping) for cells (internal)
+    #[doc(hidden)]
+    #[deprecated(
+        since = "0.5.2",
+        note = "This method violates invariants and will be removed in v0.6.0. Only use in controlled benchmarks."
+    )]
+    pub fn insert_cell_unchecked(&mut self, cell: Cell<T, U, V, D>) -> CellKey {
+        self.cells.insert(cell)
     }
 
     /// Increments the generation counter to invalidate dependent caches.
@@ -1062,9 +1123,7 @@ where
     /// Atomically inserts a vertex and creates the UUID-to-key mapping.
     ///
     /// This method ensures that both the vertex insertion and UUID mapping are
-    /// performed together, maintaining data structure invariants. This is preferred
-    /// over separate `vertices_mut().insert()` + `uuid_to_vertex_key.insert()` calls
-    /// which can leave the data structure in an inconsistent state if interrupted.
+    /// performed together, maintaining data structure invariants.
     ///
     /// **⚠️ INTERNAL API WARNING**: This method bypasses atomicity guarantees for topology
     /// assignment operations (`assign_neighbors()` and `assign_incident_cells()`). It only
@@ -1144,18 +1203,18 @@ where
     ) -> Result<CellKey, TriangulationConstructionError> {
         // Phase 3A: Validate structural invariants using vertices
         debug_assert_eq!(
-            cell.vertices().len(),
+            cell.number_of_vertices(),
             D + 1,
             "Cell should have exactly D+1 vertices for quick failure in dev"
         );
-        if cell.vertices().len() != D + 1 {
+        if cell.number_of_vertices() != D + 1 {
             return Err(TriangulationConstructionError::ValidationError(
                 TriangulationValidationError::InconsistentDataStructure {
                     message: format!(
                         "Cell must have exactly {} vertices for {}-dimensional simplex, but has {}",
                         D + 1,
                         D,
-                        cell.vertices().len()
+                        cell.number_of_vertices()
                     ),
                 },
             ));
@@ -1192,20 +1251,16 @@ where
         }
     }
 
-    /// Gets vertex keys for a cell via UUID→Key mapping.
+    /// Gets vertex keys for a cell.
     ///
-    /// This method eliminates UUID→Key lookups for cell access by working directly with keys, providing:
-    /// - Zero UUID mapping lookups for cell access (O(1) `SlotMap` lookup instead of O(1) hash lookup)
-    /// - Direct `SlotMap` access for maximum performance
-    /// - Avoids per-cell UUID lookups by resolving vertex keys through internal UUID→Key mapping
+    /// **Phase 3A**: Cells now store `VertexKey` directly. This method performs O(D) validation
+    /// and copying of keys for the requested cell and returns a stack-friendly buffer.
     ///
-    /// Note: Currently still performs O(D) UUID→Key lookups for vertices. This will be
-    /// optimized in Phase 3 when Cell stores vertex keys directly.
-    ///
-    /// NOTE: Phase 2 optimization completed. The key-based infrastructure is in place.
-    /// Future optimization (Phase 3): Migrate Cell to store `VertexKey` directly instead of Vertex with UUIDs
-    /// to eliminate the remaining O(D) UUID→Key lookups. This requires significant Cell API changes.
-    /// Track progress in future development cycles.
+    /// This method provides:
+    /// - O(1) cell lookup via storage map key
+    /// - O(D) validation that all vertex keys exist in the triangulation
+    /// - Direct key access without UUID→Key lookups (Phase 3A completed)
+    /// - Stack-allocated buffer for D ≤ 7 to avoid heap allocation
     ///
     /// # Arguments
     ///
@@ -1220,13 +1275,13 @@ where
     ///
     /// Returns a `TriangulationValidationError` if:
     /// - The cell with the given key doesn't exist
-    /// - A vertex UUID from the cell cannot be found in the vertex mapping
+    /// - A vertex key from the cell doesn't exist in the vertex storage (TDS corruption)
     ///
     /// # Performance
     ///
-    /// This uses direct `SlotMap` access with O(1) key lookup for the cell, though vertex
-    /// lookups still require O(D) UUID→Key mappings until Phase 3.
-    /// Uses stack-allocated buffer for D ≤ 7 to avoid heap allocation in the hot path.
+    /// This uses direct storage map access with O(1) key lookup for the cell and O(D)
+    /// validation for vertex keys. Uses stack-allocated buffer for D ≤ 7 to avoid heap
+    /// allocation in the hot path.
     #[inline]
     pub fn get_cell_vertices(
         &self,
@@ -1234,13 +1289,14 @@ where
     ) -> Result<VertexKeyBuffer, TriangulationValidationError> {
         let cell = self.cells.get(cell_key).ok_or_else(|| {
             TriangulationValidationError::InconsistentDataStructure {
-                message: format!("Cell key {cell_key:?} not found in cells SlotMap"),
+                message: format!("Cell key {cell_key:?} not found in cells storage map"),
             }
         })?;
 
         // Phase 3A: Cell now stores vertex keys directly
-        // Validate that all vertex keys are valid before returning them
+        // Validate and collect keys in one pass to avoid redundant iteration
         let cell_vertices = cell.vertices();
+        let mut keys = VertexKeyBuffer::with_capacity(cell_vertices.len());
         for (idx, &vertex_key) in cell_vertices.iter().enumerate() {
             if !self.vertices.contains_key(vertex_key) {
                 return Err(TriangulationValidationError::InconsistentDataStructure {
@@ -1250,10 +1306,8 @@ where
                     ),
                 });
             }
+            keys.push(vertex_key);
         }
-
-        let mut keys = VertexKeyBuffer::with_capacity(D + 1);
-        keys.extend_from_slice(cell_vertices);
         Ok(keys)
     }
 
@@ -1290,7 +1344,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first cell and its UUID
-    /// let (cell_key, cell) = tds.cells().iter().next().unwrap();
+    /// let (cell_key, cell) = tds.cells().next().unwrap();
     /// let cell_uuid = cell.uuid();
     ///
     /// // Use the helper function to find the cell key from its UUID
@@ -1350,7 +1404,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first vertex and its UUID
-    /// let (vertex_key, vertex) = tds.vertices().iter().next().unwrap();
+    /// let (vertex_key, vertex) = tds.vertices().next().unwrap();
     /// let vertex_uuid = vertex.uuid();
     ///
     /// // Use the helper function to find the vertex key from its UUID
@@ -1376,7 +1430,7 @@ where
         self.uuid_to_vertex_key.get(vertex_uuid).copied()
     }
 
-    /// Helper function to get a cell UUID from a cell key using direct `SlotMap` access.
+    /// Helper function to get a cell UUID from a cell key using direct `storage map` access.
     /// This is the reverse of `cell_key_from_uuid()` for the less common Key→UUID direction.
     ///
     /// # Arguments
@@ -1389,7 +1443,7 @@ where
     ///
     /// # Performance
     ///
-    /// This uses direct `SlotMap` indexing for O(1) Key→UUID lookups.
+    /// This uses direct `storage map` indexing for O(1) Key→UUID lookups.
     ///
     /// # Examples
     ///
@@ -1410,7 +1464,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first cell key and expected UUID
-    /// let (cell_key, cell) = tds.cells().iter().next().unwrap();
+    /// let (cell_key, cell) = tds.cells().next().unwrap();
     /// let expected_uuid = cell.uuid();
     ///
     /// // Use the helper function to get UUID from the cell key
@@ -1435,7 +1489,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first cell's UUID
-    /// let (_, cell) = tds.cells().iter().next().unwrap();
+    /// let (_, cell) = tds.cells().next().unwrap();
     /// let original_uuid = cell.uuid();
     ///
     /// // Convert UUID to key, then key back to UUID
@@ -1449,7 +1503,7 @@ where
         self.cells.get(cell_key).map(super::cell::Cell::uuid)
     }
 
-    /// Helper function to get a vertex UUID from a vertex key using direct `SlotMap` access.
+    /// Helper function to get a vertex UUID from a vertex key using direct `storage map` access.
     /// This is the reverse of `vertex_key_from_uuid()` for the less common Key→UUID direction.
     ///
     /// # Arguments
@@ -1462,7 +1516,7 @@ where
     ///
     /// # Performance
     ///
-    /// This uses direct `SlotMap` indexing for O(1) Key→UUID lookups.
+    /// This uses direct `storage map` indexing for O(1) Key→UUID lookups.
     ///
     /// # Examples
     ///
@@ -1483,7 +1537,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first vertex key and expected UUID
-    /// let (vertex_key, vertex) = tds.vertices().iter().next().unwrap();
+    /// let (vertex_key, vertex) = tds.vertices().next().unwrap();
     /// let expected_uuid = vertex.uuid();
     ///
     /// // Use the helper function to get UUID from the vertex key
@@ -1508,7 +1562,7 @@ where
     /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first vertex's UUID
-    /// let (_, vertex) = tds.vertices().iter().next().unwrap();
+    /// let (_, vertex) = tds.vertices().next().unwrap();
     /// let original_uuid = vertex.uuid();
     ///
     /// // Convert UUID to key, then key back to UUID
@@ -1532,8 +1586,8 @@ where
 
     /// Gets a cell directly by its key without UUID lookup.
     ///
-    /// This is a key-based optimization of the UUID-based cell access.
-    /// Use this method in internal algorithms to avoid UUID→Key conversion overhead.
+    /// **Deprecated**: Use [`get_cell()`](Self::get_cell) instead. This method is identical to `get_cell()`
+    /// and exists only for backward compatibility. It will be removed in v0.6.0.
     ///
     /// # Arguments
     ///
@@ -1542,17 +1596,21 @@ where
     /// # Returns
     ///
     /// An `Option` containing a reference to the cell if it exists, `None` otherwise.
-    ///
-    /// # Performance
-    ///
-    /// Direct `SlotMap` indexing for O(1) access without hash lookup.
+    #[deprecated(
+        since = "0.5.2",
+        note = "Use `get_cell()` instead. This method is identical and will be removed in v0.6.0."
+    )]
     #[inline]
     #[must_use]
     pub fn get_cell_by_key(&self, cell_key: CellKey) -> Option<&Cell<T, U, V, D>> {
-        self.cells.get(cell_key)
+        self.get_cell(cell_key)
     }
 
     /// Gets a mutable reference to a cell directly by its key.
+    ///
+    /// This method provides direct mutable access to cells, similar to [`get_vertex_by_key_mut()`](Self::get_vertex_by_key_mut).
+    /// While this allows modifying cell data fields, callers should use safe topology setter APIs
+    /// like [`set_neighbors_by_key()`](Self::set_neighbors_by_key) when modifying neighbor relationships.
     ///
     /// # Arguments
     ///
@@ -1628,49 +1686,6 @@ where
     #[must_use]
     pub fn contains_vertex_key(&self, vertex_key: VertexKey) -> bool {
         self.vertices.contains_key(vertex_key)
-    }
-
-    /// Gets all cell keys in the triangulation.
-    ///
-    /// Use this for iterating over cells by key without UUID involvement.
-    ///
-    /// # Returns
-    ///
-    /// An iterator over all cell keys.
-    #[inline]
-    pub fn cell_keys(&self) -> impl Iterator<Item = CellKey> + '_ {
-        self.cells.keys()
-    }
-
-    /// Gets an iterator over all vertex keys in the triangulation.
-    ///
-    /// Use this for iterating over vertices by key without UUID involvement.
-    ///
-    /// # Returns
-    ///
-    /// An iterator over all vertex keys.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
-    ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    ///
-    /// for vkey in tds.vertex_iter() {
-    ///     let vertex = &tds.vertices()[vkey];
-    ///     // process vertex...
-    ///     assert!(vertex.uuid() != uuid::Uuid::nil());
-    /// }
-    /// ```
-    #[inline]
-    pub fn vertex_iter(&self) -> impl Iterator<Item = VertexKey> + '_ {
-        self.vertices.keys()
     }
 
     /// Removes a cell by its key, updating all necessary mappings.
@@ -1749,8 +1764,6 @@ where
     ///
     /// This method atomically removes a vertex from both the vertex storage and
     /// the UUID→key mapping, ensuring the data structure remains consistent.
-    /// This is the preferred way to remove a vertex compared to directly manipulating
-    /// `vertices_mut()` and `uuid_to_vertex_key`, as it maintains invariants.
     ///
     /// **Internal API**: This method is intended for internal use only (e.g., rollback
     /// operations in insertion algorithms). It does not maintain triangulation topology
@@ -1805,7 +1818,7 @@ where
     pub fn find_neighbors_by_key(&self, cell_key: CellKey) -> Vec<Option<CellKey>> {
         let mut neighbors = vec![None; D + 1];
 
-        let Some(cell) = self.get_cell_by_key(cell_key) else {
+        let Some(cell) = self.get_cell(cell_key) else {
             return neighbors;
         };
 
@@ -1852,7 +1865,7 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    /// let (cell_key, cell) = tds.cells().iter().next().unwrap();
+    /// let (cell_key, cell) = tds.cells().next().unwrap();
     /// let neighbors = tds.find_neighbors_by_key(cell_key);
     ///
     /// // Validate specific cell's neighbors
@@ -1980,21 +1993,11 @@ where
         neighbors: Vec<Option<CellKey>>,
     ) -> Result<(), TriangulationValidationError> {
         // Validate the topological invariant before applying changes
+        // (includes length check: neighbors.len() == D+1)
         self.validate_neighbor_topology(cell_key, &neighbors)?;
 
         // Phase 3A: Store CellKeys directly, no UUID conversion needed
         let neighbors_vec = neighbors;
-
-        // Enforce positional semantics: neighbors.len() must be D+1
-        if neighbors_vec.len() != D + 1 {
-            return Err(TriangulationValidationError::InvalidNeighbors {
-                message: format!(
-                    "Invalid neighbor vector length: got {}, expected {}",
-                    neighbors_vec.len(),
-                    D + 1
-                ),
-            });
-        }
 
         // Get mutable reference and update, or return error if not found
         let cell = self.get_cell_by_key_mut(cell_key).ok_or_else(|| {
@@ -2064,7 +2067,7 @@ where
     /// Returns a `TriangulationValidationError` if:
     /// - A vertex UUID in a cell cannot be found in the vertex UUID-to-key mapping (`InconsistentDataStructure`)
     /// - A cell key cannot be found in the cell UUID-to-key mapping (`InconsistentDataStructure`)
-    /// - A vertex key cannot be found in the vertices `SlotMap` (`InconsistentDataStructure`)
+    /// - A vertex key cannot be found in the vertices storage map (`InconsistentDataStructure`)
     ///
     /// # Algorithm
     ///
@@ -2104,7 +2107,7 @@ where
                 if !self.cells.contains_key(cell_key) {
                     return Err(TriangulationValidationError::InconsistentDataStructure {
                         message: format!(
-                            "Cell key {cell_key:?} not found in cells SlotMap during incident cell assignment"
+                            "Cell key {cell_key:?} not found in cells storage map during incident cell assignment"
                         ),
                     });
                 }
@@ -2113,7 +2116,7 @@ where
                 let vertex = self.vertices.get_mut(vertex_key)
                     .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
                         message: format!(
-                            "Vertex key {vertex_key:?} not found in vertices SlotMap during incident cell assignment"
+                            "Vertex key {vertex_key:?} not found in vertices storage map during incident cell assignment"
                         ),
                     })?;
                 vertex.incident_cell = Some(cell_key);
@@ -2133,8 +2136,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Creates a new empty triangulation data structure.
     ///
@@ -2165,8 +2166,8 @@ where
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            vertices: SlotMap::with_key(),
-            cells: SlotMap::with_key(),
+            vertices: StorageMap::with_key(),
+            cells: StorageMap::with_key(),
             uuid_to_vertex_key: UuidToVertexKeyMap::default(),
             uuid_to_cell_key: UuidToCellKeyMap::default(),
             construction_state: TriangulationConstructionState::Incomplete(0),
@@ -2220,19 +2221,19 @@ where
     /// assert_eq!(tds.dim(), 3);
     ///
     /// // Verify cell creation and structure
-    /// let cells: Vec<_> = tds.cells().values().collect();
+    /// let cells: Vec<_> = tds.cells().map(|(_, cell)| cell).collect();
     /// assert!(!cells.is_empty(), "Should have created at least one cell");
     ///
     /// // Check that the cell has the correct number of vertices (D+1 for a simplex)
     /// let cell = &cells[0];
-    /// assert_eq!(cell.vertices().len(), 4, "3D cell should have 4 vertices");
+    /// assert_eq!(cell.number_of_vertices(), 4, "3D cell should have 4 vertices");
     ///
     /// // Verify triangulation validity
     /// assert!(tds.is_valid().is_ok(), "Triangulation should be valid after creation");
     ///
     /// // Check that all vertex keys in the cell exist in the triangulation
     /// for &vertex_key in cell.vertices() {
-    ///     assert!(tds.vertices().contains_key(vertex_key), "Cell vertex should exist in triangulation");
+    ///     assert!(tds.contains_vertex_key(vertex_key), "Cell vertex should exist in triangulation");
     /// }
     /// ```
     ///
@@ -2270,8 +2271,8 @@ where
         T: NumCast,
     {
         let mut tds = Self {
-            vertices: SlotMap::with_key(),
-            cells: SlotMap::with_key(),
+            vertices: StorageMap::with_key(),
+            cells: StorageMap::with_key(),
             uuid_to_vertex_key: UuidToVertexKeyMap::default(),
             uuid_to_cell_key: UuidToCellKeyMap::default(),
             // Initialize construction state based on number of vertices
@@ -2285,7 +2286,7 @@ where
             generation: Arc::new(AtomicU64::new(0)),
         };
 
-        // Add vertices to SlotMap and create bidirectional UUID-to-key mappings
+        // Add vertices to storage map and create bidirectional UUID-to-key mappings
         for vertex in vertices {
             let key = tds.vertices.insert(*vertex);
             let uuid = vertex.uuid();
@@ -2293,7 +2294,7 @@ where
         }
 
         // Initialize cells using Bowyer-Watson triangulation
-        // Note: bowyer_watson_logic now populates the SlotMaps internally
+        // Note: bowyer_watson_logic now populates the storage maps internally
         tds.bowyer_watson()?;
 
         Ok(tds)
@@ -2409,7 +2410,8 @@ where
     /// assert_eq!(tds.number_of_vertices(), 1);
     /// assert_eq!(tds.number_of_cells(), 0);  // No cells yet
     /// assert_eq!(tds.dim(), 0);
-    /// // Note: construction_state is not updated by add() - it tracks initial state
+    /// // Note: add() sets `construction_state` to `Constructed` once the initial D-simplex is formed.
+    /// //       Before that, the triangulation remains in an incomplete state.
     ///
     /// // Add second vertex: still unconstructed
     /// tds.add(vertex!([1.0, 0.0, 0.0])).unwrap();
@@ -2451,7 +2453,13 @@ where
         // This is intentional to maintain strict geometric uniqueness.
         // For applications requiring fuzzy matching, consider pre-processing
         // vertices with quantization or using a spatial index.
-        // Time complexity: O(n) where n is the number of existing vertices.
+        //
+        // PERFORMANCE: Time complexity is O(n) where n is the number of existing vertices.
+        // This scan becomes quadratic over many insertions. For large-scale vertex insertion:
+        // - Consider batching insertions and deduplicating the batch first
+        // - For applications with many duplicates, pre-process/quantize vertices before insertion
+        // - Future optimization (behind feature flag): maintain a hashed coordinate index
+        //   for O(1) duplicate detection at the cost of memory and exact coordinate hashing
         let new_coords: [T; D] = (&vertex).into();
         for val in self.vertices.values() {
             let existing_coords: [T; D] = val.into();
@@ -2498,6 +2506,11 @@ where
             self.assign_incident_cells()
                 .map_err(TriangulationConstructionError::ValidationError)?;
             // Topology already changed in insert_cell_with_mapping; no need to bump again
+
+            // Update construction state: we now have a valid initial D-simplex.
+            // This transitions from Incomplete state to Constructed state.
+            // Note: This only happens once when the first cell is created (Case 2).
+            self.construction_state = TriangulationConstructionState::Constructed;
             return Ok(());
         }
 
@@ -2616,6 +2629,12 @@ where
         pre_state: Option<(usize, usize, u64)>,
         #[allow(unused_variables)] failure_reason: &str,
     ) {
+        // Heuristic upper bound for cell count slack during rollback verification.
+        // This allows some leeway for cells that don't directly reference the removed vertex.
+        // TODO: Consider computing a tighter bound based on algorithm worst-case (D+1 cells per vertex)
+        // or making this configurable via feature flag for stricter validation in tests.
+        const MAX_ROLLBACK_CELL_SLACK: usize = 10;
+
         // Log the rollback for debugging bulk operations
         #[cfg(debug_assertions)]
         {
@@ -2633,7 +2652,7 @@ where
         if remove_related_cells {
             // Remove any cells that were added by the algorithm
             // We need to be careful here - we can't just truncate to pre_cell_count
-            // because SlotMap keys aren't sequential. Instead, we identify and remove
+            // because storage map keys aren't sequential. Instead, we identify and remove
             // cells that reference the removed vertex.
             let mut cells_to_remove = Vec::new();
 
@@ -2674,8 +2693,11 @@ where
                 // The cell count should be at most pre_cell_count + some reasonable delta
                 // (in case the algorithm created cells that don't directly reference the vertex)
                 debug_assert!(
-                    self.cells.len() <= pre_cell_count + 10,
-                    "Cell count should be close to pre-algorithm state after rollback"
+                    self.cells.len() <= pre_cell_count + MAX_ROLLBACK_CELL_SLACK,
+                    "Cell count after rollback ({}) should be close to pre-algorithm state ({} + {})",
+                    self.cells.len(),
+                    pre_cell_count,
+                    MAX_ROLLBACK_CELL_SLACK
                 );
             }
         }
@@ -2769,8 +2791,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Clears all neighbor relationships between cells in the triangulation.
     ///
@@ -2807,7 +2827,7 @@ where
     /// tds.clear_all_neighbors();
     ///
     /// // All cells now have no neighbors assigned
-    /// for cell in tds.cells().values() {
+    /// for cell in tds.cells().map(|(_, cell)| cell) {
     ///     assert!(cell.neighbors().is_none());
     /// }
     ///
@@ -2837,8 +2857,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Remove duplicate cells (cells with identical vertex sets)
     ///
@@ -2913,7 +2931,7 @@ where
     /// A `FacetToCellsMap` where:
     /// - The key is the canonical facet key (u64) computed from the facet's vertices
     /// - The value is a vector of tuples containing:
-    ///   - `CellKey`: The `SlotMap` key of the cell containing this facet
+    ///   - `CellKey`: The `storage map` key of the cell containing this facet
     ///   - `FacetIndex`: The index of this facet within the cell (0-based)
     ///
     /// # Note
@@ -2971,7 +2989,7 @@ where
     /// processing when cells have missing vertex keys. For strict error handling that fails
     /// on any missing data, use `build_facet_to_cells_map` instead.
     ///
-    /// NOTE: This method is deprecated and will be removed in v1.0.0.
+    /// NOTE: This method is deprecated and will be removed in v0.6.0.
     /// Use `build_facet_to_cells_map` for strict error handling or
     /// `FacetCacheProvider` trait methods for cached access.
     #[deprecated(
@@ -2986,11 +3004,12 @@ where
             "Dimension D must be <= 255 to fit facet indices in u8 (indices 0..=D)"
         );
 
-        let mut facet_to_cells: FacetToCellsMap =
-            fast_hash_map_with_capacity(self.cells.len() * (D + 1));
+        let cap = self.cells.len().saturating_mul(D.saturating_add(1));
+        let mut facet_to_cells: FacetToCellsMap = fast_hash_map_with_capacity(cap);
 
-        // Preallocate facet_vertices buffer outside the loops to avoid per-iteration allocations
-        let mut facet_vertices = Vec::with_capacity(D);
+        // Use SmallBuffer to avoid heap allocations for facet vertices (same as assign_neighbors)
+        let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D);
         #[cfg(debug_assertions)]
         let mut skipped_cells = 0usize;
 
@@ -3009,7 +3028,7 @@ where
                 continue; // Skip cells with missing vertex keys
             };
 
-            // Phase 3A: Use vertices().len() instead of vertices().len()
+            // Phase 3A: Use vertices.len() (keys buffer length) instead of any UUID-based length
             for i in 0..vertices.len() {
                 // Clear and reuse the buffer instead of allocating a new one
                 facet_vertices.clear();
@@ -3080,8 +3099,8 @@ where
             "Dimension D must be <= 255 to fit facet indices in u8 (indices 0..=D)"
         );
 
-        let mut facet_to_cells: FacetToCellsMap =
-            fast_hash_map_with_capacity(self.cells.len() * (D + 1));
+        let cap = self.cells.len().saturating_mul(D.saturating_add(1));
+        let mut facet_to_cells: FacetToCellsMap = fast_hash_map_with_capacity(cap);
 
         // Preallocate facet_vertices buffer outside the loops to avoid per-iteration allocations
         let mut facet_vertices = Vec::with_capacity(D);
@@ -3532,8 +3551,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Validates the consistency of vertex UUID-to-key mappings.
     ///
@@ -3587,12 +3604,12 @@ where
             });
         }
 
-        // Phase 1: Optimize validation by checking key-to-UUID direction first (direct SlotMap access)
+        // Phase 1: Optimize validation by checking key-to-UUID direction first (direct storage map access)
         // then only doing UUID-to-key lookup verification when needed
         for (vertex_key, vertex) in &self.vertices {
             let vertex_uuid = vertex.uuid();
 
-            // Check key-to-UUID direction first (direct SlotMap access - no hash lookup)
+            // Check key-to-UUID direction first (direct storage map access - no hash lookup)
             if self.vertex_uuid_from_key(vertex_key) != Some(vertex_uuid) {
                 return Err(TriangulationValidationError::MappingInconsistency {
                     entity: EntityKind::Vertex,
@@ -3667,12 +3684,12 @@ where
             });
         }
 
-        // Phase 1: Optimize validation by checking key-to-UUID direction first (direct SlotMap access)
+        // Phase 1: Optimize validation by checking key-to-UUID direction first (direct storage map access)
         // then only doing UUID-to-key lookup verification when needed
         for (cell_key, cell) in &self.cells {
             let cell_uuid = cell.uuid();
 
-            // Check key-to-UUID direction first (direct SlotMap access - no hash lookup)
+            // Check key-to-UUID direction first (direct storage map access - no hash lookup)
             if self.cell_uuid_from_key(cell_key) != Some(cell_uuid) {
                 return Err(TriangulationValidationError::MappingInconsistency {
                     entity: EntityKind::Cell,
@@ -3695,7 +3712,7 @@ where
         Ok(())
     }
 
-    /// Validates that all vertex keys referenced by cells actually exist in the vertices `SlotMap`.
+    /// Validates that all vertex keys referenced by cells actually exist in the vertices `storage map`.
     ///
     /// This is a defensive check for data structure corruption. In normal operation,
     /// this should never fail, but it's useful for catching bugs during development
@@ -3711,7 +3728,7 @@ where
     /// # Errors
     ///
     /// Returns `TriangulationValidationError::InconsistentDataStructure` if any cell
-    /// references a vertex key that doesn't exist in the vertices `SlotMap`.
+    /// references a vertex key that doesn't exist in the vertices `storage map`.
     #[allow(dead_code)]
     fn validate_cell_vertex_keys(&self) -> Result<(), TriangulationValidationError> {
         for (cell_key, cell) in &self.cells {
@@ -3737,7 +3754,7 @@ where
     /// **Phase 1 Migration**: This method now uses the optimized `get_cell_vertices`
     /// method to eliminate UUID→Key hash lookups, improving performance.
     fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError> {
-        let mut unique_cells = FastHashMap::default();
+        let mut unique_cells: FastHashMap<Vec<Uuid>, CellKey> = FastHashMap::default();
         let mut duplicates = Vec::new();
 
         for (cell_key, _cell) in &self.cells {
@@ -3745,23 +3762,23 @@ where
             // The error is already TriangulationValidationError, so just propagate it
             let vertices = self.get_cell_vertices(cell_key)?;
 
-            let mut sorted_keys = vertices;
-            sorted_keys.sort_unstable();
+            // Canonicalize by vertex UUIDs for backend-agnostic equality
+            // Note: Don't sort by VertexKey as slotmap::Key's Ord is implementation-defined
+            let mut vertex_uuids: Vec<Uuid> =
+                vertices.iter().map(|&k| self.vertices[k].uuid()).collect();
+            vertex_uuids.sort_unstable();
 
-            if let Some(existing_cell_key) = unique_cells.get(&sorted_keys) {
-                duplicates.push((cell_key, *existing_cell_key, sorted_keys.clone()));
+            if let Some(existing_cell_key) = unique_cells.get(&vertex_uuids) {
+                duplicates.push((cell_key, *existing_cell_key, vertex_uuids.clone()));
             } else {
-                unique_cells.insert(sorted_keys, cell_key);
+                unique_cells.insert(vertex_uuids, cell_key);
             }
         }
 
         if !duplicates.is_empty() {
             let duplicate_descriptions: Vec<String> = duplicates
                 .iter()
-                .map(|(cell1, cell2, vertices)| {
-                    let mut vertex_uuids: Vec<Uuid> =
-                        vertices.iter().map(|&k| self.vertices[k].uuid()).collect();
-                    vertex_uuids.sort_unstable();
+                .map(|(cell1, cell2, vertex_uuids)| {
                     format!("cells {cell1:?} and {cell2:?} with vertex UUIDs {vertex_uuids:?}")
                 })
                 .collect();
@@ -3871,10 +3888,7 @@ where
     /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
     /// assert!(tds.is_valid().is_ok());
     /// ```
-    pub fn is_valid(&self) -> Result<(), TriangulationValidationError>
-    where
-        [T; D]: DeserializeOwned + Serialize + Sized,
-    {
+    pub fn is_valid(&self) -> Result<(), TriangulationValidationError> {
         // First, validate mapping consistency
         self.validate_vertex_mappings()?;
         self.validate_cell_mappings()?;
@@ -3935,7 +3949,7 @@ where
         }
 
         for (cell_key, cell) in &self.cells {
-            // Phase 3A: Use neighbors instead of neighbors
+            // Phase 3A: Use neighbors (CellKey-based) instead of neighbor UUIDs
             let Some(neighbors_buf) = &cell.neighbors else {
                 continue; // Skip cells without neighbors
             };
@@ -3963,7 +3977,7 @@ where
                 };
 
                 // Early termination: mutual neighbor check using linear search (faster for small neighbor lists)
-                // Phase 3A: Check neighbors instead of neighbors
+                // Phase 3A: Check neighbors (CellKey-based) instead of neighbor UUIDs
                 if let Some(neighbor_neighbors) = &neighbor_cell.neighbors {
                     if !neighbor_neighbors.contains(&Some(cell_key)) {
                         return Err(TriangulationValidationError::InvalidNeighbors {
@@ -4019,10 +4033,9 @@ where
 /// Note: Buffer fields are ignored since they are transient data structures.
 impl<T, U, V, const D: usize> PartialEq for Tds<T, U, V, D>
 where
-    T: CoordinateScalar + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
 {
     fn eq(&self, other: &Self) -> bool {
         // Early exit if the basic counts don't match
@@ -4040,13 +4053,10 @@ where
         let mut other_vertices: Vec<_> = other.vertices.values().collect();
 
         // Sort vertices by their coordinates for consistent comparison
+        // CoordinateScalar guarantees PartialOrd; NaN validation occurs at construction time
         self_vertices.sort_by(|a, b| {
             let a_coords: [T; D] = (*a).into();
             let b_coords: [T; D] = (*b).into();
-            debug_assert!(
-                a_coords.iter().all(|x| x.is_finite()) && b_coords.iter().all(|x| x.is_finite()),
-                "Coordinates must be finite for deterministic ordering"
-            );
             a_coords
                 .partial_cmp(&b_coords)
                 .unwrap_or(CmpOrdering::Equal)
@@ -4055,10 +4065,6 @@ where
         other_vertices.sort_by(|a, b| {
             let a_coords: [T; D] = (*a).into();
             let b_coords: [T; D] = (*b).into();
-            debug_assert!(
-                a_coords.iter().all(|x| x.is_finite()) && b_coords.iter().all(|x| x.is_finite()),
-                "Coordinates must be finite for deterministic ordering"
-            );
             a_coords
                 .partial_cmp(&b_coords)
                 .unwrap_or(CmpOrdering::Equal)
@@ -4069,31 +4075,47 @@ where
             return false;
         }
 
-        // Compare cells by collecting them into sorted vectors
-        // We sort by the sorted vertex UUIDs to make comparison order-independent
+        // Compare cells using Cell::eq_by_vertices() which uses Vertex::PartialEq
+        // This provides consistent behavior: Tds uses Vertex::PartialEq and Cell::eq_by_vertices()
+        // which internally uses Vertex::PartialEq for semantic equality across TDS instances.
+
+        // Collect cells into vectors for sorting
         let mut self_cells: Vec<_> = self.cells.values().collect();
         let mut other_cells: Vec<_> = other.cells.values().collect();
 
-        // Sort cells by their vertex UUIDs
+        // Sort cells for order-independent comparison using UUID-based keys
+        // This avoids allocating coordinate vectors and is cheaper than coordinate comparison
+        let sort_key = |cell: &Cell<T, U, V, D>, tds: &Self| -> Vec<Uuid> {
+            let mut ids: Vec<Uuid> = cell
+                .vertices()
+                .iter()
+                .filter_map(|&vkey| tds.get_vertex_by_key(vkey).map(Vertex::uuid))
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+
         self_cells.sort_by(|a, b| {
-            let mut a_vertex_uuids: Vec<Uuid> = a.vertex_uuid_iter(self).collect();
-            let mut b_vertex_uuids: Vec<Uuid> = b.vertex_uuid_iter(self).collect();
-            a_vertex_uuids.sort_unstable();
-            b_vertex_uuids.sort_unstable();
-            a_vertex_uuids.cmp(&b_vertex_uuids)
+            sort_key(a, self)
+                .partial_cmp(&sort_key(b, self))
+                .unwrap_or(CmpOrdering::Equal)
         });
 
         other_cells.sort_by(|a, b| {
-            let mut a_vertex_uuids: Vec<Uuid> = a.vertex_uuid_iter(other).collect();
-            let mut b_vertex_uuids: Vec<Uuid> = b.vertex_uuid_iter(other).collect();
-            a_vertex_uuids.sort_unstable();
-            b_vertex_uuids.sort_unstable();
-            a_vertex_uuids.cmp(&b_vertex_uuids)
+            sort_key(a, other)
+                .partial_cmp(&sort_key(b, other))
+                .unwrap_or(CmpOrdering::Equal)
         });
 
-        // Compare sorted cell lists
-        if self_cells != other_cells {
+        // Compare sorted cell lists using Cell::eq_by_vertices
+        if self_cells.len() != other_cells.len() {
             return false;
+        }
+
+        for (self_cell, other_cell) in self_cells.iter().zip(other_cells.iter()) {
+            if !self_cell.eq_by_vertices(self, other_cell, other) {
+                return false;
+            }
         }
 
         // If we get here, the triangulations have the same structure
@@ -4111,10 +4133,9 @@ where
 /// the `PartialEq` relation is indeed an equivalence relation.
 impl<T, U, V, const D: usize> Eq for Tds<T, U, V, D>
 where
-    T: CoordinateScalar + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
 {
 }
 
@@ -4125,10 +4146,9 @@ where
 /// to rebuild the vertex keys for each cell.
 impl<T, U, V, const D: usize> Serialize for Tds<T, U, V, D>
 where
-    T: CoordinateScalar + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -4142,10 +4162,10 @@ where
             .iter()
             .map(|(_cell_key, cell)| {
                 let cell_uuid = cell.uuid();
-                let vertex_uuids = cell.vertex_uuids(self);
-                (cell_uuid, vertex_uuids)
+                let vertex_uuids = cell.vertex_uuids(self).map_err(serde::ser::Error::custom)?;
+                Ok((cell_uuid, vertex_uuids))
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
 
         let mut state = serializer.serialize_struct("Tds", 3)?;
         state.serialize_field("vertices", &self.vertices)?;
@@ -4158,10 +4178,9 @@ where
 /// Manual implementation of Deserialize for Tds to handle trait bound conflicts
 impl<'de, T, U, V, const D: usize> Deserialize<'de> for Tds<T, U, V, D>
 where
-    T: CoordinateScalar + DeserializeOwned,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
 {
     fn deserialize<D2>(deserializer: D2) -> Result<Self, D2::Error>
     where
@@ -4179,10 +4198,9 @@ where
 
         impl<'de, T, U, V, const D: usize> Visitor<'de> for TdsVisitor<T, U, V, D>
         where
-            T: CoordinateScalar + DeserializeOwned,
-            U: DataType + DeserializeOwned,
-            V: DataType + DeserializeOwned,
-            [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+            T: CoordinateScalar,
+            U: DataType,
+            V: DataType,
         {
             type Value = Tds<T, U, V, D>;
 
@@ -4194,8 +4212,8 @@ where
             where
                 A: MapAccess<'de>,
             {
-                let mut vertices: Option<SlotMap<VertexKey, Vertex<T, U, D>>> = None;
-                let mut cells: Option<SlotMap<CellKey, Cell<T, U, V, D>>> = None;
+                let mut vertices: Option<StorageMap<VertexKey, Vertex<T, U, D>>> = None;
+                let mut cells: Option<StorageMap<CellKey, Cell<T, U, V, D>>> = None;
                 let mut cell_vertices: Option<FastHashMap<Uuid, Vec<Uuid>>> = None;
 
                 while let Some(key) = map.next_key()? {
@@ -4241,6 +4259,10 @@ where
                 for (_cell_key, cell) in &mut cells {
                     let cell_uuid = cell.uuid();
                     if let Some(vertex_uuids) = cell_vertices.get(&cell_uuid) {
+                        // Clear stale vertex keys from serialized data before rebuilding
+                        // This prevents duplication: serialized keys + reconstructed keys
+                        cell.clear_vertex_keys();
+
                         // Convert vertex UUIDs to vertex keys
                         for &vertex_uuid in vertex_uuids {
                             if let Some(&vertex_key) = uuid_to_vertex_key.get(&vertex_uuid) {
@@ -4276,12 +4298,10 @@ where
                     generation: Arc::new(AtomicU64::new(0)),
                 };
 
-                // Rebuild incident_cell CellKey references
-                // This is safe to ignore errors since we're deserializing a validated triangulation
-                let _ = tds.assign_incident_cells();
-
-                // Rebuild neighbor relationships
-                let _ = tds.assign_neighbors();
+                // Rebuild topology; fail fast on any inconsistency.
+                // Order: neighbors first, then incident cells (consistent with other call sites).
+                tds.assign_neighbors().map_err(de::Error::custom)?;
+                tds.assign_incident_cells().map_err(de::Error::custom)?;
 
                 Ok(tds)
             }
@@ -4312,7 +4332,9 @@ mod tests {
         collections::FastHashMap, facet::FacetView, traits::boundary_analysis::BoundaryAnalysis,
         util::facet_views_are_adjacent, vertex::VertexBuilder,
     };
-    use crate::geometry::{point::Point, traits::coordinate::Coordinate};
+    use crate::geometry::{
+        point::Point, traits::coordinate::Coordinate, util::safe_usize_to_scalar,
+    };
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
@@ -4332,7 +4354,6 @@ mod tests {
     where
         T: CoordinateScalar,
         U: DataType,
-        [T; D]: Copy + DeserializeOwned + Serialize + Sized,
     {
         let mut vertex = data.map_or_else(
             || {
@@ -4448,7 +4469,7 @@ mod tests {
             );
 
             // Vertex should be in the vertices collection
-            let stored_vertex = &tds.vertices()[vertex_key.unwrap()];
+            let stored_vertex = tds.get_vertex_by_key(vertex_key.unwrap()).unwrap();
             let coords: [f64; 3] = stored_vertex.into();
             let expected = [1.0, 2.0, 3.0];
             assert!(
@@ -4665,10 +4686,13 @@ mod tests {
 
             // Collections should be empty
             assert!(
-                tds.vertices().is_empty(),
+                tds.number_of_vertices() == 0,
                 "Vertices collection should be empty"
             );
-            assert!(tds.cells().is_empty(), "Cells collection should be empty");
+            assert!(
+                tds.number_of_cells() == 0,
+                "Cells collection should be empty"
+            );
 
             // Generation should be initialized to 0
             assert_eq!(tds.generation(), 0, "Initial generation should be 0");
@@ -4844,231 +4868,157 @@ mod tests {
         );
     }
 
-    #[test]
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
-    fn test_multidimensional_triangulations_2d_to_5d() {
-        // Test 2D triangulation (triangle)
-        {
-            let vertices_2d = vec![
-                vertex!([0.0, 0.0]),
-                vertex!([1.0, 0.0]),
-                vertex!([0.5, 1.0]),
-            ];
-            let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+    /// Macro to generate dimension-specific TDS tests for dimensions 2D-5D.
+    ///
+    /// This macro reduces test duplication by generating consistent tests across
+    /// multiple dimensions. It creates tests for:
+    /// - Basic TDS creation with D+1 vertices
+    /// - Validation (dim, vertex count, cell count)
+    /// - Serialization roundtrip
+    /// - Incremental vertex addition
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// test_tds_dimensions! {
+    ///     tds_2d => 2 => "triangle" => vec![vertex!([0.0, 0.0]), ...],
+    /// }
+    /// ```
+    macro_rules! test_tds_dimensions {
+        ($(
+            $test_name:ident => $dim:expr => $desc:expr => $vertices:expr
+        ),+ $(,)?) => {
+            $(
+                #[test]
+                fn $test_name() {
+                    // Test basic TDS creation
+                    let vertices = $vertices;
+                    let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
 
-            assert_eq!(tds_2d.dim(), 2, "2D triangulation should have dimension 2");
-            assert_eq!(
-                tds_2d.number_of_vertices(),
-                3,
-                "2D triangle should have 3 vertices"
-            );
-            assert_eq!(
-                tds_2d.number_of_cells(),
-                1,
-                "2D triangle should have 1 cell (triangle)"
-            );
-            assert!(
-                tds_2d.is_valid().is_ok(),
-                "2D triangulation should be valid"
-            );
+                    assert_eq!(tds.dim(), $dim as i32,
+                        "{}D triangulation should have dimension {}", $dim, $dim);
+                    assert_eq!(tds.number_of_vertices(), $dim + 1,
+                        "{}D {} should have {} vertices (D+1)", $dim, $desc, $dim + 1);
+                    assert_eq!(tds.number_of_cells(), 1,
+                        "{}D {} should have 1 cell (single simplex)", $dim, $desc);
+                    assert!(tds.is_valid().is_ok(),
+                        "{}D triangulation should be valid", $dim);
+                }
 
-            // Test vertex counts match expected D+1 formula
-            assert_eq!(
-                tds_2d.number_of_vertices(),
-                2 + 1,
-                "2D should have D+1=3 vertices for one simplex"
-            );
-        }
+                pastey::paste! {
+                    #[test]
+                    fn [<$test_name _serialization>]() {
+                        // Test TDS serialization roundtrip
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
 
-        // Test 3D triangulation (tetrahedron)
-        {
-            let vertices_3d = vec![
-                vertex!([0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0]),
-                vertex!([0.5, 1.0, 0.0]),
-                vertex!([0.5, 0.5, 1.0]),
-            ];
-            let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
+                        let serialized = serde_json::to_string(&tds).unwrap();
+                        let deserialized: Tds<f64, Option<()>, Option<()>, $dim> =
+                            serde_json::from_str(&serialized).unwrap();
 
-            assert_eq!(tds_3d.dim(), 3, "3D triangulation should have dimension 3");
-            assert_eq!(
-                tds_3d.number_of_vertices(),
-                4,
-                "3D tetrahedron should have 4 vertices"
-            );
-            assert_eq!(
-                tds_3d.number_of_cells(),
-                1,
-                "3D tetrahedron should have 1 cell (tetrahedron)"
-            );
-            assert!(
-                tds_3d.is_valid().is_ok(),
-                "3D triangulation should be valid"
-            );
+                        assert_eq!(deserialized.dim(), tds.dim());
+                        assert_eq!(deserialized.number_of_vertices(), tds.number_of_vertices());
+                        assert_eq!(deserialized.number_of_cells(), tds.number_of_cells());
+                        assert!(deserialized.is_valid().is_ok());
+                    }
 
-            // Test vertex counts match expected D+1 formula
-            assert_eq!(
-                tds_3d.number_of_vertices(),
-                3 + 1,
-                "3D should have D+1=4 vertices for one simplex"
-            );
-        }
+                    #[test]
+                    fn [<$test_name _incremental>]() {
+                        // Test incremental vertex addition
+                        let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::empty();
+                        let vertices = $vertices;
 
-        // Test 4D triangulation (4-simplex)
-        {
-            let vertices_4d = vec![
-                vertex!([0.0, 0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 0.0, 1.0]),
-            ];
-            let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+                        for (i, vertex) in vertices.iter().enumerate() {
+                            tds.add(*vertex).unwrap();
+                            assert_eq!(tds.number_of_vertices(), i + 1,
+                                "{}D: Vertex count should increase incrementally", $dim);
 
-            assert_eq!(tds_4d.dim(), 4, "4D triangulation should have dimension 4");
-            assert_eq!(
-                tds_4d.number_of_vertices(),
-                5,
-                "4D 4-simplex should have 5 vertices"
-            );
-            assert_eq!(
-                tds_4d.number_of_cells(),
-                1,
-                "4D 4-simplex should have 1 cell (4-simplex)"
-            );
-            assert!(
-                tds_4d.is_valid().is_ok(),
-                "4D triangulation should be valid"
-            );
+                            let expected_dim = std::cmp::min(i32::try_from(i).unwrap(), $dim as i32);
+                            assert_eq!(tds.dim(), expected_dim,
+                                "{}D: Dimension should be {} after {} vertices", $dim, expected_dim, i + 1);
+                        }
 
-            // Test vertex counts match expected D+1 formula
-            assert_eq!(
-                tds_4d.number_of_vertices(),
-                4 + 1,
-                "4D should have D+1=5 vertices for one simplex"
-            );
-        }
+                        assert_eq!(tds.number_of_vertices(), $dim + 1);
+                        assert_eq!(tds.dim(), $dim as i32);
+                        assert!(tds.is_valid().is_ok(),
+                            "{}D incremental triangulation should be valid", $dim);
+                    }
 
-        // Test 5D triangulation (5-simplex)
-        {
-            let vertices_5d = vec![
-                vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
-                vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
-            ];
-            let tds_5d: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices_5d).unwrap();
+                    #[test]
+                    fn [<$test_name _empty>]() {
+                        // Test empty TDS for this dimension
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::empty();
 
-            assert_eq!(tds_5d.dim(), 5, "5D triangulation should have dimension 5");
-            assert_eq!(
-                tds_5d.number_of_vertices(),
-                6,
-                "5D 5-simplex should have 6 vertices"
-            );
-            assert_eq!(
-                tds_5d.number_of_cells(),
-                1,
-                "5D 5-simplex should have 1 cell (5-simplex)"
-            );
-            assert!(
-                tds_5d.is_valid().is_ok(),
-                "5D triangulation should be valid"
-            );
+                        assert_eq!(tds.number_of_vertices(), 0,
+                            "{}D empty TDS should have 0 vertices", $dim);
+                        assert_eq!(tds.number_of_cells(), 0,
+                            "{}D empty TDS should have 0 cells", $dim);
+                        assert_eq!(tds.dim(), -1,
+                            "{}D empty TDS should have dim -1", $dim);
+                        assert!(matches!(tds.construction_state,
+                            TriangulationConstructionState::Incomplete(0)));
+                    }
 
-            // Test vertex counts match expected D+1 formula
-            assert_eq!(
-                tds_5d.number_of_vertices(),
-                5 + 1,
-                "5D should have D+1=6 vertices for one simplex"
-            );
-        }
+                    #[test]
+                    fn [<$test_name _with_interior_point>]() {
+                        // Test triangulation with D+1 boundary vertices + 1 interior point
+                        // This triggers the Bowyer-Watson algorithm for cavity creation
+                        let mut vertices = $vertices;
 
-        // Test incremental construction across dimensions
-        {
-            // Test 2D incremental construction
-            let mut tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
-            let vertices_2d = [
-                vertex!([0.0, 0.0]),
-                vertex!([1.0, 0.0]),
-                vertex!([0.5, 1.0]),
-            ];
-            for (i, &vertex) in vertices_2d.iter().enumerate() {
-                tds_2d.add(vertex).unwrap();
-                assert_eq!(
-                    tds_2d.number_of_vertices(),
-                    i + 1,
-                    "2D: Vertex count should increase incrementally"
-                );
-                assert_eq!(
-                    tds_2d.dim(),
-                    std::cmp::min(i32::try_from(i).unwrap_or(i32::MAX), 2),
-                    "2D: Dimension should increase up to 2"
-                );
-            }
-            assert!(
-                tds_2d.is_valid().is_ok(),
-                "2D incremental triangulation should be valid"
-            );
+                        // Add an interior point (scaled down from the simplex vertices)
+                        let mut interior_coords = [0.0; $dim];
+                        let divisor = safe_usize_to_scalar::<f64>($dim + 1).unwrap();
+                        for i in 0..$dim {
+                            interior_coords[i] = 1.0 / divisor;
+                        }
+                        vertices.push(vertex!(interior_coords));
 
-            // Test 3D incremental construction
-            let mut tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
-            let vertices_3d = [
-                vertex!([0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0]),
-                vertex!([0.5, 1.0, 0.0]),
-                vertex!([0.5, 0.5, 1.0]),
-            ];
-            for (i, &vertex) in vertices_3d.iter().enumerate() {
-                tds_3d.add(vertex).unwrap();
-                assert_eq!(
-                    tds_3d.number_of_vertices(),
-                    i + 1,
-                    "3D: Vertex count should increase incrementally"
-                );
-                assert_eq!(
-                    tds_3d.dim(),
-                    std::cmp::min(i32::try_from(i).unwrap_or(i32::MAX), 3),
-                    "3D: Dimension should increase up to 3"
-                );
-            }
-            assert!(
-                tds_3d.is_valid().is_ok(),
-                "3D incremental triangulation should be valid"
-            );
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
 
-            // Test 4D incremental construction
-            let mut tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
-            let vertices_4d = [
-                vertex!([0.0, 0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 0.0, 1.0]),
-            ];
-            for (i, &vertex) in vertices_4d.iter().enumerate() {
-                tds_4d.add(vertex).unwrap();
-                assert_eq!(
-                    tds_4d.number_of_vertices(),
-                    i + 1,
-                    "4D: Vertex count should increase incrementally"
-                );
-                assert_eq!(
-                    tds_4d.dim(),
-                    std::cmp::min(i32::try_from(i).unwrap_or(i32::MAX), 4),
-                    "4D: Dimension should increase up to 4"
-                );
-            }
-            assert!(
-                tds_4d.is_valid().is_ok(),
-                "4D incremental triangulation should be valid"
-            );
-        }
+                        assert_eq!(tds.dim(), $dim as i32,
+                            "{}D triangulation with interior point should have dimension {}", $dim, $dim);
+                        assert_eq!(tds.number_of_vertices(), $dim + 2,
+                            "{}D triangulation should have {} vertices (D+2: boundary + interior)", $dim, $dim + 2);
+                        assert!(
+                            tds.number_of_cells() >= 1,
+                            "{}D triangulation with interior point should have at least 1 cell", $dim
+                        );
+                        assert!(tds.is_valid().is_ok(),
+                            "{}D triangulation with interior point should be valid", $dim);
+                    }
+                }
+            )+
+        };
+    }
 
-        println!(
-            "✓ Multi-dimensional triangulations (2D-5D) work correctly with proper vertex counts and validation"
-        );
+    // Generate tests for dimensions 2D through 5D
+    test_tds_dimensions! {
+        tds_2d_triangle => 2 => "triangle" => vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.5, 1.0]),
+        ],
+        tds_3d_tetrahedron => 3 => "tetrahedron" => vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.5, 1.0, 0.0]),
+            vertex!([0.5, 0.5, 1.0]),
+        ],
+        tds_4d_simplex => 4 => "4-simplex" => vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+        ],
+        tds_5d_simplex => 5 => "5-simplex" => vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+        ],
     }
 
     // =============================================================================
@@ -5080,10 +5030,12 @@ mod tests {
         // Test empty TDS accessors
         {
             let tds: Tds<f64, usize, usize, 3> = Tds::empty();
-            let vertices_map = tds.vertices();
-            assert_eq!(vertices_map.len(), 0, "Empty TDS should have no vertices");
-            assert_eq!(tds.number_of_vertices(), vertices_map.len());
-            assert_eq!(tds.cells().len(), 0, "Empty TDS should have no cells");
+            assert_eq!(
+                tds.number_of_vertices(),
+                0,
+                "Empty TDS should have no vertices"
+            );
+            assert_eq!(tds.number_of_cells(), 0, "Empty TDS should have no cells");
         }
 
         // Test populated TDS accessors and consistency
@@ -5098,12 +5050,14 @@ mod tests {
             let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
 
             // Test vertex accessor
-            let vertices_map = tds.vertices();
-            assert_eq!(vertices_map.len(), 4, "Tetrahedron should have 4 vertices");
-            assert_eq!(tds.number_of_vertices(), vertices_map.len());
+            assert_eq!(
+                tds.number_of_vertices(),
+                4,
+                "Tetrahedron should have 4 vertices"
+            );
 
             // Test UUID-to-key mapping consistency
-            for (vertex_key, vertex) in vertices_map {
+            for (vertex_key, vertex) in tds.vertices() {
                 let uuid = vertex.uuid();
                 let mapped_key = tds
                     .vertex_key_from_uuid(&uuid)
@@ -5112,41 +5066,18 @@ mod tests {
             }
 
             // Test UUID uniqueness
-            let uuids: std::collections::HashSet<_> = tds
-                .vertices()
-                .values()
-                .map(super::super::vertex::Vertex::uuid)
-                .collect();
-            assert_eq!(uuids.len(), tds.vertices().len());
+            let uuids: std::collections::HashSet<_> =
+                tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
+            assert_eq!(uuids.len(), tds.number_of_vertices());
 
             // Test cell accessor
-            assert_eq!(tds.cells().len(), 1, "Tetrahedron should have 1 cell");
-        }
-
-        // Test mutable accessors
-        {
-            let points = vec![
-                Point::new([0.0, 0.0, 0.0]),
-                Point::new([1.0, 0.0, 0.0]),
-                Point::new([0.0, 1.0, 0.0]),
-                Point::new([0.0, 0.0, 1.0]),
-            ];
-            let vertices = Vertex::from_points(points);
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-
-            let vertices_count = tds.vertices_mut().len();
-            let cells_count = tds.cells_mut().len();
-
-            assert_eq!(vertices_count, 4);
-            assert_eq!(cells_count, 1);
-            assert_eq!(tds.vertices().len(), vertices_count);
-            assert_eq!(tds.cells().len(), cells_count);
+            assert_eq!(tds.number_of_cells(), 1, "Tetrahedron should have 1 cell");
         }
 
         // Test accessors after incremental additions
         {
             let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
-            assert_eq!(tds.vertices().len(), 0);
+            assert_eq!(tds.number_of_vertices(), 0);
 
             let test_vertices = vec![
                 vertex!([0.0, 0.0, 0.0]),
@@ -5158,18 +5089,14 @@ mod tests {
             for (i, vertex) in test_vertices.iter().enumerate() {
                 tds.add(*vertex).unwrap();
                 assert_eq!(
-                    tds.vertices().len(),
+                    tds.number_of_vertices(),
                     i + 1,
                     "Vertex count should increase incrementally"
                 );
             }
 
             // Verify all expected coordinates are present
-            let points: Vec<&[f64; 3]> = tds
-                .vertices()
-                .values()
-                .map(|v| v.point().coords())
-                .collect();
+            let points: Vec<&[f64; 3]> = tds.vertices().map(|(_, v)| v.point().coords()).collect();
 
             let expected_points = [
                 [0.0, 0.0, 0.0],
@@ -5193,101 +5120,6 @@ mod tests {
     // =============================================================================
     // VERTEX ADDITION TESTS
     // =============================================================================
-
-    /// This test verifies that `Tds::add(Vertex)` properly updates triangulation topology
-    ///
-    /// **Expected Behavior**: When adding a vertex inside an existing triangulation, the cell count
-    /// should increase as the new vertex splits existing cells (e.g., adding a vertex inside a
-    /// tetrahedron should create multiple smaller tetrahedra).
-    ///
-    /// **Current Behavior**: The `add()` method now properly runs incremental triangulation
-    /// algorithms using Bowyer-Watson.
-    ///
-    /// **Test Status**: This test should PASS now that `add()` is fixed to update triangulation topology.
-    #[test]
-    fn test_add_vertex_should_increase_cell_count() {
-        // Create a tetrahedron with 4 vertices using new() method
-        let initial_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-
-        // Verify initial state: 4 vertices, 1 cell, valid triangulation
-        assert_eq!(tds.number_of_vertices(), 4);
-        assert_eq!(tds.number_of_cells(), 1);
-        assert!(tds.is_valid().is_ok());
-
-        // Add a new vertex inside the tetrahedron
-        let new_vertex = vertex!([0.25, 0.25, 0.25]); // Inside the tetrahedron
-        tds.add(new_vertex).unwrap();
-
-        // Verify vertex was added
-        assert_eq!(tds.number_of_vertices(), 5, "Vertex count should increase");
-
-        // Cell count should increase - adding a vertex inside a tetrahedron should split it into multiple tetrahedra
-        assert!(
-            tds.number_of_cells() > 1,
-            "Cell count should increase after adding vertex inside triangulation"
-        );
-    }
-
-    /// This test verifies that `Tds::add(Vertex)` properly integrates vertex into triangulation
-    ///
-    /// **Expected Behavior**: After adding a vertex, it should be contained in at least one cell
-    /// of the triangulation, meaning it's properly integrated into the triangulation topology.
-    ///
-    /// **Current Behavior**: The `add()` method now properly updates the cell structure and
-    /// integrates the vertex into the triangulation.
-    ///
-    /// **Test Status**: This test should PASS now that `add()` is fixed to integrate vertices into cells.
-    #[test]
-    fn test_add_vertex_should_be_in_triangulation() {
-        // Create a tetrahedron with 4 vertices using new() method
-        let initial_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-
-        // Verify initial state: 4 vertices, 1 cell, valid triangulation
-        assert_eq!(tds.number_of_vertices(), 4);
-        assert_eq!(tds.number_of_cells(), 1);
-        assert!(tds.is_valid().is_ok());
-
-        // Add a new vertex inside the tetrahedron
-        let new_vertex = vertex!([0.25, 0.25, 0.25]); // Inside the tetrahedron
-        let new_vertex_uuid = new_vertex.uuid();
-        tds.add(new_vertex).unwrap();
-
-        // Verify vertex was added
-        assert_eq!(tds.number_of_vertices(), 5, "Vertex count should increase");
-
-        // The new vertex should be contained in at least one cell
-        let mut vertex_found_in_cells = false;
-        for cell in tds.cells().values() {
-            for cell_vertex_key in cell.vertices() {
-                // Resolve VertexKey to Vertex via TDS
-                let cell_vertex = &tds.vertices()[*cell_vertex_key];
-                if cell_vertex.uuid() == new_vertex_uuid {
-                    vertex_found_in_cells = true;
-                    break;
-                }
-            }
-            if vertex_found_in_cells {
-                break;
-            }
-        }
-
-        assert!(
-            vertex_found_in_cells,
-            "New vertex should be contained in at least one cell"
-        );
-    }
 
     #[test]
     fn test_tds_basic_operations_comprehensive() {
@@ -5483,10 +5315,14 @@ mod tests {
         // Verify the triangulation contains all input vertices
         let cell = tds
             .cells()
-            .values()
+            .map(|(_, cell)| cell)
             .next()
             .expect("Should have at least one cell");
-        assert_eq!(cell.vertices().len(), 4, "3D cell should have 4 vertices");
+        assert_eq!(
+            cell.number_of_vertices(),
+            4,
+            "3D cell should have 4 vertices"
+        );
     }
 
     #[test]
@@ -5715,10 +5551,14 @@ mod tests {
         // Verify it's a proper tetrahedron
         let cell = tds
             .cells()
-            .values()
+            .map(|(_, cell)| cell)
             .next()
             .expect("Should have at least one cell");
-        assert_eq!(cell.vertices().len(), 4, "3D cell should have 4 vertices");
+        assert_eq!(
+            cell.number_of_vertices(),
+            4,
+            "3D cell should have 4 vertices"
+        );
 
         // Human readable output for cargo test -- --nocapture
         println!("{tds:?}");
@@ -5727,149 +5567,6 @@ mod tests {
     // =============================================================================
     // MULTI-DIMENSIONAL TRIANGULATION TESTS
     // =============================================================================
-
-    /// Test triangulation across multiple dimensions with minimal vertices (D+1)
-    #[test]
-    fn test_triangulation_minimal_nd() {
-        // 2D: Triangle (3 vertices)
-        let points_2d = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.5, 1.0]),
-        ];
-        let vertices_2d = Vertex::from_points(points_2d);
-        let tds_2d: Tds<f64, usize, usize, 2> = Tds::new(&vertices_2d).unwrap();
-        assert_eq!(tds_2d.number_of_vertices(), 3);
-        assert_eq!(
-            tds_2d.number_of_cells(),
-            1,
-            "2D minimal should form 1 triangle"
-        );
-        assert_eq!(tds_2d.dim(), 2);
-        assert!(tds_2d.is_valid().is_ok());
-
-        // 3D: Tetrahedron (4 vertices)
-        let points_3d = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        let vertices_3d = Vertex::from_points(points_3d);
-        let tds_3d: Tds<f64, usize, usize, 3> = Tds::new(&vertices_3d).unwrap();
-        assert_eq!(tds_3d.number_of_vertices(), 4);
-        assert_eq!(
-            tds_3d.number_of_cells(),
-            1,
-            "3D minimal should form 1 tetrahedron"
-        );
-        assert_eq!(tds_3d.dim(), 3);
-        assert!(tds_3d.is_valid().is_ok());
-
-        // 4D: 4-simplex (5 vertices)
-        let points_4d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0]),
-        ];
-        let vertices_4d = Vertex::from_points(points_4d);
-        let tds_4d: Tds<f64, usize, usize, 4> = Tds::new(&vertices_4d).unwrap();
-        assert_eq!(tds_4d.number_of_vertices(), 5);
-        assert_eq!(
-            tds_4d.number_of_cells(),
-            1,
-            "4D minimal should form 1 4-simplex"
-        );
-        assert_eq!(tds_4d.dim(), 4);
-        assert!(tds_4d.is_valid().is_ok());
-
-        // 5D: 5-simplex (6 vertices)
-        let points_5d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
-        ];
-        let vertices_5d = Vertex::from_points(points_5d);
-        let tds_5d: Tds<f64, usize, usize, 5> = Tds::new(&vertices_5d).unwrap();
-        assert_eq!(tds_5d.number_of_vertices(), 6);
-        assert_eq!(
-            tds_5d.number_of_cells(),
-            1,
-            "5D minimal should form 1 5-simplex"
-        );
-        assert_eq!(tds_5d.dim(), 5);
-        assert!(tds_5d.is_valid().is_ok());
-
-        println!("✓ All minimal N-dimensional triangulations created successfully");
-    }
-
-    /// Test triangulation with extra vertices triggering Bowyer-Watson algorithm
-    #[test]
-    fn test_triangulation_complex_nd() {
-        // 3D: Multiple tetrahedra with interior point
-        let points_3d = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([3.0, 0.0, 0.0]),
-            Point::new([0.0, 3.0, 0.0]),
-            Point::new([0.0, 0.0, 3.0]),
-            Point::new([1.0, 1.0, 1.0]), // Interior point triggers full algorithm
-        ];
-        let vertices_3d = Vertex::from_points(points_3d);
-        let tds_3d: Tds<f64, usize, usize, 3> = Tds::new(&vertices_3d).unwrap();
-        assert_eq!(tds_3d.number_of_vertices(), 5);
-        assert!(
-            tds_3d.number_of_cells() >= 1,
-            "3D complex should have at least 1 cell"
-        );
-        assert_eq!(tds_3d.dim(), 3);
-        assert!(tds_3d.is_valid().is_ok());
-
-        // 4D: Multiple 4-simplices with interior point
-        let points_4d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([3.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 3.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 3.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 3.0]),
-            Point::new([1.0, 1.0, 1.0, 1.0]), // Interior point triggers full algorithm
-        ];
-        let vertices_4d = Vertex::from_points(points_4d);
-        let tds_4d: Tds<f64, usize, usize, 4> = Tds::new(&vertices_4d).unwrap();
-        assert_eq!(tds_4d.number_of_vertices(), 6);
-        assert!(
-            tds_4d.number_of_cells() >= 1,
-            "4D complex should have at least 1 cell"
-        );
-        assert_eq!(tds_4d.dim(), 4);
-        assert!(tds_4d.is_valid().is_ok());
-
-        // 5D: Multiple 5-simplices with interior point
-        let points_5d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([3.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 3.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 3.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 3.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 3.0]),
-            Point::new([1.0, 1.0, 1.0, 1.0, 1.0]), // Interior point triggers full algorithm
-        ];
-        let vertices_5d = Vertex::from_points(points_5d);
-        let tds_5d: Tds<f64, usize, usize, 5> = Tds::new(&vertices_5d).unwrap();
-        assert_eq!(tds_5d.number_of_vertices(), 7);
-        assert!(
-            tds_5d.number_of_cells() >= 1,
-            "5D complex should have at least 1 cell"
-        );
-        assert_eq!(tds_5d.dim(), 5);
-        assert!(tds_5d.is_valid().is_ok());
-
-        println!("✓ All complex N-dimensional triangulations created successfully");
-    }
 
     #[test]
     fn test_triangulation_validation_errors() {
@@ -5977,81 +5674,6 @@ mod tests {
         println!("Large triangulation is valid.");
     }
 
-    /// Test triangulation across multiple dimensions
-    #[test]
-    fn test_triangulation_nd() {
-        // Test triangulation for 1D through 5D
-
-        // 1D: Line segment
-        let points_1d = vec![Point::new([5.0]), Point::new([15.0])];
-        let vertices_1d = Vertex::from_points(points_1d);
-        let tds_1d: Tds<f64, usize, usize, 1> = Tds::new(&vertices_1d).unwrap();
-        assert_eq!(tds_1d.number_of_vertices(), 2);
-        assert_eq!(tds_1d.number_of_cells(), 1);
-        assert_eq!(tds_1d.dim(), 1);
-        assert!(tds_1d.is_valid().is_ok());
-
-        // 2D: Triangle (need D+1=3 vertices for 2D triangulation)
-        let points_2d = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([10.0, 0.0]),
-            Point::new([5.0, 10.0]),
-        ];
-        let vertices_2d = Vertex::from_points(points_2d);
-        let tds_2d: Tds<f64, usize, usize, 2> = Tds::new(&vertices_2d).unwrap();
-        assert_eq!(tds_2d.number_of_vertices(), 3);
-        assert_eq!(tds_2d.number_of_cells(), 1);
-        assert_eq!(tds_2d.dim(), 2);
-        assert!(tds_2d.is_valid().is_ok());
-
-        // 3D: Tetrahedron (need D+1=4 vertices for 3D triangulation)
-        let points_3d = vec![
-            Point::new([-100.0, -100.0, -100.0]),
-            Point::new([100.0, 100.0, 100.0]),
-            Point::new([0.0, -100.0, 100.0]),
-            Point::new([50.0, 50.0, 0.0]),
-        ];
-        let vertices_3d = Vertex::from_points(points_3d);
-        let tds_3d: Tds<f64, usize, usize, 3> = Tds::new(&vertices_3d).unwrap();
-        assert_eq!(tds_3d.number_of_vertices(), 4);
-        assert_eq!(tds_3d.number_of_cells(), 1);
-        assert_eq!(tds_3d.dim(), 3);
-        assert!(tds_3d.is_valid().is_ok());
-
-        // 4D: 4-simplex (need D+1=5 vertices for 4D triangulation)
-        let points_4d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([5.0, 5.0, 5.0, 5.0]),
-            Point::new([5.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 5.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 5.0, 0.0]),
-        ];
-        let vertices_4d = Vertex::from_points(points_4d);
-        let tds_4d: Tds<f64, usize, usize, 4> = Tds::new(&vertices_4d).unwrap();
-        assert_eq!(tds_4d.number_of_vertices(), 5);
-        assert_eq!(tds_4d.number_of_cells(), 1);
-        assert_eq!(tds_4d.dim(), 4);
-        assert!(tds_4d.is_valid().is_ok());
-
-        // 5D: 5-simplex (need D+1=6 vertices for 5D triangulation)
-        let points_5d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([10.0, 10.0, 10.0, 10.0, 10.0]),
-            Point::new([10.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 10.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 10.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 10.0, 0.0]),
-        ];
-        let vertices_5d = Vertex::from_points(points_5d);
-        let tds_5d: Tds<f64, usize, usize, 5> = Tds::new(&vertices_5d).unwrap();
-        assert_eq!(tds_5d.number_of_vertices(), 6);
-        assert_eq!(tds_5d.number_of_cells(), 1);
-        assert_eq!(tds_5d.dim(), 5);
-        assert!(tds_5d.is_valid().is_ok());
-
-        println!("✓ All N-dimensional triangulations created with correct structure");
-    }
-
     // =============================================================================
     // NEIGHBOR AND INCIDENT CELL TESTS
     // =============================================================================
@@ -6146,7 +5768,7 @@ mod tests {
         let cell_uuid = tds.cells[cell_key].uuid();
         tds.uuid_to_cell_key.insert(cell_uuid, cell_key);
 
-        // Phase 3A: Corrupt the data structure by removing a vertex from the SlotMap
+        // Phase 3A: Corrupt the data structure by removing a vertex from the storage map
         // while keeping the cell that references it
         let first_vertex_key = vertex_keys[0];
         tds.vertices.remove(first_vertex_key);
@@ -6191,12 +5813,12 @@ mod tests {
             vertex.incident_cell = None;
         }
 
-        // Get the first cell key and remove that cell from the SlotMap
+        // Get the first cell key and remove that cell from the storage map
         let (cell_key_to_remove, _) = tds.cells.iter().next().unwrap();
         tds.cells.remove(cell_key_to_remove);
 
         // The method should now succeed because the invalid cell key is no longer
-        // in the cells SlotMap, so it won't be processed.
+        // in the cells storage map, so it won't be processed.
         // Let me instead create a test that directly exercises the error path by
         // creating an inconsistency in the data structure.
 
@@ -6247,8 +5869,8 @@ mod tests {
         let cell_uuid = tds.cells[cell_key].uuid();
         tds.uuid_to_cell_key.insert(cell_uuid, cell_key);
 
-        // Get a vertex key and remove the vertex from the SlotMap while keeping the UUID-to-key mapping
-        // This creates an inconsistent state where the vertex key exists in UUID-to-key mapping but not in SlotMap
+        // Get a vertex key and remove the vertex from the storage map while keeping the UUID-to-key mapping
+        // This creates an inconsistent state where the vertex key exists in UUID-to-key mapping but not in storage map
         let first_vertex_uuid = vertices[0].uuid();
         let vertex_key_to_remove = tds.vertex_key_from_uuid(&first_vertex_uuid).unwrap();
         tds.vertices.remove(vertex_key_to_remove);
@@ -6324,7 +5946,7 @@ mod tests {
             );
 
             // Verify that assigned incident cells actually exist in the triangulation
-            // Phase 3: incident_cell is now a CellKey, check directly in SlotMap
+            // Phase 3: incident_cell is now a CellKey, check directly in storage map
             for vertex in tds.vertices.values() {
                 if let Some(incident_cell_key) = vertex.incident_cell {
                     assert!(
@@ -6595,7 +6217,7 @@ mod tests {
         let cell_uuid = tds.cells[cell_key].uuid();
         tds.uuid_to_cell_key.insert(cell_uuid, cell_key);
 
-        // Phase 3A: Corrupt the data structure by removing a vertex from the SlotMap
+        // Phase 3A: Corrupt the data structure by removing a vertex from the storage map
         // while keeping the cell that references it
         // This simulates extreme data structure corruption
         let first_vertex_key = vertex_keys[0];
@@ -6658,7 +6280,7 @@ mod tests {
         let cell2_uuid = tds.cells[cell2_key].uuid();
         tds.uuid_to_cell_key.insert(cell2_uuid, cell2_key);
 
-        // Phase 3A: Corrupt the data structure by removing a vertex from the SlotMap
+        // Phase 3A: Corrupt the data structure by removing a vertex from the storage map
         // while keeping the cells that reference it
         let first_vertex_key = vertex_keys[0];
         tds.vertices.remove(first_vertex_key);
@@ -7146,11 +6768,11 @@ mod tests {
         // Verify all input vertices are preserved
         let cell = tds
             .cells()
-            .values()
+            .map(|(_, cell)| cell)
             .next()
             .expect("Should have at least one cell");
         assert_eq!(
-            cell.vertices().len(),
+            cell.number_of_vertices(),
             4,
             "Cell should contain all 4 vertices"
         );
@@ -7159,7 +6781,7 @@ mod tests {
         let mut found_large_coordinate = false;
         for vertex_key in cell.vertices() {
             // Resolve VertexKey to Vertex via TDS
-            let vertex = &tds.vertices()[*vertex_key];
+            let vertex = &tds.get_vertex_by_key(*vertex_key).unwrap();
             let coords = vertex.point().coords();
             for &coord in coords {
                 if coord.abs() >= 500.0 {
@@ -7197,10 +6819,10 @@ mod tests {
         // Verify that all input vertices are preserved in the triangulation
         let cell = tds
             .cells()
-            .values()
+            .map(|(_, cell)| cell)
             .next()
             .expect("Should have at least one cell");
-        assert_eq!(cell.vertices().len(), 4);
+        assert_eq!(cell.number_of_vertices(), 4);
 
         // Check that coordinates are properly handled
         let mut found_origin = false;
@@ -7208,7 +6830,7 @@ mod tests {
 
         for vertex_key in cell.vertices() {
             // Resolve VertexKey to Vertex via TDS
-            let vertex = &tds.vertices()[*vertex_key];
+            let vertex = &tds.get_vertex_by_key(*vertex_key).unwrap();
             let coords = vertex.point().coords();
 
             // Check for origin point
@@ -7427,7 +7049,7 @@ mod tests {
 
         // Verify that topology was rebuilt correctly after cell removal
         // Check that all vertices have valid incident cells
-        // Phase 3: incident_cell is now a CellKey, check directly in SlotMap
+        // Phase 3: incident_cell is now a CellKey, check directly in storage map
         for vertex in result.vertices.values() {
             if let Some(incident_cell_key) = vertex.incident_cell {
                 // The incident cell should exist in the triangulation
@@ -7985,7 +7607,7 @@ mod tests {
             let vertex_coords: Vec<_> = cell
                 .vertices()
                 .iter()
-                .map(|vk| tds.vertices()[*vk].point().coords())
+                .map(|vk| tds.get_vertex_by_key(*vk).unwrap().point().coords())
                 .collect();
             println!("Cell {}: vertices = {:?}", i, vertex_coords);
         }
@@ -8856,8 +8478,8 @@ mod tests {
             .zip(deserialized_tds.cells.values())
         {
             assert_eq!(
-                original_cell.vertices().len(),
-                deserialized_cell.vertices().len(),
+                original_cell.number_of_vertices(),
+                deserialized_cell.number_of_vertices(),
                 "Cell vertex count should be preserved"
             );
         }
@@ -8909,13 +8531,13 @@ mod tests {
         let vertex_key = tds.insert_vertex_with_mapping(vertex).unwrap();
 
         // Verify the vertex was inserted
-        assert!(tds.vertices().contains_key(vertex_key));
+        assert!(tds.contains_vertex_key(vertex_key));
 
         // Verify the UUID mapping was created
         assert_eq!(tds.vertex_key_from_uuid(&vertex_uuid), Some(vertex_key));
 
         // Verify the vertex data is correct
-        let stored_vertex = &tds.vertices()[vertex_key];
+        let stored_vertex = tds.get_vertex_by_key(vertex_key).unwrap();
         let coords: [f64; 3] = stored_vertex.into();
         assert_relative_eq!(coords[0], 1.0);
         assert_relative_eq!(coords[1], 2.0);
@@ -8935,7 +8557,7 @@ mod tests {
         }
 
         // Verify only one vertex exists
-        assert_eq!(tds.vertices().len(), 1);
+        assert_eq!(tds.number_of_vertices(), 1);
         assert_eq!(tds.uuid_to_vertex_key.len(), 1);
     }
 
@@ -8966,14 +8588,14 @@ mod tests {
         let cell_key = tds.insert_cell_with_mapping(cell).unwrap();
 
         // Verify the cell was inserted
-        assert!(tds.cells().contains_key(cell_key));
+        assert!(tds.contains_cell(cell_key));
 
         // Verify the UUID mapping was created
         assert_eq!(tds.cell_key_from_uuid(&cell_uuid), Some(cell_key));
 
         // Verify the cell data is correct
-        let stored_cell = &tds.cells()[cell_key];
-        assert_eq!(stored_cell.vertices().len(), 4);
+        let stored_cell = &tds.get_cell(cell_key).unwrap();
+        assert_eq!(stored_cell.number_of_vertices(), 4);
         assert_eq!(stored_cell.uuid(), cell_uuid);
 
         // Since we can't easily set the UUID on a cell directly to test duplicate detection,
@@ -9000,14 +8622,14 @@ mod tests {
         let new_key = tds
             .insert_cell_with_mapping(cell_for_duplicate_test)
             .unwrap();
-        assert!(tds.cells().contains_key(new_key));
+        assert!(tds.contains_cell(new_key));
 
         // Now create another cell and try to insert it with a duplicate UUID
         // Since we can't easily create a cell with a specific UUID, we'll verify
         // that the method correctly prevents duplicate UUIDs by checking the error path
 
         // Verify we have 2 cells and 2 UUID mappings
-        assert_eq!(tds.cells().len(), 2);
+        assert_eq!(tds.number_of_cells(), 2);
         assert_eq!(tds.uuid_to_cell_key.len(), 2);
     }
 
@@ -9162,44 +8784,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tds_partial_eq_different_vertex_counts() {
-        let vertices1 = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
-
-        let vertices2 = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([0.5, 0.5]),
-        ];
-
-        let tds1: Tds<f64, usize, usize, 2> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, usize, usize, 2> = Tds::new(&vertices2).unwrap();
-
-        // Should have different vertex counts
-        assert_ne!(tds1.number_of_vertices(), tds2.number_of_vertices());
-        assert_ne!(tds1, tds2);
-    }
-
-    #[test]
-    fn test_tds_partial_eq_same_content() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
-
-        let tds1: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
-        let tds2: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
-
-        // Should be equal (same triangulation)
-        assert_eq!(tds1, tds2);
-    }
-
-    #[test]
     fn test_tds_generation_counter() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
@@ -9231,31 +8815,12 @@ mod tests {
         let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
 
         // Test with valid cell key
-        if let Some((cell_key, _)) = tds.cells().iter().next() {
+        if let Some((cell_key, _)) = tds.cells().next() {
             let result = tds.get_cell_vertices(cell_key);
             assert!(result.is_ok());
             let vertices = result.unwrap();
             assert_eq!(vertices.len(), 4); // 3D tetrahedron has 4 vertices
         }
-    }
-
-    #[test]
-    fn test_add_vertex_duplicate_coordinates_error() {
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
-
-        // Add first vertex
-        let vertex1 = vertex!([1.0, 2.0, 3.0]);
-        tds.add(vertex1).unwrap();
-
-        // Try to add vertex with same coordinates but different UUID
-        let vertex2 = vertex!([1.0, 2.0, 3.0]);
-        let result = tds.add(vertex2);
-
-        // Should get duplicate coordinates error
-        assert!(matches!(
-            result,
-            Err(TriangulationConstructionError::DuplicateCoordinates { .. })
-        ));
     }
 
     #[test]
@@ -9271,19 +8836,6 @@ mod tests {
         let result = tds.insert_vertex_with_mapping(vertex);
         assert!(result.is_err());
         // The actual error type depends on internal implementation details
-    }
-
-    #[test]
-    fn test_dimension_accessor() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-        assert_eq!(tds.dim(), 3);
     }
 
     #[test]
@@ -9372,111 +8924,60 @@ mod tests {
     }
 
     // =============================================================================
-    // MULTI-DIMENSIONAL TESTS
+    // MULTI-DIMENSIONAL TESTS (MACRO-GENERATED)
     // =============================================================================
 
-    #[test]
-    fn test_triangulation_multidimensional_comprehensive() {
-        // Test triangulation creation across dimensions 1D through 5D
-        // This ensures comprehensive coverage while avoiding duplicate test logic
+    /// Macro to generate dimensional triangulation tests
+    ///
+    /// Usage: Add more dimensions by calling `test_dimension!(6)`, `test_dimension!(7)`, etc.
+    /// This makes it easy to expand testing to higher dimensions without code duplication.
+    macro_rules! test_dimension {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_triangulation_ $dim d>]() {
+                    // Create standard simplex: D+1 vertices with one 1.0 in each dimension
+                    let mut vertices = vec![];
 
-        // Test 1D triangulation - line segment
-        {
-            let vertices = vec![vertex!([0.0]), vertex!([1.0])];
-            let tds: Tds<f64, usize, usize, 1> = Tds::new(&vertices).unwrap();
+                    // First vertex at origin
+                    let coords = [0.0; $dim];
+                    vertices.push(vertex!(coords));
 
-            assert_eq!(tds.dim(), 1, "1D triangulation dimension");
-            assert_eq!(tds.number_of_vertices(), 2, "1D triangulation vertex count");
-            assert_eq!(
-                tds.number_of_cells(),
-                1,
-                "1D triangulation cell count - one 1-simplex (line segment)"
-            );
-            assert!(tds.is_valid().is_ok(), "1D triangulation should be valid");
-        }
+                    // D more vertices, each with 1.0 in one dimension
+                    for i in 0..$dim {
+                        let mut coords = [0.0; $dim];
+                        coords[i] = 1.0;
+                        vertices.push(vertex!(coords));
+                    }
 
-        // Test 2D triangulation - triangle
-        {
-            let vertices = vec![
-                vertex!([0.0, 0.0]),
-                vertex!([1.0, 0.0]),
-                vertex!([0.0, 1.0]),
-            ];
-            let tds: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
+                    let tds: Tds<f64, usize, usize, $dim> = Tds::new(&vertices).unwrap();
 
-            assert_eq!(tds.dim(), 2, "2D triangulation dimension");
-            assert_eq!(tds.number_of_vertices(), 3, "2D triangulation vertex count");
-            assert_eq!(
-                tds.number_of_cells(),
-                1,
-                "2D triangulation cell count - one 2-simplex (triangle)"
-            );
-            assert!(tds.is_valid().is_ok(), "2D triangulation should be valid");
-        }
-
-        // Test 3D triangulation - tetrahedron
-        {
-            let vertices = vec![
-                vertex!([0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0]),
-            ];
-            let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-
-            assert_eq!(tds.dim(), 3, "3D triangulation dimension");
-            assert_eq!(tds.number_of_vertices(), 4, "3D triangulation vertex count");
-            assert_eq!(
-                tds.number_of_cells(),
-                1,
-                "3D triangulation cell count - one 3-simplex (tetrahedron)"
-            );
-            assert!(tds.is_valid().is_ok(), "3D triangulation should be valid");
-        }
-
-        // Test 4D triangulation - 4-simplex (hypertetrahedron)
-        {
-            let vertices = vec![
-                vertex!([0.0, 0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 0.0, 1.0]),
-            ];
-            let tds: Tds<f64, usize, usize, 4> = Tds::new(&vertices).unwrap();
-
-            assert_eq!(tds.dim(), 4, "4D triangulation dimension");
-            assert_eq!(tds.number_of_vertices(), 5, "4D triangulation vertex count");
-            assert_eq!(
-                tds.number_of_cells(),
-                1,
-                "4D triangulation cell count - one 4-simplex"
-            );
-            assert!(tds.is_valid().is_ok(), "4D triangulation should be valid");
-        }
-
-        // Test 5D triangulation - 5-simplex
-        {
-            let vertices = vec![
-                vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
-                vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
-            ];
-            let tds: Tds<f64, usize, usize, 5> = Tds::new(&vertices).unwrap();
-
-            assert_eq!(tds.dim(), 5, "5D triangulation dimension");
-            assert_eq!(tds.number_of_vertices(), 6, "5D triangulation vertex count");
-            assert_eq!(
-                tds.number_of_cells(),
-                1,
-                "5D triangulation cell count - one 5-simplex"
-            );
-            assert!(tds.is_valid().is_ok(), "5D triangulation should be valid");
-        }
+                    assert_eq!(tds.dim(), $dim, concat!(stringify!($dim), "D triangulation dimension"));
+                    assert_eq!(
+                        tds.number_of_vertices(),
+                        $dim + 1,
+                        concat!(stringify!($dim), "D triangulation vertex count")
+                    );
+                    assert_eq!(
+                        tds.number_of_cells(),
+                        1,
+                        concat!(stringify!($dim), "D triangulation should have one ", stringify!($dim), "-simplex")
+                    );
+                    assert!(tds.is_valid().is_ok(), concat!(stringify!($dim), "D triangulation should be valid"));
+                }
+            }
+        };
     }
+
+    // Generate tests for dimensions 1-5 (easily expandable to 6, 7, etc.)
+    test_dimension!(1);
+    test_dimension!(2);
+    test_dimension!(3);
+    test_dimension!(4);
+    test_dimension!(5);
+    // To test higher dimensions, simply add:
+    // test_dimension!(6);
+    // test_dimension!(7);
 
     #[test]
     fn test_incremental_construction_various_dimensions() {

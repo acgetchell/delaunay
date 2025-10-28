@@ -11,9 +11,8 @@ use super::{
 
 use crate::prelude::CoordinateScalar;
 use num_traits::NumCast;
-use serde::{Serialize, de::DeserializeOwned};
 use std::iter::Sum;
-use std::ops::{AddAssign, Div, SubAssign};
+use std::ops::{AddAssign, SubAssign};
 
 /// Implementation of `BoundaryAnalysis` trait for `Tds`.
 ///
@@ -24,8 +23,6 @@ where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     /// Identifies all boundary facets in the triangulation.
     ///

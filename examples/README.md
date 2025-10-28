@@ -80,15 +80,15 @@ let coords: [f64; 3] = (&point).into();
 **Run with:** `cargo run --release --example into_from_conversions`
 [View source](./into_from_conversions.rs)
 
-### 3. 3D Triangulation with 50 Points (`triangulation_3d_50_points.rs`)
+### 3. 3D Triangulation with 100 Points (`triangulation_3d_100_points.rs`)
 
 A comprehensive example demonstrating the creation and analysis of a 3D Delaunay
-triangulation using 50 randomly generated points. This example showcases the
+triangulation using 100 randomly generated points. This example showcases the
 full triangulation workflow from vertex generation to validation and analysis.
 
 **Key Features:**
 
-- **Random vertex generation**: Creates 50 random 3D points with reproducible
+- **Random vertex generation**: Creates 100 random 3D points with reproducible
   seeding for consistent results across runs
 - **Delaunay triangulation construction**: Uses the Bowyer-Watson algorithm to
   build a valid 3D Delaunay triangulation
@@ -118,21 +118,21 @@ full triangulation workflow from vertex generation to validation and analysis.
 **Sample Output:**
 
 ```text
-3D Delaunay Triangulation Example - 50 Random Points
+3D Delaunay Triangulation Example - 100 Random Points
 =================================================================
 
-Generated 50 vertices:
+Generated 100 vertices:
   v 0: [   4.123,   -2.456,    7.890]
   v 1: [  -1.234,    5.678,   -3.210]
-  ... and 48 more vertices
+  ... and 98 more vertices
 
 Creating Delaunay triangulation...
-✓ Triangulation created successfully in 2.345ms
+✓ Triangulation created successfully in 5.678ms
 
 Triangulation Analysis:
 ======================
-  Number of vertices: 50
-  Number of cells:    234
+  Number of vertices: 100
+  Number of cells:    523
   Dimension:          3
   Vertex/Cell ratio:  0.21
 
@@ -140,10 +140,10 @@ Triangulation Analysis:
   Validation completed in 156μs
 ```
 
-**Run with:** `cargo run --release --example triangulation_3d_50_points`
-[View source](./triangulation_3d_50_points.rs)
+**Run with:** `cargo run --release --example triangulation_3d_100_points`
+[View source](./triangulation_3d_100_points.rs)
 
-### 4. 3D Convex Hull with 50 Points (`convex_hull_3d_50_points.rs`)
+### 4. 3D Convex Hull with 100 Points (`convex_hull_3d_100_points.rs`)
 
 Demonstrates convex hull extraction and analysis from a 3D Delaunay triangulation.
 This example showcases the extraction of convex hulls from triangulations and
@@ -158,8 +158,8 @@ their geometric properties and analysis.
 - **Performance analysis**: Benchmarks hull extraction and query operations
 - **Geometric analysis**: Detailed analysis of hull properties and facet structure
 
-**Run with:** `cargo run --release --example convex_hull_3d_50_points`
-[View source](./convex_hull_3d_50_points.rs)
+**Run with:** `cargo run --release --example convex_hull_3d_100_points`
+[View source](./convex_hull_3d_100_points.rs)
 
 ### 5. Memory Analysis Across Dimensions (`memory_analysis.rs`)
 
@@ -214,7 +214,7 @@ cargo run --release --example memory_analysis --features count-allocations
 
 For comprehensive memory scaling analysis, see:
 
-- `cargo bench --bench memory_scaling --features count-allocations`  
+- `cargo bench --bench profiling_suite --features count-allocations -- memory_profiling`  
 - `cargo bench --bench triangulation_vs_hull_memory --features count-allocations`
 
 **Run with:** `cargo run --release --example memory_analysis`

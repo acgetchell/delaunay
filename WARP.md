@@ -8,6 +8,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 - **DO NOT** issue `git commit` or `git push` commands
 - **DO NOT** use `git push --force` or modify tags (`git tag`, `git push --tags`)
+- **ALWAYS** use `git --no-pager` when reviewing changes (e.g., `git --no-pager diff`, `git --no-pager log`)
 - Let the user handle all git operations manually
 - You may suggest git commands for the user to run, but never execute them
 - This ensures the user maintains full control over version control operations
@@ -192,6 +193,12 @@ just bench-dev       # Development mode (10x faster for iteration)
 ```
 
 ### Changelog Management
+
+- **DO NOT** edit `CHANGELOG.md` directly
+- **AUTOMATED**: Changelog is generated automatically using `scripts/changelog_utils.py`
+- **PREFERRED**: Use `just changelog` or `just changelog-update` to regenerate the changelog
+- **REASON**: Manual edits will be overwritten by the next automated changelog generation
+- **FOR NEW ENTRIES**: Write clear, descriptive commit messages - they become changelog entries
 
 ```bash
 # Generate enhanced changelog with AI categorization

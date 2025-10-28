@@ -1,4 +1,6 @@
-use crate::core::collections::{FacetToCellsMap, FastHashMap, SmallBuffer};
+use crate::core::collections::{
+    FacetToCellsMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+};
 use crate::core::facet::{FacetError, FacetHandle, FacetView};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
@@ -13,14 +15,10 @@ use crate::geometry::traits::coordinate::{
 };
 use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
 use arc_swap::ArcSwapOption;
-use nalgebra::ComplexField;
 use num_traits::NumCast;
-use num_traits::{One, Zero};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
-use std::iter::Sum;
+use num_traits::Zero;
 use std::marker::PhantomData;
-use std::ops::{AddAssign, Div, DivAssign, Sub, SubAssign};
+use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
 use std::sync::{
     Arc, OnceLock,
     atomic::{AtomicU64, Ordering},
@@ -268,7 +266,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
 {
     /// The boundary facets that form the convex hull
     /// Stored as `FacetHandle` tuples (`CellKey`, `facet_index`) to enable reconstruction of `FacetView`
@@ -303,7 +300,6 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
 {
     /// Returns the number of hull facets
     ///
@@ -520,7 +516,10 @@ where
     #[must_use]
     pub fn is_valid_for_tds(&self, tds: &Tds<T, U, V, D>) -> bool {
         // Use creation_generation (immutable) for validity check, not cached_generation (mutable)
-        self.creation_generation.get().copied().unwrap_or(0) == tds.generation()
+        // Default hull (with creation_generation unset) is invalid for any TDS
+        self.creation_generation
+            .get()
+            .is_some_and(|&g| g == tds.generation())
     }
 
     /// Invalidates the internal facet-to-cells cache and resets the cached generation counter
@@ -581,7 +580,7 @@ where
     }
 }
 
-// Full impl block with complex bounds for construction and geometric operations
+// Full impl block for construction and geometric operations
 impl<T, U, V, const D: usize> ConvexHull<T, U, V, D>
 where
     T: CoordinateScalar
@@ -590,18 +589,12 @@ where
         + Sub<Output = T>
         + DivAssign<T>
         + Zero
-        + One
         + NumCast
         + Copy
-        + Sum
-        + ComplexField<RealField = T>
-        + From<f64>,
+        + std::iter::Sum,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
-    f64: From<T>,
-    // Required by nalgebra's ComplexField trait used in geometric predicates
-    for<'a> &'a T: Div<T>,
+    [T; D]: Copy + Sized,
 {
     /// Creates a new convex hull from a d-dimensional triangulation
     ///
@@ -787,6 +780,16 @@ where
         point: &Point<T, D>,
         tds: &Tds<T, U, V, D>,
     ) -> Result<bool, ConvexHullConstructionError> {
+        // Staleness guard: fail fast before any cache work
+        let creation_gen = self.creation_generation.get().copied().unwrap_or(0);
+        let tds_gen = tds.generation();
+        if creation_gen != tds_gen {
+            return Err(ConvexHullConstructionError::StaleHull {
+                hull_generation: creation_gen,
+                tds_generation: tds_gen,
+            });
+        }
+
         // Get or build the cached facet-to-cells mapping
         let facet_to_cells_arc = self
             .try_get_or_build_facet_cache(tds)
@@ -850,19 +853,32 @@ where
         // Phase 3A: Derive facet vertex keys directly from the cell to avoid UUID↔key roundtrips.
         // This eliminates the need to convert vertex UUIDs back to keys later.
         let (facet_cell_key, facet_index) = (facet_handle.cell_key(), facet_handle.facet_index());
-        let cell = tds.cells().get(facet_cell_key).ok_or(
+        let cell = tds.get_cell(facet_cell_key).ok_or(
             ConvexHullConstructionError::FacetDataAccessFailed {
                 source: FacetError::CellNotFoundInTriangulation,
             },
         )?;
 
+        // Bounds check: facet_index must be within cell vertices to prevent out-of-bounds access
+        let cell_vertex_count = cell.vertices().len();
+        if (facet_index as usize) >= cell_vertex_count {
+            return Err(ConvexHullConstructionError::VisibilityCheckFailed {
+                source: FacetError::InvalidFacetIndex {
+                    index: facet_index,
+                    facet_count: cell_vertex_count,
+                },
+            });
+        }
+
         // Extract vertex keys for all vertices except the one at facet_index
-        let facet_vertex_keys: Vec<_> = cell
-            .vertices()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &k)| (i != facet_index as usize).then_some(k))
-            .collect();
+        // Use SmallBuffer to avoid heap allocation for typical dimensions (up to 7D on stack)
+        let mut facet_vertex_keys: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D);
+        for (i, &k) in cell.vertices().iter().enumerate() {
+            if i != facet_index as usize {
+                facet_vertex_keys.push(k);
+            }
+        }
 
         if facet_vertex_keys.len() != D {
             return Err(ConvexHullConstructionError::VisibilityCheckFailed {
@@ -949,17 +965,19 @@ where
 
         // Create test simplices to compare orientations
         // Build facet_points from the vertices (fetched only once, when needed)
-        let mut facet_points = Vec::with_capacity(D);
+        // Use SmallBuffer to keep typical dimensions on-stack and avoid heap allocation
+        let mut facet_points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D);
         for v in &facet_vertices {
             facet_points.push(*v.point());
         }
 
         // Simplex 1: facet vertices + inside vertex
-        let mut simplex_with_inside = facet_points.clone();
+        let mut simplex_with_inside = facet_points.clone().into_vec();
         simplex_with_inside.push(*inside_vertex.point());
 
         // Simplex 2: facet vertices + test point
-        let mut simplex_with_test = facet_points;
+        let mut simplex_with_test = facet_points.into_vec();
         simplex_with_test.push(*point);
 
         // Get orientations using geometric predicates
@@ -1241,20 +1259,20 @@ where
                 FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index()).map_err(
                     |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
                 )?;
-            let facet_vertices: Vec<_> = facet_view
+            // Extract points directly to avoid materializing Vertex copies
+            let facet_points: Vec<Point<T, D>> = facet_view
                 .vertices()
                 .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?
-                .copied()
+                .map(|v| *v.point())
                 .collect();
 
             // Calculate distance from point to facet centroid as a simple heuristic
             let mut centroid_coords = [T::zero(); D];
-            let num_vertices = safe_usize_to_scalar(facet_vertices.len())
+            let num_vertices = safe_usize_to_scalar(facet_points.len())
                 .map_err(ConvexHullConstructionError::CoordinateConversion)?;
 
-            for vertex in &facet_vertices {
-                let vertex_point = vertex.point();
-                let coords: [T; D] = vertex_point.into();
+            for vertex_point in &facet_points {
+                let coords: [T; D] = (*vertex_point).into();
                 for (i, &coord) in coords.iter().enumerate() {
                     centroid_coords[i] += coord;
                 }
@@ -1442,15 +1460,13 @@ where
 }
 
 // Implementation of FacetCacheProvider trait for ConvexHull
-// Reduced constraint set - removed ComplexField, From<f64>, f64: From<T>, and OrderedFloat bounds
-// which are not required by the trait or the implementation
+// Separate impl block with FacetCacheProvider-specific trait bounds
+// (main impl block has simpler bounds that don't include Sum, DeserializeOwned, etc.)
 impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for ConvexHull<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum + num_traits::NumCast,
+    U: DataType,
+    V: DataType,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
@@ -1466,7 +1482,7 @@ where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + Sized + Serialize + DeserializeOwned,
+    [T; D]: Copy + Sized,
 {
     fn default() -> Self {
         Self {
@@ -1494,7 +1510,10 @@ mod tests {
     use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
     use crate::core::util::{derive_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::vertex;
+    use serde::Serialize;
+    use serde::de::DeserializeOwned;
     use std::error::Error;
+    use std::sync::atomic::Ordering;
     use std::thread;
 
     /// Helper function to extract vertices from a facet handle.
@@ -1520,36 +1539,135 @@ mod tests {
             .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })
     }
 
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
-    #[test]
-    fn test_hull_basic_operations_2d_through_5d() {
-        println!("Testing hull creation and basic operations in dimensions 2D-5D");
+    /// Macro to generate dimension-specific convex hull tests.
+    ///
+    /// This macro reduces test duplication by generating consistent tests across
+    /// multiple dimensions. It creates tests for:
+    /// - Basic hull operations (`facet_count`, `dimension`, `validate`, `is_empty`)
+    /// - Facet access methods
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// test_hull_dimensions! {
+    ///     hull_2d => 2 => "triangle" => 3 => vec![vertex!([0.0, 0.0]), ...],
+    /// }
+    /// ```
+    macro_rules! test_hull_dimensions {
+        ($(
+            $test_name:ident => $dim:expr => $desc:expr => $expected_facets:expr => $vertices:expr
+        ),+ $(,)?) => {
+            $(
+                #[test]
+                fn $test_name() {
+                    let vertices = $vertices;
+                    let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                    let hull: ConvexHull<f64, Option<()>, Option<()>, $dim> =
+                        ConvexHull::from_triangulation(&tds).unwrap();
 
-        // Test 2D hull creation and properties
-        println!("  Testing 2D hull operations...");
-        let vertices_2d = vec![
+                    assert_eq!(
+                        hull.facet_count(),
+                        $expected_facets,
+                        "{}D hull ({}) should have {} facets",
+                        $dim,
+                        $desc,
+                        $expected_facets
+                    );
+                    assert_eq!(
+                        hull.dimension(),
+                        $dim,
+                        "{}D hull should have dimension {}",
+                        $dim,
+                        $dim
+                    );
+                    assert!(
+                        hull.validate(&tds).is_ok(),
+                        "{}D hull validation should succeed",
+                        $dim
+                    );
+                    assert!(!hull.is_empty(), "{}D hull should not be empty", $dim);
+                }
+
+                pastey::paste! {
+                    #[test]
+                    fn [<$test_name _facet_access>]() {
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let hull: ConvexHull<f64, Option<()>, Option<()>, $dim> =
+                            ConvexHull::from_triangulation(&tds).unwrap();
+
+                        // Test facet iterator
+                        assert_eq!(
+                            hull.facets().count(),
+                            $expected_facets,
+                            "{}D facets iterator should return {} facets",
+                            $dim,
+                            $expected_facets
+                        );
+
+                        // Test get_facet access
+                        assert!(
+                            hull.get_facet(0).is_some(),
+                            "{}D hull should be able to get facet 0",
+                            $dim
+                        );
+                        assert!(
+                            hull.get_facet($expected_facets).is_none(),
+                            "{}D hull out of range facet index should return None",
+                            $dim
+                        );
+                    }
+                }
+            )+
+        };
+    }
+
+    // Generate tests for dimensions 1D through 6D
+    test_hull_dimensions! {
+        hull_1d_segment => 1 => "line segment" => 2 => vec![
+            vertex!([0.0]),
+            vertex!([1.0]),
+        ],
+        hull_2d_triangle => 2 => "triangle" => 3 => vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
-        ];
-        let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
-        let hull_2d: ConvexHull2D<f64, Option<()>, Option<()>> =
-            ConvexHull::from_triangulation(&tds_2d).unwrap();
+        ],
+        hull_3d_tetrahedron => 3 => "tetrahedron" => 4 => vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.5, 1.0, 0.0]),
+            vertex!([0.5, 0.5, 1.0]),
+        ],
+        hull_4d_simplex => 4 => "4-simplex" => 5 => vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+        ],
+        hull_5d_simplex => 5 => "5-simplex" => 6 => vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+        ],
+        hull_6d_simplex => 6 => "6-simplex" => 7 => vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        ],
+    }
 
-        assert_eq!(
-            hull_2d.facet_count(),
-            3,
-            "2D hull (triangle) should have 3 facets (edges)"
-        );
-        assert_eq!(hull_2d.dimension(), 2, "2D hull should have dimension 2");
-        assert!(
-            hull_2d.validate(&tds_2d).is_ok(),
-            "2D hull validation should succeed"
-        );
-        assert!(!hull_2d.is_empty(), "2D hull should not be empty");
-
-        // Test 3D hull creation and properties
-        println!("  Testing 3D hull operations...");
+    #[test]
+    fn test_empty_hull_comprehensive() {
+        // Create a TDS for validation purposes
         let vertices_3d = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -1557,91 +1675,11 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
-        let hull_3d: ConvexHull3D<f64, Option<()>, Option<()>> =
-            ConvexHull::from_triangulation(&tds_3d).unwrap();
-
-        assert_eq!(
-            hull_3d.facet_count(),
-            4,
-            "3D hull (tetrahedron) should have 4 facets"
-        );
-        assert_eq!(hull_3d.dimension(), 3, "3D hull should have dimension 3");
-        assert!(
-            hull_3d.validate(&tds_3d).is_ok(),
-            "3D hull validation should succeed"
-        );
-        assert!(!hull_3d.is_empty(), "3D hull should not be empty");
-
-        // Test facet access methods on 3D hull
-        assert_eq!(
-            hull_3d.facets().count(),
-            4,
-            "Facets iterator should return 4 facets"
-        );
-        assert!(
-            hull_3d.get_facet(0).is_some(),
-            "Should be able to get facet 0"
-        );
-        assert!(
-            hull_3d.get_facet(4).is_none(),
-            "Out of range facet index should return None"
-        );
-
-        // Test 4D hull creation and properties
-        println!("  Testing 4D hull operations...");
-        let vertices_4d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
-        ];
-        let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
-        let hull_4d: ConvexHull4D<f64, Option<()>, Option<()>> =
-            ConvexHull::from_triangulation(&tds_4d).unwrap();
-
-        assert_eq!(
-            hull_4d.facet_count(),
-            5,
-            "4D hull (4-simplex) should have 5 facets"
-        );
-        assert_eq!(hull_4d.dimension(), 4, "4D hull should have dimension 4");
-        assert!(
-            hull_4d.validate(&tds_4d).is_ok(),
-            "4D hull validation should succeed"
-        );
-        assert!(!hull_4d.is_empty(), "4D hull should not be empty");
-
-        // Test 5D hull creation and properties
-        println!("  Testing 5D hull operations...");
-        let vertices_5d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
-        ];
-        let tds_5d: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices_5d).unwrap();
-        let hull_5d: ConvexHull<f64, Option<()>, Option<()>, 5> =
-            ConvexHull::from_triangulation(&tds_5d).unwrap();
-
-        assert_eq!(
-            hull_5d.facet_count(),
-            6,
-            "5D hull (5-simplex) should have 6 facets"
-        );
-        assert_eq!(hull_5d.dimension(), 5, "5D hull should have dimension 5");
-        assert!(
-            hull_5d.validate(&tds_5d).is_ok(),
-            "5D hull validation should succeed"
-        );
-        assert!(!hull_5d.is_empty(), "5D hull should not be empty");
 
         // Test empty hull (default constructor)
-        println!("  Testing empty hull operations...");
         let empty_hull: ConvexHull3D<f64, Option<()>, Option<()>> = ConvexHull::default();
 
+        // Basic empty hull properties
         assert_eq!(
             empty_hull.facet_count(),
             0,
@@ -1670,15 +1708,36 @@ mod tests {
             "Empty hull's facets iterator should be empty"
         );
 
-        println!("  ✓ All dimensional hull operations tested successfully");
+        // Test cache behavior on empty hull
+        let empty_cache = empty_hull.facet_cache().load();
+        assert!(
+            empty_cache.is_none(),
+            "Empty hull should have no cache initially"
+        );
+
+        let empty_generation = empty_hull.cached_generation().load(Ordering::Acquire);
+        assert_eq!(empty_generation, 0, "Empty hull should have generation 0");
+
+        // Test invalidation on empty hull
+        empty_hull.invalidate_cache();
+        let invalidated_generation = empty_hull.cached_generation().load(Ordering::Acquire);
+        assert_eq!(
+            invalidated_generation, 0,
+            "Empty hull generation should remain 0 after invalidation"
+        );
     }
 
-    #[allow(clippy::too_many_lines)]
+    /// Comprehensive test for visibility algorithms covering all dimensions and edge cases
+    /// Consolidates: `test_visibility_algorithms_comprehensive`, `test_visibility_edge_cases`,
+    /// `test_visibility_algorithm_coverage`, `test_edge_case_distance_calculations`
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     #[test]
     fn test_visibility_algorithms_comprehensive() {
         println!("Testing comprehensive visibility algorithms in dimensions 2D-5D");
 
-        // Test 2D visibility (point-in-polygon and visible facets)
+        // ========================================================================
+        // Test 1: 2D visibility (point-in-polygon and visible facets)
+        // ========================================================================
         println!("  Testing 2D visibility algorithms...");
         let vertices_2d = vec![
             vertex!([0.0, 0.0]),
@@ -1721,7 +1780,9 @@ mod tests {
             "2D outside point should see some facets"
         );
 
-        // Test 3D visibility (comprehensive testing)
+        // ========================================================================
+        // Test 2: 3D visibility (comprehensive testing)
+        // ========================================================================
         println!("  Testing 3D visibility algorithms...");
         let vertices_3d = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -1782,7 +1843,102 @@ mod tests {
             "Outside point should have a nearest visible facet"
         );
 
-        // Test 4D visibility
+        // Test find_visible_facets with far outside point (multiple visible facets)
+        let far_outside_point = Point::new([10.0, 10.0, 10.0]);
+        let visible_facets = hull_3d
+            .find_visible_facets(&far_outside_point, &tds_3d)
+            .unwrap();
+        assert!(
+            !visible_facets.is_empty(),
+            "Far outside point should see multiple facets"
+        );
+
+        // Verify all returned indices are valid
+        for &index in &visible_facets {
+            assert!(
+                index < hull_3d.facet_count(),
+                "Visible facet index should be valid"
+            );
+            assert!(hull_3d.get_facet(index).is_some());
+        }
+
+        // Test individual facet visibility for each facet
+        for (i, facet) in hull_3d.facets().enumerate() {
+            let visibility_result =
+                hull_3d.is_facet_visible_from_point(facet, &far_outside_point, &tds_3d);
+            assert!(
+                visibility_result.is_ok(),
+                "Facet {i} visibility test should succeed"
+            );
+        }
+
+        // ========================================================================
+        // Test 3: Edge cases with boundary and near-boundary points
+        // ========================================================================
+        println!("  Testing visibility edge cases...");
+        let boundary_points = [
+            Point::new([0.5, 0.5, 0.0]), // On a face
+            Point::new([0.3, 0.3, 0.3]), // Near centroid
+            Point::new([0.0, 0.0, 0.0]), // At a vertex
+            Point::new([0.5, 0.0, 0.0]), // On an edge
+        ];
+
+        for (i, point) in boundary_points.iter().enumerate() {
+            let result = hull_3d.is_point_outside(point, &tds_3d);
+            assert!(
+                result.is_ok(),
+                "Boundary point {i} visibility test should not error"
+            );
+        }
+
+        // Test with points very close to the hull
+        let close_points = vec![
+            Point::new([1e-10, 1e-10, 1e-10]),
+            Point::new([0.999_999, 0.0, 0.0]),
+            Point::new([0.0, 0.999_999, 0.0]),
+            Point::new([0.0, 0.0, 0.999_999]),
+        ];
+
+        for point in close_points {
+            let result = hull_3d.is_point_outside(&point, &tds_3d);
+            assert!(
+                result.is_ok(),
+                "Close point visibility test should not error"
+            );
+        }
+
+        // ========================================================================
+        // Test 4: Distance calculations with edge cases
+        // ========================================================================
+        println!("  Testing edge case distance calculations...");
+
+        // Test find_nearest_visible_facet with equidistant points
+        let equidistant_point = Point::new([0.5, 0.5, 0.5]);
+        let result = hull_3d.find_nearest_visible_facet(&equidistant_point, &tds_3d);
+        assert!(
+            result.is_ok(),
+            "Distance calculation with equal distances should succeed"
+        );
+
+        // Test with very large coordinates that might cause overflow
+        let large_point = Point::new([1e15, 1e15, 1e15]);
+        let result = hull_3d.find_nearest_visible_facet(&large_point, &tds_3d);
+        assert!(
+            result.is_ok(),
+            "Distance calculation with large coordinates should succeed"
+        );
+
+        // Test with very small coordinates that might cause underflow
+        let small_point = Point::new([1e-15, 1e-15, 1e-15]);
+        let result = hull_3d.find_nearest_visible_facet(&small_point, &tds_3d);
+        assert!(
+            result.is_ok(),
+            "Distance calculation with small coordinates should succeed"
+        );
+
+        // ========================================================================
+        // Test 5: 4D visibility
+        // ========================================================================
         println!("  Testing 4D visibility algorithms...");
         let vertices_4d = vec![
             vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -1809,7 +1965,9 @@ mod tests {
             "4D outside point should be outside"
         );
 
-        // Test 5D visibility
+        // ========================================================================
+        // Test 6: 5D visibility
+        // ========================================================================
         println!("  Testing 5D visibility algorithms...");
         let vertices_5d = vec![
             vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
@@ -1837,22 +1995,6 @@ mod tests {
             "5D outside point should be outside"
         );
 
-        // Test edge cases with boundary points
-        println!("  Testing visibility edge cases...");
-        let boundary_points_3d = [
-            Point::new([0.5, 0.5, 0.0]), // On face
-            Point::new([0.0, 0.0, 0.0]), // At vertex
-            Point::new([0.5, 0.0, 0.0]), // On edge
-        ];
-
-        for (i, point) in boundary_points_3d.iter().enumerate() {
-            let result = hull_3d.is_point_outside(point, &tds_3d);
-            assert!(
-                result.is_ok(),
-                "Boundary point {i} visibility test should not error"
-            );
-        }
-
         println!("  ✓ Visibility algorithms tested comprehensively across all dimensions");
     }
 
@@ -1879,8 +2021,8 @@ mod tests {
         let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&tds).unwrap();
 
-        assert!(!hull.hull_facets.is_empty(), "Hull should have facets");
-        let test_facet_vertices = extract_facet_vertices(&hull.hull_facets[0], &tds).unwrap();
+        assert!(hull.facet_count() > 0, "Hull should have facets");
+        let test_facet_vertices = extract_facet_vertices(hull.get_facet(0).unwrap(), &tds).unwrap();
 
         // Test with points at various distances to verify scale-adaptive threshold
         let distance_test_points = vec![
@@ -2129,15 +2271,28 @@ mod tests {
     }
 
     /// Comprehensive tests for the `ConvexHull` validate method covering all scenarios
+    /// Consolidates: `test_convex_hull_validation_comprehensive`, `test_validate_method_comprehensive`,
+    /// `test_validate_method_various_dimensions`
     #[test]
     #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     fn test_convex_hull_validation_comprehensive() {
         println!("Testing ConvexHull validation comprehensively");
 
         // ========================================================================
-        // Test 1: Valid hulls in different dimensions (2D-5D minimum coverage)
+        // Test 1: Valid hulls in different dimensions (1D-5D comprehensive coverage)
         // ========================================================================
         println!("  Testing valid hull validation in different dimensions...");
+
+        // Test 1D hull (empty hull validation)
+        let dummy_vertices_1d = vec![vertex!([0.0]), vertex!([1.0])];
+        let dummy_tds_1d: Tds<f64, Option<()>, Option<()>, 1> =
+            Tds::new(&dummy_vertices_1d).unwrap();
+        let hull_1d: ConvexHull<f64, Option<()>, Option<()>, 1> = ConvexHull::default();
+        assert!(
+            hull_1d.validate(&dummy_tds_1d).is_ok(),
+            "1D empty hull should validate"
+        );
+        println!("    1D empty hull validated");
 
         // Test 2D hull
         let vertices_2d = vec![
@@ -2265,11 +2420,11 @@ mod tests {
             "5D empty hull should validate successfully"
         );
 
-        println!("  ✓ Empty hull validation passed for dimensions 2D-5D");
+        println!("  ✓ Empty hull validation passed for dimensions 1D-5D");
         println!("  ✓ Valid hull validation passed for all tested dimensions");
 
         // ========================================================================
-        // Test 3: Validation with different data types
+        // Test 2: Validation with different data types
         // ========================================================================
         println!("  Testing validation with different data types...");
 
@@ -2567,12 +2722,27 @@ mod tests {
     }
 
     #[test]
-    fn test_hull_with_different_coordinate_types() {
-        // Note: f32 coordinate type has complex trait bounds that would require
-        // extensive changes to support. For now, we focus on f64 which is the
-        // primary supported coordinate type.
+    fn test_generic_types_comprehensive() {
+        // Test coordinate type validation with f64
+        let vertices_f64 = vec![
+            vertex!([0.0f64, 0.0f64, 0.0f64]),
+            vertex!([1.0f64, 0.0f64, 0.0f64]),
+            vertex!([0.0f64, 1.0f64, 0.0f64]),
+            vertex!([0.0f64, 0.0f64, 1.0f64]),
+        ];
+        let tds_f64: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_f64).unwrap();
+        let hull_f64: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds_f64).unwrap();
 
-        // Test with different data precision approaches using f64
+        assert_eq!(hull_f64.facet_count(), 4);
+        assert!(!hull_f64.is_empty());
+
+        // Test point operations with f64
+        let test_point_f64 = Point::new([2.0f64, 2.0f64, 2.0f64]);
+        let result = hull_f64.is_point_outside(&test_point_f64, &tds_f64);
+        assert!(result.is_ok());
+
+        // Test with high precision f64 coordinates
         let vertices_high_precision = vec![
             vertex!([0.000_000_000_000_001, 0.0, 0.0]),
             vertex!([1.000_000_000_000_001, 0.0, 0.0]),
@@ -2588,12 +2758,6 @@ mod tests {
         assert_eq!(hull_hp.dimension(), 3);
         assert!(hull_hp.validate(&tds_hp).is_ok());
         assert!(!hull_hp.is_empty());
-    }
-
-    #[test]
-    fn test_hull_with_different_data_types() {
-        // Note: String data type doesn't implement Copy, so it can't be used with DataType.
-        // We test with Copy-able data types that satisfy the DataType trait bounds.
 
         // Test with integer vertex data
         let vertices_int = vec![
@@ -2624,6 +2788,21 @@ mod tests {
         assert_eq!(hull_char.facet_count(), 4);
         assert_eq!(hull_char.dimension(), 3);
         assert!(hull_char.validate(&tds_char).is_ok());
+
+        // Test with Option<i32> vertex data
+        let vertices_with_data = vec![
+            vertex!([0.0, 0.0, 0.0], Some(1)),
+            vertex!([1.0, 0.0, 0.0], Some(2)),
+            vertex!([0.0, 1.0, 0.0], Some(3)),
+            vertex!([0.0, 0.0, 1.0], Some(4)),
+        ];
+        let tds_with_data: Tds<f64, Option<i32>, Option<()>, 3> =
+            Tds::new(&vertices_with_data).unwrap();
+        let hull_with_data: ConvexHull<f64, Option<i32>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds_with_data).unwrap();
+
+        assert_eq!(hull_with_data.facet_count(), 4);
+        assert!(hull_with_data.validate(&tds_with_data).is_ok());
     }
 
     #[test]
@@ -2673,56 +2852,7 @@ mod tests {
     }
 
     #[test]
-    fn test_1d_convex_hull() {
-        // Test 1D case (line segment)
-        let vertices_1d = vec![vertex!([0.0]), vertex!([1.0])];
-        let tds_1d: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices_1d).unwrap();
-        let hull_1d: ConvexHull<f64, Option<()>, Option<()>, 1> =
-            ConvexHull::from_triangulation(&tds_1d).unwrap();
-
-        assert_eq!(hull_1d.dimension(), 1);
-        assert!(hull_1d.validate(&tds_1d).is_ok());
-        assert!(!hull_1d.is_empty());
-
-        // Test point outside detection in 1D
-        let inside_1d = Point::new([0.5]);
-        let outside_1d = Point::new([2.0]);
-
-        // Note: 1D visibility might behave differently, so we just test that it doesn't crash
-        let _ = hull_1d.is_point_outside(&inside_1d, &tds_1d);
-        let _ = hull_1d.is_point_outside(&outside_1d, &tds_1d);
-    }
-
-    #[test]
-    fn test_high_dimensional_hulls() {
-        // Test 6D hull
-        let vertices_6d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
-        ];
-        let tds_6d: Tds<f64, Option<()>, Option<()>, 6> = Tds::new(&vertices_6d).unwrap();
-        let hull_6d: ConvexHull<f64, Option<()>, Option<()>, 6> =
-            ConvexHull::from_triangulation(&tds_6d).unwrap();
-
-        assert_eq!(hull_6d.dimension(), 6);
-        assert!(hull_6d.validate(&tds_6d).is_ok());
-        assert!(!hull_6d.is_empty());
-
-        // Test visibility in 6D
-        let inside_6d = Point::new([0.1, 0.1, 0.1, 0.1, 0.1, 0.1]);
-        let outside_6d = Point::new([2.0, 2.0, 2.0, 2.0, 2.0, 2.0]);
-
-        assert!(!hull_6d.is_point_outside(&inside_6d, &tds_6d).unwrap());
-        assert!(hull_6d.is_point_outside(&outside_6d, &tds_6d).unwrap());
-    }
-
-    #[test]
-    fn test_hull_clone_and_debug() {
+    fn test_trait_implementations_comprehensive() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2733,19 +2863,22 @@ mod tests {
         let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&tds).unwrap();
 
-        // Test Debug trait
+        // Test Debug trait on hull
         let debug_string = format!("{hull:?}");
         assert!(
             debug_string.contains("ConvexHull"),
             "Debug output should contain ConvexHull"
         );
         assert!(!debug_string.is_empty(), "Debug output should not be empty");
-    }
 
-    #[test]
-    fn test_default_implementation() {
+        // Test Debug trait on error types
+        let error = ConvexHullConstructionError::InsufficientData {
+            message: "test".to_string(),
+        };
+        let debug_error = format!("{error:?}");
+        assert!(debug_error.contains("InsufficientData"));
+
         // Test Default trait for various dimensions
-        // Create dummy TDS instances for validation
         let dummy_vertices_2d = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -2753,27 +2886,17 @@ mod tests {
         ];
         let dummy_tds_2d: Tds<f64, Option<()>, Option<()>, 2> =
             Tds::new(&dummy_vertices_2d).unwrap();
-
         let hull_2d: ConvexHull<f64, Option<()>, Option<()>, 2> = ConvexHull::default();
         assert!(hull_2d.is_empty());
         assert_eq!(hull_2d.facet_count(), 0);
         assert_eq!(hull_2d.dimension(), 2);
         assert!(hull_2d.validate(&dummy_tds_2d).is_ok());
 
-        let dummy_vertices_3d = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let dummy_tds_3d: Tds<f64, Option<()>, Option<()>, 3> =
-            Tds::new(&dummy_vertices_3d).unwrap();
-
-        let hull_3d: ConvexHull<f64, Option<()>, Option<()>, 3> = ConvexHull::default();
-        assert!(hull_3d.is_empty());
-        assert_eq!(hull_3d.facet_count(), 0);
-        assert_eq!(hull_3d.dimension(), 3);
-        assert!(hull_3d.validate(&dummy_tds_3d).is_ok());
+        let hull_3d_default: ConvexHull<f64, Option<()>, Option<()>, 3> = ConvexHull::default();
+        assert!(hull_3d_default.is_empty());
+        assert_eq!(hull_3d_default.facet_count(), 0);
+        assert_eq!(hull_3d_default.dimension(), 3);
+        assert!(hull_3d_default.validate(&tds).is_ok());
 
         let dummy_vertices_4d = vec![
             vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -2784,7 +2907,6 @@ mod tests {
         ];
         let dummy_tds_4d: Tds<f64, Option<()>, Option<()>, 4> =
             Tds::new(&dummy_vertices_4d).unwrap();
-
         let hull_4d: ConvexHull<f64, Option<()>, Option<()>, 4> = ConvexHull::default();
         assert!(hull_4d.is_empty());
         assert_eq!(hull_4d.facet_count(), 0);
@@ -2983,28 +3105,6 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_method_comprehensive() {
-        // Test validation on valid hull
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-            ConvexHull::from_triangulation(&tds).unwrap();
-
-        let result = hull.validate(&tds);
-        assert!(result.is_ok());
-
-        // Test validation on empty hull
-        let empty_hull: ConvexHull<f64, Option<()>, Option<()>, 3> = ConvexHull::default();
-        let result = empty_hull.validate(&tds);
-        assert!(result.is_ok());
-    }
-
-    #[test]
     fn test_hull_operations_extended() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -3077,49 +3177,6 @@ mod tests {
     }
 
     #[test]
-    fn test_hull_coordinate_type_validation() {
-        // Test that the hull works with f64 (already tested elsewhere)
-        // and verify constraints exist for other types like f32
-
-        // f64 should work (already proven in other tests)
-        let vertices_f64 = vec![
-            vertex!([0.0f64, 0.0f64, 0.0f64]),
-            vertex!([1.0f64, 0.0f64, 0.0f64]),
-            vertex!([0.0f64, 1.0f64, 0.0f64]),
-            vertex!([0.0f64, 0.0f64, 1.0f64]),
-        ];
-        let tds_f64: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_f64).unwrap();
-        let hull_f64: ConvexHull<f64, Option<()>, Option<()>, 3> =
-            ConvexHull::from_triangulation(&tds_f64).unwrap();
-
-        assert_eq!(hull_f64.facet_count(), 4);
-        assert!(!hull_f64.is_empty());
-
-        // Test point operations with f64
-        let test_point_f64 = Point::new([2.0f64, 2.0f64, 2.0f64]);
-        let result = hull_f64.is_point_outside(&test_point_f64, &tds_f64);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_hull_with_various_data_types() {
-        // Test with different vertex data types
-        let vertices_with_data = vec![
-            vertex!([0.0, 0.0, 0.0], Some(1)),
-            vertex!([1.0, 0.0, 0.0], Some(2)),
-            vertex!([0.0, 1.0, 0.0], Some(3)),
-            vertex!([0.0, 0.0, 1.0], Some(4)),
-        ];
-        let tds_with_data: Tds<f64, Option<i32>, Option<()>, 3> =
-            Tds::new(&vertices_with_data).unwrap();
-        let hull_with_data: ConvexHull<f64, Option<i32>, Option<()>, 3> =
-            ConvexHull::from_triangulation(&tds_with_data).unwrap();
-
-        assert_eq!(hull_with_data.facet_count(), 4);
-        assert!(hull_with_data.validate(&tds_with_data).is_ok());
-    }
-
-    #[test]
     fn test_error_types_display_formatting() {
         // Test ConvexHullValidationError display
         let validation_error = ConvexHullValidationError::InvalidFacet {
@@ -3155,150 +3212,6 @@ mod tests {
         );
         let display = format!("{coord_error}");
         assert!(display.contains("Coordinate conversion error"));
-    }
-
-    #[test]
-    fn test_1d_convex_hull_extended() {
-        // Test 1D convex hull (edge case)
-        let vertices_1d = vec![vertex!([0.0]), vertex!([1.0])];
-        let tds_1d: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices_1d).unwrap();
-        let hull_1d: ConvexHull<f64, Option<()>, Option<()>, 1> =
-            ConvexHull::from_triangulation(&tds_1d).unwrap();
-
-        assert_eq!(hull_1d.dimension(), 1);
-        assert_eq!(hull_1d.facet_count(), 2); // Two endpoints
-
-        // Test operations on 1D hull
-        let test_point_1d = Point::new([2.0]);
-        let result = hull_1d.is_point_outside(&test_point_1d, &tds_1d);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_high_dimensional_hulls_extended() {
-        // Test 5D convex hull (higher dimensional case)
-        let vertices_5d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
-        ];
-        let tds_5d: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices_5d).unwrap();
-        let hull_5d: ConvexHull<f64, Option<()>, Option<()>, 5> =
-            ConvexHull::from_triangulation(&tds_5d).unwrap();
-
-        assert_eq!(hull_5d.dimension(), 5);
-        assert!(hull_5d.facet_count() > 0);
-
-        // Test basic operations
-        assert!(hull_5d.validate(&tds_5d).is_ok());
-        assert!(!hull_5d.is_empty());
-
-        // Test visibility with a 5D point
-        let test_point_5d = Point::new([2.0, 2.0, 2.0, 2.0, 2.0]);
-        let result = hull_5d.find_visible_facets(&test_point_5d, &tds_5d);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_clone_and_debug_traits() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-            ConvexHull::from_triangulation(&tds).unwrap();
-
-        // Test Debug trait
-        let debug_str = format!("{hull:?}");
-        assert!(debug_str.contains("ConvexHull"));
-
-        // Test that error types implement Debug
-        let error = ConvexHullConstructionError::InsufficientData {
-            message: "test".to_string(),
-        };
-        let debug_error = format!("{error:?}");
-        assert!(debug_error.contains("InsufficientData"));
-    }
-
-    #[test]
-    fn test_visibility_edge_cases() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-            ConvexHull::from_triangulation(&tds).unwrap();
-
-        // Test visibility with points on the boundary/surface
-        let boundary_points = vec![
-            Point::new([0.5, 0.5, 0.0]), // On a face
-            Point::new([0.3, 0.3, 0.3]), // Near centroid
-            Point::new([0.0, 0.0, 0.0]), // At a vertex
-            Point::new([0.5, 0.0, 0.0]), // On an edge
-        ];
-
-        for point in boundary_points {
-            // These might be visible or not depending on numerical precision
-            // The important thing is that the method doesn't crash
-            let result = hull.is_point_outside(&point, &tds);
-            assert!(
-                result.is_ok(),
-                "Boundary point visibility test should not error"
-            );
-        }
-
-        // Test with points very close to the hull
-        let close_points = vec![
-            Point::new([1e-10, 1e-10, 1e-10]),
-            Point::new([0.999_999, 0.0, 0.0]),
-            Point::new([0.0, 0.999_999, 0.0]),
-            Point::new([0.0, 0.0, 0.999_999]),
-        ];
-
-        for point in close_points {
-            let result = hull.is_point_outside(&point, &tds);
-            assert!(
-                result.is_ok(),
-                "Close point visibility test should not error"
-            );
-        }
-    }
-
-    #[test]
-    fn test_empty_hull_operations() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-            ConvexHull::from_triangulation(&tds).unwrap();
-
-        // Verify non-empty state
-        assert!(!hull.is_empty());
-        assert!(hull.facet_count() > 0);
-        assert!(hull.get_facet(0).is_some());
-        assert!(hull.validate(&tds).is_ok());
-
-        // Test empty hull using default constructor
-        let empty_hull: ConvexHull<f64, Option<()>, Option<()>, 3> = ConvexHull::default();
-        assert!(empty_hull.is_empty());
-        assert_eq!(empty_hull.facet_count(), 0);
-        assert!(empty_hull.get_facet(0).is_none());
-        assert_eq!(empty_hull.facets().count(), 0);
-        assert!(empty_hull.validate(&tds).is_ok());
-        assert_eq!(empty_hull.dimension(), 3); // Dimension is compile-time constant
     }
 
     #[test]
@@ -3398,54 +3311,6 @@ mod tests {
     }
 
     #[test]
-    fn test_visibility_algorithm_coverage() {
-        // This test specifically tries to hit different code paths in visibility testing
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-            ConvexHull::from_triangulation(&tds).unwrap();
-
-        // Test find_visible_facets with multiple visible facets
-        let far_outside_point = Point::new([10.0, 10.0, 10.0]);
-        let visible_facets = hull.find_visible_facets(&far_outside_point, &tds).unwrap();
-
-        // A point far outside should see multiple facets
-        assert!(!visible_facets.is_empty());
-
-        // Verify all returned indices are valid
-        for &index in &visible_facets {
-            assert!(
-                index < hull.facet_count(),
-                "Visible facet index should be valid"
-            );
-            assert!(hull.get_facet(index).is_some());
-        }
-
-        // Test find_visible_facets with no visible facets
-        let inside_point = Point::new([0.1, 0.1, 0.1]);
-        let visible_facets = hull.find_visible_facets(&inside_point, &tds).unwrap();
-        assert!(
-            visible_facets.is_empty(),
-            "Inside point should see no facets"
-        );
-
-        // Test individual facet visibility for each facet
-        for (i, facet) in hull.facets().enumerate() {
-            let visibility_result =
-                hull.is_facet_visible_from_point(facet, &far_outside_point, &tds);
-            assert!(
-                visibility_result.is_ok(),
-                "Facet {i} visibility test should succeed"
-            );
-        }
-    }
-
-    #[test]
     fn test_error_handling_paths() {
         println!("Testing error handling paths in convex hull methods");
 
@@ -3486,50 +3351,6 @@ mod tests {
     }
 
     #[test]
-    fn test_edge_case_distance_calculations() {
-        println!("Testing edge case distance calculations");
-
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-            ConvexHull::from_triangulation(&tds).unwrap();
-
-        // Test find_nearest_visible_facet with equal distances
-        // Create points that are equidistant from multiple facets
-        let equidistant_point = Point::new([0.5, 0.5, 0.5]);
-
-        // This should exercise the is_none_or method in the distance comparison
-        let result = hull.find_nearest_visible_facet(&equidistant_point, &tds);
-        assert!(
-            result.is_ok(),
-            "Distance calculation with equal distances should succeed"
-        );
-
-        // Test with very large coordinates that might cause overflow
-        let large_point = Point::new([1e15, 1e15, 1e15]);
-        let result = hull.find_nearest_visible_facet(&large_point, &tds);
-        assert!(
-            result.is_ok(),
-            "Distance calculation with large coordinates should succeed"
-        );
-
-        // Test with very small coordinates that might cause underflow
-        let small_point = Point::new([1e-15, 1e-15, 1e-15]);
-        let result = hull.find_nearest_visible_facet(&small_point, &tds);
-        assert!(
-            result.is_ok(),
-            "Distance calculation with small coordinates should succeed"
-        );
-
-        println!("✓ Edge case distance calculations tested successfully");
-    }
-
-    #[test]
     fn test_degenerate_orientation_fallback() {
         println!("Testing degenerate orientation fallback behavior");
 
@@ -3567,77 +3388,6 @@ mod tests {
         }
 
         println!("✓ Degenerate orientation fallback tested successfully");
-    }
-
-    #[test]
-    fn test_validate_method_various_dimensions() {
-        println!("Testing validate method comprehensively");
-
-        // Test with different dimensional hulls - create dummy TDS instances
-        let dummy_vertices_1d = vec![vertex!([0.0]), vertex!([1.0])];
-        let dummy_tds_1d: Tds<f64, Option<()>, Option<()>, 1> =
-            Tds::new(&dummy_vertices_1d).unwrap();
-        let hull_1d: ConvexHull<f64, Option<()>, Option<()>, 1> = ConvexHull::default();
-        assert!(
-            hull_1d.validate(&dummy_tds_1d).is_ok(),
-            "1D empty hull should validate"
-        );
-
-        let dummy_vertices_2d_val = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
-        let dummy_tds_2d_val: Tds<f64, Option<()>, Option<()>, 2> =
-            Tds::new(&dummy_vertices_2d_val).unwrap();
-        let hull_2d: ConvexHull<f64, Option<()>, Option<()>, 2> = ConvexHull::default();
-        assert!(
-            hull_2d.validate(&dummy_tds_2d_val).is_ok(),
-            "2D empty hull should validate"
-        );
-
-        let dummy_vertices_5d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
-        ];
-        let dummy_tds_5d: Tds<f64, Option<()>, Option<()>, 5> =
-            Tds::new(&dummy_vertices_5d).unwrap();
-        let hull_5d: ConvexHull<f64, Option<()>, Option<()>, 5> = ConvexHull::default();
-        assert!(
-            hull_5d.validate(&dummy_tds_5d).is_ok(),
-            "5D empty hull should validate"
-        );
-
-        // Test with populated hull
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
-        let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-        let hull_2d: ConvexHull<f64, Option<()>, Option<()>, 2> =
-            ConvexHull::from_triangulation(&tds_2d).unwrap();
-
-        // This should validate successfully - each 2D facet should have 2 vertices
-        assert!(
-            hull_2d.validate(&tds_2d).is_ok(),
-            "2D hull should validate successfully"
-        );
-
-        // Verify facet count and vertex counts using FacetView
-        for (i, facet_handle) in hull_2d.hull_facets.iter().enumerate() {
-            let facet_view =
-                FacetView::new(&tds_2d, facet_handle.cell_key(), facet_handle.facet_index())
-                    .unwrap();
-            let vertex_count = facet_view.vertices().unwrap().count();
-            println!("  2D Facet {i}: {vertex_count} vertices (expected 2)");
-        }
-
-        println!("✓ Validate method tested comprehensively");
     }
 
     #[test]
@@ -3770,7 +3520,7 @@ mod tests {
 
         // Get initial generation values
         let initial_tds_generation = tds.generation();
-        let initial_hull_generation = hull.cached_generation.load(Ordering::Acquire);
+        let initial_hull_generation = hull.cached_generation().load(Ordering::Acquire);
 
         println!("  Initial TDS generation: {initial_tds_generation}");
         println!("  Initial hull cached generation: {initial_hull_generation}");
@@ -3787,7 +3537,7 @@ mod tests {
 
         // Test initial cache building - first visibility test should build the cache
         let test_point = Point::new([2.0, 2.0, 2.0]);
-        let facet = &hull.hull_facets[0];
+        let facet = hull.get_facet(0).unwrap();
 
         println!("  Performing initial visibility test to build cache...");
         let result1 = hull.is_facet_visible_from_point(facet, &test_point, &tds);
@@ -3795,7 +3545,7 @@ mod tests {
 
         // Cache should now be built, generations should still match
         let post_cache_tds_gen = tds.generation();
-        let post_cache_hull_gen = hull.cached_generation.load(Ordering::Acquire);
+        let post_cache_hull_gen = hull.cached_generation().load(Ordering::Acquire);
 
         println!(
             "  After cache build - TDS gen: {post_cache_tds_gen}, Hull gen: {post_cache_hull_gen}"
@@ -3806,7 +3556,7 @@ mod tests {
         );
 
         // Verify cache was built
-        let cache_arc = hull.facet_to_cells_cache.load();
+        let cache_arc = hull.facet_cache().load();
         assert!(
             cache_arc.is_some(),
             "Cache should exist after first visibility test"
@@ -3824,7 +3574,7 @@ mod tests {
         // Test TDS modification by adding a new vertex
         println!("  Testing TDS modification and hull invalidation...");
         let old_generation = tds.generation();
-        let stale_hull_gen = hull.cached_generation.load(Ordering::Acquire);
+        let stale_hull_gen = hull.cached_generation().load(Ordering::Acquire);
 
         // Add a new vertex to the TDS - this will bump the generation
         let new_vertex = vertex!([0.5, 0.5, 0.5]); // Interior point
@@ -3864,7 +3614,7 @@ mod tests {
             new_hull.is_valid_for_tds(&tds),
             "New hull should be valid for modified TDS"
         );
-        let new_hull_gen = new_hull.cached_generation.load(Ordering::Acquire);
+        let new_hull_gen = new_hull.cached_generation().load(Ordering::Acquire);
         println!("    New hull generation: {new_hull_gen}");
         assert_eq!(
             new_hull_gen, modified_tds_gen,
@@ -3872,7 +3622,7 @@ mod tests {
         );
 
         // Get a fresh facet handle from the new hull
-        let new_facet = &new_hull.hull_facets[0];
+        let new_facet = new_hull.get_facet(0).unwrap();
 
         // Test visibility with the new hull and fresh facet handle
         println!("  Testing visibility with rebuilt hull...");
@@ -3883,7 +3633,7 @@ mod tests {
         );
 
         // Verify the cache was built for the new hull
-        let cache_arc = new_hull.facet_to_cells_cache.load();
+        let cache_arc = new_hull.facet_cache().load();
         assert!(
             cache_arc.is_some(),
             "Cache should exist after visibility test on new hull"
@@ -3895,20 +3645,20 @@ mod tests {
         println!("  Testing manual cache invalidation...");
 
         // Store current generation
-        let pre_invalidation_gen = new_hull.cached_generation.load(Ordering::Acquire);
+        let pre_invalidation_gen = new_hull.cached_generation().load(Ordering::Acquire);
 
         // Manually invalidate cache
         new_hull.invalidate_cache();
 
         // Check that cache was cleared
-        let post_invalidation_cache = new_hull.facet_to_cells_cache.load();
+        let post_invalidation_cache = new_hull.facet_cache().load();
         assert!(
             post_invalidation_cache.is_none(),
             "Cache should be None after manual invalidation"
         );
 
         // Check that generation was reset to 0
-        let post_invalidation_gen = new_hull.cached_generation.load(Ordering::Acquire);
+        let post_invalidation_gen = new_hull.cached_generation().load(Ordering::Acquire);
         assert_eq!(
             post_invalidation_gen, 0,
             "Generation should be reset to 0 after manual invalidation"
@@ -3925,14 +3675,14 @@ mod tests {
         );
 
         // Cache should be rebuilt
-        let rebuilt_cache = new_hull.facet_to_cells_cache.load();
+        let rebuilt_cache = new_hull.facet_cache().load();
         assert!(
             rebuilt_cache.is_some(),
             "Cache should be rebuilt after visibility test"
         );
 
         // Generation should be updated to current TDS generation
-        let final_hull_gen = new_hull.cached_generation.load(Ordering::Acquire);
+        let final_hull_gen = new_hull.cached_generation().load(Ordering::Acquire);
         let final_tds_gen = tds.generation();
         assert_eq!(
             final_hull_gen, final_tds_gen,
@@ -3993,9 +3743,8 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_get_or_build_facet_cache() {
-        println!("Testing get_or_build_facet_cache method");
+    fn test_try_get_or_build_facet_cache() {
+        println!("Testing try_get_or_build_facet_cache method");
 
         // Create a triangulation
         let vertices = vec![
@@ -4009,19 +3758,21 @@ mod tests {
             ConvexHull::from_triangulation(&tds).unwrap();
 
         // Initially, cache should be empty
-        let initial_cache = hull.facet_to_cells_cache.load();
+        let initial_cache = hull.facet_cache().load();
         assert!(initial_cache.is_none(), "Cache should be empty initially");
 
         // First call should build the cache
         println!("  Testing initial cache building...");
-        let cache1 = hull.get_or_build_facet_cache(&tds);
+        let cache1 = hull
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Failed to build cache");
         assert!(
             !cache1.is_empty(),
             "Cache should not be empty after building"
         );
 
         // Verify cache is now stored
-        let stored_cache = hull.facet_to_cells_cache.load();
+        let stored_cache = hull.facet_cache().load();
         assert!(
             stored_cache.is_some(),
             "Cache should be stored after building"
@@ -4029,7 +3780,9 @@ mod tests {
 
         // Second call with same generation should reuse cache
         println!("  Testing cache reuse with same generation...");
-        let cache2 = hull.get_or_build_facet_cache(&tds);
+        let cache2 = hull
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Failed to reuse cache");
         assert_eq!(
             cache1.len(),
             cache2.len(),
@@ -4065,7 +3818,9 @@ mod tests {
         );
 
         // Next call should rebuild cache due to generation change
-        let cache3 = hull.get_or_build_facet_cache(&tds);
+        let cache3 = hull
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Failed to rebuild cache");
 
         // The cache content might be different since we added a vertex
         // but it should be a valid cache
@@ -4079,7 +3834,7 @@ mod tests {
         );
 
         // Verify generation was updated
-        let updated_generation = hull.cached_generation.load(Ordering::Acquire);
+        let updated_generation = hull.cached_generation().load(Ordering::Acquire);
         assert_eq!(
             updated_generation, new_generation,
             "Hull generation should match TDS generation after rebuild"
@@ -4089,7 +3844,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_helper_methods_integration() {
         println!("Testing integration between helper methods");
 
@@ -4106,11 +3860,14 @@ mod tests {
 
         // Test that cache contains keys derivable by the key derivation method
         println!("  Testing cache-key derivation consistency...");
-        let cache = hull.get_or_build_facet_cache(&tds);
+        let cache = hull
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Failed to build cache");
 
         // For each facet in the hull, derive its key and check it exists in cache
         let mut keys_found = 0usize;
-        for (i, facet_handle) in hull.hull_facets.iter().enumerate() {
+        for i in 0..hull.facet_count() {
+            let facet_handle = hull.get_facet(i).unwrap();
             // Create FacetView to get vertices
             let facet_view =
                 FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index()).unwrap();
@@ -4144,7 +3901,7 @@ mod tests {
 
         println!(
             "  Found {keys_found}/{} hull facet keys in cache",
-            hull.hull_facets.len()
+            hull.facet_count()
         );
 
         // Cache should be non-empty (contains facets from the TDS)
@@ -4154,14 +3911,14 @@ mod tests {
         );
         assert_eq!(
             keys_found,
-            hull.hull_facets.len(),
+            hull.facet_count(),
             "Every hull facet key should be present in the cache"
         );
 
         // Test that helper methods work correctly together in visibility testing
         println!("  Testing helper methods in visibility context...");
         let test_point = Point::new([2.0, 2.0, 2.0]);
-        let test_facet = &hull.hull_facets[0];
+        let test_facet = hull.get_facet(0).unwrap();
 
         let visibility_result = hull.is_facet_visible_from_point(test_facet, &test_point, &tds);
         assert!(
@@ -4193,7 +3950,7 @@ mod tests {
             ConvexHull::from_triangulation(&tds).unwrap();
 
         // Test that normal cache building succeeds and returns the right error type
-        let test_facet = &hull.hull_facets[0];
+        let test_facet = hull.get_facet(0).unwrap();
         let test_point = Point::new([2.0, 2.0, 2.0]);
 
         // Call the method that should propagate TriangulationValidationError as FacetCacheBuildFailed
@@ -4261,7 +4018,7 @@ mod tests {
                 println!("  ✓ Found nearest facet at index: {facet_index}");
 
                 // Verify the facet is actually visible
-                let selected_facet = &hull.hull_facets[facet_index];
+                let selected_facet = hull.get_facet(facet_index).unwrap();
                 let is_visible =
                     hull.is_facet_visible_from_point(selected_facet, &equidistant_point, &tds);
                 assert!(
@@ -4450,11 +4207,11 @@ mod tests {
         );
 
         // Verify cache is stored
-        let stored_cache = hull.facet_to_cells_cache.load();
+        let stored_cache = hull.facet_cache().load();
         assert!(stored_cache.is_some(), "Cache should be stored");
 
         // Check initial generation
-        let initial_gen = hull.cached_generation.load(Ordering::Acquire);
+        let initial_gen = hull.cached_generation().load(Ordering::Acquire);
         let expected_gen = tds.generation();
         assert_eq!(
             initial_gen, expected_gen,
@@ -4466,14 +4223,14 @@ mod tests {
         hull.invalidate_cache();
 
         // Verify cache is cleared
-        let cleared_cache = hull.facet_to_cells_cache.load();
+        let cleared_cache = hull.facet_cache().load();
         assert!(
             cleared_cache.is_none(),
             "Cache should be cleared after invalidation"
         );
 
         // Verify generation is reset
-        let reset_gen = hull.cached_generation.load(Ordering::Acquire);
+        let reset_gen = hull.cached_generation().load(Ordering::Acquire);
         assert_eq!(
             reset_gen, 0,
             "Generation should be reset to 0 after invalidation"
@@ -4488,14 +4245,14 @@ mod tests {
         );
 
         // Verify cache is stored again
-        let restored_cache = hull.facet_to_cells_cache.load();
+        let restored_cache = hull.facet_cache().load();
         assert!(
             restored_cache.is_some(),
             "Cache should be restored after rebuild"
         );
 
         // Generation should be updated to TDS generation
-        let final_gen = hull.cached_generation.load(Ordering::Acquire);
+        let final_gen = hull.cached_generation().load(Ordering::Acquire);
         let tds_gen = tds.generation();
         assert_eq!(
             final_gen, tds_gen,
@@ -4538,7 +4295,7 @@ mod tests {
         println!("  Testing error types are properly propagated...");
 
         let test_point = Point::new([2.0, 2.0, 2.0]);
-        let test_facet = &hull.hull_facets[0];
+        let test_facet = hull.get_facet(0).unwrap();
 
         // Test is_facet_visible_from_point returns ConvexHullConstructionError
         let visibility_result = hull.is_facet_visible_from_point(test_facet, &test_point, &tds);
@@ -4605,7 +4362,7 @@ mod tests {
 
         // Test normal case to verify the error type is available
         let test_point = Point::new([2.0, 2.0, 2.0]);
-        let test_facet = &hull.hull_facets[0];
+        let test_facet = hull.get_facet(0).unwrap();
 
         // This should succeed in normal cases
         let visibility_result = hull.is_facet_visible_from_point(test_facet, &test_point, &tds);
@@ -5047,7 +4804,7 @@ mod tests {
         let normal_hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&normal_tds).unwrap();
         let test_facet_vertices =
-            extract_facet_vertices(&normal_hull.hull_facets[0], &normal_tds).unwrap();
+            extract_facet_vertices(normal_hull.get_facet(0).unwrap(), &normal_tds).unwrap();
 
         let extreme_points = [
             Point::new([1e-100, 1e-100, 1e-100]), // Extremely small
@@ -5098,7 +4855,7 @@ mod tests {
 
         println!("  Testing fallback with points at various distances...");
 
-        let facet_handle = &hull.hull_facets[0];
+        let facet_handle = hull.get_facet(0).unwrap();
         let facet_view =
             FacetView::new(&tds, facet_handle.cell_key(), facet_handle.facet_index()).unwrap();
         let test_facet_vertices = crate::core::util::facet_view_to_vertices(&facet_view).unwrap();
@@ -5188,9 +4945,11 @@ mod tests {
                     Ok(collinear_hull) => {
                         println!("    ✓ Near-collinear triangulation created successfully");
 
-                        let collinear_facet_vertices =
-                            extract_facet_vertices(&collinear_hull.hull_facets[0], &collinear_tds)
-                                .unwrap();
+                        let collinear_facet_vertices = extract_facet_vertices(
+                            collinear_hull.get_facet(0).unwrap(),
+                            &collinear_tds,
+                        )
+                        .unwrap();
                         let test_point = Point::new([1.5, 0.5, 0.5]);
 
                         let collinear_result =
@@ -5236,7 +4995,8 @@ mod tests {
                         println!("    ✓ Tiny area triangulation created successfully");
 
                         let tiny_facet_vertices =
-                            extract_facet_vertices(&tiny_hull.hull_facets[0], &tiny_tds).unwrap();
+                            extract_facet_vertices(tiny_hull.get_facet(0).unwrap(), &tiny_tds)
+                                .unwrap();
                         let test_point = Point::new([1e-3, 1e-3, 1e-3]);
 
                         let tiny_result =
@@ -5284,7 +5044,7 @@ mod tests {
         let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&tds).unwrap();
 
-        let test_facet_vertices = extract_facet_vertices(&hull.hull_facets[0], &tds).unwrap();
+        let test_facet_vertices = extract_facet_vertices(hull.get_facet(0).unwrap(), &tds).unwrap();
 
         println!("  Testing threshold behavior with systematic point placement...");
 
@@ -5387,7 +5147,8 @@ mod tests {
                 Ok(edge_tds) => match ConvexHull::from_triangulation(&edge_tds) {
                     Ok(edge_hull) => {
                         let edge_facet_vertices =
-                            extract_facet_vertices(&edge_hull.hull_facets[0], &edge_tds).unwrap();
+                            extract_facet_vertices(edge_hull.get_facet(0).unwrap(), &edge_tds)
+                                .unwrap();
                         let test_point = Point::new([5.0, 5.0, 5.0]);
 
                         let edge_result =
@@ -6053,7 +5814,7 @@ mod tests {
 
         // Record initial generation
         let initial_generation = tds.generation();
-        let initial_hull_generation = hull.cached_generation.load(Ordering::Acquire);
+        let initial_hull_generation = hull.cached_generation().load(Ordering::Acquire);
 
         println!("    Initial TDS generation: {initial_generation}");
         println!("    Initial hull generation: {initial_hull_generation}");
@@ -6066,7 +5827,7 @@ mod tests {
                 println!("    After modification {i}: TDS generation = {current_gen}");
 
                 // Test that hull detects staleness
-                let hull_gen = hull.cached_generation.load(Ordering::Acquire);
+                let hull_gen = hull.cached_generation().load(Ordering::Acquire);
                 if hull_gen > 0 && hull_gen < current_gen {
                     println!(
                         "      ✓ Hull generation ({hull_gen}) correctly behind TDS ({current_gen})"
@@ -6087,7 +5848,7 @@ mod tests {
         let visibility_result = hull.is_point_outside(&test_point, &tds);
         match visibility_result {
             Ok(is_outside) => {
-                let updated_hull_gen = hull.cached_generation.load(Ordering::Acquire);
+                let updated_hull_gen = hull.cached_generation().load(Ordering::Acquire);
                 println!("    After cache rebuild: hull generation = {updated_hull_gen}");
                 assert_eq!(
                     updated_hull_gen, final_generation,
@@ -6106,7 +5867,7 @@ mod tests {
 
         // Test manual invalidation
         hull.invalidate_cache();
-        let invalidated_gen = hull.cached_generation.load(Ordering::Acquire);
+        let invalidated_gen = hull.cached_generation().load(Ordering::Acquire);
         assert_eq!(
             invalidated_gen, 0,
             "Generation should be reset to 0 after manual invalidation"
@@ -6117,7 +5878,7 @@ mod tests {
         let rebuild_result = hull.is_point_outside(&test_point, &tds);
         match rebuild_result {
             Ok(_) => {
-                let rebuilt_gen = hull.cached_generation.load(Ordering::Acquire);
+                let rebuilt_gen = hull.cached_generation().load(Ordering::Acquire);
                 assert_eq!(
                     rebuilt_gen, final_generation,
                     "Generation should match TDS after rebuild from manual invalidation"
@@ -6161,13 +5922,13 @@ mod tests {
             hull.invalidate_cache();
 
             // Verify cache is cleared
-            let cache_after_invalidation = hull.facet_to_cells_cache.load();
+            let cache_after_invalidation = hull.facet_cache().load();
             assert!(
                 cache_after_invalidation.is_none(),
                 "Cache should be None after invalidation"
             );
 
-            let generation_after_invalidation = hull.cached_generation.load(Ordering::Acquire);
+            let generation_after_invalidation = hull.cached_generation().load(Ordering::Acquire);
             assert_eq!(
                 generation_after_invalidation, 0,
                 "Generation should be 0 after invalidation"
@@ -6180,14 +5941,14 @@ mod tests {
                     Ok(is_outside) => {
                         // After first operation, cache should be rebuilt
                         if i == 0 {
-                            let cache_after_rebuild = hull.facet_to_cells_cache.load();
+                            let cache_after_rebuild = hull.facet_cache().load();
                             assert!(
                                 cache_after_rebuild.is_some(),
                                 "Cache should exist after first operation"
                             );
 
                             let generation_after_rebuild =
-                                hull.cached_generation.load(Ordering::Acquire);
+                                hull.cached_generation().load(Ordering::Acquire);
                             assert!(
                                 generation_after_rebuild > 0,
                                 "Generation should be updated after rebuild"
@@ -6203,10 +5964,10 @@ mod tests {
             }
 
             // Verify cache remains consistent throughout the cycle
-            let final_cache = hull.facet_to_cells_cache.load();
+            let final_cache = hull.facet_cache().load();
             assert!(final_cache.is_some(), "Cache should exist at end of cycle");
 
-            let final_generation = hull.cached_generation.load(Ordering::Acquire);
+            let final_generation = hull.cached_generation().load(Ordering::Acquire);
             let tds_generation = tds.generation();
             assert_eq!(
                 final_generation, tds_generation,
@@ -6223,8 +5984,8 @@ mod tests {
         println!("  Testing cache reuse efficiency...");
 
         // Test that cache is reused when generation hasn't changed
-        let cache_before = hull.facet_to_cells_cache.load();
-        let generation_before = hull.cached_generation.load(Ordering::Acquire);
+        let cache_before = hull.facet_cache().load();
+        let generation_before = hull.cached_generation().load(Ordering::Acquire);
 
         // Perform multiple operations without TDS changes
         for i in 0..10 {
@@ -6233,8 +5994,8 @@ mod tests {
             assert!(result.is_ok(), "Visibility test {i} should succeed");
         }
 
-        let cache_after = hull.facet_to_cells_cache.load();
-        let generation_after = hull.cached_generation.load(Ordering::Acquire);
+        let cache_after = hull.facet_cache().load();
+        let generation_after = hull.cached_generation().load(Ordering::Acquire);
 
         // Cache should exist before and after operations
         assert!(
@@ -6268,102 +6029,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_behavior_with_empty_hull() {
-        println!("Testing cache behavior with empty and minimal hulls");
-
-        println!("  Testing empty hull cache behavior...");
-
-        let empty_hull: ConvexHull<f64, Option<()>, Option<()>, 3> = ConvexHull::default();
-
-        // Test cache operations on empty hull
-        let empty_cache = empty_hull.facet_to_cells_cache.load();
-        assert!(
-            empty_cache.is_none(),
-            "Empty hull should have no cache initially"
-        );
-
-        let empty_generation = empty_hull.cached_generation.load(Ordering::Acquire);
-        assert_eq!(empty_generation, 0, "Empty hull should have generation 0");
-
-        // Test invalidation on empty hull
-        empty_hull.invalidate_cache();
-        let invalidated_generation = empty_hull.cached_generation.load(Ordering::Acquire);
-        assert_eq!(
-            invalidated_generation, 0,
-            "Empty hull generation should remain 0 after invalidation"
-        );
-
-        println!("    ✓ Empty hull cache behavior correct");
-
-        println!("  Testing minimal hull cache behavior...");
-
-        // Create minimal valid hull (2D triangle)
-        let minimal_vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.5, 1.0]),
-        ];
-
-        match Tds::<f64, Option<()>, Option<()>, 2>::new(&minimal_vertices) {
-            Ok(minimal_tds) => {
-                match ConvexHull::from_triangulation(&minimal_tds) {
-                    Ok(minimal_hull) => {
-                        println!(
-                            "    Minimal hull facet count: {}",
-                            minimal_hull.facet_count()
-                        );
-
-                        // Test cache operations on minimal hull
-                        let test_point = Point::new([0.5, 2.0]);
-                        let visibility_result =
-                            minimal_hull.is_point_outside(&test_point, &minimal_tds);
-                        match visibility_result {
-                            Ok(is_outside) => {
-                                println!("    Minimal hull visibility test: {is_outside}");
-
-                                // Verify cache was created
-                                let cache = minimal_hull.facet_to_cells_cache.load();
-                                assert!(
-                                    cache.is_some(),
-                                    "Minimal hull should have cache after operation"
-                                );
-
-                                let generation =
-                                    minimal_hull.cached_generation.load(Ordering::Acquire);
-                                assert!(
-                                    generation > 0,
-                                    "Minimal hull should have non-zero generation"
-                                );
-                            }
-                            Err(e) => {
-                                println!("    Minimal hull visibility test failed: {e}");
-                            }
-                        }
-
-                        // Test cache invalidation on minimal hull
-                        minimal_hull.invalidate_cache();
-                        let cache_after_invalidation = minimal_hull.facet_to_cells_cache.load();
-                        assert!(
-                            cache_after_invalidation.is_none(),
-                            "Cache should be cleared after invalidation"
-                        );
-
-                        println!("    ✓ Minimal hull cache behavior correct");
-                    }
-                    Err(e) => {
-                        println!("    Minimal hull construction failed: {e}");
-                    }
-                }
-            }
-            Err(e) => {
-                println!("    Minimal TDS construction failed: {e}");
-            }
-        }
-
-        println!("  ✓ Empty and minimal hull cache behavior tested");
-    }
-
-    #[test]
     fn test_memory_usage_and_cleanup() {
         println!("Testing memory usage patterns and cleanup behavior");
 
@@ -6384,7 +6049,7 @@ mod tests {
         let _ = hull.is_point_outside(&test_point, &tds);
 
         // Verify cache exists
-        let cache_exists = hull.facet_to_cells_cache.load();
+        let cache_exists = hull.facet_cache().load();
         assert!(
             cache_exists.is_some(),
             "Cache should exist after visibility test"
@@ -6392,7 +6057,7 @@ mod tests {
 
         // Manual invalidation should clear the cache
         hull.invalidate_cache();
-        let cache_after_invalidation = hull.facet_to_cells_cache.load();
+        let cache_after_invalidation = hull.facet_cache().load();
         assert!(
             cache_after_invalidation.is_none(),
             "Cache should be None after invalidation"
@@ -6400,7 +6065,7 @@ mod tests {
 
         // Cache should rebuild on next operation
         let _ = hull.is_point_outside(&test_point, &tds);
-        let cache_rebuilt = hull.facet_to_cells_cache.load();
+        let cache_rebuilt = hull.facet_cache().load();
         assert!(
             cache_rebuilt.is_some(),
             "Cache should be rebuilt after invalidation"
@@ -6420,8 +6085,8 @@ mod tests {
         let _ = hull1.is_point_outside(&test_point, &tds);
         let _ = hull2.is_point_outside(&test_point, &tds);
 
-        let cache1 = hull1.facet_to_cells_cache.load();
-        let cache2 = hull2.facet_to_cells_cache.load();
+        let cache1 = hull1.facet_cache().load();
+        let cache2 = hull2.facet_cache().load();
 
         if let (Some(cache1_arc), Some(cache2_arc)) = (&*cache1, &*cache2) {
             // Caches should be independent (different Arc instances)
@@ -6443,8 +6108,8 @@ mod tests {
         // Test that invalidating one doesn't affect the other
         hull1.invalidate_cache();
 
-        let hull1_cache_after_invalidation = hull1.facet_to_cells_cache.load();
-        let hull2_cache_after_hull1_invalidation = hull2.facet_to_cells_cache.load();
+        let hull1_cache_after_invalidation = hull1.facet_cache().load();
+        let hull2_cache_after_hull1_invalidation = hull2.facet_cache().load();
 
         assert!(
             hull1_cache_after_invalidation.is_none(),

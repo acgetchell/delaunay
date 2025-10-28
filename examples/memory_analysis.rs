@@ -164,6 +164,8 @@ fn main() {
     println!("• Use --features count-allocations to see detailed allocation metrics");
 
     println!("\nFor comprehensive scaling analysis, run:");
-    println!("  cargo bench --bench memory_scaling --features count-allocations");
+    println!(
+        "  cargo bench --bench profiling_suite --features count-allocations -- memory_profiling"
+    );
     println!("  cargo bench --bench triangulation_vs_hull_memory --features count-allocations");
 }

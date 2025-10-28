@@ -11,10 +11,9 @@ use crate::core::{
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use arc_swap::ArcSwapOption;
-use serde::{Serialize, de::DeserializeOwned};
 use std::{
     iter::Sum,
-    ops::{AddAssign, Div, SubAssign},
+    ops::{AddAssign, SubAssign},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -44,9 +43,9 @@ use std::{
 /// use delaunay::core::traits::data_type::DataType;
 /// use std::sync::Arc;
 /// use std::sync::atomic::{AtomicU64, Ordering};
-/// use std::ops::{AddAssign, SubAssign, Div};
+/// use std::ops::{AddAssign, SubAssign};
 /// use std::iter::Sum;
-/// use serde::{Serialize, de::DeserializeOwned};
+/// use serde::de::DeserializeOwned;
 /// use arc_swap::ArcSwapOption;
 ///
 /// struct MyAlgorithm {
@@ -66,10 +65,8 @@ use std::{
 /// impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for MyAlgorithm
 /// where
 ///     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
-///     U: DataType + DeserializeOwned,
-///     V: DataType + DeserializeOwned,
-///     for<'a> &'a T: Div<T>,
-///     [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+///     U: DataType,
+///     V: DataType,
 /// {
 ///     fn facet_cache(&self) -> &ArcSwapOption<delaunay::core::collections::FacetToCellsMap> {
 ///         &self.facet_to_cells_cache
@@ -83,12 +80,13 @@ use std::{
 pub trait FacetCacheProvider<T, U, V, const D: usize>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
-    for<'a> &'a T: Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
+    U: DataType,
+    V: DataType,
 {
     /// Returns a reference to the facet cache storage.
+    ///
+    /// The cache stores precomputed facet-to-cells mappings to avoid expensive
+    /// rebuilds during repeated facet queries.
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap>;
 
     /// Returns a reference to the cached generation counter.

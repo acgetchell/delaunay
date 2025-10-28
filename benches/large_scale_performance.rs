@@ -5,8 +5,8 @@
 //!
 //! # Benchmark Coverage
 //!
-//! - **Dimensions**: 2D, 3D, 4D (practical range)
-//! - **Vertex counts**: 1,000, 5,000, 10,000 (scalability testing)
+//! - **Dimensions**: 2D, 3D, 4D, 5D (complete coverage)
+//! - **Vertex counts**: 1K-10K (2D/3D), 1K-3K (4D default), 500-1K (5D)
 //! - **Measurements**:
 //!   - Construction time (Bowyer-Watson algorithm)
 //!   - Memory usage delta during construction (process RSS)
@@ -21,9 +21,14 @@
 //! - Memory measurements show allocation patterns
 //! - Scalability tests (1K→5K→10K) reveal growth patterns
 //!
+//! # Point Distribution
+//!
+//! - **Current**: Uniform random distribution (seeded for reproducibility)
+//! - **Future**: Grid and Poisson disk distributions planned but not yet implemented
+//!
 //! # Reproducibility
 //!
-//! All benchmarks use seeded RNG (`StdRng::seed_from_u64`) for deterministic results.
+//! All benchmarks use seeded RNG for deterministic results via `generate_random_points_seeded()`.
 //! Points are generated within bounded coordinates (-100.0, 100.0) to avoid degeneracies.
 //!
 //! # Running Benchmarks
@@ -49,19 +54,27 @@
 //! just bench-compare
 //! ```
 //!
-//! # Performance Notes
+//! # Performance Notes & Scaling Strategy
 //!
-//! - 2D/3D with 10,000 vertices: ~1-10 seconds construction
-//! - 4D with 10,000 vertices: ~30-120 seconds construction (complexity increases rapidly)
-//! - Memory usage scales with O(n^⌈d/2⌉) cells in d dimensions
-//! - Query performance depends on `SlotMap` implementation efficiency
+//! **Timing Estimates (per dimension suite):**
+//! - 2D: [1K, 5K, 10K] → ~15-30 minutes
+//! - 3D: [1K, 5K, 10K] → ~20-40 minutes  
+//! - 4D: [1K, 3K] (default) → ~30-60 minutes
+//! - 4D: [1K, 5K, 10K] (large scale) → ~2-4 hours
+//! - 5D: [500, 1K] → ~30-60 minutes
 //!
-//! # CI Considerations
+//! **Total benchmark runtime:**
+//! - Default (local): ~2-3 hours (2D/3D/4D/5D, recommended for development)
+//! - Large scale: ~4-6 hours (includes 4D@10K, requires compute cluster)
 //!
-//! For CI runs with time constraints:
-//! - Set `CRITERION_SAMPLE_SIZE=10` environment variable
-//! - Run smaller configurations: `cargo bench -- "1000"`
-//! - Consider skipping 4D/10000 for faster CI: `cargo bench -- "/2D|3D/"`
+//! **Scaling for Large Runs:**
+//! ```bash
+//! # Enable 10K points for 4D (use on compute cluster)
+//! BENCH_LARGE_SCALE=1 cargo bench --bench large_scale_performance
+//! ```
+//!
+//! **Memory complexity:** O(n^⌈d/2⌉) cells in d dimensions
+//! **Query performance:** Directly measures `SlotMap` iteration efficiency
 
 #![allow(missing_docs)]
 
@@ -69,8 +82,6 @@ use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_mai
 use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::vertex;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use std::hint::black_box;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -90,11 +101,9 @@ fn get_memory_usage() -> u64 {
     static SYS: OnceLock<Mutex<System>> = OnceLock::new();
     static UNIT_LOGGED: std::sync::Once = std::sync::Once::new();
 
-    // Log memory unit on first call if BENCH_PRINT_MEM is set
+    // Log memory unit on first call for clarity in all benchmark runs
     UNIT_LOGGED.call_once(|| {
-        if std::env::var_os("BENCH_PRINT_MEM").is_some() {
-            eprintln!("sysinfo::Process::memory unit: bytes; reporting KiB after ÷1024");
-        }
+        eprintln!("[INFO] Memory measurements in KiB (sysinfo::Process::memory() / 1024)");
     });
 
     let pid = sysinfo::get_current_pid().expect("Failed to get current PID");
@@ -115,10 +124,7 @@ fn get_memory_usage() -> u64 {
 }
 
 /// Measure memory delta during triangulation construction
-fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) -> MemoryInfo
-where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
-{
+fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) -> MemoryInfo {
     let mem_before = get_memory_usage();
 
     // Generate points and vertices (setup overhead)
@@ -157,16 +163,13 @@ where
 // =============================================================================
 
 /// Benchmark: Triangulation construction time
-fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
-where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
-{
+fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
     let bench_name = format!("construction/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
     group.throughput(Throughput::Elements(n_points as u64));
 
-    // Adjust sample size for 4D large cases to bound execution time
-    if D == 4 && n_points >= 5000 {
+    // Adjust sample size for heavy cases to bound execution time
+    if (D == 4 && n_points >= 5000) || D == 5 {
         group.sample_size(10);
         group.measurement_time(Duration::from_secs(120));
     }
@@ -197,10 +200,7 @@ where
 // =============================================================================
 
 /// Benchmark: Memory usage measurement (informational, not timing-focused)
-fn bench_memory_usage<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
-where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
-{
+fn bench_memory_usage<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
     let bench_name = format!("memory/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
 
@@ -229,16 +229,14 @@ where
 // =============================================================================
 
 /// Benchmark: Topology validation time
-fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
-where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
-{
+fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
     let bench_name = format!("validation/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
 
-    // Adjust sample size for large cases
-    if n_points >= 5000 {
+    // Adjust sample size for large cases and 5D
+    if n_points >= 5000 || D == 5 {
         group.sample_size(10);
+        group.measurement_time(Duration::from_secs(120));
     }
 
     // Pre-generate triangulation for validation benchmarks
@@ -277,12 +275,19 @@ where
 // =============================================================================
 
 /// Benchmark: Neighbor query performance (critical for `SlotMap` evaluation)
-fn bench_neighbor_queries<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
-where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
-{
+fn bench_neighbor_queries<const D: usize>(
+    c: &mut Criterion,
+    dimension_name: &str,
+    n_points: usize,
+) {
     let bench_name = format!("queries/neighbors/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
+
+    // Adjust sample size for very heavy cases (5D or large 4D)
+    if D == 5 || (D == 4 && n_points >= 5000) {
+        group.sample_size(10);
+        group.measurement_time(Duration::from_secs(120));
+    }
 
     // Pre-generate triangulation
     let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
@@ -311,13 +316,20 @@ where
 }
 
 /// Benchmark: Vertex iteration performance (tests `SlotMap` iteration efficiency)
-fn bench_vertex_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
-where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
-{
+fn bench_vertex_iteration<const D: usize>(
+    c: &mut Criterion,
+    dimension_name: &str,
+    n_points: usize,
+) {
     let bench_name = format!("queries/vertices/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
     group.throughput(Throughput::Elements(n_points as u64));
+
+    // Adjust sample size for very heavy cases (5D or large 4D)
+    if D == 5 || (D == 4 && n_points >= 5000) {
+        group.sample_size(10);
+        group.measurement_time(Duration::from_secs(120));
+    }
 
     // Pre-generate triangulation
     let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
@@ -330,7 +342,7 @@ where
         b.iter(|| {
             // Iterate through all vertices - measures `SlotMap` iteration performance
             let mut count = 0;
-            for vertex in tds.vertex_iter() {
+            for (_, vertex) in tds.vertices() {
                 black_box(vertex);
                 count += 1;
             }
@@ -342,12 +354,15 @@ where
 }
 
 /// Benchmark: Cell iteration performance (tests `SlotMap` cell iteration)
-fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
-where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
-{
+fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
     let bench_name = format!("queries/cells/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
+
+    // Adjust sample size for very heavy cases (5D or large 4D)
+    if D == 5 || (D == 4 && n_points >= 5000) {
+        group.sample_size(10);
+        group.measurement_time(Duration::from_secs(120));
+    }
 
     // Pre-generate triangulation
     let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
@@ -401,9 +416,20 @@ fn bench_3d_suite(c: &mut Criterion) {
 }
 
 fn bench_4d_suite(c: &mut Criterion) {
-    // Note: 4D with 10,000 vertices can be very slow (30-120 seconds)
-    // Consider reducing to [1000, 5000] for faster CI runs
-    for &n_points in &[1000, 5000, 10_000] {
+    // 4D scaling: Default uses smaller sizes for reasonable runtime (~30-60 min total)
+    // Set BENCH_LARGE_SCALE=1 (or any truthy value) for 10K points (requires compute cluster, ~2-4 hours)
+    // Note: BENCH_LARGE_SCALE=0 or BENCH_LARGE_SCALE=false will disable large scale mode
+    let large_scale_enabled = std::env::var("BENCH_LARGE_SCALE")
+        .ok()
+        .is_some_and(|v| !v.is_empty() && v != "0" && v != "false");
+
+    let point_counts: &[usize] = if large_scale_enabled {
+        &[1000, 5000, 10_000] // Full scale for cluster runs
+    } else {
+        &[1000, 3000] // Reduced scale for local development (<2 hours total)
+    };
+
+    for &n_points in point_counts {
         bench_construction::<4>(c, "4D", n_points);
         bench_memory_usage::<4>(c, "4D", n_points);
         bench_validation::<4>(c, "4D", n_points);
@@ -413,10 +439,41 @@ fn bench_4d_suite(c: &mut Criterion) {
     }
 }
 
+fn bench_5d_suite(c: &mut Criterion) {
+    // 5D scaling: Very small sizes due to extreme computational cost
+    // Complexity grows as O(n^⌈5/2⌉) ≈ O(n³) for cells
+    for &n_points in &[500, 1000] {
+        bench_construction::<5>(c, "5D", n_points);
+        bench_memory_usage::<5>(c, "5D", n_points);
+        bench_validation::<5>(c, "5D", n_points);
+        bench_neighbor_queries::<5>(c, "5D", n_points);
+        bench_vertex_iteration::<5>(c, "5D", n_points);
+        bench_cell_iteration::<5>(c, "5D", n_points);
+    }
+}
+
 criterion_group!(
     name = large_scale_benches;
-    config = Criterion::default();
-    targets = bench_2d_suite, bench_3d_suite, bench_4d_suite
+    config = {
+        let sample_size = std::env::var("BENCH_SAMPLE_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(100);
+        let warm_up_secs = std::env::var("BENCH_WARMUP_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3);
+        let measurement_secs = std::env::var("BENCH_MEASUREMENT_TIME")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
+
+        Criterion::default()
+            .sample_size(sample_size)
+            .warm_up_time(Duration::from_secs(warm_up_secs))
+            .measurement_time(Duration::from_secs(measurement_secs))
+    };
+    targets = bench_2d_suite, bench_3d_suite, bench_4d_suite, bench_5d_suite
 );
 
 criterion_main!(large_scale_benches);

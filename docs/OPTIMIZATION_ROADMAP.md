@@ -490,7 +490,7 @@ Phase 3 was completed in October 2025 through comprehensive refactoring:
 
 ---
 
-## Phase 4: Collection Abstraction 📋 PLANNED
+## Phase 4: Collection Backend Evaluation 📋 PLANNED
 
 ### Status: 📋 PLANNED
 
@@ -498,50 +498,48 @@ Phase 3 was completed in October 2025 through comprehensive refactoring:
 
 ### Objective
 
-Abstract SlotMap usage behind traits to enable swapping implementations without code changes.
+Evaluate different SlotMap implementations via feature flags to find optimal iteration performance.
 
 ### Design
 
-#### Core Trait
+#### Feature Flag Selection
 
 ```rust
-pub trait StableKeyCollection<K: Key, V> {
-    fn insert(&mut self, value: V) -> K;
-    fn remove(&mut self, key: K) -> Option<V>;
-    fn get(&self, key: K) -> Option<&V>;
-    fn get_mut(&mut self, key: K) -> Option<&mut V>;
-    fn contains_key(&self, key: K) -> bool;
-    fn len(&self) -> usize;
-    fn keys(&self) -> impl Iterator<Item = K> + '_;
-    fn values(&self) -> impl Iterator<Item = &V> + '_;
-    fn iter(&self) -> impl Iterator<Item = (K, &V)> + '_;
-    fn clear(&mut self);
-}
-```
+// In Cargo.toml
+[features]
+default = []
+dense-slotmap = []  # Use DenseSlotMap for better iteration
+hop-slotmap = []    # Use HopSlotMap for very large scale
 
-#### TDS Becomes Generic
+// In src/core/triangulation_data_structure.rs
+#[cfg(feature = "dense-slotmap")]
+use slotmap::DenseSlotMap as CellStorage;
 
-```rust
-pub struct Tds<
-    T, U, V, const D: usize,
-    CC = SlotMapCollection<CellKey, Cell<T, U, V, D>>,
-    VC = SlotMapCollection<VertexKey, Vertex<T, U, D>>,
-> where
-    CC: StableKeyCollection<CellKey, Cell<T, U, V, D>>,
-    VC: StableKeyCollection<VertexKey, Vertex<T, U, D>>,
-{
-    pub cells: CC,
-    pub vertices: VC,
+#[cfg(feature = "hop-slotmap")]
+use slotmap::HopSlotMap as CellStorage;
+
+#[cfg(not(any(feature = "dense-slotmap", feature = "hop-slotmap")))]
+use slotmap::SlotMap as CellStorage;
+
+pub struct Tds<T, U, V, const D: usize> {
+    cells: CellStorage<CellKey, Cell<T, U, V, D>>,
+    vertices: CellStorage<VertexKey, Vertex<T, U, D>>,
     // ...
 }
 ```
 
-#### Implementations
+#### Benchmarking Different Backends
 
-- `SlotMapCollection` - Current default
-- `DenseSlotMapCollection` - Better cache locality
-- `HopSlotMapCollection` - For very large triangulations
-- Custom implementations for specific use cases
+```bash
+# Benchmark with default SlotMap
+cargo bench --bench large_scale_performance
+
+# Benchmark with DenseSlotMap
+cargo bench --bench large_scale_performance --features dense-slotmap
+
+# Benchmark with HopSlotMap
+cargo bench --bench large_scale_performance --features hop-slotmap
+```
 
 ### Expected Impact
 
@@ -560,37 +558,38 @@ pub struct Tds<
 
 - **10-15% improvement** in iteration-heavy operations with DenseSlotMap
 - **5-10% better** cache miss rate
-- **Zero code changes** required to swap implementations
-- **Enable benchmarking** of different strategies
+- **Zero overhead** - compile-time selection via feature flags
+- **Easy benchmarking** - just change feature flag
 
 ### Implementation Strategy
 
-#### Phase 4A: Trait Definition and SlotMap Wrapper
+#### Phase 4A: Add Feature Flags and Type Aliases
 
-1. Define `StableKeyCollection` trait
-2. Implement `SlotMapCollection` wrapper
-3. Update TDS to use trait bounds
-4. Ensure all tests pass with default implementation
+1. Add `dense-slotmap` and `hop-slotmap` features to `Cargo.toml`
+2. Create type aliases based on feature flags
+3. Update TDS to use type aliases instead of concrete types
+4. Ensure all tests pass with each feature
 
-#### Phase 4B: Alternative Implementations  
+#### Phase 4B: Benchmarking and Evaluation  
 
-1. Implement `DenseSlotMapCollection`
-2. Add benchmarks comparing implementations
-3. Document performance characteristics
-4. Consider `HopSlotMap` for very large triangulations
+1. Run `large_scale_performance.rs` with all three backends
+2. Compare iteration, memory, and query performance
+3. Document actual performance characteristics
+4. Select default based on results
 
-#### Phase 4C: Specialized Optimizations
+#### Phase 4C: Documentation and Release
 
-1. Custom allocator support
-2. Memory pool implementations for specific use cases
-3. SIMD-friendly layouts (if applicable)
+1. Document feature flags in README and docs
+2. Add performance comparison table
+3. Update CHANGELOG with Phase 4 completion
+4. Release as part of v0.6.0
 
 ### Benefits
 
-- **Performance tuning** without code changes
-- **Future flexibility** for custom implementations
-- **Clean abstraction** - single interface for all
-- **Easy benchmarking** - swap with type parameter
+- **Zero abstraction overhead** - compile-time selection
+- **Simple implementation** - no trait complexity
+- **Easy benchmarking** - just change cargo feature flag
+- **Future flexibility** - can add trait layer later if needed
 
 ---
 
@@ -616,15 +615,19 @@ All other changes were internal - Cell and Vertex structures refactored to use k
 
 ### Phase 4: Opt-in Performance
 
-```rust
-// Default usage unchanged
-let tds: Tds<f64, (), (), 3> = Tds::new(&vertices)?;
+```toml
+# In user's Cargo.toml
+[dependencies]
+delaunay = "0.6"  # Default: SlotMap
 
-// Advanced users can optimize
-use delaunay::collections::DenseSlotMapCollection;
-type OptimizedTds<T, U, V, const D: usize> = 
-    Tds<T, U, V, D, DenseSlotMapCollection<_>, DenseSlotMapCollection<_>>;
+# Or for better iteration performance:
+delaunay = { version = "0.6", features = ["dense-slotmap"] }
+
+# Or for very large scale:
+delaunay = { version = "0.6", features = ["hop-slotmap"] }
 ```
+
+No code changes required - just select the feature flag.
 
 ---
 

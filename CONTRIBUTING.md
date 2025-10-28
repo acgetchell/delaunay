@@ -189,7 +189,7 @@ This is normal and only happens once. After that, the correct toolchain is used 
 
 ```bash
 rustup show
-# Should show: active toolchain: 1.89.0-<platform> (overridden by '/path/to/delaunay/rust-toolchain.toml')
+# Should show: active toolchain: 1.90.0-<platform> (overridden by '/path/to/delaunay/rust-toolchain.toml')
 ```
 
 ### Python Development Environment
@@ -349,17 +349,14 @@ just help-workflows   # Show organized workflow help
 # Quick development cycle
 just dev              # Format, lint, and test (fast feedback)
 
-# Comprehensive validation
+# Comprehensive quality checks
 just quality          # All quality checks + tests (Rust + Python)
 
 # CI simulation
 just ci               # Quality + release tests + benchmark compilation
 
 # Pre-commit validation (most thorough)
-just pre-commit       # Comprehensive checks before pushing
-
-# Quality checks
-just quality          # All formatting, linting, validation
+just commit-check     # CI + examples validation
 
 # Testing workflows
 just test-all         # All tests (Rust + Python)
@@ -369,9 +366,6 @@ just coverage         # Generate HTML coverage report
 # Benchmark workflows
 just bench-baseline   # Generate performance baseline
 just bench-compare    # Compare against baseline
-
-# CI simulation
-just ci               # Run what CI runs locally
 ```
 
 ### Individual Task Recipes
@@ -416,7 +410,7 @@ just dev              # Quick cycle: format, lint, test
 **Before committing:**
 
 ```bash
-just commit-check    # Most comprehensive: CI + examples
+just commit-check     # Most comprehensive: CI + examples
 ```
 
 **When working on performance:**
@@ -873,6 +867,30 @@ just examples
 
 The old shell scripts (`generate_baseline.sh`, `compare_benchmarks.sh`) mentioned in some documentation have been
 **replaced** with Python utilities that integrate with GitHub Actions for automated baseline management.
+
+### Profiling
+
+The project uses [samply](https://github.com/mstange/samply) for performance profiling to identify bottlenecks:
+
+```bash
+# Profile code changes (runs full profiling suite)
+just profile
+
+# Development mode profiling (10x faster for iteration)
+just profile-dev
+```
+
+**Profiling workflow:**
+
+1. **Run profiling**: `just profile` generates an interactive flame graph
+2. **Analyze results**: Browser opens automatically with the profiling visualization
+3. **Identify bottlenecks**: Look for hot paths in the flame graph
+4. **Optimize**: Make targeted improvements to high-impact code paths
+5. **Re-profile**: Verify optimizations with another profiling run
+
+**Development mode** (`just profile-dev`) uses reduced iteration counts for faster profiling cycles during active optimization work.
+
+**Note**: Profiling requires `samply` to be installed (`cargo install samply`). The `just setup` command installs it automatically.
 
 ### Performance Guidelines
 

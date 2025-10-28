@@ -8,9 +8,8 @@ use num_traits::{Float, Zero};
 use peroxide::fuga::{LinearAlgebra, MatrixTrait, zeros};
 use rand::Rng;
 use rand::distr::uniform::SampleUniform;
-use serde::{Serialize, de::DeserializeOwned};
 use std::iter::Sum;
-use std::ops::{AddAssign, Div, SubAssign};
+use std::ops::{AddAssign, SubAssign};
 
 use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
@@ -1583,8 +1582,6 @@ where
     T: CoordinateScalar + Sum + Zero + AddAssign<T> + SubAssign<T> + num_traits::NumCast,
     U: DataType,
     V: DataType,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
-    for<'a> &'a T: Div<T>,
 {
     let mut total_measure = T::zero();
 
@@ -2107,7 +2104,6 @@ where
     U: DataType,
     V: DataType,
     for<'a> &'a T: std::ops::Div<T>,
-    [T; D]: Copy + DeserializeOwned + Serialize + Sized,
 {
     // Generate random points (seeded or unseeded)
     let points: Vec<Point<T, D>> = match seed {
