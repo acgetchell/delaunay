@@ -516,7 +516,10 @@ where
     #[must_use]
     pub fn is_valid_for_tds(&self, tds: &Tds<T, U, V, D>) -> bool {
         // Use creation_generation (immutable) for validity check, not cached_generation (mutable)
-        self.creation_generation.get().copied().unwrap_or(0) == tds.generation()
+        // Default hull (with creation_generation unset) is invalid for any TDS
+        self.creation_generation
+            .get()
+            .is_some_and(|&g| g == tds.generation())
     }
 
     /// Invalidates the internal facet-to-cells cache and resets the cached generation counter
@@ -3738,9 +3741,8 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_get_or_build_facet_cache() {
-        println!("Testing get_or_build_facet_cache method");
+    fn test_try_get_or_build_facet_cache() {
+        println!("Testing try_get_or_build_facet_cache method");
 
         // Create a triangulation
         let vertices = vec![
@@ -3759,7 +3761,9 @@ mod tests {
 
         // First call should build the cache
         println!("  Testing initial cache building...");
-        let cache1 = hull.get_or_build_facet_cache(&tds);
+        let cache1 = hull
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Failed to build cache");
         assert!(
             !cache1.is_empty(),
             "Cache should not be empty after building"
@@ -3774,7 +3778,9 @@ mod tests {
 
         // Second call with same generation should reuse cache
         println!("  Testing cache reuse with same generation...");
-        let cache2 = hull.get_or_build_facet_cache(&tds);
+        let cache2 = hull
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Failed to reuse cache");
         assert_eq!(
             cache1.len(),
             cache2.len(),
@@ -3810,7 +3816,9 @@ mod tests {
         );
 
         // Next call should rebuild cache due to generation change
-        let cache3 = hull.get_or_build_facet_cache(&tds);
+        let cache3 = hull
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Failed to rebuild cache");
 
         // The cache content might be different since we added a vertex
         // but it should be a valid cache
@@ -3834,7 +3842,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_helper_methods_integration() {
         println!("Testing integration between helper methods");
 
@@ -3851,7 +3858,9 @@ mod tests {
 
         // Test that cache contains keys derivable by the key derivation method
         println!("  Testing cache-key derivation consistency...");
-        let cache = hull.get_or_build_facet_cache(&tds);
+        let cache = hull
+            .try_get_or_build_facet_cache(&tds)
+            .expect("Failed to build cache");
 
         // For each facet in the hull, derive its key and check it exists in cache
         let mut keys_found = 0usize;

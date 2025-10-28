@@ -600,9 +600,17 @@ where
                 vertex_points.push(*v.point());
             }
 
-            // Defensive check: should not happen since we validate all vertices exist
+            // TDS corruption: cell has incomplete vertex list (should have D+1 vertices)
             if vertex_points.len() < D + 1 {
-                continue; // Skip incomplete cells (geometric degeneracy, not TDS corruption)
+                return Err(InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "TDS corruption: Cell {cell_key:?} has {} vertices but expected {} (D+1)",
+                            vertex_points.len(),
+                            D + 1
+                        ),
+                    },
+                ));
             }
 
             // Use robust insphere test
@@ -1083,15 +1091,15 @@ where
         let threshold = {
             let scale = self.predicate_config.perturbation_scale;
             let multiplier = self.predicate_config.visibility_threshold_multiplier;
-            // Guard against negative multipliers - clamp to zero minimum
-            let clamped_multiplier = if f64::from(multiplier) < 0.0 {
+            // Guard against invalid multipliers (NaN or negative) - clamp to zero minimum
+            let multiplier_f64 = f64::from(multiplier);
+            let clamped_multiplier = if !multiplier_f64.is_finite() || multiplier_f64 < 0.0 {
                 <T as From<f64>>::from(0.0)
             } else {
                 multiplier
             };
             let th = scale * scale * clamped_multiplier;
-            // Best-effort clamp: treat non-finite as "very large"
-            // If T is float-like, this avoids NaN/Inf comparisons.
+            // Fallback for non-finite results (shouldn't happen with clamped multiplier)
             if (f64::from(th)).is_finite() {
                 th
             } else {
@@ -3854,14 +3862,13 @@ mod tests {
         assert!(!bad_cells.is_empty());
     }
 
-    /// Test TDS corruption error path in `find_bad_cells_with_robust_fallback`
+    /// Test that valid TDS operations don't produce false TDS corruption errors
     ///
-    /// This test verifies that the error propagation logic exists for TDS corruption
-    /// (lines 475-487). Since we cannot easily create TDS corruption in safe Rust,
-    /// we verify the happy path works correctly and note that the error path is
-    /// covered by integration tests that can simulate corrupted states.
+    /// This test verifies that the error propagation logic for TDS corruption
+    /// exists and that valid TDS operations don't incorrectly trigger corruption errors.
+    /// Actual TDS corruption detection is tested in integration tests.
     #[test]
-    fn test_find_bad_cells_handles_tds_corruption() {
+    fn test_find_bad_cells_no_false_corruption_errors() {
         let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         let vertices = vec![
@@ -3873,21 +3880,15 @@ mod tests {
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
         let test_vertex = vertex!([0.25, 0.25, 0.25]);
 
-        // Verify that valid TDS doesn't produce corruption errors
+        // Verify that valid TDS operations don't produce false TDS corruption errors
         let result = algorithm.find_bad_cells_with_robust_fallback(&tds, &test_vertex);
         assert!(
             result.is_ok(),
             "Valid TDS should not produce TDS corruption errors"
         );
 
-        println!("  ✓ TDS corruption error path exists (lines 475-487)");
-        println!("  ✓ Valid TDS correctly returns Ok with no corruption");
-
-        // Note: The actual TdsCorruption error path (lines 475-487) that converts
-        // BadCellsError::TdsCorruption to InsertionError::TriangulationState is
-        // exercised when the underlying find_bad_cells implementation detects
-        // corruption. This is tested in integration tests that can create corrupted
-        // states using unsafe operations or manual TDS manipulation.
+        println!("  ✓ Valid TDS correctly returns Ok without false corruption errors");
+        println!("  ✓ Actual TDS corruption detection is tested in integration tests");
     }
 
     #[test]
