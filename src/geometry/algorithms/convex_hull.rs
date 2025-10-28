@@ -965,17 +965,19 @@ where
 
         // Create test simplices to compare orientations
         // Build facet_points from the vertices (fetched only once, when needed)
-        let mut facet_points = Vec::with_capacity(D);
+        // Use SmallBuffer to keep typical dimensions on-stack and avoid heap allocation
+        let mut facet_points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D);
         for v in &facet_vertices {
             facet_points.push(*v.point());
         }
 
         // Simplex 1: facet vertices + inside vertex
-        let mut simplex_with_inside = facet_points.clone();
+        let mut simplex_with_inside = facet_points.clone().into_vec();
         simplex_with_inside.push(*inside_vertex.point());
 
         // Simplex 2: facet vertices + test point
-        let mut simplex_with_test = facet_points;
+        let mut simplex_with_test = facet_points.into_vec();
         simplex_with_test.push(*point);
 
         // Get orientations using geometric predicates
@@ -1257,20 +1259,20 @@ where
                 FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index()).map_err(
                     |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
                 )?;
-            let facet_vertices: Vec<_> = facet_view
+            // Extract points directly to avoid materializing Vertex copies
+            let facet_points: Vec<Point<T, D>> = facet_view
                 .vertices()
                 .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?
-                .copied()
+                .map(|v| *v.point())
                 .collect();
 
             // Calculate distance from point to facet centroid as a simple heuristic
             let mut centroid_coords = [T::zero(); D];
-            let num_vertices = safe_usize_to_scalar(facet_vertices.len())
+            let num_vertices = safe_usize_to_scalar(facet_points.len())
                 .map_err(ConvexHullConstructionError::CoordinateConversion)?;
 
-            for vertex in &facet_vertices {
-                let vertex_point = vertex.point();
-                let coords: [T; D] = vertex_point.into();
+            for vertex_point in &facet_points {
+                let coords: [T; D] = (*vertex_point).into();
                 for (i, &coord) in coords.iter().enumerate() {
                     centroid_coords[i] += coord;
                 }
@@ -1463,8 +1465,8 @@ where
 impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for ConvexHull<T, U, V, D>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum + num_traits::NumCast,
-    U: DataType + serde::de::DeserializeOwned,
-    V: DataType + serde::de::DeserializeOwned,
+    U: DataType,
+    V: DataType,
 {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache

@@ -109,6 +109,11 @@ where
     ///
     /// * `config` - Custom predicate configuration
     ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if configuration contains invalid values:
+    /// - `visibility_threshold_multiplier` must be finite and non-negative
+    ///
     /// # Examples
     ///
     /// ```
@@ -120,6 +125,13 @@ where
     ///     RobustBowyerWatson::with_config(config);
     /// ```
     pub fn with_config(config: RobustPredicateConfig<T>) -> Self {
+        // Validate configuration at construction time (debug builds only)
+        debug_assert!(
+            f64::from(config.visibility_threshold_multiplier).is_finite()
+                && f64::from(config.visibility_threshold_multiplier) >= 0.0,
+            "visibility_threshold_multiplier must be finite and non-negative, got: {:?}",
+            f64::from(config.visibility_threshold_multiplier)
+        );
         Self {
             predicate_config: config,
             stats: InsertionStatistics::new(),
@@ -1088,23 +1100,11 @@ where
         // For exterior vertices, use a more aggressive threshold
         // If the vertex is far from the facet centroid, consider it visible
         // Use a threshold based on the perturbation scale multiplied by a configurable factor
+        // Note: Configuration is validated at construction time (see with_config debug_assert)
         let threshold = {
             let scale = self.predicate_config.perturbation_scale;
             let multiplier = self.predicate_config.visibility_threshold_multiplier;
-            // Guard against invalid multipliers (NaN or negative) - clamp to zero minimum
-            let multiplier_f64 = f64::from(multiplier);
-            let clamped_multiplier = if !multiplier_f64.is_finite() || multiplier_f64 < 0.0 {
-                <T as From<f64>>::from(0.0)
-            } else {
-                multiplier
-            };
-            let th = scale * scale * clamped_multiplier;
-            // Fallback for non-finite results (shouldn't happen with clamped multiplier)
-            if (f64::from(th)).is_finite() {
-                th
-            } else {
-                <T as From<f64>>::from(f64::MAX / 2.0)
-            }
+            scale * scale * multiplier
         };
         Ok(distance_squared > threshold)
     }

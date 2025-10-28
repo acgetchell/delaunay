@@ -11,7 +11,6 @@ use crate::core::{
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use arc_swap::ArcSwapOption;
-use serde::de::DeserializeOwned;
 use std::{
     iter::Sum,
     ops::{AddAssign, SubAssign},
@@ -66,8 +65,8 @@ use std::{
 /// impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for MyAlgorithm
 /// where
 ///     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
-///     U: DataType + DeserializeOwned,
-///     V: DataType + DeserializeOwned,
+///     U: DataType,
+///     V: DataType,
 /// {
 ///     fn facet_cache(&self) -> &ArcSwapOption<delaunay::core::collections::FacetToCellsMap> {
 ///         &self.facet_to_cells_cache
@@ -81,8 +80,8 @@ use std::{
 pub trait FacetCacheProvider<T, U, V, const D: usize>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
-    U: DataType + DeserializeOwned,
-    V: DataType + DeserializeOwned,
+    U: DataType,
+    V: DataType,
 {
     /// Returns a reference to the facet cache storage.
     ///
