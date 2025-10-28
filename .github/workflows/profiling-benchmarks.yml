@@ -214,7 +214,7 @@ jobs:
           cp -r target/criterion profiling-results/criterion-baseline-${{ github.ref_name }}
 
       - name: Upload profiling results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: profiling-results-${{ github.run_number }}
           path: profiling-results/
@@ -222,7 +222,7 @@ jobs:
 
       - name: Upload profiling baseline (for tagged releases)
         if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: profiling-baseline-${{ github.ref_name }}
           path: |
@@ -271,7 +271,7 @@ jobs:
           echo "Running memory profiling analysis..."
           CRITERION_QUIET_MODE=1 cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
       - name: Upload memory test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: memory-stress-results-${{ github.run_number }}
           path: |
