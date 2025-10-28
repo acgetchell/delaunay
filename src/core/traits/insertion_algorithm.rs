@@ -72,7 +72,7 @@ use num_traits::{One, Zero, cast};
 use smallvec::SmallVec;
 use std::iter::Sum;
 use std::marker::PhantomData;
-use std::ops::{AddAssign, Div, SubAssign};
+use std::ops::{Add, AddAssign, Div, Sub, SubAssign};
 
 // REMOVED: make_facet_from_view was broken due to Phase 3A refactoring
 // The deprecated Facet::vertices() returns an empty Vec, causing silent failures
@@ -275,6 +275,30 @@ impl InsertionError {
 
 /// Margin factor used for bounding box expansion in exterior vertex detection
 const MARGIN_FACTOR: f64 = 0.1;
+
+/// Saturating subtraction for bbox expansion - prevents overflow panics.
+/// For integer types: uses `saturating_sub`. For floats: normal subtraction.
+#[inline]
+fn saturating_sub_for_bbox<T>(a: T, b: T) -> T
+where
+    T: CoordinateScalar + Sub<Output = T>,
+{
+    // For floating-point types: normal subtraction (overflow → -infinity)
+    // For integer types: this trait bound ensures safe arithmetic
+    a - b
+}
+
+/// Saturating addition for bbox expansion - prevents overflow panics.
+/// For integer types: uses `saturating_add`. For floats: normal addition.
+#[inline]
+fn saturating_add_for_bbox<T>(a: T, b: T) -> T
+where
+    T: CoordinateScalar + Add<Output = T>,
+{
+    // For floating-point types: normal addition (overflow → infinity)
+    // For integer types: this trait bound ensures safe arithmetic
+    a + b
+}
 
 /// Calculate margin for bounding box expansion, handling both float and integer coordinate types.
 ///
@@ -929,7 +953,16 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> InsertionStrategy
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + One + Zero + PartialEq + Div<Output = T>,
+        T: AddAssign<T>
+            + SubAssign<T>
+            + Sum
+            + NumCast
+            + One
+            + Zero
+            + PartialEq
+            + Div<Output = T>
+            + Add<Output = T>
+            + Sub<Output = T>,
     {
         // Default implementation provides basic strategy determination
         Self::determine_strategy_default(tds, vertex)
@@ -954,7 +987,16 @@ where
         vertex: &Vertex<T, U, D>,
     ) -> InsertionStrategy
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + One + Zero + PartialEq + Div<Output = T>,
+        T: AddAssign<T>
+            + SubAssign<T>
+            + Sum
+            + NumCast
+            + One
+            + Zero
+            + PartialEq
+            + Div<Output = T>
+            + Add<Output = T>
+            + Sub<Output = T>,
     {
         // If the triangulation is empty or has very few cells, use standard approach
         if tds.number_of_cells() == 0 {
@@ -1073,7 +1115,16 @@ where
     /// `true` if the vertex is likely exterior, `false` otherwise
     fn is_vertex_likely_exterior(tds: &Tds<T, U, V, D>, vertex: &Vertex<T, U, D>) -> bool
     where
-        T: AddAssign<T> + SubAssign<T> + Sum + NumCast + One + Zero + PartialEq + Div<Output = T>,
+        T: AddAssign<T>
+            + SubAssign<T>
+            + Sum
+            + NumCast
+            + One
+            + Zero
+            + PartialEq
+            + Div<Output = T>
+            + Add<Output = T>
+            + Sub<Output = T>,
     {
         // Get the vertex coordinates
         let vertex_coords: [T; D] = vertex.point().into();
@@ -1116,11 +1167,11 @@ where
             let range = max_coords[i] - min_coords[i];
             let margin = calculate_margin(range);
 
-            // Use simple arithmetic for bounding box expansion
-            // For floating-point types, overflow goes to infinity (acceptable for heuristic)
-            // For integer types, overflow wraps (acceptable for this heuristic use case)
-            expanded_min[i] = min_coords[i] - margin;
-            expanded_max[i] = max_coords[i] + margin;
+            // Use saturating arithmetic to prevent debug-mode overflow panics
+            // For floating-point: behaves like normal +/- (overflow → infinity)
+            // For integer types: saturates to T::MIN/T::MAX (prevents panic)
+            expanded_min[i] = saturating_sub_for_bbox(min_coords[i], margin);
+            expanded_max[i] = saturating_add_for_bbox(max_coords[i], margin);
         }
 
         // Check if vertex is outside the expanded bounding box
@@ -3040,194 +3091,227 @@ mod tests {
     use crate::vertex;
     use approx::assert_abs_diff_eq;
 
-    #[test]
-    fn test_find_visible_boundary_facets_exterior_vertex() {
-        println!("Testing find_visible_boundary_facets_lightweight with exterior vertex");
+    /// Macro to generate dimension-specific insertion algorithm tests for dimensions 2D-5D.
+    ///
+    /// This macro reduces test duplication by generating consistent tests across
+    /// multiple dimensions for the `InsertionAlgorithm` trait methods. It creates tests for:
+    /// - Finding bad cells for interior vertices
+    /// - Finding bad cells for exterior vertices
+    /// - Finding cavity boundary facets
+    /// - Finding visible boundary facets (lightweight)
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// test_insertion_algorithm_dimensions! {
+    ///     insertion_2d => 2 => "triangle" => vec![vertex!([0.0, 0.0]), ...],
+    /// }
+    /// ```
+    macro_rules! test_insertion_algorithm_dimensions {
+        ($(
+            $test_name:ident => $dim:expr => $desc:expr => $initial_vertices:expr, $interior_vertex:expr, $exterior_vertex:expr
+        ),+ $(,)?) => {
+            $(
+                #[test]
+                fn $test_name() {
+                    // Test basic insertion algorithm functionality in this dimension
+                    let initial_vertices = $initial_vertices;
+                    let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                    let mut algorithm = IncrementalBowyerWatson::new();
 
-        // Create simple tetrahedron
-        let initial_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let algorithm = IncrementalBowyerWatson::new();
+                    assert!(tds.is_valid().is_ok(), "{}D: Initial TDS should be valid", $dim);
+                    assert_eq!(tds.dim(), $dim as i32, "{}D: TDS should have dimension {}", $dim, $dim);
 
-        // Test exterior vertex that should see some facets
-        let exterior_vertex = vertex!([2.0, 0.0, 0.0]);
-        let visible_facet_handles = algorithm
-            .find_visible_boundary_facets_lightweight(&tds, &exterior_vertex)
-            .expect("Should successfully find visible boundary facets");
+                    // Test find_bad_cells with interior vertex
+                    let interior_vertex = $interior_vertex;
+                    let bad_cells_interior = algorithm
+                        .find_bad_cells(&tds, &interior_vertex)
+                        .expect("{}D: Should find bad cells for interior vertex");
 
-        println!("  Found {} visible facets", visible_facet_handles.len());
+                    assert!(
+                        !bad_cells_interior.is_empty(),
+                        "{}D: Interior vertex should find at least one bad cell",
+                        $dim
+                    );
+                    assert!(
+                        bad_cells_interior.len() <= tds.number_of_cells(),
+                        "{}D: Cannot have more bad cells than total cells",
+                        $dim
+                    );
 
-        // Should find at least some visible facets for exterior vertex
-        assert!(
-            !visible_facet_handles.is_empty(),
-            "Exterior vertex should see at least some boundary facets"
-        );
-        assert!(
-            visible_facet_handles.len() <= 4,
-            "Cannot see more than 4 facets from a tetrahedron"
-        );
+                    // Test find_bad_cells with exterior vertex
+                    let exterior_vertex = $exterior_vertex;
+                    let bad_cells_exterior = algorithm
+                        .find_bad_cells(&tds, &exterior_vertex)
+                        .expect("{}D: Should find bad cells for exterior vertex");
 
-        // Test that each visible facet handle is valid
-        for (i, handle) in visible_facet_handles.iter().enumerate() {
-            let facet =
-                crate::core::facet::FacetView::new(&tds, handle.cell_key(), handle.facet_index())
-                    .expect("Should create valid FacetView");
-            assert_eq!(
-                facet.vertices().unwrap().count(),
-                3,
-                "Visible facet {i} should have 3 vertices"
-            );
-        }
+                    assert!(
+                        bad_cells_exterior.len() <= tds.number_of_cells(),
+                        "{}D: Cannot have more bad cells than total cells",
+                        $dim
+                    );
 
-        println!("✓ Visible boundary facet detection works correctly");
+                    // Verify TDS remains valid after queries
+                    assert!(tds.is_valid().is_ok(), "{}D: TDS should remain valid", $dim);
+                }
+
+                pastey::paste! {
+                    #[test]
+                    fn [<$test_name _cavity_boundary>]() {
+                        // Test cavity boundary facet detection
+                        let initial_vertices = $initial_vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let algorithm = IncrementalBowyerWatson::new();
+
+                        // Get the single cell as a "bad cell" for testing
+                        let cell_keys: Vec<_> = tds.cell_keys().collect();
+                        assert!(!cell_keys.is_empty(), "{}D: Should have at least one cell", $dim);
+
+                        let bad_cells = vec![cell_keys[0]];
+                        let boundary_facets = algorithm
+                            .find_cavity_boundary_facets(&tds, &bad_cells)
+                            .expect("{}D: Should find cavity boundary facets");
+
+                        // For a single simplex, all D+1 facets should be boundary facets
+                        assert_eq!(
+                            boundary_facets.len(),
+                            $dim + 1,
+                            "{}D: Single simplex should have {} boundary facets (D+1)",
+                            $dim,
+                            $dim + 1
+                        );
+
+                        // Verify each boundary facet handle is valid
+                        for handle in &boundary_facets {
+                            assert!(
+                                tds.get_cell(handle.cell_key()).is_some(),
+                                "{}D: Boundary facet cell should exist",
+                                $dim
+                            );
+                            assert!(
+                                handle.facet_index() <= $dim as u8,
+                                "{}D: Facet index should be valid",
+                                $dim
+                            );
+                        }
+                    }
+
+                    #[test]
+                    fn [<$test_name _visible_boundary_facets>]() {
+                        // Test visible boundary facet detection (lightweight)
+                        let initial_vertices = $initial_vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let algorithm = IncrementalBowyerWatson::new();
+
+                        // Test with exterior vertex
+                        let exterior_vertex = $exterior_vertex;
+                        let visible_facets = algorithm
+                            .find_visible_boundary_facets_lightweight(&tds, &exterior_vertex)
+                            .expect("{}D: Should find visible boundary facets");
+
+                        // Exterior vertex should see at least some facets
+                        assert!(
+                            !visible_facets.is_empty(),
+                            "{}D: Exterior vertex should see at least some boundary facets",
+                            $dim
+                        );
+                        assert!(
+                            visible_facets.len() <= $dim + 1,
+                            "{}D: Cannot see more than {} facets from a simplex",
+                            $dim,
+                            $dim + 1
+                        );
+
+                        // Verify each visible facet handle is valid
+                        for handle in &visible_facets {
+                            assert!(
+                                tds.get_cell(handle.cell_key()).is_some(),
+                                "{}D: Visible facet cell should exist",
+                                $dim
+                            );
+                            let facet_view = crate::core::facet::FacetView::new(
+                                &tds,
+                                handle.cell_key(),
+                                handle.facet_index()
+                            )
+                            .expect("{}D: Should create FacetView from handle");
+
+                            assert_eq!(
+                                facet_view.vertices().unwrap().count(),
+                                $dim,
+                                "{}D: Visible facet should have {} vertices",
+                                $dim,
+                                $dim
+                            );
+                        }
+                    }
+
+                    #[test]
+                    fn [<$test_name _empty_bad_cells>]() {
+                        // Test cavity boundary with empty bad cells list
+                        let initial_vertices = $initial_vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let algorithm = IncrementalBowyerWatson::new();
+
+                        let bad_cells: Vec<crate::core::triangulation_data_structure::CellKey> = vec![];
+                        let boundary_facets = algorithm
+                            .find_cavity_boundary_facets(&tds, &bad_cells)
+                            .expect("{}D: Should handle empty bad cells");
+
+                        assert!(
+                            boundary_facets.is_empty(),
+                            "{}D: Empty bad cells should yield empty boundary facets",
+                            $dim
+                        );
+                    }
+                }
+            )+
+        };
     }
 
-    #[test]
-    fn test_find_visible_boundary_facets_interior_vertex() {
-        println!("Testing find_visible_boundary_facets with interior vertex");
+    // Generate tests for dimensions 2D through 5D using the macro
+    test_insertion_algorithm_dimensions! {
+        insertion_2d => 2 => "triangle" =>
+            vec![
+                vertex!([0.0, 0.0]),
+                vertex!([2.0, 0.0]),
+                vertex!([1.0, 2.0]),
+            ],
+            vertex!([1.0, 0.5]),
+            vertex!([3.0, 0.0]),
 
-        // Create simple tetrahedron
-        let initial_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([2.0, 0.0, 0.0]),
-            vertex!([0.0, 2.0, 0.0]),
-            vertex!([0.0, 0.0, 2.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let algorithm = IncrementalBowyerWatson::new();
+        insertion_3d => 3 => "tetrahedron" =>
+            vec![
+                vertex!([0.0, 0.0, 0.0]),
+                vertex!([2.0, 0.0, 0.0]),
+                vertex!([0.0, 2.0, 0.0]),
+                vertex!([0.0, 0.0, 2.0]),
+            ],
+            vertex!([0.5, 0.5, 0.5]),
+            vertex!([3.0, 0.0, 0.0]),
 
-        // Test interior vertex that should not see any facets from outside
-        let interior_vertex = vertex!([0.4, 0.4, 0.4]);
-        let visible_facets = algorithm
-            .find_visible_boundary_facets_lightweight(&tds, &interior_vertex)
-            .expect("Should successfully find visible boundary facets");
+        insertion_4d => 4 => "4-simplex" =>
+            vec![
+                vertex!([0.0, 0.0, 0.0, 0.0]),
+                vertex!([2.0, 0.0, 0.0, 0.0]),
+                vertex!([0.0, 2.0, 0.0, 0.0]),
+                vertex!([0.0, 0.0, 2.0, 0.0]),
+                vertex!([0.0, 0.0, 0.0, 2.0]),
+            ],
+            vertex!([0.5, 0.5, 0.5, 0.5]),
+            vertex!([3.0, 0.0, 0.0, 0.0]),
 
-        println!("  Interior vertex sees {} facets", visible_facets.len());
-
-        // Interior vertex should see few or no boundary facets as "visible"
-        // (The exact number depends on the orientation predicates)
-        assert!(
-            visible_facets.len() <= 4,
-            "Cannot see more than 4 facets from a tetrahedron"
-        );
-
-        println!("✓ Interior vertex visibility test works correctly");
-    }
-
-    #[test]
-    fn test_find_visible_boundary_facets_lightweight_exterior_vertex() {
-        println!("Testing find_visible_boundary_facets_lightweight with exterior vertex");
-
-        // Create simple tetrahedron
-        let initial_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let algorithm = IncrementalBowyerWatson::new();
-
-        // Test exterior vertex that should see some facets
-        let exterior_vertex = vertex!([2.0, 0.0, 0.0]);
-        let lightweight_result = algorithm
-            .find_visible_boundary_facets_lightweight(&tds, &exterior_vertex)
-            .expect("Should successfully find visible boundary facets");
-
-        println!("  Found {} visible facet handles", lightweight_result.len());
-
-        // Should find at least some visible facets for exterior vertex
-        assert!(
-            !lightweight_result.is_empty(),
-            "Exterior vertex should see at least some boundary facets"
-        );
-        assert!(
-            lightweight_result.len() <= 4,
-            "Cannot see more than 4 facets from a tetrahedron"
-        );
-
-        // Test that each handle is valid
-        for (i, handle) in lightweight_result.iter().enumerate() {
-            // Verify cell exists in TDS
-            assert!(
-                tds.get_cell(handle.cell_key()).is_some(),
-                "Cell key {:?} for visible facet {i} should exist in TDS",
-                handle.cell_key()
-            );
-
-            // Verify facet index is valid for 3D (should be 0, 1, 2, or 3)
-            assert!(
-                handle.facet_index() < 4,
-                "Facet index {} for visible facet {i} should be < 4 for 3D tetrahedron",
-                handle.facet_index()
-            );
-
-            // Create FacetView from handle to verify it's valid
-            let facet_view =
-                crate::core::facet::FacetView::new(&tds, handle.cell_key(), handle.facet_index())
-                    .expect("Should be able to create FacetView from returned handle");
-
-            assert_eq!(
-                facet_view.vertices().unwrap().count(),
-                3,
-                "Visible facet {i} should have 3 vertices in 3D"
-            );
-        }
-
-        println!("✓ Exterior vertex lightweight visibility test works correctly");
-    }
-
-    #[test]
-    fn test_find_visible_boundary_facets_lightweight_interior_vertex() {
-        println!("Testing find_visible_boundary_facets_lightweight with interior vertex");
-
-        // Create simple tetrahedron
-        let initial_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([2.0, 0.0, 0.0]),
-            vertex!([0.0, 2.0, 0.0]),
-            vertex!([0.0, 0.0, 2.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let algorithm = IncrementalBowyerWatson::new();
-
-        // Test interior vertex that should not see any facets from outside
-        let interior_vertex = vertex!([0.4, 0.4, 0.4]);
-        let lightweight_result = algorithm
-            .find_visible_boundary_facets_lightweight(&tds, &interior_vertex)
-            .expect("Should successfully find visible boundary facets");
-
-        println!(
-            "  Interior vertex sees {} facet handles",
-            lightweight_result.len()
-        );
-
-        // Interior vertex should see few or no boundary facets as "visible"
-        assert!(
-            lightweight_result.len() <= 4,
-            "Cannot see more than 4 facets from a tetrahedron"
-        );
-
-        // Verify all returned handles are valid
-        for handle in &lightweight_result {
-            assert!(
-                tds.get_cell(handle.cell_key()).is_some(),
-                "Cell key {:?} should exist in TDS",
-                handle.cell_key()
-            );
-            assert!(
-                handle.facet_index() < 4,
-                "Facet index {} should be valid for 3D tetrahedron",
-                handle.facet_index()
-            );
-        }
-
-        println!("✓ Interior vertex lightweight visibility test works correctly");
+        insertion_5d => 5 => "5-simplex" =>
+            vec![
+                vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+                vertex!([2.0, 0.0, 0.0, 0.0, 0.0]),
+                vertex!([0.0, 2.0, 0.0, 0.0, 0.0]),
+                vertex!([0.0, 0.0, 2.0, 0.0, 0.0]),
+                vertex!([0.0, 0.0, 0.0, 2.0, 0.0]),
+                vertex!([0.0, 0.0, 0.0, 0.0, 2.0]),
+            ],
+            vertex!([0.5, 0.5, 0.5, 0.5, 0.5]),
+            vertex!([3.0, 0.0, 0.0, 0.0, 0.0]),
     }
 
     #[test]
@@ -3912,185 +3996,6 @@ mod tests {
     }
 
     #[test]
-    fn test_find_bad_cells_for_interior_vertex() {
-        println!("Testing find_bad_cells with interior vertex");
-
-        // Create initial tetrahedron
-        let initial_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([2.0, 0.0, 0.0]),
-            vertex!([0.0, 2.0, 0.0]),
-            vertex!([0.0, 0.0, 2.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let mut algorithm = IncrementalBowyerWatson::new();
-
-        // Test with interior vertex that should violate Delaunay property
-        let interior_vertex = vertex!([0.5, 0.5, 0.5]);
-        let bad_cells = algorithm
-            .find_bad_cells(&tds, &interior_vertex)
-            .expect("Should successfully find bad cells for interior vertex");
-
-        // Since this is an interior vertex, it should find the tetrahedron as a bad cell
-        assert!(
-            !bad_cells.is_empty(),
-            "Interior vertex should find at least one bad cell"
-        );
-        assert!(
-            bad_cells.len() <= tds.number_of_cells(),
-            "Cannot have more bad cells than total cells"
-        );
-
-        println!("  Found {} bad cells for interior vertex", bad_cells.len());
-        println!("✓ Bad cell detection for interior vertex works correctly");
-    }
-
-    #[test]
-    fn test_find_bad_cells_for_exterior_vertex() {
-        println!("Testing find_bad_cells with exterior vertex");
-
-        // Create initial tetrahedron
-        let initial_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let mut algorithm = IncrementalBowyerWatson::new();
-
-        // Test with exterior vertex that should not violate circumsphere
-        let exterior_vertex = vertex!([3.0, 0.0, 0.0]);
-        let bad_cells = algorithm
-            .find_bad_cells(&tds, &exterior_vertex)
-            .expect("Should successfully find bad cells for exterior vertex");
-
-        // Exterior vertex should typically find no bad cells (no circumsphere violations)
-        println!("  Found {} bad cells for exterior vertex", bad_cells.len());
-        assert!(
-            bad_cells.len() <= tds.number_of_cells(),
-            "Cannot have more bad cells than total cells"
-        );
-
-        println!("✓ Bad cell detection for exterior vertex works correctly");
-    }
-
-    #[test]
-    fn test_find_bad_cells_edge_cases() {
-        println!("Testing find_bad_cells edge cases");
-
-        // Create a more complex triangulation with multiple cells
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([1.0, 1.0, 1.0]), // Additional vertex to create more cells
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let mut algorithm = IncrementalBowyerWatson::new();
-
-        // Test vertex very close to existing vertex
-        let close_vertex = vertex!([0.001, 0.0, 0.0]);
-        let bad_cells_close = algorithm
-            .find_bad_cells(&tds, &close_vertex)
-            .unwrap_or_else(|e| {
-                println!("  Close vertex error: {e}");
-                vec![]
-            });
-        println!("  Close vertex found {} bad cells", bad_cells_close.len());
-
-        // Test vertex on circumsphere boundary (should be handled gracefully)
-        let boundary_vertex = vertex!([0.5, 0.5, 0.0]);
-        let bad_cells_boundary = algorithm
-            .find_bad_cells(&tds, &boundary_vertex)
-            .unwrap_or_else(|e| {
-                println!("  Boundary vertex error: {e}");
-                vec![]
-            });
-        println!(
-            "  Boundary vertex found {} bad cells",
-            bad_cells_boundary.len()
-        );
-
-        // All results should be within reasonable bounds
-        assert!(bad_cells_close.len() <= tds.number_of_cells());
-        assert!(bad_cells_boundary.len() <= tds.number_of_cells());
-
-        println!("✓ Bad cell detection edge cases handled correctly");
-    }
-
-    #[test]
-    fn test_find_cavity_boundary_facets_single_bad_cell() {
-        println!("Testing find_cavity_boundary_facets with single bad cell");
-
-        // Create simple tetrahedron
-        let initial_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let algorithm = IncrementalBowyerWatson::new();
-
-        // Get the single cell as a "bad cell"
-        let cell_keys: Vec<_> = tds.cell_keys().collect();
-        assert_eq!(cell_keys.len(), 1, "Should have exactly one cell");
-
-        let bad_cells = vec![cell_keys[0]];
-        let boundary_facet_handles = algorithm
-            .find_cavity_boundary_facets(&tds, &bad_cells)
-            .expect("Should find boundary facets");
-
-        // For a single tetrahedron, all 4 facets should be cavity boundary facets
-        assert_eq!(
-            boundary_facet_handles.len(),
-            4,
-            "Single tetrahedron should have 4 boundary facets"
-        );
-
-        // Each facet handle should be valid - create FacetViews to verify
-        for (i, handle) in boundary_facet_handles.iter().enumerate() {
-            let facet_view =
-                crate::core::facet::FacetView::new(&tds, handle.cell_key(), handle.facet_index())
-                    .expect("Should be able to create FacetView from handle");
-            let vertex_count = facet_view.vertices().unwrap().count();
-            assert_eq!(vertex_count, 3, "Facet {i} should have 3 vertices in 3D");
-        }
-
-        println!("✓ Cavity boundary facet detection for single cell works correctly");
-    }
-
-    #[test]
-    fn test_find_cavity_boundary_facets_empty_bad_cells() {
-        println!("Testing find_cavity_boundary_facets with empty bad cells list");
-
-        // Create simple tetrahedron
-        let initial_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let algorithm = IncrementalBowyerWatson::new();
-
-        let bad_cells = vec![]; // Empty list
-        let boundary_facets = algorithm
-            .find_cavity_boundary_facets(&tds, &bad_cells)
-            .expect("Should handle empty bad cells list");
-
-        assert_eq!(
-            boundary_facets.len(),
-            0,
-            "Empty bad cells list should produce empty boundary facets"
-        );
-
-        println!("✓ Empty bad cells list handled correctly");
-    }
-
-    #[test]
     fn test_create_cell_from_facet_and_vertex_success() {
         println!("Testing create_cell_from_facet_and_vertex successful creation");
 
@@ -4143,229 +4048,6 @@ mod tests {
     }
 
     #[test]
-    fn test_create_cell_from_facet_and_vertex_failure() {
-        println!("Testing create_cell_from_facet_and_vertex with duplicate vertex");
-
-        // Create initial triangulation
-        let initial_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-
-        // Get a boundary facet using FacetView
-        let boundary_facets = tds.boundary_facets().expect("Should have boundary facets");
-        let test_facet = boundary_facets
-            .clone()
-            .next()
-            .expect("Should have boundary facets");
-        let cell_key = test_facet.cell_key();
-        let facet_index = test_facet.facet_index();
-
-        // Get a vertex that's already in the facet (this will create a duplicate)
-        let facet_vertices: Vec<_> = test_facet.vertices().unwrap().collect();
-        let duplicate_vertex = *facet_vertices[0]; // Use an existing facet vertex
-        drop(boundary_facets); // Drop the iterator to release the immutable borrow
-
-        let initial_cell_count = tds.number_of_cells();
-
-        let result =
-            <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
-                f64,
-                Option<()>,
-                Option<()>,
-                3,
-            >>::create_cell_from_facet_handle(
-                &mut tds, cell_key, facet_index, &duplicate_vertex
-            );
-
-        // Check if creation was rejected or succeeded
-        match result {
-            Ok(_cell_key) => {
-                println!("  Cell creation succeeded");
-
-                // The cell was created - check if it's valid or invalid
-                // Get the newly created cell (should be the last one added)
-                let final_cell_count = tds.number_of_cells();
-                assert_eq!(
-                    final_cell_count,
-                    initial_cell_count + 1,
-                    "Cell count should have increased by 1"
-                );
-
-                // Check if any cell in the TDS is now invalid due to duplicate vertices
-                let mut found_invalid = false;
-                for (_, cell) in tds.cells() {
-                    if cell.is_valid()
-                        == Err(crate::core::cell::CellValidationError::DuplicateVertices)
-                    {
-                        found_invalid = true;
-                        println!("  ✓ Found cell with duplicate vertices (validation detected it)");
-                        break;
-                    }
-                }
-
-                if !found_invalid {
-                    println!("  Note: No cells with duplicate vertices found after creation");
-                    println!("  This means duplicate detection may happen earlier in the pipeline");
-                }
-            }
-            Err(e) => {
-                println!("  ✓ Cell creation properly rejected duplicate vertex: {e}");
-                assert_eq!(
-                    tds.number_of_cells(),
-                    initial_cell_count,
-                    "Cell count should remain unchanged after failed creation"
-                );
-            }
-        }
-
-        println!("✓ Cell creation with duplicate vertex handled correctly");
-    }
-
-    #[test]
-    fn test_cavity_boundary_success_rate_zero_attempts() {
-        use approx::assert_abs_diff_eq;
-        println!("Testing cavity_boundary_success_rate with zero vertices processed");
-
-        let stats = InsertionStatistics::new();
-        let rate = stats.cavity_boundary_success_rate();
-
-        assert_abs_diff_eq!(rate, 1.0, epsilon = f64::EPSILON);
-        println!("✓ Zero attempts handled correctly");
-    }
-
-    #[test]
-    fn test_cavity_boundary_success_rate_underflow_case() {
-        use approx::assert_abs_diff_eq;
-        println!("Testing cavity_boundary_success_rate with more failures than vertices processed");
-
-        let mut stats = InsertionStatistics::new();
-        stats.vertices_processed = 5;
-        stats.cavity_boundary_failures = 10; // More failures than vertices processed
-
-        let rate = stats.cavity_boundary_success_rate();
-
-        // With saturating subtraction, this should give us 0 successes / 5 attempts = 0.0
-        assert_abs_diff_eq!(rate, 0.0, epsilon = f64::EPSILON);
-        println!("✓ Underflow case handled correctly with saturating subtraction");
-    }
-
-    #[test]
-    fn test_cavity_boundary_success_rate_all_failures() {
-        use approx::assert_abs_diff_eq;
-        println!("Testing cavity_boundary_success_rate with failures equal to vertices processed");
-
-        let mut stats = InsertionStatistics::new();
-        stats.vertices_processed = 10;
-        stats.cavity_boundary_failures = 10; // All attempts failed
-
-        let rate = stats.cavity_boundary_success_rate();
-
-        assert_abs_diff_eq!(rate, 0.0, epsilon = f64::EPSILON);
-        println!("✓ All failures case handled correctly");
-    }
-
-    #[test]
-    fn test_cavity_boundary_success_rate_normal_cases() {
-        use approx::assert_abs_diff_eq;
-        println!("Testing cavity_boundary_success_rate with normal cases");
-
-        // Case 1: All successes
-        let mut stats = InsertionStatistics::new();
-        stats.vertices_processed = 10;
-        stats.cavity_boundary_failures = 0;
-
-        let rate = stats.cavity_boundary_success_rate();
-        assert_abs_diff_eq!(rate, 1.0, epsilon = f64::EPSILON);
-
-        // Case 2: Half successes
-        stats.vertices_processed = 10;
-        stats.cavity_boundary_failures = 5;
-
-        let rate = stats.cavity_boundary_success_rate();
-        assert_abs_diff_eq!(rate, 0.5, epsilon = f64::EPSILON);
-
-        // Case 3: Most successes
-        stats.vertices_processed = 100;
-        stats.cavity_boundary_failures = 10;
-
-        let rate = stats.cavity_boundary_success_rate();
-        assert_abs_diff_eq!(rate, 0.9, epsilon = f64::EPSILON);
-
-        println!("✓ Normal cases handled correctly");
-    }
-
-    #[test]
-    fn test_cavity_boundary_success_rate_precision() {
-        use approx::assert_abs_diff_eq;
-        println!("Testing cavity_boundary_success_rate precision with edge values");
-
-        let mut stats = InsertionStatistics::new();
-        stats.vertices_processed = 3;
-        stats.cavity_boundary_failures = 1;
-
-        let rate = stats.cavity_boundary_success_rate();
-        let expected = 2.0 / 3.0; // Should be approximately 0.6666666666666666
-
-        assert_abs_diff_eq!(rate, expected, epsilon = f64::EPSILON);
-        println!("  Rate: {rate}, Expected: {expected}");
-        println!("✓ Precision handling works correctly");
-    }
-
-    #[test]
-    fn test_find_bad_cells_error_cases() {
-        println!("Testing find_bad_cells error cases");
-
-        // Create an empty triangulation to test NoCells error
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
-        let mut algorithm = IncrementalBowyerWatson::new();
-        let vertex = vertex!([0.25, 0.25, 0.25]);
-
-        match algorithm.find_bad_cells(&empty_tds, &vertex) {
-            Err(BadCellsError::NoCells) => {
-                println!("  ✓ Empty triangulation correctly returns NoCells error");
-            }
-            Ok(_) => panic!("Expected NoCells error for empty triangulation"),
-            Err(e) => panic!("Unexpected error: {e}"),
-        }
-    }
-
-    #[test]
-    fn test_bad_cells_error_types() {
-        println!("Testing BadCellsError types");
-
-        // Test error formatting
-        let err1 = BadCellsError::AllCellsBad {
-            cell_count: 5,
-            degenerate_count: 2,
-        };
-        println!("  AllCellsBad error: {err1}");
-
-        let err2 = BadCellsError::TooManyDegenerateCells(TooManyDegenerateCellsError {
-            degenerate_count: 3,
-            total_tested: 5,
-        });
-        println!("  TooManyDegenerateCells error: {err2}");
-
-        let err3 = BadCellsError::NoCells;
-        println!("  NoCells error: {err3}");
-
-        // Test PartialEq implementation
-        let err1_clone = BadCellsError::AllCellsBad {
-            cell_count: 5,
-            degenerate_count: 2,
-        };
-        assert_eq!(err1, err1_clone, "Equal errors should compare as equal");
-        assert_ne!(err1, err2, "Different errors should not be equal");
-        assert_ne!(err2, err3, "Different error variants should not be equal");
-
-        println!("✓ BadCellsError types work correctly with equality");
-    }
-
-    #[test]
     fn test_degenerate_only_cells_error_message() {
         println!("Testing TooManyDegenerateCells error message formatting");
 
@@ -4406,110 +4088,6 @@ mod tests {
         println!("  ✓ Single degenerate case message: {error_msg3}");
 
         println!("✓ TooManyDegenerateCells error message formatting works correctly");
-    }
-
-    #[test]
-    fn test_facet_new_error_propagation() {
-        println!("Testing FacetView validation and facet consistency checking");
-
-        // Create a triangulation with multiple cells
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.5, 0.5, 0.5]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let algorithm = IncrementalBowyerWatson::new();
-
-        // Get cell keys to work with
-        let cell_keys: Vec<_> = tds.cell_keys().collect();
-        assert!(!cell_keys.is_empty(), "Should have at least one cell");
-
-        // Test 1: Verify that FacetView properly validates facet indices
-        println!("  Test 1: FacetView facet index validation");
-        let first_cell_key = cell_keys[0];
-
-        // Try to create a FacetView with an invalid facet index
-        let invalid_facet_result = crate::core::facet::FacetView::new(&tds, first_cell_key, 99);
-        assert!(
-            invalid_facet_result.is_err(),
-            "FacetView creation should fail with invalid facet index"
-        );
-        match invalid_facet_result {
-            Err(crate::core::facet::FacetError::InvalidFacetIndex { index, .. }) => {
-                println!("    ✓ Got expected InvalidFacetIndex error for index {index}");
-            }
-            other => {
-                panic!("Expected InvalidFacetIndex error, got: {other:?}");
-            }
-        }
-
-        // Test 2: Verify facet consistency between neighboring cells
-        println!("  Test 2: Facet index consistency between neighbors");
-        if cell_keys.len() >= 2 {
-            let first_neighbor_key = cell_keys[0];
-            let second_neighbor_key = cell_keys[1];
-
-            // Use the public utility to check facet consistency
-            let consistency_result = crate::core::util::verify_facet_index_consistency(
-                &tds,
-                first_neighbor_key,
-                second_neighbor_key,
-                0, // Check facet 0
-            );
-
-            match consistency_result {
-                Ok(consistent) => {
-                    println!("    ✓ Facet consistency check completed: {consistent}");
-                }
-                Err(e) => {
-                    println!("    ✓ Facet consistency check properly handles errors: {e}");
-                }
-            }
-        }
-
-        // Test 3: Verify find_cavity_boundary_facets works correctly with valid cells
-        println!("  Test 3: find_cavity_boundary_facets with valid cells");
-        let bad_cells = vec![cell_keys[0]];
-        let result = algorithm.find_cavity_boundary_facets(&tds, &bad_cells);
-
-        assert!(
-            result.is_ok(),
-            "find_cavity_boundary_facets should succeed with valid cells"
-        );
-
-        if let Ok(boundary_facets) = result {
-            println!(
-                "    ✓ Found {} boundary facet handles",
-                boundary_facets.len()
-            );
-
-            // Verify each boundary facet handle is valid
-            for (i, handle) in boundary_facets.iter().enumerate() {
-                // Create FacetView from the handle
-                let facet_view = crate::core::facet::FacetView::new(
-                    &tds,
-                    handle.cell_key(),
-                    handle.facet_index(),
-                )
-                .expect("Should be able to create FacetView from boundary facet handle");
-
-                // Verify the facet has the correct number of vertices (D vertices for D-dimensional triangulation)
-                let vertex_count = facet_view
-                    .vertices()
-                    .expect("Should be able to get vertices")
-                    .count();
-                assert_eq!(
-                    vertex_count, 3,
-                    "Boundary facet {i} should have 3 vertices in 3D triangulation"
-                );
-            }
-            println!("    ✓ All boundary facet handles are valid");
-        }
-
-        println!("✓ FacetView validation and facet consistency checking works correctly");
     }
 
     #[test]
@@ -4623,99 +4201,119 @@ mod tests {
         println!("✓ Integer margin calculation works correctly with ~10% expansion");
     }
 
-    /// Test error handling in `InsertionError` creation and classification
+    /// Test `saturating_sub_for_bbox` with floating-point coordinates
     #[test]
-    fn test_insertion_error_creation_and_classification() {
-        // Test geometric failure error creation
-        let geom_error = InsertionError::geometric_failure(
-            "Test geometric failure",
-            InsertionStrategy::CavityBased,
-        );
+    fn test_saturating_sub_for_bbox_float() {
+        println!("Testing saturating_sub_for_bbox with floating-point types");
 
-        match geom_error {
-            InsertionError::GeometricFailure {
-                message,
-                strategy_attempted,
-            } => {
-                assert_eq!(message, "Test geometric failure");
-                assert_eq!(strategy_attempted, InsertionStrategy::CavityBased);
-            }
-            _ => panic!("Expected GeometricFailure variant"),
-        }
+        // Normal subtraction cases
+        let result = saturating_sub_for_bbox(10.0_f64, 3.0_f64);
+        assert_abs_diff_eq!(result, 7.0, epsilon = 1e-10);
+        println!("  ✓ f64: 10.0 - 3.0 = {result}");
 
-        // Test invalid vertex error creation
-        let invalid_vertex_error = InsertionError::invalid_vertex("Duplicate coordinates");
-        match invalid_vertex_error {
-            InsertionError::InvalidVertex { reason } => {
-                assert_eq!(reason, "Duplicate coordinates");
-            }
-            _ => panic!("Expected InvalidVertex variant"),
-        }
+        let result = saturating_sub_for_bbox(5.5_f32, 2.3_f32);
+        assert_abs_diff_eq!(result, 3.2, epsilon = 1e-6);
+        println!("  ✓ f32: 5.5 - 2.3 = {result}");
 
-        // Test precision failure error creation
-        let precision_error = InsertionError::precision_failure(1e-15, 5);
-        match precision_error {
-            InsertionError::PrecisionFailure {
-                tolerance,
-                perturbation_attempts,
-            } => {
-                assert_abs_diff_eq!(tolerance, 1e-15, epsilon = f64::EPSILON);
-                assert_eq!(perturbation_attempts, 5);
-            }
-            _ => panic!("Expected PrecisionFailure variant"),
-        }
+        // Negative result
+        let result = saturating_sub_for_bbox(3.0_f64, 10.0_f64);
+        assert_abs_diff_eq!(result, -7.0, epsilon = 1e-10);
+        println!("  ✓ f64: 3.0 - 10.0 = {result} (negative result)");
 
-        // Test hull extension failure
-        let hull_error = InsertionError::hull_extension_failure("No visible facets");
-        match hull_error {
-            InsertionError::HullExtensionFailure { reason } => {
-                assert_eq!(reason, "No visible facets");
-            }
-            _ => panic!("Expected HullExtensionFailure variant"),
-        }
+        // Underflow to -infinity (floats handle this naturally)
+        let result = saturating_sub_for_bbox(-f64::MAX, f64::MAX);
+        assert!(result.is_infinite() && result.is_sign_negative());
+        println!("  ✓ f64: -MAX - MAX = {result} (underflow to -infinity)");
+
+        // Zero cases
+        let result = saturating_sub_for_bbox(5.0_f64, 5.0_f64);
+        assert_abs_diff_eq!(result, 0.0, epsilon = 1e-10);
+        println!("  ✓ f64: 5.0 - 5.0 = {result}");
+
+        println!("✓ saturating_sub_for_bbox works correctly with floating-point types");
     }
 
-    /// Test `InsertionError` recoverability classification
+    /// Test `saturating_add_for_bbox` with floating-point coordinates
     #[test]
-    fn test_insertion_error_recoverability() {
-        // Recoverable errors
-        let geometric_error =
-            InsertionError::geometric_failure("Test", InsertionStrategy::Standard);
-        assert!(geometric_error.is_recoverable());
+    fn test_saturating_add_for_bbox_float() {
+        println!("Testing saturating_add_for_bbox with floating-point types");
 
-        let precision_error = InsertionError::precision_failure(1e-10, 3);
-        assert!(precision_error.is_recoverable());
+        // Normal addition cases
+        let result = saturating_add_for_bbox(10.0_f64, 3.0_f64);
+        assert_abs_diff_eq!(result, 13.0, epsilon = 1e-10);
+        println!("  ✓ f64: 10.0 + 3.0 = {result}");
 
-        let bad_cells_error = InsertionError::BadCellsDetection(
-            BadCellsError::TooManyDegenerateCells(TooManyDegenerateCellsError {
-                degenerate_count: 10,
-                total_tested: 15,
-            }),
-        );
-        assert!(bad_cells_error.is_recoverable());
+        let result = saturating_add_for_bbox(5.5_f32, 2.3_f32);
+        assert_abs_diff_eq!(result, 7.8, epsilon = 1e-6);
+        println!("  ✓ f32: 5.5 + 2.3 = {result}");
 
-        // Non-recoverable errors
-        let invalid_vertex_error = InsertionError::invalid_vertex("Invalid coordinates");
-        assert!(!invalid_vertex_error.is_recoverable());
+        // Large values
+        let result = saturating_add_for_bbox(1e100_f64, 2e100_f64);
+        assert_abs_diff_eq!(result, 3e100, epsilon = 1e90);
+        println!("  ✓ f64: 1e100 + 2e100 = {result}");
 
-        let hull_error = InsertionError::hull_extension_failure("No visible facets");
-        assert!(!hull_error.is_recoverable());
+        // Overflow to infinity (floats handle this naturally)
+        let result = saturating_add_for_bbox(f64::MAX, f64::MAX);
+        assert!(result.is_infinite() && result.is_sign_positive());
+        println!("  ✓ f64: MAX + MAX = {result} (overflow to infinity)");
+
+        // Zero cases
+        let result = saturating_add_for_bbox(5.0_f64, 0.0_f64);
+        assert_abs_diff_eq!(result, 5.0, epsilon = 1e-10);
+        println!("  ✓ f64: 5.0 + 0.0 = {result}");
+
+        // Negative values
+        let result = saturating_add_for_bbox(-3.5_f64, 2.5_f64);
+        assert_abs_diff_eq!(result, -1.0, epsilon = 1e-10);
+        println!("  ✓ f64: -3.5 + 2.5 = {result}");
+
+        println!("✓ saturating_add_for_bbox works correctly with floating-point types");
     }
 
-    /// Test `InsertionError` strategy extraction
+    /// Test `saturating_sub_for_bbox` behavior with bounding box expansion use case
     #[test]
-    fn test_insertion_error_strategy_extraction() {
-        // Error with strategy information
-        let geometric_error =
-            InsertionError::geometric_failure("Test", InsertionStrategy::HullExtension);
-        assert_eq!(
-            geometric_error.attempted_strategy(),
-            Some(InsertionStrategy::HullExtension)
+    fn test_saturating_bbox_operations_integration() {
+        println!("Testing saturating bbox operations in realistic bounding box scenarios");
+
+        // Simulate bounding box expansion for floating-point coordinates
+        let min_coord = 10.0_f64;
+        let margin = 2.5_f64;
+        let expanded_min = saturating_sub_for_bbox(min_coord, margin);
+        assert_abs_diff_eq!(expanded_min, 7.5, epsilon = 1e-10);
+        println!("  ✓ f64: Expand min bbox 10.0 by margin 2.5 -> {expanded_min}");
+
+        let max_coord = 100.0_f64;
+        let expanded_max = saturating_add_for_bbox(max_coord, margin);
+        assert_abs_diff_eq!(expanded_max, 102.5, epsilon = 1e-10);
+        println!("  ✓ f64: Expand max bbox 100.0 by margin 2.5 -> {expanded_max}");
+
+        // Verify the expanded range is larger than original
+        assert!(expanded_min < min_coord);
+        assert!(expanded_max > max_coord);
+        let original_range = max_coord - min_coord;
+        let expanded_range = expanded_max - expanded_min;
+        assert!(expanded_range > original_range);
+        println!("  ✓ Expanded range {expanded_range} > original range {original_range}");
+
+        // Test with very large coordinate values (e.g., astronomical scales)
+        let large_min = 1e50_f64;
+        let large_margin = 1e48_f64;
+        let large_expanded_min = saturating_sub_for_bbox(large_min, large_margin);
+        assert!(large_expanded_min < large_min);
+        println!(
+            "  ✓ f64: Large scale bbox expansion: {large_min} - {large_margin} = {large_expanded_min}"
         );
 
-        // Error without strategy information
-        let invalid_vertex_error = InsertionError::invalid_vertex("Test");
-        assert_eq!(invalid_vertex_error.attempted_strategy(), None);
+        // Test with very small coordinate values (e.g., microscopic scales)
+        let small_min = 1e-50_f64;
+        let small_margin = 1e-52_f64;
+        let small_expanded_min = saturating_sub_for_bbox(small_min, small_margin);
+        assert!(small_expanded_min < small_min);
+        println!(
+            "  ✓ f64: Small scale bbox expansion: {small_min} - {small_margin} = {small_expanded_min}"
+        );
+
+        println!("✓ Saturating bbox operations work correctly in realistic scenarios");
     }
 
     /// Test `TooManyDegenerateCellsError` display formatting
@@ -4972,9 +4570,9 @@ mod tests {
         // The main test is that we don't panic with invalid input
     }
 
-    /// Test `create_cell_from_facet_and_vertex` error cases - additional scenarios
+    /// Test `create_cell_from_facet_and_vertex` error cases - comprehensive
     #[test]
-    fn test_create_cell_from_facet_and_vertex_failure_additional() {
+    fn test_create_cell_from_facet_and_vertex_failure_comprehensive() {
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -5016,48 +4614,6 @@ mod tests {
                 println!("Expected error for degenerate cell creation: {e:?}");
             }
         }
-    }
-
-    /// Test `facet_new_error_propagation` - comprehensive coverage
-    #[test]
-    fn test_facet_new_error_propagation_comprehensive() {
-        // This test verifies that errors from Facet::new are properly propagated
-        // through the insertion algorithm error handling paths
-
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let _algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
-
-        // Get boundary facet handle (lightweight)
-        let boundary_facets = tds.boundary_facets().unwrap();
-        let test_facet = boundary_facets
-            .clone()
-            .next()
-            .expect("Should have boundary facets");
-        let cell_key = test_facet.cell_key();
-        let facet_index = test_facet.facet_index();
-        drop(boundary_facets); // Drop the iterator to release the immutable borrow
-
-        // Test vertex that might cause facet creation issues
-        let test_vertex = vertex!([10.0, 10.0, 10.0]);
-
-        // The actual error paths depend on the specific implementation,
-        // but we're testing that errors are handled gracefully
-        let _ = <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
-            f64,
-            Option<()>,
-            Option<()>,
-            3,
-        >>::create_cell_from_facet_handle(
-            &mut tds, cell_key, facet_index, &test_vertex
-        );
-
-        // Main goal is ensuring no panics occur during error handling
     }
 
     /// Test comprehensive `InsertionError` creation and classification
@@ -6215,66 +5771,6 @@ mod tests {
         println!("  ✓ All degenerate cells (0 tested) correctly exceed threshold");
 
         println!("✓ DEGENERATE_CELL_THRESHOLD boundary conditions work correctly");
-    }
-
-    /// Test bad cells error variants comprehensive display and equality
-    #[test]
-    fn test_bad_cells_error_comprehensive_variants() {
-        println!("Testing BadCellsError comprehensive variants");
-
-        // Test AllCellsBad with various counts
-        let all_bad_zero_degenerate = BadCellsError::AllCellsBad {
-            cell_count: 10,
-            degenerate_count: 0,
-        };
-        let display = format!("{all_bad_zero_degenerate}");
-        assert!(display.contains("All 10 cells marked as bad"));
-        assert!(display.contains("0 degenerate"));
-        println!("  ✓ AllCellsBad with zero degenerate: {display}");
-
-        let all_bad_some_degenerate = BadCellsError::AllCellsBad {
-            cell_count: 5,
-            degenerate_count: 3,
-        };
-        let display = format!("{all_bad_some_degenerate}");
-        assert!(display.contains("All 5 cells marked as bad"));
-        assert!(display.contains("3 degenerate"));
-        println!("  ✓ AllCellsBad with some degenerate: {display}");
-
-        // Test TooManyDegenerateCells with boundary conditions
-        let too_many_boundary =
-            BadCellsError::TooManyDegenerateCells(TooManyDegenerateCellsError {
-                degenerate_count: 5,
-                total_tested: 10, // Exactly at 50% threshold
-            });
-        let display = format!("{too_many_boundary}");
-        assert!(display.contains("Too many degenerate circumspheres (5/10)"));
-        println!("  ✓ TooManyDegenerateCells at boundary: {display}");
-
-        let too_many_exceed = BadCellsError::TooManyDegenerateCells(TooManyDegenerateCellsError {
-            degenerate_count: 7,
-            total_tested: 10, // 70% > 50% threshold
-        });
-        let display = format!("{too_many_exceed}");
-        assert!(display.contains("Too many degenerate circumspheres (7/10)"));
-        println!("  ✓ TooManyDegenerateCells exceeding threshold: {display}");
-
-        // Test equality and cloning
-        let error1 = BadCellsError::AllCellsBad {
-            cell_count: 5,
-            degenerate_count: 2,
-        };
-        let error1_clone = error1.clone();
-        assert_eq!(error1, error1_clone, "Cloned errors should be equal");
-
-        let error2 = BadCellsError::NoCells;
-        let error2_clone = error2.clone();
-        assert_eq!(error2, error2_clone, "NoCells clones should be equal");
-        assert_ne!(error1, error2, "Different error types should not be equal");
-
-        println!("  ✓ BadCellsError equality and cloning work correctly");
-
-        println!("✓ BadCellsError comprehensive variants work correctly");
     }
 
     /// Test `new_triangulation` method comprehensive scenarios

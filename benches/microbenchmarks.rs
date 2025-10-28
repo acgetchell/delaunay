@@ -137,14 +137,16 @@ macro_rules! generate_dimensional_benchmarks {
                                     // bench-only invariant violation. No additional cfg guard is needed.
                                     #[allow(deprecated)]
                                     {
-                                        // Scoped import to avoid items_after_statements warning
-                                        use delaunay::cell;
-                                        // Use deterministic vertex selection from input vertices (not tds.vertices())
-                                        if vertices.len() >= ($dim + 1) {
+                                        // Clone an existing cell from the TDS to ensure VertexKeys remain valid
+                                        // This avoids creating cells with dangling keys from temporary TDS instances
+                                        let cell_to_duplicate = tds.cell_keys()
+                                            .next()
+                                            .and_then(|key| tds.get_cell(key).cloned());
+
+                                        if let Some(cell_to_dup) = cell_to_duplicate {
                                             // SAFETY(BENCH-ONLY): Deliberately create duplicates for perf testing
                                             for _ in 0..3 {
-                                                let duplicate_cell = cell!(vertices[0..($dim + 1)].to_vec());
-                                                let _cell_key = tds.insert_cell_unchecked(duplicate_cell);
+                                                let _cell_key = tds.insert_cell_unchecked(cell_to_dup.clone());
                                                 // Intentionally not updating UUID mappings to create true duplicates
                                             }
                                         }
