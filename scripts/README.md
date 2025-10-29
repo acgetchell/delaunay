@@ -246,7 +246,128 @@ Hardware Information:
 
 ---
 
+#### `compare_storage_backends.py` 🐍
+
+**Purpose**: Compare SlotMap vs DenseSlotMap storage backend performance for Phase 4 evaluation.
+
+**Features**:
+
+- **Automated Comparison**: Runs benchmarks with both backends and generates detailed reports
+- **Criterion Integration**: Parses Criterion output (JSON and text) for robust comparison
+- **Performance Metrics**: Analyzes construction time, iteration speed, query performance, and validation overhead
+- **Memory Tracking**: Reports RSS memory usage internally during benchmarks
+- **Summary Statistics**: Calculates average, best-case, and worst-case performance differences
+- **Development Mode**: Fast iteration with reduced scale (`--dev` flag)
+- **Markdown Reports**: Professional comparison reports with tables and recommendations
+
+**Commands**:
+
+```bash
+# Run comparison with default settings
+uv run compare-storage-backends
+
+# Quick comparison (development mode)
+uv run compare-storage-backends --dev
+
+# Custom output location
+uv run compare-storage-backends --output artifacts/storage_comparison.md
+
+# Specify benchmark to run
+uv run compare-storage-backends --bench large_scale_performance
+
+# Filter specific benchmarks
+uv run compare-storage-backends --filter "construction/3D"
+```
+
+**Report Contents**:
+
+- Performance comparison table with percentage differences
+- Summary statistics (average, best/worst case)
+- Recommendations based on results
+- Reproduction instructions
+
+**Dependencies**: Python 3.13+, `subprocess_utils.py`
+
+---
+
 ### Shell Scripts (Specialized)
+
+#### `slurm_storage_comparison.sh`
+
+**Purpose**: Slurm cluster script for comprehensive SlotMap vs DenseSlotMap comparison.
+
+**Features**:
+
+- **Automated 3-phase execution**: SlotMap benchmarks → DenseSlotMap benchmarks → Analysis
+- **Baseline saving**: Uses `--save-baseline` for precise Criterion comparisons
+- **Resource management**: Configurable CPU, memory, and time limits
+- **Progress tracking**: Detailed timing and progress output
+- **Artifact archiving**: Packages all results in timestamped tarball
+- **critcmp integration**: Automatic detailed comparison if available
+- **Error handling**: Timeout protection and graceful failure recovery
+
+**Usage**:
+
+```bash
+# Standard comparison (~12 hours)
+sbatch scripts/slurm_storage_comparison.sh
+
+# Large-scale comparison (~24 hours)
+sbatch --time=24:00:00 scripts/slurm_storage_comparison.sh --large
+
+# Custom resources
+sbatch --mem=64G --cpus-per-task=16 scripts/slurm_storage_comparison.sh
+```
+
+**Prerequisites**:
+
+- Rust toolchain (rustup)
+- uv package manager
+- critcmp (optional but recommended): `cargo install critcmp`
+
+**Output Files**:
+
+```text
+artifacts/
+├── storage_comparison_<job-id>_<timestamp>.md   # Main report
+├── storage-comparison-<job-id>/                 # Full archive
+│   ├── criterion/                               # Criterion reports
+│   └── report.md                                # Report copy
+└── storage-comparison-<job-id>.tar.gz           # Compressed
+
+slurm-<job-id>-storage-comparison.out            # Stdout log
+slurm-<job-id>-storage-comparison.err            # Stderr log
+```
+
+**Configuration**:
+
+Edit the script header for your cluster:
+
+```bash
+#SBATCH --partition=compute        # Your partition name
+#SBATCH --time=12:00:00           # Job time limit
+#SBATCH --cpus-per-task=8         # CPU cores
+#SBATCH --mem=32G                 # Memory allocation
+```
+
+**Analysis Tools**:
+
+```bash
+# On cluster after completion
+cat artifacts/storage_comparison_<job-id>_<timestamp>.md
+critcmp slotmap denseslotmap
+
+# Download and analyze locally
+scp cluster:/path/to/artifacts/storage-comparison-<job-id>.tar.gz .
+tar -xzf storage-comparison-<job-id>.tar.gz
+open storage-comparison-<job-id>/criterion/*/report/index.html
+```
+
+**Related**: See [Issue #74](https://github.com/acgetchell/delaunay/issues/74) for Phase 4 implementation details.
+
+**Dependencies**: Slurm, Rust, cargo, uv, optional critcmp
+
+---
 
 #### `run_all_examples.sh`
 

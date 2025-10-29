@@ -130,9 +130,11 @@ delaunay/
 │   ├── benchmark_models.py                       # Data models for benchmark parsing and formatting
 │   ├── benchmark_utils.py                        # Benchmark processing, baseline generation, and performance comparison utilities
 │   ├── changelog_utils.py                        # Comprehensive Python utilities for changelog generation, processing, and git tagging
+│   ├── compare_storage_backends.py               # SlotMap vs DenseSlotMap performance comparison utility
 │   ├── enhance_commits.py                        # Commit enhancement and categorization utilities
 │   ├── hardware_utils.py                         # Hardware information detection and system capabilities analysis
 │   ├── run_all_examples.sh                       # Validate all examples
+│   ├── slurm_storage_comparison.sh               # Slurm cluster script for comprehensive storage backend comparison
 │   └── subprocess_utils.py                       # Secure subprocess execution utilities and shared project navigation functions
 ├── .github/                                      # GitHub configuration
 │   ├── workflows/                                # CI/CD workflows
