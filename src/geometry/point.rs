@@ -428,7 +428,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::collections::FastHashMap;
     use approx::assert_relative_eq;
     use std::cmp::Ordering;
     use std::collections::hash_map::DefaultHasher;
@@ -441,18 +440,6 @@ mod tests {
         let mut hasher = DefaultHasher::new();
         value.hash(&mut hasher);
         hasher.finish()
-    }
-
-    // Helper function to test basic point properties
-    fn test_basic_point_properties<T, const D: usize>(
-        point: &Point<T, D>,
-        expected_coords: [T; D],
-        expected_dim: usize,
-    ) where
-        T: CoordinateScalar,
-    {
-        assert_eq!(point.to_array(), expected_coords);
-        assert_eq!(point.dim(), expected_dim);
     }
 
     // Helper function to test point equality and hash consistency
@@ -474,6 +461,298 @@ mod tests {
     }
 
     // =============================================================================
+    // MACROS FOR DIMENSIONAL TESTING
+    // =============================================================================
+
+    /// Macro to test basic point operations across multiple dimensions (2D-5D).
+    ///
+    /// This macro generates tests for common point operations across different
+    /// dimensionalities, reducing code duplication while maintaining explicit
+    /// test coverage.
+    macro_rules! test_point_across_dimensions {
+        // Test point creation and basic properties
+        (creation: $test_name:ident) => {
+            #[test]
+            fn $test_name() {
+                // 2D
+                let point_2d = Point::new([1.0, 2.0]);
+                assert_relative_eq!(point_2d.to_array().as_slice(), [1.0, 2.0].as_slice());
+                assert_eq!(point_2d.dim(), 2);
+
+                // 3D
+                let point_3d = Point::new([1.0, 2.0, 3.0]);
+                assert_relative_eq!(point_3d.to_array().as_slice(), [1.0, 2.0, 3.0].as_slice());
+                assert_eq!(point_3d.dim(), 3);
+
+                // 4D
+                let point_4d = Point::new([1.0, 2.0, 3.0, 4.0]);
+                assert_relative_eq!(
+                    point_4d.to_array().as_slice(),
+                    [1.0, 2.0, 3.0, 4.0].as_slice()
+                );
+                assert_eq!(point_4d.dim(), 4);
+
+                // 5D
+                let point_5d = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+                assert_relative_eq!(
+                    point_5d.to_array().as_slice(),
+                    [1.0, 2.0, 3.0, 4.0, 5.0].as_slice()
+                );
+                assert_eq!(point_5d.dim(), 5);
+            }
+        };
+
+        // Test point equality across dimensions
+        (equality: $test_name:ident) => {
+            #[test]
+            fn $test_name() {
+                // 2D
+                let p2d_a = Point::new([1.0, 2.0]);
+                let p2d_b = Point::new([1.0, 2.0]);
+                let p2d_c = Point::new([1.0, 3.0]);
+                assert_eq!(p2d_a, p2d_b);
+                assert_ne!(p2d_a, p2d_c);
+
+                // 3D
+                let p3d_a = Point::new([1.0, 2.0, 3.0]);
+                let p3d_b = Point::new([1.0, 2.0, 3.0]);
+                let p3d_c = Point::new([1.0, 2.0, 4.0]);
+                assert_eq!(p3d_a, p3d_b);
+                assert_ne!(p3d_a, p3d_c);
+
+                // 4D
+                let p4d_a = Point::new([1.0, 2.0, 3.0, 4.0]);
+                let p4d_b = Point::new([1.0, 2.0, 3.0, 4.0]);
+                let p4d_c = Point::new([1.0, 2.0, 3.0, 5.0]);
+                assert_eq!(p4d_a, p4d_b);
+                assert_ne!(p4d_a, p4d_c);
+
+                // 5D
+                let p5d_a = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+                let p5d_b = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+                let p5d_c = Point::new([1.0, 2.0, 3.0, 4.0, 6.0]);
+                assert_eq!(p5d_a, p5d_b);
+                assert_ne!(p5d_a, p5d_c);
+            }
+        };
+
+        // Test point hashing across dimensions
+        (hashing: $test_name:ident) => {
+            #[test]
+            fn $test_name() {
+                // 2D
+                let p2d_a = Point::new([1.0, 2.0]);
+                let p2d_b = Point::new([1.0, 2.0]);
+                assert_eq!(get_hash(&p2d_a), get_hash(&p2d_b));
+
+                // 3D
+                let p3d_a = Point::new([1.0, 2.0, 3.0]);
+                let p3d_b = Point::new([1.0, 2.0, 3.0]);
+                assert_eq!(get_hash(&p3d_a), get_hash(&p3d_b));
+
+                // 4D
+                let p4d_a = Point::new([1.0, 2.0, 3.0, 4.0]);
+                let p4d_b = Point::new([1.0, 2.0, 3.0, 4.0]);
+                assert_eq!(get_hash(&p4d_a), get_hash(&p4d_b));
+
+                // 5D
+                let p5d_a = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+                let p5d_b = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+                assert_eq!(get_hash(&p5d_a), get_hash(&p5d_b));
+            }
+        };
+
+        // Test point ordering across dimensions
+        (ordering: $test_name:ident) => {
+            #[test]
+            fn $test_name() {
+                // 2D - lexicographic ordering
+                let p2d_a = Point::new([1.0, 2.0]);
+                let p2d_b = Point::new([1.0, 3.0]);
+                assert!(p2d_a < p2d_b);
+                assert!(p2d_b > p2d_a);
+
+                // 3D
+                let p3d_a = Point::new([1.0, 2.0, 3.0]);
+                let p3d_b = Point::new([1.0, 2.0, 4.0]);
+                assert!(p3d_a < p3d_b);
+                assert!(p3d_b > p3d_a);
+
+                // 4D
+                let p4d_a = Point::new([1.0, 2.0, 3.0, 4.0]);
+                let p4d_b = Point::new([1.0, 2.0, 3.0, 5.0]);
+                assert!(p4d_a < p4d_b);
+                assert!(p4d_b > p4d_a);
+
+                // 5D
+                let p5d_a = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+                let p5d_b = Point::new([1.0, 2.0, 3.0, 4.0, 6.0]);
+                assert!(p5d_a < p5d_b);
+                assert!(p5d_b > p5d_a);
+            }
+        };
+
+        // Test point validation across dimensions
+        (validation: $test_name:ident) => {
+            #[test]
+            fn $test_name() {
+                // 2D - valid and invalid
+                let valid_2d = Point::new([1.0, 2.0]);
+                assert!(valid_2d.validate().is_ok());
+                let invalid_2d = Point::new([f64::NAN, 2.0]);
+                assert!(invalid_2d.validate().is_err());
+
+                // 3D
+                let valid_3d = Point::new([1.0, 2.0, 3.0]);
+                assert!(valid_3d.validate().is_ok());
+                let invalid_3d = Point::new([1.0, f64::INFINITY, 3.0]);
+                assert!(invalid_3d.validate().is_err());
+
+                // 4D
+                let valid_4d = Point::new([1.0, 2.0, 3.0, 4.0]);
+                assert!(valid_4d.validate().is_ok());
+                let invalid_4d = Point::new([1.0, 2.0, f64::NEG_INFINITY, 4.0]);
+                assert!(invalid_4d.validate().is_err());
+
+                // 5D
+                let valid_5d = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+                assert!(valid_5d.validate().is_ok());
+                let invalid_5d = Point::new([1.0, 2.0, 3.0, f64::NAN, 5.0]);
+                assert!(invalid_5d.validate().is_err());
+            }
+        };
+
+        // Test point serialization across dimensions
+        (serialization: $test_name:ident) => {
+            #[test]
+            fn $test_name() {
+                // 2D
+                let p2d = Point::new([1.0, 2.0]);
+                let json2d = serde_json::to_string(&p2d).unwrap();
+                let de2d: Point<f64, 2> = serde_json::from_str(&json2d).unwrap();
+                assert_eq!(p2d, de2d);
+
+                // 3D
+                let p3d = Point::new([1.0, 2.0, 3.0]);
+                let json3d = serde_json::to_string(&p3d).unwrap();
+                let de3d: Point<f64, 3> = serde_json::from_str(&json3d).unwrap();
+                assert_eq!(p3d, de3d);
+
+                // 4D
+                let p4d = Point::new([1.0, 2.0, 3.0, 4.0]);
+                let json4d = serde_json::to_string(&p4d).unwrap();
+                let de4d: Point<f64, 4> = serde_json::from_str(&json4d).unwrap();
+                assert_eq!(p4d, de4d);
+
+                // 5D
+                let p5d = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+                let json5d = serde_json::to_string(&p5d).unwrap();
+                let de5d: Point<f64, 5> = serde_json::from_str(&json5d).unwrap();
+                assert_eq!(p5d, de5d);
+            }
+        };
+
+        // Test point origin across dimensions
+        (origin: $test_name:ident) => {
+            #[test]
+            fn $test_name() {
+                // 2D
+                let origin_2d: Point<f64, 2> = Point::origin();
+                assert_relative_eq!(origin_2d.to_array().as_slice(), [0.0, 0.0].as_slice());
+
+                // 3D
+                let origin_3d: Point<f64, 3> = Point::origin();
+                assert_relative_eq!(origin_3d.to_array().as_slice(), [0.0, 0.0, 0.0].as_slice());
+
+                // 4D
+                let origin_4d: Point<f64, 4> = Point::origin();
+                assert_relative_eq!(
+                    origin_4d.to_array().as_slice(),
+                    [0.0, 0.0, 0.0, 0.0].as_slice()
+                );
+
+                // 5D
+                let origin_5d: Point<f64, 5> = Point::origin();
+                assert_relative_eq!(
+                    origin_5d.to_array().as_slice(),
+                    [0.0, 0.0, 0.0, 0.0, 0.0].as_slice()
+                );
+            }
+        };
+
+        // Test HashMap usage across dimensions
+        (hashmap: $test_name:ident) => {
+            #[test]
+            fn $test_name() {
+                // 2D
+                let mut map2d: HashMap<Point<f64, 2>, i32> = HashMap::new();
+                let p2d = Point::new([1.0, 2.0]);
+                map2d.insert(p2d, 42);
+                assert_eq!(map2d.get(&Point::new([1.0, 2.0])), Some(&42));
+
+                // 3D
+                let mut map3d: HashMap<Point<f64, 3>, i32> = HashMap::new();
+                let p3d = Point::new([1.0, 2.0, 3.0]);
+                map3d.insert(p3d, 42);
+                assert_eq!(map3d.get(&Point::new([1.0, 2.0, 3.0])), Some(&42));
+
+                // 4D
+                let mut map4d: HashMap<Point<f64, 4>, i32> = HashMap::new();
+                let p4d = Point::new([1.0, 2.0, 3.0, 4.0]);
+                map4d.insert(p4d, 42);
+                assert_eq!(map4d.get(&Point::new([1.0, 2.0, 3.0, 4.0])), Some(&42));
+
+                // 5D
+                let mut map5d: HashMap<Point<f64, 5>, i32> = HashMap::new();
+                let p5d = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+                map5d.insert(p5d, 42);
+                assert_eq!(map5d.get(&Point::new([1.0, 2.0, 3.0, 4.0, 5.0])), Some(&42));
+            }
+        };
+
+        // Test Copy semantics across dimensions
+        (copy: $test_name:ident) => {
+            #[test]
+            fn $test_name() {
+                // 2D
+                let p2d_original = Point::new([1.0, 2.0]);
+                let p2d_copy = p2d_original;
+                assert_eq!(p2d_original, p2d_copy);
+                assert_relative_eq!(
+                    p2d_original.to_array().as_slice(),
+                    p2d_copy.to_array().as_slice()
+                );
+
+                // 3D
+                let p3d_original = Point::new([1.0, 2.0, 3.0]);
+                let p3d_copy = p3d_original;
+                assert_eq!(p3d_original, p3d_copy);
+
+                // 4D
+                let p4d_original = Point::new([1.0, 2.0, 3.0, 4.0]);
+                let p4d_copy = p4d_original;
+                assert_eq!(p4d_original, p4d_copy);
+
+                // 5D
+                let p5d_original = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+                let p5d_copy = p5d_original;
+                assert_eq!(p5d_original, p5d_copy);
+            }
+        };
+    }
+
+    // Generate dimensional tests using the macro
+    test_point_across_dimensions!(creation: point_creation_dimensional);
+    test_point_across_dimensions!(equality: point_equality_dimensional);
+    test_point_across_dimensions!(hashing: point_hashing_dimensional);
+    test_point_across_dimensions!(ordering: point_ordering_dimensional);
+    test_point_across_dimensions!(validation: point_validation_dimensional);
+    test_point_across_dimensions!(serialization: point_serialization_dimensional);
+    test_point_across_dimensions!(origin: point_origin_dimensional);
+    test_point_across_dimensions!(hashmap: point_hashmap_dimensional);
+    test_point_across_dimensions!(copy: point_copy_dimensional);
+
+    // =============================================================================
     // BASIC POINT CREATION TESTS
     // =============================================================================
 
@@ -492,42 +771,7 @@ mod tests {
         println!("Default: {point:?}");
     }
 
-    #[test]
-    fn point_new() {
-        let point = Point::new([1.0, 2.0, 3.0, 4.0]);
-
-        let coords = point.to_array();
-        assert_relative_eq!(
-            coords.as_slice(),
-            [1.0, 2.0, 3.0, 4.0].as_slice(),
-            epsilon = 1e-9
-        );
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Point: {point:?}");
-    }
-
-    #[test]
-    fn point_copy() {
-        let point = Point::new([1.0, 2.0, 3.0, 4.0]);
-        let point_copy = point;
-
-        assert_eq!(point, point_copy);
-        let coords1 = point.to_array();
-        let coords2 = point_copy.to_array();
-        assert_relative_eq!(coords1.as_slice(), coords2.as_slice(), epsilon = 1e-9);
-        assert_eq!(point.dim(), point_copy.dim());
-    }
-
-    #[test]
-    fn point_dim() {
-        let point = Point::new([1.0, 2.0, 3.0, 4.0]);
-
-        assert_eq!(point.dim(), 4);
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Point: {:?} is {}-D", point, point.dim());
-    }
+    // point_new, point_copy, point_dim removed - covered by point_creation_dimensional and point_copy_dimensional
 
     #[test]
     fn point_coords() {
@@ -581,41 +825,9 @@ mod tests {
         println!("coords() provides efficient read-only access to coordinates");
     }
 
-    #[test]
-    fn point_origin() {
-        let point: Point<f64, 4> = Point::origin();
+    // point_origin removed - covered by point_origin_dimensional
 
-        let coords = point.to_array();
-        assert_relative_eq!(
-            coords.as_slice(),
-            [0.0, 0.0, 0.0, 0.0].as_slice(),
-            epsilon = 1e-9
-        );
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Origin: {:?} is {}-D", point, point.dim());
-    }
-
-    #[test]
-    fn point_serialization() {
-        // Test basic serialization and deserialization
-        let point: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
-
-        // Test JSON serialization
-        let json = serde_json::to_string(&point).unwrap();
-        assert_eq!(json, "[1.0,2.0,3.0]");
-
-        // Test JSON deserialization
-        let deserialized: Point<f64, 3> = serde_json::from_str(&json).unwrap();
-        assert_eq!(point, deserialized);
-
-        // Test with negative values
-        let point_neg: Point<f64, 2> = Point::new([-1.5, 2.5]);
-        let json_neg = serde_json::to_string(&point_neg).unwrap();
-        assert_eq!(json_neg, "[-1.5,2.5]");
-        let deserialized_neg: Point<f64, 2> = serde_json::from_str(&json_neg).unwrap();
-        assert_eq!(point_neg, deserialized_neg);
-    }
+    // point_serialization removed - basic cases covered by point_serialization_dimensional
 
     #[test]
     fn point_from_array_f32_to_f64() {
@@ -658,92 +870,12 @@ mod tests {
     // HASH AND EQUALITY TESTS
     // =============================================================================
 
-    #[test]
-    fn point_hash() {
-        let point1 = Point::new([1.0, 2.0, 3.0]);
-        let point2 = Point::new([1.0, 2.0, 3.0]);
-        let point3 = Point::new([1.0, 2.0, 4.0]);
+    // point_hash, point_hash_in_hashmap, point_partial_eq, point_partial_ord
+    // removed - covered by point_hashing_dimensional, point_hashmap_dimensional,
+    // point_equality_dimensional, and point_ordering_dimensional
 
-        let mut hasher1 = DefaultHasher::new();
-        let mut hasher2 = DefaultHasher::new();
-        let mut hasher3 = DefaultHasher::new();
-
-        point1.hash(&mut hasher1);
-        point2.hash(&mut hasher2);
-        point3.hash(&mut hasher3);
-
-        // Same points should have same hash
-        assert_eq!(hasher1.finish(), hasher2.finish());
-        // Different points should have different hash (with high probability)
-        assert_ne!(hasher1.finish(), hasher3.finish());
-    }
-
-    #[test]
-    fn point_hash_in_hashmap() {
-        let mut map: FastHashMap<Point<f64, 2>, i32> = FastHashMap::default();
-
-        let point1 = Point::new([1.0, 2.0]);
-        let point2 = Point::new([3.0, 4.0]);
-        let point3 = Point::new([1.0, 2.0]); // Same as point1
-
-        map.insert(point1, 10);
-        map.insert(point2, 20);
-
-        assert_eq!(map.get(&point3), Some(&10)); // Should find point1's value
-        assert_eq!(map.len(), 2);
-    }
-
-    #[test]
-    fn point_partial_eq() {
-        let point1 = Point::new([1.0, 2.0, 3.0]);
-        let point2 = Point::new([1.0, 2.0, 3.0]);
-        let point3 = Point::new([1.0, 2.0, 4.0]);
-
-        assert_eq!(point1, point2);
-        assert_ne!(point1, point3);
-        assert_ne!(point2, point3);
-    }
-
-    #[test]
-    fn point_partial_ord() {
-        let point1 = Point::new([1.0, 2.0, 3.0]);
-        let point2 = Point::new([1.0, 2.0, 4.0]);
-        let point3 = Point::new([1.0, 3.0, 0.0]);
-        let point4 = Point::new([2.0, 0.0, 0.0]);
-
-        // Lexicographic ordering
-        assert!(point1 < point2); // 3.0 < 4.0 in last coordinate
-        assert!(point1 < point3); // 2.0 < 3.0 in second coordinate
-        assert!(point1 < point4); // 1.0 < 2.0 in first coordinate
-        assert!(point2 > point1);
-    }
-
-    #[test]
-    fn point_multidimensional_comprehensive() {
-        // Test 2D points
-        let point_2d: Point<f64, 2> = Point::new([1.0, 2.0]);
-        test_basic_point_properties(&point_2d, [1.0, 2.0], 2);
-        let origin_2d: Point<f64, 2> = Point::origin();
-        test_basic_point_properties(&origin_2d, [0.0, 0.0], 2);
-
-        // Test 3D points
-        let point_3d: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
-        test_basic_point_properties(&point_3d, [1.0, 2.0, 3.0], 3);
-        let origin_3d: Point<f64, 3> = Point::origin();
-        test_basic_point_properties(&origin_3d, [0.0, 0.0, 0.0], 3);
-
-        // Test 4D points
-        let point_4d: Point<f64, 4> = Point::new([1.0, 2.0, 3.0, 4.0]);
-        test_basic_point_properties(&point_4d, [1.0, 2.0, 3.0, 4.0], 4);
-        let origin_4d: Point<f64, 4> = Point::origin();
-        test_basic_point_properties(&origin_4d, [0.0, 0.0, 0.0, 0.0], 4);
-
-        // Test 5D points
-        let point_5d: Point<f64, 5> = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
-        test_basic_point_properties(&point_5d, [1.0, 2.0, 3.0, 4.0, 5.0], 5);
-        let origin_5d: Point<f64, 5> = Point::origin();
-        test_basic_point_properties(&origin_5d, [0.0, 0.0, 0.0, 0.0, 0.0], 5);
-    }
+    // point_multidimensional_comprehensive removed - covered by dimensional macro tests
+    // (point_creation_dimensional, point_origin_dimensional)
 
     #[test]
     fn point_with_f32() {
@@ -2385,6 +2517,377 @@ mod tests {
         assert!(point_set.contains(&test_normal));
     }
 
+    // =============================================================================
+    // TryFrom CONVERSION ERROR TESTS
+    // =============================================================================
+
+    #[test]
+    fn point_try_from_overflow_f64_to_f32() {
+        // Test that overflow during f64 to f32 conversion produces NonFiniteValue error
+        let large_coords = [f64::MAX, 1.0];
+        let result: Result<Point<f32, 2>, _> = Point::try_from(large_coords);
+
+        assert!(result.is_err(), "f64::MAX should overflow when cast to f32");
+
+        if let Err(CoordinateConversionError::NonFiniteValue {
+            coordinate_index,
+            coordinate_value,
+        }) = result
+        {
+            assert_eq!(coordinate_index, 0);
+            assert!(coordinate_value.contains("inf") || coordinate_value.contains("Inf"));
+        } else {
+            panic!("Expected NonFiniteValue error, got: {result:?}");
+        }
+    }
+
+    #[test]
+    fn point_try_from_negative_overflow_f64_to_f32() {
+        // Test negative overflow
+        let large_negative_coords = [f64::MIN, 1.0];
+        let result: Result<Point<f32, 2>, _> = Point::try_from(large_negative_coords);
+
+        assert!(result.is_err(), "f64::MIN should overflow when cast to f32");
+
+        if let Err(CoordinateConversionError::NonFiniteValue {
+            coordinate_index,
+            coordinate_value,
+        }) = result
+        {
+            assert_eq!(coordinate_index, 0);
+            assert!(coordinate_value.contains("inf") || coordinate_value.contains("Inf"));
+        } else {
+            panic!("Expected NonFiniteValue error");
+        }
+    }
+
+    #[test]
+    fn point_try_from_multiple_overflow_coordinates() {
+        // Test that the first overflowing coordinate is reported
+        let coords = [1.0, f64::MAX, f64::MIN, f64::MAX];
+        let result: Result<Point<f32, 4>, _> = Point::try_from(coords);
+
+        assert!(result.is_err());
+
+        if let Err(CoordinateConversionError::NonFiniteValue {
+            coordinate_index, ..
+        }) = result
+        {
+            // Should report the first overflow at index 1
+            assert_eq!(coordinate_index, 1);
+        } else {
+            panic!("Expected NonFiniteValue error");
+        }
+    }
+
+    #[test]
+    fn point_try_from_successful_conversions() {
+        // Test successful conversions that don't overflow
+
+        // f32 to f64 (safe upcast)
+        let coords_f32: [f32; 3] = [1.5, -2.5, 3.5];
+        let point_f64: Point<f64, 3> = Point::try_from(coords_f32).unwrap();
+        assert_relative_eq!(
+            point_f64.to_array().as_slice(),
+            [1.5f64, -2.5f64, 3.5f64].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // i32 to f64
+        let coords_i32: [i32; 4] = [1, -2, 3, -4];
+        let point_from_int: Point<f64, 4> = Point::try_from(coords_i32).unwrap();
+        assert_relative_eq!(
+            point_from_int.to_array().as_slice(),
+            [1.0, -2.0, 3.0, -4.0].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // Same type conversion (f64 to f64)
+        let coords_same: [f64; 2] = [10.0, 20.0];
+        let point_same: Point<f64, 2> = Point::try_from(coords_same).unwrap();
+        assert_relative_eq!(point_same.to_array().as_slice(), [10.0, 20.0].as_slice());
+    }
+
+    #[test]
+    fn point_try_from_edge_case_values() {
+        // Test with values close to f32 limits (should succeed)
+        let coords_near_f32_max: [f64; 2] = [f64::from(f32::MAX), f64::from(f32::MIN)];
+        let result: Result<Point<f32, 2>, _> = Point::try_from(coords_near_f32_max);
+        assert!(result.is_ok(), "Values within f32 range should convert");
+
+        // Test with zero and negative zero
+        let coords_zero: [f64; 2] = [0.0, -0.0];
+        let point_zero: Point<f32, 2> = Point::try_from(coords_zero).unwrap();
+        assert_relative_eq!(point_zero.to_array()[0], 0.0f32);
+        assert_relative_eq!(point_zero.to_array()[1], -0.0f32);
+
+        // Test with very small values
+        let coords_small: [f64; 2] = [1e-10, -1e-10];
+        let point_small: Point<f32, 2> = Point::try_from(coords_small).unwrap();
+        // These may underflow to zero in f32, but should still be finite
+        assert!(point_small.to_array()[0].is_finite());
+        assert!(point_small.to_array()[1].is_finite());
+    }
+
+    #[test]
+    fn point_try_from_integer_to_float_conversions() {
+        // Test various integer types to floating point
+
+        // u32 to f64
+        let coords_u32: [u32; 3] = [100, 200, 300];
+        let point_u32: Point<f64, 3> = Point::try_from(coords_u32).unwrap();
+        assert_relative_eq!(
+            point_u32.to_array().as_slice(),
+            [100.0, 200.0, 300.0].as_slice(),
+            epsilon = 1e-9
+        );
+
+        // i16 to f32
+        let coords_i16: [i16; 2] = [-100, 200];
+        let point_i16: Point<f32, 2> = Point::try_from(coords_i16).unwrap();
+        assert_relative_eq!(
+            point_i16.to_array().as_slice(),
+            [-100.0f32, 200.0f32].as_slice(),
+            epsilon = 1e-6
+        );
+
+        // Large but representable integers
+        let coords_large_i32: [i32; 2] = [1_000_000, -1_000_000];
+        let point_large: Point<f64, 2> = Point::try_from(coords_large_i32).unwrap();
+        assert_relative_eq!(
+            point_large.to_array().as_slice(),
+            [1_000_000.0, -1_000_000.0].as_slice(),
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn point_try_from_all_coordinates_must_be_finite() {
+        // Test that all coordinates are validated during conversion
+
+        // Valid conversion - all finite
+        let valid_coords: [f32; 3] = [1.0, 2.0, 3.0];
+        let result: Result<Point<f64, 3>, _> = Point::try_from(valid_coords);
+        assert!(result.is_ok());
+
+        // Invalid - produces infinity after conversion
+        let invalid_coords = [1.0, f64::MAX, 3.0];
+        let result: Result<Point<f32, 3>, _> = Point::try_from(invalid_coords);
+        assert!(
+            result.is_err(),
+            "Should fail if any coordinate becomes non-finite"
+        );
+    }
+
+    // =============================================================================
+    // DIM() METHOD EXPLICIT TESTS
+    // =============================================================================
+
+    #[test]
+    fn point_dim_method_explicit() {
+        // Test the dim() method explicitly across various dimensions
+
+        let point_1d: Point<f64, 1> = Point::new([1.0]);
+        assert_eq!(point_1d.dim(), 1);
+
+        let point_2d: Point<f64, 2> = Point::new([1.0, 2.0]);
+        assert_eq!(point_2d.dim(), 2);
+
+        let point_3d: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
+        assert_eq!(point_3d.dim(), 3);
+
+        let point_5d: Point<f64, 5> = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+        assert_eq!(point_5d.dim(), 5);
+
+        let point_10d: Point<f64, 10> = Point::new([0.0; 10]);
+        assert_eq!(point_10d.dim(), 10);
+
+        let point_32d: Point<f64, 32> = Point::new([0.0; 32]);
+        assert_eq!(point_32d.dim(), 32);
+    }
+
+    #[test]
+    fn point_dim_with_different_types() {
+        // Test dim() with different coordinate types
+
+        let point_f32: Point<f32, 3> = Point::new([1.0, 2.0, 3.0]);
+        assert_eq!(point_f32.dim(), 3);
+
+        let point_f64: Point<f64, 4> = Point::new([1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(point_f64.dim(), 4);
+    }
+
+    // =============================================================================
+    // TO_ARRAY() METHOD EXPLICIT TESTS
+    // =============================================================================
+
+    #[test]
+    fn point_to_array_explicit() {
+        // Test to_array() method explicitly
+
+        let point = Point::new([1.0, 2.0, 3.0]);
+        let arr = point.to_array();
+        assert_relative_eq!(arr.as_slice(), [1.0, 2.0, 3.0].as_slice());
+
+        // Verify that to_array() returns a copy, not a reference
+        let point2 = Point::new([4.0, 5.0]);
+        let arr2 = point2.to_array();
+        assert_relative_eq!(arr2.as_slice(), [4.0, 5.0].as_slice());
+
+        // Test with different dimensions
+        let point_1d = Point::new([42.0]);
+        assert_relative_eq!(point_1d.to_array().as_slice(), [42.0].as_slice());
+
+        let point_5d = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+        assert_relative_eq!(
+            point_5d.to_array().as_slice(),
+            [1.0, 2.0, 3.0, 4.0, 5.0].as_slice()
+        );
+    }
+
+    #[test]
+    fn point_to_array_with_special_values() {
+        // Test to_array() with special floating-point values
+
+        let point_nan = Point::new([f64::NAN, 1.0, 2.0]);
+        let arr = point_nan.to_array();
+        assert!(arr[0].is_nan());
+        assert_relative_eq!(arr[1], 1.0);
+        assert_relative_eq!(arr[2], 2.0);
+
+        let point_inf = Point::new([f64::INFINITY, f64::NEG_INFINITY]);
+        let arr_inf = point_inf.to_array();
+        assert!(arr_inf[0].is_infinite() && arr_inf[0].is_sign_positive());
+        assert!(arr_inf[1].is_infinite() && arr_inf[1].is_sign_negative());
+    }
+
+    // =============================================================================
+    // ORDERED_EQUALS() AND HASH_COORDINATE() DIRECT TESTS
+    // =============================================================================
+
+    #[test]
+    fn point_ordered_equals_direct() {
+        // Test ordered_equals() method directly
+
+        let point1 = Point::new([1.0, 2.0, 3.0]);
+        let point2 = Point::new([1.0, 2.0, 3.0]);
+        let point3 = Point::new([1.0, 2.0, 4.0]);
+
+        assert!(point1.ordered_equals(&point2));
+        assert!(!point1.ordered_equals(&point3));
+
+        // Test with NaN (should be equal)
+        let point_nan1 = Point::new([f64::NAN, 2.0]);
+        let point_nan2 = Point::new([f64::NAN, 2.0]);
+        assert!(point_nan1.ordered_equals(&point_nan2));
+
+        // Test with infinity
+        let point_inf1 = Point::new([f64::INFINITY, 1.0]);
+        let point_inf2 = Point::new([f64::INFINITY, 1.0]);
+        assert!(point_inf1.ordered_equals(&point_inf2));
+    }
+
+    #[test]
+    fn point_hash_coordinate_direct() {
+        // Test hash_coordinate() method directly
+
+        let point1 = Point::new([1.0, 2.0, 3.0]);
+        let point2 = Point::new([1.0, 2.0, 3.0]);
+
+        let mut hasher1 = DefaultHasher::new();
+        let mut hasher2 = DefaultHasher::new();
+
+        point1.hash_coordinate(&mut hasher1);
+        point2.hash_coordinate(&mut hasher2);
+
+        assert_eq!(hasher1.finish(), hasher2.finish());
+
+        // Test with different points
+        let point3 = Point::new([1.0, 2.0, 4.0]);
+        let mut hasher3 = DefaultHasher::new();
+        point3.hash_coordinate(&mut hasher3);
+
+        assert_ne!(hasher1.finish(), hasher3.finish());
+    }
+
+    #[test]
+    fn point_hash_coordinate_special_values() {
+        // Test hash_coordinate() with special values
+
+        let point_nan1 = Point::new([f64::NAN, 2.0]);
+        let point_nan2 = Point::new([f64::NAN, 2.0]);
+
+        let mut hasher1 = DefaultHasher::new();
+        let mut hasher2 = DefaultHasher::new();
+
+        point_nan1.hash_coordinate(&mut hasher1);
+        point_nan2.hash_coordinate(&mut hasher2);
+
+        // NaN values should hash consistently
+        assert_eq!(hasher1.finish(), hasher2.finish());
+    }
+
+    // =============================================================================
+    // COMPREHENSIVE 1D POINT TESTS
+    // =============================================================================
+
+    #[test]
+    fn point_1d_comprehensive() {
+        // Test 1D points comprehensively
+
+        // Creation
+        let point = Point::new([42.0]);
+        assert_eq!(point.dim(), 1);
+        assert_relative_eq!(point.to_array().as_slice(), [42.0].as_slice());
+
+        // Equality
+        let point2 = Point::new([42.0]);
+        assert_eq!(point, point2);
+
+        let point3 = Point::new([43.0]);
+        assert_ne!(point, point3);
+
+        // Hashing
+        assert_eq!(get_hash(&point), get_hash(&point2));
+        assert_ne!(get_hash(&point), get_hash(&point3));
+
+        // Ordering
+        assert!(point < point3);
+        assert!(point3 > point);
+
+        // Validation
+        assert!(point.validate().is_ok());
+        let invalid_1d = Point::new([f64::NAN]);
+        assert!(invalid_1d.validate().is_err());
+
+        // Origin
+        let origin: Point<f64, 1> = Point::origin();
+        assert_relative_eq!(origin.to_array().as_slice(), [0.0].as_slice());
+
+        // Serialization
+        let json = serde_json::to_string(&point).unwrap();
+        assert_eq!(json, "[42.0]");
+        let deserialized: Point<f64, 1> = serde_json::from_str(&json).unwrap();
+        assert_eq!(point, deserialized);
+    }
+
+    #[test]
+    fn point_1d_special_values() {
+        // Test 1D points with special values
+
+        let point_nan = Point::new([f64::NAN]);
+        let point_nan2 = Point::new([f64::NAN]);
+        assert_eq!(point_nan, point_nan2);
+
+        let point_inf = Point::new([f64::INFINITY]);
+        let point_neg_inf = Point::new([f64::NEG_INFINITY]);
+        assert_ne!(point_inf, point_neg_inf);
+        assert!(point_neg_inf < point_inf);
+
+        // NaN should be greater than infinity in OrderedFloat semantics
+        assert!(point_nan > point_inf);
+    }
+
     #[test]
     fn point_mathematical_properties_comprehensive() {
         // Test mathematical properties with various special values
@@ -2658,7 +3161,7 @@ mod tests {
 
     #[test]
     fn point_try_from_error_details() {
-        // Test error message formatting for NonFiniteValue
+        // Test error message formatting for NonFiniteValue with NaN
         let coords_with_nan = [f64::NAN, 1.0];
         let result: Result<Point<f32, 2>, _> = Point::try_from(coords_with_nan);
         assert!(result.is_err());
@@ -2669,12 +3172,27 @@ mod tests {
         assert!(error_msg.contains("coordinate index 0"));
         assert!(error_msg.contains("NaN"));
 
-        // Test error cloning and equality
+        // Test error cloning and equality with infinity
         let coords_with_inf = [f64::INFINITY, 2.0];
         let result2: Result<Point<f32, 2>, _> = Point::try_from(coords_with_inf);
         let error2 = result2.unwrap_err();
         let error2_clone = error2.clone();
         assert_eq!(error2, error2_clone);
+
+        // Test overflow error details (f64::MAX overflows to f32)
+        let coords_overflow = [f64::MAX, 1.0];
+        let result3: Result<Point<f32, 2>, _> = Point::try_from(coords_overflow);
+        match result3 {
+            Err(CoordinateConversionError::NonFiniteValue {
+                coordinate_index,
+                coordinate_value,
+            }) => {
+                assert_eq!(coordinate_index, 0);
+                assert!(!coordinate_value.is_empty());
+                assert!(coordinate_value.contains("inf") || coordinate_value.contains("Inf"));
+            }
+            _ => panic!("Expected NonFiniteValue error for overflow"),
+        }
     }
 
     #[test]

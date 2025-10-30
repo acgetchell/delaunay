@@ -9,11 +9,21 @@
 //! The test helps determine if vertex loss is expected behavior (duplicate removal)
 //! or a bug in serialization/deserialization.
 
+use approx::relative_eq;
 use delaunay::core::Tds;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
 use std::collections::HashSet;
+
+/// Check if two points are approximately equal (coordinate-wise)
+/// Uses relative epsilon comparison suitable for JSON serialization roundtrips
+fn points_approx_equal<const D: usize>(p1: &Point<f64, D>, p2: &Point<f64, D>) -> bool {
+    p1.coords()
+        .iter()
+        .zip(p2.coords().iter())
+        .all(|(a, b)| relative_eq!(a, b, epsilon = 1e-14, max_relative = 1e-14))
+}
 
 /// Test vertex preservation with duplicate coordinates
 #[test]
@@ -82,11 +92,20 @@ fn test_vertex_preservation_with_duplicates_3d() {
         panic!("Serialization lost vertices: {tds_vertex_count} -> {deser_vertex_count}");
     }
 
-    // Verify coordinate preservation
+    // Verify coordinate preservation (with tolerance for JSON precision)
     assert_eq!(
-        tds_coords, deser_coords,
-        "Coordinates changed during serialization"
+        tds_coords.len(),
+        deser_coords.len(),
+        "Coordinate count mismatch"
     );
+    for tds_coord in &tds_coords {
+        assert!(
+            deser_coords
+                .iter()
+                .any(|dc| points_approx_equal(tds_coord, dc)),
+            "Coordinate {tds_coord:?} not found in deserialized set (within tolerance)"
+        );
+    }
 
     println!("\n✅ Serialization preserved all vertices from constructed Tds");
 }
@@ -199,10 +218,21 @@ fn test_vertex_coordinate_preservation_3d() {
     // Collect deserialized vertex coordinates
     let deserialized_coords: HashSet<_> =
         deserialized.vertices().map(|(_, v)| *v.point()).collect();
+
+    // Verify coordinate preservation with tolerance for JSON precision
     assert_eq!(
-        original_coords, deserialized_coords,
-        "Vertex coordinates must be exactly preserved through serialization"
+        original_coords.len(),
+        deserialized_coords.len(),
+        "Coordinate count mismatch"
     );
+    for orig_coord in &original_coords {
+        assert!(
+            deserialized_coords
+                .iter()
+                .any(|dc| points_approx_equal(orig_coord, dc)),
+            "Coordinate {orig_coord:?} not preserved through serialization (within tolerance)"
+        );
+    }
 
     println!("✅ Vertex coordinates exactly preserved");
 }

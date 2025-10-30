@@ -14,7 +14,7 @@ use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::quality::radius_ratio;
 use delaunay::geometry::traits::coordinate::Coordinate;
-use delaunay::geometry::util::{circumradius, inradius};
+use delaunay::geometry::util::{circumradius, inradius, safe_usize_to_scalar};
 use proptest::prelude::*;
 
 // =============================================================================
@@ -146,16 +146,14 @@ macro_rules! test_quality_properties {
 
                     // Create a flatter simplex (still valid but lower quality)
                     // Make it elongated in one direction with small extent in others
-                    let mut degenerate_points = Vec::new();
-                    for i in 0..=($dim) {
+                    let mut degenerate_points = Vec::with_capacity($dim + 1);
+                    degenerate_points.push(Point::new([0.0f64; $dim]));
+                    for i in 0..$dim {
                         let mut coords = [0.0f64; $dim];
-                        coords[0] = f64::from(i) * base_scale;  // Long in first dimension
-                        // Add small but non-zero spread in other dimensions
-                        for j in 1..$dim {
-                            #[allow(clippy::cast_precision_loss)]
-                            let j_factor = j as f64;
-                            coords[j] = f64::from(i) * 0.05 * base_scale * (1.0 / (j_factor + 1.0));
-                        }
+                        let i_f64: f64 = safe_usize_to_scalar(i).unwrap();
+                        coords[0] = (10.0 + i_f64) * base_scale;
+                        let axis = (i + 1) % $dim;
+                        coords[axis] += 0.05 * base_scale;
                         degenerate_points.push(Point::new(coords));
                     }
 

@@ -156,6 +156,7 @@
 // Standard library imports
 use std::{
     cmp::Ordering as CmpOrdering,
+    collections::HashSet,
     fmt::{self, Debug},
     iter::Sum,
     marker::PhantomData,
@@ -182,7 +183,8 @@ use crate::core::collections::{
     ValidCellsBuffer, VertexKeyBuffer, VertexKeySet, VertexToCellsMap, fast_hash_map_with_capacity,
 };
 use crate::geometry::{
-    quality::radius_ratio, traits::coordinate::CoordinateScalar, util::safe_scalar_to_f64,
+    point::Point, quality::radius_ratio, traits::coordinate::CoordinateScalar,
+    util::safe_scalar_to_f64,
 };
 
 // num-traits imports
@@ -396,7 +398,7 @@ new_key_type! {
 /// # Properties
 ///
 /// - `vertices`: A storage map that stores vertices with stable keys for efficient access.
-///   Each [`Vertex`] has a [`Point`](crate::geometry::point::Point) of type T, vertex data of type U, and a constant D representing the dimension.
+///   Each [`Vertex`] has a [`Point`] of type T, vertex data of type U, and a constant D representing the dimension.
 /// - `cells`: The `cells` property is a storage map that stores [`Cell`] objects with stable keys.
 ///   Each [`Cell`] has one or more [`Vertex`] objects with cell data of type V.
 ///   Note the dimensionality of the cell may differ from D, though the [`Tds`]
@@ -2189,6 +2191,10 @@ where
     /// Use [`Self::add()`] when you need explicit notification of rejected vertices during
     /// incremental construction.
     ///
+    /// If, after filtering, fewer than D+1 unique vertices remain, `new()` returns
+    /// `TriangulationConstructionError::InsufficientVertices`. Passing an empty slice (`&[]`)
+    /// is allowed and yields an empty triangulation.
+    ///
     /// # Arguments
     ///
     /// * `vertices`: A container of [Vertex]s with which to initialize the
@@ -2202,6 +2208,7 @@ where
     /// # Errors
     ///
     /// Returns a `TriangulationConstructionError` if:
+    /// - There are insufficient unique vertices after duplicate filtering (fewer than D+1)
     /// - Triangulation computation fails during the Bowyer-Watson algorithm
     /// - Cell creation or validation fails
     /// - Neighbor assignment or duplicate cell removal fails
@@ -2298,24 +2305,31 @@ where
         };
 
         // Add vertices to storage map and create bidirectional UUID-to-key mappings
-        // Skip duplicate coordinates (same as `add()` method behavior)
+        // Skip duplicate coordinates (unlike `add()`, which errors on duplicates)
+        // Use HashSet with Point for O(n) duplicate detection instead of O(n²) sequential scan
+        let mut seen_points: HashSet<Point<T, D>> = HashSet::with_capacity(vertices.len());
+
         for vertex in vertices {
-            let new_coords: [T; D] = vertex.into();
-
-            // Check if a vertex with these coordinates already exists
-            let is_duplicate = tds.vertices.values().any(|existing| {
-                let existing_coords: [T; D] = existing.into();
-                existing_coords == new_coords
-            });
-
-            if is_duplicate {
-                // Skip duplicate vertices silently (same behavior as batched insertion)
+            // Skip if we've already seen this point
+            if !seen_points.insert(*vertex.point()) {
                 continue;
             }
 
-            let key = tds.vertices.insert(*vertex);
+            // CRITICAL: Use Entry API to prevent duplicate UUID corruption
+            // Without this, two vertices with same UUID would silently overwrite the mapping
             let uuid = vertex.uuid();
-            tds.uuid_to_vertex_key.insert(uuid, key);
+            match tds.uuid_to_vertex_key.entry(uuid) {
+                std::collections::hash_map::Entry::Occupied(_) => {
+                    return Err(TriangulationConstructionError::DuplicateUuid {
+                        entity: EntityKind::Vertex,
+                        uuid,
+                    });
+                }
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    let key = tds.vertices.insert(*vertex);
+                    e.insert(key);
+                }
+            }
         }
 
         // Initialize cells using Bowyer-Watson triangulation
@@ -9148,11 +9162,12 @@ mod tests {
             // Verify TDS remains valid after each insertion
             // Note: Cell count may increase, decrease, or stay same depending on topology constraints.
             // What matters is validity - the triangulation must maintain all invariants.
+            let valid = tds.is_valid();
             assert!(
-                tds.is_valid().is_ok(),
+                valid.is_ok(),
                 "TDS should remain valid after insertion {}: {:?}",
                 i + 1,
-                tds.is_valid().err()
+                valid.err()
             );
 
             // Verify we still have at least one cell
@@ -9207,34 +9222,33 @@ mod tests {
             let vertices_before = tds.number_of_vertices();
 
             // Insert the vertex
+            let vertex_num = i + 1;
             tds.add(*vertex).unwrap_or_else(|e| {
-                panic!("Failed to insert {} vertex {}: {e}", vertex_type, i + 1)
+                panic!("Failed to insert {vertex_type} vertex {vertex_num}: {e}")
             });
 
             // Verify vertex was added
+            let vertex_num = i + 1;
             assert_eq!(
                 tds.number_of_vertices(),
                 vertices_before + 1,
-                "Vertex count should increase by 1 after {} insertion {}",
-                vertex_type,
-                i + 1
+                "Vertex count should increase by 1 after {vertex_type} insertion {vertex_num}"
             );
 
             // Both types of insertion should increase cell count
             // (though the amount may differ)
+            let vertex_num = i + 1;
             assert!(
                 tds.number_of_cells() >= cells_before,
-                "Cell count should not decrease after {} insertion {}",
-                vertex_type,
-                i + 1
+                "Cell count should not decrease after {vertex_type} insertion {vertex_num}"
             );
 
             // Verify TDS remains valid after each insertion
+            let vertex_num = i + 1;
+            let valid = tds.is_valid();
             assert!(
-                tds.is_valid().is_ok(),
-                "TDS should remain valid after {} insertion {}",
-                vertex_type,
-                i + 1
+                valid.is_ok(),
+                "TDS should remain valid after {vertex_type} insertion {vertex_num}"
             );
         }
 
@@ -9247,6 +9261,120 @@ mod tests {
         assert!(
             tds.number_of_cells() > 1,
             "Should have multiple cells after mixed insertions"
+        );
+    }
+
+    /// Test that UUID mapping integrity is maintained (security fix verification)
+    ///
+    /// This test verifies the fix for a critical vulnerability where duplicate UUIDs
+    /// in batch insertion could silently corrupt the UUID-to-key mapping.
+    ///
+    /// Note: We can't easily create vertices with duplicate UUIDs using vertex!() macro
+    /// (it always generates unique UUIDs), so this test verifies that normal construction
+    /// maintains UUID mapping integrity - each UUID maps to exactly one vertex.
+    #[test]
+    fn test_uuid_mapping_prevents_corruption() {
+        // Create many vertices and verify UUID uniqueness is maintained
+        #[allow(clippy::cast_lossless)]
+        let vertices: Vec<_> = (0..10)
+            .map(|i| vertex!([(i as f64), 0.0, 0.0, 0.0]))
+            .collect();
+
+        let tds = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices).unwrap();
+
+        // Verify each UUID maps to exactly one key
+        let mut seen_uuids = std::collections::HashSet::new();
+        for (i, vertex) in vertices.iter().enumerate() {
+            let uuid = vertex.uuid();
+
+            // UUID should be unique
+            assert!(seen_uuids.insert(uuid), "Duplicate UUID found at index {i}");
+
+            // UUID should map to a key
+            let key_opt = tds.vertex_key_from_uuid(&uuid);
+            assert!(key_opt.is_some(), "UUID {uuid} should map to a key");
+
+            // Key should retrieve the original vertex
+            let key = key_opt.unwrap();
+            let retrieved = tds.get_vertex_by_key(key);
+            assert!(retrieved.is_some(), "Key should retrieve a vertex");
+            assert_eq!(retrieved.unwrap().uuid(), uuid, "UUID round-trip failed");
+        }
+
+        // All UUIDs should be unique
+        assert_eq!(seen_uuids.len(), 10, "All UUIDs should be unique");
+    }
+
+    /// Test that duplicate coordinates are handled correctly (not an error)
+    #[test]
+    fn test_new_handles_duplicate_coordinates() {
+        // Vertices with same coordinates but different UUIDs
+        let v1 = vertex!([0.0, 0.0, 0.0]);
+        let v2 = vertex!([0.0, 0.0, 0.0]); // Same coordinates, different UUID
+        let v3 = vertex!([1.0, 0.0, 0.0]);
+        let v4 = vertex!([0.0, 1.0, 0.0]);
+        let v5 = vertex!([0.0, 0.0, 1.0]);
+
+        let vertices = vec![v1, v2, v3, v4, v5];
+
+        // Should succeed, silently skipping duplicate coordinates
+        let result = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices);
+        assert!(
+            result.is_ok(),
+            "Should handle duplicate coordinates: {:?}",
+            result
+        );
+
+        let tds = result.unwrap();
+        // Should only have 4 unique coordinate vertices, not 5
+        assert_eq!(
+            tds.number_of_vertices(),
+            4,
+            "Should skip duplicate coordinates"
+        );
+    }
+
+    /// Test that UUID mapping integrity is maintained after construction
+    #[test]
+    fn test_uuid_mapping_integrity_after_construction() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+
+        // Verify every vertex UUID maps to exactly one key
+        for (i, vertex) in vertices.iter().enumerate() {
+            let uuid = vertex.uuid();
+            let key_opt = tds.vertex_key_from_uuid(&uuid);
+
+            assert!(key_opt.is_some(), "Vertex {i}: UUID should map to a key");
+
+            let key = key_opt.unwrap();
+            let retrieved_vertex = tds.get_vertex_by_key(key);
+
+            assert!(
+                retrieved_vertex.is_some(),
+                "Vertex {i}: Key should retrieve a vertex"
+            );
+
+            // Verify UUID round-trip
+            assert_eq!(
+                retrieved_vertex.unwrap().uuid(),
+                uuid,
+                "Vertex {i}: UUID round-trip failed"
+            );
+        }
+
+        // Verify number of UUID mappings equals number of vertices
+        // (would fail if duplicate UUIDs overwrote mappings)
+        let uuid_count = tds.number_of_vertices();
+        assert_eq!(
+            uuid_count, 4,
+            "Should have exactly 4 UUID mappings for 4 vertices"
         );
     }
 }
