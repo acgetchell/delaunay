@@ -90,12 +90,23 @@ delaunay/
 │   ├── circumsphere_debug_tools.rs               # Interactive circumsphere testing and debugging utilities
 │   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
 │   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
+│   ├── proptest_bowyer_watson.proptest-regressions  # Proptest regression cases for Bowyer-Watson insertion (2D-5D)
+│   ├── proptest_bowyer_watson.rs                 # Property-based tests for Bowyer-Watson vertex insertion (2D-5D)
+│   ├── proptest_cell.rs                          # Property-based tests for Cell data structure
+│   ├── proptest_convex_hull.rs                   # Property-based tests for convex hull computation
+│   ├── proptest_facet.rs                         # Property-based tests for Facet operations
+│   ├── proptest_geometry.rs                      # Property-based tests for geometric utilities
 │   ├── proptest_point.rs                         # Property-based tests for Point (hashing, equality, serialization)
-│   ├── proptest_predicates.proptest-regressions  # Proptest regression test cases for geometric predicates
 │   ├── proptest_predicates.rs                    # Property-based tests for geometric predicates (orientation, insphere)
+│   ├── proptest_quality.proptest-regressions     # Proptest regression cases for quality metrics
+│   ├── proptest_quality.rs                       # Property-based tests for mesh quality metrics
+│   ├── proptest_serialization.proptest-regressions  # Proptest regression cases for serialization
+│   ├── proptest_serialization.rs                 # Property-based tests for serialization/deserialization
 │   ├── proptest_triangulation.rs                 # Property-based tests for triangulation invariants
 │   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
 │   ├── robust_predicates_showcase.rs             # Robust predicates demonstration tests
+│   ├── serialization_vertex_preservation.rs      # Serialization vertex UUID preservation tests
+│   ├── storage_backend_compatibility.rs          # Storage backend (SlotMap) compatibility tests
 │   ├── tds_basic_integration.rs                  # Basic TDS creation, neighbor assignment, and validation tests
 │   └── test_cavity_boundary_error.rs             # Cavity boundary error reproduction tests
 ├── docs/                                         # Additional documentation

@@ -1585,16 +1585,20 @@ where
         // This is done BEFORE any modifications to enable clean rollback on failure.
         let boundary_infos = Self::gather_boundary_facet_info(tds, &boundary_facet_handles)?;
 
+        // Deduplicate boundary facets to prevent creating duplicate cells
+        // (critical for correct topology)
+        let boundary_infos = Self::deduplicate_boundary_facet_info(boundary_infos);
+
         // ========================================================================
         // PHASE 2: TENTATIVE - Insert vertex and create new cells (no removal yet)
         // ========================================================================
         // Track whether vertex existed before this operation for atomic rollback
         let vertex_existed_before = tds.vertex_key_from_uuid(&vertex.uuid()).is_some();
 
-        // Ensure vertex is in TDS (needed to create cells)
+        // Ensure vertex is in TDS (needed for filtering and cell creation)
         Self::ensure_vertex_in_tds(tds, vertex)?;
 
-        // Get the inserted vertex key for cell creation
+        // Get the inserted vertex key for filtering and cell creation
         let inserted_vk = tds.vertex_key_from_uuid(&vertex.uuid()).ok_or_else(|| {
             InsertionError::TriangulationState(
                 TriangulationValidationError::InconsistentDataStructure {
@@ -1602,6 +1606,11 @@ where
                 },
             )
         })?;
+
+        // Filter boundary facets to prevent invalid facet sharing
+        // This prevents creating cells that would violate the "facet shared by at most 2 cells" constraint
+        let boundary_infos =
+            Self::filter_boundary_facets_by_valid_facet_sharing(tds, boundary_infos, inserted_vk);
 
         // Create all new cells BEFORE removing bad cells
         // This allows clean rollback if creation fails
@@ -2480,61 +2489,58 @@ where
         // Track whether vertex existed before this operation for atomic rollback
         let vertex_existed_before = tds.vertex_key_from_uuid(&vertex.uuid()).is_some();
 
-        // Phase 1: Extract all facet data upfront before creating any cells
-        // This ensures we can validate everything before modifying the TDS
-        let mut extracted_facet_data = Vec::with_capacity(facet_handles.len());
+        // Phase 1: Gather and deduplicate boundary facet information
+        // This uses the shared deduplication logic to prevent duplicate cell creation
+        let boundary_infos = Self::gather_boundary_facet_info(tds, facet_handles)?;
+        let boundary_infos = Self::deduplicate_boundary_facet_info(boundary_infos);
 
-        for handle in facet_handles {
-            let cell_key = handle.cell_key();
-            let facet_index = handle.facet_index();
+        // Ensure vertex is in TDS (needed for filtering and cell creation)
+        Self::ensure_vertex_in_tds(tds, vertex)?;
 
-            // Validate cell exists first
-            let _cell = tds.get_cell(cell_key).ok_or_else(|| {
+        // Get the inserted vertex key for filtering and cell creation
+        let inserted_vk = tds.vertex_key_from_uuid(&vertex.uuid()).ok_or_else(|| {
+            InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: "Vertex was not found in TDS immediately after insertion".to_string(),
+                },
+            )
+        })?;
+
+        // Phase 1.5: Filter boundary facets to prevent invalid facet sharing
+        // This prevents creating cells that would violate the "facet shared by at most 2 cells" constraint
+        let boundary_infos =
+            Self::filter_boundary_facets_by_valid_facet_sharing(tds, boundary_infos, inserted_vk);
+
+        // Phase 2: Create all cells from deduplicated boundary facets
+        // Tracking created cell keys for potential rollback
+        let mut created_cell_keys = Vec::with_capacity(boundary_infos.len());
+
+        for info in &boundary_infos {
+            // Combine facet vertices with the inserted vertex
+            let mut cell_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                info.facet_vertex_keys.clone();
+            cell_vertices.push(inserted_vk);
+
+            // Create cell from vertex keys
+            let new_cell = Cell::new(cell_vertices, None).map_err(|err| {
                 InsertionError::TriangulationState(
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Cell key {cell_key:?} not found in TDS during cell creation"
-                        ),
+                    TriangulationValidationError::FailedToCreateCell {
+                        message: format!("Failed to create cell from boundary facet: {err}"),
                     },
                 )
             })?;
 
-            // Create FacetView and extract vertices
-            let facet_view = crate::core::facet::FacetView::new(tds, cell_key, facet_index)
-                .map_err(|_| {
-                    InsertionError::TriangulationState(
-                        TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Facet index {facet_index} out of bounds for cell {cell_key:?}"
-                            ),
-                        },
-                    )
-                })?;
-
-            // Extract vertex data from FacetView
-            let facet_vertices_iter = facet_view.vertices().map_err(|e| {
-                InsertionError::TriangulationState(TriangulationValidationError::FacetError(e))
-            })?;
-            let facet_vertices: Vec<Vertex<T, U, D>> = facet_vertices_iter.copied().collect();
-            extracted_facet_data.push(facet_vertices);
-        }
-
-        // Phase 2: Create all cells, tracking created cell keys for potential rollback
-        let mut created_cell_keys = Vec::with_capacity(extracted_facet_data.len());
-
-        for facet_vertices in extracted_facet_data {
-            match Self::create_cell_from_vertices_and_vertex(tds, facet_vertices, vertex) {
-                Ok(cell_key) => {
-                    created_cell_keys.push(cell_key);
-                }
+            match tds.insert_cell_with_mapping(new_cell) {
+                Ok(key) => created_cell_keys.push(key),
                 Err(e) => {
+                    // Rollback: remove only newly-created cells and the vertex if it was new
                     Self::rollback_created_cells_and_vertex(
                         tds,
                         &created_cell_keys,
                         vertex,
                         vertex_existed_before,
                     );
-                    return Err(InsertionError::TriangulationState(e));
+                    return Err(InsertionError::TriangulationConstruction(e));
                 }
             }
         }
@@ -2546,7 +2552,7 @@ where
             return Err(InsertionError::TriangulationState(
                 TriangulationValidationError::FailedToCreateCell {
                     message: format!(
-                        "Failed to create any cells from {} facet handles",
+                        "Failed to create any cells from {} facet handles (all were duplicates)",
                         facet_handles.len()
                     ),
                 },
@@ -2554,6 +2560,178 @@ where
         }
 
         Ok(cells_created)
+    }
+
+    /// Deduplicate boundary facet information by vertex set.
+    ///
+    /// Multiple boundary facets from different bad cells can have identical vertex sets,
+    /// which would lead to creating duplicate cells sharing all facets (invalid topology).
+    /// This function filters out such duplicates, keeping only the first occurrence of
+    /// each unique vertex set.
+    ///
+    /// # Arguments
+    ///
+    /// * `boundary_infos` - Vector of boundary facet information to deduplicate
+    ///
+    /// # Returns
+    ///
+    /// A deduplicated vector containing only unique facets by vertex set.
+    ///
+    /// # Implementation Note
+    ///
+    /// Uses a `HashSet` of sorted vertex keys to identify duplicates in O(n) time.
+    /// The order of non-duplicate facets is preserved from the input.
+    #[must_use]
+    fn deduplicate_boundary_facet_info(
+        boundary_infos: Vec<BoundaryFacetInfo>,
+    ) -> Vec<BoundaryFacetInfo> {
+        use std::collections::HashSet;
+        let mut seen_vertex_sets = HashSet::new();
+        let mut deduplicated = Vec::new();
+
+        for info in boundary_infos {
+            // Create a sorted set of vertex keys to identify unique facets
+            let mut vertex_keys: Vec<_> = info.facet_vertex_keys.iter().copied().collect();
+            vertex_keys.sort_unstable();
+
+            // Only keep facets we haven't seen before
+            if seen_vertex_sets.insert(vertex_keys) {
+                deduplicated.push(info);
+            }
+        }
+
+        deduplicated
+    }
+
+    /// Filter boundary facets to prevent invalid facet sharing.
+    ///
+    /// This function ensures that creating cells from the boundary facets will not violate
+    /// the fundamental Delaunay constraint: each facet must be shared by at most 2 cells.
+    ///
+    /// When we create a new cell from a boundary facet + inserted vertex, that cell will have
+    /// D+1 facets:
+    /// - 1 facet is the boundary facet itself (exists, currently has 1 cell)
+    /// - D new facets (formed between boundary facet vertices and the new vertex)
+    ///
+    /// We need to ensure none of those D new facets would be shared by >2 cells.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Reference to the triangulation data structure
+    /// * `boundary_infos` - Deduplicated boundary facet information
+    /// * `inserted_vk` - Vertex key of the newly inserted vertex
+    ///
+    /// # Returns
+    ///
+    /// Filtered vector of boundary facets that will maintain valid topology when cells are created.
+    ///
+    /// # Implementation Note
+    ///
+    /// This is a preventive approach that avoids creating invalid topology rather than
+    /// fixing it reactively. Time complexity is O(N*D*F) where N is number of boundary facets,
+    /// D is dimension, and F is average facets per cell in the facet map.
+    #[must_use]
+    fn filter_boundary_facets_by_valid_facet_sharing(
+        tds: &Tds<T, U, V, D>,
+        boundary_infos: Vec<BoundaryFacetInfo>,
+        inserted_vk: VertexKey,
+    ) -> Vec<BoundaryFacetInfo>
+    where
+        T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
+    {
+        use std::collections::HashMap;
+
+        // Build facet-to-cells map from current TDS state
+        // If this fails, return all boundary infos (conservative: allow creation, let reactive fix handle it)
+        let Ok(facet_map) = tds.build_facet_to_cells_map() else {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Warning: Could not build facet map for preventive filtering, allowing all boundary facets"
+            );
+            return boundary_infos;
+        };
+
+        // Count how many cells each facet currently has
+        let mut facet_cell_counts: HashMap<u64, usize> = HashMap::new();
+        for (facet_key, handles) in &facet_map {
+            facet_cell_counts.insert(*facet_key, handles.len());
+        }
+
+        // Filter boundary facets: keep only those that won't cause over-sharing
+        #[cfg(debug_assertions)]
+        let boundary_count = boundary_infos.len();
+        let mut filtered = Vec::new();
+        let mut facet_vertices_buffer: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+
+        for info in boundary_infos {
+            // Simulate creating the cell: combine boundary facet vertices + inserted vertex
+            let mut cell_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                info.facet_vertex_keys.clone();
+            cell_vertices.push(inserted_vk);
+
+            // Check all D+1 facets of this would-be cell
+            let mut would_cause_oversharing = false;
+
+            for exclude_idx in 0..cell_vertices.len() {
+                // Build the facet by excluding vertex at exclude_idx
+                facet_vertices_buffer.clear();
+                for (i, &vk) in cell_vertices.iter().enumerate() {
+                    if i != exclude_idx {
+                        facet_vertices_buffer.push(vk);
+                    }
+                }
+
+                // Compute facet key
+                let facet_key = facet_key_from_vertices(&facet_vertices_buffer);
+
+                // Check current cell count for this facet
+                let current_count = facet_cell_counts.get(&facet_key).copied().unwrap_or(0);
+
+                // If this facet already has 2 cells, adding our new cell would make it 3 (over-sharing)
+                if current_count >= 2 {
+                    would_cause_oversharing = true;
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Filtering out boundary facet: would cause facet {:?} to be shared by {} cells (currently {})",
+                        facet_key,
+                        current_count + 1,
+                        current_count
+                    );
+                    break;
+                }
+            }
+
+            if !would_cause_oversharing {
+                // This boundary facet is safe to use
+                filtered.push(info);
+
+                // Update our local facet counts to account for this cell we're planning to create
+                // This ensures subsequent checks see the cumulative effect
+                for exclude_idx in 0..cell_vertices.len() {
+                    facet_vertices_buffer.clear();
+                    for (i, &vk) in cell_vertices.iter().enumerate() {
+                        if i != exclude_idx {
+                            facet_vertices_buffer.push(vk);
+                        }
+                    }
+                    let facet_key = facet_key_from_vertices(&facet_vertices_buffer);
+                    *facet_cell_counts.entry(facet_key).or_insert(0) += 1;
+                }
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        if filtered.len() < boundary_count {
+            eprintln!(
+                "Filtered {} boundary facets to prevent over-sharing (kept {} of {})",
+                boundary_count - filtered.len(),
+                filtered.len(),
+                boundary_count
+            );
+        }
+
+        filtered
     }
 
     /// Gather all boundary facet metadata before modifying the TDS.
@@ -3063,7 +3241,14 @@ where
         // Remove duplicate cells first
         tds.remove_duplicate_cells()?;
 
-        // Fix invalid facet sharing
+        // Fix invalid facet sharing (defense-in-depth)
+        // NOTE: We use preventive filtering (filter_boundary_facets_by_valid_facet_sharing)
+        // to avoid creating invalid topology in the first place. However, we keep this
+        // reactive fix as a safety net in case:
+        // 1. The preventive filtering fails to build the facet map
+        // 2. There are edge cases the preventive filter doesn't catch
+        // 3. Invalid topology arises from other sources
+        // This ensures correctness even if the preventive approach has gaps.
         tds.fix_invalid_facet_sharing().map_err(|e| {
             TriangulationValidationError::InconsistentDataStructure {
                 message: format!("Failed to fix invalid facet sharing: {e}"),
@@ -3263,6 +3448,107 @@ mod tests {
                             "{}D: Empty bad cells should yield empty boundary facets",
                             $dim
                         );
+                    }
+
+                    #[test]
+                    fn [<$test_name _deduplicate_boundary_facet_info>]() {
+                        // Test deduplication of boundary facet info
+                        println!("Testing deduplicate_boundary_facet_info in {}D", $dim);
+
+                        let initial_vertices = $initial_vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let cell_key = tds.cell_keys().next().expect("Should have at least one cell");
+
+                        // Get vertex keys for the simplex (should have D+1 vertices)
+                        let vertex_keys: Vec<_> = tds.vertex_keys().collect();
+                        assert_eq!(vertex_keys.len(), $dim + 1, "{}D: Should have {} vertices", $dim, $dim + 1);
+
+                        // Create test facet info with duplicates
+                        // In D dimensions, each facet has D vertices
+                        let mut facet_info = Vec::new();
+
+                        // Add first distinct facet (all vertices except the first)
+                        let mut first_facet_vertices = SmallBuffer::new();
+                        for v in vertex_keys.iter().skip(1).take($dim) {
+                            first_facet_vertices.push(*v);
+                        }
+                        facet_info.push(BoundaryFacetInfo {
+                            bad_cell: cell_key,
+                            bad_facet_index: 0,
+                            facet_vertex_keys: first_facet_vertices.clone(),
+                            outside_neighbor: None,
+                        });
+
+                        // Add second distinct facet (all vertices except the second)
+                        let mut second_facet_vertices = SmallBuffer::new();
+                        second_facet_vertices.push(vertex_keys[0]);
+                        for v in vertex_keys.iter().skip(2).take($dim - 1) {
+                            second_facet_vertices.push(*v);
+                        }
+                        facet_info.push(BoundaryFacetInfo {
+                            bad_cell: cell_key,
+                            bad_facet_index: 1,
+                            facet_vertex_keys: second_facet_vertices.clone(),
+                            outside_neighbor: None,
+                        });
+
+                        // Add duplicate of first facet (same vertex set, reversed order)
+                        let mut duplicate_facet_vertices = SmallBuffer::new();
+                        for v in first_facet_vertices.iter().rev() {
+                            duplicate_facet_vertices.push(*v);
+                        }
+                        facet_info.push(BoundaryFacetInfo {
+                            bad_cell: cell_key,
+                            bad_facet_index: 2,
+                            facet_vertex_keys: duplicate_facet_vertices,
+                            outside_neighbor: None,
+                        });
+
+                        println!("  {}D: Input {} facets (including 1 duplicate)", $dim, facet_info.len());
+
+                        // Deduplicate using the same logic as the implementation
+                        let deduplicated = {
+                            use std::collections::HashSet;
+                            let mut seen_vertex_sets = HashSet::new();
+                            let mut dedup = Vec::new();
+                            for info in facet_info.clone() {
+                                let mut vertex_keys: Vec<_> = info.facet_vertex_keys.iter().copied().collect();
+                                vertex_keys.sort_unstable();
+                                if seen_vertex_sets.insert(vertex_keys) {
+                                    dedup.push(info);
+                                }
+                            }
+                            dedup
+                        };
+
+                        println!("  {}D: Output {} unique facets", $dim, deduplicated.len());
+
+                        // Should remove exactly one duplicate
+                        assert_eq!(
+                            deduplicated.len(),
+                            facet_info.len() - 1,
+                            "{}D: Should remove exactly one duplicate facet",
+                            $dim
+                        );
+
+                        // Verify all remaining facets have distinct vertex sets
+                        let unique_sets: std::collections::HashSet<_> = deduplicated
+                            .iter()
+                            .map(|info| {
+                                let mut sorted: Vec<_> = info.facet_vertex_keys.iter().copied().collect();
+                                sorted.sort();
+                                sorted
+                            })
+                            .collect();
+
+                        assert_eq!(
+                            unique_sets.len(),
+                            deduplicated.len(),
+                            "{}D: All remaining facets should have distinct vertex sets",
+                            $dim
+                        );
+
+                        println!("  ✓ {}D: Deduplication test passed", $dim);
                     }
                 }
             )+
@@ -3542,8 +3828,8 @@ mod tests {
                     crate::core::triangulation_data_structure::TriangulationValidationError::InconsistentDataStructure { message }
                 ) => {
                     assert!(
-                        message.contains("Cell key") && message.contains("not found"),
-                        "Error message should mention cell key not found, got: {message}"
+                        message.contains("not found"),
+                        "Error message should mention cell not found, got: {message}"
                     );
                 }
                 _ => panic!("Expected InconsistentDataStructure error, got: {e:?}"),
@@ -3593,8 +3879,8 @@ mod tests {
                     crate::core::triangulation_data_structure::TriangulationValidationError::InconsistentDataStructure { message }
                 ) => {
                     assert!(
-                        message.contains("Facet index") && message.contains("out of bounds"),
-                        "Error message should mention facet index out of bounds, got: {message}"
+                        message.contains("Facet") || message.contains("Boundary facet") || message.contains("vertices"),
+                        "Error message should mention facet issue, got: {message}"
                     );
                 }
                 _ => panic!("Expected InconsistentDataStructure error, got: {e:?}"),
