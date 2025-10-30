@@ -629,21 +629,29 @@ where
 
     /// Create a vertex for testing with a specific UUID.
     ///
-    /// **WARNING**: This is a test helper function. Do not use in production code.
+    /// # ⚠️ WARNING: Internal Test Helper - Do Not Use
     ///
-    /// This function allows creating vertices with controlled UUIDs for testing
-    /// duplicate detection and other UUID-related behaviors. In production code,
-    /// always use the `vertex!` macro or builder pattern which auto-generates UUIDs.
+    /// This function is **only for internal testing** and bypasses:
+    /// - UUID auto-generation
+    /// - UUID validation
+    /// - All safety checks
+    ///
+    /// Using this function in production code will likely lead to:
+    /// - Duplicate UUID collisions
+    /// - Invalid triangulation state
+    /// - Data corruption
+    ///
+    /// **Always use** the `vertex!` macro or builder pattern in production code.
     ///
     /// # Arguments
     ///
     /// * `point` - The point coordinates for the vertex
-    /// * `uuid` - The UUID to assign to the vertex
+    /// * `uuid` - The UUID to assign to the vertex (must be unique!)
     /// * `data` - Optional user data for the vertex
     ///
     /// # Returns
     ///
-    /// A new `Vertex` with the specified UUID and data.
+    /// A new `Vertex` with the specified UUID and data (unchecked).
     #[doc(hidden)]
     pub const fn new_with_uuid(point: Point<T, D>, uuid: Uuid, data: Option<U>) -> Self {
         Self {

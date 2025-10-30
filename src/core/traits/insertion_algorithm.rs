@@ -276,27 +276,29 @@ impl InsertionError {
 /// Margin factor used for bounding box expansion in exterior vertex detection
 const MARGIN_FACTOR: f64 = 0.1;
 
-/// Saturating subtraction for bbox expansion - prevents overflow panics.
-/// For integer types: uses `saturating_sub`. For floats: normal subtraction.
+/// Saturating subtraction for bbox expansion.
+///
+/// For floating-point types (f32, f64): Normal subtraction with natural overflow handling
+/// (underflow → -infinity). Integer types are not supported by `CoordinateScalar`.
 #[inline]
 fn saturating_sub_for_bbox<T>(a: T, b: T) -> T
 where
     T: CoordinateScalar + Sub<Output = T>,
 {
-    // For floating-point types: normal subtraction (overflow → -infinity)
-    // For integer types: this trait bound ensures safe arithmetic
+    // Floating-point arithmetic naturally handles overflow
     a - b
 }
 
-/// Saturating addition for bbox expansion - prevents overflow panics.
-/// For integer types: uses `saturating_add`. For floats: normal addition.
+/// Saturating addition for bbox expansion.
+///
+/// For floating-point types (f32, f64): Normal addition with natural overflow handling
+/// (overflow → infinity). Integer types are not supported by `CoordinateScalar`.
 #[inline]
 fn saturating_add_for_bbox<T>(a: T, b: T) -> T
 where
     T: CoordinateScalar + Add<Output = T>,
 {
-    // For floating-point types: normal addition (overflow → infinity)
-    // For integer types: this trait bound ensures safe arithmetic
+    // Floating-point arithmetic naturally handles overflow
     a + b
 }
 
@@ -2498,6 +2500,15 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
+        // Early exit: empty input
+        if facet_handles.is_empty() {
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::FailedToCreateCell {
+                    message: "No facet handles provided for cell creation".to_string(),
+                },
+            ));
+        }
+
         // Track whether vertex existed before this operation for atomic rollback
         let vertex_existed_before = tds.vertex_key_from_uuid(&vertex.uuid()).is_some();
 
@@ -2529,7 +2540,7 @@ where
             Self::rollback_created_cells_and_vertex(tds, &[], vertex, vertex_existed_before);
             return Err(InsertionError::TriangulationState(
                 TriangulationValidationError::FailedToCreateCell {
-                    message: "Preventive facet filtering removed every boundary facet; aborting cell creation to keep the TDS consistent."
+                    message: "No boundary facets available after filtering; aborting to keep the TDS consistent."
                         .to_string(),
                 },
             ));
@@ -2609,15 +2620,16 @@ where
     ///
     /// # Implementation Note
     ///
-    /// Uses a `HashSet` of sorted vertex keys to identify duplicates in O(n) time.
+    /// Uses `FastHashSet` of sorted vertex keys to identify duplicates in O(n) time.
     /// The order of non-duplicate facets is preserved from the input.
     #[must_use]
     fn deduplicate_boundary_facet_info(
         boundary_infos: Vec<BoundaryFacetInfo>,
     ) -> Vec<BoundaryFacetInfo> {
-        use std::collections::HashSet;
-        let mut seen_vertex_sets = HashSet::new();
-        let mut deduplicated = Vec::new();
+        use crate::core::collections::{FastHashSet, fast_hash_set_with_capacity};
+        let mut seen_vertex_sets: FastHashSet<Vec<VertexKey>> =
+            fast_hash_set_with_capacity(boundary_infos.len());
+        let mut deduplicated = Vec::with_capacity(boundary_infos.len());
 
         for info in boundary_infos {
             // Create a sorted set of vertex keys to identify unique facets
@@ -3898,14 +3910,14 @@ mod tests {
         let initial_cell_count = tds.number_of_cells();
         let initial_vertex_count = tds.number_of_vertices();
 
-        // Create cells from empty handle list - should error due to empty boundary facets
+        // Create cells from empty handle list - should error immediately (early exit)
         let result = IncrementalBowyerWatson::create_cells_from_facet_handles(
             &mut tds,
             &empty_handles,
             &test_vertex,
         );
 
-        // Should fail because filtering produces empty boundary set
+        // Should fail immediately with clear error message (no vertex insertion needed)
         assert!(result.is_err(), "Should error on empty handle list");
 
         // Verify TDS state unchanged (atomic rollback)
