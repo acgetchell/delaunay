@@ -1174,6 +1174,7 @@ class ChangelogProcessor:
         """Initialize the processor with repository URL."""
         self.repo_url = repo_url
         self.pending_expanded_commits: list[str] = []
+        self.expanded_commit_shas: set[str] = set()  # Track SHAs we've expanded
         self.in_merged_prs_section = False
         self.current_release_has_changes_section = False
         self.changes_section_index = -1
@@ -1252,7 +1253,7 @@ class ChangelogProcessor:
         self._process_pr_squashed_commit(pr_number)
         return True
 
-    def _handle_commit_line(self, line: str) -> str:
+    def _handle_commit_line(self, line: str) -> str | None:
         """Handle commit lines with SHA patterns."""
         commit_match = re.search(r"- \*\*.*?\*\*.*?\[`([a-f0-9]{7,40})`\]", line) or re.search(r"- .*?\(#[0-9]+\) \[`([a-f0-9]{7,40})`\]", line)
 
@@ -1260,6 +1261,11 @@ class ChangelogProcessor:
             return line
 
         commit_sha = commit_match.group(1)
+
+        # Skip commits that were already expanded from PRs
+        if commit_sha in self.expanded_commit_shas:
+            return None  # Skip this line to avoid duplication
+
         return self._process_commit_sha(commit_sha, line)
 
     def _process_pr_squashed_commit(self, pr_number: str) -> None:
@@ -1281,6 +1287,9 @@ class ChangelogProcessor:
             commit_sha = sha_output.strip().splitlines()[0] if sha_output.strip() else ""
             if commit_sha:
                 self._expand_squashed_commit(commit_sha)
+                # Track this SHA to avoid duplicating it later
+                self.expanded_commit_shas.add(commit_sha)
+                self.expanded_commit_shas.add(commit_sha[:7])  # Also track short SHA
         except Exception as e:
             logging.debug("Failed to process PR squashed commit for PR #%s: %s", pr_number, e)
 
@@ -1326,6 +1335,8 @@ class ChangelogProcessor:
             # Add to existing Changes section - use slice insertion to preserve order and avoid O(n²)
             insert_index = self.changes_section_index + 1
             output_lines[insert_index:insert_index] = ["", *self.pending_expanded_commits]
+            # Mark that we've used this index so it won't be reused
+            self.changes_section_index = -1
         else:
             # Create new Changes section before this release
             output_lines.extend(["", "### Changes", ""])
@@ -1338,6 +1349,7 @@ class ChangelogProcessor:
         self.in_merged_prs_section = False
         self.current_release_has_changes_section = False
         self.changes_section_index = -1
+        self.expanded_commit_shas.clear()  # Clear for next release
 
     def _finalize_pending_commits(self, output_lines: list[str]) -> None:
         """Handle any remaining expanded commits at the end of the file."""
@@ -1352,6 +1364,9 @@ class ChangelogProcessor:
             # Add Changes section at the end
             output_lines.extend(["", "### Changes", ""])
             output_lines.extend(self.pending_expanded_commits)
+
+        # Clear pending commits after insertion
+        self.pending_expanded_commits.clear()
 
 
 if __name__ == "__main__":
