@@ -2310,13 +2310,8 @@ where
         let mut seen_points: HashSet<Point<T, D>> = HashSet::with_capacity(vertices.len());
 
         for vertex in vertices {
-            // Skip if we've already seen this point
-            if !seen_points.insert(*vertex.point()) {
-                continue;
-            }
-
-            // CRITICAL: Use Entry API to prevent duplicate UUID corruption
-            // Without this, two vertices with same UUID would silently overwrite the mapping
+            // CRITICAL: Check for duplicate UUID first, before checking coordinates
+            // This ensures we always catch UUID collisions, even with duplicate coordinates
             let uuid = vertex.uuid();
             match tds.uuid_to_vertex_key.entry(uuid) {
                 std::collections::hash_map::Entry::Occupied(_) => {
@@ -2326,11 +2321,25 @@ where
                     });
                 }
                 std::collections::hash_map::Entry::Vacant(e) => {
+                    // Skip if we've already seen this point (duplicate coordinates)
+                    if !seen_points.insert(*vertex.point()) {
+                        continue;
+                    }
                     let key = tds.vertices.insert(*vertex);
                     e.insert(key);
                 }
             }
         }
+
+        // Recalculate construction_state based on unique vertices after deduplication
+        let unique_vertex_count = tds.vertices.len();
+        tds.construction_state = if unique_vertex_count == 0 {
+            TriangulationConstructionState::Incomplete(0)
+        } else if unique_vertex_count < D + 1 {
+            TriangulationConstructionState::Incomplete(unique_vertex_count)
+        } else {
+            TriangulationConstructionState::Constructed
+        };
 
         // Initialize cells using Bowyer-Watson triangulation
         // Note: bowyer_watson_logic now populates the storage maps internally

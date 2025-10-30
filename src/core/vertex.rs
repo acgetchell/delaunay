@@ -626,6 +626,33 @@ where
         // Individual vertices cannot validate incident_cell without TDS context.
         // User data validation (if U: DataType requires it) could be added here.
     }
+
+    /// Create a vertex for testing with a specific UUID.
+    ///
+    /// **WARNING**: This is a test helper function. Do not use in production code.
+    ///
+    /// This function allows creating vertices with controlled UUIDs for testing
+    /// duplicate detection and other UUID-related behaviors. In production code,
+    /// always use the `vertex!` macro or builder pattern which auto-generates UUIDs.
+    ///
+    /// # Arguments
+    ///
+    /// * `point` - The point coordinates for the vertex
+    /// * `uuid` - The UUID to assign to the vertex
+    /// * `data` - Optional user data for the vertex
+    ///
+    /// # Returns
+    ///
+    /// A new `Vertex` with the specified UUID and data.
+    #[doc(hidden)]
+    pub const fn new_with_uuid(point: Point<T, D>, uuid: Uuid, data: Option<U>) -> Self {
+        Self {
+            point,
+            uuid,
+            incident_cell: None,
+            data,
+        }
+    }
 }
 
 // =============================================================================

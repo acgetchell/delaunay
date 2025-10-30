@@ -2695,6 +2695,9 @@ where
             SmallBuffer::new();
 
         for info in boundary_infos {
+            // Capture bad_cell before we potentially move info
+            let bad_cell = info.bad_cell;
+
             // Simulate creating the cell: combine boundary facet vertices + inserted vertex
             let mut cell_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
                 info.facet_vertex_keys.clone();
@@ -2716,9 +2719,17 @@ where
                 let facet_key = facet_key_from_vertices(&facet_vertices_buffer);
 
                 // Check current cell count for this facet
-                let current_count = facet_cell_counts.get(&facet_key).copied().unwrap_or(0);
+                let mut current_count = facet_cell_counts.get(&facet_key).copied().unwrap_or(0);
 
-                // If this facet already has 2 cells, adding our new cell would make it 3 (over-sharing)
+                // The facet we're replacing is still counted via the bad cell; discount it
+                // since the bad cell is about to be deleted
+                if let Some(handles) = facet_map.get(&facet_key)
+                    && handles.iter().any(|handle| handle.cell_key() == bad_cell)
+                {
+                    current_count = current_count.saturating_sub(1);
+                }
+
+                // If this facet already has 2 cells (after discounting bad cell), adding our new cell would make it 3 (over-sharing)
                 if current_count >= 2 {
                     would_cause_oversharing = true;
                     #[cfg(debug_assertions)]
@@ -2746,7 +2757,14 @@ where
                         }
                     }
                     let facet_key = facet_key_from_vertices(&facet_vertices_buffer);
-                    *facet_cell_counts.entry(facet_key).or_insert(0) += 1;
+                    let entry = facet_cell_counts.entry(facet_key).or_insert(0);
+                    // Discount the bad cell contribution if present before incrementing
+                    if let Some(handles) = facet_map.get(&facet_key)
+                        && handles.iter().any(|handle| handle.cell_key() == bad_cell)
+                    {
+                        *entry = entry.saturating_sub(1);
+                    }
+                    *entry += 1;
                 }
             }
         }
@@ -7428,6 +7446,111 @@ mod tests {
         println!("  ✓ update_statistics works correctly");
 
         println!("✓ InsertionAlgorithm trait methods comprehensive test passed");
+    }
+
+    /// Test that preventive facet filtering correctly handles interior boundary facets.
+    ///
+    /// This test specifically checks for a bug where the filter would reject all valid
+    /// interior boundary facets because it counted facets from bad cells (about to be deleted)
+    /// as if they would remain, causing legitimate boundary facets to be incorrectly flagged
+    /// as over-sharing.
+    ///
+    /// The test creates a simple 3D triangulation with 5 vertices forming 2 tetrahedra,
+    /// then simulates the cavity-based insertion by:
+    /// 1. Marking one cell as "bad"
+    /// 2. Finding its boundary facets
+    /// 3. Applying preventive filtering
+    /// 4. Verifying that valid interior boundary facets are NOT filtered out
+    #[test]
+    fn test_preventive_filter_does_not_reject_valid_interior_facets() {
+        println!("Testing preventive facet filter with interior boundary facets");
+
+        // Create a 3D triangulation with 5 vertices forming 2 adjacent tetrahedra
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.5, 1.0, 0.0]),
+            vertex!([0.5, 0.5, 1.0]),
+            vertex!([0.5, 0.5, -1.0]), // Creates second tetrahedron
+        ];
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Verify we have 2 cells
+        assert_eq!(tds.number_of_cells(), 2, "Should have 2 tetrahedra");
+
+        // Pick one cell as the "bad cell" that we're removing
+        let bad_cell = tds
+            .cell_keys()
+            .next()
+            .expect("Should have at least one cell");
+
+        // Find the boundary facets of this "cavity"
+        let algorithm = IncrementalBowyerWatson::new();
+        let boundary_facets = algorithm
+            .find_cavity_boundary_facets(&tds, &[bad_cell])
+            .expect("Should find boundary facets");
+
+        println!(
+            "  Found {} boundary facets for single-cell cavity",
+            boundary_facets.len()
+        );
+        assert_eq!(
+            boundary_facets.len(),
+            4,
+            "Single tetrahedron cavity should have 4 boundary facets"
+        );
+
+        // Gather boundary facet information (mimics real insertion flow)
+        let boundary_infos =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::gather_boundary_facet_info(
+                &tds,
+                &boundary_facets,
+            )
+            .expect("Should gather boundary facet info");
+
+        // Get a vertex key for the "inserted" vertex (use one from the other cell)
+        let other_cell_key = tds
+            .cell_keys()
+            .find(|&ck| ck != bad_cell)
+            .expect("Should have second cell");
+        let other_cell = tds.get_cell(other_cell_key).expect("Should get other cell");
+        let inserted_vk = other_cell.vertices()[0];
+
+        // Apply preventive filtering
+        let filtered = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::filter_boundary_facets_by_valid_facet_sharing(
+            &tds,
+            boundary_infos.clone(),
+            inserted_vk,
+        );
+
+        println!(
+            "  After filtering: {} facets remaining (from {})",
+            filtered.len(),
+            boundary_infos.len()
+        );
+
+        // CRITICAL CHECK: The filter should NOT remove all boundary facets
+        // Before the fix, this would fail because interior facets were incorrectly
+        // counted as belonging to 2 cells (bad cell + neighbor) and rejected
+        assert!(
+            !filtered.is_empty(),
+            "Preventive filter should not reject all valid interior boundary facets. \
+             This indicates the bug where bad cell facets are counted incorrectly."
+        );
+
+        // For a single-cell cavity in a 2-cell triangulation, at least 1 facet
+        // should pass (the shared facet between the two cells)
+        assert!(
+            !filtered.is_empty(),
+            "Should keep at least the interior boundary facet(s)"
+        );
+
+        println!(
+            "  ✓ Filter correctly kept {} valid boundary facet(s)",
+            filtered.len()
+        );
+        println!("✓ Preventive facet filter test passed - no false rejections");
     }
 
     // Property tests for margin calculation and exterior detection
