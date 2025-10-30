@@ -276,13 +276,12 @@ impl InsertionError {
 /// Margin factor used for bounding box expansion in exterior vertex detection
 const MARGIN_FACTOR: f64 = 0.1;
 
-/// Floating-point safe subtraction for bbox expansion.
+/// Floating-point subtraction for bbox expansion.
 ///
 /// For floating-point types (f32, f64): Normal subtraction with natural overflow handling
 /// (underflow → -infinity). Integer types are not supported by `CoordinateScalar`.
 ///
-/// Note: Named "saturating" for consistency with bbox expansion semantics, but performs
-/// standard FP subtraction since floats naturally handle overflow without panicking.
+/// Note: Named "saturating" for bbox semantic consistency, not integer saturating arithmetic.
 #[inline]
 fn saturating_sub_for_bbox<T>(a: T, b: T) -> T
 where
@@ -292,13 +291,12 @@ where
     a - b
 }
 
-/// Floating-point safe addition for bbox expansion.
+/// Floating-point addition for bbox expansion.
 ///
 /// For floating-point types (f32, f64): Normal addition with natural overflow handling
 /// (overflow → infinity). Integer types are not supported by `CoordinateScalar`.
 ///
-/// Note: Named "saturating" for consistency with bbox expansion semantics, but performs
-/// standard FP addition since floats naturally handle overflow without panicking.
+/// Note: Named "saturating" for bbox semantic consistency, not integer saturating arithmetic.
 #[inline]
 fn saturating_add_for_bbox<T>(a: T, b: T) -> T
 where
@@ -4096,8 +4094,7 @@ mod tests {
         println!("  Final cell count: {final_cell_count}");
         println!("  Cells created: {cells_created}");
 
-        // Should still create cells (the implementation might handle duplicates by creating duplicate cells,
-        // or it might be smart enough to avoid them - either behavior is acceptable as long as it doesn't crash)
+        // Duplicate facets are deduplicated by canonical vertex set - no duplicate cells created
         assert!(cells_created > 0, "Should have created at least some cells");
         assert_eq!(
             final_cell_count,
