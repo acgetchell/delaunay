@@ -276,10 +276,13 @@ impl InsertionError {
 /// Margin factor used for bounding box expansion in exterior vertex detection
 const MARGIN_FACTOR: f64 = 0.1;
 
-/// Saturating subtraction for bbox expansion.
+/// Floating-point safe subtraction for bbox expansion.
 ///
 /// For floating-point types (f32, f64): Normal subtraction with natural overflow handling
 /// (underflow → -infinity). Integer types are not supported by `CoordinateScalar`.
+///
+/// Note: Named "saturating" for consistency with bbox expansion semantics, but performs
+/// standard FP subtraction since floats naturally handle overflow without panicking.
 #[inline]
 fn saturating_sub_for_bbox<T>(a: T, b: T) -> T
 where
@@ -289,10 +292,13 @@ where
     a - b
 }
 
-/// Saturating addition for bbox expansion.
+/// Floating-point safe addition for bbox expansion.
 ///
 /// For floating-point types (f32, f64): Normal addition with natural overflow handling
 /// (overflow → infinity). Integer types are not supported by `CoordinateScalar`.
+///
+/// Note: Named "saturating" for consistency with bbox expansion semantics, but performs
+/// standard FP addition since floats naturally handle overflow without panicking.
 #[inline]
 fn saturating_add_for_bbox<T>(a: T, b: T) -> T
 where
@@ -2620,24 +2626,25 @@ where
     ///
     /// # Implementation Note
     ///
-    /// Uses `FastHashSet` of sorted vertex keys to identify duplicates in O(n) time.
+    /// Uses `FastHashSet` of facet keys (u64 hash) to identify duplicates in O(n) time.
+    /// This avoids allocating Vec for each facet and uses the same hashing as `facet_key_from_vertices`.
     /// The order of non-duplicate facets is preserved from the input.
     #[must_use]
     fn deduplicate_boundary_facet_info(
         boundary_infos: Vec<BoundaryFacetInfo>,
     ) -> Vec<BoundaryFacetInfo> {
         use crate::core::collections::{FastHashSet, fast_hash_set_with_capacity};
-        let mut seen_vertex_sets: FastHashSet<Vec<VertexKey>> =
+        let mut seen_facet_keys: FastHashSet<u64> =
             fast_hash_set_with_capacity(boundary_infos.len());
         let mut deduplicated = Vec::with_capacity(boundary_infos.len());
 
         for info in boundary_infos {
-            // Create a sorted set of vertex keys to identify unique facets
-            let mut vertex_keys: Vec<_> = info.facet_vertex_keys.iter().copied().collect();
-            vertex_keys.sort_unstable();
+            // Use canonical facet key (u64 hash) to identify unique facets
+            // This matches the hashing used throughout the codebase and avoids allocating Vec
+            let facet_key = facet_key_from_vertices(&info.facet_vertex_keys);
 
             // Only keep facets we haven't seen before
-            if seen_vertex_sets.insert(vertex_keys) {
+            if seen_facet_keys.insert(facet_key) {
                 deduplicated.push(info);
             }
         }
@@ -2681,7 +2688,7 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
-        use std::collections::HashMap;
+        use crate::core::collections::{FastHashMap, fast_hash_map_with_capacity};
 
         // Build facet-to-cells map from current TDS state
         // If this fails, return all boundary infos (conservative: allow creation, let reactive fix handle it)
@@ -2694,7 +2701,8 @@ where
         };
 
         // Count how many cells each facet currently has
-        let mut facet_cell_counts: HashMap<u64, usize> = HashMap::new();
+        let mut facet_cell_counts: FastHashMap<u64, usize> =
+            fast_hash_map_with_capacity(facet_map.len());
         for (facet_key, handles) in &facet_map {
             facet_cell_counts.insert(*facet_key, handles.len());
         }
@@ -5716,20 +5724,17 @@ mod tests {
         );
         println!("  ✓ create_cells_from_boundary_facets created {cells_created} cells");
 
-        // Test with empty boundary facets (should create no cells)
+        // Test with empty boundary facets (should error due to early exit)
         let empty_facet_handles: Vec<FacetHandle> = vec![];
         let another_vertex = vertex!([3.0, 3.0, 3.0]);
-        let cells_created = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_facet_handles(
+        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_facet_handles(
             &mut tds,
             &empty_facet_handles,
             &another_vertex,
-        ).unwrap_or(0);
-
-        assert_eq!(
-            cells_created, 0,
-            "Should create no cells from empty boundary facets"
         );
-        println!("  ✓ Empty boundary facets handled correctly");
+
+        assert!(result.is_err(), "Empty facet handle list should error");
+        println!("  ✓ Empty boundary facets error correctly");
 
         println!("✓ create_cells_from_boundary_facets works correctly");
     }
