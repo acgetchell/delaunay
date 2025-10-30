@@ -603,6 +603,66 @@ class ChangelogUtils:
         return lines
 
     @staticmethod
+    def _protect_cron_expressions(line: str) -> str:
+        """
+        Protect cron expressions and asterisk patterns from markdown interpretation.
+
+        Wraps cron-like patterns (e.g., '0 2 * * 0') in backticks to prevent markdown
+        from treating asterisks as emphasis markers.
+
+        Args:
+            line: Line that may contain cron expressions
+
+        Returns:
+            Line with cron expressions wrapped in backticks
+        """
+
+        # Match cron expressions: sequences with asterisks and numbers/spaces
+        # Pattern: quoted strings containing digits, spaces, asterisks, and hyphens
+        def protect_match(match: re.Match) -> str:
+            content = match.group(0)
+            # If already in backticks, leave it alone
+            if content.startswith("`") and content.endswith("`"):
+                return content
+            # Check if this looks like a cron expression (has * and digits/spaces)
+            if "*" in content and any(c.isdigit() or c.isspace() for c in content):
+                # Remove quotes and wrap in backticks
+                inner = content.strip("'\"")
+                return f"`{inner}`"
+            return content
+
+        # Match quoted strings that might be cron expressions
+        return re.sub(r"'[0-9 *-]+'|\"[0-9 *-]+\"", protect_match, line)
+
+    @staticmethod
+    def _downgrade_headers(line: str) -> str:
+        """
+        Downgrade markdown headers to #### for commit message bodies.
+
+        Changelog structure uses:
+        - ## for release versions
+        - ### for sections (Added, Changed, etc.)
+
+        All headers in commit message bodies are converted to #### to:
+        1. Avoid conflicts with changelog structure
+        2. Maintain consistent hierarchy (### Section > #### Commit detail)
+        3. Satisfy markdownlint MD001 (no heading level jumps)
+
+        Args:
+            line: Line that may contain markdown headers
+
+        Returns:
+            Line with headers converted to ####
+        """
+        # Match any markdown header: # through ######
+        header_match = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if header_match:
+            content = header_match.group(2)
+            # Convert all headers to #### for consistency
+            return f"#### {content}"
+        return line
+
+    @staticmethod
     def _format_entry_body(body_lines: list[str], max_line_length: int) -> list[str]:
         """
         Format entry body content with proper wrapping.
@@ -620,7 +680,11 @@ class ChangelogUtils:
         body_content = []
         for line in body_lines:
             if line.strip():
-                body_content.append(line.strip())
+                # Protect cron expressions first
+                processed_line = ChangelogUtils._protect_cron_expressions(line.strip())
+                # Then downgrade any markdown headers in the content
+                processed_line = ChangelogUtils._downgrade_headers(processed_line)
+                body_content.append(processed_line)
             elif body_content and body_content[-1]:
                 body_content.append("")  # Preserve paragraph breaks
 
