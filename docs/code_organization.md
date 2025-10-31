@@ -296,6 +296,7 @@ with convenient `just` shortcuts for common workflows.
 
 - `point.rs` - NaN-aware Point operations
 - `predicates.rs`, `robust_predicates.rs` - Geometric tests (see [Numerical Robustness Guide](numerical_robustness_guide.md))
+- `quality.rs` - Cell quality metrics (radius ratio, normalized volume) for d-dimensional simplices
 - `matrix.rs` - Linear algebra support
 - `algorithms/convex_hull.rs` - Hull extraction
 - `traits/coordinate.rs` - Coordinate abstractions

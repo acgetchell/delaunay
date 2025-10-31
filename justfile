@@ -34,12 +34,12 @@ action-lint:
 bench:
     cargo bench --workspace
 
+bench-baseline: _ensure-uv
+    uv run benchmark-utils generate-baseline
+
 # CI regression benchmarks (fast, suitable for CI)
 bench-ci:
     cargo bench --bench ci_performance_suite
-
-bench-baseline: _ensure-uv
-    uv run benchmark-utils generate-baseline
 
 bench-compare: _ensure-uv
     uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
@@ -51,9 +51,9 @@ bench-compile:
 bench-dev: _ensure-uv
     CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=1000 CRIT_WARMUP_MS=500 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
 
-# Quick benchmark validation: minimal samples for sanity checking
-bench-quick:
-    CRIT_SAMPLE_SIZE=5 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace
+# Generate performance summary with fresh benchmark runs (for releases)
+bench-perf-summary: _ensure-uv
+    uv run benchmark-utils generate-summary --run-benchmarks
 
 # Phase 4 SlotMap evaluation benchmarks
 bench-phase4:
@@ -67,6 +67,10 @@ bench-phase4-large:
 bench-phase4-quick:
     @echo "⚡ Quick Phase 4 validation tests (~90 seconds)"
     cargo test --release --test storage_backend_compatibility -- --ignored
+
+# Quick benchmark validation: minimal samples for sanity checking
+bench-quick:
+    CRIT_SAMPLE_SIZE=5 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace
 
 # Build commands
 build:
@@ -166,12 +170,13 @@ help-workflows:
     @echo "  just lint-config   # Configuration validation (JSON, TOML, Actions)"
     @echo ""
     @echo "Benchmark System:"
-    @echo "  just bench         # Run all benchmarks"
-    @echo "  just bench-ci      # CI regression benchmarks (fast, ~5-10 min)"
-    @echo "  just bench-baseline # Generate performance baseline"
-    @echo "  just bench-compare # Compare against baseline"
-    @echo "  just bench-dev     # Development mode (10x faster, ~1-2 min)"
-    @echo "  just bench-quick   # Quick validation (minimal samples, ~30 sec)"
+    @echo "  just bench              # Run all benchmarks"
+    @echo "  just bench-baseline     # Generate performance baseline"
+    @echo "  just bench-ci           # CI regression benchmarks (fast, ~5-10 min)"
+    @echo "  just bench-compare      # Compare against baseline"
+    @echo "  just bench-dev          # Development mode (10x faster, ~1-2 min)"
+    @echo "  just bench-perf-summary # Generate performance summary for releases (~30-45 min)"
+    @echo "  just bench-quick        # Quick validation (minimal samples, ~30 sec)"
     @echo ""
     @echo "Phase 4 SlotMap Evaluation:"
     @echo "  just bench-phase4       # Run Phase 4 benchmarks (~10-30 min default)"
