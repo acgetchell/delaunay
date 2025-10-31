@@ -298,33 +298,41 @@ impl InsertionError {
 /// Margin factor used for bounding box expansion in exterior vertex detection
 const MARGIN_FACTOR: f64 = 0.1;
 
-/// Floating-point subtraction for bbox expansion.
+/// Bounding box expansion helper: safe subtraction for floating-point coordinates.
 ///
-/// For floating-point types (f32, f64): Normal subtraction with natural overflow handling
-/// (underflow → -infinity). Integer types are not supported by `CoordinateScalar`.
+/// Performs normal floating-point subtraction. Despite the name, this is NOT saturating
+/// arithmetic - floats naturally handle overflow by producing ±infinity, which is the
+/// desired behavior for bounding box expansion (ensures all vertices are contained).
 ///
-/// Note: Named "saturating" for bbox semantic consistency, not integer saturating arithmetic.
+/// # Type Constraints
+///
+/// Only supports floating-point types (f32, f64) via `CoordinateScalar`. Integer types
+/// are not supported by the trait.
 #[inline]
-fn saturating_sub_for_bbox<T>(a: T, b: T) -> T
+fn bbox_sub<T>(a: T, b: T) -> T
 where
     T: CoordinateScalar + Sub<Output = T>,
 {
-    // Floating-point arithmetic naturally handles overflow
+    // Plain subtraction; floats naturally produce -infinity on underflow
     a - b
 }
 
-/// Floating-point addition for bbox expansion.
+/// Bounding box expansion helper: safe addition for floating-point coordinates.
 ///
-/// For floating-point types (f32, f64): Normal addition with natural overflow handling
-/// (overflow → infinity). Integer types are not supported by `CoordinateScalar`.
+/// Performs normal floating-point addition. Despite the name, this is NOT saturating
+/// arithmetic - floats naturally handle overflow by producing ±infinity, which is the
+/// desired behavior for bounding box expansion (ensures all vertices are contained).
 ///
-/// Note: Named "saturating" for bbox semantic consistency, not integer saturating arithmetic.
+/// # Type Constraints
+///
+/// Only supports floating-point types (f32, f64) via `CoordinateScalar`. Integer types
+/// are not supported by the trait.
 #[inline]
-fn saturating_add_for_bbox<T>(a: T, b: T) -> T
+fn bbox_add<T>(a: T, b: T) -> T
 where
     T: CoordinateScalar + Add<Output = T>,
 {
-    // Floating-point arithmetic naturally handles overflow
+    // Plain addition; floats naturally produce +infinity on overflow
     a + b
 }
 
@@ -1198,8 +1206,8 @@ where
             // Use saturating arithmetic to prevent debug-mode overflow panics
             // For floating-point: behaves like normal +/- (overflow → infinity)
             // For integer types: saturates to T::MIN/T::MAX (prevents panic)
-            expanded_min[i] = saturating_sub_for_bbox(min_coords[i], margin);
-            expanded_max[i] = saturating_add_for_bbox(max_coords[i], margin);
+            expanded_min[i] = bbox_sub(min_coords[i], margin);
+            expanded_max[i] = bbox_add(max_coords[i], margin);
         }
 
         // Check if vertex is outside the expanded bounding box
@@ -2144,8 +2152,7 @@ where
             ));
         };
 
-        // HOT PATH: Collect facet vertices once to avoid duplicate iteration
-        // This single collection is used for both UUID lookup and point extraction
+        // HOT PATH: Collect facet vertices once for point extraction
         let facet_vertices_vec: SmallVec<[Vertex<T, U, D>; 8]> = facet
             .vertices()
             .map_err(|e| {
@@ -2154,46 +2161,33 @@ where
             .copied()
             .collect();
 
-        // Build HashSet for O(1) UUID lookups (more efficient than SmallVec::contains for D > 2)
-        let facet_vertex_uuids: FastHashSet<uuid::Uuid> =
-            facet_vertices_vec.iter().map(Vertex::uuid).collect();
-
-        // Find the vertex in the adjacent cell that is NOT part of the facet
-        // This is the \"opposite\" vertex that defines the \"inside\" side of the facet
+        // Find the opposite vertex directly using facet_index (avoids HashSet overhead)
         let cell_vertices = adjacent_cell.vertices();
+        let facet_index = <usize as From<u8>>::from(facet.facet_index());
 
-        let mut opposite_vertex = None;
-        for &vkey in cell_vertices {
-            let Some(cell_vertex) = tds.get_vertex_by_key(vkey) else {
-                // Missing vertex mapping indicates TDS inconsistency - return error for diagnosability
-                return Err(InsertionError::TriangulationState(
+        let opposite_vkey = cell_vertices
+            .get(facet_index)
+            .ok_or_else(|| {
+                InsertionError::TriangulationState(
                     TriangulationValidationError::InconsistentDataStructure {
                         message: format!(
-                            "Vertex key {vkey:?} from cell {adjacent_cell_key:?} not found in TDS during visibility test. \
-                             This indicates mapping inconsistency."
+                            "Facet index {facet_index} out of bounds for cell {adjacent_cell_key:?} with {} vertices",
+                            cell_vertices.len()
                         ),
                     },
-                ));
-            };
-            // Check membership with O(1) HashSet lookup instead of O(D) SmallVec contains
-            let is_in_facet = facet_vertex_uuids.contains(&cell_vertex.uuid());
-            if !is_in_facet {
-                opposite_vertex = Some(cell_vertex);
-                break;
-            }
-        }
+                )
+            })?;
 
-        let Some(opposite_vertex) = opposite_vertex else {
-            // Could not find opposite vertex - topology is inconsistent
-            return Err(InsertionError::TriangulationState(
+        let opposite_vertex = tds.get_vertex_by_key(*opposite_vkey).ok_or_else(|| {
+            InsertionError::TriangulationState(
                 TriangulationValidationError::InconsistentDataStructure {
                     message: format!(
-                        "Facet lacked opposite vertex for cell {adjacent_cell_key:?}. This indicates potential TDS corruption \
-                         where the facet vertices do not form a proper (D-1)-face of the adjacent D-cell."
+                        "Vertex key {opposite_vkey:?} from cell {adjacent_cell_key:?} not found in TDS during visibility test. \
+                         This indicates mapping inconsistency."
                     ),
                 },
-            ));
-        };
+            )
+        })?;
 
         // Create test simplices for orientation comparison
         // Using SmallVec to avoid heap allocation for small simplices (D+1 points)
@@ -3195,13 +3189,13 @@ where
                     continue;
                 }
 
-                // Build facet signature: all vertices except opposite_vk, sorted
-                let mut facet_sig: FacetSignature = cell_vertices
+                // Build facet signature: all vertices except opposite_vk
+                // Note: facet_key_from_vertices() sorts internally, no need to pre-sort
+                let facet_sig: FacetSignature = cell_vertices
                     .iter()
                     .enumerate()
                     .filter_map(|(i, &vk)| (i != opposite_idx).then_some(vk))
                     .collect();
-                facet_sig.sort_unstable();
 
                 let facet_key = facet_key_from_vertices(&facet_sig);
 
@@ -4723,76 +4717,76 @@ mod tests {
         println!("✓ Integer margin calculation works correctly with ~10% expansion");
     }
 
-    /// Test `saturating_sub_for_bbox` with floating-point coordinates
+    /// Test `bbox_sub` with floating-point coordinates
     #[test]
-    fn test_saturating_sub_for_bbox_float() {
-        println!("Testing saturating_sub_for_bbox with floating-point types");
+    fn test_bbox_sub_float() {
+        println!("Testing bbox_sub with floating-point types");
 
         // Normal subtraction cases
-        let result = saturating_sub_for_bbox(10.0_f64, 3.0_f64);
+        let result = bbox_sub(10.0_f64, 3.0_f64);
         assert_abs_diff_eq!(result, 7.0, epsilon = 1e-10);
         println!("  ✓ f64: 10.0 - 3.0 = {result}");
 
-        let result = saturating_sub_for_bbox(5.5_f32, 2.3_f32);
+        let result = bbox_sub(5.5_f32, 2.3_f32);
         assert_abs_diff_eq!(result, 3.2, epsilon = 1e-6);
         println!("  ✓ f32: 5.5 - 2.3 = {result}");
 
         // Negative result
-        let result = saturating_sub_for_bbox(3.0_f64, 10.0_f64);
+        let result = bbox_sub(3.0_f64, 10.0_f64);
         assert_abs_diff_eq!(result, -7.0, epsilon = 1e-10);
         println!("  ✓ f64: 3.0 - 10.0 = {result} (negative result)");
 
         // Underflow to -infinity (floats handle this naturally)
-        let result = saturating_sub_for_bbox(-f64::MAX, f64::MAX);
+        let result = bbox_sub(-f64::MAX, f64::MAX);
         assert!(result.is_infinite() && result.is_sign_negative());
         println!("  ✓ f64: -MAX - MAX = {result} (underflow to -infinity)");
 
         // Zero cases
-        let result = saturating_sub_for_bbox(5.0_f64, 5.0_f64);
+        let result = bbox_sub(5.0_f64, 5.0_f64);
         assert_abs_diff_eq!(result, 0.0, epsilon = 1e-10);
         println!("  ✓ f64: 5.0 - 5.0 = {result}");
 
-        println!("✓ saturating_sub_for_bbox works correctly with floating-point types");
+        println!("✓ bbox_sub works correctly with floating-point types");
     }
 
-    /// Test `saturating_add_for_bbox` with floating-point coordinates
+    /// Test `bbox_add` with floating-point coordinates
     #[test]
-    fn test_saturating_add_for_bbox_float() {
-        println!("Testing saturating_add_for_bbox with floating-point types");
+    fn test_bbox_add_float() {
+        println!("Testing bbox_add with floating-point types");
 
         // Normal addition cases
-        let result = saturating_add_for_bbox(10.0_f64, 3.0_f64);
+        let result = bbox_add(10.0_f64, 3.0_f64);
         assert_abs_diff_eq!(result, 13.0, epsilon = 1e-10);
         println!("  ✓ f64: 10.0 + 3.0 = {result}");
 
-        let result = saturating_add_for_bbox(5.5_f32, 2.3_f32);
+        let result = bbox_add(5.5_f32, 2.3_f32);
         assert_abs_diff_eq!(result, 7.8, epsilon = 1e-6);
         println!("  ✓ f32: 5.5 + 2.3 = {result}");
 
         // Large values
-        let result = saturating_add_for_bbox(1e100_f64, 2e100_f64);
+        let result = bbox_add(1e100_f64, 2e100_f64);
         assert_abs_diff_eq!(result, 3e100, epsilon = 1e90);
         println!("  ✓ f64: 1e100 + 2e100 = {result}");
 
         // Overflow to infinity (floats handle this naturally)
-        let result = saturating_add_for_bbox(f64::MAX, f64::MAX);
+        let result = bbox_add(f64::MAX, f64::MAX);
         assert!(result.is_infinite() && result.is_sign_positive());
         println!("  ✓ f64: MAX + MAX = {result} (overflow to infinity)");
 
         // Zero cases
-        let result = saturating_add_for_bbox(5.0_f64, 0.0_f64);
+        let result = bbox_add(5.0_f64, 0.0_f64);
         assert_abs_diff_eq!(result, 5.0, epsilon = 1e-10);
         println!("  ✓ f64: 5.0 + 0.0 = {result}");
 
         // Negative values
-        let result = saturating_add_for_bbox(-3.5_f64, 2.5_f64);
+        let result = bbox_add(-3.5_f64, 2.5_f64);
         assert_abs_diff_eq!(result, -1.0, epsilon = 1e-10);
         println!("  ✓ f64: -3.5 + 2.5 = {result}");
 
-        println!("✓ saturating_add_for_bbox works correctly with floating-point types");
+        println!("✓ bbox_add works correctly with floating-point types");
     }
 
-    /// Test `saturating_sub_for_bbox` behavior with bounding box expansion use case
+    /// Test `bbox_sub` behavior with bounding box expansion use case
     #[test]
     fn test_saturating_bbox_operations_integration() {
         println!("Testing saturating bbox operations in realistic bounding box scenarios");
@@ -4800,12 +4794,12 @@ mod tests {
         // Simulate bounding box expansion for floating-point coordinates
         let min_coord = 10.0_f64;
         let margin = 2.5_f64;
-        let expanded_min = saturating_sub_for_bbox(min_coord, margin);
+        let expanded_min = bbox_sub(min_coord, margin);
         assert_abs_diff_eq!(expanded_min, 7.5, epsilon = 1e-10);
         println!("  ✓ f64: Expand min bbox 10.0 by margin 2.5 -> {expanded_min}");
 
         let max_coord = 100.0_f64;
-        let expanded_max = saturating_add_for_bbox(max_coord, margin);
+        let expanded_max = bbox_add(max_coord, margin);
         assert_abs_diff_eq!(expanded_max, 102.5, epsilon = 1e-10);
         println!("  ✓ f64: Expand max bbox 100.0 by margin 2.5 -> {expanded_max}");
 
@@ -4820,7 +4814,7 @@ mod tests {
         // Test with very large coordinate values (e.g., astronomical scales)
         let large_min = 1e50_f64;
         let large_margin = 1e48_f64;
-        let large_expanded_min = saturating_sub_for_bbox(large_min, large_margin);
+        let large_expanded_min = bbox_sub(large_min, large_margin);
         assert!(large_expanded_min < large_min);
         println!(
             "  ✓ f64: Large scale bbox expansion: {large_min} - {large_margin} = {large_expanded_min}"
@@ -4829,7 +4823,7 @@ mod tests {
         // Test with very small coordinate values (e.g., microscopic scales)
         let small_min = 1e-50_f64;
         let small_margin = 1e-52_f64;
-        let small_expanded_min = saturating_sub_for_bbox(small_min, small_margin);
+        let small_expanded_min = bbox_sub(small_min, small_margin);
         assert!(small_expanded_min < small_min);
         println!(
             "  ✓ f64: Small scale bbox expansion: {small_min} - {small_margin} = {small_expanded_min}"
@@ -7184,8 +7178,8 @@ mod tests {
             b in -1000.0f64..1000.0f64,
         ) {
             // These should never panic
-            let _sub_result = saturating_sub_for_bbox(a, b);
-            let _add_result = saturating_add_for_bbox(a, b);
+            let _sub_result = bbox_sub(a, b);
+            let _add_result = bbox_add(a, b);
             // If we got here without panicking, test passes
             prop_assert!(true);
         }
