@@ -99,6 +99,17 @@ This includes information about:
 
 For a comprehensive list of academic references and bibliographic citations used throughout the library, see [REFERENCES.md](REFERENCES.md).
 
+> Portions of this library were developed with the assistance of these AI tools:
+>
+> - [ChatGPT]
+> - [Claude]
+> - [CodeRabbit]
+> - [GitHub Copilot]
+> - [KiloCode]
+> - [WARP](WARP.md)
+>
+> All code was reviewed and/or edited by the author.
+
 [Rust]: https://rust-lang.org
 [CGAL]: https://www.cgal.org/
 [C++]: https://isocpp.org
@@ -108,3 +119,8 @@ For a comprehensive list of academic references and bibliographic citations used
 [Constrained Delaunay triangulations]: https://en.wikipedia.org/wiki/Constrained_Delaunay_triangulation
 [Voronoi diagrams]: https://en.wikipedia.org/wiki/Voronoi_diagram
 [Convex hulls]: https://en.wikipedia.org/wiki/Convex_hull
+[ChatGPT]: https://openai.com/chatgpt
+[Claude]: https://www.anthropic.com/claude
+[CodeRabbit]: https://coderabbit.ai/
+[GitHub Copilot]: https://github.com/features/copilot
+[KiloCode]: https://kilocode.ai/

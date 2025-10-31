@@ -68,15 +68,6 @@ bench-phase4-quick:
     @echo "⚡ Quick Phase 4 validation tests (~90 seconds)"
     cargo test --release --test storage_backend_compatibility -- --ignored
 
-# Compare SlotMap vs DenseSlotMap storage backends
-compare-storage: _ensure-uv
-    @echo "📊 Comparing SlotMap vs DenseSlotMap performance (~4-6 hours)"
-    uv run compare-storage-backends --bench large_scale_performance
-
-compare-storage-large: _ensure-uv
-    @echo "📊 Comparing storage backends at large scale (~8-12 hours, use on compute cluster)"
-    BENCH_LARGE_SCALE=1 uv run compare-storage-backends --bench large_scale_performance
-
 # Build commands
 build:
     cargo build
@@ -96,14 +87,14 @@ changelog-update: changelog
     @echo "To create a git tag with changelog content for a specific version, run:"
     @echo "  just changelog-tag <version>  # e.g., just changelog-tag v0.4.2"
 
-# CI simulation: quality checks + release tests + benchmark compilation
-ci: quality test-release bench-compile
-    @echo "🎯 CI simulation complete!"
-
 # CI with performance baseline
 ci-baseline tag="ci":
     just ci
     just perf-baseline {{tag}}
+
+# CI simulation: quality checks + release tests + benchmark compilation
+ci: quality test-release bench-compile
+    @echo "🎯 CI simulation complete!"
 
 # Clean build artifacts
 clean:
@@ -117,7 +108,16 @@ clippy:
 
 # Pre-commit workflow: CI + examples (most comprehensive validation)
 commit-check: ci examples
-    @echo "🚀 Ready to commit! All checks passed."
+    @echo "🚀 Ready to commit! All checks passed!"
+
+# Compare SlotMap vs DenseSlotMap storage backends
+compare-storage: _ensure-uv
+    @echo "📊 Comparing SlotMap vs DenseSlotMap performance (~4-6 hours)"
+    uv run compare-storage-backends --bench large_scale_performance
+
+compare-storage-large: _ensure-uv
+    @echo "📊 Comparing storage backends at large scale (~8-12 hours, use on compute cluster)"
+    BENCH_LARGE_SCALE=1 uv run compare-storage-backends --bench large_scale_performance
 
 # Coverage analysis
 coverage:
@@ -189,17 +189,17 @@ help-workflows:
     @echo ""
     @echo "Note: Some recipes require external tools. See 'just setup' output."
 
+# All linting: code + documentation + configuration
+lint: lint-code lint-docs lint-config
+
 # Code linting: Rust (fmt, clippy, docs) + Python (ruff) + Shell scripts
 lint-code: fmt clippy doc-check python-lint shell-lint
-
-# Documentation linting: Markdown + spell checking
-lint-docs: markdown-lint spell-check
 
 # Configuration validation: JSON, TOML, GitHub Actions workflows
 lint-config: validate-json validate-toml action-lint
 
-# All linting: code + documentation + configuration
-lint: lint-code lint-docs lint-config
+# Documentation linting: Markdown + spell checking
+lint-docs: markdown-lint spell-check
 
 # Shell and markdown quality
 markdown-lint:

@@ -11,10 +11,11 @@
 //! functionality. For more complex scenarios, see other integration tests in this directory.
 
 use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::triangulation_data_structure::{Tds, TriangulationConstructionState};
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
+use uuid::Uuid;
 
 // =============================================================================
 // TDS CREATION TESTS
@@ -166,4 +167,133 @@ fn test_two_cells_share_facet() {
             panic!("Cannot compute boundary facets: {e}");
         }
     }
+}
+
+// =============================================================================
+// DUPLICATE HANDLING TESTS
+// =============================================================================
+
+#[test]
+fn test_duplicate_uuid_with_duplicate_coordinates_is_caught() {
+    // Test that duplicate UUIDs are caught even when coordinates are duplicated
+    // This verifies the fix where UUID checking happens before coordinate deduplication
+    let uuid = Uuid::new_v4();
+    let point = Point::new([1.0, 2.0, 3.0]);
+
+    let vertices: Vec<Vertex<f64, usize, 3>> = vec![
+        Vertex::new_with_uuid(point, uuid, Some(0)),
+        Vertex::new_with_uuid(point, uuid, Some(1)),
+    ];
+
+    let result = Tds::<f64, usize, usize, 3>::new(&vertices);
+    assert!(
+        result.is_err(),
+        "Should error on duplicate UUID even with duplicate coordinates"
+    );
+
+    if let Err(e) = result {
+        let error_msg = format!("{e}");
+        assert!(
+            error_msg.contains("Duplicate UUID"),
+            "Error should mention duplicate UUID, got: {error_msg}"
+        );
+    }
+}
+
+#[test]
+fn test_duplicate_uuid_with_different_coordinates_is_caught() {
+    // Test that duplicate UUIDs are caught when coordinates differ
+    let uuid = Uuid::new_v4();
+
+    let vertices: Vec<Vertex<f64, usize, 3>> = vec![
+        Vertex::new_with_uuid(Point::new([1.0, 2.0, 3.0]), uuid, Some(0)),
+        Vertex::new_with_uuid(Point::new([4.0, 5.0, 6.0]), uuid, Some(1)),
+    ];
+
+    let result = Tds::<f64, usize, usize, 3>::new(&vertices);
+    assert!(
+        result.is_err(),
+        "Should error on duplicate UUID with different coordinates"
+    );
+
+    if let Err(e) = result {
+        let error_msg = format!("{e}");
+        assert!(
+            error_msg.contains("Duplicate UUID"),
+            "Error should mention duplicate UUID, got: {error_msg}"
+        );
+    }
+}
+
+#[test]
+fn test_construction_state_reflects_unique_vertices() {
+    // Test that construction_state is calculated based on unique vertices after deduplication
+    // Use 2D to need only 3 vertices instead of 4
+    let point1 = Point::new([0.0, 0.0]);
+    let point2 = Point::new([1.0, 0.0]);
+
+    // Create vertices with duplicates: 5 vertices but only 2 unique points
+    let vertices: Vec<Vertex<f64, usize, 2>> = vec![
+        Vertex::new_with_uuid(point1, Uuid::new_v4(), Some(0)),
+        Vertex::new_with_uuid(point1, Uuid::new_v4(), Some(1)),
+        Vertex::new_with_uuid(point2, Uuid::new_v4(), Some(2)),
+        Vertex::new_with_uuid(point2, Uuid::new_v4(), Some(3)),
+        Vertex::new_with_uuid(point1, Uuid::new_v4(), Some(4)),
+    ];
+
+    // Should error due to insufficient vertices (2 < D+1 = 3 for 2D)
+    let result = Tds::<f64, usize, usize, 2>::new(&vertices);
+    assert!(
+        result.is_err(),
+        "Should error when unique vertices (2) < D+1 (3)"
+    );
+
+    // Verify error message mentions insufficient vertices
+    if let Err(e) = result {
+        let error_msg = format!("{e}");
+        assert!(
+            error_msg.contains("Insufficient") || error_msg.contains("insufficient"),
+            "Error should mention insufficient vertices, got: {error_msg}"
+        );
+    }
+}
+
+#[test]
+fn test_construction_state_constructed_after_dedup() {
+    // Test that construction_state is Constructed when unique vertices >= D+1
+    let points = vec![
+        Point::new([0.0, 0.0, 0.0]),
+        Point::new([1.0, 0.0, 0.0]),
+        Point::new([0.0, 1.0, 0.0]),
+        Point::new([0.0, 0.0, 1.0]),
+    ];
+
+    // Add duplicates of the same 4 points
+    let mut vertices: Vec<Vertex<f64, usize, 3>> = Vec::new();
+    for point in &points {
+        vertices.push(Vertex::new_with_uuid(*point, Uuid::new_v4(), Some(0)));
+    }
+    // Add duplicate coordinates (should be skipped)
+    for point in &points {
+        vertices.push(Vertex::new_with_uuid(*point, Uuid::new_v4(), Some(1)));
+    }
+
+    let tds = Tds::<f64, usize, usize, 3>::new(&vertices).unwrap();
+
+    // Should have 4 unique vertices
+    assert_eq!(
+        tds.number_of_vertices(),
+        4,
+        "Should have 4 unique vertices after deduplication"
+    );
+
+    // construction_state should be Constructed (4 >= D+1 = 4)
+    assert!(
+        matches!(
+            tds.construction_state,
+            TriangulationConstructionState::Constructed
+        ),
+        "construction_state should be Constructed for 4 unique vertices in 3D, got: {:?}",
+        tds.construction_state
+    );
 }

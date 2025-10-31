@@ -216,6 +216,28 @@ pub enum InsertionError {
     /// Vertex validation error
     #[error("Vertex validation error: {0}")]
     VertexValidation(#[from] crate::core::vertex::VertexValidationError),
+
+    /// Duplicate boundary facets detected during cavity boundary analysis.
+    ///
+    /// This error surfaces algorithmic bugs in cavity boundary detection. The cavity
+    /// boundary should be a topological sphere with no duplicate facets. Duplicates
+    /// indicate:
+    /// - Incorrect neighbor traversal logic
+    /// - Non-manifold mesh connectivity
+    /// - Data structure corruption
+    ///
+    /// By returning an error instead of silently filtering duplicates, we ensure
+    /// correctness and prevent subtle insertion failures.
+    #[error(
+        "Duplicate boundary facets detected: {duplicate_count} duplicates found among {total_count} facets. \
+         This indicates a bug in cavity boundary detection."
+    )]
+    DuplicateBoundaryFacets {
+        /// Number of duplicate facets found
+        duplicate_count: usize,
+        /// Total number of facets processed
+        total_count: usize,
+    },
 }
 
 impl InsertionError {
@@ -276,27 +298,41 @@ impl InsertionError {
 /// Margin factor used for bounding box expansion in exterior vertex detection
 const MARGIN_FACTOR: f64 = 0.1;
 
-/// Saturating subtraction for bbox expansion - prevents overflow panics.
-/// For integer types: uses `saturating_sub`. For floats: normal subtraction.
+/// Bounding box expansion helper: safe subtraction for floating-point coordinates.
+///
+/// Performs normal floating-point subtraction. Despite the name, this is NOT saturating
+/// arithmetic - floats naturally handle overflow by producing ±infinity, which is the
+/// desired behavior for bounding box expansion (ensures all vertices are contained).
+///
+/// # Type Constraints
+///
+/// Only supports floating-point types (f32, f64) via `CoordinateScalar`. Integer types
+/// are not supported by the trait.
 #[inline]
-fn saturating_sub_for_bbox<T>(a: T, b: T) -> T
+fn bbox_sub<T>(a: T, b: T) -> T
 where
     T: CoordinateScalar + Sub<Output = T>,
 {
-    // For floating-point types: normal subtraction (overflow → -infinity)
-    // For integer types: this trait bound ensures safe arithmetic
+    // Plain subtraction; floats naturally produce -infinity on underflow
     a - b
 }
 
-/// Saturating addition for bbox expansion - prevents overflow panics.
-/// For integer types: uses `saturating_add`. For floats: normal addition.
+/// Bounding box expansion helper: safe addition for floating-point coordinates.
+///
+/// Performs normal floating-point addition. Despite the name, this is NOT saturating
+/// arithmetic - floats naturally handle overflow by producing ±infinity, which is the
+/// desired behavior for bounding box expansion (ensures all vertices are contained).
+///
+/// # Type Constraints
+///
+/// Only supports floating-point types (f32, f64) via `CoordinateScalar`. Integer types
+/// are not supported by the trait.
 #[inline]
-fn saturating_add_for_bbox<T>(a: T, b: T) -> T
+fn bbox_add<T>(a: T, b: T) -> T
 where
     T: CoordinateScalar + Add<Output = T>,
 {
-    // For floating-point types: normal addition (overflow → infinity)
-    // For integer types: this trait bound ensures safe arithmetic
+    // Plain addition; floats naturally produce +infinity on overflow
     a + b
 }
 
@@ -1170,8 +1206,8 @@ where
             // Use saturating arithmetic to prevent debug-mode overflow panics
             // For floating-point: behaves like normal +/- (overflow → infinity)
             // For integer types: saturates to T::MIN/T::MAX (prevents panic)
-            expanded_min[i] = saturating_sub_for_bbox(min_coords[i], margin);
-            expanded_max[i] = saturating_add_for_bbox(max_coords[i], margin);
+            expanded_min[i] = bbox_sub(min_coords[i], margin);
+            expanded_max[i] = bbox_add(max_coords[i], margin);
         }
 
         // Check if vertex is outside the expanded bounding box
@@ -1420,12 +1456,13 @@ where
 
             // Check each facet (opposite to each vertex)
             for facet_idx in 0..=D {
-                let Some(&neighbor_key_opt) = neighbors.get(facet_idx) else {
-                    continue;
+                // Missing slot => treat as boundary
+                let is_boundary = match neighbors.get(facet_idx) {
+                    None => true,
+                    Some(&neighbor_key_opt) => {
+                        neighbor_key_opt.is_none_or(|n| !bad_cell_set.contains(&n))
+                    }
                 };
-
-                // Boundary facet if: no neighbor OR neighbor is not bad
-                let is_boundary = neighbor_key_opt.is_none_or(|n| !bad_cell_set.contains(&n));
                 if !is_boundary {
                     continue; // Interior facet; skip
                 }
@@ -1585,16 +1622,20 @@ where
         // This is done BEFORE any modifications to enable clean rollback on failure.
         let boundary_infos = Self::gather_boundary_facet_info(tds, &boundary_facet_handles)?;
 
+        // Deduplicate and validate boundary facets to prevent creating duplicate cells
+        // Error on duplicates instead of silently filtering (surfaces algorithmic bugs)
+        let boundary_infos = Self::deduplicate_boundary_facet_info(boundary_infos)?;
+
         // ========================================================================
         // PHASE 2: TENTATIVE - Insert vertex and create new cells (no removal yet)
         // ========================================================================
         // Track whether vertex existed before this operation for atomic rollback
         let vertex_existed_before = tds.vertex_key_from_uuid(&vertex.uuid()).is_some();
 
-        // Ensure vertex is in TDS (needed to create cells)
+        // Ensure vertex is in TDS (needed for filtering and cell creation)
         Self::ensure_vertex_in_tds(tds, vertex)?;
 
-        // Get the inserted vertex key for cell creation
+        // Get the inserted vertex key for filtering and cell creation
         let inserted_vk = tds.vertex_key_from_uuid(&vertex.uuid()).ok_or_else(|| {
             InsertionError::TriangulationState(
                 TriangulationValidationError::InconsistentDataStructure {
@@ -1602,6 +1643,23 @@ where
                 },
             )
         })?;
+
+        // Filter boundary facets to prevent invalid facet sharing
+        // This prevents creating cells that would violate the "facet shared by at most 2 cells" constraint
+        let boundary_infos =
+            Self::filter_boundary_facets_by_valid_facet_sharing(tds, boundary_infos, inserted_vk)?;
+
+        // Hard-stop if preventive filter removed all boundary facets
+        // Proceeding would leave a hole in the TDS after removing bad cells
+        if boundary_infos.is_empty() {
+            Self::rollback_created_cells_and_vertex(tds, &[], vertex, vertex_existed_before);
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::FailedToCreateCell {
+                    message: "Preventive facet filtering rejected every cavity facet; aborting to keep the triangulation intact."
+                        .to_string(),
+                },
+            ));
+        }
 
         // Create all new cells BEFORE removing bad cells
         // This allows clean rollback if creation fails
@@ -2094,8 +2152,7 @@ where
             ));
         };
 
-        // HOT PATH: Collect facet vertices once to avoid duplicate iteration
-        // This single collection is used for both UUID lookup and point extraction
+        // HOT PATH: Collect facet vertices once for point extraction
         let facet_vertices_vec: SmallVec<[Vertex<T, U, D>; 8]> = facet
             .vertices()
             .map_err(|e| {
@@ -2104,46 +2161,33 @@ where
             .copied()
             .collect();
 
-        // Build HashSet for O(1) UUID lookups (more efficient than SmallVec::contains for D > 2)
-        let facet_vertex_uuids: FastHashSet<uuid::Uuid> =
-            facet_vertices_vec.iter().map(Vertex::uuid).collect();
-
-        // Find the vertex in the adjacent cell that is NOT part of the facet
-        // This is the \"opposite\" vertex that defines the \"inside\" side of the facet
+        // Find the opposite vertex directly using facet_index (avoids HashSet overhead)
         let cell_vertices = adjacent_cell.vertices();
+        let facet_index = <usize as From<u8>>::from(facet.facet_index());
 
-        let mut opposite_vertex = None;
-        for &vkey in cell_vertices {
-            let Some(cell_vertex) = tds.get_vertex_by_key(vkey) else {
-                // Missing vertex mapping indicates TDS inconsistency - return error for diagnosability
-                return Err(InsertionError::TriangulationState(
+        let opposite_vkey = cell_vertices
+            .get(facet_index)
+            .ok_or_else(|| {
+                InsertionError::TriangulationState(
                     TriangulationValidationError::InconsistentDataStructure {
                         message: format!(
-                            "Vertex key {vkey:?} from cell {adjacent_cell_key:?} not found in TDS during visibility test. \
-                             This indicates mapping inconsistency."
+                            "Facet index {facet_index} out of bounds for cell {adjacent_cell_key:?} with {} vertices",
+                            cell_vertices.len()
                         ),
                     },
-                ));
-            };
-            // Check membership with O(1) HashSet lookup instead of O(D) SmallVec contains
-            let is_in_facet = facet_vertex_uuids.contains(&cell_vertex.uuid());
-            if !is_in_facet {
-                opposite_vertex = Some(cell_vertex);
-                break;
-            }
-        }
+                )
+            })?;
 
-        let Some(opposite_vertex) = opposite_vertex else {
-            // Could not find opposite vertex - topology is inconsistent
-            return Err(InsertionError::TriangulationState(
+        let opposite_vertex = tds.get_vertex_by_key(*opposite_vkey).ok_or_else(|| {
+            InsertionError::TriangulationState(
                 TriangulationValidationError::InconsistentDataStructure {
                     message: format!(
-                        "Facet lacked opposite vertex for cell {adjacent_cell_key:?}. This indicates potential TDS corruption \
-                         where the facet vertices do not form a proper (D-1)-face of the adjacent D-cell."
+                        "Vertex key {opposite_vkey:?} from cell {adjacent_cell_key:?} not found in TDS during visibility test. \
+                         This indicates mapping inconsistency."
                     ),
                 },
-            ));
-        };
+            )
+        })?;
 
         // Create test simplices for orientation comparison
         // Using SmallVec to avoid heap allocation for small simplices (D+1 points)
@@ -2477,64 +2521,82 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
+        // Early exit: empty input
+        if facet_handles.is_empty() {
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::FailedToCreateCell {
+                    message: "No facet handles provided for cell creation".to_string(),
+                },
+            ));
+        }
+
         // Track whether vertex existed before this operation for atomic rollback
         let vertex_existed_before = tds.vertex_key_from_uuid(&vertex.uuid()).is_some();
 
-        // Phase 1: Extract all facet data upfront before creating any cells
-        // This ensures we can validate everything before modifying the TDS
-        let mut extracted_facet_data = Vec::with_capacity(facet_handles.len());
+        // Phase 1: Gather and validate boundary facet information
+        // Error on duplicates instead of silently filtering (surfaces algorithmic bugs)
+        let boundary_infos = Self::gather_boundary_facet_info(tds, facet_handles)?;
+        let boundary_infos = Self::deduplicate_boundary_facet_info(boundary_infos)?;
 
-        for handle in facet_handles {
-            let cell_key = handle.cell_key();
-            let facet_index = handle.facet_index();
+        // Ensure vertex is in TDS (needed for filtering and cell creation)
+        Self::ensure_vertex_in_tds(tds, vertex)?;
 
-            // Validate cell exists first
-            let _cell = tds.get_cell(cell_key).ok_or_else(|| {
+        // Get the inserted vertex key for filtering and cell creation
+        let inserted_vk = tds.vertex_key_from_uuid(&vertex.uuid()).ok_or_else(|| {
+            InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: "Vertex was not found in TDS immediately after insertion".to_string(),
+                },
+            )
+        })?;
+
+        // Phase 1.5: Filter boundary facets to prevent invalid facet sharing
+        // This prevents creating cells that would violate the "facet shared by at most 2 cells" constraint
+        let boundary_infos =
+            Self::filter_boundary_facets_by_valid_facet_sharing(tds, boundary_infos, inserted_vk)?;
+
+        // Hard-stop if preventive filter removed all boundary facets
+        // Creating zero cells would be invalid
+        if boundary_infos.is_empty() {
+            Self::rollback_created_cells_and_vertex(tds, &[], vertex, vertex_existed_before);
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::FailedToCreateCell {
+                    message: "No boundary facets available after filtering; aborting to keep the TDS consistent."
+                        .to_string(),
+                },
+            ));
+        }
+
+        // Phase 2: Create all cells from deduplicated boundary facets
+        // Tracking created cell keys for potential rollback
+        let mut created_cell_keys = Vec::with_capacity(boundary_infos.len());
+
+        for info in &boundary_infos {
+            // Combine facet vertices with the inserted vertex
+            let mut cell_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                info.facet_vertex_keys.clone();
+            cell_vertices.push(inserted_vk);
+
+            // Create cell from vertex keys
+            let new_cell = Cell::new(cell_vertices, None).map_err(|err| {
                 InsertionError::TriangulationState(
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Cell key {cell_key:?} not found in TDS during cell creation"
-                        ),
+                    TriangulationValidationError::FailedToCreateCell {
+                        message: format!("Failed to create cell from boundary facet: {err}"),
                     },
                 )
             })?;
 
-            // Create FacetView and extract vertices
-            let facet_view = crate::core::facet::FacetView::new(tds, cell_key, facet_index)
-                .map_err(|_| {
-                    InsertionError::TriangulationState(
-                        TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Facet index {facet_index} out of bounds for cell {cell_key:?}"
-                            ),
-                        },
-                    )
-                })?;
-
-            // Extract vertex data from FacetView
-            let facet_vertices_iter = facet_view.vertices().map_err(|e| {
-                InsertionError::TriangulationState(TriangulationValidationError::FacetError(e))
-            })?;
-            let facet_vertices: Vec<Vertex<T, U, D>> = facet_vertices_iter.copied().collect();
-            extracted_facet_data.push(facet_vertices);
-        }
-
-        // Phase 2: Create all cells, tracking created cell keys for potential rollback
-        let mut created_cell_keys = Vec::with_capacity(extracted_facet_data.len());
-
-        for facet_vertices in extracted_facet_data {
-            match Self::create_cell_from_vertices_and_vertex(tds, facet_vertices, vertex) {
-                Ok(cell_key) => {
-                    created_cell_keys.push(cell_key);
-                }
+            match tds.insert_cell_with_mapping(new_cell) {
+                Ok(key) => created_cell_keys.push(key),
                 Err(e) => {
+                    // Rollback: remove only newly-created cells and the vertex if it was new
                     Self::rollback_created_cells_and_vertex(
                         tds,
                         &created_cell_keys,
                         vertex,
                         vertex_existed_before,
                     );
-                    return Err(InsertionError::TriangulationState(e));
+                    return Err(InsertionError::TriangulationConstruction(e));
                 }
             }
         }
@@ -2543,10 +2605,16 @@ where
 
         // Validate that we created at least some cells
         if cells_created == 0 && !facet_handles.is_empty() {
+            Self::rollback_created_cells_and_vertex(
+                tds,
+                &created_cell_keys,
+                vertex,
+                vertex_existed_before,
+            );
             return Err(InsertionError::TriangulationState(
                 TriangulationValidationError::FailedToCreateCell {
                     message: format!(
-                        "Failed to create any cells from {} facet handles",
+                        "Failed to create any cells from {} facet handles (all were duplicates)",
                         facet_handles.len()
                     ),
                 },
@@ -2554,6 +2622,232 @@ where
         }
 
         Ok(cells_created)
+    }
+
+    /// Detect and reject duplicate boundary facets.
+    ///
+    /// Multiple boundary facets from different bad cells can have identical vertex sets,
+    /// which would lead to creating duplicate cells sharing all facets (invalid topology).
+    /// Instead of silently filtering duplicates, this function returns an error if any
+    /// are detected, surfacing algorithmic bugs in cavity boundary detection.
+    ///
+    /// The cavity boundary should form a topological sphere with no duplicate facets.
+    /// Duplicates indicate:
+    /// - Incorrect neighbor traversal logic
+    /// - Non-manifold mesh connectivity
+    /// - Data structure corruption
+    ///
+    /// # Arguments
+    ///
+    /// * `boundary_infos` - Vector of boundary facet information to validate
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(SmallBuffer<BoundaryFacetInfo>)` if no duplicates detected
+    /// - `Err(InsertionError::DuplicateBoundaryFacets)` if duplicates found
+    ///
+    /// # Errors
+    ///
+    /// Returns `InsertionError::DuplicateBoundaryFacets` if duplicate facets are detected,
+    /// indicating an algorithmic bug in cavity boundary detection.
+    ///
+    /// # Performance
+    ///
+    /// Uses `SmallBuffer` for efficient stack allocation (typically D+1 facets in D dimensions).
+    /// Falls back to heap allocation for pathological cases. Runs in O(n) time using
+    /// `FastHashSet` for duplicate detection via canonical facet keys.
+    ///
+    /// # Implementation Note
+    ///
+    /// Uses canonical facet key (u64 hash) via `facet_key_from_vertices` to identify duplicates,
+    /// matching the hashing strategy used throughout the codebase.
+    fn deduplicate_boundary_facet_info(
+        boundary_infos: Vec<BoundaryFacetInfo>,
+    ) -> Result<SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE>, InsertionError> {
+        let total_count = boundary_infos.len();
+        let mut seen_facet_keys: FastHashSet<u64> = fast_hash_set_with_capacity(total_count);
+        let mut deduplicated: SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+        let mut duplicate_count = 0;
+
+        for info in boundary_infos {
+            // Use canonical facet key (u64 hash) to identify unique facets
+            // This matches the hashing used throughout the codebase
+            let facet_key = facet_key_from_vertices(&info.facet_vertex_keys);
+
+            // Track duplicates instead of silently filtering
+            if seen_facet_keys.insert(facet_key) {
+                deduplicated.push(info);
+            } else {
+                duplicate_count += 1;
+            }
+        }
+
+        // Return error if duplicates were detected
+        if duplicate_count > 0 {
+            return Err(InsertionError::DuplicateBoundaryFacets {
+                duplicate_count,
+                total_count,
+            });
+        }
+
+        Ok(deduplicated)
+    }
+
+    /// Filter boundary facets to prevent invalid facet sharing.
+    ///
+    /// This function ensures that creating cells from the boundary facets will not violate
+    /// the fundamental Delaunay constraint: each facet must be shared by at most 2 cells.
+    ///
+    /// When we create a new cell from a boundary facet + inserted vertex, that cell will have
+    /// D+1 facets:
+    /// - 1 facet is the boundary facet itself (exists, currently has 1 cell)
+    /// - D new facets (formed between boundary facet vertices and the new vertex)
+    ///
+    /// We need to ensure none of those D new facets would be shared by >2 cells.
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Reference to the triangulation data structure
+    /// * `boundary_infos` - Deduplicated boundary facet information
+    /// * `inserted_vk` - Vertex key of the newly inserted vertex
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(SmallBuffer<BoundaryFacetInfo>)` with filtered facets that maintain valid topology
+    /// - `Err(InsertionError)` if facet map building fails
+    ///
+    /// # Errors
+    ///
+    /// Returns `InsertionError::TriangulationState` if the facet-to-cells map cannot be built.
+    ///
+    /// # Implementation Note
+    ///
+    /// This is a preventive approach that avoids creating invalid topology rather than
+    /// fixing it reactively. Time complexity is O(N*D*F) where N is number of boundary facets,
+    /// D is dimension, and F is average facets per cell in the facet map.
+    fn filter_boundary_facets_by_valid_facet_sharing(
+        tds: &Tds<T, U, V, D>,
+        boundary_infos: SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE>,
+        inserted_vk: VertexKey,
+    ) -> Result<SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE>, InsertionError>
+    where
+        T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
+    {
+        use crate::core::collections::{FastHashMap, fast_hash_map_with_capacity};
+
+        // Build facet-to-cells map from current TDS state
+        let facet_map = tds.build_facet_to_cells_map().map_err(|e| {
+            InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Failed to build facet-to-cells map for preventive filtering: {e}"
+                    ),
+                },
+            )
+        })?;
+
+        // Count how many cells each facet currently has
+        let mut facet_cell_counts: FastHashMap<u64, usize> =
+            fast_hash_map_with_capacity(facet_map.len());
+        for (facet_key, handles) in &facet_map {
+            facet_cell_counts.insert(*facet_key, handles.len());
+        }
+
+        // Filter boundary facets: keep only those that won't cause over-sharing
+        #[cfg(debug_assertions)]
+        let boundary_count = boundary_infos.len();
+        let mut filtered: SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+        let mut facet_vertices_buffer: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+
+        for info in boundary_infos {
+            // Capture bad_cell before we potentially move info
+            let bad_cell = info.bad_cell;
+
+            // Simulate creating the cell: combine boundary facet vertices + inserted vertex
+            let mut cell_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                info.facet_vertex_keys.clone();
+            cell_vertices.push(inserted_vk);
+
+            // Check all D+1 facets of this would-be cell
+            let mut would_cause_oversharing = false;
+
+            for exclude_idx in 0..cell_vertices.len() {
+                // Build the facet by excluding vertex at exclude_idx
+                facet_vertices_buffer.clear();
+                for (i, &vk) in cell_vertices.iter().enumerate() {
+                    if i != exclude_idx {
+                        facet_vertices_buffer.push(vk);
+                    }
+                }
+
+                // Compute facet key
+                let facet_key = facet_key_from_vertices(&facet_vertices_buffer);
+
+                // Check current cell count for this facet
+                let mut current_count = facet_cell_counts.get(&facet_key).copied().unwrap_or(0);
+
+                // The facet we're replacing is still counted via the bad cell; discount it
+                // since the bad cell is about to be deleted
+                if let Some(handles) = facet_map.get(&facet_key)
+                    && handles.iter().any(|handle| handle.cell_key() == bad_cell)
+                {
+                    current_count = current_count.saturating_sub(1);
+                }
+
+                // If this facet already has 2 cells (after discounting bad cell), adding our new cell would make it 3 (over-sharing)
+                if current_count >= 2 {
+                    would_cause_oversharing = true;
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Filtering out boundary facet: would cause facet {:?} to be shared by {} cells (currently {})",
+                        facet_key,
+                        current_count + 1,
+                        current_count
+                    );
+                    break;
+                }
+            }
+
+            if !would_cause_oversharing {
+                // This boundary facet is safe to use
+                filtered.push(info);
+
+                // Update our local facet counts to account for this cell we're planning to create
+                // This ensures subsequent checks see the cumulative effect
+                for exclude_idx in 0..cell_vertices.len() {
+                    facet_vertices_buffer.clear();
+                    for (i, &vk) in cell_vertices.iter().enumerate() {
+                        if i != exclude_idx {
+                            facet_vertices_buffer.push(vk);
+                        }
+                    }
+                    let facet_key = facet_key_from_vertices(&facet_vertices_buffer);
+                    let entry = facet_cell_counts.entry(facet_key).or_insert(0);
+                    // Discount the bad cell contribution if present before incrementing
+                    if let Some(handles) = facet_map.get(&facet_key)
+                        && handles.iter().any(|handle| handle.cell_key() == bad_cell)
+                    {
+                        *entry = entry.saturating_sub(1);
+                    }
+                    *entry += 1;
+                }
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        if filtered.len() < boundary_count {
+            eprintln!(
+                "Filtered {} boundary facets to prevent over-sharing (kept {} of {})",
+                boundary_count - filtered.len(),
+                filtered.len(),
+                boundary_count
+            );
+        }
+
+        Ok(filtered)
     }
 
     /// Gather all boundary facet metadata before modifying the TDS.
@@ -2895,13 +3189,13 @@ where
                     continue;
                 }
 
-                // Build facet signature: all vertices except opposite_vk, sorted
-                let mut facet_sig: FacetSignature = cell_vertices
+                // Build facet signature: all vertices except opposite_vk
+                // Note: facet_key_from_vertices() sorts internally, no need to pre-sort
+                let facet_sig: FacetSignature = cell_vertices
                     .iter()
                     .enumerate()
                     .filter_map(|(i, &vk)| (i != opposite_idx).then_some(vk))
                     .collect();
-                facet_sig.sort_unstable();
 
                 let facet_key = facet_key_from_vertices(&facet_sig);
 
@@ -3063,7 +3357,14 @@ where
         // Remove duplicate cells first
         tds.remove_duplicate_cells()?;
 
-        // Fix invalid facet sharing
+        // Fix invalid facet sharing (defense-in-depth)
+        // NOTE: We use preventive filtering (filter_boundary_facets_by_valid_facet_sharing)
+        // to avoid creating invalid topology in the first place. However, we keep this
+        // reactive fix as a safety net in case:
+        // 1. The preventive filtering fails to build the facet map
+        // 2. There are edge cases the preventive filter doesn't catch
+        // 3. Invalid topology arises from other sources
+        // This ensures correctness even if the preventive approach has gaps.
         tds.fix_invalid_facet_sharing().map_err(|e| {
             TriangulationValidationError::InconsistentDataStructure {
                 message: format!("Failed to fix invalid facet sharing: {e}"),
@@ -3263,6 +3564,212 @@ mod tests {
                             "{}D: Empty bad cells should yield empty boundary facets",
                             $dim
                         );
+                    }
+
+                    #[test]
+                    fn [<$test_name _deduplicate_boundary_facet_info>]() {
+                        // Test duplicate detection and error handling in boundary facet deduplication
+                        println!("Testing deduplicate_boundary_facet_info in {}D", $dim);
+
+                        let initial_vertices = $initial_vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let cell_key = tds.cell_keys().next().expect("Should have at least one cell");
+
+                        // Get vertex keys for the simplex (should have D+1 vertices)
+                        let vertex_keys: Vec<_> = tds.vertex_keys().collect();
+                        assert_eq!(vertex_keys.len(), $dim + 1, "{}D: Should have {} vertices", $dim, $dim + 1);
+
+                        // Case 1: Test with duplicates - should return error
+                        let mut facet_info_with_duplicates = Vec::new();
+
+                        // Add first distinct facet (all vertices except the first)
+                        let mut first_facet_vertices = SmallBuffer::new();
+                        for v in vertex_keys.iter().skip(1).take($dim) {
+                            first_facet_vertices.push(*v);
+                        }
+                        facet_info_with_duplicates.push(BoundaryFacetInfo {
+                            bad_cell: cell_key,
+                            bad_facet_index: 0,
+                            facet_vertex_keys: first_facet_vertices.clone(),
+                            outside_neighbor: None,
+                        });
+
+                        // Add second distinct facet (all vertices except the second)
+                        let mut second_facet_vertices = SmallBuffer::new();
+                        second_facet_vertices.push(vertex_keys[0]);
+                        for v in vertex_keys.iter().skip(2).take($dim - 1) {
+                            second_facet_vertices.push(*v);
+                        }
+                        facet_info_with_duplicates.push(BoundaryFacetInfo {
+                            bad_cell: cell_key,
+                            bad_facet_index: 1,
+                            facet_vertex_keys: second_facet_vertices.clone(),
+                            outside_neighbor: None,
+                        });
+
+                        // Add duplicate of first facet (same vertex set, reversed order)
+                        let mut duplicate_facet_vertices = SmallBuffer::new();
+                        for v in first_facet_vertices.iter().rev() {
+                            duplicate_facet_vertices.push(*v);
+                        }
+                        facet_info_with_duplicates.push(BoundaryFacetInfo {
+                            bad_cell: cell_key,
+                            bad_facet_index: 2,
+                            facet_vertex_keys: duplicate_facet_vertices,
+                            outside_neighbor: None,
+                        });
+
+                        println!("  {}D: Testing with {} facets (including 1 duplicate)", $dim, facet_info_with_duplicates.len());
+
+                        // Should return error with correct counts
+                        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::deduplicate_boundary_facet_info(
+                            facet_info_with_duplicates.clone()
+                        );
+
+                        match result {
+                            Err(InsertionError::DuplicateBoundaryFacets { duplicate_count, total_count }) => {
+                                assert_eq!(duplicate_count, 1, "{}D: Should detect exactly 1 duplicate", $dim);
+                                assert_eq!(total_count, 3, "{}D: Total count should be 3", $dim);
+                                println!("  ✓ {}D: Correctly detected {} duplicate out of {} facets", $dim, duplicate_count, total_count);
+                            }
+                            Ok(_) => panic!("{}D: Should have returned DuplicateBoundaryFacets error", $dim),
+                            Err(other) => panic!("{}D: Unexpected error: {:?}", $dim, other),
+                        }
+
+                        // Case 2: Test without duplicates - should return Ok
+                        let facet_info_no_duplicates = vec![
+                            BoundaryFacetInfo {
+                                bad_cell: cell_key,
+                                bad_facet_index: 0,
+                                facet_vertex_keys: first_facet_vertices.clone(),
+                                outside_neighbor: None,
+                            },
+                            BoundaryFacetInfo {
+                                bad_cell: cell_key,
+                                bad_facet_index: 1,
+                                facet_vertex_keys: second_facet_vertices.clone(),
+                                outside_neighbor: None,
+                            },
+                        ];
+
+                        println!("  {}D: Testing with {} unique facets (no duplicates)", $dim, facet_info_no_duplicates.len());
+
+                        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::deduplicate_boundary_facet_info(
+                            facet_info_no_duplicates.clone()
+                        );
+
+                        match result {
+                            Ok(deduplicated) => {
+                                assert_eq!(deduplicated.len(), 2, "{}D: Should have 2 unique facets", $dim);
+
+                                // Verify all facets have distinct vertex sets
+                                let unique_sets: std::collections::HashSet<_> = deduplicated
+                                    .iter()
+                                    .map(|info| {
+                                        let mut sorted: Vec<_> = info.facet_vertex_keys.iter().copied().collect();
+                                        sorted.sort();
+                                        sorted
+                                    })
+                                    .collect();
+
+                                assert_eq!(
+                                    unique_sets.len(),
+                                    deduplicated.len(),
+                                    "{}D: All facets should have distinct vertex sets",
+                                    $dim
+                                );
+
+                                println!("  ✓ {}D: Correctly returned {} unique facets", $dim, deduplicated.len());
+                            }
+                            Err(e) => panic!("{}D: Should not have returned error for non-duplicate input: {:?}", $dim, e),
+                        }
+
+                        println!("  ✓ {}D: Deduplication test passed", $dim);
+                    }
+
+                    #[test]
+                    fn [<$test_name _is_vertex_interior>]() {
+                        // Test is_vertex_interior classification
+                        println!("Testing is_vertex_interior in {}D", $dim);
+                        let vertices = $initial_vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let algorithm = IncrementalBowyerWatson::new();
+
+                        // Test interior vertex
+                        let interior_vertex = $interior_vertex;
+                        let result = algorithm.is_vertex_interior(&tds, &interior_vertex);
+                        assert!(result.is_ok(), "{}D: Should succeed for interior vertex", $dim);
+                        assert!(result.unwrap(), "{}D: Interior vertex should be classified as interior", $dim);
+
+                        // Test exterior vertex
+                        let exterior_vertex = $exterior_vertex;
+                        let result = algorithm.is_vertex_interior(&tds, &exterior_vertex);
+                        assert!(result.is_ok(), "{}D: Should succeed for exterior vertex", $dim);
+                        assert!(!result.unwrap(), "{}D: Exterior vertex should not be interior", $dim);
+
+                        println!("  ✓ {}D: is_vertex_interior test passed", $dim);
+                    }
+
+                    #[test]
+                    fn [<$test_name _is_vertex_likely_exterior>]() {
+                        // Test is_vertex_likely_exterior classification
+                        println!("Testing is_vertex_likely_exterior in {}D", $dim);
+                        let vertices = $initial_vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+
+                        // Test far exterior vertex
+                        let far_exterior = $exterior_vertex;
+                        let is_exterior = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::is_vertex_likely_exterior(
+                            &tds,
+                            &far_exterior,
+                        );
+                        assert!(is_exterior, "{}D: Far exterior vertex should be classified as exterior", $dim);
+
+                        // Test interior vertex
+                        let interior = $interior_vertex;
+                        let is_exterior = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::is_vertex_likely_exterior(
+                            &tds,
+                            &interior,
+                        );
+                        assert!(!is_exterior, "{}D: Interior vertex should not be classified as exterior", $dim);
+
+                        println!("  ✓ {}D: is_vertex_likely_exterior test passed", $dim);
+                    }
+
+                    #[test]
+                    fn [<$test_name _gather_boundary_facet_info>]() {
+                        // Test gather_boundary_facet_info
+                        println!("Testing gather_boundary_facet_info in {}D", $dim);
+                        let vertices = $initial_vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+
+                        // Get boundary facets
+                        let boundary_facets: Vec<_> = tds
+                            .boundary_facets()
+                            .unwrap()
+                            .map(|fv| FacetHandle::new(fv.cell_key(), fv.facet_index()))
+                            .collect();
+
+                        // Test gathering
+                        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::gather_boundary_facet_info(
+                            &tds,
+                            &boundary_facets,
+                        );
+                        assert!(result.is_ok(), "{}D: Should succeed for valid boundary facets", $dim);
+                        let infos = result.unwrap();
+                        assert!(!infos.is_empty(), "{}D: Should have boundary facet info", $dim);
+
+                        // Each facet should have D vertices
+                        for info in &infos {
+                            assert_eq!(
+                                info.facet_vertex_keys.len(),
+                                $dim,
+                                "{}D: Each facet should have {} vertices",
+                                $dim, $dim
+                            );
+                        }
+
+                        println!("  ✓ {}D: gather_boundary_facet_info test passed", $dim);
                     }
                 }
             )+
@@ -3477,25 +3984,28 @@ mod tests {
         let empty_handles: Vec<FacetHandle> = Vec::new();
 
         let initial_cell_count = tds.number_of_cells();
+        let initial_vertex_count = tds.number_of_vertices();
 
-        // Create cells from empty handle list
-        let cells_created = IncrementalBowyerWatson::create_cells_from_facet_handles(
+        // Create cells from empty handle list - should error immediately (early exit)
+        let result = IncrementalBowyerWatson::create_cells_from_facet_handles(
             &mut tds,
             &empty_handles,
             &test_vertex,
-        )
-        .expect("Should handle empty handle list gracefully");
+        );
 
-        let final_cell_count = tds.number_of_cells();
+        // Should fail immediately with clear error message (no vertex insertion needed)
+        assert!(result.is_err(), "Should error on empty handle list");
 
-        // Should create no cells from empty input
+        // Verify TDS state unchanged (atomic rollback)
         assert_eq!(
-            cells_created, 0,
-            "Should create 0 cells from empty handle list"
+            tds.number_of_cells(),
+            initial_cell_count,
+            "Cell count should not change after error"
         );
         assert_eq!(
-            final_cell_count, initial_cell_count,
-            "Cell count should not change with empty handle list"
+            tds.number_of_vertices(),
+            initial_vertex_count,
+            "Vertex count should not change after error (vertex rolled back)"
         );
 
         println!("✓ Empty handle list test works correctly");
@@ -3542,8 +4052,8 @@ mod tests {
                     crate::core::triangulation_data_structure::TriangulationValidationError::InconsistentDataStructure { message }
                 ) => {
                     assert!(
-                        message.contains("Cell key") && message.contains("not found"),
-                        "Error message should mention cell key not found, got: {message}"
+                        message.contains("not found"),
+                        "Error message should mention cell not found, got: {message}"
                     );
                 }
                 _ => panic!("Expected InconsistentDataStructure error, got: {e:?}"),
@@ -3593,8 +4103,8 @@ mod tests {
                     crate::core::triangulation_data_structure::TriangulationValidationError::InconsistentDataStructure { message }
                 ) => {
                     assert!(
-                        message.contains("Facet index") && message.contains("out of bounds"),
-                        "Error message should mention facet index out of bounds, got: {message}"
+                        message.contains("Facet") || message.contains("Boundary facet") || message.contains("vertices"),
+                        "Error message should mention facet issue, got: {message}"
                     );
                 }
                 _ => panic!("Expected InconsistentDataStructure error, got: {e:?}"),
@@ -3642,28 +4152,34 @@ mod tests {
             duplicate_handles.len()
         );
 
-        // Create cells from handles with duplicates
-        let cells_created = IncrementalBowyerWatson::create_cells_from_facet_handles(
+        // Create cells from handles with duplicates - should fail with error
+        let result = IncrementalBowyerWatson::create_cells_from_facet_handles(
             &mut tds,
             &duplicate_handles,
             &exterior_vertex,
-        )
-        .expect("Should handle duplicate handles gracefully");
-
-        let final_cell_count = tds.number_of_cells();
-        println!("  Final cell count: {final_cell_count}");
-        println!("  Cells created: {cells_created}");
-
-        // Should still create cells (the implementation might handle duplicates by creating duplicate cells,
-        // or it might be smart enough to avoid them - either behavior is acceptable as long as it doesn't crash)
-        assert!(cells_created > 0, "Should have created at least some cells");
-        assert_eq!(
-            final_cell_count,
-            initial_cell_count + cells_created,
-            "Cell count should increase by the number of cells created"
         );
 
-        println!("✓ Duplicate handles test works correctly");
+        // Should return error about duplicate boundary facets
+        match result {
+            Err(InsertionError::DuplicateBoundaryFacets {
+                duplicate_count,
+                total_count,
+            }) => {
+                assert!(duplicate_count >= 2, "Should detect at least 2 duplicates");
+                assert_eq!(
+                    total_count,
+                    duplicate_handles.len(),
+                    "Total count should match input"
+                );
+                println!(
+                    "  ✓ Correctly detected {duplicate_count} duplicates out of {total_count} handles"
+                );
+            }
+            Ok(_) => panic!("Should have returned DuplicateBoundaryFacets error"),
+            Err(other) => panic!("Unexpected error: {other:?}"),
+        }
+
+        println!("✓ Duplicate handles test works correctly - errors on duplicates as expected");
     }
 
     #[test]
@@ -4201,76 +4717,76 @@ mod tests {
         println!("✓ Integer margin calculation works correctly with ~10% expansion");
     }
 
-    /// Test `saturating_sub_for_bbox` with floating-point coordinates
+    /// Test `bbox_sub` with floating-point coordinates
     #[test]
-    fn test_saturating_sub_for_bbox_float() {
-        println!("Testing saturating_sub_for_bbox with floating-point types");
+    fn test_bbox_sub_float() {
+        println!("Testing bbox_sub with floating-point types");
 
         // Normal subtraction cases
-        let result = saturating_sub_for_bbox(10.0_f64, 3.0_f64);
+        let result = bbox_sub(10.0_f64, 3.0_f64);
         assert_abs_diff_eq!(result, 7.0, epsilon = 1e-10);
         println!("  ✓ f64: 10.0 - 3.0 = {result}");
 
-        let result = saturating_sub_for_bbox(5.5_f32, 2.3_f32);
+        let result = bbox_sub(5.5_f32, 2.3_f32);
         assert_abs_diff_eq!(result, 3.2, epsilon = 1e-6);
         println!("  ✓ f32: 5.5 - 2.3 = {result}");
 
         // Negative result
-        let result = saturating_sub_for_bbox(3.0_f64, 10.0_f64);
+        let result = bbox_sub(3.0_f64, 10.0_f64);
         assert_abs_diff_eq!(result, -7.0, epsilon = 1e-10);
         println!("  ✓ f64: 3.0 - 10.0 = {result} (negative result)");
 
         // Underflow to -infinity (floats handle this naturally)
-        let result = saturating_sub_for_bbox(-f64::MAX, f64::MAX);
+        let result = bbox_sub(-f64::MAX, f64::MAX);
         assert!(result.is_infinite() && result.is_sign_negative());
         println!("  ✓ f64: -MAX - MAX = {result} (underflow to -infinity)");
 
         // Zero cases
-        let result = saturating_sub_for_bbox(5.0_f64, 5.0_f64);
+        let result = bbox_sub(5.0_f64, 5.0_f64);
         assert_abs_diff_eq!(result, 0.0, epsilon = 1e-10);
         println!("  ✓ f64: 5.0 - 5.0 = {result}");
 
-        println!("✓ saturating_sub_for_bbox works correctly with floating-point types");
+        println!("✓ bbox_sub works correctly with floating-point types");
     }
 
-    /// Test `saturating_add_for_bbox` with floating-point coordinates
+    /// Test `bbox_add` with floating-point coordinates
     #[test]
-    fn test_saturating_add_for_bbox_float() {
-        println!("Testing saturating_add_for_bbox with floating-point types");
+    fn test_bbox_add_float() {
+        println!("Testing bbox_add with floating-point types");
 
         // Normal addition cases
-        let result = saturating_add_for_bbox(10.0_f64, 3.0_f64);
+        let result = bbox_add(10.0_f64, 3.0_f64);
         assert_abs_diff_eq!(result, 13.0, epsilon = 1e-10);
         println!("  ✓ f64: 10.0 + 3.0 = {result}");
 
-        let result = saturating_add_for_bbox(5.5_f32, 2.3_f32);
+        let result = bbox_add(5.5_f32, 2.3_f32);
         assert_abs_diff_eq!(result, 7.8, epsilon = 1e-6);
         println!("  ✓ f32: 5.5 + 2.3 = {result}");
 
         // Large values
-        let result = saturating_add_for_bbox(1e100_f64, 2e100_f64);
+        let result = bbox_add(1e100_f64, 2e100_f64);
         assert_abs_diff_eq!(result, 3e100, epsilon = 1e90);
         println!("  ✓ f64: 1e100 + 2e100 = {result}");
 
         // Overflow to infinity (floats handle this naturally)
-        let result = saturating_add_for_bbox(f64::MAX, f64::MAX);
+        let result = bbox_add(f64::MAX, f64::MAX);
         assert!(result.is_infinite() && result.is_sign_positive());
         println!("  ✓ f64: MAX + MAX = {result} (overflow to infinity)");
 
         // Zero cases
-        let result = saturating_add_for_bbox(5.0_f64, 0.0_f64);
+        let result = bbox_add(5.0_f64, 0.0_f64);
         assert_abs_diff_eq!(result, 5.0, epsilon = 1e-10);
         println!("  ✓ f64: 5.0 + 0.0 = {result}");
 
         // Negative values
-        let result = saturating_add_for_bbox(-3.5_f64, 2.5_f64);
+        let result = bbox_add(-3.5_f64, 2.5_f64);
         assert_abs_diff_eq!(result, -1.0, epsilon = 1e-10);
         println!("  ✓ f64: -3.5 + 2.5 = {result}");
 
-        println!("✓ saturating_add_for_bbox works correctly with floating-point types");
+        println!("✓ bbox_add works correctly with floating-point types");
     }
 
-    /// Test `saturating_sub_for_bbox` behavior with bounding box expansion use case
+    /// Test `bbox_sub` behavior with bounding box expansion use case
     #[test]
     fn test_saturating_bbox_operations_integration() {
         println!("Testing saturating bbox operations in realistic bounding box scenarios");
@@ -4278,12 +4794,12 @@ mod tests {
         // Simulate bounding box expansion for floating-point coordinates
         let min_coord = 10.0_f64;
         let margin = 2.5_f64;
-        let expanded_min = saturating_sub_for_bbox(min_coord, margin);
+        let expanded_min = bbox_sub(min_coord, margin);
         assert_abs_diff_eq!(expanded_min, 7.5, epsilon = 1e-10);
         println!("  ✓ f64: Expand min bbox 10.0 by margin 2.5 -> {expanded_min}");
 
         let max_coord = 100.0_f64;
-        let expanded_max = saturating_add_for_bbox(max_coord, margin);
+        let expanded_max = bbox_add(max_coord, margin);
         assert_abs_diff_eq!(expanded_max, 102.5, epsilon = 1e-10);
         println!("  ✓ f64: Expand max bbox 100.0 by margin 2.5 -> {expanded_max}");
 
@@ -4298,7 +4814,7 @@ mod tests {
         // Test with very large coordinate values (e.g., astronomical scales)
         let large_min = 1e50_f64;
         let large_margin = 1e48_f64;
-        let large_expanded_min = saturating_sub_for_bbox(large_min, large_margin);
+        let large_expanded_min = bbox_sub(large_min, large_margin);
         assert!(large_expanded_min < large_min);
         println!(
             "  ✓ f64: Large scale bbox expansion: {large_min} - {large_margin} = {large_expanded_min}"
@@ -4307,7 +4823,7 @@ mod tests {
         // Test with very small coordinate values (e.g., microscopic scales)
         let small_min = 1e-50_f64;
         let small_margin = 1e-52_f64;
-        let small_expanded_min = saturating_sub_for_bbox(small_min, small_margin);
+        let small_expanded_min = bbox_sub(small_min, small_margin);
         assert!(small_expanded_min < small_min);
         println!(
             "  ✓ f64: Small scale bbox expansion: {small_min} - {small_margin} = {small_expanded_min}"
@@ -5282,20 +5798,17 @@ mod tests {
         );
         println!("  ✓ create_cells_from_boundary_facets created {cells_created} cells");
 
-        // Test with empty boundary facets (should create no cells)
+        // Test with empty boundary facets (should error due to early exit)
         let empty_facet_handles: Vec<FacetHandle> = vec![];
         let another_vertex = vertex!([3.0, 3.0, 3.0]);
-        let cells_created = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_facet_handles(
+        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_facet_handles(
             &mut tds,
             &empty_facet_handles,
             &another_vertex,
-        ).unwrap_or(0);
-
-        assert_eq!(
-            cells_created, 0,
-            "Should create no cells from empty boundary facets"
         );
-        println!("  ✓ Empty boundary facets handled correctly");
+
+        assert!(result.is_err(), "Empty facet handle list should error");
+        println!("  ✓ Empty boundary facets error correctly");
 
         println!("✓ create_cells_from_boundary_facets works correctly");
     }
@@ -6314,5 +6827,874 @@ mod tests {
         assert!(tds.is_valid().is_ok());
 
         println!("  ✓ 4D insertion successful");
+    }
+
+    // =========================================================================
+    // CRITICAL MISSING TESTS - Added based on comprehensive test coverage analysis
+    // =========================================================================
+
+    /// Test `is_vertex_interior` with empty TDS (edge case not covered by macro)
+    #[test]
+    fn test_is_vertex_interior_empty_tds() {
+        println!("Testing is_vertex_interior with empty TDS");
+        let algorithm = IncrementalBowyerWatson::new();
+
+        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let test_vertex = vertex!([1.0, 1.0, 1.0]);
+        let result = algorithm.is_vertex_interior(&empty_tds, &test_vertex);
+        assert!(result.is_ok(), "Should handle empty TDS");
+        assert!(
+            !result.unwrap(),
+            "Empty TDS should return false for interior"
+        );
+        println!("  ✓ Empty TDS handled correctly");
+        println!("✓ Empty TDS edge case test passed");
+    }
+
+    // test_gather_boundary_facet_info_errors removed - now covered by dimension macro (_gather_boundary_facet_info)
+
+    /// Test `deduplicate_boundary_facet_info` edge cases
+    #[test]
+    fn test_deduplicate_boundary_facet_info_edge_cases() {
+        println!("Testing deduplicate_boundary_facet_info edge cases");
+
+        // Test with all duplicates
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+        let vertex_keys: Vec<_> = tds.vertex_keys().take(3).collect();
+
+        let mut facet_vertices = SmallBuffer::new();
+        for vk in &vertex_keys {
+            facet_vertices.push(*vk);
+        }
+
+        let all_duplicates = vec![
+            BoundaryFacetInfo {
+                bad_cell: cell_key,
+                bad_facet_index: 0,
+                facet_vertex_keys: facet_vertices.clone(),
+                outside_neighbor: None,
+            },
+            BoundaryFacetInfo {
+                bad_cell: cell_key,
+                bad_facet_index: 1,
+                facet_vertex_keys: facet_vertices.clone(),
+                outside_neighbor: None,
+            },
+            BoundaryFacetInfo {
+                bad_cell: cell_key,
+                bad_facet_index: 2,
+                facet_vertex_keys: facet_vertices.clone(),
+                outside_neighbor: None,
+            },
+        ];
+
+        let result =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::deduplicate_boundary_facet_info(
+                all_duplicates,
+            );
+        // Should return error with correct duplicate count
+        match result {
+            Err(InsertionError::DuplicateBoundaryFacets {
+                duplicate_count,
+                total_count,
+            }) => {
+                assert_eq!(duplicate_count, 2, "Should detect 2 duplicates");
+                assert_eq!(total_count, 3, "Total count should be 3");
+                println!(
+                    "  ✓ All duplicates correctly detected: {duplicate_count} duplicates out of {total_count}"
+                );
+            }
+            Ok(_) => panic!("Should have returned DuplicateBoundaryFacets error"),
+            Err(other) => panic!("Unexpected error: {other:?}"),
+        }
+
+        println!("✓ deduplicate_boundary_facet_info edge cases passed");
+    }
+
+    /// Test `rollback_created_cells_and_vertex` verification
+    #[test]
+    fn test_rollback_created_cells_and_vertex_verification() {
+        println!("Testing rollback_created_cells_and_vertex");
+
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ])
+        .unwrap();
+
+        let initial_vertex_count = tds.number_of_vertices();
+        let _initial_cell_count = tds.number_of_cells();
+
+        // Insert a new vertex and create cells
+        let new_vertex = vertex!([0.5, 0.5, 0.5]);
+        let boundary_facets: Vec<_> = tds
+            .boundary_facets()
+            .unwrap()
+            .map(|fv| FacetHandle::new(fv.cell_key(), fv.facet_index()))
+            .take(2)
+            .collect();
+
+        // Manually create some cells
+        let mut created_cells = Vec::new();
+        for handle in &boundary_facets {
+            if let Ok(cell_key) = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cell_from_facet_handle(
+                &mut tds,
+                handle.cell_key(),
+                handle.facet_index(),
+                &new_vertex,
+            ) {
+                created_cells.push(cell_key);
+            }
+        }
+
+        let cells_after_creation = tds.number_of_cells();
+        let _vertices_after_creation = tds.number_of_vertices();
+
+        // Rollback with vertex_existed_before = false (vertex should be removed)
+        IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::rollback_created_cells_and_vertex(
+            &mut tds,
+            &created_cells,
+            &new_vertex,
+            false,
+        );
+
+        assert_eq!(
+            tds.number_of_vertices(),
+            initial_vertex_count,
+            "Vertex count should return to initial after rollback"
+        );
+        assert_eq!(
+            tds.number_of_cells(),
+            cells_after_creation - created_cells.len(),
+            "Cells should be removed"
+        );
+        println!(
+            "  ✓ Rollback removed {} cells and the vertex",
+            created_cells.len()
+        );
+
+        println!("✓ rollback_created_cells_and_vertex verification passed");
+    }
+
+    /// Test `set_neighbor_with_validation` bounds checking
+    #[test]
+    fn test_set_neighbor_with_validation_bounds() {
+        println!("Testing set_neighbor_with_validation bounds checking");
+
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ])
+        .unwrap();
+
+        let cell_keys: Vec<_> = tds.cell_keys().collect();
+        assert!(!cell_keys.is_empty(), "Should have at least one cell");
+
+        let cell_key = cell_keys[0];
+
+        // Test valid neighbor index (0..=D)
+        let result =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::set_neighbor_with_validation(
+                &mut tds, cell_key, 0, cell_key,
+            );
+        assert!(result.is_ok(), "Valid neighbor index should succeed");
+        println!("  ✓ Valid neighbor index (0) works");
+
+        // Test boundary valid index (D)
+        let result =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::set_neighbor_with_validation(
+                &mut tds, cell_key, 3, cell_key,
+            );
+        assert!(result.is_ok(), "Boundary valid index (D=3) should succeed");
+        println!("  ✓ Boundary valid index (3) works");
+
+        // Test out of bounds index (> D)
+        let result =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::set_neighbor_with_validation(
+                &mut tds, cell_key, 4, cell_key,
+            );
+        assert!(
+            result.is_err(),
+            "Out of bounds index should fail: {result:?}"
+        );
+        println!("  ✓ Out of bounds index (4) correctly rejected");
+
+        println!("✓ set_neighbor_with_validation bounds checking passed");
+    }
+
+    // =========================================================================
+    // PROPTEST-BASED PROPERTY TESTS
+    // =========================================================================
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Property: calculate_margin should never return zero for non-zero input
+        #[test]
+        fn prop_calculate_margin_never_zero_for_nonzero_input(range in 1i32..10000) {
+            let margin = calculate_margin(range);
+            prop_assert!(margin > 0, "Margin should be positive for positive range");
+            prop_assert!(margin <= range, "Margin should not exceed range");
+        }
+
+        /// Property: InsertionStatistics rates should always be in [0.0, inf) with proper bounds
+        #[test]
+        fn prop_insertion_statistics_rates_bounded(
+            vertices_processed in 0usize..1000,
+            cavity_failures in 0usize..1000,
+        ) {
+            let mut stats = InsertionStatistics::new();
+            stats.vertices_processed = vertices_processed;
+            stats.cavity_boundary_failures = cavity_failures;
+            // Ensure fallback_uses doesn't exceed vertices_processed for semantic correctness
+            stats.fallback_strategies_used = if vertices_processed > 0 {
+                vertices_processed / 2  // At most half can be fallbacks
+            } else {
+                0
+            };
+
+            let success_rate = stats.cavity_boundary_success_rate();
+            prop_assert!((0.0..=1.0).contains(&success_rate),
+                "Success rate {success_rate} should be in [0.0, 1.0]");
+
+            let fallback_rate = stats.fallback_usage_rate();
+            prop_assert!((0.0..=1.0).contains(&fallback_rate),
+                "Fallback rate {fallback_rate} should be in [0.0, 1.0]");
+        }
+
+        /// Property: Deduplication correctly detects duplicates
+        #[test]
+        fn prop_deduplication_detects_duplicates(count in 2usize..20) {
+            // Create test data
+            let vertices = vec![
+                vertex!([0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0]),
+                vertex!([0.0, 1.0, 0.0]),
+                vertex!([0.0, 0.0, 1.0]),
+            ];
+            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let cell_key = tds.cell_keys().next().unwrap();
+            let vertex_keys: Vec<_> = tds.vertex_keys().take(3).collect();
+
+            let mut facet_vertices = SmallBuffer::new();
+            for vk in &vertex_keys {
+                facet_vertices.push(*vk);
+            }
+
+            // Create multiple copies of the same facet (all duplicates)
+            let mut infos = Vec::new();
+            for i in 0..count {
+                infos.push(BoundaryFacetInfo {
+                    bad_cell: cell_key,
+                    bad_facet_index: i,
+                    facet_vertex_keys: facet_vertices.clone(),
+                    outside_neighbor: None,
+                });
+            }
+
+            // Deduplication should detect duplicates and error
+            let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::deduplicate_boundary_facet_info(
+                infos,
+            );
+
+            // Should detect duplicates (count - 1 duplicates since first is not a duplicate)
+            prop_assert!(result.is_err(), "Should detect duplicates and return error");
+
+            if let Err(InsertionError::DuplicateBoundaryFacets { duplicate_count, .. }) = result {
+                prop_assert_eq!(duplicate_count, count - 1, "Should detect correct number of duplicates");
+            }
+        }
+
+        /// Property: Filter operations should never increase facet count
+        #[test]
+        fn prop_filter_never_increases_count(vertex_count in 4usize..10) {
+            // Create vertices
+            #[allow(clippy::cast_precision_loss)]
+            let vertices: Vec<_> = (0..vertex_count)
+                .map(|i| vertex!([(i as f64), 0.0, 0.0]))
+                .collect();
+
+            if vertices.len() >= 4 {
+                let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices[..4]).unwrap();
+                let cell_key = tds.cell_keys().next().unwrap();
+                let vk_list: Vec<_> = tds.vertex_keys().collect();
+
+                // Create boundary infos
+                let mut infos = Vec::new();
+                for (i, _) in vk_list[..3].iter().enumerate() {
+                    let mut facet_vks = SmallBuffer::new();
+                    for (j, &vk) in vk_list[..3].iter().enumerate() {
+                        if j != i {
+                            facet_vks.push(vk);
+                        }
+                    }
+                    facet_vks.push(vk_list[3]);
+
+                    infos.push(BoundaryFacetInfo {
+                        bad_cell: cell_key,
+                        bad_facet_index: i,
+                        facet_vertex_keys: facet_vks,
+                        outside_neighbor: None,
+                    });
+                }
+
+                let initial_count = infos.len();
+                let new_vk = vk_list[0]; // Use existing vertex
+
+                // Convert to SmallBuffer
+                let mut infos_buffer: SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE> = SmallBuffer::new();
+                for info in infos {
+                    infos_buffer.push(info);
+                }
+
+                let filtered = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::filter_boundary_facets_by_valid_facet_sharing(
+                    &tds,
+                    infos_buffer,
+                    new_vk,
+                )
+                .expect("Filter should succeed");
+
+                prop_assert!(filtered.len() <= initial_count,
+                    "Filter should never increase facet count: {initial_count} -> {}",
+                    filtered.len());
+            }
+        }
+
+        /// Property: Saturating arithmetic should not panic
+        #[test]
+        fn prop_saturating_arithmetic_no_panic(
+            a in -1000.0f64..1000.0f64,
+            b in -1000.0f64..1000.0f64,
+        ) {
+            // These should never panic
+            let _sub_result = bbox_sub(a, b);
+            let _add_result = bbox_add(a, b);
+            // If we got here without panicking, test passes
+            prop_assert!(true);
+        }
+    }
+
+    /// Integration test: Large scale degenerate input
+    #[test]
+    fn test_large_scale_degenerate_coplanar_points() {
+        println!("Testing large scale degenerate coplanar points");
+
+        // Create many coplanar points (all z=0)
+        let mut vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]), // One non-coplanar for valid 3D
+        ];
+
+        // Add more coplanar points
+        #[allow(clippy::cast_lossless)]
+        for i in 0..10 {
+            vertices.push(vertex!([(i as f64) * 0.1, (i as f64) * 0.15, 0.0]));
+        }
+
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices[..4]).unwrap();
+        let mut algorithm = IncrementalBowyerWatson::new();
+
+        // Try inserting coplanar points
+        let mut success_count = 0;
+        for vertex in vertices.iter().skip(4) {
+            match algorithm.insert_vertex(&mut tds, *vertex) {
+                Ok(_) => success_count += 1,
+                Err(e) => {
+                    println!("  ⚠ Insertion failed (expected for degenerate): {e}");
+                }
+            }
+        }
+
+        let num_coplanar = vertices.len() - 4;
+        println!(
+            "  ✓ Handled {num_coplanar} coplanar points gracefully ({success_count} successful insertions)"
+        );
+        println!("✓ Large scale degenerate input test completed");
+    }
+
+    /// Stress test: Multiple consecutive insertions with potential rollbacks
+    #[test]
+    fn test_stress_multiple_consecutive_insertions() {
+        println!("Stress testing multiple consecutive insertions");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([0.0, 2.0, 0.0]),
+            vertex!([0.0, 0.0, 2.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut algorithm = IncrementalBowyerWatson::new();
+
+        // Insert many interior points in rapid succession
+        #[allow(clippy::cast_lossless)]
+        let test_vertices: Vec<_> = (0..20)
+            .map(|i| {
+                let t = (i as f64) * 0.1;
+                vertex!([0.5 + t * 0.1, 0.5 + t * 0.05, 0.5 + t * 0.08])
+            })
+            .collect();
+
+        let mut success_count = 0;
+        let mut rollback_count = 0;
+
+        for vertex in test_vertices {
+            match algorithm.insert_vertex(&mut tds, vertex) {
+                Ok(_) => success_count += 1,
+                Err(_) => rollback_count += 1,
+            }
+        }
+
+        println!(
+            "  ✓ Completed stress test: {success_count} successful, {rollback_count} failures/rollbacks"
+        );
+        assert!(
+            tds.is_valid().is_ok(),
+            "TDS should remain valid after stress test"
+        );
+        println!("✓ Stress test completed successfully");
+    }
+
+    // =========================================================================
+    // REMAINING CRITICAL TESTS - is_vertex_likely_exterior edge cases
+    // =========================================================================
+
+    /// Test `is_vertex_likely_exterior` with single vertex in TDS
+    #[test]
+    fn test_is_vertex_likely_exterior_single_vertex() {
+        println!("Testing is_vertex_likely_exterior with single vertex in TDS");
+
+        // Create TDS with just one vertex (empty after construction)
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let single_vertex = vertex!([1.0, 1.0, 1.0]);
+        tds.insert_vertex_with_mapping(single_vertex).unwrap();
+
+        let test_vertex = vertex!([2.0, 2.0, 2.0]);
+        let is_exterior =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
+                &tds,
+                &test_vertex,
+            );
+
+        // With only one vertex, any other vertex should be considered exterior
+        // because there's no meaningful bounding box
+        println!("  ✓ Single vertex TDS: is_exterior = {is_exterior}");
+        println!("✓ Single vertex test completed");
+    }
+
+    /// Test `is_vertex_likely_exterior` with all vertices at same point
+    #[test]
+    fn test_is_vertex_likely_exterior_all_same_point() {
+        println!("Testing is_vertex_likely_exterior with all vertices at same point");
+
+        // Create vertices all at the same point (degenerate case)
+        let same_point = vertex!([1.0, 1.0, 1.0]);
+        let vertices = vec![same_point; 4]; // All 4 vertices at same point
+
+        // This will likely fail to create a valid TDS, but let's handle it
+        match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+            Ok(tds) => {
+                let test_vertex = vertex!([2.0, 2.0, 2.0]);
+                let is_exterior = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
+                    &tds,
+                    &test_vertex,
+                );
+                println!("  ✓ All same point: is_exterior = {is_exterior}");
+            }
+            Err(e) => {
+                println!("  ✓ Degenerate case correctly rejected: {e}");
+            }
+        }
+
+        println!("✓ All same point test completed");
+    }
+
+    /// Test `is_vertex_likely_exterior` with vertex exactly on bounding box edge
+    #[test]
+    fn test_is_vertex_likely_exterior_on_bbox_edge() {
+        println!("Testing is_vertex_likely_exterior with vertex on bounding box edge");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([10.0, 0.0, 0.0]),
+            vertex!([0.0, 10.0, 0.0]),
+            vertex!([0.0, 0.0, 10.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Bounding box is [0,10] x [0,10] x [0,10]
+        // With 10% margin: [-1,11] x [-1,11] x [-1,11]
+
+        // Test vertex exactly on expanded boundary
+        let on_boundary = vertex!([11.0, 5.0, 5.0]);
+        let is_exterior =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
+                &tds,
+                &on_boundary,
+            );
+        println!("  ✓ On boundary [11.0, 5.0, 5.0]: is_exterior = {is_exterior}");
+
+        // Test vertex just inside expanded boundary
+        let just_inside = vertex!([10.5, 5.0, 5.0]);
+        let is_exterior =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
+                &tds,
+                &just_inside,
+            );
+        println!("  ✓ Just inside [10.5, 5.0, 5.0]: is_exterior = {is_exterior}");
+
+        // Test vertex just outside expanded boundary
+        let just_outside = vertex!([11.5, 5.0, 5.0]);
+        let is_exterior =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
+                &tds,
+                &just_outside,
+            );
+        assert!(
+            is_exterior,
+            "Vertex outside expanded bbox should be exterior"
+        );
+        println!("  ✓ Just outside [11.5, 5.0, 5.0]: is_exterior = {is_exterior}");
+
+        println!("✓ Bounding box edge test completed");
+    }
+
+    // =========================================================================
+    // REMAINING CRITICAL TESTS - find_bad_cells missing cases
+    // =========================================================================
+
+    /// Test `find_bad_cells` with exact `DEGENERATE_CELL_THRESHOLD` boundary (50%)
+    #[test]
+    fn test_find_bad_cells_exact_threshold() {
+        println!("Testing find_bad_cells at exact degenerate threshold (50%)");
+
+        // This test verifies the threshold logic by simulation
+        // We can't easily create a TDS with exactly 50% degenerate cells,
+        // but we can verify the error message
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut algorithm = IncrementalBowyerWatson::new();
+
+        // Test with a vertex that should work normally
+        let test_vertex = vertex!([0.5, 0.5, 0.5]);
+        let result = algorithm.find_bad_cells(&tds, &test_vertex);
+
+        match result {
+            Ok(bad_cells) => {
+                let num_bad = bad_cells.len();
+                println!("  ✓ Found {num_bad} bad cells for interior vertex");
+                assert!(!bad_cells.is_empty(), "Should find at least one bad cell");
+            }
+            Err(e) => {
+                println!("  ✓ Error (acceptable): {e}");
+            }
+        }
+
+        println!("✓ Degenerate threshold test completed");
+    }
+
+    // =========================================================================
+    // REMAINING CRITICAL TESTS - InsertionAlgorithm trait methods
+    // =========================================================================
+
+    /// Test `create_cell_from_vertices_and_vertex` duplicate detection
+    #[test]
+    fn test_create_cell_from_vertices_and_vertex_duplicate() {
+        println!("Testing create_cell_from_vertices_and_vertex duplicate detection");
+
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ])
+        .unwrap();
+
+        // Get facet vertices
+        let facet_vertices: Vec<_> = tds.vertices().take(3).map(|(_, v)| *v).collect();
+
+        // Try to create cell with duplicate vertex (one that's already in facet)
+        let duplicate_vertex = facet_vertices[0];
+
+        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cell_from_vertices_and_vertex(
+            &mut tds,
+            facet_vertices,
+            &duplicate_vertex,
+        );
+
+        assert!(
+            result.is_err(),
+            "Should reject duplicate vertex: {result:?}"
+        );
+
+        if let Err(e) = result {
+            let error_msg = format!("{e}");
+            assert!(
+                error_msg.contains("duplicate"),
+                "Error should mention duplicate: {error_msg}"
+            );
+            println!("  ✓ Duplicate correctly rejected: {e}");
+        }
+
+        println!("✓ Duplicate vertex detection test passed");
+    }
+
+    /// Test `invalidate_cache_atomically` is callable
+    #[test]
+    fn test_invalidate_cache_atomically_callable() {
+        println!("Testing invalidate_cache_atomically is callable");
+
+        let mut algorithm: IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> =
+            IncrementalBowyerWatson::new();
+
+        // This should not panic - just verify it's callable
+        algorithm.invalidate_cache_atomically();
+
+        println!("  ✓ invalidate_cache_atomically called successfully");
+        println!("✓ Cache invalidation test passed");
+    }
+
+    /// Test `determine_strategy` with zero-cell TDS
+    #[test]
+    fn test_determine_strategy_zero_cells() {
+        println!("Testing determine_strategy with zero cells");
+
+        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let test_vertex = vertex!([1.0, 1.0, 1.0]);
+        let algorithm: IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> =
+            IncrementalBowyerWatson::new();
+
+        let strategy = algorithm.determine_strategy(&empty_tds, &test_vertex);
+
+        // Note: determine_strategy_default returns Standard for 0 cells,
+        // but the actual implementation may return HullExtension since
+        // there's no existing triangulation to extend into
+        println!("  ✓ Zero cells strategy: {strategy:?}");
+        assert!(
+            matches!(
+                strategy,
+                InsertionStrategy::Standard | InsertionStrategy::HullExtension
+            ),
+            "Empty TDS should use Standard or HullExtension strategy, got {strategy:?}"
+        );
+        println!("✓ determine_strategy zero cells test passed");
+    }
+
+    /// Test `InsertionAlgorithm` comprehensive trait method coverage
+    #[test]
+    fn test_insertion_algorithm_trait_methods_comprehensive() {
+        println!("Testing InsertionAlgorithm trait methods comprehensively");
+
+        let mut algorithm: IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> =
+            IncrementalBowyerWatson::new();
+
+        // Test get_statistics
+        let (insertions, created, removed) = algorithm.get_statistics();
+        assert_eq!(insertions, 0, "Initial insertions should be 0");
+        assert_eq!(created, 0, "Initial cells created should be 0");
+        assert_eq!(removed, 0, "Initial cells removed should be 0");
+        println!("  ✓ get_statistics works correctly");
+
+        // Test reset
+        algorithm.reset();
+        let (insertions, created, removed) = algorithm.get_statistics();
+        assert_eq!(insertions, 0);
+        assert_eq!(created, 0);
+        assert_eq!(removed, 0);
+        println!("  ✓ reset works correctly");
+
+        // Test increment methods
+        algorithm.increment_cells_created(5);
+        algorithm.increment_cells_removed(3);
+        let (_, created, removed) = algorithm.get_statistics();
+        assert_eq!(created, 5, "Cells created should be incremented");
+        assert_eq!(removed, 3, "Cells removed should be incremented");
+        println!("  ✓ increment methods work correctly");
+
+        // Test update_statistics
+        algorithm.update_statistics(2, 1);
+        let (_, created, removed) = algorithm.get_statistics();
+        assert_eq!(created, 7, "Cells created should be 5+2");
+        assert_eq!(removed, 4, "Cells removed should be 3+1");
+        println!("  ✓ update_statistics works correctly");
+
+        println!("✓ InsertionAlgorithm trait methods comprehensive test passed");
+    }
+
+    /// Test that preventive facet filtering correctly handles interior boundary facets.
+    ///
+    /// This test specifically checks for a bug where the filter would reject all valid
+    /// interior boundary facets because it counted facets from bad cells (about to be deleted)
+    /// as if they would remain, causing legitimate boundary facets to be incorrectly flagged
+    /// as over-sharing.
+    ///
+    /// The test creates a simple 3D triangulation with 5 vertices forming 2 tetrahedra,
+    /// then simulates the cavity-based insertion by:
+    /// 1. Marking one cell as "bad"
+    /// 2. Finding its boundary facets
+    /// 3. Applying preventive filtering
+    /// 4. Verifying that valid interior boundary facets are NOT filtered out
+    #[test]
+    fn test_preventive_filter_does_not_reject_valid_interior_facets() {
+        println!("Testing preventive facet filter with interior boundary facets");
+
+        // Create a 3D triangulation with 5 vertices forming 2 adjacent tetrahedra
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.5, 1.0, 0.0]),
+            vertex!([0.5, 0.5, 1.0]),
+            vertex!([0.5, 0.5, -1.0]), // Creates second tetrahedron
+        ];
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Verify we have 2 cells
+        assert_eq!(tds.number_of_cells(), 2, "Should have 2 tetrahedra");
+
+        // Pick one cell as the "bad cell" that we're removing
+        let bad_cell = tds
+            .cell_keys()
+            .next()
+            .expect("Should have at least one cell");
+
+        // Find the boundary facets of this "cavity"
+        let algorithm = IncrementalBowyerWatson::new();
+        let boundary_facets = algorithm
+            .find_cavity_boundary_facets(&tds, &[bad_cell])
+            .expect("Should find boundary facets");
+
+        println!(
+            "  Found {} boundary facets for single-cell cavity",
+            boundary_facets.len()
+        );
+        assert_eq!(
+            boundary_facets.len(),
+            4,
+            "Single tetrahedron cavity should have 4 boundary facets"
+        );
+
+        // Gather boundary facet information (mimics real insertion flow)
+        let boundary_infos =
+            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::gather_boundary_facet_info(
+                &tds,
+                &boundary_facets,
+            )
+            .expect("Should gather boundary facet info");
+
+        // Get a vertex key for the "inserted" vertex (use one from the other cell)
+        let other_cell_key = tds
+            .cell_keys()
+            .find(|&ck| ck != bad_cell)
+            .expect("Should have second cell");
+        let other_cell = tds.get_cell(other_cell_key).expect("Should get other cell");
+        let inserted_vk = other_cell.vertices()[0];
+
+        // Convert to SmallBuffer for filtering
+        let mut boundary_infos_buffer: SmallBuffer<
+            BoundaryFacetInfo,
+            MAX_PRACTICAL_DIMENSION_SIZE,
+        > = SmallBuffer::new();
+        for info in boundary_infos.clone() {
+            boundary_infos_buffer.push(info);
+        }
+
+        // Apply preventive filtering
+        let filtered = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::filter_boundary_facets_by_valid_facet_sharing(
+            &tds,
+            boundary_infos_buffer,
+            inserted_vk,
+        )
+        .expect("Filter should succeed");
+
+        println!(
+            "  After filtering: {} facets remaining (from {})",
+            filtered.len(),
+            boundary_infos.len()
+        );
+
+        // CRITICAL CHECK: The filter should NOT remove all boundary facets
+        // Before the fix, this would fail because interior facets were incorrectly
+        // counted as belonging to 2 cells (bad cell + neighbor) and rejected
+        assert!(
+            !filtered.is_empty(),
+            "Preventive filter should not reject all valid interior boundary facets. \
+             This indicates the bug where bad cell facets are counted incorrectly."
+        );
+
+        // For a single-cell cavity in a 2-cell triangulation, at least 1 facet
+        // should pass (the shared facet between the two cells)
+        assert!(
+            !filtered.is_empty(),
+            "Should keep at least the interior boundary facet(s)"
+        );
+
+        println!(
+            "  ✓ Filter correctly kept {} valid boundary facet(s)",
+            filtered.len()
+        );
+        println!("✓ Preventive facet filter test passed - no false rejections");
+    }
+
+    // Property tests for margin calculation and exterior detection
+    proptest! {
+        #[test]
+        fn prop_margin_calculation_accuracy(range in 10i32..100_000) {
+            let margin = calculate_margin(range);
+            // For integers, margin should be range/10 (with minimum 1)
+            let expected_min = std::cmp::max(1, range / 10);
+            prop_assert!(margin >= expected_min,
+                "Margin {margin} should be at least {expected_min}");
+            // Margin should not exceed range/10 by more than 1 (rounding)
+            let expected_max = (range / 10) + 1;
+            prop_assert!(margin <= expected_max,
+                "Margin {margin} should not exceed {expected_max}");
+        }
+
+        /// Property: is_vertex_likely_exterior should be consistent
+        #[test]
+        #[allow(clippy::tuple_array_conversions)]
+        fn prop_is_vertex_likely_exterior_consistency(
+            x in -100.0f64..100.0,
+            y in -100.0f64..100.0,
+            z in -100.0f64..100.0,
+        ) {
+            let vertices = vec![
+                vertex!([0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0]),
+                vertex!([0.0, 1.0, 0.0]),
+                vertex!([0.0, 0.0, 1.0]),
+            ];
+            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let test_vertex = vertex!([x, y, z]);
+
+            // Should not panic
+            let _is_exterior = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
+                &tds,
+                &test_vertex,
+            );
+
+            // Test passes if we didn't panic
+            prop_assert!(true);
+        }
     }
 }

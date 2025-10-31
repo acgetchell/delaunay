@@ -25,6 +25,18 @@ Zenodo. DOI: https://doi.org/10.5281/zenodo.16931097
 For BibTeX, APA, or other citation formats, please refer to the [CITATION.cff](CITATION.cff) file or use
 GitHub's "Cite this repository" feature.
 
+## AI-Assisted Development Tools
+
+- OpenAI. "ChatGPT." <https://openai.com/chatgpt>.
+- Anthropic. "Claude." <https://www.anthropic.com/claude>.
+- CodeRabbit AI, Inc. "CodeRabbit." <https://coderabbit.ai/>.
+- GitHub. "GitHub Copilot." <https://github.com/features/copilot>.
+- KiloCode. "KiloCode AI Engineering Assistant." <https://kilocode.ai/>.
+- Warp Dev, Inc. "WARP." <https://www.warp.dev/>.
+
+All AI-generated output was reviewed and/or edited by the maintainer.
+No generated content was used without human oversight.
+
 ## Core Delaunay Triangulation Algorithms and Data Structures
 
 This section contains the foundational algorithms and data structures that form the basis of this library.
