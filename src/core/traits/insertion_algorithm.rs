@@ -216,6 +216,28 @@ pub enum InsertionError {
     /// Vertex validation error
     #[error("Vertex validation error: {0}")]
     VertexValidation(#[from] crate::core::vertex::VertexValidationError),
+
+    /// Duplicate boundary facets detected during cavity boundary analysis.
+    ///
+    /// This error surfaces algorithmic bugs in cavity boundary detection. The cavity
+    /// boundary should be a topological sphere with no duplicate facets. Duplicates
+    /// indicate:
+    /// - Incorrect neighbor traversal logic
+    /// - Non-manifold mesh connectivity
+    /// - Data structure corruption
+    ///
+    /// By returning an error instead of silently filtering duplicates, we ensure
+    /// correctness and prevent subtle insertion failures.
+    #[error(
+        "Duplicate boundary facets detected: {duplicate_count} duplicates found among {total_count} facets. \
+         This indicates a bug in cavity boundary detection."
+    )]
+    DuplicateBoundaryFacets {
+        /// Number of duplicate facets found
+        duplicate_count: usize,
+        /// Total number of facets processed
+        total_count: usize,
+    },
 }
 
 impl InsertionError {
@@ -1426,12 +1448,13 @@ where
 
             // Check each facet (opposite to each vertex)
             for facet_idx in 0..=D {
-                let Some(&neighbor_key_opt) = neighbors.get(facet_idx) else {
-                    continue;
+                // Missing slot => treat as boundary
+                let is_boundary = match neighbors.get(facet_idx) {
+                    None => true,
+                    Some(&neighbor_key_opt) => {
+                        neighbor_key_opt.is_none_or(|n| !bad_cell_set.contains(&n))
+                    }
                 };
-
-                // Boundary facet if: no neighbor OR neighbor is not bad
-                let is_boundary = neighbor_key_opt.is_none_or(|n| !bad_cell_set.contains(&n));
                 if !is_boundary {
                     continue; // Interior facet; skip
                 }
@@ -1591,9 +1614,9 @@ where
         // This is done BEFORE any modifications to enable clean rollback on failure.
         let boundary_infos = Self::gather_boundary_facet_info(tds, &boundary_facet_handles)?;
 
-        // Deduplicate boundary facets to prevent creating duplicate cells
-        // (critical for correct topology)
-        let boundary_infos = Self::deduplicate_boundary_facet_info(boundary_infos);
+        // Deduplicate and validate boundary facets to prevent creating duplicate cells
+        // Error on duplicates instead of silently filtering (surfaces algorithmic bugs)
+        let boundary_infos = Self::deduplicate_boundary_facet_info(boundary_infos)?;
 
         // ========================================================================
         // PHASE 2: TENTATIVE - Insert vertex and create new cells (no removal yet)
@@ -1616,7 +1639,7 @@ where
         // Filter boundary facets to prevent invalid facet sharing
         // This prevents creating cells that would violate the "facet shared by at most 2 cells" constraint
         let boundary_infos =
-            Self::filter_boundary_facets_by_valid_facet_sharing(tds, boundary_infos, inserted_vk);
+            Self::filter_boundary_facets_by_valid_facet_sharing(tds, boundary_infos, inserted_vk)?;
 
         // Hard-stop if preventive filter removed all boundary facets
         // Proceeding would leave a hole in the TDS after removing bad cells
@@ -2516,10 +2539,10 @@ where
         // Track whether vertex existed before this operation for atomic rollback
         let vertex_existed_before = tds.vertex_key_from_uuid(&vertex.uuid()).is_some();
 
-        // Phase 1: Gather and deduplicate boundary facet information
-        // This uses the shared deduplication logic to prevent duplicate cell creation
+        // Phase 1: Gather and validate boundary facet information
+        // Error on duplicates instead of silently filtering (surfaces algorithmic bugs)
         let boundary_infos = Self::gather_boundary_facet_info(tds, facet_handles)?;
-        let boundary_infos = Self::deduplicate_boundary_facet_info(boundary_infos);
+        let boundary_infos = Self::deduplicate_boundary_facet_info(boundary_infos)?;
 
         // Ensure vertex is in TDS (needed for filtering and cell creation)
         Self::ensure_vertex_in_tds(tds, vertex)?;
@@ -2536,7 +2559,7 @@ where
         // Phase 1.5: Filter boundary facets to prevent invalid facet sharing
         // This prevents creating cells that would violate the "facet shared by at most 2 cells" constraint
         let boundary_infos =
-            Self::filter_boundary_facets_by_valid_facet_sharing(tds, boundary_infos, inserted_vk);
+            Self::filter_boundary_facets_by_valid_facet_sharing(tds, boundary_infos, inserted_vk)?;
 
         // Hard-stop if preventive filter removed all boundary facets
         // Creating zero cells would be invalid
@@ -2607,47 +2630,74 @@ where
         Ok(cells_created)
     }
 
-    /// Deduplicate boundary facet information by vertex set.
+    /// Detect and reject duplicate boundary facets.
     ///
     /// Multiple boundary facets from different bad cells can have identical vertex sets,
     /// which would lead to creating duplicate cells sharing all facets (invalid topology).
-    /// This function filters out such duplicates, keeping only the first occurrence of
-    /// each unique vertex set.
+    /// Instead of silently filtering duplicates, this function returns an error if any
+    /// are detected, surfacing algorithmic bugs in cavity boundary detection.
+    ///
+    /// The cavity boundary should form a topological sphere with no duplicate facets.
+    /// Duplicates indicate:
+    /// - Incorrect neighbor traversal logic
+    /// - Non-manifold mesh connectivity
+    /// - Data structure corruption
     ///
     /// # Arguments
     ///
-    /// * `boundary_infos` - Vector of boundary facet information to deduplicate
+    /// * `boundary_infos` - Vector of boundary facet information to validate
     ///
     /// # Returns
     ///
-    /// A deduplicated vector containing only unique facets by vertex set.
+    /// - `Ok(SmallBuffer<BoundaryFacetInfo>)` if no duplicates detected
+    /// - `Err(InsertionError::DuplicateBoundaryFacets)` if duplicates found
+    ///
+    /// # Errors
+    ///
+    /// Returns `InsertionError::DuplicateBoundaryFacets` if duplicate facets are detected,
+    /// indicating an algorithmic bug in cavity boundary detection.
+    ///
+    /// # Performance
+    ///
+    /// Uses `SmallBuffer` for efficient stack allocation (typically D+1 facets in D dimensions).
+    /// Falls back to heap allocation for pathological cases. Runs in O(n) time using
+    /// `FastHashSet` for duplicate detection via canonical facet keys.
     ///
     /// # Implementation Note
     ///
-    /// Uses `FastHashSet` of facet keys (u64 hash) to identify duplicates in O(n) time.
-    /// This avoids allocating Vec for each facet and uses the same hashing as `facet_key_from_vertices`.
-    /// The order of non-duplicate facets is preserved from the input.
-    #[must_use]
+    /// Uses canonical facet key (u64 hash) via `facet_key_from_vertices` to identify duplicates,
+    /// matching the hashing strategy used throughout the codebase.
     fn deduplicate_boundary_facet_info(
         boundary_infos: Vec<BoundaryFacetInfo>,
-    ) -> Vec<BoundaryFacetInfo> {
-        use crate::core::collections::{FastHashSet, fast_hash_set_with_capacity};
-        let mut seen_facet_keys: FastHashSet<u64> =
-            fast_hash_set_with_capacity(boundary_infos.len());
-        let mut deduplicated = Vec::with_capacity(boundary_infos.len());
+    ) -> Result<SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE>, InsertionError> {
+        let total_count = boundary_infos.len();
+        let mut seen_facet_keys: FastHashSet<u64> = fast_hash_set_with_capacity(total_count);
+        let mut deduplicated: SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+        let mut duplicate_count = 0;
 
         for info in boundary_infos {
             // Use canonical facet key (u64 hash) to identify unique facets
-            // This matches the hashing used throughout the codebase and avoids allocating Vec
+            // This matches the hashing used throughout the codebase
             let facet_key = facet_key_from_vertices(&info.facet_vertex_keys);
 
-            // Only keep facets we haven't seen before
+            // Track duplicates instead of silently filtering
             if seen_facet_keys.insert(facet_key) {
                 deduplicated.push(info);
+            } else {
+                duplicate_count += 1;
             }
         }
 
-        deduplicated
+        // Return error if duplicates were detected
+        if duplicate_count > 0 {
+            return Err(InsertionError::DuplicateBoundaryFacets {
+                duplicate_count,
+                total_count,
+            });
+        }
+
+        Ok(deduplicated)
     }
 
     /// Filter boundary facets to prevent invalid facet sharing.
@@ -2670,33 +2720,38 @@ where
     ///
     /// # Returns
     ///
-    /// Filtered vector of boundary facets that will maintain valid topology when cells are created.
+    /// - `Ok(SmallBuffer<BoundaryFacetInfo>)` with filtered facets that maintain valid topology
+    /// - `Err(InsertionError)` if facet map building fails
+    ///
+    /// # Errors
+    ///
+    /// Returns `InsertionError::TriangulationState` if the facet-to-cells map cannot be built.
     ///
     /// # Implementation Note
     ///
     /// This is a preventive approach that avoids creating invalid topology rather than
     /// fixing it reactively. Time complexity is O(N*D*F) where N is number of boundary facets,
     /// D is dimension, and F is average facets per cell in the facet map.
-    #[must_use]
     fn filter_boundary_facets_by_valid_facet_sharing(
         tds: &Tds<T, U, V, D>,
-        boundary_infos: Vec<BoundaryFacetInfo>,
+        boundary_infos: SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE>,
         inserted_vk: VertexKey,
-    ) -> Vec<BoundaryFacetInfo>
+    ) -> Result<SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE>, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
         use crate::core::collections::{FastHashMap, fast_hash_map_with_capacity};
 
         // Build facet-to-cells map from current TDS state
-        // If this fails, return all boundary infos (conservative: allow creation, let reactive fix handle it)
-        let Ok(facet_map) = tds.build_facet_to_cells_map() else {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Warning: Could not build facet map for preventive filtering, allowing all boundary facets"
-            );
-            return boundary_infos;
-        };
+        let facet_map = tds.build_facet_to_cells_map().map_err(|e| {
+            InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Failed to build facet-to-cells map for preventive filtering: {e}"
+                    ),
+                },
+            )
+        })?;
 
         // Count how many cells each facet currently has
         let mut facet_cell_counts: FastHashMap<u64, usize> =
@@ -2708,7 +2763,8 @@ where
         // Filter boundary facets: keep only those that won't cause over-sharing
         #[cfg(debug_assertions)]
         let boundary_count = boundary_infos.len();
-        let mut filtered = Vec::new();
+        let mut filtered: SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
         let mut facet_vertices_buffer: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::new();
 
@@ -2797,7 +2853,7 @@ where
             );
         }
 
-        filtered
+        Ok(filtered)
     }
 
     /// Gather all boundary facet metadata before modifying the TDS.
@@ -3518,7 +3574,7 @@ mod tests {
 
                     #[test]
                     fn [<$test_name _deduplicate_boundary_facet_info>]() {
-                        // Test deduplication of boundary facet info
+                        // Test duplicate detection and error handling in boundary facet deduplication
                         println!("Testing deduplicate_boundary_facet_info in {}D", $dim);
 
                         let initial_vertices = $initial_vertices;
@@ -3529,16 +3585,15 @@ mod tests {
                         let vertex_keys: Vec<_> = tds.vertex_keys().collect();
                         assert_eq!(vertex_keys.len(), $dim + 1, "{}D: Should have {} vertices", $dim, $dim + 1);
 
-                        // Create test facet info with duplicates
-                        // In D dimensions, each facet has D vertices
-                        let mut facet_info = Vec::new();
+                        // Case 1: Test with duplicates - should return error
+                        let mut facet_info_with_duplicates = Vec::new();
 
                         // Add first distinct facet (all vertices except the first)
                         let mut first_facet_vertices = SmallBuffer::new();
                         for v in vertex_keys.iter().skip(1).take($dim) {
                             first_facet_vertices.push(*v);
                         }
-                        facet_info.push(BoundaryFacetInfo {
+                        facet_info_with_duplicates.push(BoundaryFacetInfo {
                             bad_cell: cell_key,
                             bad_facet_index: 0,
                             facet_vertex_keys: first_facet_vertices.clone(),
@@ -3551,7 +3606,7 @@ mod tests {
                         for v in vertex_keys.iter().skip(2).take($dim - 1) {
                             second_facet_vertices.push(*v);
                         }
-                        facet_info.push(BoundaryFacetInfo {
+                        facet_info_with_duplicates.push(BoundaryFacetInfo {
                             bad_cell: cell_key,
                             bad_facet_index: 1,
                             facet_vertex_keys: second_facet_vertices.clone(),
@@ -3563,56 +3618,77 @@ mod tests {
                         for v in first_facet_vertices.iter().rev() {
                             duplicate_facet_vertices.push(*v);
                         }
-                        facet_info.push(BoundaryFacetInfo {
+                        facet_info_with_duplicates.push(BoundaryFacetInfo {
                             bad_cell: cell_key,
                             bad_facet_index: 2,
                             facet_vertex_keys: duplicate_facet_vertices,
                             outside_neighbor: None,
                         });
 
-                        println!("  {}D: Input {} facets (including 1 duplicate)", $dim, facet_info.len());
+                        println!("  {}D: Testing with {} facets (including 1 duplicate)", $dim, facet_info_with_duplicates.len());
 
-                        // Deduplicate using the same logic as the implementation
-                        let deduplicated = {
-                            use std::collections::HashSet;
-                            let mut seen_vertex_sets = HashSet::new();
-                            let mut dedup = Vec::new();
-                            for info in facet_info.clone() {
-                                let mut vertex_keys: Vec<_> = info.facet_vertex_keys.iter().copied().collect();
-                                vertex_keys.sort_unstable();
-                                if seen_vertex_sets.insert(vertex_keys) {
-                                    dedup.push(info);
-                                }
+                        // Should return error with correct counts
+                        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::deduplicate_boundary_facet_info(
+                            facet_info_with_duplicates.clone()
+                        );
+
+                        match result {
+                            Err(InsertionError::DuplicateBoundaryFacets { duplicate_count, total_count }) => {
+                                assert_eq!(duplicate_count, 1, "{}D: Should detect exactly 1 duplicate", $dim);
+                                assert_eq!(total_count, 3, "{}D: Total count should be 3", $dim);
+                                println!("  ✓ {}D: Correctly detected {} duplicate out of {} facets", $dim, duplicate_count, total_count);
                             }
-                            dedup
-                        };
+                            Ok(_) => panic!("{}D: Should have returned DuplicateBoundaryFacets error", $dim),
+                            Err(other) => panic!("{}D: Unexpected error: {:?}", $dim, other),
+                        }
 
-                        println!("  {}D: Output {} unique facets", $dim, deduplicated.len());
+                        // Case 2: Test without duplicates - should return Ok
+                        let facet_info_no_duplicates = vec![
+                            BoundaryFacetInfo {
+                                bad_cell: cell_key,
+                                bad_facet_index: 0,
+                                facet_vertex_keys: first_facet_vertices.clone(),
+                                outside_neighbor: None,
+                            },
+                            BoundaryFacetInfo {
+                                bad_cell: cell_key,
+                                bad_facet_index: 1,
+                                facet_vertex_keys: second_facet_vertices.clone(),
+                                outside_neighbor: None,
+                            },
+                        ];
 
-                        // Should remove exactly one duplicate
-                        assert_eq!(
-                            deduplicated.len(),
-                            facet_info.len() - 1,
-                            "{}D: Should remove exactly one duplicate facet",
-                            $dim
+                        println!("  {}D: Testing with {} unique facets (no duplicates)", $dim, facet_info_no_duplicates.len());
+
+                        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::deduplicate_boundary_facet_info(
+                            facet_info_no_duplicates.clone()
                         );
 
-                        // Verify all remaining facets have distinct vertex sets
-                        let unique_sets: std::collections::HashSet<_> = deduplicated
-                            .iter()
-                            .map(|info| {
-                                let mut sorted: Vec<_> = info.facet_vertex_keys.iter().copied().collect();
-                                sorted.sort();
-                                sorted
-                            })
-                            .collect();
+                        match result {
+                            Ok(deduplicated) => {
+                                assert_eq!(deduplicated.len(), 2, "{}D: Should have 2 unique facets", $dim);
 
-                        assert_eq!(
-                            unique_sets.len(),
-                            deduplicated.len(),
-                            "{}D: All remaining facets should have distinct vertex sets",
-                            $dim
-                        );
+                                // Verify all facets have distinct vertex sets
+                                let unique_sets: std::collections::HashSet<_> = deduplicated
+                                    .iter()
+                                    .map(|info| {
+                                        let mut sorted: Vec<_> = info.facet_vertex_keys.iter().copied().collect();
+                                        sorted.sort();
+                                        sorted
+                                    })
+                                    .collect();
+
+                                assert_eq!(
+                                    unique_sets.len(),
+                                    deduplicated.len(),
+                                    "{}D: All facets should have distinct vertex sets",
+                                    $dim
+                                );
+
+                                println!("  ✓ {}D: Correctly returned {} unique facets", $dim, deduplicated.len());
+                            }
+                            Err(e) => panic!("{}D: Should not have returned error for non-duplicate input: {:?}", $dim, e),
+                        }
 
                         println!("  ✓ {}D: Deduplication test passed", $dim);
                     }
@@ -4082,27 +4158,34 @@ mod tests {
             duplicate_handles.len()
         );
 
-        // Create cells from handles with duplicates
-        let cells_created = IncrementalBowyerWatson::create_cells_from_facet_handles(
+        // Create cells from handles with duplicates - should fail with error
+        let result = IncrementalBowyerWatson::create_cells_from_facet_handles(
             &mut tds,
             &duplicate_handles,
             &exterior_vertex,
-        )
-        .expect("Should handle duplicate handles gracefully");
-
-        let final_cell_count = tds.number_of_cells();
-        println!("  Final cell count: {final_cell_count}");
-        println!("  Cells created: {cells_created}");
-
-        // Duplicate facets are deduplicated by canonical vertex set - no duplicate cells created
-        assert!(cells_created > 0, "Should have created at least some cells");
-        assert_eq!(
-            final_cell_count,
-            initial_cell_count + cells_created,
-            "Cell count should increase by the number of cells created"
         );
 
-        println!("✓ Duplicate handles test works correctly");
+        // Should return error about duplicate boundary facets
+        match result {
+            Err(InsertionError::DuplicateBoundaryFacets {
+                duplicate_count,
+                total_count,
+            }) => {
+                assert!(duplicate_count >= 2, "Should detect at least 2 duplicates");
+                assert_eq!(
+                    total_count,
+                    duplicate_handles.len(),
+                    "Total count should match input"
+                );
+                println!(
+                    "  ✓ Correctly detected {duplicate_count} duplicates out of {total_count} handles"
+                );
+            }
+            Ok(_) => panic!("Should have returned DuplicateBoundaryFacets error"),
+            Err(other) => panic!("Unexpected error: {other:?}"),
+        }
+
+        println!("✓ Duplicate handles test works correctly - errors on duplicates as expected");
     }
 
     #[test]
@@ -6781,15 +6864,6 @@ mod tests {
     fn test_deduplicate_boundary_facet_info_edge_cases() {
         println!("Testing deduplicate_boundary_facet_info edge cases");
 
-        // Test with empty input
-        let empty_infos: Vec<BoundaryFacetInfo> = vec![];
-        let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::deduplicate_boundary_facet_info(
-                empty_infos,
-            );
-        assert!(result.is_empty(), "Empty input should return empty output");
-        println!("  ✓ Empty input handled correctly");
-
         // Test with all duplicates
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -6829,17 +6903,23 @@ mod tests {
 
         let result =
             IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::deduplicate_boundary_facet_info(
-                all_duplicates.clone(),
+                all_duplicates,
             );
-        assert_eq!(
-            result.len(),
-            1,
-            "All duplicates should reduce to one unique facet"
-        );
-        println!(
-            "  ✓ All duplicates correctly reduced from {} to 1",
-            all_duplicates.len()
-        );
+        // Should return error with correct duplicate count
+        match result {
+            Err(InsertionError::DuplicateBoundaryFacets {
+                duplicate_count,
+                total_count,
+            }) => {
+                assert_eq!(duplicate_count, 2, "Should detect 2 duplicates");
+                assert_eq!(total_count, 3, "Total count should be 3");
+                println!(
+                    "  ✓ All duplicates correctly detected: {duplicate_count} duplicates out of {total_count}"
+                );
+            }
+            Ok(_) => panic!("Should have returned DuplicateBoundaryFacets error"),
+            Err(other) => panic!("Unexpected error: {other:?}"),
+        }
 
         println!("✓ deduplicate_boundary_facet_info edge cases passed");
     }
@@ -6999,9 +7079,9 @@ mod tests {
                 "Fallback rate {fallback_rate} should be in [0.0, 1.0]");
         }
 
-        /// Property: Deduplication should be idempotent
+        /// Property: Deduplication correctly detects duplicates
         #[test]
-        fn prop_deduplication_is_idempotent(count in 1usize..20) {
+        fn prop_deduplication_detects_duplicates(count in 2usize..20) {
             // Create test data
             let vertices = vec![
                 vertex!([0.0, 0.0, 0.0]),
@@ -7018,7 +7098,7 @@ mod tests {
                 facet_vertices.push(*vk);
             }
 
-            // Create multiple copies of the same facet
+            // Create multiple copies of the same facet (all duplicates)
             let mut infos = Vec::new();
             for i in 0..count {
                 infos.push(BoundaryFacetInfo {
@@ -7029,20 +7109,17 @@ mod tests {
                 });
             }
 
-            // First deduplication
-            let dedup1 = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::deduplicate_boundary_facet_info(
+            // Deduplication should detect duplicates and error
+            let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::deduplicate_boundary_facet_info(
                 infos,
             );
 
-            // Second deduplication (should be identical)
-            let dedup2 = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::deduplicate_boundary_facet_info(
-                dedup1.clone(),
-            );
+            // Should detect duplicates (count - 1 duplicates since first is not a duplicate)
+            prop_assert!(result.is_err(), "Should detect duplicates and return error");
 
-            prop_assert_eq!(dedup1.len(), dedup2.len(),
-                "Deduplication should be idempotent");
-            prop_assert_eq!(dedup1.len(), 1,
-                "All identical facets should reduce to one");
+            if let Err(InsertionError::DuplicateBoundaryFacets { duplicate_count, .. }) = result {
+                prop_assert_eq!(duplicate_count, count - 1, "Should detect correct number of duplicates");
+            }
         }
 
         /// Property: Filter operations should never increase facet count
@@ -7081,11 +7158,18 @@ mod tests {
                 let initial_count = infos.len();
                 let new_vk = vk_list[0]; // Use existing vertex
 
+                // Convert to SmallBuffer
+                let mut infos_buffer: SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE> = SmallBuffer::new();
+                for info in infos {
+                    infos_buffer.push(info);
+                }
+
                 let filtered = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::filter_boundary_facets_by_valid_facet_sharing(
                     &tds,
-                    infos,
+                    infos_buffer,
                     new_vk,
-                );
+                )
+                .expect("Filter should succeed");
 
                 prop_assert!(filtered.len() <= initial_count,
                     "Filter should never increase facet count: {initial_count} -> {}",
@@ -7531,12 +7615,22 @@ mod tests {
         let other_cell = tds.get_cell(other_cell_key).expect("Should get other cell");
         let inserted_vk = other_cell.vertices()[0];
 
+        // Convert to SmallBuffer for filtering
+        let mut boundary_infos_buffer: SmallBuffer<
+            BoundaryFacetInfo,
+            MAX_PRACTICAL_DIMENSION_SIZE,
+        > = SmallBuffer::new();
+        for info in boundary_infos.clone() {
+            boundary_infos_buffer.push(info);
+        }
+
         // Apply preventive filtering
         let filtered = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::filter_boundary_facets_by_valid_facet_sharing(
             &tds,
-            boundary_infos.clone(),
+            boundary_infos_buffer,
             inserted_vk,
-        );
+        )
+        .expect("Filter should succeed");
 
         println!(
             "  After filtering: {} facets remaining (from {})",
