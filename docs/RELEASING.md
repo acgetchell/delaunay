@@ -92,7 +92,7 @@ just changelog
 echo "Generating performance results for release $TAG..."
 echo "This will run fresh benchmarks and update benches/PERFORMANCE_RESULTS.md"
 
-uv run benchmark-utils generate-summary --run-benchmarks
+just bench-perf-summary
 
 echo "Performance results generated. Review benches/PERFORMANCE_RESULTS.md for accuracy."
 ```

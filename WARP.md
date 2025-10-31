@@ -140,6 +140,12 @@ modified, added, or staged, and then focus the quality tools on those specific f
 # Comprehensive quality check (recommended - runs all checks below)
 just quality
 
+# Linting hierarchy (comprehensive to specific)
+just lint          # All linting: code + documentation + configuration
+just lint-code     # Code linting: Rust (fmt, clippy, docs) + Python (ruff) + Shell
+just lint-docs     # Documentation linting: Markdown + spell checking
+just lint-config   # Configuration validation: JSON, TOML, GitHub Actions workflows
+
 # Individual quality checks (if you need granular control):
 just fmt           # Rust code formatting
 just clippy        # Rust linting with pedantic/nursery/cargo warnings
@@ -150,6 +156,7 @@ just markdown-lint # Markdown linting with auto-fixes
 just spell-check   # Spell checking (only checks modified files)
 just validate-json # JSON validation
 just validate-toml # TOML validation
+just action-lint   # GitHub Actions workflow validation
 
 ```
 
@@ -183,6 +190,7 @@ just coverage      # Generate HTML coverage report (excludes benchmarks/examples
 # Benchmark execution
 just bench-compile # Compile benchmarks without running
 just bench         # Run all benchmarks
+just bench-ci      # CI regression benchmarks (fast, suitable for CI)
 
 # Performance baseline management
 just bench-baseline  # Generate performance baseline
@@ -190,7 +198,25 @@ just bench-baseline  # Generate performance baseline
 # Performance comparison
 just bench-compare   # Compare against baseline
 just bench-dev       # Development mode (10x faster for iteration)
+just bench-quick     # Quick benchmark validation with minimal samples
+
+# Phase 4 SlotMap evaluation (storage backend comparison)
+just bench-phase4        # Full Phase 4 benchmark suite (~10-30 min)
+just bench-phase4-quick  # Fast subset for iteration (~90 seconds)
+just bench-phase4-large  # Large dataset Phase 4 suite (long-running, ~2-3 hours)
+
+# Storage backend comparison
+just compare-storage       # Compare SlotMap vs DenseSlotMap performance (~4-6 hours)
+just compare-storage-large # Large scale comparison (~8-12 hours, compute cluster)
+
+# Performance analysis framework
+just perf-baseline [tag]   # Create performance baseline
+just perf-compare file     # Compare against baseline file
+just perf-check [threshold] # Check for regressions (default 5% threshold)
+just perf-help            # Show performance framework help
 ```
+
+**Performance Warning**: Phase 4 and storage comparison benchmarks are time-intensive. Use `bench-phase4-quick` for rapid iteration during development.
 
 ### Changelog Management
 

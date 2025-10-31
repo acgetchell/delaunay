@@ -26,6 +26,7 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 - [x]  Copy-able data types associated with vertices and cells (integers, floats, chars, custom enums)
 - [x]  d-dimensional [Delaunay triangulations]
 - [x]  d-dimensional [Convex hulls]
+- [x]  Geometry quality metrics for simplices: radius ratio and normalized volume (dimension-agnostic)
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
 

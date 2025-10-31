@@ -87,13 +87,161 @@ Property-based tests for triangulation structural invariants.
 
 **Run with:** `cargo test --test proptest_triangulation` or included in `just test`
 
+#### [`proptest_bowyer_watson.rs`](./proptest_bowyer_watson.rs)
+
+Property-based tests for Bowyer-Watson insertion algorithm verifying invariants during randomized vertex insertion sequences across dimensions (2D-5D).
+
+**Test Coverage:**
+
+- **Cavity Boundary Correctness**:
+  - Conflict zone boundary facets are correctly identified
+  - No orphaned facets after insertion
+- **Delaunay Property Preservation**:
+  - Delaunay property holds after each insertion
+  - Circumsphere test consistency
+- **Neighbor Symmetry**:
+  - Reciprocal neighbor relationships maintained
+  - No broken neighbor links
+- **Structural Integrity**:
+  - No orphan vertices or cells after insertion
+  - Vertex count consistency
+
+**Run with:**
+
+```bash
+# Standard test run
+cargo test --release --test proptest_bowyer_watson
+
+# With increased test cases and verbose output
+PROPTEST_CASES=512 cargo test --release --test proptest_bowyer_watson -- --nocapture
+
+# Reproduce a specific failure
+PROPTEST_SEED=<seed> cargo test --release --test proptest_bowyer_watson -- --nocapture
+```
+
+#### [`proptest_cell.rs`](./proptest_cell.rs)
+
+Property-based tests for Cell data structure verifying cell-level invariants and topological consistency.
+
+**Test Coverage:**
+
+- **Orientation Consistency**: Cell vertex ordering and orientation preservation
+- **Neighbor Linkage**: Neighbor references validity and symmetry
+- **Facet Completeness**: All facets properly defined and accessible
+- **Vertex References**: All vertex keys are valid and consistent
+
+**Run with:** `cargo test --release --test proptest_cell`
+
+#### [`proptest_convex_hull.rs`](./proptest_convex_hull.rs)
+
+Property-based tests for convex hull computation verifying hull properties and integration with triangulation.
+
+**Test Coverage:**
+
+- **Hull Vertex Extremeness**: Hull vertices are extreme points of the point set
+- **Hull Facet Consistency**: All hull facets are valid and properly oriented
+- **Boundary Subset Property**: Hull is a subset of triangulation boundary
+- **Dimension Consistency**: Hull dimension matches point set dimension
+
+**Run with:** `cargo test --release --test proptest_convex_hull`
+
+#### [`proptest_facet.rs`](./proptest_facet.rs)
+
+Property-based tests for Facet operations verifying facet adjacency and orientation across neighboring cells.
+
+**Test Coverage:**
+
+- **Mutual Neighbor References**: If cell A has neighbor B via facet F, then B has A as neighbor
+- **Co-facet Consistency**: Shared facets reference same vertices (possibly different order)
+- **Orientation Alternation**: Adjacent cells have opposite facet orientations
+- **Facet Key Validity**: All facet identifiers are valid and retrievable
+
+**Run with:** `cargo test --release --test proptest_facet`
+
+#### [`proptest_geometry.rs`](./proptest_geometry.rs)
+
+Property-based tests for geometric utilities and predicates.
+
+**Test Coverage:**
+
+- **Orientation Antisymmetry**: Swapping vertices reverses orientation
+- **Insphere/Outsphere Consistency**: Points are consistently classified relative to circumsphere
+- **Circumsphere Invariants**: Simplex vertices lie on their circumsphere
+- **Geometric Utility Correctness**: Helper functions produce valid results
+
+**Run with:** `cargo test --release --test proptest_geometry`
+
+#### [`proptest_quality.rs`](./proptest_quality.rs)
+
+Property-based tests for geometry quality metrics (radius ratio and normalized volume).
+
+**Test Coverage:**
+
+- **Valid Ranges**: Metrics produce finite, positive values for valid simplices
+- **Scale Invariance**: Metrics remain unchanged under uniform scaling
+- **Translation Invariance**: Metrics remain unchanged under translation
+- **Degeneracy Sensitivity**: Metrics detect and handle degenerate configurations
+- **Cross-dimensional Consistency**: Metrics behave correctly across dimensions
+
+**Run with:**
+
+```bash
+# Standard test run
+cargo test --release --test proptest_quality
+
+# With increased test cases for thorough validation
+PROPTEST_CASES=1024 cargo test --release --test proptest_quality -- --nocapture
+```
+
+#### [`proptest_serialization.rs`](./proptest_serialization.rs)
+
+Property-based tests for serialization and deserialization verifying data preservation via randomized structures.
+
+**Test Coverage:**
+
+- **Round-trip Equality**: Serialize → deserialize preserves structure and data
+- **Neighbor Graph Preservation**: Cell neighbor relationships survive round-trip
+- **Vertex Data Integrity**: Vertex coordinates and associated data are preserved
+- **Cell Data Integrity**: Cell-associated data is preserved
+- **Cross-dimensional Serialization**: Works correctly for all supported dimensions
+
+**Run with:** `cargo test --release --test proptest_serialization`
+
 **Property Testing Notes:**
 
 - Property tests use randomized inputs to discover edge cases
 - Tests may take longer than unit tests due to multiple iterations
 - Failures include shrunk minimal failing cases for debugging
-- Configure test cases via `PROPTEST_CASES=N` environment variable
-- Default: 256 test cases per property
+- Configure test cases via `PROPTEST_CASES=N` environment variable (default: 256)
+- Reproduce failures using `PROPTEST_SEED=<seed>` from test output
+- For deterministic ordering when debugging, use `--test-threads=1`
+- Always prefer `--release` mode for representative performance
+
+**About `.proptest-regressions` Files:**
+
+Proptest automatically captures minimal failing test cases in `.proptest-regressions` files located in the
+`tests/` directory. These files serve as regression test suites:
+
+- **Purpose**: Minimal failing cases that are re-run first to guard against regressions
+- **Version Control**: Always commit these files so CI and all developers validate past failures
+- **Automatic Updates**: Tests automatically update these files when new failures are discovered
+- **Do Not Hand-Edit**: Let proptest manage these files; manual edits may break the format
+- **Reproduction**: To debug a failure, copy the seed from test output:
+
+  ```bash
+  PROPTEST_SEED=12345 cargo test --release --test proptest_quality -- --nocapture
+  ```
+
+- **Performance Note**: Regression cases run before random cases; many entries can slow tests
+- **Filtering**: Use test filters to narrow scope when iterating on specific properties
+- **Maintenance**: It's acceptable to prune obsolete entries in follow-up PRs (keep diffs focused)
+
+**Current Regression Files:**
+
+- `proptest_bowyer_watson.proptest-regressions`
+- `proptest_convex_hull.proptest-regressions`
+- `proptest_quality.proptest-regressions`
+- `proptest_serialization.proptest-regressions`
 
 ### 🔧 Debugging and Analysis Tools
 
@@ -204,6 +352,38 @@ Demonstration and stress testing of robust geometric predicates with focus on nu
 - Performance impact analysis
 
 **Run with:** `cargo test --test robust_predicates_showcase` or `just test-release`
+
+#### [`serialization_vertex_preservation.rs`](./serialization_vertex_preservation.rs)
+
+Integration tests for serialization ensuring vertex identifiers and associated data are preserved across serialize/deserialize cycles.
+
+**Test Coverage:**
+
+- **Vertex UUID Preservation**: Vertex identifiers remain stable across serialization
+- **Coordinate Preservation**: Exact coordinate values are preserved
+- **Vertex Data Preservation**: Associated vertex data survives round-trip
+- **Cell References**: Cell-to-vertex references remain valid after deserialization
+
+**Run with:** `cargo test --release --test serialization_vertex_preservation`
+
+#### [`storage_backend_compatibility.rs`](./storage_backend_compatibility.rs)
+
+Integration tests verifying equivalence of triangulation behavior across different storage backends (e.g., SlotMap vs DenseSlotMap).
+
+**Test Coverage:**
+
+- **Behavioral Equivalence**: Triangulation operations produce identical results across backends
+- **Data Structure Integrity**: Cell and vertex relationships consistent regardless of backend
+- **API Compatibility**: All public APIs work consistently across backends
+- **Performance Characteristics**: Backend-specific performance trade-offs are documented
+
+**Run with:** `cargo test --release --test storage_backend_compatibility`
+
+**Note**: If storage backends are feature-gated, specify the feature:
+
+```bash
+cargo test --release --features <backend_feature> --test storage_backend_compatibility
+```
 
 ### 🐛 Regression and Error Reproduction
 
