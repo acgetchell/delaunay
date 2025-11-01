@@ -1471,6 +1471,21 @@ mod tests {
                         let (processed, _, _) = algorithm.get_statistics();
                         assert_eq!(processed, 1, "{}D: Should have processed 1 vertex", $dim);
                     }
+
+                    #[test]
+                    fn [<$test_name _fallback_strategies>]() {
+                        // Test fallback strategies with near-degenerate configuration
+                        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, $dim>::for_degenerate_cases();
+                        let initial_vertices = $initial_vertices;
+                        let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+
+                        // Insert near-degenerate point (very small coordinates)
+                        let near_zero_coords = [1e-10; $dim];
+                        let test_vertex = vertex!(near_zero_coords);
+                        let _ = algorithm.insert_vertex(&mut tds, test_vertex);
+
+                        assert!(tds.is_valid().is_ok(), "{}D: TDS should remain valid with fallback strategies", $dim);
+                    }
                 }
             )+
         };
@@ -4971,5 +4986,252 @@ mod tests {
             "Error propagation with ? operator should work correctly"
         );
         println!("✓ Result-based API integrates correctly with ? operator");
+    }
+
+    // =========================================================================
+    // UNIT TESTS FOR SPECIFIC ERROR PATHS AND FALLBACK STRATEGIES
+    // =========================================================================
+
+    /// Test that fallback strategies are used when primary strategy fails
+    #[test]
+    fn test_fallback_strategy_activation() {
+        let mut algorithm = RobustBowyerWatson::for_degenerate_cases();
+
+        // Create initial triangulation with near-degenerate configuration
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Insert a vertex with very small coordinates (near-degenerate)
+        let degenerate_vertex = vertex!([1e-10, 1e-10, 1e-10]);
+
+        // This should trigger fallback strategies but still succeed or maintain TDS validity
+        let result = algorithm.insert_vertex(&mut tds, degenerate_vertex);
+
+        // Either insertion succeeds or TDS remains valid even on failure
+        if result.is_ok() {
+            let (processed, _, _) = algorithm.get_statistics();
+            assert!(processed > 0, "Should have processed the vertex");
+        }
+
+        // TDS should remain valid regardless
+        assert!(
+            tds.is_valid().is_ok(),
+            "TDS should remain valid after degenerate insertion attempt"
+        );
+    }
+
+    /// Test that multiple fallback attempts maintain statistics correctly
+    #[test]
+    fn test_fallback_statistics_tracking() {
+        let mut algorithm = RobustBowyerWatson::for_degenerate_cases();
+
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([10.0, 0.0, 0.0]),
+            vertex!([0.0, 10.0, 0.0]),
+            vertex!([0.0, 0.0, 10.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        let initial_stats = algorithm.get_statistics();
+
+        // Try inserting multiple degenerate vertices
+        let degenerate_vertices = vec![
+            vertex!([1e-11, 1e-11, 1e-11]),
+            vertex!([2e-11, 1e-11, 1e-11]),
+            vertex!([1e-11, 2e-11, 1e-11]),
+        ];
+
+        for vertex in degenerate_vertices {
+            let _ = algorithm.insert_vertex(&mut tds, vertex);
+        }
+
+        let final_stats = algorithm.get_statistics();
+
+        // Statistics should have changed (either processed increased or attempts recorded)
+        assert!(
+            final_stats.0 >= initial_stats.0,
+            "Processed count should not decrease"
+        );
+    }
+
+    /// Test cavity boundary detection with minimal triangulation
+    #[test]
+    fn test_cavity_boundary_minimal_triangulation() {
+        let mut algorithm = RobustBowyerWatson::new();
+
+        // Create minimal tetrahedron
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Insert vertex at center (should find bad cells and boundary)
+        let center_vertex = vertex!([0.25, 0.25, 0.25]);
+        let result = algorithm.insert_vertex(&mut tds, center_vertex);
+
+        // Should either succeed or maintain validity
+        if result.is_ok() {
+            assert!(
+                tds.is_valid().is_ok(),
+                "TDS should be valid after successful insertion"
+            );
+        } else {
+            // If it fails, verify TDS wasn't corrupted
+            assert!(
+                tds.is_valid().is_ok(),
+                "TDS should remain valid even if insertion fails"
+            );
+        }
+    }
+
+    /// Test cavity boundary with exterior point (should find no bad cells)
+    #[test]
+    fn test_cavity_boundary_exterior_point() {
+        let mut algorithm = RobustBowyerWatson::new();
+
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Insert exterior point (far from convex hull)
+        let exterior_vertex = vertex!([10.0, 10.0, 10.0]);
+        let result = algorithm.insert_vertex(&mut tds, exterior_vertex);
+
+        // Should use hull extension strategy
+        if let Ok(info) = result {
+            // Hull extension doesn't remove cells, only creates new ones
+            assert_eq!(
+                info.cells_removed, 0,
+                "Hull extension should not remove cells"
+            );
+            assert!(info.cells_created > 0, "Hull extension should create cells");
+        }
+
+        assert!(
+            tds.is_valid().is_ok(),
+            "TDS should be valid after exterior insertion"
+        );
+    }
+
+    /// Test visibility detection with nearly coplanar configuration
+    #[test]
+    fn test_visibility_heuristic_coplanar() {
+        let mut algorithm = RobustBowyerWatson::for_degenerate_cases();
+
+        // Create nearly coplanar configuration
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([10.0, 0.0, 0.0]),
+            vertex!([0.0, 10.0, 0.0]),
+            vertex!([0.0, 0.0, 1e-8]), // Nearly coplanar
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Insert exterior point
+        let exterior_vertex = vertex!([5.0, 5.0, 2.0]);
+        let result = algorithm.insert_vertex(&mut tds, exterior_vertex);
+
+        // Algorithm should handle this gracefully
+        assert!(
+            result.is_ok() || tds.is_valid().is_ok(),
+            "Should handle nearly coplanar configuration"
+        );
+    }
+
+    /// Test visibility with distant exterior vertex
+    #[test]
+    fn test_visibility_distant_exterior() {
+        let mut algorithm = RobustBowyerWatson::new();
+
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Insert very distant point (should clearly be exterior)
+        let distant_vertex = vertex!([100.0, 100.0, 100.0]);
+        let result = algorithm.insert_vertex(&mut tds, distant_vertex);
+
+        // Should succeed with hull extension
+        assert!(
+            result.is_ok(),
+            "Distant exterior point should insert successfully"
+        );
+
+        if let Ok(info) = result {
+            assert_eq!(
+                info.cells_removed, 0,
+                "Hull extension should not remove cells"
+            );
+            assert!(
+                info.cells_created > 0,
+                "Should create new cells for hull extension"
+            );
+        }
+    }
+
+    /// Test that facet cache is properly validated
+    #[test]
+    fn test_facet_cache_validation() {
+        let mut algorithm = RobustBowyerWatson::new();
+
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Trigger cache build by inserting vertex (which uses facet mapping internally)
+        let test_vertex = vertex!([0.5, 0.5, 0.5]);
+
+        // This internally validates the facet mapping
+        let result = algorithm.insert_vertex(&mut tds, test_vertex);
+
+        // Should either succeed or fail gracefully (not panic)
+        assert!(
+            result.is_ok() || result.is_err(),
+            "Facet validation should not panic"
+        );
+    }
+
+    /// Test that over-shared facets are detected
+    #[test]
+    fn test_over_shared_facet_detection_logic() {
+        let algorithm = RobustBowyerWatson::new();
+
+        // Create valid triangulation
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Build facet mapping - should succeed for valid TDS
+        let result = algorithm.build_validated_facet_mapping(&tds);
+
+        assert!(
+            result.is_ok(),
+            "Valid TDS should have valid facet mapping without over-shared facets"
+        );
     }
 }

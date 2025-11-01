@@ -168,6 +168,7 @@
     "cppcheck",
     "cpus",
     "critcmp",
+    "degen",
     "denseslotmap",
     "derefs",
     "deser",
