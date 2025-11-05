@@ -125,7 +125,7 @@ compare-storage-large: _ensure-uv
 
 # Coverage analysis
 coverage:
-    cargo tarpaulin --exclude-files 'benches/**' --exclude-files 'examples/**' --exclude-files 'tests/**' --out Html --output-dir target/tarpaulin
+    cargo tarpaulin --lib --tests --exclude-files 'benches/**' --exclude-files 'examples/**' --out Html --output-dir target/tarpaulin
     @echo "📊 Coverage report generated: target/tarpaulin/tarpaulin-report.html"
 
 # Default recipe shows available commands

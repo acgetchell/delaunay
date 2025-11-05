@@ -1167,4 +1167,186 @@ mod tests {
             "Strict version should work after deprecated version"
         );
     }
+
+    #[test]
+    fn test_cache_invalidation_idempotence() {
+        let provider = TestCacheProvider::new();
+        let tds = create_test_triangulation();
+
+        // Build cache
+        let _cache = provider.try_get_or_build_facet_cache(&tds).unwrap();
+        assert!(provider.facet_cache().load().is_some());
+
+        // Invalidate multiple times
+        provider.invalidate_facet_cache();
+        assert!(provider.facet_cache().load().is_none());
+        assert_eq!(provider.cached_generation().load(Ordering::Relaxed), 0);
+
+        provider.invalidate_facet_cache();
+        assert!(provider.facet_cache().load().is_none());
+        assert_eq!(provider.cached_generation().load(Ordering::Relaxed), 0);
+
+        provider.invalidate_facet_cache();
+        assert!(provider.facet_cache().load().is_none());
+        assert_eq!(provider.cached_generation().load(Ordering::Relaxed), 0);
+
+        // Should still be able to rebuild
+        let cache = provider.try_get_or_build_facet_cache(&tds).unwrap();
+        assert!(!cache.is_empty());
+    }
+
+    #[test]
+    fn test_cache_race_condition_on_invalidation() {
+        // Test that cache properly handles race between get and invalidate
+        let provider = Arc::new(TestCacheProvider::new());
+        let tds = Arc::new(create_test_triangulation());
+        let barrier = Arc::new(Barrier::new(2));
+
+        // Build initial cache
+        let _initial_cache = provider.try_get_or_build_facet_cache(&tds).unwrap();
+
+        let provider_clone = Arc::clone(&provider);
+        let tds_clone = Arc::clone(&tds);
+        let barrier_clone = Arc::clone(&barrier);
+
+        // Thread 1: Repeatedly get cache
+        let getter_thread = thread::spawn(move || {
+            barrier_clone.wait();
+            for _ in 0..100 {
+                let _cache = provider_clone.try_get_or_build_facet_cache(&tds_clone);
+                thread::sleep(Duration::from_micros(10));
+            }
+        });
+
+        // Thread 2: Repeatedly invalidate
+        let invalidator_thread = thread::spawn(move || {
+            barrier.wait();
+            for _ in 0..50 {
+                provider.invalidate_facet_cache();
+                thread::sleep(Duration::from_micros(20));
+            }
+        });
+
+        // Both threads should complete without panicking
+        getter_thread.join().expect("Getter thread should complete");
+        invalidator_thread
+            .join()
+            .expect("Invalidator thread should complete");
+    }
+
+    #[test]
+    fn test_cache_with_modified_tds_during_build() {
+        // Test edge case where TDS is modified while cache is being built
+        let provider = TestCacheProvider::new();
+        let mut tds = create_test_triangulation();
+        let initial_gen = tds.generation();
+
+        // Build cache
+        let cache1 = provider.try_get_or_build_facet_cache(&tds).unwrap();
+
+        // Modify TDS multiple times rapidly with unique coordinates
+        let test_vertices = [
+            vertex!([0.5, 0.5, 0.5]), // Interior point
+            vertex!([0.3, 0.3, 0.1]), // Another interior point
+            vertex!([0.2, 0.1, 0.3]), // Third interior point
+        ];
+        for vertex in test_vertices {
+            tds.add(vertex).expect("Failed to add vertex");
+        }
+
+        let final_gen = tds.generation();
+        assert!(final_gen > initial_gen, "Generation should have increased");
+
+        // Cache should be rebuilt with new generation
+        let cache2 = provider.try_get_or_build_facet_cache(&tds).unwrap();
+        assert_ne!(
+            Arc::as_ptr(&cache1),
+            Arc::as_ptr(&cache2),
+            "Cache should be different after TDS modifications"
+        );
+
+        // Verify generation is tracked correctly
+        assert_eq!(
+            provider.cached_generation().load(Ordering::Relaxed),
+            final_gen,
+            "Cached generation should match final TDS generation"
+        );
+    }
+
+    #[test]
+    fn test_deprecated_fallback_behavior() {
+        // Test that deprecated methods handle errors gracefully with fallback
+        let provider = TestCacheProvider::new();
+        let tds = create_test_triangulation();
+
+        // Deprecated methods should succeed even with potential errors
+        let cache = provider.get_or_build_facet_cache(&tds);
+        assert!(
+            !cache.is_empty(),
+            "Deprecated method should return valid cache"
+        );
+
+        // Build using RCU should also succeed
+        provider.invalidate_facet_cache();
+        let old_value = provider.build_cache_with_rcu(&tds);
+        assert!(old_value.is_none(), "Should return None for first build");
+
+        // Verify cache exists
+        assert!(provider.facet_cache().load().is_some());
+    }
+
+    #[test]
+    fn test_cache_size_consistency_after_operations() {
+        // Verify cache size remains consistent across different operations
+        let provider = TestCacheProvider::new();
+        let mut tds = create_test_triangulation();
+
+        // Initial cache
+        let cache1 = provider.try_get_or_build_facet_cache(&tds).unwrap();
+        let size1 = cache1.len();
+
+        // Invalidate and rebuild - should get same size
+        provider.invalidate_facet_cache();
+        let cache2 = provider.try_get_or_build_facet_cache(&tds).unwrap();
+        assert_eq!(
+            cache2.len(),
+            size1,
+            "Size should be consistent after invalidate/rebuild"
+        );
+
+        // Add vertex - size should change
+        tds.add(vertex!([0.5, 0.5, 0.5]))
+            .expect("Failed to add vertex");
+        let cache3 = provider.try_get_or_build_facet_cache(&tds).unwrap();
+        // Size might be different after adding a vertex (more cells = more facets)
+        assert!(
+            cache3.len() >= size1,
+            "Cache size should grow or stay same after adding vertex"
+        );
+    }
+
+    #[test]
+    fn test_cache_generation_ordering_semantics() {
+        // Test that Acquire/Release ordering works correctly
+        let provider = Arc::new(TestCacheProvider::new());
+        let tds = Arc::new(create_test_triangulation());
+
+        // Build cache
+        let _cache = provider.try_get_or_build_facet_cache(&tds).unwrap();
+        let gen_after_build = provider.cached_generation().load(Ordering::Acquire);
+        assert_eq!(gen_after_build, tds.generation());
+
+        // Invalidate
+        provider.invalidate_facet_cache();
+        let gen_after_invalidate = provider.cached_generation().load(Ordering::Acquire);
+        assert_eq!(
+            gen_after_invalidate, 0,
+            "Generation should be reset after invalidate"
+        );
+
+        // Rebuild
+        let _cache2 = provider.try_get_or_build_facet_cache(&tds).unwrap();
+        let gen_after_rebuild = provider.cached_generation().load(Ordering::Acquire);
+        assert_eq!(gen_after_rebuild, tds.generation());
+    }
 }

@@ -1516,6 +1516,10 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::thread;
 
+    // =============================================================================
+    // HELPER FUNCTIONS
+    // =============================================================================
+
     /// Helper function to extract vertices from a facet handle.
     ///
     /// This is a test utility that creates a `FacetView` from a facet handle
@@ -1539,20 +1543,53 @@ mod tests {
             .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })
     }
 
-    /// Macro to generate dimension-specific convex hull tests.
+    // =============================================================================
+    // TEST GENERATION MACROS
+    // =============================================================================
+
+    /// Macro to generate comprehensive dimension-specific convex hull tests.
     ///
     /// This macro reduces test duplication by generating consistent tests across
-    /// multiple dimensions. It creates tests for:
-    /// - Basic hull operations (`facet_count`, `dimension`, `validate`, `is_empty`)
-    /// - Facet access methods
+    /// multiple dimensions (1D through 6D). For each dimension, it creates:
+    ///
+    /// 1. **Basic operations test** - Tests:
+    ///    - `facet_count()` returns expected number
+    ///    - `dimension()` returns correct dimension
+    ///    - `validate()` succeeds
+    ///    - `is_empty()` returns false for non-empty hull
+    ///
+    /// 2. **Facet access test** (via `pastey::paste`) - Tests:
+    ///    - `facets()` iterator returns correct count
+    ///    - `get_facet(0)` returns Some for valid index
+    ///    - `get_facet(out_of_bounds)` returns None
+    ///
+    /// 3. **Point containment test** (via `pastey::paste`) - Tests:
+    ///    - Inside point (centroid) is correctly identified as not outside
+    ///    - Outside point is correctly identified as outside
     ///
     /// # Usage
     ///
     /// ```ignore
     /// test_hull_dimensions! {
-    ///     hull_2d => 2 => "triangle" => 3 => vec![vertex!([0.0, 0.0]), ...],
+    ///     hull_2d => 2 => "triangle" => 3 =>
+    ///         vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])],
     /// }
     /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `$test_name` - Base name for generated tests
+    /// * `$dim` - Dimension (const generic parameter)
+    /// * `$desc` - Description string for error messages
+    /// * `$expected_facets` - Expected number of facets in the hull
+    /// * `$vertices` - Vec of vertices to construct the hull
+    ///
+    /// # Generated Tests
+    ///
+    /// For `hull_2d => 2 => "triangle" => 3 => vertices`, generates:
+    /// - `hull_2d()` - Basic operations
+    /// - `hull_2d_facet_access()` - Facet access  
+    /// - `hull_2d_point_containment()` - Point inside/outside detection
     macro_rules! test_hull_dimensions {
         ($(
             $test_name:ident => $dim:expr => $desc:expr => $expected_facets:expr => $vertices:expr
@@ -1614,6 +1651,34 @@ mod tests {
                         assert!(
                             hull.get_facet($expected_facets).is_none(),
                             "{}D hull out of range facet index should return None",
+                            $dim
+                        );
+                    }
+
+                    #[test]
+                    fn [<$test_name _point_containment>]() {
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let hull: ConvexHull<f64, Option<()>, Option<()>, $dim> =
+                            ConvexHull::from_triangulation(&tds).unwrap();
+
+                        // Test with inside point (scaled to ensure it's inside the unit simplex)
+                        // For a unit simplex, a point is inside if sum of coordinates <= 1
+                        // Use 0.1 per dimension to ensure sum stays well below 1 for all dimensions
+                        let inside_coords = [0.1; $dim];
+                        let inside_point = Point::new(inside_coords);
+                        assert!(
+                            !hull.is_point_outside(&inside_point, &tds).unwrap(),
+                            "{}D hull: point with small coordinates should be inside",
+                            $dim
+                        );
+
+                        // Test with outside point
+                        let outside_coords = [2.0; $dim];
+                        let outside_point = Point::new(outside_coords);
+                        assert!(
+                            hull.is_point_outside(&outside_point, &tds).unwrap(),
+                            "{}D hull: point far outside should be detected",
                             $dim
                         );
                     }
@@ -2965,6 +3030,13 @@ mod tests {
             }
             _ => panic!("Expected InsufficientData error for no vertices"),
         }
+
+        // Also test with matches! macro (alternative assertion style)
+        let result2 = ConvexHull::from_triangulation(&empty_tds);
+        assert!(matches!(
+            result2,
+            Err(ConvexHullConstructionError::InsufficientData { .. })
+        ));
     }
 
     #[test]
@@ -3067,7 +3139,9 @@ mod tests {
     }
 
     #[test]
-    fn test_find_nearest_visible_facet_no_visible_facets() {
+    fn test_inside_point_no_visible_facets() {
+        // Consolidated test for inside point detection (no visible facets)
+        // Tests both find_nearest_visible_facet and is_point_outside
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3078,11 +3152,16 @@ mod tests {
         let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&tds).unwrap();
 
-        // Test with a point inside the hull (no facets should be visible)
+        // Test with a point inside the hull
         let inside_point = Point::new([0.2, 0.2, 0.2]);
+
+        // Test find_nearest_visible_facet (no facets should be visible)
         let result = hull.find_nearest_visible_facet(&inside_point, &tds);
         assert!(result.is_ok());
-        // May or may not be None depending on specific geometry and precision
+
+        // Test is_point_outside (should return false)
+        let is_outside = hull.is_point_outside(&inside_point, &tds).unwrap();
+        assert!(!is_outside, "Inside point should not be outside");
     }
 
     #[test]
