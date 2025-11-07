@@ -394,7 +394,7 @@ where
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
     {
         // Use visibility detection with robust fallback
-        #[allow(clippy::collapsible_if)] // Can't collapse due to if-let chain guard limitations
+        #[expect(clippy::collapsible_if)] // Can't collapse due to if-let chain guard limitations
         if let Ok(visible_facet_handles) =
             self.find_visible_boundary_facets_with_robust_fallback(tds, vertex)
         {
@@ -789,7 +789,6 @@ where
     // Helper Methods
     // ========================================================================
 
-    #[allow(clippy::unused_self)]
     fn build_validated_facet_mapping(
         &self,
         tds: &Tds<T, U, V, D>,
@@ -842,7 +841,7 @@ where
     ///
     /// This checks that boundary facets were found when bad cells exist,
     /// and can perform additional geometric validation if needed.
-    #[allow(clippy::unused_self)]
+    #[expect(clippy::unused_self)]
     const fn validate_boundary_facets(
         &self,
         boundary_facets: &[FacetHandle],
@@ -1138,7 +1137,7 @@ where
     /// This is a helper method for the `hybrid_insert_vertex` example that shows
     /// how a robust algorithm could selectively use enhanced predicates only
     /// when needed for performance optimization.
-    #[allow(clippy::unused_self)]
+    #[expect(clippy::unused_self)]
     fn vertex_needs_robust_handling(
         &self,
         tds: &Tds<T, U, V, D>,
@@ -1537,7 +1536,7 @@ mod tests {
     /// `test_default_implementation_consistency`, `test_default_has_proper_buffer_capacity`,
     /// `test_algorithm_configuration_presets`, `test_configuration_validation_paths`
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_algorithm_configuration_comprehensive() {
         // Test 1: Basic construction with new()
         let algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
@@ -1658,7 +1657,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::used_underscore_binding)] // Variables used in conditional debug_println! macros
+    #[expect(clippy::used_underscore_binding)] // Variables used in conditional debug_println! macros
     fn test_no_double_counting_statistics() {
         debug_println!("Testing that robust vertex insertion statistics are not double counted");
 
@@ -1749,7 +1748,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_debug_exterior_vertex_insertion() {
         debug_println!("Testing exterior vertex insertion in robust Bowyer-Watson");
 
@@ -1890,7 +1889,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_cavity_based_insertion_consistency() {
         debug_println!("Testing cavity-based insertion maintains TDS consistency");
 
@@ -2035,7 +2034,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_hull_extension_insertion_consistency() {
         println!("Testing hull extension insertion maintains TDS consistency");
 
@@ -2226,7 +2225,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_finalization_prevents_inconsistencies() {
         println!("Testing that finalization prevents data structure inconsistencies");
 
@@ -2502,7 +2501,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_facet_cache_provider_implementation() {
         println!("Testing FacetCacheProvider implementation for RobustBowyerWatson");
 
@@ -3119,7 +3118,7 @@ mod tests {
         let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Test 1: Cubic lattice points
-        #[allow(clippy::cast_possible_truncation)]
+        #[expect(clippy::cast_possible_truncation)]
         let cubic_vertices: Vec<_> = (0..3_usize)
             .flat_map(|i| {
                 (0..3_usize).flat_map(move |j| {
@@ -4122,7 +4121,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_atomic_vertex_insert_and_remove_cells() {
         println!("Testing atomic_vertex_insert_and_remove_cells");
 
@@ -4496,7 +4495,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_atomic_cavity_based_insertion_guarantees() {
         println!("Testing atomic cavity-based insertion guarantees");
 

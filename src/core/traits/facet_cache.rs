@@ -159,7 +159,7 @@ where
                 return Some(existing.clone());
             }
             // Build the cache only once, even if RCU retries
-            #[allow(clippy::option_if_let_else)]
+            #[expect(clippy::option_if_let_else)]
             // Complex error handling doesn't benefit from map_or_else
             match built.get_or_insert_with(|| tds.build_facet_to_cells_map().map(Arc::new)) {
                 Ok(arc) => Some(arc.clone()),
@@ -1213,7 +1213,9 @@ mod tests {
         let getter_thread = thread::spawn(move || {
             barrier_clone.wait();
             for _ in 0..100 {
-                let _cache = provider_clone.try_get_or_build_facet_cache(&tds_clone);
+                provider_clone
+                    .try_get_or_build_facet_cache(&tds_clone)
+                    .expect("cache retrieval should succeed during invalidation race");
                 thread::sleep(Duration::from_micros(10));
             }
         });

@@ -136,9 +136,9 @@
 //! See <https://docs.rs/delaunay> for the latest documentation.
 
 // Allow multiple crate versions due to transitive dependencies
-#![allow(clippy::multiple_crate_versions)]
+#![expect(clippy::multiple_crate_versions)]
 // Temporarily allow deprecated warnings during Facet -> FacetView migration
-#![allow(deprecated)]
+#![expect(deprecated)]
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
 
@@ -264,7 +264,6 @@ pub mod prelude {
 /// The function `is_normal` checks that structs implement `auto` traits.
 /// Traits are checked at compile time, so this function is only used for
 /// testing.
-#[allow(clippy::extra_unused_type_parameters)]
 #[must_use]
 pub const fn is_normal<T: Sized + Send + Sync + Unpin>() -> bool {
     true

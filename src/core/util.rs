@@ -1126,8 +1126,7 @@ mod tests {
     // =============================================================================
 
     #[test]
-    #[allow(clippy::cognitive_complexity)]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_derive_facet_key_from_vertex_keys_comprehensive() {
         println!("Testing derive_facet_key_from_vertex_keys comprehensively");
 

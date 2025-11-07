@@ -76,7 +76,6 @@ macro_rules! generate_dimensional_benchmarks {
                 let mut group = c.benchmark_group(concat!("bowyer_watson_triangulation_", stringify!([<$dim>]), "d"));
 
                 for &n_points in &point_counts {
-                    #[allow(clippy::cast_sign_loss)]
                     let throughput = n_points as u64;
                     group.throughput(Throughput::Elements(throughput));
 
@@ -107,7 +106,6 @@ macro_rules! generate_dimensional_benchmarks {
                 let mut group = c.benchmark_group(concat!("remove_duplicate_cells_", stringify!([<$dim>]), "d"));
 
                 for &n_points in &point_counts {
-                    #[allow(clippy::cast_sign_loss)]
                     let throughput = n_points as u64;
                     group.throughput(Throughput::Elements(throughput));
 
@@ -229,7 +227,6 @@ macro_rules! generate_validation_benchmarks {
                 let mut group = c.benchmark_group(&format!("validation_methods_{}d", $dim));
 
                 for &n_points in point_counts {
-                    #[allow(clippy::cast_sign_loss)]
                     let throughput = n_points as u64;
                     group.throughput(Throughput::Elements(throughput));
 

@@ -1049,8 +1049,7 @@ where
     ///
     /// A mutable reference to the storage map containing all cells.
     #[doc(hidden)]
-    #[allow(clippy::missing_const_for_fn)]
-    pub(crate) fn cells_mut(&mut self) -> &mut StorageMap<CellKey, Cell<T, U, V, D>> {
+    pub(crate) const fn cells_mut(&mut self) -> &mut StorageMap<CellKey, Cell<T, U, V, D>> {
         &mut self.cells
     }
 
@@ -3216,7 +3215,7 @@ where
     ///    - Keep only the valid cells (up to 2) and remove invalid ones
     /// 5. Remove the excess/invalid cells and update the cell bimap accordingly
     /// 6. Clean up any resulting duplicate cells
-    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+    #[expect(clippy::too_many_lines, clippy::cognitive_complexity)]
     pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, TriangulationValidationError> {
         // Safety limit for iteration count to prevent infinite loops
         const MAX_FIX_FACET_ITERATIONS: usize = 10;
@@ -3639,7 +3638,6 @@ where
     /// // Validation should pass for a properly constructed triangulation
     /// assert!(tds.validate_vertex_mappings().is_ok());
     /// ```
-    #[allow(clippy::too_many_lines)]
     pub fn validate_vertex_mappings(&self) -> Result<(), TriangulationValidationError> {
         if self.uuid_to_vertex_key.len() != self.vertices.len() {
             return Err(TriangulationValidationError::MappingInconsistency {
@@ -3719,7 +3717,6 @@ where
     /// // Validation should pass for a properly constructed triangulation
     /// assert!(tds.validate_cell_mappings().is_ok());
     /// ```
-    #[allow(clippy::too_many_lines)]
     pub fn validate_cell_mappings(&self) -> Result<(), TriangulationValidationError> {
         if self.uuid_to_cell_key.len() != self.cells.len() {
             return Err(TriangulationValidationError::MappingInconsistency {
@@ -4372,7 +4369,7 @@ where
 // =============================================================================
 
 #[cfg(test)]
-#[allow(clippy::uninlined_format_args, clippy::similar_names)]
+#[expect(clippy::uninlined_format_args, clippy::similar_names)]
 mod tests {
     use super::*;
     use crate::cell;
@@ -4708,7 +4705,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+    #[expect(clippy::cognitive_complexity, clippy::too_many_lines)]
     fn test_empty_constructor_comprehensive() {
         // Test basic empty() constructor properties in 3D
         {
@@ -5155,7 +5152,7 @@ mod tests {
 
             for expected in expected_points {
                 let found = points.iter().any(|&p| {
-                    #[allow(clippy::float_cmp)]
+                    #[expect(clippy::float_cmp)]
                     {
                         *p == expected
                     }
@@ -6356,7 +6353,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::cognitive_complexity)]
     fn test_set_neighbors_by_key_validation() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -8128,7 +8124,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_is_valid_detects_improper_facet_sharing() {
         // This test verifies that tds.is_valid() now properly detects improper facet sharing
         // (testing our recent addition of facet sharing validation to is_valid)
@@ -8437,7 +8433,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)] // This test comprehensively validates serialization/deserialization
+    #[expect(clippy::too_many_lines)] // This test comprehensively validates serialization/deserialization
     fn test_tds_serialization_deserialization() {
         // Create a triangulation with two adjacent tetrahedra sharing one facet
         // This is the same setup as line 3957 in test_is_boundary_facet
@@ -8509,7 +8505,7 @@ mod tests {
         {
             let original_coords: [f64; 3] = original_vertex.into();
             let deserialized_coords: [f64; 3] = deserialized_vertex.into();
-            #[allow(clippy::float_cmp)]
+            #[expect(clippy::float_cmp)]
             {
                 assert_eq!(
                     original_coords, deserialized_coords,
@@ -9284,7 +9280,7 @@ mod tests {
     #[test]
     fn test_uuid_mapping_prevents_corruption() {
         // Create many vertices and verify UUID uniqueness is maintained
-        #[allow(clippy::cast_lossless)]
+        #[expect(clippy::cast_lossless)]
         let vertices: Vec<_> = (0..10)
             .map(|i| vertex!([(i as f64), 0.0, 0.0, 0.0]))
             .collect();

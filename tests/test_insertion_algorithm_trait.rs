@@ -17,6 +17,7 @@ use delaunay::core::traits::insertion_algorithm::{
     BadCellsError, InsertionBuffers, InsertionError, InsertionStrategy,
 };
 use delaunay::core::triangulation_data_structure::{CellKey, Tds, TriangulationValidationError};
+use delaunay::geometry::Coordinate;
 // These tests focus on public accessor methods that are not tested by unit tests
 // in the source module (which use private field access)
 
@@ -159,8 +160,13 @@ fn test_insertion_buffers_set_boundary_facet_handles() {
 fn test_insertion_buffers_boundary_facets_as_views() {
     let buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::new();
     // Create a TDS with minimal vertices for testing
-    let vertices = vec![];
-    let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let vertices = delaunay::core::vertex::Vertex::from_points(vec![
+        delaunay::geometry::point::Point::new([0.0, 0.0, 0.0]),
+        delaunay::geometry::point::Point::new([1.0, 0.0, 0.0]),
+        delaunay::geometry::point::Point::new([0.0, 1.0, 0.0]),
+        delaunay::geometry::point::Point::new([0.0, 0.0, 1.0]),
+    ]);
+    let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).expect("valid tetrahedron");
 
     // With empty buffers, should return empty vec
     let result = buffers.boundary_facets_as_views(&tds);
@@ -197,8 +203,13 @@ fn test_insertion_buffers_set_visible_facet_handles() {
 fn test_insertion_buffers_visible_facets_as_views() {
     let buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::new();
     // Create a TDS with minimal vertices for testing
-    let vertices = vec![];
-    let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let vertices = delaunay::core::vertex::Vertex::from_points(vec![
+        delaunay::geometry::point::Point::new([0.0, 0.0, 0.0]),
+        delaunay::geometry::point::Point::new([1.0, 0.0, 0.0]),
+        delaunay::geometry::point::Point::new([0.0, 1.0, 0.0]),
+        delaunay::geometry::point::Point::new([0.0, 0.0, 1.0]),
+    ]);
+    let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).expect("valid tetrahedron");
 
     // With empty buffers, should return empty vec
     let result = buffers.visible_facets_as_views(&tds);

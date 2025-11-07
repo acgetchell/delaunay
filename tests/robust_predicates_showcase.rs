@@ -17,7 +17,7 @@ use std::time::Instant;
 /// This test demonstrates the exact problem we're solving: standard predicates
 /// failing on degenerate cases that would lead to triangulation failures.
 #[test]
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn showcase_degenerate_failure_recovery() {
     println!("🎯 SHOWCASE: Robust Predicates Solving Real Failures");
     println!("{}", "=".repeat(50));
@@ -239,7 +239,7 @@ fn stress_test_tolerance_limits() {
 
 /// Performance comparison showing the cost/benefit trade-off
 #[test]
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn performance_cost_benefit_analysis() {
     println!("\n⚡ PERFORMANCE ANALYSIS: Cost vs Benefit");
     println!("{}", "=".repeat(50));
@@ -292,18 +292,18 @@ fn performance_cost_benefit_analysis() {
         rob_regular_time += start.elapsed();
     }
 
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(clippy::cast_precision_loss)]
     let std_avg = std_regular_time.as_nanos() as f64
         / <f64 as std::convert::From<_>>::from(iterations)
         / 1000.0;
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(clippy::cast_precision_loss)]
     let rob_avg = rob_regular_time.as_nanos() as f64
         / <f64 as std::convert::From<_>>::from(iterations)
         / 1000.0;
     println!("   Standard: {std_regular_successes}/{iterations} success, avg {std_avg:.2}μs");
     println!("   Robust:   {rob_regular_successes}/{iterations} success, avg {rob_avg:.2}μs");
 
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(clippy::cast_precision_loss)]
     let regular_overhead = rob_regular_time.as_nanos() as f64 / std_regular_time.as_nanos() as f64;
     println!("   Overhead: {regular_overhead:.2}x");
 
@@ -332,11 +332,11 @@ fn performance_cost_benefit_analysis() {
         rob_problem_time += start.elapsed();
     }
 
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(clippy::cast_precision_loss)]
     let std_problem_avg = std_problem_time.as_nanos() as f64
         / <f64 as std::convert::From<_>>::from(iterations)
         / 1000.0;
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(clippy::cast_precision_loss)]
     let rob_problem_avg = rob_problem_time.as_nanos() as f64
         / <f64 as std::convert::From<_>>::from(iterations)
         / 1000.0;

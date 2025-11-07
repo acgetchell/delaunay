@@ -64,7 +64,7 @@ macro_rules! generate_memory_analysis {
 
             #[cfg(feature = "count-allocations")]
             {
-                #[allow(clippy::cast_precision_loss)]
+                #[expect(clippy::cast_precision_loss)]
                 {
                     let tri_bytes = tri_info.bytes_total as f64;
                     let hull_bytes = hull_info.bytes_total as f64;

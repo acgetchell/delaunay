@@ -961,7 +961,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_simplex_orientation_comprehensive() {
         // Test 2D orientation - positive case
         let positive_2d = vec![

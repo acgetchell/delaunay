@@ -145,7 +145,7 @@ fn test_cache_invalidation_during_incremental_building() {
 /// This exercises the RCU mechanism in `try_build_cache_with_rcu()` (lines 148-185)
 /// to ensure only one thread actually builds the cache while others wait and reuse.
 #[test]
-#[allow(clippy::needless_collect)] // Must collect handles before joining to avoid deadlock
+#[expect(clippy::needless_collect)] // Must collect handles before joining to avoid deadlock
 fn test_rcu_contention_multiple_threads() {
     const NUM_THREADS: usize = 10;
 

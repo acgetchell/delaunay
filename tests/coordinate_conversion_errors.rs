@@ -203,7 +203,7 @@ fn test_hypot_with_infinity_values() {
 // =============================================================================
 
 #[test]
-#[allow(clippy::match_same_arms)]
+#[expect(clippy::match_same_arms)]
 fn test_robust_insphere_with_nan() {
     // Test robust insphere with NaN coordinates
     let points = vec![
@@ -236,7 +236,7 @@ fn test_robust_insphere_with_nan() {
 }
 
 #[test]
-#[allow(clippy::match_same_arms)]
+#[expect(clippy::match_same_arms)]
 fn test_robust_insphere_with_infinity() {
     // Test robust insphere with infinity coordinates
     let points = vec![
@@ -370,7 +370,7 @@ fn test_zero_and_negative_zero() {
 }
 
 #[test]
-#[allow(clippy::match_same_arms)]
+#[expect(clippy::match_same_arms)]
 fn test_very_large_finite_values() {
     // Test that very large but finite values are handled correctly
     // Use a large value that won't overflow when squared (f64::MAX would become infinity when squared)

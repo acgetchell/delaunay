@@ -280,7 +280,6 @@ where
     /// Cache for the facet-to-cells mapping to avoid rebuilding it for each facet check
     /// Uses `ArcSwapOption` for lock-free atomic updates when cache needs invalidation
     /// This avoids Some/None wrapping boilerplate compared to `ArcSwap<Option<T>>`
-    #[allow(clippy::type_complexity)]
     facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
     /// Immutable TDS generation at hull creation time.
     /// Set once in `from_triangulation()` and never modified. Used to detect stale hulls.
@@ -773,7 +772,6 @@ where
     /// // Note: The result depends on which facet is selected and the point's position
     /// // This test just verifies the method executes without error
     /// ```
-    #[allow(clippy::too_many_lines)]
     pub fn is_facet_visible_from_point(
         &self,
         facet_handle: &FacetHandle,
@@ -823,7 +821,7 @@ where
     /// # Errors
     ///
     /// Returns a [`ConvexHullConstructionError`] if visibility checking fails.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn is_facet_visible_from_point_with_cache(
         &self,
         facet_handle: &FacetHandle,
@@ -1795,7 +1793,7 @@ mod tests {
     /// Comprehensive test for visibility algorithms covering all dimensions and edge cases
     /// Consolidates: `test_visibility_algorithms_comprehensive`, `test_visibility_edge_cases`,
     /// `test_visibility_algorithm_coverage`, `test_edge_case_distance_calculations`
-    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+    #[expect(clippy::too_many_lines, clippy::cognitive_complexity)]
     #[test]
     fn test_visibility_algorithms_comprehensive() {
         println!("Testing comprehensive visibility algorithms in dimensions 2D-5D");
@@ -2069,7 +2067,7 @@ mod tests {
     // These tests target private methods to ensure thorough coverage of internal
     // ConvexHull functionality, particularly the fallback_visibility_test method.
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     #[test]
     fn test_fallback_visibility_comprehensive() {
         println!("Testing comprehensive fallback visibility algorithm");
@@ -2339,7 +2337,7 @@ mod tests {
     /// Consolidates: `test_convex_hull_validation_comprehensive`, `test_validate_method_comprehensive`,
     /// `test_validate_method_various_dimensions`
     #[test]
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+    #[expect(clippy::cognitive_complexity, clippy::too_many_lines)]
     fn test_convex_hull_validation_comprehensive() {
         println!("Testing ConvexHull validation comprehensively");
 
@@ -3581,7 +3579,7 @@ mod tests {
         println!("✓ Numeric cast error handling tested successfully");
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     #[test]
     fn test_cache_invalidation_behavior() {
         println!("Testing cache invalidation behavior in ConvexHull");
@@ -4615,7 +4613,7 @@ mod tests {
     // These tests provide comprehensive coverage of error conditions that can
     // occur during convex hull construction and operation.
 
-    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+    #[expect(clippy::too_many_lines, clippy::cognitive_complexity)]
     #[test]
     fn test_convex_hull_error_handling_comprehensive() {
         println!("Testing comprehensive ConvexHull error handling");
@@ -4917,7 +4915,7 @@ mod tests {
     // under various degenerate and edge-case conditions.
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_fallback_visibility_with_degenerate_facets() {
         println!("Testing fallback visibility algorithm with degenerate facet geometries");
 
@@ -5108,7 +5106,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_fallback_visibility_threshold_behavior() {
         println!("Testing fallback visibility threshold and heuristic behavior");
 
@@ -5383,7 +5381,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_coplanar_points_in_higher_dimensions() {
         println!("Testing convex hull construction with coplanar point configurations");
 
@@ -5615,7 +5613,7 @@ mod tests {
     // and with larger datasets to ensure robustness and performance.
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_high_dimensional_convex_hulls() {
         println!("Testing convex hull construction in high dimensions (6D, 7D, 8D)");
 

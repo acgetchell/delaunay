@@ -52,7 +52,10 @@ macro_rules! test_robust_algorithm_properties {
                 ) {
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         let mut algorithm = RobustBowyerWatson::new();
-                        let test_vertex = Vertex::from_points(vec![Point::new(test_coords)])[0];
+                        let test_vertex = Vertex::from_points(vec![Point::new(test_coords)])
+                            .into_iter()
+                            .next()
+                            .expect("single vertex");
 
                         let _result = algorithm.insert_vertex(&mut tds, test_vertex);
 
@@ -85,7 +88,10 @@ macro_rules! test_robust_algorithm_properties {
                         let mut prev_removed = 0;
 
                         for point in test_points {
-                            let test_vertex = Vertex::from_points(vec![point])[0];
+                            let test_vertex = Vertex::from_points(vec![point])
+                                .into_iter()
+                                .next()
+                                .expect("single vertex");
                             let _ = algorithm.insert_vertex(&mut tds, test_vertex);
 
                             let (processed, created, removed) = algorithm.get_statistics();
@@ -124,7 +130,10 @@ macro_rules! test_robust_algorithm_properties {
                 ) {
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         let mut algorithm = RobustBowyerWatson::new();
-                        let test_vertex = Vertex::from_points(vec![Point::new(test_coords)])[0];
+                        let test_vertex = Vertex::from_points(vec![Point::new(test_coords)])
+                            .into_iter()
+                            .next()
+                            .expect("single vertex");
 
                         let result = algorithm.insert_vertex(&mut tds, test_vertex);
 
@@ -169,7 +178,10 @@ macro_rules! test_robust_algorithm_properties {
                             *coord /= vertex_count_f64;
                         }
 
-                        let interior_vertex = Vertex::from_points(vec![Point::new(interior_coords)])[0];
+                        let interior_vertex = Vertex::from_points(vec![Point::new(interior_coords)])
+                            .into_iter()
+                            .next()
+                            .expect("single vertex");
                         let _result = algorithm.insert_vertex(&mut tds, interior_vertex);
 
                         // Property: Interior point insertion should succeed (or fail gracefully)
@@ -200,7 +212,10 @@ macro_rules! test_robust_algorithm_properties {
                         let initial_gen = algorithm.cached_generation().load(Ordering::Acquire);
 
                         for point in test_points {
-                            let test_vertex = Vertex::from_points(vec![point])[0];
+                            let test_vertex = Vertex::from_points(vec![point])
+                                .into_iter()
+                                .next()
+                                .expect("single vertex");
                             let _ = algorithm.insert_vertex(&mut tds, test_vertex);
                         }
 
@@ -228,7 +243,10 @@ macro_rules! test_robust_algorithm_properties {
                         let mut algorithm = RobustBowyerWatson::new();
 
                         // Insert a vertex to potentially change state
-                        let test_vertex = Vertex::from_points(vec![Point::new(test_coords)])[0];
+                        let test_vertex = Vertex::from_points(vec![Point::new(test_coords)])
+                            .into_iter()
+                            .next()
+                            .expect("single vertex");
                         let _ = algorithm.insert_vertex(&mut tds, test_vertex);
 
                         // Reset algorithm
@@ -276,7 +294,10 @@ macro_rules! test_robust_algorithm_properties {
                         let center_coord = scale * 0.25;
                         let test_vertex = Vertex::from_points(
                             vec![Point::new([center_coord; $dim])]
-                        )[0];
+                        )
+                            .into_iter()
+                            .next()
+                            .expect("single vertex");
                         let _ = algorithm.insert_vertex(&mut tds, test_vertex);
 
                         // Property: TDS handles extreme scales gracefully

@@ -567,7 +567,7 @@ mod tests {
     // ============================================================================
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn diagnose_triangulation_invariant_violations() {
         #[cfg(debug_assertions)]
         eprintln!("=== DELAUNAY TRIANGULATION DIAGNOSTIC ===\n");

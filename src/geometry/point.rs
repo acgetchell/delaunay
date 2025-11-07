@@ -1413,7 +1413,7 @@ mod tests {
 
         // Create different NaN values
         let nan1 = f64::NAN;
-        #[allow(clippy::zero_divided_by_zero)]
+        #[expect(clippy::zero_divided_by_zero)]
         let nan2 = 0.0f64 / 0.0f64; // Another way to create NaN
         let nan3 = f64::INFINITY - f64::INFINITY; // Yet another way
 
@@ -1433,7 +1433,7 @@ mod tests {
 
         // Test with f32 as well
         let f32_nan1 = f32::NAN;
-        #[allow(clippy::zero_divided_by_zero)]
+        #[expect(clippy::zero_divided_by_zero)]
         let f32_nan2 = 0.0f32 / 0.0f32;
 
         let point_f32_1 = Point::new([f32_nan1]);
@@ -1524,7 +1524,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(clippy::cast_precision_loss)]
     fn point_extreme_dimensions() {
         // Test with high dimensional points (limited by serde trait implementations)
 
@@ -1601,7 +1601,7 @@ mod tests {
         let original = Point::new([1.0, 2.0, 3.0]);
 
         // Test explicit cloning
-        #[allow(clippy::clone_on_copy)]
+        #[expect(clippy::clone_on_copy)]
         let cloned = original.clone();
         assert_relative_eq!(original.to_array().as_slice(), cloned.to_array().as_slice());
 
@@ -1930,7 +1930,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)] // Comprehensive test with many test cases
     fn point_deserialize_case_insensitive_special_values() {
         // Test case-insensitive deserialization of special values
 
@@ -3313,7 +3312,7 @@ mod tests {
         assert_sync(point);
 
         // Test Clone and Copy
-        #[allow(clippy::clone_on_copy)]
+        #[expect(clippy::clone_on_copy)]
         let cloned = point.clone();
         let copied = point;
 

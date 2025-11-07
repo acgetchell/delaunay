@@ -188,7 +188,7 @@ gaps.
   - [x] `InsufficientData` errors (empty TDS, no vertices, no cells)
   - [x] `StaleHull` detection in visibility methods
   - [x] Cache invalidation and rebuild logic
-  - [x] Coordinate conversion with large scale values
+  - [x] Coordinate conversion with large-scale values
 - [x] Public API method coverage
   - [x] `find_nearest_visible_facet()` (lines 1227-1303)
   - [x] `is_point_outside()` (lines 1350-1357)

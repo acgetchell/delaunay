@@ -3275,7 +3275,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::float_cmp)]
+    #[expect(clippy::float_cmp)]
     fn test_surface_measure_single_facet() {
         // Test with single triangular facet using TDS boundary facets
 
@@ -3652,7 +3652,7 @@ mod tests {
     // =============================================================================
 
     #[test]
-    #[allow(clippy::float_cmp)]
+    #[expect(clippy::float_cmp)]
     fn test_surface_measure_multiple_facets_different_sizes() {
         // Test with facets of different sizes using triangulations with known boundary facets
 

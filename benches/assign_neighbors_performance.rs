@@ -3,7 +3,7 @@
 //! This benchmark measures the runtime of the `assign_neighbors` method before and after
 //! optimizations to confirm reduced overhead on representative triangulations.
 
-#![allow(missing_docs, unused_doc_comments, unused_attributes)]
+#![expect(missing_docs)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::geometry::util::generate_random_points;
@@ -21,7 +21,7 @@ fn generate_grid_points_3d(n_side: usize) -> Vec<Point<f64, 3>> {
     for i in 0..n_side {
         for j in 0..n_side {
             for k in 0..n_side {
-                #[allow(clippy::cast_precision_loss)]
+                #[expect(clippy::cast_precision_loss)]
                 let point =
                     Point::new([i as f64 * spacing, j as f64 * spacing, k as f64 * spacing]);
                 points.push(point);
@@ -112,7 +112,7 @@ macro_rules! generate_assign_neighbors_benchmarks {
                         let num_cells = tds.number_of_cells();
                         let num_vertices = tds.number_of_vertices();
 
-                        #[allow(clippy::cast_precision_loss)]
+                        #[expect(clippy::cast_precision_loss)]
                         let ratio = num_cells as f64 / n_points as f64;
 
                         if verbose {
