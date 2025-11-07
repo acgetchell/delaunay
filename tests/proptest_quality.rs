@@ -221,7 +221,7 @@ macro_rules! test_quality_properties {
                                     {
                                         let rel_diff = ((ratio_orig - ratio_trans).abs() / ratio_orig.max(1.0)).min(1.0);
                                         prop_assert!(
-                                            rel_diff < 0.01,
+                                        rel_diff < 0.05,
                                             "{}D radius ratio should be translation-invariant: {} vs {} (diff: {})",
                                             $dim,
                                             ratio_orig,

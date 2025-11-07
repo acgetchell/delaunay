@@ -123,9 +123,9 @@ compare-storage-large: _ensure-uv
     @echo "📊 Comparing storage backends at large scale (~8-12 hours, use on compute cluster)"
     BENCH_LARGE_SCALE=1 uv run compare-storage-backends --bench large_scale_performance
 
-# Coverage analysis
+# Coverage analysis (matches CI configuration)
 coverage:
-    cargo tarpaulin --run-types Tests --run-types Doctests --exclude-files 'benches/**' --exclude-files 'examples/**' --out Html --output-dir target/tarpaulin
+    cargo tarpaulin --exclude-files 'benches/*' --exclude-files 'examples/*' --all-features --workspace --out Html --output-dir target/tarpaulin
     @echo "📊 Coverage report generated: target/tarpaulin/tarpaulin-report.html"
 
 # Default recipe shows available commands
