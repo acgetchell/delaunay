@@ -27,7 +27,7 @@ use std::{
 /// Test concurrent cache access during vertex insertion operations.
 ///
 /// This test exercises the retry loops in `try_get_or_build_facet_cache()`
-/// (lines 337-390) by having multiple threads simultaneously:
+/// by having multiple threads simultaneously:
 /// - Insert vertices (modifies TDS, increments generation)
 /// - Query the facet cache
 ///
@@ -92,9 +92,9 @@ fn test_concurrent_cache_access_during_insertion() {
 /// Test cache invalidation during incremental building.
 ///
 /// This exercises the code paths where:
-/// - Cache is invalidated (line 365)
-/// - Rebuild happens via `try_build_cache_with_rcu` (line 368)
-/// - Generation check fails and retry occurs (lines 371-374)
+/// - Cache is invalidated via `invalidate_facet_cache`
+/// - Rebuild happens via `try_build_cache_with_rcu`
+/// - Generation check fails and retry occurs in the main retry loop
 #[test]
 fn test_cache_invalidation_during_incremental_building() {
     let initial_vertices = vec![
@@ -142,7 +142,7 @@ fn test_cache_invalidation_during_incremental_building() {
 
 /// Test RCU contention with multiple threads building cache simultaneously.
 ///
-/// This exercises the RCU mechanism in `try_build_cache_with_rcu()` (lines 148-185)
+/// This exercises the RCU mechanism in `try_build_cache_with_rcu()`
 /// to ensure only one thread actually builds the cache while others wait and reuse.
 #[test]
 #[expect(clippy::needless_collect)] // Must collect handles before joining to avoid deadlock
@@ -209,6 +209,16 @@ fn test_rcu_contention_multiple_threads() {
             "All caches should have same size"
         );
     }
+
+    // Verify that most threads reused the same Arc (RCU efficiency)
+    let shared = caches
+        .iter()
+        .filter(|c| Arc::ptr_eq(c, first_cache))
+        .count();
+    assert!(
+        shared >= NUM_THREADS / 2,
+        "Most threads should share the same Arc (found {shared}/{NUM_THREADS})"
+    );
 }
 
 /// Test generation tracking through insertion operations.
@@ -297,9 +307,9 @@ fn test_convex_hull_cache_during_construction() {
 
 /// Test retry loop when generation changes during cache build.
 ///
-/// This exercises the stale cache rebuild path (lines 357-395) by repeatedly
-/// invalidating and rebuilding the cache while checking that the generation
-/// tracking remains consistent.
+/// This exercises the stale cache rebuild path in `try_get_or_build_facet_cache`
+/// by repeatedly invalidating and rebuilding the cache while checking that the
+/// generation tracking remains consistent.
 #[test]
 fn test_retry_loop_on_generation_change() {
     let initial_vertices = vec![

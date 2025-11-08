@@ -612,12 +612,12 @@ where
                 vertex_points.push(*v.point());
             }
 
-            // TDS corruption: cell has incomplete vertex list (should have D+1 vertices)
-            if vertex_points.len() < D + 1 {
+            // TDS corruption: cell must have exactly D+1 vertices (defensive programming)
+            if vertex_points.len() != D + 1 {
                 return Err(InsertionError::TriangulationState(
                     TriangulationValidationError::InconsistentDataStructure {
                         message: format!(
-                            "TDS corruption: Cell {cell_key:?} has {} vertices but expected {} (D+1)",
+                            "TDS corruption: Cell {cell_key:?} has {} vertices but expected exactly {} (D+1)",
                             vertex_points.len(),
                             D + 1
                         ),
@@ -746,7 +746,7 @@ where
                 ));
             }
             // Generic fallback validation
-            self.validate_boundary_facets(&boundary_handles, bad_cells.len())?;
+            Self::validate_boundary_facets(&boundary_handles, bad_cells.len())?;
         }
 
         Ok(boundary_handles)
@@ -841,9 +841,7 @@ where
     ///
     /// This checks that boundary facets were found when bad cells exist,
     /// and can perform additional geometric validation if needed.
-    #[expect(clippy::unused_self)]
     const fn validate_boundary_facets(
-        &self,
         boundary_facets: &[FacetHandle],
         bad_cell_count: usize,
     ) -> Result<(), InsertionError> {
@@ -877,6 +875,7 @@ where
     /// # Errors
     ///
     /// Returns `InsertionError` if TDS corruption is detected (cell or facet references non-existent vertex).
+    #[expect(clippy::too_many_lines)] // Additional validation checks for defensive programming
     fn is_facet_visible_from_vertex_robust(
         &self,
         tds: &Tds<T, U, V, D>,
@@ -940,6 +939,21 @@ where
                 ));
             };
             cell_vertices.push(v);
+        }
+
+        // Guard opposite-vertex discovery - facet should have exactly D vertices
+        if facet_vertices.len() != D {
+            return Err(InsertionError::TriangulationState(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "TDS corruption: Boundary facet at cell {:?}, index {} has {} vertices but expected exactly {} (D)",
+                        facet_view.cell_key(),
+                        facet_view.facet_index(),
+                        facet_vertices.len(),
+                        D
+                    ),
+                },
+            ));
         }
 
         let mut opposite_vertex = None;
@@ -1103,7 +1117,15 @@ where
         let threshold = {
             let scale = self.predicate_config.perturbation_scale;
             let multiplier = self.predicate_config.visibility_threshold_multiplier;
-            scale * scale * multiplier
+            let raw = scale * scale * multiplier;
+            // Clamp to finite max to avoid overflow with extreme configs
+            if f64::from(raw).is_finite() {
+                raw
+            } else {
+                // Use safe conversion for extreme values
+                <T as num_traits::NumCast>::from(f64::MAX / 2.0)
+                    .unwrap_or_else(|| <T as num_traits::NumCast>::from(1e100).unwrap()) // Fallback for safety
+            }
         };
         Ok(distance_squared > threshold)
     }
@@ -1657,7 +1679,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::used_underscore_binding)] // Variables used in conditional debug_println! macros
     fn test_no_double_counting_statistics() {
         debug_println!("Testing that robust vertex insertion statistics are not double counted");
 
@@ -1707,7 +1728,9 @@ mod tests {
                 i + 1
             );
 
-            let (after_insertions, _after_created, _after_removed) = algorithm.get_statistics();
+            #[allow(unused_variables)]
+            // after_created/after_removed only used in debug_println (conditionally compiled)
+            let (after_insertions, after_created, after_removed) = algorithm.get_statistics();
             let insertion_info = insertion_result.unwrap();
 
             debug_println!(
@@ -1716,8 +1739,8 @@ mod tests {
                 new_vertex.point().coords()
             );
             debug_println!("  Insertions: {after_insertions}");
-            debug_println!("  Cells created: {_after_created}");
-            debug_println!("  Cells removed: {_after_removed}");
+            debug_println!("  Cells created: {after_created}");
+            debug_println!("  Cells removed: {after_removed}");
             debug_println!("  Total cells in TDS: {}", tds.number_of_cells());
             debug_println!(
                 "  InsertionInfo: created={}, removed={}",
@@ -3118,13 +3141,11 @@ mod tests {
         let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Test 1: Cubic lattice points
-        #[expect(clippy::cast_possible_truncation)]
+        #[expect(clippy::cast_precision_loss)] // Small integers (0..3) convert exactly to f64
         let cubic_vertices: Vec<_> = (0..3_usize)
             .flat_map(|i| {
                 (0..3_usize).flat_map(move |j| {
-                    (0..3_usize).map(move |k| {
-                        vertex!([f64::from(i as u8), f64::from(j as u8), f64::from(k as u8)])
-                    })
+                    (0..3_usize).map(move |k| vertex!([i as f64, j as f64, k as f64]))
                 })
             })
             .collect();
@@ -3375,11 +3396,12 @@ mod tests {
     /// Test `validate_boundary_facets` error conditions using lightweight handles
     #[test]
     fn test_validate_boundary_facets() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
-
         // Test with empty boundary facets but non-zero bad cell count (should error)
         let empty_handles: Vec<FacetHandle> = vec![];
-        let result = algorithm.validate_boundary_facets(&empty_handles, 3);
+        let result = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::validate_boundary_facets(
+            &empty_handles,
+            3,
+        );
         assert!(
             result.is_err(),
             "Should error when no boundary facets found but bad cells exist"
@@ -3408,7 +3430,10 @@ mod tests {
             .map(|fv| FacetHandle::new(fv.cell_key(), fv.facet_index()))
             .collect();
 
-        let result = algorithm.validate_boundary_facets(&boundary_handles, 1);
+        let result = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::validate_boundary_facets(
+            &boundary_handles,
+            1,
+        );
         assert!(result.is_ok(), "Should succeed with valid boundary facets");
     }
 
@@ -4991,7 +5016,9 @@ mod tests {
     // UNIT TESTS FOR SPECIFIC ERROR PATHS AND FALLBACK STRATEGIES
     // =========================================================================
 
-    /// Test that fallback strategies are used when primary strategy fails
+    /// Test that fallback strategies are used when primary strategy fails.
+    ///
+    /// This test verifies the `robust_insert_vertex_impl` fallback mechanisms.
     #[test]
     fn test_fallback_strategy_activation() {
         let mut algorithm = RobustBowyerWatson::for_degenerate_cases();
@@ -5024,7 +5051,9 @@ mod tests {
         );
     }
 
-    /// Test that multiple fallback attempts maintain statistics correctly
+    /// Test that multiple fallback attempts maintain statistics correctly.
+    ///
+    /// Verifies statistics tracking through the `insert_vertex` method.
     #[test]
     fn test_fallback_statistics_tracking() {
         let mut algorithm = RobustBowyerWatson::for_degenerate_cases();
@@ -5059,7 +5088,9 @@ mod tests {
         );
     }
 
-    /// Test cavity boundary detection with minimal triangulation
+    /// Test cavity boundary detection with minimal triangulation.
+    ///
+    /// Validates `robust_find_cavity_boundary_facets` behavior.
     #[test]
     fn test_cavity_boundary_minimal_triangulation() {
         let mut algorithm = RobustBowyerWatson::new();

@@ -427,11 +427,6 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 
 /// Calculate percentile from a slice of values using nearest-rank method
 /// Supports configurable percentile via environment variable `BENCH_PERCENTILE` (default: 95)
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
 fn calculate_percentile(values: &mut [u64]) -> u64 {
     if values.is_empty() {
         return 0;

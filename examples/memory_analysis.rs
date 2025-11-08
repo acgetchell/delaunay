@@ -64,7 +64,7 @@ macro_rules! generate_memory_analysis {
 
             #[cfg(feature = "count-allocations")]
             {
-                #[expect(clippy::cast_precision_loss)]
+                #[expect(clippy::cast_precision_loss, reason = "Converting byte counters to floating-point for human-friendly KiB/MiB output")]
                 {
                     let tri_bytes = tri_info.bytes_total as f64;
                     let hull_bytes = hull_info.bytes_total as f64;

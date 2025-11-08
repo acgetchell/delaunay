@@ -5121,6 +5121,7 @@ mod tests {
 
         // Test accessors after incremental additions
         {
+            const EPSILON: f64 = 1e-12;
             let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
             assert_eq!(tds.number_of_vertices(), 0);
 
@@ -5149,13 +5150,11 @@ mod tests {
                 [0.0, 1.0, 0.0],
                 [0.0, 0.0, 1.0],
             ];
-
             for expected in expected_points {
                 let found = points.iter().any(|&p| {
-                    #[expect(clippy::float_cmp)]
-                    {
-                        *p == expected
-                    }
+                    p.iter()
+                        .zip(expected.iter())
+                        .all(|(a, b)| (a - b).abs() <= EPSILON)
                 });
                 assert!(found, "Expected point {expected:?} not found");
             }
@@ -8435,6 +8434,8 @@ mod tests {
     #[test]
     #[expect(clippy::too_many_lines)] // This test comprehensively validates serialization/deserialization
     fn test_tds_serialization_deserialization() {
+        const EPSILON: f64 = 1e-12;
+
         // Create a triangulation with two adjacent tetrahedra sharing one facet
         // This is the same setup as line 3957 in test_is_boundary_facet
         let points = vec![
@@ -8498,6 +8499,7 @@ mod tests {
 
         // Verify vertices are preserved (check coordinates)
         assert_eq!(deserialized_tds.vertices.len(), original_tds.vertices.len());
+
         for (original_vertex, deserialized_vertex) in original_tds
             .vertices
             .values()
@@ -8505,11 +8507,10 @@ mod tests {
         {
             let original_coords: [f64; 3] = original_vertex.into();
             let deserialized_coords: [f64; 3] = deserialized_vertex.into();
-            #[expect(clippy::float_cmp)]
-            {
-                assert_eq!(
-                    original_coords, deserialized_coords,
-                    "Vertex coordinates should be preserved"
+            for (a, b) in original_coords.iter().zip(deserialized_coords.iter()) {
+                assert!(
+                    (a - b).abs() <= EPSILON,
+                    "Vertex coordinates should be preserved: {a} vs {b}"
                 );
             }
         }
@@ -9280,9 +9281,8 @@ mod tests {
     #[test]
     fn test_uuid_mapping_prevents_corruption() {
         // Create many vertices and verify UUID uniqueness is maintained
-        #[expect(clippy::cast_lossless)]
         let vertices: Vec<_> = (0..10)
-            .map(|i| vertex!([(i as f64), 0.0, 0.0, 0.0]))
+            .map(|i: i32| vertex!([<f64 as std::convert::From<i32>>::from(i), 0.0, 0.0, 0.0]))
             .collect();
 
         let tds = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices).unwrap();

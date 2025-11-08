@@ -3275,7 +3275,10 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::float_cmp)]
+    #[expect(
+        clippy::float_cmp,
+        reason = "Comparisons are against exact literals (constructed geometry), acceptable in this test"
+    )]
     fn test_surface_measure_single_facet() {
         // Test with single triangular facet using TDS boundary facets
 
@@ -3652,7 +3655,10 @@ mod tests {
     // =============================================================================
 
     #[test]
-    #[expect(clippy::float_cmp)]
+    #[expect(
+        clippy::float_cmp,
+        reason = "Comparisons are against exact literals (constructed geometry), acceptable in this test"
+    )]
     fn test_surface_measure_multiple_facets_different_sizes() {
         // Test with facets of different sizes using triangulations with known boundary facets
 
