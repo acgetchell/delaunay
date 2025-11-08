@@ -158,13 +158,8 @@ macro_rules! gen_insphere_inward_scaling_inside {
                         let inv_len: f64 = 1.0 / f64::from($dim + 1);
                         for i in 0..$dim { centroid[i] *= inv_len; }
 
-                        // Scale from center toward centroid
-                        let scale: f64 = 0.01;
-                        let mut interior = [0.0_f64; $dim];
-                        for i in 0..$dim {
-                            interior[i] = (1.0 - scale).mul_add(center_coords[i], scale * centroid[i]);
-                        }
-                        let interior_point = Point::new(interior);
+                        // Use centroid, which is guaranteed to lie inside the simplex
+                        let interior_point = Point::new(centroid);
 
                         if let Ok(result) = insphere(&simplex, interior_point) {
                             // Check separation to avoid degenerate case

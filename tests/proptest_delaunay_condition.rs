@@ -110,9 +110,21 @@ proptest! {
                     let initial = create_initial_simplex::<$dim>();
                     let mut tds = Tds::<f64, Option<()>, Option<()>, $dim>::new(&initial).expect("init TDS");
                     let mut algorithm = RobustBowyerWatson::new();
-                    for v in &vertices { let _ = algorithm.insert_vertex(&mut tds, *v); }
+                    for v in &vertices {
+                        let insert_result = algorithm.insert_vertex(&mut tds, *v);
+                        prop_assert!(
+                            insert_result.is_ok(),
+                            "RobustBowyerWatson failed to insert vertex: {:?}",
+                            insert_result.as_ref().err()
+                        );
+                    }
                     // Ensure post-insertion finalization is applied
-                    let _ = <RobustBowyerWatson<f64, Option<()>, Option<()>, $dim> as InsertionAlgorithm<f64, Option<()>, Option<()>, $dim>>::finalize_triangulation(&mut tds);
+                    let finalize_result = <RobustBowyerWatson<f64, Option<()>, Option<()>, $dim> as InsertionAlgorithm<f64, Option<()>, Option<()>, $dim>>::finalize_triangulation(&mut tds);
+                    prop_assert!(
+                        finalize_result.is_ok(),
+                        "finalize_triangulation failed: {:?}",
+                        finalize_result.as_ref().err()
+                    );
 
                     // Robust insphere config
                     let config = delaunay::geometry::robust_predicates::config_presets::general_triangulation::<f64>();
@@ -249,7 +261,14 @@ proptest! {
 
         let mut tds_a: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&initial).expect("init");
         let mut algo_a = RobustBowyerWatson::new();
-        for v in &vertices { let _ = algo_a.insert_vertex(&mut tds_a, *v); }
+        for v in &vertices {
+            let insert_result = algo_a.insert_vertex(&mut tds_a, *v);
+            prop_assert!(
+                insert_result.is_ok(),
+                "RobustBowyerWatson failed to insert vertex in natural order: {:?}",
+                insert_result.as_ref().err()
+            );
+        }
         prop_assume!(tds_a.is_valid().is_ok());
 
         let mut tds_b: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&initial).expect("init");
@@ -257,7 +276,14 @@ proptest! {
         let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
         order.shuffle(&mut rng);
         let mut algo_b = RobustBowyerWatson::new();
-        for &i in &order { let _ = algo_b.insert_vertex(&mut tds_b, vertices[i]); }
+        for &i in &order {
+            let insert_result = algo_b.insert_vertex(&mut tds_b, vertices[i]);
+            prop_assert!(
+                insert_result.is_ok(),
+                "RobustBowyerWatson failed to insert vertex in shuffled order: {:?}",
+                insert_result.as_ref().err()
+            );
+        }
         prop_assume!(tds_b.is_valid().is_ok());
 
         // Compare triangulations coarsely to avoid fragility

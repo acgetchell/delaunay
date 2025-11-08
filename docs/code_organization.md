@@ -95,15 +95,19 @@ delaunay/
 │   ├── proptest_bowyer_watson.rs                 # Property-based tests for Bowyer-Watson vertex insertion (2D-5D)
 │   ├── proptest_cell.rs                          # Property-based tests for Cell data structure
 │   ├── proptest_convex_hull.rs                   # Property-based tests for convex hull computation
+│   ├── proptest_delaunay_condition.rs            # Delaunay condition properties (empty circumsphere, order invariance)
 │   ├── proptest_facet.rs                         # Property-based tests for Facet operations
 │   ├── proptest_geometry.rs                      # Property-based tests for geometric utilities
 │   ├── proptest_point.rs                         # Property-based tests for Point (hashing, equality, serialization)
+│   ├── proptest_vertex.rs                        # Property-based tests for Vertex operations
 │   ├── proptest_predicates.rs                    # Property-based tests for geometric predicates (orientation, insphere)
 │   ├── proptest_quality.proptest-regressions     # Proptest regression cases for quality metrics
 │   ├── proptest_quality.rs                       # Property-based tests for mesh quality metrics
 │   ├── proptest_robust_bowyer_watson.rs          # Property-based tests for robust Bowyer-Watson algorithm
+│   ├── proptest_safe_conversions.rs              # Property-based tests for safe numeric and type conversions
 │   ├── proptest_serialization.rs                 # Property-based tests for serialization/deserialization
 │   ├── proptest_triangulation.rs                 # Property-based tests for triangulation invariants
+│   ├── proptest_invariants.rs                    # Additional property-based invariants and consistency checks
 │   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
 │   ├── robust_predicates_showcase.rs             # Robust predicates demonstration tests
 │   ├── serialization_vertex_preservation.rs      # Serialization vertex UUID preservation tests
@@ -133,6 +137,7 @@ delaunay/
 │   ├── OPTIMIZATION_ROADMAP.md                   # Comprehensive 4-phase optimization strategy (primary reference)
 │   ├── phase4.md                                 # Phase 4 benchmark consolidation plan and progress
 │   ├── property_testing_summary.md               # Property-based testing guide
+│   ├── jaccard.md                                # Jaccard set similarity usage and adoption plan
 │   ├── README.md                                 # Documentation index and navigation guide
 │   ├── RELEASING.md                              # Release process documentation
 │   └── topology.md                               # Topology and geometric properties guide

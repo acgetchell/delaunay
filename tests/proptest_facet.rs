@@ -9,8 +9,8 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use delaunay::core::facet::FacetView;
+use delaunay::core::facet::facet_key_from_vertices;
 use delaunay::core::triangulation_data_structure::Tds;
-use delaunay::core::triangulation_data_structure::VertexKey;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
@@ -173,19 +173,19 @@ macro_rules! test_facet_multiplicity {
                         // Ensure we're checking a valid triangulation to avoid degenerate edge cases
                         prop_assume!(tds.is_valid().is_ok());
 
-                        let mut counts: HashMap<Vec<VertexKey>, usize> = HashMap::new();
+                        let mut counts: HashMap<u64, usize> = HashMap::new();
 
                         for (_cell_key, cell) in tds.cells() {
                             let vs = cell.vertices();
                             for i in 0..vs.len() {
-                                let mut facet: Vec<_> = vs
+                                let facet: Vec<_> = vs
                                     .iter()
                                     .copied()
                                     .enumerate()
-                                    .filter_map(|(j, vk)| if j != i { Some(vk) } else { None })
+                                    .filter_map(|(j, vk)| (j != i).then_some(vk))
                                     .collect();
-                                facet.sort();
-                                *counts.entry(facet).or_default() += 1;
+                                let key = facet_key_from_vertices(&facet);
+                                *counts.entry(key).or_default() += 1;
                             }
                         }
 
