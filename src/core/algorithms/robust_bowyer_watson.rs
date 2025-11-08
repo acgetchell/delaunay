@@ -1047,6 +1047,7 @@ where
             + std::ops::Sub<Output = T>
             + std::ops::Mul<Output = T>
             + num_traits::Zero
+            + num_traits::NumCast
             + From<f64>,
         f64: From<T>,
     {

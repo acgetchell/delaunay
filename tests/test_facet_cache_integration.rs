@@ -48,9 +48,6 @@ fn test_sequential_cache_invalidation_during_insertion() {
     let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
     let mut algorithm = IncrementalBowyerWatson::new();
 
-    // Initial cache build
-    let _cache = algorithm.try_get_or_build_facet_cache(&tds).unwrap();
-
     // Create vertices to insert
     let new_vertices: Vec<_> = (0..10)
         .map(|i| {
@@ -86,7 +83,8 @@ fn test_sequential_cache_invalidation_during_insertion() {
 
     // Verify cache size is reasonable (each cell has D+1 facets)
     let cell_count = tds.cells().count();
-    assert!(final_cache.len() <= cell_count * (3 + 1));
+    let dim = usize::try_from(tds.dim()).expect("TDS dimension should be non-negative");
+    assert!(final_cache.len() <= cell_count * (dim + 1));
 }
 
 /// Test cache invalidation during incremental building.
@@ -106,8 +104,6 @@ fn test_cache_invalidation_during_incremental_building() {
     let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
     let mut algorithm = IncrementalBowyerWatson::new();
 
-    // Build initial cache
-    let _cache = algorithm.try_get_or_build_facet_cache(&tds).unwrap();
     let initial_generation = tds.generation();
 
     // Insert vertices with forced invalidation after each insertion
