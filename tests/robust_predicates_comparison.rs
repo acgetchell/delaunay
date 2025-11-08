@@ -307,10 +307,10 @@ fn benchmark_robust_vs_standard() {
         "Benchmark Results ({iterations} iterations × {} test points):",
         test_points.len()
     );
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(clippy::cast_precision_loss)]
     let standard_avg =
         standard_duration.as_micros() as f64 / (iterations * test_points.len()) as f64;
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(clippy::cast_precision_loss)]
     let robust_avg = robust_duration.as_micros() as f64 / (iterations * test_points.len()) as f64;
     println!(
         "Standard predicates: {standard_successes} successes in {standard_duration:?} ({standard_avg:.2} μs/call)"
@@ -319,7 +319,7 @@ fn benchmark_robust_vs_standard() {
         "Robust predicates: {robust_successes} successes in {robust_duration:?} ({robust_avg:.2} μs/call)"
     );
 
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(clippy::cast_precision_loss)]
     let overhead_ratio = robust_duration.as_micros() as f64 / standard_duration.as_micros() as f64;
     println!("Robust overhead: {overhead_ratio:.2}x");
     println!(

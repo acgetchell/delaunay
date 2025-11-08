@@ -406,7 +406,10 @@ fn test_4d_circumsphere_methods() {
     println!("4D method comparison completed.\n");
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Intentional verbose debug harness; kept as a single flow for manual inspection"
+)]
 fn test_circumsphere_containment() {
     println!("Testing circumsphere containment:");
     println!("  determinant-based (insphere) vs distance-based (insphere_distance)");

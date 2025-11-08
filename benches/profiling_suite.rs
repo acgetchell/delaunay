@@ -229,7 +229,7 @@ fn generate_points_by_distribution<const D: usize>(
 // ============================================================================
 
 /// Comprehensive triangulation scaling analysis across dimensions and distributions
-#[allow(clippy::significant_drop_tightening, clippy::too_many_lines)]
+#[expect(clippy::significant_drop_tightening, clippy::too_many_lines)]
 fn benchmark_triangulation_scaling(c: &mut Criterion) {
     let counts = get_profiling_counts();
     let distributions = [
@@ -427,11 +427,6 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 
 /// Calculate percentile from a slice of values using nearest-rank method
 /// Supports configurable percentile via environment variable `BENCH_PERCENTILE` (default: 95)
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
 fn calculate_percentile(values: &mut [u64]) -> u64 {
     if values.is_empty() {
         return 0;
@@ -454,7 +449,7 @@ fn calculate_percentile(values: &mut [u64]) -> u64 {
 }
 
 /// Print memory allocation summary
-#[allow(clippy::cast_precision_loss)]
+#[expect(clippy::cast_precision_loss)]
 fn print_alloc_summary(
     info: &AllocationInfo,
     description: &str,
@@ -489,7 +484,7 @@ fn print_alloc_summary(
 }
 
 /// Generic helper to benchmark memory usage for a specific dimension D
-#[allow(clippy::cast_possible_wrap)]
+#[expect(clippy::cast_possible_wrap)]
 fn bench_memory_usage<const D: usize>(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     bench_id_prefix: &str,
@@ -586,7 +581,6 @@ fn bench_memory_usage<const D: usize>(
 }
 
 /// Memory usage profiling across different scales and dimensions using allocation counter
-#[allow(clippy::too_many_lines, clippy::cast_possible_wrap)]
 fn benchmark_memory_profiling(c: &mut Criterion) {
     #[cfg(not(feature = "count-allocations"))]
     print_count_allocations_banner_once();
@@ -702,7 +696,6 @@ fn benchmark_query_latency(c: &mut Criterion) {
                             let query_point_obj = *query_point;
 
                             // Use the fastest circumsphere method (based on benchmark results)
-                            #[allow(clippy::items_after_statements)]
                             {
                                 use delaunay::geometry::predicates::insphere_lifted;
                                 let result = insphere_lifted(points_for_test, query_point_obj);

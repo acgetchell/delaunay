@@ -280,7 +280,6 @@ where
     /// Cache for the facet-to-cells mapping to avoid rebuilding it for each facet check
     /// Uses `ArcSwapOption` for lock-free atomic updates when cache needs invalidation
     /// This avoids Some/None wrapping boilerplate compared to `ArcSwap<Option<T>>`
-    #[allow(clippy::type_complexity)]
     facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
     /// Immutable TDS generation at hull creation time.
     /// Set once in `from_triangulation()` and never modified. Used to detect stale hulls.
@@ -773,7 +772,6 @@ where
     /// // Note: The result depends on which facet is selected and the point's position
     /// // This test just verifies the method executes without error
     /// ```
-    #[allow(clippy::too_many_lines)]
     pub fn is_facet_visible_from_point(
         &self,
         facet_handle: &FacetHandle,
@@ -823,7 +821,7 @@ where
     /// # Errors
     ///
     /// Returns a [`ConvexHullConstructionError`] if visibility checking fails.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn is_facet_visible_from_point_with_cache(
         &self,
         facet_handle: &FacetHandle,
@@ -1516,6 +1514,10 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::thread;
 
+    // =============================================================================
+    // HELPER FUNCTIONS
+    // =============================================================================
+
     /// Helper function to extract vertices from a facet handle.
     ///
     /// This is a test utility that creates a `FacetView` from a facet handle
@@ -1539,20 +1541,53 @@ mod tests {
             .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })
     }
 
-    /// Macro to generate dimension-specific convex hull tests.
+    // =============================================================================
+    // TEST GENERATION MACROS
+    // =============================================================================
+
+    /// Macro to generate comprehensive dimension-specific convex hull tests.
     ///
     /// This macro reduces test duplication by generating consistent tests across
-    /// multiple dimensions. It creates tests for:
-    /// - Basic hull operations (`facet_count`, `dimension`, `validate`, `is_empty`)
-    /// - Facet access methods
+    /// multiple dimensions (1D through 6D). For each dimension, it creates:
+    ///
+    /// 1. **Basic operations test** - Tests:
+    ///    - `facet_count()` returns expected number
+    ///    - `dimension()` returns correct dimension
+    ///    - `validate()` succeeds
+    ///    - `is_empty()` returns false for non-empty hull
+    ///
+    /// 2. **Facet access test** (via `pastey::paste`) - Tests:
+    ///    - `facets()` iterator returns correct count
+    ///    - `get_facet(0)` returns Some for valid index
+    ///    - `get_facet(out_of_bounds)` returns None
+    ///
+    /// 3. **Point containment test** (via `pastey::paste`) - Tests:
+    ///    - Inside point (centroid) is correctly identified as not outside
+    ///    - Outside point is correctly identified as outside
     ///
     /// # Usage
     ///
     /// ```ignore
     /// test_hull_dimensions! {
-    ///     hull_2d => 2 => "triangle" => 3 => vec![vertex!([0.0, 0.0]), ...],
+    ///     hull_2d => 2 => "triangle" => 3 =>
+    ///         vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])],
     /// }
     /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `$test_name` - Base name for generated tests
+    /// * `$dim` - Dimension (const generic parameter)
+    /// * `$desc` - Description string for error messages
+    /// * `$expected_facets` - Expected number of facets in the hull
+    /// * `$vertices` - Vec of vertices to construct the hull
+    ///
+    /// # Generated Tests
+    ///
+    /// For `hull_2d => 2 => "triangle" => 3 => vertices`, generates:
+    /// - `hull_2d()` - Basic operations
+    /// - `hull_2d_facet_access()` - Facet access  
+    /// - `hull_2d_point_containment()` - Point inside/outside detection
     macro_rules! test_hull_dimensions {
         ($(
             $test_name:ident => $dim:expr => $desc:expr => $expected_facets:expr => $vertices:expr
@@ -1614,6 +1649,34 @@ mod tests {
                         assert!(
                             hull.get_facet($expected_facets).is_none(),
                             "{}D hull out of range facet index should return None",
+                            $dim
+                        );
+                    }
+
+                    #[test]
+                    fn [<$test_name _point_containment>]() {
+                        let vertices = $vertices;
+                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let hull: ConvexHull<f64, Option<()>, Option<()>, $dim> =
+                            ConvexHull::from_triangulation(&tds).unwrap();
+
+                        // Test with inside point (scaled to ensure it's inside the unit simplex)
+                        // For a unit simplex, a point is inside if sum of coordinates <= 1
+                        // Use 0.1 per dimension to ensure sum stays well below 1 for all dimensions
+                        let inside_coords = [0.1; $dim];
+                        let inside_point = Point::new(inside_coords);
+                        assert!(
+                            !hull.is_point_outside(&inside_point, &tds).unwrap(),
+                            "{}D hull: point with small coordinates should be inside",
+                            $dim
+                        );
+
+                        // Test with outside point
+                        let outside_coords = [2.0; $dim];
+                        let outside_point = Point::new(outside_coords);
+                        assert!(
+                            hull.is_point_outside(&outside_point, &tds).unwrap(),
+                            "{}D hull: point far outside should be detected",
                             $dim
                         );
                     }
@@ -1730,7 +1793,7 @@ mod tests {
     /// Comprehensive test for visibility algorithms covering all dimensions and edge cases
     /// Consolidates: `test_visibility_algorithms_comprehensive`, `test_visibility_edge_cases`,
     /// `test_visibility_algorithm_coverage`, `test_edge_case_distance_calculations`
-    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+    #[expect(clippy::too_many_lines, clippy::cognitive_complexity)]
     #[test]
     fn test_visibility_algorithms_comprehensive() {
         println!("Testing comprehensive visibility algorithms in dimensions 2D-5D");
@@ -2004,7 +2067,7 @@ mod tests {
     // These tests target private methods to ensure thorough coverage of internal
     // ConvexHull functionality, particularly the fallback_visibility_test method.
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     #[test]
     fn test_fallback_visibility_comprehensive() {
         println!("Testing comprehensive fallback visibility algorithm");
@@ -2274,7 +2337,7 @@ mod tests {
     /// Consolidates: `test_convex_hull_validation_comprehensive`, `test_validate_method_comprehensive`,
     /// `test_validate_method_various_dimensions`
     #[test]
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+    #[expect(clippy::cognitive_complexity, clippy::too_many_lines)]
     fn test_convex_hull_validation_comprehensive() {
         println!("Testing ConvexHull validation comprehensively");
 
@@ -2965,6 +3028,13 @@ mod tests {
             }
             _ => panic!("Expected InsufficientData error for no vertices"),
         }
+
+        // Also test with matches! macro (alternative assertion style)
+        let result2 = ConvexHull::from_triangulation(&empty_tds);
+        assert!(matches!(
+            result2,
+            Err(ConvexHullConstructionError::InsufficientData { .. })
+        ));
     }
 
     #[test]
@@ -3067,7 +3137,9 @@ mod tests {
     }
 
     #[test]
-    fn test_find_nearest_visible_facet_no_visible_facets() {
+    fn test_inside_point_no_visible_facets() {
+        // Consolidated test for inside point detection (no visible facets)
+        // Tests both find_nearest_visible_facet and is_point_outside
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3078,11 +3150,16 @@ mod tests {
         let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
             ConvexHull::from_triangulation(&tds).unwrap();
 
-        // Test with a point inside the hull (no facets should be visible)
+        // Test with a point inside the hull
         let inside_point = Point::new([0.2, 0.2, 0.2]);
+
+        // Test find_nearest_visible_facet (no facets should be visible)
         let result = hull.find_nearest_visible_facet(&inside_point, &tds);
         assert!(result.is_ok());
-        // May or may not be None depending on specific geometry and precision
+
+        // Test is_point_outside (should return false)
+        let is_outside = hull.is_point_outside(&inside_point, &tds).unwrap();
+        assert!(!is_outside, "Inside point should not be outside");
     }
 
     #[test]
@@ -3502,7 +3579,7 @@ mod tests {
         println!("✓ Numeric cast error handling tested successfully");
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     #[test]
     fn test_cache_invalidation_behavior() {
         println!("Testing cache invalidation behavior in ConvexHull");
@@ -4536,7 +4613,7 @@ mod tests {
     // These tests provide comprehensive coverage of error conditions that can
     // occur during convex hull construction and operation.
 
-    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+    #[expect(clippy::too_many_lines, clippy::cognitive_complexity)]
     #[test]
     fn test_convex_hull_error_handling_comprehensive() {
         println!("Testing comprehensive ConvexHull error handling");
@@ -4838,7 +4915,7 @@ mod tests {
     // under various degenerate and edge-case conditions.
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_fallback_visibility_with_degenerate_facets() {
         println!("Testing fallback visibility algorithm with degenerate facet geometries");
 
@@ -5029,7 +5106,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_fallback_visibility_threshold_behavior() {
         println!("Testing fallback visibility threshold and heuristic behavior");
 
@@ -5304,7 +5381,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_coplanar_points_in_higher_dimensions() {
         println!("Testing convex hull construction with coplanar point configurations");
 
@@ -5536,7 +5613,7 @@ mod tests {
     // and with larger datasets to ensure robustness and performance.
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_high_dimensional_convex_hulls() {
         println!("Testing convex hull construction in high dimensions (6D, 7D, 8D)");
 

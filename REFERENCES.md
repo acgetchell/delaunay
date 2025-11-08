@@ -146,6 +146,17 @@ and selecting high-quality cells during triangulation repair.
   *SIAM Journal on Scientific Computing* 23, no. 1 (2001): 193-218.
   DOI: [10.1137/S1064827500371499](https://doi.org/10.1137/S1064827500371499)
 
+## Set Similarity Metrics (Testing and Validation)
+
+These references motivate the Jaccard similarity/distance used in tests to compare
+set-based structures (e.g., edge sets) under different construction orders.
+
+- Jaccard, P. "Étude comparative de la distribution florale dans une portion des Alpes et des Jura."
+  *Bulletin de la Société Vaudoise des Sciences Naturelles* 37, no. 142 (1901): 547–579.
+- Tanimoto, T. T. "An Elementary Mathematical Theory of Classification and Prediction."
+  IBM Technical Report, 1958. Often cited for the Tanimoto coefficient (equivalent to the
+  Jaccard index for binary vectors).
+
 ## Convex Hull Algorithms
 
 The library includes d-dimensional convex hull functionality, based on these algorithmic foundations.

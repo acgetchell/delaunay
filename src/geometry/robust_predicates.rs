@@ -902,7 +902,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     #[test]
     fn test_verify_insphere_consistency_comprehensive() {
         let config = config_presets::general_triangulation();

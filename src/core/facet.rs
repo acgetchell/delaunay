@@ -613,8 +613,8 @@ where
     }
 }
 
-#[allow(clippy::expl_impl_clone_on_copy)]
-#[allow(clippy::non_canonical_clone_impl)]
+#[expect(clippy::expl_impl_clone_on_copy)]
+#[expect(clippy::non_canonical_clone_impl)]
 impl<T, U, V, const D: usize> Clone for FacetView<'_, T, U, V, D>
 where
     T: CoordinateScalar,
@@ -744,7 +744,7 @@ where
         );
         // We collect here because we need an owned iterator to store in the struct
         // CellKey is just u64, so this is efficient
-        #[allow(clippy::needless_collect)]
+        #[expect(clippy::needless_collect)]
         let cell_keys: Vec<CellKey> = tds.cell_keys().collect();
         Self {
             tds,

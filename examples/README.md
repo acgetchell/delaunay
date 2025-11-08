@@ -118,26 +118,98 @@ full triangulation workflow from vertex generation to validation and analysis.
 **Sample Output:**
 
 ```text
+=================================================================
 3D Delaunay Triangulation Example - 100 Random Points
 =================================================================
 
-Generated 100 vertices:
-  v 0: [   4.123,   -2.456,    7.890]
-  v 1: [  -1.234,    5.678,   -3.210]
-  ... and 98 more vertices
-
-Creating Delaunay triangulation...
-✓ Triangulation created successfully in 5.678ms
+Creating 3D Delaunay triangulation with 100 random points...
+✓ Triangulation created successfully in 123.222ms
+Generated 100 vertices
+First few vertices:
+  v 0: [   0.531,    0.855,    2.729]
+  v 1: [  -1.882,   -9.313,   -1.701]
+  v 2: [   4.748,    6.985,   -7.374]
+  v 3: [  -9.935,    8.643,    0.123]
+  v 4: [  -2.187,   -7.182,    0.461]
+  v 5: [  -5.626,   -9.748,    0.385]
+  v 6: [  -8.995,    2.929,    6.916]
+  v 7: [  -0.045,    0.120,   -8.830]
+  v 8: [  -2.980,   -1.049,    5.888]
+  v 9: [  -5.929,   -1.966,    3.092]
+  ... and 90 more vertices
 
 Triangulation Analysis:
 ======================
   Number of vertices: 100
-  Number of cells:    523
+  Number of cells:    2211
   Dimension:          3
-  Vertex/Cell ratio:  0.21
+  Vertex/Cell ratio:  0.05
 
+  Cell Analysis:
+    Cell CellKey(1v27):
+      Vertices: 4
+      Neighbors: 4
+    Cell CellKey(2v39):
+      Vertices: 4
+      Neighbors: 4
+    Cell CellKey(3v29):
+      Vertices: 4
+    Valid cells:     2211/2211
+    Avg neighbors:   3.42
+
+Triangulation Validation:
+========================
 ✓ Triangulation is VALID
-  Validation completed in 156μs
+  Validation completed in 953.292µs
+
+  Validation Details:
+    • All cells have valid geometry
+    • Neighbor relationships are consistent
+    • No duplicate cells detected
+    • Vertex mappings are consistent
+    • Facet sharing is valid
+
+Boundary Analysis:
+=================
+  Boundary facets:     4880
+  Boundary computation: 630.125µs
+
+  Boundary Details:
+    • Boundary facets form the convex hull
+    • Each boundary facet belongs to exactly one cell
+    • Facet 1: key = Ok(8560930012034061606)
+    • Facet 2: key = Ok(6274251604205431426)
+    • Facet 3: key = Ok(11636944546669252672)
+    • ... and 4877 more boundary facets
+
+  Topological Properties:
+    • Vertices (V): 100
+    • Cells (C):    2211
+    • Boundary facets: 4880
+
+Performance Analysis:
+====================
+  Validation Performance (5 runs):
+    • Average time: 835.408µs
+    • Min time:     788.125µs
+    • Max time:     902.792µs
+
+  Boundary Computation Performance (3 runs):
+    • Average time: 552.43µs
+
+  Memory Usage Estimation (stack only, excludes heap allocations):
+    • Vertex memory: ~5600 bytes
+    • Cell memory:   ~406824 bytes
+    • Total memory:  ~412424 bytes (402.8 KB)
+    Note: This excludes heap-owned data like neighbors and internal collections
+
+  Performance Ratios:
+    • Validation per vertex: 8354.08 ns
+    • Validation per cell:   377.84 ns
+
+=================================================================
+Example completed successfully!
+=================================================================
 ```
 
 **Run with:** `cargo run --release --example triangulation_3d_100_points`
@@ -190,14 +262,51 @@ Memory Analysis for Delaunay Triangulations Across Dimensions
 
 === Memory Analysis with 25 Points ===
 
+--- 2D Triangulation ---
+  Analyzing 2D triangulation with 25 points
+    Triangulation: 25 vertices, 26 cells
+    Convex hull: 32 facets
+    Construction time: 2.811791ms
+    Hull extraction time: 5.625µs
+    Triangulation memory: 1233.7 KiB (1.20 MiB, 50532 bytes/vertex)
+    Hull memory: 7.1 KiB (0.6% of triangulation)
+
 --- 3D Triangulation ---
   Analyzing 3D triangulation with 25 points
-    Triangulation: 25 vertices, 94 cells
-    Convex hull: 46 facets
-    Construction time: 1.234ms
-    Hull extraction time: 456μs
-    Triangulation memory: 12.4 KiB (524 bytes/vertex)
-    Hull memory: 3.8 KiB (30.6% of triangulation)
+    Triangulation: 25 vertices, 100 cells
+    Convex hull: 60 facets
+    Construction time: 2.016208ms
+    Hull extraction time: 24.917µs
+    Triangulation memory: 3502.7 KiB (3.42 MiB, 143471 bytes/vertex)
+    Hull memory: 26.8 KiB (0.8% of triangulation)
+
+--- 4D Triangulation ---
+  Analyzing 4D triangulation with 25 points
+    Triangulation: 25 vertices, 211 cells
+    Convex hull: 341 facets
+    Construction time: 4.791167ms
+    Hull extraction time: 74.666µs
+    Triangulation memory: 10315.2 KiB (10.07 MiB, 422509 bytes/vertex)
+    Hull memory: 111.7 KiB (1.1% of triangulation)
+
+--- 5D Triangulation ---
+  Analyzing 5D triangulation with 25 points
+    Triangulation: 25 vertices, 532 cells
+    Convex hull: 1290 facets
+    Construction time: 10.621375ms
+    Hull extraction time: 220.959µs
+    Triangulation memory: 22676.3 KiB (22.14 MiB, 928823 bytes/vertex)
+    Hull memory: 248.2 KiB (1.1% of triangulation)
+
+=== Key Insights (empirical) ===
+• On random 3D inputs, memory tends to scale between O(n) and O(n log n), distribution-dependent
+• Convex hull memory is often a fraction of triangulation memory (ballpark 10–30%, varies)
+• Hull extraction is typically faster than triangulation construction
+• Use --features count-allocations to see detailed allocation metrics
+
+For comprehensive scaling analysis, run:
+  cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
+  cargo bench --bench triangulation_vs_hull_memory --features count-allocations
 ```
 
 **Usage:**
@@ -239,6 +348,7 @@ heap allocations.
 **Sample Output:**
 
 ```text
+=================================================================
 Zero-Allocation Iterator Demo
 =================================================================
 
@@ -252,10 +362,26 @@ Functional Equivalence Test:
 
 Performance Comparison:
 ======================
-  Method 1 (vertex_uuids):   7.63µs (10000 iterations)
-  Method 2 (vertex_uuid_iter):   0.00ns (10000 iterations)
-  Speedup: N/A (iteration time too small to measure reliably)
+  Method 1 (vertex_uuids): 512.46µs (10000 iterations)
+  Method 2 (vertex_uuid_iter):   7.54µs (10000 iterations)
+  Speedup: 67.95x faster
   Counts match: true
+
+Iterator Capabilities:
+=====================
+  Length via ExactSizeIterator: 5
+  Non-nil UUIDs via for loop: 5
+  Valid UUIDs via iterator chain: 5
+  First 3 UUIDs: 3 collected
+
+=================================================================
+Key Benefits of vertex_uuid_iter():
+- Zero heap allocations (no Vec created)
+- Implements ExactSizeIterator (O(1) len())
+- Full iterator trait support (map, filter, etc.)
+- Lazy evaluation (only compute what you need)
+- Better performance for iteration-only use cases
+=================================================================
 ```
 
 **Run with:** `cargo run --release --example zero_allocation_iterator_demo`

@@ -114,7 +114,7 @@ fn nan_comparison_demo() {
     println!("point_nan1 == point_normal: {}", point_nan1 == point_normal);
 
     // Test reflexivity with NaN (this demonstrates our custom implementation)
-    #[allow(clippy::eq_op)]
+    #[expect(clippy::eq_op)]
     let reflexivity_result = point_nan1 == point_nan1;
     println!("point_nan1 == point_nan1: {reflexivity_result}");
 
@@ -281,7 +281,7 @@ fn mathematical_properties_demo() {
     println!("Testing with points containing NaN and ∞:");
 
     // Reflexivity: a == a (this demonstrates our custom implementation)
-    #[allow(clippy::eq_op)]
+    #[expect(clippy::eq_op)]
     let reflexivity_result = point_a == point_a;
     println!("Reflexivity (a == a): {reflexivity_result}");
 

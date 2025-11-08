@@ -586,7 +586,7 @@ impl InsertionStatistics {
             let successes = self
                 .vertices_processed
                 .saturating_sub(self.cavity_boundary_failures);
-            #[allow(clippy::cast_precision_loss)]
+            #[expect(clippy::cast_precision_loss)]
             {
                 successes as f64 / self.vertices_processed as f64
             }
@@ -599,7 +599,7 @@ impl InsertionStatistics {
         if self.vertices_processed == 0 {
             0.0
         } else {
-            #[allow(clippy::cast_precision_loss)]
+            #[expect(clippy::cast_precision_loss)]
             {
                 self.fallback_strategies_used as f64 / self.vertices_processed as f64
             }
@@ -614,7 +614,6 @@ impl InsertionStatistics {
 /// Instead of allocating new vectors on each operation, algorithms can
 /// reuse these pre-allocated buffers.
 #[derive(Debug)]
-#[allow(clippy::struct_field_names)]
 pub struct InsertionBuffers<T, U, V, const D: usize>
 where
     T: CoordinateScalar,
@@ -1527,7 +1526,7 @@ where
     /// - No bad cells are found (vertex is not interior)
     /// - Cavity boundary computation fails
     /// - Cell creation fails
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn insert_vertex_cavity_based(
         &mut self,
         tds: &mut Tds<T, U, V, D>,
@@ -3088,7 +3087,6 @@ where
     /// - Cell or vertex lookups fail
     /// - Neighbor wiring creates conflicts or asymmetries
     /// - The inserted vertex cannot be found in created cells
-    #[allow(clippy::too_many_lines)] // Complex topology wiring requires detailed logic
     fn connect_new_cells_to_neighbors(
         tds: &mut Tds<T, U, V, D>,
         inserted_vk: VertexKey,
@@ -3158,7 +3156,7 @@ where
         // STEP 2: Wire New→New neighbors within the cavity
         // ====================================================================
         // Type alias at module level would be better, but this is a local helper
-        #[allow(clippy::items_after_statements)]
+        #[expect(clippy::items_after_statements)]
         type FacetSignature = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>;
 
         // Build a map from facet signatures to (cell_key, local_facet_index)
@@ -5246,7 +5244,7 @@ mod tests {
 
     /// Test `InsertionStrategy` determination edge cases
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_insertion_strategy_determination_edge_cases() {
         println!("Testing InsertionStrategy determination edge cases");
 
@@ -7120,7 +7118,7 @@ mod tests {
         #[test]
         fn prop_filter_never_increases_count(vertex_count in 4usize..10) {
             // Create vertices
-            #[allow(clippy::cast_precision_loss)]
+            #[expect(clippy::cast_precision_loss)]
             let vertices: Vec<_> = (0..vertex_count)
                 .map(|i| vertex!([(i as f64), 0.0, 0.0]))
                 .collect();
@@ -7199,7 +7197,7 @@ mod tests {
         ];
 
         // Add more coplanar points
-        #[allow(clippy::cast_lossless)]
+        #[expect(clippy::cast_lossless)]
         for i in 0..10 {
             vertices.push(vertex!([(i as f64) * 0.1, (i as f64) * 0.15, 0.0]));
         }
@@ -7240,7 +7238,7 @@ mod tests {
         let mut algorithm = IncrementalBowyerWatson::new();
 
         // Insert many interior points in rapid succession
-        #[allow(clippy::cast_lossless)]
+        #[expect(clippy::cast_lossless)]
         let test_vertices: Vec<_> = (0..20)
             .map(|i| {
                 let t = (i as f64) * 0.1;
@@ -7672,7 +7670,7 @@ mod tests {
 
         /// Property: is_vertex_likely_exterior should be consistent
         #[test]
-        #[allow(clippy::tuple_array_conversions)]
+        #[expect(clippy::tuple_array_conversions)]
         fn prop_is_vertex_likely_exterior_consistency(
             x in -100.0f64..100.0,
             y in -100.0f64..100.0,

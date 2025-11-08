@@ -388,6 +388,95 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 }
 
 // =============================================================================
+// SET SIMILARITY UTILITIES
+// =============================================================================
+
+/// Jaccard index (similarity) between two sets: |A ∩ B| / |A ∪ B|.
+///
+/// Returns 1.0 when both sets are empty by convention.
+///
+/// References
+/// - Jaccard, P. (1901). Étude comparative de la distribution florale.
+///   Bulletin de la Société Vaudoise des Sciences Naturelles.
+/// - Tanimoto, T. T. (1958). An elementary mathematical theory of classification and
+///   prediction. IBM Report (often cited for the Tanimoto coefficient).
+///
+/// # Examples
+/// ```
+/// use std::collections::HashSet;
+/// use delaunay::core::util::jaccard_index;
+///
+/// // Identical sets => similarity 1.0
+/// let a: HashSet<_> = [1, 2, 3].into_iter().collect();
+/// assert_eq!(jaccard_index(&a, &a), 1.0);
+///
+/// // Partial overlap: {1,2,3} vs {3,4} => |∩|=1, |∪|=4 => 0.25
+/// let b: HashSet<_> = [3, 4].into_iter().collect();
+/// assert!((jaccard_index(&a, &b) - 0.25).abs() < 1e-12);
+///
+/// // Empty vs empty => 1.0 by convention
+/// let empty: HashSet<i32> = HashSet::new();
+/// assert_eq!(jaccard_index(&empty, &empty), 1.0);
+/// ```
+#[must_use]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "usize→f64 conversion for ratio; counts fit safely in f64 mantissa"
+)]
+pub fn jaccard_index<T, S>(
+    a: &std::collections::HashSet<T, S>,
+    b: &std::collections::HashSet<T, S>,
+) -> f64
+where
+    T: Eq + std::hash::Hash,
+    S: std::hash::BuildHasher,
+{
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    // Iterate over the smaller set for intersection count
+    let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    let mut inter = 0usize;
+    for x in small {
+        if large.contains(x) {
+            inter += 1;
+        }
+    }
+    let union = a.len() + b.len() - inter;
+    inter as f64 / union as f64
+}
+
+/// Jaccard distance between two sets: 1.0 - Jaccard index.
+///
+/// # Examples
+/// ```
+/// use std::collections::HashSet;
+/// use delaunay::core::util::{jaccard_index, jaccard_distance};
+///
+/// let a: HashSet<_> = [1, 2, 3].into_iter().collect();
+/// let b: HashSet<_> = [3, 4].into_iter().collect();
+///
+/// // Distance is 0.0 for identical sets
+/// assert_eq!(jaccard_distance(&a, &a), 0.0);
+///
+/// // Index + distance = 1.0
+/// let sum = jaccard_index(&a, &b) + jaccard_distance(&a, &b);
+/// assert!((sum - 1.0).abs() < 1e-12);
+/// ```
+#[inline]
+#[must_use]
+pub fn jaccard_distance<T, S>(
+    a: &std::collections::HashSet<T, S>,
+    b: &std::collections::HashSet<T, S>,
+) -> f64
+where
+    T: Eq + std::hash::Hash,
+    S: std::hash::BuildHasher,
+{
+    1.0 - jaccard_index(a, b)
+}
+
+// =============================================================================
 // FACET KEY UTILITIES
 // =============================================================================
 
@@ -695,6 +784,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+    use approx::assert_relative_eq;
 
     // =============================================================================
     // UUID UTILITIES TESTS
@@ -909,6 +999,43 @@ mod tests {
             "Different large values should produce different hashes"
         );
     }
+
+    // =============================================================================
+    // SET SIMILARITY UTILITIES TESTS
+    // =============================================================================
+
+    // Unit tests for jaccard_index and jaccard_distance across 2D–5D using a macro
+    macro_rules! gen_jaccard_set_tests {
+        ($name:ident, $dim:literal) => {
+            #[test]
+            fn $name() {
+                use std::collections::HashSet;
+                let empty: HashSet<[i32; $dim]> = HashSet::new();
+                assert_relative_eq!(jaccard_index(&empty, &empty), 1.0, epsilon = 1e-12);
+                assert_relative_eq!(jaccard_distance(&empty, &empty), 0.0, epsilon = 1e-12);
+
+                let a: HashSet<[i32; $dim]> = HashSet::from([[1; $dim], [2; $dim], [3; $dim]]);
+                let b: HashSet<[i32; $dim]> = HashSet::from([[3; $dim], [4; $dim]]);
+
+                // Identical sets
+                assert_relative_eq!(jaccard_index(&a, &a), 1.0, epsilon = 1e-12);
+                assert_relative_eq!(jaccard_distance(&a, &a), 0.0, epsilon = 1e-12);
+
+                // Partial overlap: |∩|=1, |∪|=4
+                assert_relative_eq!(jaccard_index(&a, &b), 0.25, epsilon = 1e-12);
+                assert_relative_eq!(jaccard_distance(&a, &b), 0.75, epsilon = 1e-12);
+
+                // Empty vs non-empty
+                assert_relative_eq!(jaccard_index(&a, &empty), 0.0, epsilon = 1e-12);
+                assert_relative_eq!(jaccard_distance(&a, &empty), 1.0, epsilon = 1e-12);
+            }
+        };
+    }
+
+    gen_jaccard_set_tests!(jaccard_basic_properties_2d, 2);
+    gen_jaccard_set_tests!(jaccard_basic_properties_3d, 3);
+    gen_jaccard_set_tests!(jaccard_basic_properties_4d, 4);
+    gen_jaccard_set_tests!(jaccard_basic_properties_5d, 5);
 
     // =============================================================================
     // COMBINATION UTILITIES TESTS
@@ -1126,8 +1253,7 @@ mod tests {
     // =============================================================================
 
     #[test]
-    #[allow(clippy::cognitive_complexity)]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn test_derive_facet_key_from_vertex_keys_comprehensive() {
         println!("Testing derive_facet_key_from_vertex_keys comprehensively");
 

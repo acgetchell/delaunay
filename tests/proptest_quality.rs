@@ -12,7 +12,7 @@
 use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
-use delaunay::geometry::quality::radius_ratio;
+use delaunay::geometry::quality::{normalized_volume, radius_ratio};
 use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::geometry::util::{circumradius, inradius, safe_usize_to_scalar};
 use proptest::prelude::*;
@@ -178,6 +178,247 @@ macro_rules! test_quality_properties {
                                     ratio_reg,
                                     ratio_deg
                                 );
+                            }
+                        }
+                    }
+                }
+
+                /// Property: Radius ratio is translation-invariant
+                #[test]
+                fn [<prop_radius_ratio_translation_invariant_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $min_vertices..=$max_vertices
+                    ).prop_map(Vertex::from_points),
+                    translation in prop::array::[<uniform $dim>](finite_coordinate())
+                ) {
+                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                        // Translate all vertices
+                        let translated_vertices: Vec<_> = vertices
+                            .iter()
+                            .map(|v| {
+                                let coords: [f64; $dim] = (*v.point()).into();
+                                let mut translated = [0.0f64; $dim];
+                                for i in 0..$dim {
+                                    translated[i] = coords[i] + translation[i];
+                                }
+                                // Use from_points to create vertices with auto-generated UUIDs
+                                Point::new(translated)
+                            })
+                            .collect::<Vec<_>>();
+
+                        let translated_vertices = Vertex::from_points(translated_vertices);
+
+                        if let Ok(tds_translated) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&translated_vertices) {
+                            // Compare radius ratios for corresponding cells
+                            let original_keys: Vec<_> = tds.cell_keys().collect();
+                            let translated_keys: Vec<_> = tds_translated.cell_keys().collect();
+
+                            if original_keys.len() == translated_keys.len() {
+                                for (orig_key, trans_key) in original_keys.iter().zip(translated_keys.iter()) {
+                                    if let (Ok(ratio_orig), Ok(ratio_trans)) =
+                                        (radius_ratio(&tds, *orig_key), radius_ratio(&tds_translated, *trans_key))
+                                    {
+                                        let rel_diff = ((ratio_orig - ratio_trans).abs() / ratio_orig.max(1.0)).min(1.0);
+                                        prop_assert!(
+                                        rel_diff < 0.05,
+                                            "{}D radius ratio should be translation-invariant: {} vs {} (diff: {})",
+                                            $dim,
+                                            ratio_orig,
+                                            ratio_trans,
+                                            rel_diff
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                /// Property: Normalized volume is translation-invariant
+                #[test]
+                fn [<prop_normalized_volume_translation_invariant_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $min_vertices..=$max_vertices
+                    ).prop_map(Vertex::from_points),
+                    translation in prop::array::[<uniform $dim>](finite_coordinate())
+                ) {
+                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                        // Translate all vertices
+                        let translated_vertices: Vec<_> = vertices
+                            .iter()
+                            .map(|v| {
+                                let coords: [f64; $dim] = (*v.point()).into();
+                                let mut translated = [0.0f64; $dim];
+                                for i in 0..$dim {
+                                    translated[i] = coords[i] + translation[i];
+                                }
+                                Point::new(translated)
+                            })
+                            .collect::<Vec<_>>();
+
+                        let translated_vertices = Vertex::from_points(translated_vertices);
+
+                        if let Ok(tds_translated) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&translated_vertices) {
+                            let original_keys: Vec<_> = tds.cell_keys().collect();
+                            let translated_keys: Vec<_> = tds_translated.cell_keys().collect();
+
+                            if original_keys.len() == translated_keys.len() {
+                                for (orig_key, trans_key) in original_keys.iter().zip(translated_keys.iter()) {
+                                    if let (Ok(vol_orig), Ok(vol_trans)) =
+                                        (normalized_volume(&tds, *orig_key), normalized_volume(&tds_translated, *trans_key))
+                                    {
+                                        let rel_diff = ((vol_orig - vol_trans).abs() / vol_orig.max(1e-6)).min(1.0);
+                                        prop_assert!(
+                                            rel_diff < 0.01,
+                                            "{}D normalized volume should be translation-invariant: {} vs {} (diff: {})",
+                                            $dim,
+                                            vol_orig,
+                                            vol_trans,
+                                            rel_diff
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                /// Property: Radius ratio is scale-invariant (uniform scaling)
+                #[test]
+                fn [<prop_normalized_volume_scale_invariant_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $min_vertices..=$max_vertices
+                    ).prop_map(Vertex::from_points),
+                    scale in 0.1f64..10.0f64
+                ) {
+                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                        // Scale all vertices uniformly
+                        let scaled_vertices: Vec<_> = vertices
+                            .iter()
+                            .map(|v| {
+                                let coords: [f64; $dim] = (*v.point()).into();
+                                let mut scaled = [0.0f64; $dim];
+                                for i in 0..$dim {
+                                    scaled[i] = coords[i] * scale;
+                                }
+                                Point::new(scaled)
+                            })
+                            .collect::<Vec<_>>();
+
+                        let scaled_vertices = Vertex::from_points(scaled_vertices);
+
+                        if let Ok(tds_scaled) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&scaled_vertices) {
+                            let original_keys: Vec<_> = tds.cell_keys().collect();
+                            let scaled_keys: Vec<_> = tds_scaled.cell_keys().collect();
+
+                            if original_keys.len() == scaled_keys.len() {
+                                for (orig_key, scaled_key) in original_keys.iter().zip(scaled_keys.iter()) {
+                                    if let (Ok(vol_orig), Ok(vol_scaled)) =
+                                        (normalized_volume(&tds, *orig_key), normalized_volume(&tds_scaled, *scaled_key))
+                                    {
+                                        let rel_diff = ((vol_orig - vol_scaled).abs() / vol_orig.max(1e-6)).min(1.0);
+                                        prop_assert!(
+                                            rel_diff < 0.01,
+                                            "{}D normalized volume should be scale-invariant: {} vs {} (diff: {})",
+                                            $dim,
+                                            vol_orig,
+                                            vol_scaled,
+                                            rel_diff
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                /// Property: Both metrics detect degeneracy consistently
+                #[test]
+                fn [<prop_degeneracy_consistency_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $min_vertices..=$max_vertices
+                    ).prop_map(Vertex::from_points)
+                ) {
+                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                        for cell_key in tds.cell_keys() {
+                            let rr_result = radius_ratio(&tds, cell_key);
+                            let nv_result = normalized_volume(&tds, cell_key);
+
+                            // Both metrics should agree on degeneracy
+                            // If one fails with DegenerateCell, both should fail
+                            match (rr_result, nv_result) {
+                                (Ok(_), Ok(_)) => (),  // Both succeed - OK
+                                (Err(rr_err), Err(nv_err)) => {
+                                    // Both fail - verify they're both degeneracy errors or both other errors
+                                    let rr_is_degen = matches!(rr_err, delaunay::geometry::quality::QualityError::DegenerateCell { .. });
+                                    let nv_is_degen = matches!(nv_err, delaunay::geometry::quality::QualityError::DegenerateCell { .. });
+
+                                    if rr_is_degen || nv_is_degen {
+                                        prop_assert!(
+                                            rr_is_degen == nv_is_degen,
+                                            "{}D: Both metrics should detect degeneracy consistently: rr={}, nv={}",
+                                            $dim,
+                                            rr_is_degen,
+                                            nv_is_degen
+                                        );
+                                    }
+                                }
+                                (Ok(_), Err(_)) | (Err(_), Ok(_)) => {
+                                    // One succeeds, one fails - this is acceptable for numerical edge cases
+                                    // but log for investigation if it's a degeneracy disagreement
+                                }
+                            }
+                        }
+                    }
+                }
+
+                /// Property: Extreme deformation degrades quality (becomes degenerate)
+                #[test]
+                fn [<prop_quality_degrades_under_collapse_ $dim d>](
+                    base_scale in 0.1f64..10.0f64
+                ) {
+                    // Create a regular simplex
+                    let mut regular_points = Vec::new();
+                    regular_points.push(Point::new([0.0f64; $dim]));
+                    for i in 0..$dim {
+                        let mut coords = [0.0f64; $dim];
+                        coords[i] = base_scale;
+                        regular_points.push(Point::new(coords));
+                    }
+
+                    // Create a nearly-degenerate version (collapse last vertex toward origin)
+                    let mut degenerate_points = regular_points.clone();
+                    if let Some(last) = degenerate_points.last_mut() {
+                        let coords: [f64; $dim] = (*last).into();
+                        let mut collapsed_coords = coords;
+                        // Collapse to nearly coincident with first vertex
+                        for i in 0..$dim {
+                            collapsed_coords[i] *= 0.01; // Move 99% toward origin
+                        }
+                        *last = Point::new(collapsed_coords);
+                    }
+
+                    // Compare quality metrics - collapsed should be much worse
+                    if let (Ok(r_reg), Ok(r_inner_reg)) = (circumradius(&regular_points), inradius(&regular_points)) {
+                        if let (Ok(r_coll), Ok(r_inner_coll)) = (circumradius(&degenerate_points), inradius(&degenerate_points)) {
+                            if r_reg > 1e-6 && r_inner_reg > 1e-9 && r_coll > 1e-6 && r_inner_coll > 1e-9 {
+                                let ratio_reg = r_reg / r_inner_reg;
+                                let ratio_coll = r_coll / r_inner_coll;
+
+                                if ratio_reg.is_finite() && ratio_coll.is_finite() {
+                                    // Collapsed simplex should have significantly worse quality
+                                    prop_assert!(
+                                        ratio_coll > ratio_reg * 1.5,
+                                        "{}D: Collapsed simplex should have worse quality: regular={}, collapsed={}",
+                                        $dim,
+                                        ratio_reg,
+                                        ratio_coll
+                                    );
+                                }
                             }
                         }
                     }

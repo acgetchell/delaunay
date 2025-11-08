@@ -43,426 +43,239 @@ fn point_5d() -> impl Strategy<Value = Point<f64, 5>> {
 }
 
 // =============================================================================
-// ORIENTATION PROPERTY TESTS
+// ORIENTATION AND INSPHERE MACROS
 // =============================================================================
 
-proptest! {
-    /// Property: Reversing the order of two vertices in a simplex should flip
-    /// the orientation sign (or remain DEGENERATE).
-    #[test]
-    fn prop_orientation_sign_flip_2d(
-        p0 in point_2d(),
-        p1 in point_2d(),
-        p2 in point_2d(),
-    ) {
-        let simplex1 = vec![p0, p1, p2];
-        let simplex2 = vec![p0, p2, p1];  // Swap last two
+// Generates orientation sign-flip property across dimensions
+macro_rules! gen_orientation_sign_flip {
+    ($dim:literal) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<prop_orientation_sign_flip_ $dim d>](
+                    simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
+                ) {
+                    let simplex1 = simplex.clone();
+                    let mut simplex2 = simplex.clone();
+                    let len = simplex2.len();
+                    simplex2.swap(len - 1, len - 2);
 
-        let orient1 = simplex_orientation(&simplex1);
-        let orient2 = simplex_orientation(&simplex2);
+                    let orient1 = simplex_orientation(&simplex1);
+                    let orient2 = simplex_orientation(&simplex2);
 
-        // Both should succeed or both fail
-        match (orient1, orient2) {
-            (Ok(o1), Ok(o2)) => {
-                // If one is degenerate, the other should be too
-                if o1 == Orientation::DEGENERATE || o2 == Orientation::DEGENERATE {
-                    prop_assert_eq!(o1, Orientation::DEGENERATE);
-                    prop_assert_eq!(o2, Orientation::DEGENERATE);
-                } else {
-                    // Non-degenerate orientations should be opposite
-                    match (o1, o2) {
-                        (Orientation::POSITIVE, Orientation::NEGATIVE) | (Orientation::NEGATIVE, Orientation::POSITIVE) => {},
-                        _ => prop_assert!(false, "Expected opposite orientations, got {:?} and {:?}", o1, o2),
+                    match (orient1, orient2) {
+                        (Ok(o1), Ok(o2)) => {
+                            if o1 == Orientation::DEGENERATE || o2 == Orientation::DEGENERATE {
+                                prop_assert_eq!(o1, Orientation::DEGENERATE);
+                                prop_assert_eq!(o2, Orientation::DEGENERATE);
+                            } else {
+                                match (o1, o2) {
+                                    (Orientation::POSITIVE, Orientation::NEGATIVE)
+                                    | (Orientation::NEGATIVE, Orientation::POSITIVE) => {}
+                                    _ => prop_assert!(false, "Expected opposite orientations, got {:?} and {:?}", o1, o2),
+                                }
+                            }
+                        }
+                        (Err(_), Err(_)) => {}
+                        _ => prop_assert!(false, "One orientation succeeded while the other failed"),
                     }
                 }
             }
-            (Err(_), Err(_)) => {},
-            _ => prop_assert!(false, "One orientation succeeded while the other failed"),
         }
-    }
-
-    /// Property: Cyclic permutation of vertices should preserve orientation sign
-    /// in 2D (for triangles).
-    #[test]
-    fn prop_orientation_cyclic_invariance_2d(
-        p0 in point_2d(),
-        p1 in point_2d(),
-        p2 in point_2d(),
-    ) {
-        let simplex1 = vec![p0, p1, p2];
-        let simplex2 = vec![p1, p2, p0];  // Cyclic rotation
-        let simplex3 = vec![p2, p0, p1];  // Another cyclic rotation
-
-        if let (Ok(o1), Ok(o2), Ok(o3)) = (
-            simplex_orientation(&simplex1),
-            simplex_orientation(&simplex2),
-            simplex_orientation(&simplex3),
-        ) {
-            // All cyclic permutations should have the same orientation
-            prop_assert_eq!(o1, o2, "First cyclic permutation changed orientation");
-            prop_assert_eq!(o2, o3, "Second cyclic permutation changed orientation");
-        }
-    }
-
-    /// Property: 3D orientation sign flip under vertex swap
-    #[test]
-    fn prop_orientation_sign_flip_3d(
-        p0 in point_3d(),
-        p1 in point_3d(),
-        p2 in point_3d(),
-        p3 in point_3d(),
-    ) {
-        let simplex1 = vec![p0, p1, p2, p3];
-        let simplex2 = vec![p0, p1, p3, p2];  // Swap last two
-
-        let orient1 = simplex_orientation(&simplex1);
-        let orient2 = simplex_orientation(&simplex2);
-
-        if let (Ok(o1), Ok(o2)) = (orient1, orient2) {
-            if o1 == Orientation::DEGENERATE || o2 == Orientation::DEGENERATE {
-                prop_assert_eq!(o1, Orientation::DEGENERATE);
-                prop_assert_eq!(o2, Orientation::DEGENERATE);
-            } else {
-                match (o1, o2) {
-                    (Orientation::POSITIVE, Orientation::NEGATIVE) | (Orientation::NEGATIVE, Orientation::POSITIVE) => {},
-                    _ => prop_assert!(false, "Expected opposite orientations"),
-                }
-            }
-        }
-    }
-
-    /// Property: 4D orientation sign flip under vertex swap
-    #[test]
-    fn prop_orientation_sign_flip_4d(
-        p0 in point_4d(),
-        p1 in point_4d(),
-        p2 in point_4d(),
-        p3 in point_4d(),
-        p4 in point_4d(),
-    ) {
-        let simplex1 = vec![p0, p1, p2, p3, p4];
-        let simplex2 = vec![p0, p1, p2, p4, p3];  // Swap last two
-
-        let orient1 = simplex_orientation(&simplex1);
-        let orient2 = simplex_orientation(&simplex2);
-
-        if let (Ok(o1), Ok(o2)) = (orient1, orient2) {
-            if o1 == Orientation::DEGENERATE || o2 == Orientation::DEGENERATE {
-                prop_assert_eq!(o1, Orientation::DEGENERATE);
-                prop_assert_eq!(o2, Orientation::DEGENERATE);
-            } else {
-                match (o1, o2) {
-                    (Orientation::POSITIVE, Orientation::NEGATIVE) | (Orientation::NEGATIVE, Orientation::POSITIVE) => {},
-                    _ => prop_assert!(false, "Expected opposite orientations"),
-                }
-            }
-        }
-    }
-
-    /// Property: 5D orientation sign flip under vertex swap
-    #[test]
-    fn prop_orientation_sign_flip_5d(
-        p0 in point_5d(),
-        p1 in point_5d(),
-        p2 in point_5d(),
-        p3 in point_5d(),
-        p4 in point_5d(),
-        p5 in point_5d(),
-    ) {
-        let simplex1 = vec![p0, p1, p2, p3, p4, p5];
-        let simplex2 = vec![p0, p1, p2, p3, p5, p4];  // Swap last two
-
-        let orient1 = simplex_orientation(&simplex1);
-        let orient2 = simplex_orientation(&simplex2);
-
-        if let (Ok(o1), Ok(o2)) = (orient1, orient2) {
-            if o1 == Orientation::DEGENERATE || o2 == Orientation::DEGENERATE {
-                prop_assert_eq!(o1, Orientation::DEGENERATE);
-                prop_assert_eq!(o2, Orientation::DEGENERATE);
-            } else {
-                match (o1, o2) {
-                    (Orientation::POSITIVE, Orientation::NEGATIVE) | (Orientation::NEGATIVE, Orientation::POSITIVE) => {},
-                    _ => prop_assert!(false, "Expected opposite orientations"),
-                }
-            }
-        }
-    }
+    };
 }
+
+// 2D-only: cyclic permutation preserves orientation (3-cycle is even)
+macro_rules! gen_orientation_cyclic_invariance {
+    ($dim:literal) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<prop_orientation_cyclic_invariance_ $dim d>](
+                    simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
+                ) {
+                    // For 2D: simplex has 3 points
+                    let simplex1 = simplex.clone();
+                    let simplex2 = vec![simplex1[1], simplex1[2], simplex1[0]];
+                    let simplex3 = vec![simplex1[2], simplex1[0], simplex1[1]];
+
+                    if let (Ok(o1), Ok(o2), Ok(o3)) = (
+                        simplex_orientation(&simplex1),
+                        simplex_orientation(&simplex2),
+                        simplex_orientation(&simplex3),
+                    ) {
+                        prop_assert_eq!(o1, o2, "First cyclic permutation changed orientation");
+                        prop_assert_eq!(o2, o3, "Second cyclic permutation changed orientation");
+                    }
+                }
+            }
+        }
+    };
+}
+
+// Vertices of a simplex lie on or outside the circumsphere boundary
+macro_rules! gen_insphere_simplex_vertices_on_boundary {
+    ($dim:literal) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<prop_insphere_simplex_vertices_on_boundary_ $dim d>](
+                    simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
+                ) {
+                    for vertex in &simplex {
+                        if let Ok(result) = insphere(&simplex, *vertex) {
+                            prop_assert!(
+                                result == InSphere::BOUNDARY || result == InSphere::OUTSIDE,
+                                "Simplex vertex is {:?}, expected BOUNDARY or OUTSIDE",
+                                result
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
+// 2D: scale from circumcenter toward centroid -> INSIDE or BOUNDARY
+macro_rules! gen_insphere_inward_scaling_inside {
+    ($dim:literal) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<prop_insphere_inward_scaling_makes_point_inside_ $dim d>](
+                    simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
+                ) {
+                    if let Ok(center) = circumcenter(&simplex) {
+                        let center_coords: [f64; $dim] = center.into();
+
+                        // Compute centroid
+                        let mut centroid = [0.0_f64; $dim];
+                        for p in &simplex {
+                            let c: [f64; $dim] = (*p).into();
+                            for i in 0..$dim { centroid[i] += c[i]; }
+                        }
+                        let inv_len: f64 = 1.0 / f64::from($dim + 1);
+                        for i in 0..$dim { centroid[i] *= inv_len; }
+
+                        // Use centroid, which is guaranteed to lie inside the simplex
+                        let interior_point = Point::new(centroid);
+
+                        if let Ok(result) = insphere(&simplex, interior_point) {
+                            // Check separation to avoid degenerate case
+                            let mut dist_sq = 0.0;
+                            for i in 0..$dim { let d = center_coords[i] - centroid[i]; dist_sq += d * d; }
+                            if dist_sq > 1e-6 {
+                                prop_assert!(
+                                    result == InSphere::INSIDE || result == InSphere::BOUNDARY,
+                                    "Point scaled toward centroid should be INSIDE or BOUNDARY, got {:?}",
+                                    result
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
+// D-dimensional: place point at 10x circumradius along a direction -> OUTSIDE
+macro_rules! gen_insphere_distant_point_outside_by_radius {
+    ($dim:literal) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<prop_insphere_distant_point_is_outside_ $dim d>](
+                    simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
+                ) {
+                    if let (Ok(center), Ok(radius)) = (circumcenter(&simplex), circumradius(&simplex)) {
+                        if radius < 1e-6 || !radius.is_finite() {
+                            return Ok(());
+                        }
+                        let center_coords: [f64; $dim] = center.into();
+                        // Build a direction: normalize center if nonzero; else use e0
+                        let mut norm_sq = 0.0;
+                        for i in 0..$dim { norm_sq += center_coords[i] * center_coords[i]; }
+                        let mut dir = [0.0_f64; $dim];
+                        if norm_sq > 1e-8 {
+                            let inv_norm = norm_sq.sqrt().recip();
+                            for i in 0..$dim { dir[i] = center_coords[i] * inv_norm; }
+                        } else {
+                            dir[0] = 1.0;
+                        }
+                        let distance = radius * 10.0;
+                        let mut far = [0.0_f64; $dim];
+                        for i in 0..$dim {
+                            far[i] = dir[i].mul_add(distance, center_coords[i]);
+                        }
+                        let far_point = Point::new(far);
+                        if let Ok(result) = insphere(&simplex, far_point) {
+                            prop_assert!(result == InSphere::OUTSIDE, "Point at 10x circumradius from center should be OUTSIDE, got {:?}", result);
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
+// 4D/5D: scale circumcenter coordinates far away -> OUTSIDE (if not near origin)
+macro_rules! gen_insphere_scale_center_outside {
+    ($dim:literal) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<prop_insphere_scaling_makes_point_outside_ $dim d>](
+                    simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
+                ) {
+                    if let Ok(center) = circumcenter(&simplex) {
+                        let center_coords: [f64; $dim] = center.into();
+                        let scale = 10000.0;
+                        let mut far = [0.0_f64; $dim];
+                        for i in 0..$dim { far[i] = center_coords[i] * scale; }
+                        let far_point = Point::new(far);
+                        if let Ok(result) = insphere(&simplex, far_point) {
+                            if center_coords.iter().any(|&c| c.abs() > 0.01) {
+                                prop_assert!(result == InSphere::OUTSIDE, "Point scaled away from circumcenter should be OUTSIDE, got {:?}", result);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
+// =============================================================================
+// ORIENTATION PROPERTY TESTS
+// =============================================================================
+
+gen_orientation_sign_flip!(2);
+gen_orientation_sign_flip!(3);
+gen_orientation_sign_flip!(4);
+gen_orientation_sign_flip!(5);
+
+gen_orientation_cyclic_invariance!(2);
 
 // =============================================================================
 // INSPHERE PROPERTY TESTS
 // =============================================================================
 
-proptest! {
-    /// Property: A point on the circumcenter should be equidistant from all
-    /// simplex vertices (within numerical tolerance).
-    ///
-    /// Note: This tests the BOUNDARY case implicitly.
-    #[test]
-    fn prop_insphere_simplex_vertices_on_boundary_2d(
-        p0 in point_2d(),
-        p1 in point_2d(),
-        p2 in point_2d(),
-    ) {
-        let simplex = vec![p0, p1, p2];
+gen_insphere_simplex_vertices_on_boundary!(2);
+gen_insphere_simplex_vertices_on_boundary!(3);
+gen_insphere_simplex_vertices_on_boundary!(4);
+gen_insphere_simplex_vertices_on_boundary!(5);
 
-        // All vertices of the simplex should be on or near the boundary
-        // of the circumsphere (they define it)
-        for vertex in &simplex {
-            if let Ok(result) = insphere(&simplex, *vertex) {
-                // Vertices should not be strictly INSIDE (due to numerical tolerance)
-                // They should be BOUNDARY or possibly OUTSIDE due to rounding
-                prop_assert!(
-                    result == InSphere::BOUNDARY || result == InSphere::OUTSIDE,
-                    "Simplex vertex {:?} is reported as {:?}, expected BOUNDARY or OUTSIDE",
-                    vertex,
-                    result
-                );
-            }
-        }
-    }
+gen_insphere_inward_scaling_inside!(2);
 
-    /// Property: A point scaled inward from circumcenter toward centroid should eventually be INSIDE.
-    /// This validates the fundamental geometric property that points close to the simplex interior
-    /// are inside the circumsphere.
-    #[test]
-    fn prop_insphere_inward_scaling_makes_point_inside_2d(
-        p0 in point_2d(),
-        p1 in point_2d(),
-        p2 in point_2d(),
-    ) {
-        let simplex = vec![p0, p1, p2];
+gen_insphere_distant_point_outside_by_radius!(2);
+gen_insphere_distant_point_outside_by_radius!(3);
+gen_insphere_distant_point_outside_by_radius!(4);
+gen_insphere_distant_point_outside_by_radius!(5);
 
-        // Compute circumcenter and centroid
-        if let Ok(circumcenter_point) = circumcenter(&simplex) {
-            let center_coords: [f64; 2] = circumcenter_point.into();
-
-            // Compute centroid
-            let coords0: [f64; 2] = p0.into();
-            let coords1: [f64; 2] = p1.into();
-            let coords2: [f64; 2] = p2.into();
-            let centroid = [
-                (coords0[0] + coords1[0] + coords2[0]) / 3.0,
-                (coords0[1] + coords1[1] + coords2[1]) / 3.0,
-            ];
-
-            // Scale inward from circumcenter toward centroid
-            // A point very close to the centroid should be INSIDE for well-conditioned simplices
-            let scale = 0.01;  // Very close to centroid
-            let interior_point = Point::new([
-                center_coords[0].mul_add(1.0 - scale, centroid[0] * scale),
-                center_coords[1].mul_add(1.0 - scale, centroid[1] * scale),
-            ]);
-
-            if let Ok(result) = insphere(&simplex, interior_point) {
-                // Skip if circumcenter and centroid are too close (degenerate case)
-                let dx = center_coords[0] - centroid[0];
-                let dy = center_coords[1] - centroid[1];
-                let dist_sq = dx.mul_add(dx, dy * dy);
-
-                if dist_sq > 1e-6 {
-                    prop_assert!(
-                        result == InSphere::INSIDE || result == InSphere::BOUNDARY,
-                        "Point scaled toward centroid should be INSIDE or BOUNDARY, got {:?}",
-                        result
-                    );
-                }
-            }
-        }
-    }
-
-    /// Property: A point scaled far from the circumcenter (relative to circumradius) should be OUTSIDE.
-    /// This tests that the insphere predicate correctly identifies distant points.
-    #[test]
-    fn prop_insphere_distant_point_is_outside_2d(
-        p0 in point_2d(),
-        p1 in point_2d(),
-        p2 in point_2d(),
-    ) {
-        let simplex = vec![p0, p1, p2];
-
-        // Compute circumcenter and circumradius
-        if let (Ok(center), Ok(radius)) = (circumcenter(&simplex), circumradius(&simplex)) {
-            let center_coords: [f64; 2] = center.into();
-
-            // Skip degenerate or near-degenerate simplices
-            if radius < 1e-6 || !radius.is_finite() {
-                return Ok(());
-            }
-
-            // Create a direction vector from circumcenter
-            // Use a fixed direction if circumcenter is at origin
-            let (dir_x, dir_y) = if center_coords[0].abs() > 0.01 || center_coords[1].abs() > 0.01 {
-                let norm = center_coords[0].hypot(center_coords[1]);
-                (center_coords[0] / norm, center_coords[1] / norm)
-            } else {
-                (1.0, 0.0) // Fixed direction
-            };
-
-            // Place point at 10x the circumradius away from circumcenter
-            let distance = radius * 10.0;
-            let far_point = Point::new([
-                dir_x.mul_add(distance, center_coords[0]),
-                dir_y.mul_add(distance, center_coords[1]),
-            ]);
-
-            if let Ok(result) = insphere(&simplex, far_point) {
-                prop_assert!(
-                    result == InSphere::OUTSIDE,
-                    "Point at 10x circumradius from center should be OUTSIDE, got {:?}. Center: {:?}, Radius: {}, Far point: {:?}",
-                    result,
-                    center_coords,
-                    radius,
-                    far_point
-                );
-            }
-        }
-    }
-
-    /// Property: 3D insphere - simplex vertices should be on boundary
-    #[test]
-    fn prop_insphere_simplex_vertices_on_boundary_3d(
-        p0 in point_3d(),
-        p1 in point_3d(),
-        p2 in point_3d(),
-        p3 in point_3d(),
-    ) {
-        let simplex = vec![p0, p1, p2, p3];
-
-        for vertex in &simplex {
-            if let Ok(result) = insphere(&simplex, *vertex) {
-                prop_assert!(
-                    result == InSphere::BOUNDARY || result == InSphere::OUTSIDE,
-                    "3D simplex vertex is {:?}, expected BOUNDARY or OUTSIDE",
-                    result
-                );
-            }
-        }
-    }
-
-    /// Property: 4D insphere - simplex vertices should be on boundary
-    #[test]
-    fn prop_insphere_simplex_vertices_on_boundary_4d(
-        p0 in point_4d(),
-        p1 in point_4d(),
-        p2 in point_4d(),
-        p3 in point_4d(),
-        p4 in point_4d(),
-    ) {
-        let simplex = vec![p0, p1, p2, p3, p4];
-
-        for vertex in &simplex {
-            if let Ok(result) = insphere(&simplex, *vertex) {
-                prop_assert!(
-                    result == InSphere::BOUNDARY || result == InSphere::OUTSIDE,
-                    "4D simplex vertex is {:?}, expected BOUNDARY or OUTSIDE",
-                    result
-                );
-            }
-        }
-    }
-
-    /// Property: 4D insphere - a point scaled far away from circumcenter is OUTSIDE
-    #[test]
-    fn prop_insphere_scaling_makes_point_outside_4d(
-        p0 in point_4d(),
-        p1 in point_4d(),
-        p2 in point_4d(),
-        p3 in point_4d(),
-        p4 in point_4d(),
-    ) {
-        let simplex_points = vec![p0, p1, p2, p3, p4];
-
-        // Compute circumcenter
-        if let Ok(center) = circumcenter(&simplex_points) {
-            let center_coords: [f64; 4] = center.into();
-
-            // Create a point far from the circumcenter by scaling away from it
-            let scale = 10000.0;
-            let far_point = Point::new([
-                center_coords[0] * scale,
-                center_coords[1] * scale,
-                center_coords[2] * scale,
-                center_coords[3] * scale,
-            ]);
-
-            if let Ok(result) = insphere(&simplex_points, far_point) {
-                // Point scaled away from circumcenter should be OUTSIDE
-                // (unless circumcenter is at origin)
-                if center_coords.iter().any(|&c| c.abs() > 0.01) {
-                    prop_assert!(
-                        result == InSphere::OUTSIDE,
-                        "4D point scaled away from circumcenter should be OUTSIDE, got {:?}",
-                        result
-                    );
-                }
-            }
-        }
-    }
-
-    /// Property: 5D insphere - simplex vertices should be on boundary
-    #[test]
-    fn prop_insphere_simplex_vertices_on_boundary_5d(
-        p0 in point_5d(),
-        p1 in point_5d(),
-        p2 in point_5d(),
-        p3 in point_5d(),
-        p4 in point_5d(),
-        p5 in point_5d(),
-    ) {
-        let simplex = vec![p0, p1, p2, p3, p4, p5];
-
-        for vertex in &simplex {
-            if let Ok(result) = insphere(&simplex, *vertex) {
-                prop_assert!(
-                    result == InSphere::BOUNDARY || result == InSphere::OUTSIDE,
-                    "5D simplex vertex is {:?}, expected BOUNDARY or OUTSIDE",
-                    result
-                );
-            }
-        }
-    }
-
-    /// Property: 5D insphere - a point scaled far away from circumcenter is OUTSIDE
-    #[test]
-    fn prop_insphere_scaling_makes_point_outside_5d(
-        p0 in point_5d(),
-        p1 in point_5d(),
-        p2 in point_5d(),
-        p3 in point_5d(),
-        p4 in point_5d(),
-        p5 in point_5d(),
-    ) {
-        let simplex_points = vec![p0, p1, p2, p3, p4, p5];
-
-        // Compute circumcenter
-        if let Ok(center) = circumcenter(&simplex_points) {
-            let center_coords: [f64; 5] = center.into();
-
-            // Create a point far from the circumcenter by scaling away from it
-            let scale = 10000.0;
-            let far_point = Point::new([
-                center_coords[0] * scale,
-                center_coords[1] * scale,
-                center_coords[2] * scale,
-                center_coords[3] * scale,
-                center_coords[4] * scale,
-            ]);
-
-            if let Ok(result) = insphere(&simplex_points, far_point) {
-                // Point scaled away from circumcenter should be OUTSIDE
-                // (unless circumcenter is at origin)
-                if center_coords.iter().any(|&c| c.abs() > 0.01) {
-                    prop_assert!(
-                        result == InSphere::OUTSIDE,
-                        "5D point scaled away from circumcenter should be OUTSIDE, got {:?}",
-                        result
-                    );
-                }
-            }
-        }
-    }
-}
+gen_insphere_scale_center_outside!(4);
+gen_insphere_scale_center_outside!(5);
 
 // =============================================================================
 // CROSS-PREDICATE CONSISTENCY TESTS

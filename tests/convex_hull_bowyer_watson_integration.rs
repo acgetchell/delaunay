@@ -57,7 +57,10 @@ fn analyze_triangulation_state(tds: &Tds<f64, Option<()>, Option<()>, 3>, label:
 }
 
 #[test]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Comprehensive integration scenario; length is deliberate for coverage and diagnostics"
+)]
 fn test_comprehensive_hull_extension_execution() {
     println!("=== COMPREHENSIVE HULL EXTENSION EXECUTION TEST ===");
 

@@ -119,6 +119,41 @@ PROPTEST_CASES=512 cargo test --release --test proptest_bowyer_watson -- --nocap
 PROPTEST_SEED=<seed> cargo test --release --test proptest_bowyer_watson -- --nocapture
 ```
 
+#### [`proptest_robust_bowyer_watson.rs`](./proptest_robust_bowyer_watson.rs)
+
+Property-based tests for `RobustBowyerWatson` algorithm verifying robustness properties under randomized insertion sequences.
+
+**Test Coverage:**
+
+- **TDS Validity Preservation**:
+  - TDS remains valid after all insertion attempts (success or failure)
+  - Structural integrity maintained regardless of outcome
+- **Statistics Monotonicity**:
+  - Counters (processed, created, removed) are non-decreasing
+  - Consistent tracking across multiple insertions
+- **Insertion Info Consistency**:
+  - Successful insertions have `success=true` in result
+  - Cell creation/removal counts are reasonable
+- **Interior Point Handling**:
+  - Interior points (centroid of existing vertices) insert gracefully
+  - TDS validity maintained after interior insertions
+- **Cache Invalidation Properties**:
+  - Cache generation tracking works correctly
+  - Invalidation occurs with structural modifications
+
+**Run with:**
+
+```bash
+# Standard test run
+cargo test --release --test proptest_robust_bowyer_watson
+
+# With increased test cases for thorough validation
+PROPTEST_CASES=512 cargo test --release --test proptest_robust_bowyer_watson -- --nocapture
+
+# Reproduce a specific failure
+PROPTEST_SEED=<seed> cargo test --release --test proptest_robust_bowyer_watson -- --nocapture
+```
+
 #### [`proptest_cell.rs`](./proptest_cell.rs)
 
 Property-based tests for Cell data structure verifying cell-level invariants and topological consistency.
@@ -312,6 +347,28 @@ Fundamental integration tests for triangulation data structure (TDS) operations,
 **Purpose:** These tests establish foundational TDS behavior. For complex scenarios involving algorithms like Bowyer-Watson or convex hull
 operations, see other integration tests.
 
+#### [`test_insertion_algorithm_utils.rs`](./test_insertion_algorithm_utils.rs)
+
+Integration tests for insertion algorithm utility types (`InsertionBuffers` and `InsertionStatistics`) that support vertex insertion algorithms.
+
+**Test Coverage:**
+
+- **InsertionBuffers** (9 tests):
+  - Buffer creation and initialization (new, default, with_capacity)
+  - Buffer management (clear_all, prepare methods)
+  - Vec compatibility methods for legacy API support
+  - FacetView conversion for boundary analysis
+- **InsertionStatistics** (4 tests):
+  - Statistics initialization and recording
+  - Vertex insertion tracking
+  - Fallback strategy usage tracking
+  - Rate calculation methods (fallback_usage_rate)
+
+**Run with:** `cargo test --test test_insertion_algorithm_utils --release`
+
+**Purpose:** These tests ensure the utility types used by insertion algorithms (Bowyer-Watson, robust variants) work correctly
+for performance optimization (buffer reuse) and algorithm instrumentation (statistics tracking).
+
 #### [`convex_hull_bowyer_watson_integration.rs`](./convex_hull_bowyer_watson_integration.rs)
 
 Integration tests for convex hull algorithms with Bowyer-Watson triangulation, focusing on the interaction between hull computation and triangulation construction.
@@ -384,6 +441,155 @@ Integration tests verifying equivalence of triangulation behavior across differe
 ```bash
 cargo test --release --features <backend_feature> --test storage_backend_compatibility
 ```
+
+#### [`integration_robust_bowyer_watson.rs`](./integration_robust_bowyer_watson.rs)
+
+End-to-end integration tests for `RobustBowyerWatson` algorithm verifying robust insertion behavior across dimensions 2D-5D.
+
+**Test Coverage:**
+
+- **Large Random Point Sets**: Insertion of 50-100 random points with TDS validity maintained throughout
+- **Exterior Vertex Insertion**: Hull extension scenarios with vertices inserted along each axis
+- **Clustered Point Patterns**: Mixed clustered (near-origin) and scattered point distributions
+- **Algorithm Reset and Reuse**: Statistics tracking and algorithm state management
+- **Cross-dimensional Testing**: Generated tests for 2D, 3D, 4D, and 5D using macro-based approach
+
+**Run with:** `cargo test --test integration_robust_bowyer_watson` or `just test-release`
+
+**Purpose:** Verifies that the robust insertion algorithm handles real-world point distributions while maintaining TDS validity and
+geometric correctness across varying dimensions and insertion patterns.
+
+#### [`test_insertion_algorithm_trait.rs`](./test_insertion_algorithm_trait.rs)
+
+Integration tests for public API methods of `InsertionAlgorithm` trait and supporting types.
+
+**Test Coverage:**
+
+- **InsertionBuffers Public API** (14 tests):
+  - Buffer creation methods (new, default, with_capacity)
+  - Buffer management (clear_all, prepare methods)
+  - Vec compatibility helpers (bad_cells_as_vec, set_bad_cells_from_vec)
+  - FacetView conversion (boundary_facets_as_views, visible_facets_as_views)
+  - Accessor methods for all buffer types
+- **Error Type Conversions**:
+  - InsertionError display formatting
+  - BadCellsError conversion and context
+  - TriangulationValidationError integration
+
+**Run with:** `cargo test --test test_insertion_algorithm_trait --release`
+
+**Purpose:** Verifies public accessor methods and API contracts. Complements unit tests in source (which use private field access) by
+testing only through public interfaces.
+
+#### [`test_facet_cache_integration.rs`](./test_facet_cache_integration.rs)
+
+Integration tests for facet cache behavior under concurrent access, TDS modifications, and algorithmic usage patterns.
+
+**Test Coverage:**
+
+- **Concurrent Cache Access**: Multi-threaded cache building and querying during vertex insertions
+- **Cache Invalidation**: Cache rebuilding after TDS generation changes
+- **RCU Contention**: Multiple threads simultaneously building cache with Read-Copy-Update mechanism
+- **Generation Tracking**: Verification of cache staleness detection and retry loops
+- **Algorithm Integration**: Cache behavior through `IncrementalBowyerWatson` operations
+
+**Run with:** `cargo test --test test_facet_cache_integration` or `just test-release`
+
+**Purpose:** Exercises complex cache synchronization code paths (retry loops, RCU, generation tracking) that are difficult to trigger
+via unit tests. Validates thread-safe cache operations during real algorithm usage.
+
+#### [`test_geometry_util.rs`](./test_geometry_util.rs)
+
+Integration tests for geometry utility functions focusing on error paths, edge cases, and multi-dimensional behavior.
+
+**Test Coverage:**
+
+- **Random Point Generation Errors**:
+  - Invalid ranges (min >= max)
+  - Zero point counts for grid generation
+  - Impossible Poisson spacing constraints
+  - Reproducibility with seeded generation
+- **Circumcenter/Circumradius Errors**:
+  - Empty point sets
+  - Invalid simplex dimensions (wrong vertex count)
+  - Degenerate simplices (collinear, coincident points)
+- **Simplex Volume Edge Cases**:
+  - Multi-dimensional degenerate cases (1D-2D)
+  - Coordinate conversion failures
+  - Invalid simplex configurations
+
+**Run with:** `cargo test --test test_geometry_util` or `just test-release`
+
+**Purpose:** Tests error handling and edge cases for geometric utilities that complement doctest coverage, ensuring robust behavior with
+invalid inputs and degenerate configurations.
+
+#### [`test_robust_fallbacks.rs`](./test_robust_fallbacks.rs)
+
+Configuration API tests for `RobustBowyerWatson` algorithm, documenting constructor variants and predicate configuration presets.
+
+**Test Coverage:**
+
+- **Constructor Variants**:
+  - `new()` - Default constructor with general_triangulation config
+  - `with_config()` - Custom configuration with various presets
+  - `for_degenerate_cases()` - Degenerate-optimized constructor
+- **Configuration Presets**:
+  - `general_triangulation` - Balanced performance/robustness
+  - `high_precision` - Maximum numerical accuracy
+  - `degenerate_robust` - Optimized for near-degenerate cases
+- **Multi-dimensional Configuration**: Testing presets across 2D-4D
+- **Custom Tolerance Settings**: User-defined tolerance configurations
+
+**Run with:** `cargo test --test test_robust_fallbacks` or `just test-release`
+
+**Purpose:** Serves as API documentation and contract validation for configuration system. Minimal coverage impact (implementation already
+covered) but ensures public API contracts work correctly.
+
+#### [`test_tds_edge_cases.rs`](./test_tds_edge_cases.rs)
+
+Edge case integration tests for Triangulation Data Structure (TDS) operations, focusing on removal operations and topology consistency.
+
+**Test Coverage:**
+
+- **Cell Removal Operations**:
+  - Single cell removal (remove_cell_by_key)
+  - Multiple cell removal (remove_cells_by_keys)
+  - Nonexistent cell handling
+  - Partial removal with invalid keys
+- **Duplicate Cell Removal**:
+  - Detection of duplicate cells
+  - Clean TDS validation (no duplicates)
+- **Neighbor Clearing**:
+  - Clear all neighbor relationships
+  - Neighbor reassignment after clearing
+  - Topology validation after operations
+
+**Run with:** `cargo test --test test_tds_edge_cases` or `just test-release`
+
+**Purpose:** Tests TDS removal operations and topology maintenance that are not covered by basic integration tests. Complements
+`tds_basic_integration.rs` which focuses on construction and validation.
+
+#### [`test_convex_hull_error_paths.rs`](./test_convex_hull_error_paths.rs)
+
+Error path tests for ConvexHull module targeting uncovered error conditions and edge cases.
+
+**Test Coverage:**
+
+- **Construction Errors**:
+  - InsufficientData - Empty triangulations (0 vertices, 0 cells)
+  - No boundary facets scenarios
+- **Stale Hull Detection**:
+  - Using hull with modified TDS (generation mismatch)
+  - StaleHull error in visibility checks
+  - StaleHull error in find_visible_facets
+- **Cache Invalidation**:
+  - Cache rebuilding after invalidation
+  - Generation consistency verification
+
+**Run with:** `cargo test --test test_convex_hull_error_paths` or `just test-release`
+
+**Purpose:** Improves coverage of `src/geometry/algorithms/convex_hull.rs` by testing error paths that are difficult to trigger through
+normal usage. Focuses on defensive validation and staleness detection.
 
 ### 🐛 Regression and Error Reproduction
 

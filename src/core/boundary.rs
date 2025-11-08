@@ -242,7 +242,7 @@ mod tests {
     // SINGLE SIMPLEX TESTS
     // =============================================================================
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     #[test]
     fn test_boundary_facets_single_simplices() {
         // Test boundary analysis for single simplices in different dimensions

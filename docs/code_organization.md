@@ -62,6 +62,7 @@ delaunay/
 │   │   ├── matrix.rs                             # Matrix operations for geometric computations
 │   │   ├── point.rs                              # Generic Point struct with NaN-aware operations
 │   │   ├── predicates.rs                         # Geometric predicates (insphere, orientation)
+│   │   ├── quality.rs                            # Mesh quality metrics and analysis
 │   │   ├── robust_predicates.rs                  # Robust geometric predicates
 │   │   └── util.rs                               # Geometric utility functions
 │   └── lib.rs                                    # Main library file with module declarations and prelude
@@ -90,40 +91,53 @@ delaunay/
 │   ├── circumsphere_debug_tools.rs               # Interactive circumsphere testing and debugging utilities
 │   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
 │   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
-│   ├── proptest_bowyer_watson.proptest-regressions  # Proptest regression cases for Bowyer-Watson insertion (2D-5D)
+│   ├── integration_robust_bowyer_watson.rs       # Integration tests for robust Bowyer-Watson algorithm
 │   ├── proptest_bowyer_watson.rs                 # Property-based tests for Bowyer-Watson vertex insertion (2D-5D)
 │   ├── proptest_cell.rs                          # Property-based tests for Cell data structure
 │   ├── proptest_convex_hull.rs                   # Property-based tests for convex hull computation
+│   ├── proptest_delaunay_condition.rs            # Delaunay condition properties (empty circumsphere, order invariance)
 │   ├── proptest_facet.rs                         # Property-based tests for Facet operations
 │   ├── proptest_geometry.rs                      # Property-based tests for geometric utilities
 │   ├── proptest_point.rs                         # Property-based tests for Point (hashing, equality, serialization)
+│   ├── proptest_vertex.rs                        # Property-based tests for Vertex operations
 │   ├── proptest_predicates.rs                    # Property-based tests for geometric predicates (orientation, insphere)
 │   ├── proptest_quality.proptest-regressions     # Proptest regression cases for quality metrics
 │   ├── proptest_quality.rs                       # Property-based tests for mesh quality metrics
-│   ├── proptest_serialization.proptest-regressions  # Proptest regression cases for serialization
+│   ├── proptest_robust_bowyer_watson.rs          # Property-based tests for robust Bowyer-Watson algorithm
+│   ├── proptest_safe_conversions.rs              # Property-based tests for safe numeric and type conversions
 │   ├── proptest_serialization.rs                 # Property-based tests for serialization/deserialization
 │   ├── proptest_triangulation.rs                 # Property-based tests for triangulation invariants
+│   ├── proptest_invariants.rs                    # Additional property-based invariants and consistency checks
 │   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
 │   ├── robust_predicates_showcase.rs             # Robust predicates demonstration tests
 │   ├── serialization_vertex_preservation.rs      # Serialization vertex UUID preservation tests
 │   ├── storage_backend_compatibility.rs          # Storage backend (SlotMap) compatibility tests
 │   ├── tds_basic_integration.rs                  # Basic TDS creation, neighbor assignment, and validation tests
-│   └── test_cavity_boundary_error.rs             # Cavity boundary error reproduction tests
+│   ├── test_cavity_boundary_error.rs             # Cavity boundary error reproduction tests
+│   ├── test_convex_hull_error_paths.rs           # Convex hull error handling tests
+│   ├── test_facet_cache_integration.rs           # Facet cache integration tests
+│   ├── test_geometry_util.rs                     # Geometry utility function tests
+│   ├── test_insertion_algorithm_trait.rs         # Insertion algorithm trait tests
+│   ├── test_insertion_algorithm_utils.rs         # Insertion algorithm utility tests
+│   ├── test_robust_fallbacks.rs                  # Robust fallback mechanism tests
+│   └── test_tds_edge_cases.rs                    # TDS edge case tests
 ├── docs/                                         # Additional documentation
 │   ├── archive/                                  # Historical documentation
 │   │   ├── optimization_recommendations_historical.md  # Historical optimization notes
+│   │   ├── phase_3a_implementation_guide.md           # Phase 3A implementation history
+│   │   ├── phase_3c_action_plan.md                    # Phase 3C action plan history
 │   │   ├── phase2_bowyer_watson_optimization.md       # Phase 2 Bowyer-Watson optimization history
 │   │   ├── phase2_uuid_iter_optimization.md           # Phase 2 UUID iterator optimization history
-│   │   ├── phase_3a_implementation_guide.md           # Phase 3A implementation history
-│   │   └── phase_3c_action_plan.md                    # Phase 3C action plan history
+│   │   └── testing.md                                 # Historical testing guide and best practices
 │   ├── templates/                                # Templates for automated generation
-│   │   ├── README.md                             # Templates documentation
-│   │   └── changelog.hbs                         # Custom changelog template
+│   │   ├── changelog.hbs                         # Custom changelog template
+│   │   └── README.md                             # Templates documentation
 │   ├── code_organization.md                      # Code organization patterns (this file)
 │   ├── numerical_robustness_guide.md             # Numerical robustness and stability guide
 │   ├── OPTIMIZATION_ROADMAP.md                   # Comprehensive 4-phase optimization strategy (primary reference)
 │   ├── phase4.md                                 # Phase 4 benchmark consolidation plan and progress
 │   ├── property_testing_summary.md               # Property-based testing guide
+│   ├── jaccard.md                                # Jaccard set similarity usage and adoption plan
 │   ├── README.md                                 # Documentation index and navigation guide
 │   ├── RELEASING.md                              # Release process documentation
 │   └── topology.md                               # Topology and geometric properties guide
@@ -134,6 +148,7 @@ delaunay/
 │   │   ├── test_benchmark_models.py              # Tests for benchmark_models.py data models and parsing/formatting functions
 │   │   ├── test_benchmark_utils.py               # Tests for benchmark_utils.py business logic and utilities
 │   │   ├── test_changelog_utils.py               # Comprehensive tests for changelog_utils.py
+│   │   ├── test_compare_storage_backends.py      # Tests for compare_storage_backends.py
 │   │   ├── test_enhance_commits.py               # Tests for enhance_commits.py
 │   │   ├── test_hardware_utils.py                # Tests for hardware_utils.py
 │   │   └── test_subprocess_utils.py              # Comprehensive tests for subprocess_utils.py
@@ -147,32 +162,12 @@ delaunay/
 │   ├── run_all_examples.sh                       # Validate all examples
 │   ├── slurm_storage_comparison.sh               # Slurm cluster script for comprehensive storage backend comparison
 │   └── subprocess_utils.py                       # Secure subprocess execution utilities and shared project navigation functions
-├── .github/                                      # GitHub configuration
-│   ├── workflows/                                # CI/CD workflows
-│   │   ├── audit.yml                             # Security vulnerability scanning
-│   │   ├── benchmarks.yml                        # Performance regression testing
-│   │   ├── ci.yml                                # Main CI pipeline
-│   │   ├── codacy.yml                            # Code quality analysis
-│   │   ├── codecov.yml                           # Test coverage tracking
-│   │   ├── generate-baseline.yml                 # Automated performance baseline generation on releases
-│   │   ├── profiling-benchmarks.yml              # Profiling suite for large-scale performance analysis
-│   │   └── rust-clippy.yml                       # Additional clippy analysis
-│   ├── instructions/                             # GitHub integration instructions
-│   │   └── codacy.instructions.md                # Codacy configuration instructions
-│   ├── CODEOWNERS                                # Code ownership definitions
-│   └── dependabot.yml                            # Dependency update configuration
+├── proptest-regressions/                         # Proptest regression test storage
+│   └── core/
+│       └── traits/
+│           └── insertion_algorithm.txt           # Regression cases for insertion algorithm traits
 ├── .cargo/                                       # Cargo configuration
 │   └── config.toml                               # Build configuration
-├── .auto-changelog                               # Auto-changelog configuration
-├── .codacy.yml                                   # Codacy code quality configuration
-├── .codecov.yml                                  # Codecov configuration
-├── .coderabbit.yml                               # CodeRabbit AI review configuration
-├── .gitleaks.toml                                # GitLeaks security scanning configuration
-├── .gitignore                                    # Git ignore patterns
-├── .markdownlint.json                            # Markdown linting configuration
-├── .python-version                               # Python version specification for performance requirements
-├── .semgrep.yaml                                 # Semgrep static analysis configuration for security and code quality
-├── .yamllint                                     # YAML linting configuration
 ├── clippy.toml                                   # Clippy configuration for additional linting rules
 ├── CHANGELOG.md                                  # Version history with enhanced squashed PR support
 ├── CITATION.cff                                  # Citation metadata for academic use
@@ -296,7 +291,8 @@ with convenient `just` shortcuts for common workflows.
 
 - `point.rs` - NaN-aware Point operations
 - `predicates.rs`, `robust_predicates.rs` - Geometric tests (see [Numerical Robustness Guide](numerical_robustness_guide.md))
-- `quality.rs` - Cell quality metrics (radius ratio, normalized volume) for d-dimensional simplices
+- `quality.rs` - Cell quality metrics (radius ratio, normalized volume) for d-dimensional simplices; provides mesh quality analysis to identify
+  poorly-shaped cells (supports 2D-6D)
 - `matrix.rs` - Linear algebra support
 - `algorithms/convex_hull.rs` - Hull extraction
 - `traits/coordinate.rs` - Coordinate abstractions

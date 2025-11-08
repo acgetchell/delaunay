@@ -9,11 +9,13 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use delaunay::core::facet::FacetView;
+use delaunay::core::facet::facet_key_from_vertices;
 use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
 use proptest::prelude::*;
+use std::collections::HashMap;
 
 // =============================================================================
 // TEST CONFIGURATION
@@ -154,3 +156,50 @@ test_facet_properties!(2, 4, 10, 2);
 test_facet_properties!(3, 5, 12, 3);
 test_facet_properties!(4, 6, 14, 4);
 test_facet_properties!(5, 7, 16, 5);
+
+// Additional invariant: facet multiplicity (each facet should belong to 1 or 2 cells)
+macro_rules! test_facet_multiplicity {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<prop_facet_multiplicity_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $min_vertices..=$max_vertices
+                    ).prop_map(Vertex::from_points)
+                ) {
+                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                        // Ensure we're checking a valid triangulation to avoid degenerate edge cases
+                        prop_assume!(tds.is_valid().is_ok());
+
+                        let mut counts: HashMap<u64, usize> = HashMap::new();
+
+                        for (_cell_key, cell) in tds.cells() {
+                            let vs = cell.vertices();
+                            for i in 0..vs.len() {
+                                let facet: Vec<_> = vs
+                                    .iter()
+                                    .copied()
+                                    .enumerate()
+                                    .filter_map(|(j, vk)| (j != i).then_some(vk))
+                                    .collect();
+                                let key = facet_key_from_vertices(&facet);
+                                *counts.entry(key).or_default() += 1;
+                            }
+                        }
+
+                        for (facet, c) in counts {
+                            prop_assert!(c == 1 || c == 2, "facet {:?} appears {} times (must be 1 or 2)", facet, c);
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
+test_facet_multiplicity!(2, 4, 10);
+test_facet_multiplicity!(3, 5, 12);
+test_facet_multiplicity!(4, 6, 14);
+test_facet_multiplicity!(5, 7, 16);
