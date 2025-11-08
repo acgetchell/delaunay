@@ -24,20 +24,20 @@ use std::{
     thread,
 };
 
-/// Test concurrent cache access during vertex insertion operations.
+/// Test sequential cache invalidation during vertex insertion operations.
 ///
-/// This test exercises the retry loops in `try_get_or_build_facet_cache()`
-/// by having multiple threads simultaneously:
-/// - Insert vertices (modifies TDS, increments generation)
-/// - Query the facet cache
+/// This test verifies cache consistency when vertices are inserted sequentially
+/// with explicit invalidation between insertions:
+/// - Invalidate cache
+/// - Insert vertex (modifies TDS, increments generation)
+/// - Rebuild and query the facet cache
 ///
 /// Expected behavior:
-/// - Cache stays consistent across threads
-/// - No panics or data races
+/// - Cache rebuilds correctly after each insertion
 /// - Generation tracking works correctly
-/// - Retry loops handle concurrent modifications gracefully
+/// - Cache remains consistent with TDS state
 #[test]
-fn test_concurrent_cache_access_during_insertion() {
+fn test_sequential_cache_invalidation_during_insertion() {
     // Create initial triangulation with a few vertices
     let initial_vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -145,7 +145,7 @@ fn test_cache_invalidation_during_incremental_building() {
 /// This exercises the RCU mechanism in `try_build_cache_with_rcu()`
 /// to ensure only one thread actually builds the cache while others wait and reuse.
 #[test]
-#[expect(clippy::needless_collect)] // Must collect handles before joining to avoid deadlock
+#[expect(clippy::needless_collect)] // Collect handles to consume iterator before joining threads
 fn test_rcu_contention_multiple_threads() {
     const NUM_THREADS: usize = 10;
 

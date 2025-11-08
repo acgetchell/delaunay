@@ -9282,7 +9282,10 @@ mod tests {
     fn test_uuid_mapping_prevents_corruption() {
         // Create many vertices and verify UUID uniqueness is maintained
         let vertices: Vec<_> = (0..10)
-            .map(|i: i32| vertex!([<f64 as std::convert::From<i32>>::from(i), 0.0, 0.0, 0.0]))
+            .map(|i: i32| {
+                let x: f64 = num_traits::cast(i).expect("Small i32 converts exactly to f64");
+                vertex!([x, 0.0, 0.0, 0.0])
+            })
             .collect();
 
         let tds = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices).unwrap();

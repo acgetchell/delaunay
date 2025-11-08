@@ -841,14 +841,18 @@ where
     ///
     /// This checks that boundary facets were found when bad cells exist,
     /// and can perform additional geometric validation if needed.
-    const fn validate_boundary_facets(
+    fn validate_boundary_facets(
         boundary_facets: &[FacetHandle],
         bad_cell_count: usize,
     ) -> Result<(), InsertionError> {
         if boundary_facets.is_empty() && bad_cell_count > 0 {
-            return Err(InsertionError::ExcessiveBadCells {
-                found: bad_cell_count,
-                threshold: 0,
+            // Provide clearer error context: no boundary facets found for bad cells
+            return Err(InsertionError::GeometricFailure {
+                message: format!(
+                    "No boundary facets found for {bad_cell_count} bad cells. \
+                     This typically indicates TDS corruption or all cells marked as bad."
+                ),
+                strategy_attempted: InsertionStrategy::CavityBased,
             });
         }
 
@@ -3408,11 +3412,14 @@ mod tests {
         );
 
         match result.err().unwrap() {
-            InsertionError::ExcessiveBadCells { found, threshold } => {
-                assert_eq!(found, 3);
-                assert_eq!(threshold, 0);
+            InsertionError::GeometricFailure {
+                message,
+                strategy_attempted,
+            } => {
+                assert!(message.contains("No boundary facets found for 3 bad cells"));
+                assert_eq!(strategy_attempted, InsertionStrategy::CavityBased);
             }
-            other => panic!("Expected ExcessiveBadCells error, got {other:?}"),
+            other => panic!("Expected GeometricFailure error, got {other:?}"),
         }
 
         // Test with boundary facets present (should succeed)
