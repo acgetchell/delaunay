@@ -180,7 +180,7 @@ macro_rules! gen_insphere_inward_scaling_inside {
     };
 }
 
-// 2D: place point at 10x circumradius along a direction -> OUTSIDE
+// D-dimensional: place point at 10x circumradius along a direction -> OUTSIDE
 macro_rules! gen_insphere_distant_point_outside_by_radius {
     ($dim:literal) => {
         pastey::paste! {
@@ -193,18 +193,23 @@ macro_rules! gen_insphere_distant_point_outside_by_radius {
                         if radius < 1e-6 || !radius.is_finite() {
                             return Ok(());
                         }
-                        let center_coords: [f64; 2] = center.into();
-                        let (dir_x, dir_y) = if center_coords[0].abs() > 0.01 || center_coords[1].abs() > 0.01 {
-                            let norm = center_coords[0].hypot(center_coords[1]);
-                            (center_coords[0] / norm, center_coords[1] / norm)
+                        let center_coords: [f64; $dim] = center.into();
+                        // Build a direction: normalize center if nonzero; else use e0
+                        let mut norm_sq = 0.0;
+                        for i in 0..$dim { norm_sq += center_coords[i] * center_coords[i]; }
+                        let mut dir = [0.0_f64; $dim];
+                        if norm_sq > 1e-8 {
+                            let inv_norm = norm_sq.sqrt().recip();
+                            for i in 0..$dim { dir[i] = center_coords[i] * inv_norm; }
                         } else {
-                            (1.0, 0.0)
-                        };
+                            dir[0] = 1.0;
+                        }
                         let distance = radius * 10.0;
-                        let far_point = Point::new([
-                            dir_x.mul_add(distance, center_coords[0]),
-                            dir_y.mul_add(distance, center_coords[1]),
-                        ]);
+                        let mut far = [0.0_f64; $dim];
+                        for i in 0..$dim {
+                            far[i] = dir[i].mul_add(distance, center_coords[i]);
+                        }
+                        let far_point = Point::new(far);
                         if let Ok(result) = insphere(&simplex, far_point) {
                             prop_assert!(result == InSphere::OUTSIDE, "Point at 10x circumradius from center should be OUTSIDE, got {:?}", result);
                         }
@@ -265,6 +270,9 @@ gen_insphere_simplex_vertices_on_boundary!(5);
 gen_insphere_inward_scaling_inside!(2);
 
 gen_insphere_distant_point_outside_by_radius!(2);
+gen_insphere_distant_point_outside_by_radius!(3);
+gen_insphere_distant_point_outside_by_radius!(4);
+gen_insphere_distant_point_outside_by_radius!(5);
 
 gen_insphere_scale_center_outside!(4);
 gen_insphere_scale_center_outside!(5);

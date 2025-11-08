@@ -298,6 +298,7 @@
     "quickcheck",
     "rawpointer",
     "readlines",
+    "recip",
     "redef",
     "repr",
     "retriangulation",

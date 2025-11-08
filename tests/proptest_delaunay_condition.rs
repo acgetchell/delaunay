@@ -269,6 +269,18 @@ proptest! {
                 insert_result.as_ref().err()
             );
         }
+        // Finalize triangulation A before validation/comparison
+        let finalize_a = <RobustBowyerWatson<f64, Option<()>, Option<()>, 2> as InsertionAlgorithm<
+            f64,
+            Option<()>,
+            Option<()>,
+            2,
+        >>::finalize_triangulation(&mut tds_a);
+        prop_assert!(
+            finalize_a.is_ok(),
+            "finalize_triangulation failed for natural order: {:?}",
+            finalize_a.as_ref().err()
+        );
         prop_assume!(tds_a.is_valid().is_ok());
 
         let mut tds_b: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&initial).expect("init");
@@ -284,6 +296,18 @@ proptest! {
                 insert_result.as_ref().err()
             );
         }
+        // Finalize triangulation B before validation/comparison
+        let finalize_b = <RobustBowyerWatson<f64, Option<()>, Option<()>, 2> as InsertionAlgorithm<
+            f64,
+            Option<()>,
+            Option<()>,
+            2,
+        >>::finalize_triangulation(&mut tds_b);
+        prop_assert!(
+            finalize_b.is_ok(),
+            "finalize_triangulation failed for shuffled order: {:?}",
+            finalize_b.as_ref().err()
+        );
         prop_assume!(tds_b.is_valid().is_ok());
 
         // Compare triangulations coarsely to avoid fragility
