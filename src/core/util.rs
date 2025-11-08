@@ -388,6 +388,61 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 }
 
 // =============================================================================
+// SET SIMILARITY UTILITIES
+// =============================================================================
+
+/// Jaccard index (similarity) between two sets: |A ∩ B| / |A ∪ B|.
+///
+/// Returns 1.0 when both sets are empty by convention.
+///
+/// References
+/// - Jaccard, P. (1901). Étude comparative de la distribution florale.
+///   Bulletin de la Société Vaudoise des Sciences Naturelles.
+/// - Tanimoto, T. T. (1958). An elementary mathematical theory of classification and
+///   prediction. IBM Report (often cited for the Tanimoto coefficient).
+#[must_use]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "usize→f64 conversion for ratio; counts fit safely in f64 mantissa"
+)]
+pub fn jaccard_index<T, S>(
+    a: &std::collections::HashSet<T, S>,
+    b: &std::collections::HashSet<T, S>,
+) -> f64
+where
+    T: Eq + std::hash::Hash,
+    S: std::hash::BuildHasher,
+{
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    // Iterate over the smaller set for intersection count
+    let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    let mut inter = 0usize;
+    for x in small {
+        if large.contains(x) {
+            inter += 1;
+        }
+    }
+    let union = a.len() + b.len() - inter;
+    inter as f64 / union as f64
+}
+
+/// Jaccard distance between two sets: 1.0 - Jaccard index.
+#[inline]
+#[must_use]
+pub fn jaccard_distance<T, S>(
+    a: &std::collections::HashSet<T, S>,
+    b: &std::collections::HashSet<T, S>,
+) -> f64
+where
+    T: Eq + std::hash::Hash,
+    S: std::hash::BuildHasher,
+{
+    1.0 - jaccard_index(a, b)
+}
+
+// =============================================================================
 // FACET KEY UTILITIES
 // =============================================================================
 

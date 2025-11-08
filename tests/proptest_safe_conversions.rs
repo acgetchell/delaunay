@@ -14,8 +14,6 @@
 //! - Round-trip conversions preserve values where possible
 //! - Non-finite values (NaN, Infinity) are properly rejected
 
-#![allow(unused_imports)] // Imports used in test functions
-
 use approx::assert_relative_eq;
 use delaunay::geometry::util::{
     safe_coords_from_f64, safe_coords_to_f64, safe_scalar_from_f64, safe_scalar_to_f64,
@@ -55,31 +53,106 @@ fn safe_usize_for_f32() -> impl Strategy<Value = usize> {
 }
 
 // =============================================================================
-// SCALAR CONVERSION TESTS
+// SCALAR CONVERSION TESTS (MACRO-GENERATED)
 // =============================================================================
 
-proptest! {
-    /// Property: safe_scalar_to_f64 succeeds for finite f64 values
-    #[test]
-    fn prop_safe_scalar_to_f64_succeeds_for_finite(value in finite_f64()) {
-        let result: Result<f64, _> = safe_scalar_to_f64(value);
-        prop_assert!(result.is_ok(), "Conversion should succeed for finite f64: {}", value);
-        prop_assert!((result.unwrap() - value).abs() < 1e-12, "Converted value should match original");
-    }
+// f64 input -> f64 output should match exactly
+macro_rules! gen_safe_scalar_to_f64_ok_f64 {
+    () => {
+        proptest! {
+            #[test]
+            fn prop_safe_scalar_to_f64_succeeds_for_finite_f64(value in finite_f64()) {
+                let result: Result<f64, _> = safe_scalar_to_f64(value);
+                prop_assert!(result.is_ok(), "Conversion should succeed for finite f64");
+                prop_assert!((result.unwrap() - value).abs() < 1e-12, "Converted value should match original");
+            }
+        }
+    };
+}
 
+// f32 input -> f64 output should equal f64::from(input)
+macro_rules! gen_safe_scalar_to_f64_ok_f32 {
+    () => {
+        proptest! {
+            #[test]
+            fn prop_safe_scalar_to_f64_succeeds_for_finite_f32(value in finite_f32()) {
+                let result: Result<f64, _> = safe_scalar_to_f64(value);
+                prop_assert!(result.is_ok(), "Conversion should succeed for finite f32");
+                let expected = f64::from(value);
+                prop_assert!((result.unwrap() - expected).abs() < 1e-12, "Converted value should match original");
+            }
+        }
+    };
+}
+
+// f64 input -> f64 output
+macro_rules! gen_safe_scalar_from_f64_ok_f64 {
+    () => {
+        proptest! {
+            #[test]
+            fn prop_safe_scalar_from_f64_succeeds_for_finite_f64(value in finite_f64()) {
+                let result: Result<f64, _> = safe_scalar_from_f64(value);
+                prop_assert!(result.is_ok(), "Conversion should succeed for finite f64");
+                prop_assert!((result.unwrap() - value).abs() < 1e-12, "Converted value should match original");
+            }
+        }
+    };
+}
+
+// f64 input -> f32 output (within tolerance)
+macro_rules! gen_safe_scalar_from_f64_ok_f32 {
+    () => {
+        proptest! {
+            #[test]
+            fn prop_safe_scalar_from_f64_succeeds_for_finite_f32(value in finite_f64()) {
+                let result: Result<f32, _> = safe_scalar_from_f64(value);
+                prop_assert!(result.is_ok(), "Conversion should succeed for finite f64");
+                let diff = (f64::from(result.unwrap()) - value).abs();
+                prop_assert!(diff <= 1e-4, "Converted value should match within tolerance: diff={}", diff);
+            }
+        }
+    };
+}
+
+// Round-trip scalar tests
+macro_rules! gen_round_trip_scalar_f64_f64 {
+    () => {
+        proptest! {
+            #[test]
+            fn prop_round_trip_f64_f64(value in finite_f64()) {
+                let converted: Result<f64, _> = safe_scalar_to_f64(value);
+                prop_assert!(converted.is_ok());
+                let back: Result<f64, _> = safe_scalar_from_f64(converted.unwrap());
+                prop_assert!(back.is_ok());
+                prop_assert!((back.unwrap() - value).abs() < 1e-12, "Round-trip should preserve f64 value");
+            }
+        }
+    };
+}
+
+macro_rules! gen_round_trip_scalar_f32_f64_f32 {
+    () => {
+        proptest! {
+            #[test]
+            fn prop_round_trip_f32_f64_f32(value in finite_f32()) {
+                let to_f64: Result<f64, _> = safe_scalar_to_f64(value);
+                prop_assert!(to_f64.is_ok());
+                let back: Result<f32, _> = safe_scalar_from_f64(to_f64.unwrap());
+                prop_assert!(back.is_ok());
+                let difference = (back.unwrap() - value).abs();
+                prop_assert!(difference < 1e-6, "Round-trip should preserve f32 value: diff = {}", difference);
+            }
+        }
+    };
+}
+
+// Non-finite rejection tests
+proptest! {
     /// Property: safe_scalar_to_f64 rejects non-finite values
     #[test]
     fn prop_safe_scalar_to_f64_rejects_non_finite(value in non_finite_f64()) {
         let result: Result<f64, _> = safe_scalar_to_f64(value);
         prop_assert!(result.is_err(), "Conversion should fail for non-finite f64: {}", value);
-    }
-
-    /// Property: safe_scalar_from_f64 succeeds for finite values
-    #[test]
-    fn prop_safe_scalar_from_f64_succeeds_for_finite(value in finite_f64()) {
-        let result: Result<f64, _> = safe_scalar_from_f64(value);
-        prop_assert!(result.is_ok(), "Conversion should succeed for finite f64: {}", value);
-        prop_assert!((result.unwrap() - value).abs() < 1e-10, "Converted value should match");
     }
 
     /// Property: safe_scalar_from_f64 rejects non-finite values
@@ -88,75 +161,97 @@ proptest! {
         let result: Result<f32, _> = safe_scalar_from_f64(value);
         prop_assert!(result.is_err(), "Conversion should fail for non-finite f64: {}", value);
     }
-
-    /// Property: Round-trip f64 -> f64 preserves value exactly
-    #[test]
-    fn prop_round_trip_f64_f64(value in finite_f64()) {
-        let converted: Result<f64, _> = safe_scalar_to_f64(value);
-        prop_assert!(converted.is_ok());
-
-        let back: Result<f64, _> = safe_scalar_from_f64(converted.unwrap());
-        prop_assert!(back.is_ok());
-        prop_assert!((back.unwrap() - value).abs() < 1e-12, "Round-trip should preserve f64 value");
-    }
-
-    /// Property: Round-trip f32 -> f64 -> f32 preserves value (within f32 precision)
-    #[test]
-    fn prop_round_trip_f32_f64_f32(value in finite_f32()) {
-        let to_f64: Result<f64, _> = safe_scalar_to_f64(value);
-        prop_assert!(to_f64.is_ok());
-
-        let back: Result<f32, _> = safe_scalar_from_f64(to_f64.unwrap());
-        prop_assert!(back.is_ok());
-
-        let difference = (back.unwrap() - value).abs();
-        prop_assert!(
-            difference < 1e-6,
-            "Round-trip should preserve f32 value: diff = {}",
-            difference
-        );
-    }
 }
 
+// Invoke macros
+gen_safe_scalar_to_f64_ok_f64!();
+gen_safe_scalar_to_f64_ok_f32!();
+
+gen_safe_scalar_from_f64_ok_f64!();
+gen_safe_scalar_from_f64_ok_f32!();
+
+gen_round_trip_scalar_f64_f64!();
+gen_round_trip_scalar_f32_f64_f32!();
+
 // =============================================================================
-// USIZE CONVERSION TESTS
+// USIZE CONVERSION TESTS (MACRO-GENERATED)
 // =============================================================================
 
+macro_rules! gen_safe_usize_to_scalar_succeeds {
+    ($name:ident, $ty:ty, $strategy:ident) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<$name>](value in $strategy()) {
+                    let result: Result<$ty, _> = safe_usize_to_scalar(value);
+                    prop_assert!(result.is_ok(), "Conversion should succeed for usize {}", value);
+                    let converted = result.unwrap();
+                    let back: usize = cast(converted).expect("round-trip usize should be exact");
+                    prop_assert_eq!(back, value, "Converted value should match original");
+                }
+            }
+        }
+    };
+}
+
+macro_rules! gen_safe_usize_exact_small_values {
+    ($name:ident, $ty:ty, $upper:expr) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<$name>](value in 0..=$upper) {
+                    let result: Result<$ty, _> = safe_usize_to_scalar(value);
+                    prop_assert!(result.is_ok(), "Conversion should succeed for small usize: {}", value);
+                    let converted = result.unwrap();
+                    let back: usize = cast(converted).expect("round-trip usize should be exact");
+                    prop_assert_eq!(back, value, "Small values should convert exactly");
+                }
+            }
+        }
+    };
+}
+
+macro_rules! gen_safe_usize_preserves_const {
+    ($name:ident, $val:expr, $expected:expr, $ty:ty, $eps:expr) => {
+        pastey::paste! {
+            #[test]
+            fn [<$name>]() {
+                let result: Result<$ty, _> = safe_usize_to_scalar($val);
+                assert!(result.is_ok());
+                let v = result.unwrap();
+                assert!((f64::from(v) - $expected).abs() < $eps);
+            }
+        }
+    };
+}
+
+fn usize_range_f64() -> impl Strategy<Value = usize> {
+    safe_usize()
+}
+fn usize_range_f32() -> impl Strategy<Value = usize> {
+    safe_usize_for_f32()
+}
+
+gen_safe_usize_to_scalar_succeeds!(
+    prop_safe_usize_to_f64_succeeds_small_values,
+    f64,
+    usize_range_f64
+);
+
+gen_safe_usize_to_scalar_succeeds!(
+    prop_safe_usize_to_f32_succeeds_small_values,
+    f32,
+    usize_range_f32
+);
+
+gen_safe_usize_exact_small_values!(prop_safe_usize_exact_for_small_values, f64, 1000_usize);
+
+gen_safe_usize_preserves_const!(prop_safe_usize_preserves_zero, 0_usize, 0.0_f64, f64, 1e-15);
+
+gen_safe_usize_preserves_const!(prop_safe_usize_preserves_one, 1_usize, 1.0_f64, f64, 1e-15);
+
+// Monotonicity test retained (f32)
 proptest! {
-    /// Property: safe_usize_to_scalar succeeds for small usize values (< 2^53)
-    #[test]
-    fn prop_safe_usize_to_f64_succeeds_small_values(value in safe_usize()) {
-        let result: Result<f64, _> = safe_usize_to_scalar(value);
-        prop_assert!(result.is_ok(), "Conversion should succeed for usize {} < 2^53", value);
-
-        let converted = result.unwrap();
-        let back: usize = cast(converted).expect("f64 should convert back to usize exactly");
-        prop_assert_eq!(back, value, "Converted value should match original");
-    }
-
-    /// Property: safe_usize_to_scalar succeeds for small usize values targeting f32 (< 2^24)
-    #[test]
-    fn prop_safe_usize_to_f32_succeeds_small_values(value in safe_usize_for_f32()) {
-        let result: Result<f32, _> = safe_usize_to_scalar(value);
-        prop_assert!(result.is_ok(), "Conversion should succeed for usize {} < 2^24", value);
-
-        let converted = result.unwrap();
-        let back: usize = cast(converted).expect("f32 should convert back to usize exactly");
-        prop_assert_eq!(back, value, "Converted f32 value should match original");
-    }
-
-    /// Property: safe_usize_to_scalar is exact for small values
-    #[test]
-    fn prop_safe_usize_exact_for_small_values(value in 0..=1000_usize) {
-        let result: Result<f64, _> = safe_usize_to_scalar(value);
-        prop_assert!(result.is_ok(), "Conversion should succeed for small usize: {}", value);
-
-        let converted = result.unwrap();
-        let back: usize = cast(converted).expect("f64 should convert back to usize exactly");
-        prop_assert_eq!(back, value, "Small values should convert exactly");
-    }
-
-
     /// Property: safe_usize_to_scalar is monotonic for safe values
     #[test]
     fn prop_safe_usize_monotonic(value1 in safe_usize_for_f32(), value2 in safe_usize_for_f32()) {
@@ -182,160 +277,105 @@ proptest! {
     }
 }
 
-/// Property: `safe_usize_to_scalar` preserves zero
-#[test]
-fn prop_safe_usize_preserves_zero() {
-    let result: Result<f64, _> = safe_usize_to_scalar(0_usize);
-    assert!(result.is_ok());
-    assert!(
-        (result.unwrap() - 0.0).abs() < 1e-15,
-        "Zero should convert to 0.0"
-    );
-}
-
-/// Property: `safe_usize_to_scalar` preserves one
-#[test]
-fn prop_safe_usize_preserves_one() {
-    let result: Result<f64, _> = safe_usize_to_scalar(1_usize);
-    assert!(result.is_ok());
-    assert!(
-        (result.unwrap() - 1.0).abs() < 1e-15,
-        "One should convert to 1.0"
-    );
-}
-
 // =============================================================================
 // COORDINATE ARRAY CONVERSION TESTS
 // =============================================================================
 
+// Macros to generate repeated coordinate array tests across dimensions
+macro_rules! gen_safe_coords_to_f64 {
+    ($dim:literal) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<prop_safe_coords_to_f64_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f32())) {
+                    let result = safe_coords_to_f64(coords);
+                    prop_assert!(result.is_ok(), "Conversion should succeed for finite {}D coords", $dim);
+                    let converted = result.unwrap();
+                    for i in 0..$dim {
+                        let diff = (converted[i] - f64::from(coords[i])).abs();
+                        prop_assert!(diff < 1e-6, "Coordinate {} should match: {} vs {}", i, converted[i], coords[i]);
+                    }
+                }
+            }
+        }
+    };
+}
+
+macro_rules! gen_safe_coords_from_f64 {
+    ($dim:literal) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<prop_safe_coords_from_f64_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
+                    let result: Result<[f64; $dim], _> = safe_coords_from_f64(coords);
+                    prop_assert!(result.is_ok(), "Conversion should succeed for finite {}D coords", $dim);
+                    let converted = result.unwrap();
+                    for i in 0..$dim {
+                        let diff = (converted[i] - coords[i]).abs();
+                        prop_assert!(diff < 1e-10, "Coordinate {} should match: {} vs {}", i, converted[i], coords[i]);
+                    }
+                }
+            }
+        }
+    };
+}
+
+macro_rules! gen_round_trip_coords_f32 {
+    ($dim:literal) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<prop_round_trip_coords_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f32())) {
+                    let to_f64 = safe_coords_to_f64(coords);
+                    prop_assert!(to_f64.is_ok());
+                    let back: Result<[f32; $dim], _> = safe_coords_from_f64(to_f64.unwrap());
+                    prop_assert!(back.is_ok());
+                    let converted = back.unwrap();
+                    for i in 0..$dim {
+                        let diff = (converted[i] - coords[i]).abs();
+                        prop_assert!(diff < 1e-6, "Round-trip coordinate {} should match: diff = {}", i, diff);
+                    }
+                }
+            }
+        }
+    };
+}
+
+macro_rules! gen_round_trip_coords_f64_exact {
+    ($dim:literal) => {
+        pastey::paste! {
+            proptest! {
+                #[test]
+                fn [<prop_round_trip_coords_ $dim d _exact>](coords in prop::array::[<uniform $dim>](finite_f64())) {
+                    let to_f64 = safe_coords_to_f64(coords);
+                    prop_assert!(to_f64.is_ok());
+                    let back: Result<[f64; $dim], _> = safe_coords_from_f64(to_f64.unwrap());
+                    prop_assert!(back.is_ok());
+                    let converted = back.unwrap();
+                    for i in 0..$dim {
+                        prop_assert!((converted[i] - coords[i]).abs() < 1e-12,
+                            "Round-trip f64 coordinate {} should be exact (within tolerance)", i);
+                    }
+                }
+            }
+        }
+    };
+}
+
+// Instantiate macros for specific dimensions
+gen_safe_coords_to_f64!(2);
+gen_safe_coords_to_f64!(3);
+
+gen_safe_coords_from_f64!(2);
+gen_safe_coords_from_f64!(3);
+
+gen_round_trip_coords_f32!(2);
+gen_round_trip_coords_f32!(3);
+
+gen_round_trip_coords_f64_exact!(4);
+
+// Keep 3D rejection tests
 proptest! {
-    /// Property: safe_coords_to_f64 succeeds for 2D finite coordinates
-    #[test]
-    fn prop_safe_coords_to_f64_2d(coords in prop::array::uniform2(finite_f32())) {
-        let result = safe_coords_to_f64(coords);
-        prop_assert!(result.is_ok(), "Conversion should succeed for finite 2D coords");
-
-        let converted = result.unwrap();
-        for i in 0..2 {
-            let diff = (converted[i] - f64::from(coords[i])).abs();
-            prop_assert!(
-                diff < 1e-6,
-                "Coordinate {} should match: {} vs {}",
-                i, converted[i], coords[i]
-            );
-        }
-    }
-
-    /// Property: safe_coords_to_f64 succeeds for 3D finite coordinates
-    #[test]
-    fn prop_safe_coords_to_f64_3d(coords in prop::array::uniform3(finite_f32())) {
-        let result = safe_coords_to_f64(coords);
-        prop_assert!(result.is_ok(), "Conversion should succeed for finite 3D coords");
-
-        let converted = result.unwrap();
-        for i in 0..3 {
-            let diff = (converted[i] - f64::from(coords[i])).abs();
-            prop_assert!(
-                diff < 1e-6,
-                "Coordinate {} should match: {} vs {}",
-                i, converted[i], coords[i]
-            );
-        }
-    }
-
-    /// Property: safe_coords_from_f64 succeeds for 2D finite coordinates
-    #[test]
-    fn prop_safe_coords_from_f64_2d(coords in prop::array::uniform2(finite_f64())) {
-        let result: Result<[f64; 2], _> = safe_coords_from_f64(coords);
-        prop_assert!(result.is_ok(), "Conversion should succeed for finite 2D coords");
-
-        let converted = result.unwrap();
-        for i in 0..2 {
-            let diff = (converted[i] - coords[i]).abs();
-            prop_assert!(
-                diff < 1e-10,
-                "Coordinate {} should match: {} vs {}",
-                i, converted[i], coords[i]
-            );
-        }
-    }
-
-    /// Property: safe_coords_from_f64 succeeds for 3D finite coordinates
-    #[test]
-    fn prop_safe_coords_from_f64_3d(coords in prop::array::uniform3(finite_f64())) {
-        let result: Result<[f64; 3], _> = safe_coords_from_f64(coords);
-        prop_assert!(result.is_ok(), "Conversion should succeed for finite 3D coords");
-
-        let converted = result.unwrap();
-        for i in 0..3 {
-            let diff = (converted[i] - coords[i]).abs();
-            prop_assert!(
-                diff < 1e-10,
-                "Coordinate {} should match: {} vs {}",
-                i, converted[i], coords[i]
-            );
-        }
-    }
-
-    /// Property: Round-trip coordinate conversion 2D (f32 -> f64 -> f32)
-    #[test]
-    fn prop_round_trip_coords_2d(coords in prop::array::uniform2(finite_f32())) {
-        let to_f64 = safe_coords_to_f64(coords);
-        prop_assert!(to_f64.is_ok());
-
-        let back: Result<[f32; 2], _> = safe_coords_from_f64(to_f64.unwrap());
-        prop_assert!(back.is_ok());
-
-        let converted = back.unwrap();
-        for i in 0..2 {
-            let diff = (converted[i] - coords[i]).abs();
-            prop_assert!(
-                diff < 1e-6,
-                "Round-trip coordinate {} should match: diff = {}",
-                i, diff
-            );
-        }
-    }
-
-    /// Property: Round-trip coordinate conversion 3D (f32 -> f64 -> f32)
-    #[test]
-    fn prop_round_trip_coords_3d(coords in prop::array::uniform3(finite_f32())) {
-        let to_f64 = safe_coords_to_f64(coords);
-        prop_assert!(to_f64.is_ok());
-
-        let back: Result<[f32; 3], _> = safe_coords_from_f64(to_f64.unwrap());
-        prop_assert!(back.is_ok());
-
-        let converted = back.unwrap();
-        for i in 0..3 {
-            let diff = (converted[i] - coords[i]).abs();
-            prop_assert!(
-                diff < 1e-6,
-                "Round-trip coordinate {} should match: diff = {}",
-                i, diff
-            );
-        }
-    }
-
-    /// Property: Round-trip coordinate conversion 4D (f64 -> f64 -> f64)
-    #[test]
-    fn prop_round_trip_coords_4d_exact(coords in prop::array::uniform4(finite_f64())) {
-        let to_f64 = safe_coords_to_f64(coords);
-        prop_assert!(to_f64.is_ok());
-
-        let back: Result<[f64; 4], _> = safe_coords_from_f64(to_f64.unwrap());
-        prop_assert!(back.is_ok());
-
-        let converted = back.unwrap();
-        for i in 0..4 {
-            prop_assert!(
-                (converted[i] - coords[i]).abs() < 1e-12,
-                "Round-trip f64 coordinate {} should be exact (within tolerance)",
-                i
-            );
-        }
-    }
-
     /// Property: Coordinate array with one NaN is rejected
     #[test]
     fn prop_coords_reject_nan_3d(good_coord in finite_f64(), nan_index in 0..3_usize) {
