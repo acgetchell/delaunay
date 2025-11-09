@@ -73,13 +73,14 @@ use smallvec::SmallVec;
 use std::iter::Sum;
 use std::marker::PhantomData;
 use std::ops::{Add, AddAssign, Div, Sub, SubAssign};
+use thiserror::Error;
 
 // REMOVED: make_facet_from_view was broken due to Phase 3A refactoring
 // The deprecated Facet::vertices() returns an empty Vec, causing silent failures
 // All code now uses FacetView directly or lightweight (CellKey, u8) handles
 
 /// Error for too many degenerate cells case
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub struct TooManyDegenerateCellsError {
     /// Number of degenerate cells
     pub degenerate_count: usize,
@@ -105,11 +106,9 @@ impl std::fmt::Display for TooManyDegenerateCellsError {
     }
 }
 
-impl std::error::Error for TooManyDegenerateCellsError {}
-
 /// Error that can occur during bad cells detection
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum BadCellsError {
     /// All cells were marked as bad, which is geometrically unusual and likely indicates
     /// the vertex should be inserted via hull extension instead
@@ -145,7 +144,7 @@ pub enum BadCellsError {
 
 /// Comprehensive error type for vertex insertion operations
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Error)]
 pub enum InsertionError {
     /// Geometric predicates failed to determine vertex placement
     #[error("Geometric failure during {strategy_attempted:?} insertion: {message}")]

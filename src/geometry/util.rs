@@ -5,7 +5,6 @@
 //! both predicates and other geometric algorithms.
 
 use num_traits::{Float, Zero};
-use peroxide::fuga::{LinearAlgebra, MatrixTrait, zeros};
 use rand::Rng;
 use rand::distr::uniform::SampleUniform;
 use std::iter::Sum;
@@ -748,8 +747,8 @@ where
     }
 
     // Build matrix A and vector B for the linear system
-    let mut matrix = zeros(dim, dim);
-    let mut b = zeros(dim, 1);
+    let mut matrix = crate::geometry::matrix::Matrix::zeros(dim, dim);
+    let mut b = crate::geometry::matrix::Matrix::zeros(dim, 1);
     let coords_0: [T; D] = (&points[0]).into();
 
     // Use safe coordinate conversion
@@ -781,10 +780,11 @@ where
     let a_inv = invert(&matrix)?;
 
     let solution = a_inv * b * 0.5;
-    let solution_vec = solution.col(0);
+    // Extract first (and only) column as a vector
+    let solution_vec = solution.column(0).into_owned();
 
     // Convert solution vector to array
-    let solution_slice: &[f64] = &solution_vec;
+    let solution_slice: &[f64] = solution_vec.as_slice();
     let solution_array: [f64; D] =
         solution_slice
             .try_into()
@@ -1097,7 +1097,7 @@ where
     let p0_f64 = safe_coords_to_f64(*p0_coords)?;
 
     // Create matrix of edge vectors (each row is an edge vector)
-    let mut edge_matrix = zeros(D, D);
+    let mut edge_matrix = crate::geometry::matrix::Matrix::zeros(D, D);
     for i in 1..=D {
         let point_coords = points[i].coords();
         let point_f64 = safe_coords_to_f64(*point_coords)?;
@@ -1108,7 +1108,7 @@ where
     }
 
     // Compute Gram matrix G where G[i,j] = edge_i · edge_j
-    let mut gram_matrix = zeros(D, D);
+    let mut gram_matrix = crate::geometry::matrix::Matrix::zeros(D, D);
     for i in 0..D {
         for j in 0..D {
             let mut dot_product = 0.0;
@@ -1120,7 +1120,7 @@ where
     }
 
     // Calculate determinant of Gram matrix
-    let mut det = gram_matrix.det();
+    let mut det = gram_matrix.determinant();
 
     // Clamp small negative values to zero (numerical tolerance)
     if det < 0.0 {
@@ -1469,7 +1469,7 @@ where
     let p0_f64 = safe_coords_to_f64(*p0_coords)?;
 
     // Create matrix of edge vectors (each row is an edge vector)
-    let mut edge_matrix = zeros(D - 1, D);
+    let mut edge_matrix = crate::geometry::matrix::Matrix::zeros(D - 1, D);
     for i in 1..D {
         let point_coords = points[i].coords();
         let point_f64 = safe_coords_to_f64(*point_coords)?;
@@ -1480,7 +1480,7 @@ where
     }
 
     // Compute Gram matrix G where G[i,j] = edge_i · edge_j
-    let mut gram_matrix = zeros(D - 1, D - 1);
+    let mut gram_matrix = crate::geometry::matrix::Matrix::zeros(D - 1, D - 1);
     for i in 0..(D - 1) {
         for j in 0..(D - 1) {
             let mut dot_product = 0.0;
@@ -1492,7 +1492,7 @@ where
     }
 
     // Calculate determinant of Gram matrix
-    let mut det = gram_matrix.det();
+    let mut det = gram_matrix.determinant();
 
     // Clamp small negative values to zero (numerical tolerance)
     if det < 0.0 {

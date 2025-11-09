@@ -145,8 +145,25 @@ The `robust_insphere` function in `src/geometry/robust_predicates.rs` provides:
 1. **Adaptive Tolerance Computation**
 
    ```rust
-   let adaptive_tolerance = compute_adaptive_tolerance(&matrix, &config);
+   use delaunay::geometry::matrix;
+   let adaptive_tolerance = matrix::adaptive_tolerance(&matrix, config.base_tolerance);
    ```
+
+   Why exclude the constant-1 column?
+   - Orientation and the standard insphere determinants use an augmented matrix with a trailing column of 1.0s.
+   - If we include that column in the matrix magnitude (∞-norm) estimate,
+     small-coordinate problems (e.g., 1e-9 scale) get a magnitude dominated by
+     the 1.0s, making the tolerance too large and masking boundary signal.
+   - The helper detects a last column that is approximately all 1.0 and
+     excludes it for the magnitude estimate only. The determinant itself is
+     unchanged. This keeps the tolerance proportional to the geometric scale
+     (coordinates and squared norms) while preserving robustness.
+
+   Note:
+   - Only the tolerance scaling excludes the constant-1 column.
+   - The determinant is always computed on the full matrix, including the
+     constant-1 column. This preserves the correct predicate geometry while
+     making the tolerance scale-aware.
 
 2. **Matrix Conditioning**
 
@@ -156,9 +173,20 @@ The `robust_insphere` function in `src/geometry/robust_predicates.rs` provides:
    ```
 
 3. **Multiple Fallback Strategies**
-   - Standard determinant with adaptive tolerance
-   - Matrix conditioning when standard method fails
-   - Symbolic perturbation for extreme degenerate cases
+
+- Standard determinant with adaptive tolerance
+- Matrix conditioning when standard method fails
+- Symbolic perturbation for extreme degenerate cases
+
+Sign conventions for the insphere predicate
+
+- Standard determinant form (`predicates::insphere`) and robust form
+  (`robust_predicates::robust_insphere`): interpret the determinant sign
+  relative to the simplex orientation. No dimension-parity adjustment is needed.
+- Lifted paraboloid form (`predicates::insphere_lifted`): the lifted
+  determinant has opposite sign in even dimensions. We apply a parity factor of
+  −1 for even D (and +1 for odd D) before the orientation normalization so
+  results match the standard form across 2D–5D.
 
 ### Configuration Options
 
@@ -210,11 +238,13 @@ for cell_key in &tds.cells().indices().collect::<Vec<_>>() {
 The `condition_matrix` function in `src/geometry/robust_predicates.rs` implements row scaling:
 
 ```rust
+use delaunay::geometry::matrix::Matrix;
+
 /// Apply conditioning to improve matrix stability
 fn condition_matrix(
-    mut matrix: na::DMatrix<f64>,
+    mut matrix: Matrix,
     _config: &RobustPredicateConfig<f64>,
-) -> (na::DMatrix<f64>, f64) {
+) -> (Matrix, f64) {
     let mut scale_factor = 1.0;
     
     // Row scaling - normalize each row by its maximum element

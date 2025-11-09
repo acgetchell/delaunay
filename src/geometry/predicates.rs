@@ -4,8 +4,8 @@
 //! that operate on points and simplices, including circumcenter and circumradius
 //! calculations.
 
+use crate::geometry::matrix::Matrix;
 use num_traits::{Float, Zero};
-use peroxide::fuga::{LinearAlgebra, zeros};
 use std::iter::Sum;
 
 use crate::core::cell::CellValidationError;
@@ -125,7 +125,7 @@ where
 
     // Create matrix for orientation test
     // Matrix has D+1 columns: D coordinates + 1
-    let mut matrix = zeros(D + 1, D + 1);
+    let mut matrix: Matrix = Matrix::zeros(D + 1, D + 1);
 
     // Populate rows with the coordinates of the points of the simplex
     for (i, p) in simplex_points.iter().enumerate() {
@@ -143,11 +143,11 @@ where
     }
 
     // Calculate the determinant of the matrix
-    let det = matrix.det();
+    let det = matrix.determinant();
 
-    // Use a tolerance for degenerate case detection
-    let tolerance = T::default_tolerance();
-    let tolerance_f64 = safe_scalar_to_f64(tolerance)?;
+    // Use adaptive tolerance based on matrix magnitude
+    let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
+    let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
     if det > tolerance_f64 {
         Ok(Orientation::POSITIVE)
@@ -362,7 +362,12 @@ where
         });
     }
 
-    let mut matrix = zeros(D + 2, D + 2);
+    // Short-circuit: an original simplex vertex lies exactly on the circumsphere boundary
+    if simplex_points.iter().any(|p| p == &test_point) {
+        return Ok(InSphere::BOUNDARY);
+    }
+
+    let mut matrix: Matrix = Matrix::zeros(D + 2, D + 2);
 
     for (i, p) in simplex_points.iter().enumerate() {
         let point_coords: [T; D] = p.into();
@@ -386,9 +391,12 @@ where
     matrix[(D + 1, D)] = safe_scalar_to_f64(test_squared_norm_t)?;
     matrix[(D + 1, D + 1)] = 1.0;
 
-    let det = matrix.det();
+    let det = matrix.determinant();
     let orientation = simplex_orientation(simplex_points)?;
-    let tolerance_f64 = safe_scalar_to_f64(T::default_tolerance())?;
+
+    // Adaptive tolerance scaled by matrix magnitude to improve robustness in release mode
+    let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
+    let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
     match orientation {
         Orientation::DEGENERATE => Err(CoordinateConversionError::ConversionFailed {
@@ -519,7 +527,7 @@ where
     // Matrix dimensions: (D+1) x (D+1)
     //   rows = D simplex points (relative to first) + 1 test point
     //   cols = D coordinates + 1 squared norm
-    let mut matrix = zeros(D + 1, D + 1);
+    let mut matrix: Matrix = Matrix::zeros(D + 1, D + 1);
 
     // Populate rows with the coordinates relative to the reference point
     for i in 1..=D {
@@ -576,17 +584,17 @@ where
     matrix[(D, D)] = test_squared_norm_f64;
 
     // Calculate the determinant of the matrix
-    let det = matrix.det();
+    let det = matrix.determinant();
 
     // For this matrix formulation using relative coordinates, we need to check
     // the simplex orientation to correctly interpret the determinant sign.
     let orientation = simplex_orientation(simplex_points)
         .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
-    // Use a tolerance for boundary detection
-    let tolerance = T::default_tolerance();
-    let tolerance_f64: f64 = safe_scalar_to_f64(tolerance)
+    // Use adaptive tolerance for boundary detection
+    let base_tol = safe_scalar_to_f64(T::default_tolerance())
         .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
+    let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
     // The sign interpretation depends on both orientation and dimension parity
     // For the lifted matrix formulation, even and odd dimensions have opposite sign conventions
