@@ -5,7 +5,6 @@
 //! both predicates and other geometric algorithms.
 
 use num_traits::{Float, Zero};
-use peroxide::fuga::{LinearAlgebra, MatrixTrait, zeros};
 use rand::Rng;
 use rand::distr::uniform::SampleUniform;
 use std::iter::Sum;
@@ -748,8 +747,8 @@ where
     }
 
     // Build matrix A and vector B for the linear system
-    let mut matrix = zeros(dim, dim);
-    let mut b = zeros(dim, 1);
+    let mut matrix = crate::geometry::matrix::Matrix::zeros(dim, dim);
+    let mut b = crate::geometry::matrix::Matrix::zeros(dim, 1);
     let coords_0: [T; D] = (&points[0]).into();
 
     // Use safe coordinate conversion
@@ -781,10 +780,11 @@ where
     let a_inv = invert(&matrix)?;
 
     let solution = a_inv * b * 0.5;
-    let solution_vec = solution.col(0);
+    // Extract first (and only) column as a vector
+    let solution_vec = solution.column(0).into_owned();
 
     // Convert solution vector to array
-    let solution_slice: &[f64] = &solution_vec;
+    let solution_slice: &[f64] = solution_vec.as_slice();
     let solution_array: [f64; D] =
         solution_slice
             .try_into()
@@ -1074,6 +1074,65 @@ where
     }
 }
 
+/// Compute the Gram matrix determinant for edge vectors and apply tolerance clamping.
+///
+/// This helper constructs the Gram matrix G where G\[i,j\] = `edge_i` · `edge_j` and computes
+/// its determinant with numerical tolerance handling:
+/// - Clamps small negative values (> -1e-12) to zero
+/// - Returns error for large negative values (degenerate simplex)
+/// - Returns error for zero determinant (no volume)
+///
+/// # Arguments
+///
+/// * `edge_matrix` - Matrix of edge vectors (rows are edge vectors)
+/// * `gram_dim` - Dimension of the Gram matrix (number of edges)
+///
+/// # Returns
+///
+/// The clamped Gram determinant, or an error if degenerate
+fn compute_gram_determinant(
+    edge_matrix: &crate::geometry::matrix::Matrix,
+    gram_dim: usize,
+) -> Result<f64, CircumcenterError> {
+    let edge_dim = edge_matrix.ncols();
+
+    // Compute Gram matrix G where G[i,j] = edge_i · edge_j
+    let mut gram_matrix = crate::geometry::matrix::Matrix::zeros(gram_dim, gram_dim);
+    for i in 0..gram_dim {
+        for j in 0..gram_dim {
+            let mut dot_product = 0.0;
+            for k in 0..edge_dim {
+                dot_product += edge_matrix[(i, k)] * edge_matrix[(j, k)];
+            }
+            gram_matrix[(i, j)] = dot_product;
+        }
+    }
+
+    // Calculate determinant of Gram matrix
+    let mut det = gram_matrix.determinant();
+
+    // Clamp small negative values to zero (numerical tolerance)
+    if det < 0.0 {
+        if det > -1e-12 {
+            det = 0.0;
+        } else {
+            return Err(CircumcenterError::MatrixInversionFailed {
+                details: "Gram matrix has negative determinant (degenerate simplex)".to_string(),
+            });
+        }
+    }
+
+    // Degenerate case: zero determinant means no volume
+    if det == 0.0 {
+        return Err(CircumcenterError::MatrixInversionFailed {
+            details: "Degenerate simplex with zero volume (collinear or coplanar points)"
+                .to_string(),
+        });
+    }
+
+    Ok(det)
+}
+
 /// Calculate the volume of a D-dimensional simplex using the Gram matrix method.
 ///
 /// This is a helper function that implements the general Gram matrix approach
@@ -1097,7 +1156,7 @@ where
     let p0_f64 = safe_coords_to_f64(*p0_coords)?;
 
     // Create matrix of edge vectors (each row is an edge vector)
-    let mut edge_matrix = zeros(D, D);
+    let mut edge_matrix = crate::geometry::matrix::Matrix::zeros(D, D);
     for i in 1..=D {
         let point_coords = points[i].coords();
         let point_f64 = safe_coords_to_f64(*point_coords)?;
@@ -1107,39 +1166,8 @@ where
         }
     }
 
-    // Compute Gram matrix G where G[i,j] = edge_i · edge_j
-    let mut gram_matrix = zeros(D, D);
-    for i in 0..D {
-        for j in 0..D {
-            let mut dot_product = 0.0;
-            for k in 0..D {
-                dot_product += edge_matrix[(i, k)] * edge_matrix[(j, k)];
-            }
-            gram_matrix[(i, j)] = dot_product;
-        }
-    }
-
-    // Calculate determinant of Gram matrix
-    let mut det = gram_matrix.det();
-
-    // Clamp small negative values to zero (numerical tolerance)
-    if det < 0.0 {
-        if det > -1e-12 {
-            det = 0.0;
-        } else {
-            return Err(CircumcenterError::MatrixInversionFailed {
-                details: "Gram matrix has negative determinant (degenerate simplex)".to_string(),
-            });
-        }
-    }
-
-    // Degenerate case: zero determinant means the simplex has no volume
-    if det == 0.0 {
-        return Err(CircumcenterError::MatrixInversionFailed {
-            details: "Degenerate simplex with zero volume (collinear or coplanar points)"
-                .to_string(),
-        });
-    }
+    // Compute Gram determinant with clamping
+    let det = compute_gram_determinant(&edge_matrix, D)?;
 
     let volume_f64 = {
         let sqrt_det = det.sqrt();
@@ -1469,7 +1497,7 @@ where
     let p0_f64 = safe_coords_to_f64(*p0_coords)?;
 
     // Create matrix of edge vectors (each row is an edge vector)
-    let mut edge_matrix = zeros(D - 1, D);
+    let mut edge_matrix = crate::geometry::matrix::Matrix::zeros(D - 1, D);
     for i in 1..D {
         let point_coords = points[i].coords();
         let point_f64 = safe_coords_to_f64(*point_coords)?;
@@ -1479,38 +1507,8 @@ where
         }
     }
 
-    // Compute Gram matrix G where G[i,j] = edge_i · edge_j
-    let mut gram_matrix = zeros(D - 1, D - 1);
-    for i in 0..(D - 1) {
-        for j in 0..(D - 1) {
-            let mut dot_product = 0.0;
-            for k in 0..D {
-                dot_product += edge_matrix[(i, k)] * edge_matrix[(j, k)];
-            }
-            gram_matrix[(i, j)] = dot_product;
-        }
-    }
-
-    // Calculate determinant of Gram matrix
-    let mut det = gram_matrix.det();
-
-    // Clamp small negative values to zero (numerical tolerance)
-    if det < 0.0 {
-        if det > -1e-12 {
-            det = 0.0;
-        } else {
-            return Err(CircumcenterError::MatrixInversionFailed {
-                details: "Gram matrix has negative determinant (degenerate simplex)".to_string(),
-            });
-        }
-    }
-
-    // Degenerate case: zero determinant means the facet has no volume
-    if det == 0.0 {
-        return Err(CircumcenterError::MatrixInversionFailed {
-            details: "Degenerate facet with zero volume (collinear or coplanar points)".to_string(),
-        });
-    }
+    // Compute Gram determinant with clamping
+    let det = compute_gram_determinant(&edge_matrix, D - 1)?;
 
     let volume_f64 = {
         let sqrt_det = det.sqrt();
@@ -3068,6 +3066,100 @@ mod tests {
         // This is a 3-dimensional simplex in 4D space
         assert_relative_eq!(measure, 1.0 / 6.0, epsilon = 1e-10);
     }
+
+    #[test]
+    fn test_compute_gram_determinant_degenerate_edges() {
+        // Test completely degenerate edge matrix (parallel edges)
+        use crate::geometry::matrix::Matrix;
+
+        let mut edge_matrix = Matrix::zeros(2, 3);
+        // Two parallel edges
+        edge_matrix[(0, 0)] = 1.0;
+        edge_matrix[(0, 1)] = 0.0;
+        edge_matrix[(0, 2)] = 0.0;
+        edge_matrix[(1, 0)] = 2.0; // Parallel to edge 0
+        edge_matrix[(1, 1)] = 0.0;
+        edge_matrix[(1, 2)] = 0.0;
+
+        let result = compute_gram_determinant(&edge_matrix, 2);
+        assert!(result.is_err(), "Degenerate edges should produce error");
+
+        if let Err(e) = result {
+            let error_str = e.to_string().to_lowercase();
+            assert!(error_str.contains("degenerate") || error_str.contains("zero volume"));
+        }
+    }
+
+    #[test]
+    fn test_compute_gram_determinant_clamping_small_negative() {
+        // Test that small negative determinants are clamped to zero and produce error
+        use crate::geometry::matrix::Matrix;
+
+        // Create nearly degenerate edge matrix
+        let mut edge_matrix = Matrix::zeros(2, 3);
+        edge_matrix[(0, 0)] = 1.0;
+        edge_matrix[(0, 1)] = 0.0;
+        edge_matrix[(0, 2)] = 0.0;
+        edge_matrix[(1, 0)] = 1.0;
+        edge_matrix[(1, 1)] = 1e-14; // Very small orthogonal component
+        edge_matrix[(1, 2)] = 0.0;
+
+        // This should error (nearly degenerate is clamped to zero then errors)
+        let result = compute_gram_determinant(&edge_matrix, 2);
+        assert!(result.is_err(), "Nearly degenerate case should error");
+    }
+
+    // Macro to test orthogonal edges across dimensions
+    macro_rules! test_gram_det_orthogonal {
+        ($test_name:ident, $dim:expr) => {
+            #[test]
+            fn $test_name() {
+                use crate::geometry::matrix::Matrix;
+
+                let mut edge_matrix = Matrix::zeros($dim, $dim);
+                // Set up orthogonal unit vectors
+                for i in 0..$dim {
+                    edge_matrix[(i, i)] = 1.0;
+                }
+
+                let det = compute_gram_determinant(&edge_matrix, $dim).unwrap();
+                // Gram matrix is identity, so determinant should be 1.0
+                assert_relative_eq!(det, 1.0, epsilon = 1e-10);
+            }
+        };
+    }
+
+    // Generate tests for 2D through 5D
+    test_gram_det_orthogonal!(test_compute_gram_determinant_orthogonal_2d, 2);
+    test_gram_det_orthogonal!(test_compute_gram_determinant_orthogonal_3d, 3);
+    test_gram_det_orthogonal!(test_compute_gram_determinant_orthogonal_4d, 4);
+    test_gram_det_orthogonal!(test_compute_gram_determinant_orthogonal_5d, 5);
+
+    // Macro to test scaled edges across dimensions
+    macro_rules! test_gram_det_scaled {
+        ($test_name:ident, $dim:expr, $scale:expr, $expected_det:expr) => {
+            #[test]
+            fn $test_name() {
+                use crate::geometry::matrix::Matrix;
+
+                let mut edge_matrix = Matrix::zeros($dim, $dim);
+                // Set up scaled orthogonal vectors
+                for i in 0..$dim {
+                    edge_matrix[(i, i)] = $scale;
+                }
+
+                let det = compute_gram_determinant(&edge_matrix, $dim).unwrap();
+                // Gram matrix diagonal has $scale^2, determinant is ($scale^2)^$dim
+                assert_relative_eq!(det, $expected_det, epsilon = 1e-9);
+            }
+        };
+    }
+
+    // Generate scaled tests for 2D through 5D with scale factor 2.0
+    test_gram_det_scaled!(test_compute_gram_determinant_scaled_2d, 2, 2.0, 16.0); // (2^2)^2 = 16
+    test_gram_det_scaled!(test_compute_gram_determinant_scaled_3d, 3, 2.0, 64.0); // (2^2)^3 = 64
+    test_gram_det_scaled!(test_compute_gram_determinant_scaled_4d, 4, 2.0, 256.0); // (2^2)^4 = 256
+    test_gram_det_scaled!(test_compute_gram_determinant_scaled_5d, 5, 2.0, 1024.0); // (2^2)^5 = 1024
 
     #[test]
     fn test_gram_matrix_debug() {

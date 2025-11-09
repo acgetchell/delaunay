@@ -43,45 +43,33 @@ use crate::geometry::{
 };
 use num_traits::NumCast;
 use std::{
-    error::Error,
-    fmt,
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
 };
+use thiserror::Error;
 
 /// Errors that can occur during quality metric computation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum QualityError {
     /// Cell has invalid or missing vertex keys
+    #[error("Invalid cell: {message}")]
     InvalidCell {
         /// Description of the error
         message: String,
     },
     /// Cell is degenerate (zero or near-zero volume)
+    #[error("Degenerate cell: {detail}")]
     DegenerateCell {
         /// Measure/context of degeneracy (e.g., "volume=…", "inradius=…")
         detail: String,
     },
     /// Numerical computation failed
+    #[error("Numerical error: {message}")]
     NumericalError {
         /// Description of the numerical issue
         message: String,
     },
 }
-
-impl fmt::Display for QualityError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidCell { message } => write!(f, "Invalid cell: {message}"),
-            Self::DegenerateCell { detail } => {
-                write!(f, "Degenerate cell: {detail}")
-            }
-            Self::NumericalError { message } => write!(f, "Numerical error: {message}"),
-        }
-    }
-}
-
-impl Error for QualityError {}
 
 /// Helper function to extract cell points from a triangulation.
 ///
@@ -153,6 +141,14 @@ where
             total_edge_length += dist;
             edge_count += 1;
         }
+    }
+
+    // If there are no edges (e.g., D == 0), fall back to floor epsilon.
+    if edge_count == 0 {
+        let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
+            message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
+        })?;
+        return Ok((T::zero(), floor));
     }
 
     let edge_count_t = NumCast::from(edge_count).ok_or_else(|| QualityError::NumericalError {

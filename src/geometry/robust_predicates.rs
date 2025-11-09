@@ -5,7 +5,6 @@
 //! address the "No cavity boundary facets found" error by making the predicates
 //! more reliable when dealing with degenerate or near-degenerate point configurations.
 
-use nalgebra as na;
 use num_traits::{Float, cast};
 use std::fmt::Debug;
 
@@ -212,8 +211,11 @@ where
     // Calculate determinant
     let det = matrix.determinant();
 
-    // Compute adaptive tolerance based on matrix conditioning
-    let adaptive_tolerance = compute_adaptive_tolerance(&matrix, config);
+    // Compute adaptive tolerance using matrix helper
+    let base_tol = super::util::safe_scalar_to_f64(config.base_tolerance)?;
+    let adaptive_tolerance: T = super::util::safe_scalar_from_f64::<T>(
+        crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol),
+    )?;
 
     // Get simplex orientation for correct interpretation
     let orientation = robust_orientation(simplex_points, config)?;
@@ -244,14 +246,18 @@ where
     // Build matrix and apply conditioning
     let matrix = build_insphere_matrix(simplex_points, test_point)?;
 
+    // Compute adaptive tolerance from original matrix BEFORE conditioning
+    // This keeps determinant and tolerance in the same scale
+    let base_tol = super::util::safe_scalar_to_f64(config.base_tolerance)?;
+    let tolerance_raw = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
+
     // Apply row scaling to improve conditioning
     let (conditioned_matrix, scale_factor) = condition_matrix(matrix, config);
 
     // Calculate determinant with scale correction
     let det = conditioned_matrix.determinant() * scale_factor;
 
-    // Use base tolerance since matrix is now better conditioned
-    let tolerance = config.base_tolerance;
+    let tolerance: T = super::util::safe_scalar_from_f64::<T>(tolerance_raw)?;
     let orientation = robust_orientation(simplex_points, config)?;
 
     interpret_insphere_determinant(det, orientation, tolerance)
@@ -318,8 +324,8 @@ where
     let det = matrix.determinant();
 
     // Use adaptive tolerance
-    let tolerance = compute_matrix_adaptive_tolerance(&matrix, config);
-    let tolerance_f64: f64 = safe_scalar_to_f64(tolerance)?;
+    let base_tol = safe_scalar_to_f64(config.base_tolerance)?;
+    let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
     if det > tolerance_f64 {
         Ok(Orientation::POSITIVE)
@@ -338,14 +344,14 @@ where
 fn build_insphere_matrix<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
-) -> Result<na::DMatrix<f64>, CoordinateConversionError>
+) -> Result<crate::geometry::matrix::Matrix, CoordinateConversionError>
 where
     T: CoordinateScalar,
     [T; D]: Copy + Sized,
 {
-    use na::DMatrix;
+    use crate::geometry::matrix::Matrix;
 
-    let mut matrix = DMatrix::zeros(D + 2, D + 2);
+    let mut matrix: Matrix = Matrix::zeros(D + 2, D + 2);
 
     // Add simplex points
     for (i, point) in simplex_points.iter().enumerate() {
@@ -385,14 +391,14 @@ where
 /// Build orientation matrix for determinant computation.
 fn build_orientation_matrix<T, const D: usize>(
     simplex_points: &[Point<T, D>],
-) -> Result<na::DMatrix<f64>, CoordinateConversionError>
+) -> Result<crate::geometry::matrix::Matrix, CoordinateConversionError>
 where
     T: CoordinateScalar,
     [T; D]: Copy + Sized,
 {
-    use na::DMatrix;
+    use crate::geometry::matrix::Matrix;
 
-    let mut matrix = DMatrix::zeros(D + 1, D + 1);
+    let mut matrix: Matrix = Matrix::zeros(D + 1, D + 1);
 
     for (i, point) in simplex_points.iter().enumerate() {
         let coords: [T; D] = point.into();
@@ -410,55 +416,12 @@ where
     Ok(matrix)
 }
 
-/// Compute adaptive tolerance based on matrix magnitude and conditioning.
-fn compute_adaptive_tolerance<T>(matrix: &na::DMatrix<f64>, config: &RobustPredicateConfig<T>) -> T
-where
-    T: CoordinateScalar,
-{
-    // Compute matrix infinity norm (maximum absolute row sum)
-    let mut max_row_sum = 0.0;
-    for i in 0..matrix.nrows() {
-        let mut row_sum = 0.0;
-        for j in 0..matrix.ncols() {
-            row_sum += matrix[(i, j)].abs();
-        }
-        max_row_sum = max_row_sum.max(row_sum);
-    }
-
-    // Scale base tolerance by matrix magnitude
-    let mut base_tol: f64 = safe_scalar_to_f64(config.base_tolerance).unwrap_or(1e-15);
-    let mut rel_factor: f64 = safe_scalar_to_f64(config.relative_tolerance_factor).unwrap_or(1e-12);
-
-    // Guard against non-finite tolerances
-    if !base_tol.is_finite() {
-        base_tol = 1e-15;
-    }
-    if !rel_factor.is_finite() {
-        rel_factor = 1e-12;
-    }
-
-    let adaptive_tol = rel_factor.mul_add(max_row_sum, base_tol);
-
-    // Use safe conversion but fall back to config value on failure
-    super::util::safe_scalar_from_f64(adaptive_tol).unwrap_or(config.base_tolerance)
-}
-
-/// Simplified version for matrix-based tolerance computation.
-fn compute_matrix_adaptive_tolerance<T>(
-    matrix: &na::DMatrix<f64>,
-    config: &RobustPredicateConfig<T>,
-) -> T
-where
-    T: CoordinateScalar,
-{
-    compute_adaptive_tolerance(matrix, config)
-}
-
+// Removed: compute_adaptive_tolerance and compute_matrix_adaptive_tolerance
 /// Apply matrix conditioning to improve numerical stability.
 fn condition_matrix<T>(
-    mut matrix: na::DMatrix<f64>,
+    mut matrix: crate::geometry::matrix::Matrix,
     _config: &RobustPredicateConfig<T>,
-) -> (na::DMatrix<f64>, f64)
+) -> (crate::geometry::matrix::Matrix, f64)
 where
     T: CoordinateScalar,
 {
@@ -1447,7 +1410,8 @@ mod tests {
         small_matrix[(1, 0)] = 3.0;
         small_matrix[(1, 1)] = 4.0;
 
-        let tolerance_small = compute_adaptive_tolerance(&small_matrix, &config);
+        let tolerance_small =
+            crate::geometry::matrix::adaptive_tolerance(&small_matrix, config.base_tolerance);
         assert!(tolerance_small > 0.0);
 
         // Large matrix with large values
@@ -1462,7 +1426,8 @@ mod tests {
             }
         }
 
-        let tolerance_large = compute_adaptive_tolerance(&large_matrix, &config);
+        let tolerance_large =
+            crate::geometry::matrix::adaptive_tolerance(&large_matrix, config.base_tolerance);
         assert!(tolerance_large > 0.0);
         // Larger matrices with larger values should have larger tolerances
         assert!(tolerance_large > tolerance_small);
@@ -1475,7 +1440,8 @@ mod tests {
             }
         }
 
-        let tolerance_tiny = compute_adaptive_tolerance(&tiny_matrix, &config);
+        let tolerance_tiny =
+            crate::geometry::matrix::adaptive_tolerance(&tiny_matrix, config.base_tolerance);
         assert!(tolerance_tiny > 0.0);
     }
 
