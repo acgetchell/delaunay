@@ -246,17 +246,18 @@ where
     // Build matrix and apply conditioning
     let matrix = build_insphere_matrix(simplex_points, test_point)?;
 
+    // Compute adaptive tolerance from original matrix BEFORE conditioning
+    // This keeps determinant and tolerance in the same scale
+    let base_tol = super::util::safe_scalar_to_f64(config.base_tolerance)?;
+    let tolerance_raw = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
+
     // Apply row scaling to improve conditioning
     let (conditioned_matrix, scale_factor) = condition_matrix(matrix, config);
 
     // Calculate determinant with scale correction
     let det = conditioned_matrix.determinant() * scale_factor;
 
-    // Use adaptive tolerance even after conditioning for consistency
-    let base_tol = super::util::safe_scalar_to_f64(config.base_tolerance)?;
-    let tolerance: T = super::util::safe_scalar_from_f64::<T>(
-        crate::geometry::matrix::adaptive_tolerance(&conditioned_matrix, base_tol),
-    )?;
+    let tolerance: T = super::util::safe_scalar_from_f64::<T>(tolerance_raw)?;
     let orientation = robust_orientation(simplex_points, config)?;
 
     interpret_insphere_determinant(det, orientation, tolerance)

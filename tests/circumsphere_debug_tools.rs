@@ -13,6 +13,7 @@
 //! cargo test --test circumsphere_debug_tools test_all_debug -- --ignored --nocapture
 //! ```
 
+use delaunay::geometry::matrix::Matrix;
 use delaunay::geometry::util::squared_norm;
 use delaunay::prelude::*;
 use nalgebra as na;
@@ -887,7 +888,7 @@ fn setup_3d_matrix_test() -> Setup3DResult {
 /// Build and analyze the matrix for the 3D test
 fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, bool) {
     // Manually build the matrix as in the matrix method
-    let mut matrix = delaunay::geometry::matrix::Matrix::zeros(4, 4); // D+1 x D+1 for D=3
+    let mut matrix = Matrix::zeros(4, 4); // D+1 x D+1 for D=3
 
     println!("Building matrix rows:");
 

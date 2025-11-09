@@ -143,6 +143,14 @@ where
         }
     }
 
+    // If there are no edges (e.g., D == 0), fall back to floor epsilon.
+    if edge_count == 0 {
+        let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
+            message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
+        })?;
+        return Ok((T::zero(), floor));
+    }
+
     let edge_count_t = NumCast::from(edge_count).ok_or_else(|| QualityError::NumericalError {
         message: "Failed to convert edge count to type T".to_string(),
     })?;

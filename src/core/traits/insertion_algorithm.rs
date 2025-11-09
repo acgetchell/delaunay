@@ -80,6 +80,7 @@ use thiserror::Error;
 // All code now uses FacetView directly or lightweight (CellKey, u8) handles
 
 /// Error for too many degenerate cells case
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub struct TooManyDegenerateCellsError {
     /// Number of degenerate cells
