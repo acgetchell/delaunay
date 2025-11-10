@@ -197,7 +197,7 @@ fn create_initial_simplex<const D: usize>()
 test_robust_integration!(2, 100);
 test_robust_integration!(3, 100);
 test_robust_integration!(4, 50);
-test_robust_integration!(5, 50);
+test_robust_integration!(5, 30); // Reduced for coverage runs
 
 // =============================================================================
 // ADDITIONAL INTEGRATION TESTS (3D-specific)
