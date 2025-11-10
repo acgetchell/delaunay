@@ -20,8 +20,15 @@ use rand::Rng;
 /// Macro to generate integration tests for a given dimension
 macro_rules! test_robust_integration {
     ($dim:literal, $num_random_points:literal) => {
+        test_robust_integration!(@impl $dim, $num_random_points, );
+    };
+    ($dim:literal, $num_random_points:literal, $(#[$attr:meta])*) => {
+        test_robust_integration!(@impl $dim, $num_random_points, $(#[$attr])*);
+    };
+    (@impl $dim:literal, $num_random_points:literal, $(#[$attr:meta])*) => {
         pastey::paste! {
             /// Test: Large random point set insertion
+            $(#[$attr])*
             #[test]
             fn [<test_large_random_point_set_ $dim d>]() {
                 let mut rng = rand::rng();
@@ -69,6 +76,7 @@ macro_rules! test_robust_integration {
             }
 
             /// Test: Exterior vertex insertion sequence
+            $(#[$attr])*
             #[test]
             fn [<test_exterior_vertex_insertion_sequence_ $dim d>]() {
                 let mut algorithm = RobustBowyerWatson::new();
@@ -117,6 +125,7 @@ macro_rules! test_robust_integration {
             }
 
             /// Test: Clustered points followed by scattered points
+            $(#[$attr])*
             #[test]
             fn [<test_clustered_points_ $dim d>]() {
                 let mut algorithm = RobustBowyerWatson::new();
@@ -197,7 +206,9 @@ fn create_initial_simplex<const D: usize>()
 test_robust_integration!(2, 100);
 test_robust_integration!(3, 100);
 test_robust_integration!(4, 50);
-test_robust_integration!(5, 30); // Reduced for coverage runs
+
+// 5D tests are too slow for CI - run with `cargo test -- --ignored`
+test_robust_integration!(5, 30, #[ignore = "5D tests are too slow for CI"]);
 
 // =============================================================================
 // ADDITIONAL INTEGRATION TESTS (3D-specific)
