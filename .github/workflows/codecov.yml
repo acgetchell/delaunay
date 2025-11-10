@@ -62,7 +62,7 @@ jobs:
           # - Exclusions: --exclude-files "benches/*" "examples/*"
           # - All features: --all-features
           # - Workspace: --workspace
-          # - Timeout: --timeout 120
+          # - Timeout: --timeout 240 (increased for 5D integration tests)
           # - Verbose: --verbose
           # - Implicit test threads: --implicit-test-threads
           echo "::group::Running tarpaulin"
@@ -73,7 +73,7 @@ jobs:
             --exclude-files "benches/*" "examples/*" \
             --all-features \
             --workspace \
-            --timeout 120 \
+            --timeout 240 \
             --verbose \
             --implicit-test-threads
           echo "::endgroup::"
