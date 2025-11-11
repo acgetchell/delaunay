@@ -64,12 +64,13 @@ use super::traits::data_type::DataType;
 use super::util::{stable_hash_u64_slice, usize_to_u8};
 use super::{
     cell::Cell,
-    triangulation_data_structure::{CellKey, Tds, VertexKey},
+    triangulation_data_structure::{CellKey, Tds, TriangulationValidationError, VertexKey},
     vertex::Vertex,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use slotmap::Key;
 use std::fmt::{self, Debug};
+use std::sync::Arc;
 use thiserror::Error;
 
 // =============================================================================
@@ -170,6 +171,20 @@ pub enum FacetError {
         facet_key: u64,
         /// The actual multiplicity found.
         found: usize,
+    },
+    /// Failed to retrieve boundary facets from triangulation.
+    #[error("Failed to retrieve boundary facets: {source}")]
+    BoundaryFacetRetrievalFailed {
+        /// The underlying triangulation validation error.
+        #[source]
+        source: Arc<TriangulationValidationError>,
+    },
+    /// Cell operation failed due to validation error.
+    #[error("Cell operation failed: {source}")]
+    CellOperationFailed {
+        /// The underlying triangulation validation error.
+        #[source]
+        source: Arc<TriangulationValidationError>,
     },
 }
 
@@ -575,10 +590,11 @@ where
     /// Returns `FacetError` if vertex keys cannot be retrieved.
     pub fn key(&self) -> Result<u64, FacetError> {
         // Get vertex keys for the facet vertices
-        let cell_vertices = self
-            .tds
-            .get_cell_vertices(self.cell_key)
-            .map_err(|_| FacetError::CellNotFoundInTriangulation)?;
+        let cell_vertices = self.tds.get_cell_vertices(self.cell_key).map_err(|e| {
+            FacetError::CellOperationFailed {
+                source: Arc::new(e),
+            }
+        })?;
         let facet_index = usize::from(self.facet_index);
 
         // Collect vertex keys excluding the opposite vertex

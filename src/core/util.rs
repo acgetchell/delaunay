@@ -410,6 +410,29 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 // SET SIMILARITY UTILITIES
 // =============================================================================
 
+/// Compute intersection and union sizes for two sets.
+///
+/// Returns `(intersection, union)` where:
+/// - `intersection`: number of elements in both sets
+/// - `union`: number of elements in at least one set
+///
+/// This is an internal helper used by `jaccard_index` and `format_jaccard_report`.
+/// The function iterates over the smaller set for optimal performance.
+fn compute_set_metrics<T, S>(
+    a: &std::collections::HashSet<T, S>,
+    b: &std::collections::HashSet<T, S>,
+) -> (usize, usize)
+where
+    T: Eq + std::hash::Hash,
+    S: std::hash::BuildHasher,
+{
+    // Optimize: iterate over smaller set for intersection count
+    let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    let intersection = small.iter().filter(|x| large.contains(x)).count();
+    let union = a.len() + b.len() - intersection;
+    (intersection, union)
+}
+
 /// Jaccard index (similarity) between two sets: |A ∩ B| / |A ∪ B|.
 ///
 /// Returns 1.0 when both sets are empty by convention.
@@ -457,27 +480,20 @@ where
     if a.is_empty() && b.is_empty() {
         return Ok(1.0);
     }
-    // Iterate over the smaller set for intersection count
-    let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
-    let mut inter = 0usize;
-    for x in small {
-        if large.contains(x) {
-            inter += 1;
-        }
-    }
-    let union = a.len() + b.len() - inter;
+
+    let (intersection, union) = compute_set_metrics(a, b);
 
     // Check for safe conversion before casting
-    if (inter as u128) > MAX_SAFE_INT_U128 || (union as u128) > MAX_SAFE_INT_U128 {
+    if (intersection as u128) > MAX_SAFE_INT_U128 || (union as u128) > MAX_SAFE_INT_U128 {
         return Err(JaccardComputationError::SetSizeTooLarge {
-            intersection: inter,
+            intersection,
             union,
         });
     }
 
     // Safe to cast: we've verified values are within safe range
     #[allow(clippy::cast_precision_loss)]
-    let inter_f64 = inter as f64;
+    let inter_f64 = intersection as f64;
     #[allow(clippy::cast_precision_loss)]
     let union_f64 = union as f64;
 
@@ -696,10 +712,12 @@ where
     let mut facet_ids = HashSet::new();
 
     // boundary_facets() returns Result<impl Iterator, TriangulationValidationError>
-    // We need to handle the error conversion
-    let boundary_facets = tds
-        .boundary_facets()
-        .map_err(|_| FacetError::CellNotFoundInTriangulation)?;
+    // Wrap the underlying error for better diagnostics
+    let boundary_facets =
+        tds.boundary_facets()
+            .map_err(|e| FacetError::BoundaryFacetRetrievalFailed {
+                source: std::sync::Arc::new(e),
+            })?;
 
     for facet_view in boundary_facets {
         // Use the existing FacetView::key() method
@@ -827,12 +845,10 @@ where
     let size_a = a.len();
     let size_b = b.len();
 
-    // Compute intersection and union
-    let intersection: usize = a.iter().filter(|x| b.contains(x)).count();
-    let union = size_a + size_b - intersection;
+    // Compute intersection and union using shared helper
+    let (intersection, union) = compute_set_metrics(a, b);
 
     // Compute Jaccard index using safe conversion
-
     let jaccard = if union == 0 {
         1.0
     } else {
