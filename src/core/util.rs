@@ -898,21 +898,19 @@ where
 /// ```
 #[macro_export]
 macro_rules! assert_jaccard_gte {
+    // 3-arg form (no label) - delegate to 4-arg form with default label
+    ($a:expr, $b:expr, $threshold:expr $(,)?) => {
+        $crate::assert_jaccard_gte!($a, $b, $threshold, "Jaccard index assertion")
+    };
+    // 4-arg form (with label)
     ($a:expr, $b:expr, $threshold:expr, $($label:tt)*) => {{
         let a_ref = $a;
         let b_ref = $b;
         let threshold = $threshold;
 
-        // Compute intersection and union
-        let intersection: usize = a_ref.iter().filter(|x| b_ref.contains(x)).count();
-        let union = a_ref.len() + b_ref.len() - intersection;
-
-        // Compute Jaccard index
-        let jaccard_index = if union == 0 {
-            1.0
-        } else {
-            intersection as f64 / union as f64
-        };
+        // Use jaccard_index function for safety and consistency
+        let jaccard_index = $crate::core::util::jaccard_index(a_ref, b_ref)
+            .expect("Jaccard computation should not overflow for reasonable test sets");
 
         if jaccard_index < threshold {
             let report = $crate::core::util::format_jaccard_report(
