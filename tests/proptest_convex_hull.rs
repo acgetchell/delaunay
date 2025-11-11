@@ -9,8 +9,10 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+use delaunay::assert_jaccard_gte;
 use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
 use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::util::extract_hull_facet_set;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 use delaunay::geometry::point::Point;
@@ -273,6 +275,18 @@ macro_rules! test_convex_hull_properties {
                                 prop_assert!(
                                     hull1.is_valid_for_tds(&tds) && hull2.is_valid_for_tds(&tds),
                                     "{}D both reconstructed hulls should be valid for the same TDS",
+                                    $dim
+                                );
+
+                                // Extract facet sets and compare via Jaccard similarity
+                                // Should be exactly identical (Jaccard = 1.0) since same TDS
+                                let facets1 = extract_hull_facet_set(&hull1, &tds);
+                                let facets2 = extract_hull_facet_set(&hull2, &tds);
+                                assert_jaccard_gte!(
+                                    &facets1,
+                                    &facets2,
+                                    1.0,
+                                    "{}D hull reconstruction facet topology (exact match expected)",
                                     $dim
                                 );
                             }

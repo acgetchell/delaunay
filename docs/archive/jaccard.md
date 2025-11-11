@@ -89,25 +89,29 @@ Goal: Consolidate set-comparison logic across tests using `core::util::{jaccard_
   - Threshold: ≥ 0.99 (99% similarity required for vertex preservation)
   - All 4 tests passing
 
-- [ ] **Storage backend compatibility** (`tests/storage_backend_compatibility.rs`): Not yet updated
-  - Note: All tests currently ignored (Phase 4 evaluation tests)
-  - Will extract edge sets and compare via Jaccard when activated
-  - Planned threshold: ≥ 0.999
+- [x] **Storage backend compatibility** (`tests/storage_backend_compatibility.rs`): Edge set comparison complete ✅
+  - Added edge set extraction and Jaccard comparison to serialization tests (4 tests, 2D-5D)
+  - Threshold: ≥ 0.999 (near-exact edge topology preservation)
+  - All tests passing when run with `--ignored` flag
+  - Note: Tests remain ignored by default (Phase 4 evaluation tests)
 
-- [ ] **Convex hull tests**: Not yet updated
-  - `tests/convex_hull_bowyer_watson_integration.rs`
-  - `tests/proptest_convex_hull.rs`
-  - Will use `extract_hull_facet_set()` for topology comparison
-  - Planned thresholds: 0.95–1.0 depending on scenario
+- [x] **Convex hull tests**: Migrated to Jaccard similarity
+  - `tests/proptest_convex_hull.rs` - Added facet set comparison to hull reconstruction test
+  - Uses `extract_hull_facet_set()` to compare hull topology
+  - Threshold: 1.0 (exact match) for hull reconstruction from same TDS
+  - All 24 property tests passing across 2D-5D
+  - Note: `tests/convex_hull_bowyer_watson_integration.rs` focuses on algorithm integration; doesn't compare hulls
 
-- [ ] **Triangulation invariants**: Not yet updated
-  - `tests/proptest_triangulation.rs`
-  - Will add optional Jaccard diagnostics for neighbor reciprocity failures
-  - Retain strict assertions; use Jaccard only for enhanced error reporting
+- [x] **Triangulation invariants**: Enhanced with Jaccard diagnostics
+  - `tests/proptest_triangulation.rs` - Added diagnostics to neighbor symmetry tests (2D-5D)
+  - Strict assertions retained (no relaxation of invariants)
+  - On failure, reports Jaccard similarity, set sizes, and common neighbors
+  - Aids debugging by quantifying "how close" the neighbor sets are
+  - All 4 property tests passing
 
-- [ ] **Documentation updates**: Partially complete
-  - This file updated with implementation progress
-  - Still TODO: Update `tests/README.md` with usage examples and threshold conventions
+- [x] **Documentation updates**: Complete
+  - `docs/jaccard.md` - Implementation status, design decisions, usage examples
+  - `tests/README.md` - Comprehensive Jaccard utilities section with examples and threshold conventions
 
 - [ ] **Prepare for insertion-order invariance re-enablement** (coordinate with Issue #120)
 
@@ -139,13 +143,13 @@ Thresholds are initial values subject to tuning based on CI feedback.
 - Facets: `FacetView::key()` sorts vertex UUIDs before hashing
 - Ensures stable, order-independent comparisons
 
-### Acceptance criteria (partially met)
+### Acceptance criteria (all met ✅)
 
 - [x] Tests compile and pass in debug and release
 - [x] New helpers centralized in `src/core/util.rs`; no duplicate inline Jaccard logic
 - [x] Comprehensive documentation with examples in helper functions
-- [ ] `tests/README.md` updated with Jaccard usage and thresholds
-- [ ] All test files migrated
+- [x] `tests/README.md` updated with Jaccard usage and thresholds
+- [x] All test files migrated or enhanced
 
 ### Risk mitigation
 

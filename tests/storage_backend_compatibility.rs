@@ -47,6 +47,8 @@
 //! - Large-scale operations
 //! - Serialization/deserialization
 
+use delaunay::assert_jaccard_gte;
+use delaunay::core::util::extract_edge_set;
 use delaunay::prelude::*;
 use delaunay::vertex;
 
@@ -140,6 +142,9 @@ macro_rules! test_neighbor_access {
 }
 
 /// Generate serialization tests for a given dimension.
+///
+/// Uses Jaccard similarity to verify edge topology preservation across serialization,
+/// providing robust validation that handles potential ordering variations.
 macro_rules! test_serialization {
     ($dim:expr, $name:ident, $vertices:expr) => {
         #[test]
@@ -148,12 +153,28 @@ macro_rules! test_serialization {
             let vertices: Vec<_> = $vertices;
             let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
 
+            // Extract edge topology before serialization
+            let edges_before = extract_edge_set(&tds);
+
             let serialized = serde_json::to_string(&tds).expect("serialization failed");
             let deserialized: Tds<f64, (), (), $dim> =
                 serde_json::from_str(&serialized).expect("deserialization failed");
 
+            // Verify counts
             assert_eq!(deserialized.number_of_vertices(), tds.number_of_vertices());
             assert_eq!(deserialized.number_of_cells(), tds.number_of_cells());
+
+            // Verify edge topology preservation via Jaccard similarity
+            // Use strict threshold (0.999) as topology should be fully preserved
+            let edges_after = extract_edge_set(&deserialized);
+            assert_jaccard_gte!(
+                &edges_before,
+                &edges_after,
+                0.999,
+                "{}D edge topology preservation through serialization (backend: {})",
+                $dim,
+                if cfg!(feature = "dense-slotmap") { "DenseSlotMap" } else { "SlotMap" }
+            );
         }
     };
 }

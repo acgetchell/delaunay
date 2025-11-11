@@ -761,9 +761,179 @@ When contributing integration tests:
 4. **Performance Awareness**: Consider performance implications and use release mode for timing-sensitive tests
 5. **Error Handling**: Include appropriate error handling and validation
 
+## Jaccard Similarity Testing Utilities
+
+The test suite uses Jaccard similarity for robust set-based comparisons, enabling fuzzy-tolerant validation that handles
+floating-point precision variations and near-degenerate cases.
+
+### Available Utilities
+
+#### Extraction Helpers (`delaunay::core::util`)
+
+Canonical set extraction functions for comparing triangulation topology:
+
+```rust
+use delaunay::core::util::{
+    extract_vertex_coordinate_set,    // HashSet<Point<T, D>>
+    extract_edge_set,                  // HashSet<(u128, u128)>
+    extract_facet_identifier_set,      // Result<HashSet<u64>, FacetError>
+    extract_hull_facet_set,            // HashSet<u64>
+};
+```
+
+**Features:**
+
+- Deterministic canonicalization (sorted edges/facets)
+- Uses existing `FacetView::key()` API for facet identification
+- Safe f64 conversions with overflow detection (2^53 limit)
+- No external hashing dependencies
+
+#### Assertion Macro
+
+```rust
+use delaunay::assert_jaccard_gte;
+
+let before = extract_vertex_coordinate_set(&tds_before);
+let after = extract_vertex_coordinate_set(&tds_after);
+
+assert_jaccard_gte!(
+    &before,
+    &after,
+    0.99,  // threshold: minimum acceptable similarity
+    "Vertex preservation through operation"
+);
+```
+
+**On failure, provides detailed diagnostics:**
+
+- Set sizes and Jaccard index value
+- Intersection and union counts
+- Sample symmetric differences (first 5 unique elements per set)
+
+#### Diagnostic Reporting
+
+```rust
+use delaunay::core::util::format_jaccard_report;
+
+let report = format_jaccard_report(
+    &set_a,
+    &set_b,
+    "Expected",
+    "Actual"
+)?;
+println!("{}", report);
+```
+
+### Threshold Conventions
+
+| Test Scenario | Threshold | Rationale |
+|--------------|-----------|------------|
+| **Serialization** (vertex coords) | ≥ 0.99 | Strict preservation expected; allows minor floating-point drift |
+| **Storage backend** (edge topology) | ≥ 0.999 | Near-exact equivalence; backends should be equivalent |
+| **Hull reconstruction** (facet sets) | = 1.0 | Exact match when reconstructing from same TDS |
+| **Property tests** (diagnostics) | N/A | Report similarity on failure; maintain strict invariants |
+
+### Usage Examples
+
+#### Vertex Coordinate Preservation
+
+```rust
+use delaunay::assert_jaccard_gte;
+use delaunay::core::util::extract_vertex_coordinate_set;
+
+let original_coords = extract_vertex_coordinate_set(&tds);
+// ... perform operation (serialization, transformation, etc.) ...
+let result_coords = extract_vertex_coordinate_set(&tds_after);
+
+assert_jaccard_gte!(
+    &original_coords,
+    &result_coords,
+    0.99,
+    "Serialization vertex preservation"
+);
+```
+
+#### Edge Set Comparison
+
+```rust
+use delaunay::core::util::extract_edge_set;
+
+let edges_a = extract_edge_set(&tds_a);
+let edges_b = extract_edge_set(&tds_b);
+
+assert_jaccard_gte!(
+    &edges_a,
+    &edges_b,
+    0.999,
+    "Storage backend edge-set equivalence"
+);
+```
+
+#### Hull Facet Topology
+
+```rust
+use delaunay::core::util::extract_hull_facet_set;
+use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+
+let hull1 = ConvexHull::from_triangulation(&tds)?;
+let hull2 = ConvexHull::from_triangulation(&tds)?;
+
+let facets1 = extract_hull_facet_set(&hull1, &tds);
+let facets2 = extract_hull_facet_set(&hull2, &tds);
+
+assert_jaccard_gte!(
+    &facets1,
+    &facets2,
+    1.0,
+    "Hull reconstruction consistency"
+);
+```
+
+### Design Decisions
+
+**Why Jaccard similarity?**
+
+- Handles floating-point precision variations gracefully
+- Provides meaningful similarity metric (0.0 to 1.0)
+- Better than exact equality for numeric/geometric computations
+- Rich diagnostics on failure (shows what differs)
+
+**Safety guarantees:**
+
+- All `usize→f64` casts checked against 2^53 limit
+- Proper error handling via `JaccardComputationError`
+- No precision loss in computation
+
+**Determinism:**
+
+- Facet keys use FNV-based hashing (no random seeds)
+- Edges canonicalized by sorting UUIDs
+- Stable across runs and platforms
+
+### Test Coverage
+
+**Currently using Jaccard similarity:**
+
+- ✅ `serialization_vertex_preservation.rs` - 4 tests with vertex coordinate comparison
+- ✅ `proptest_convex_hull.rs` - 24 property tests (2D-5D) with hull facet topology comparison
+- ✅ `proptest_triangulation.rs` - 4 neighbor symmetry tests (2D-5D) with enhanced failure diagnostics
+  - Strict invariants maintained (no relaxation)
+  - On failure: reports Jaccard similarity, set sizes, and common neighbors
+  - Helps debug "near-miss" failures by quantifying similarity
+
+**Deferred (not currently active):**
+
+- `storage_backend_compatibility.rs` - Edge set comparison (all tests ignored - Phase 4 evaluation)
+
+### Related Documentation
+
+- **[Jaccard Similarity Theory](../docs/archive/jaccard.md)**: Mathematical background, adoption plan (completed in v0.5.4)
+- **API Documentation**: `cargo doc --open` → `delaunay::core::util` module
+
 ## Related Documentation
 
 - **[Examples](../examples/README.md)**: Usage demonstrations and library examples
 - **[Benchmarks](../benches/README.md)**: Performance benchmarks and analysis
 - **[Code Organization](../docs/code_organization.md)**: Complete project structure overview
 - **[Numerical Robustness Guide](../docs/numerical_robustness_guide.md)**: Numerical stability documentation
+- **[Jaccard Similarity Guide](../docs/archive/jaccard.md)**: Set similarity testing framework (archived - completed)

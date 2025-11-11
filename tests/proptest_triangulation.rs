@@ -8,11 +8,13 @@
 //! - Triangulation remains valid after vertex insertion
 
 use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::util::jaccard_index;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::vertex;
 use proptest::prelude::*;
+use std::collections::HashSet;
 
 // =============================================================================
 // TEST CONFIGURATION
@@ -99,7 +101,43 @@ macro_rules! gen_neighbor_symmetry {
                                         .get_cell(*neighbor_key)
                                         .and_then(|c| c.neighbors())
                                         .is_some_and(|nn| nn.iter().any(|n| n == &Some(cell_key)));
-                                    prop_assert!(found_reciprocal, "{}D neighbor relationship should be symmetric", $dim);
+
+                                    if !found_reciprocal {
+                                        // Enhanced diagnostics with Jaccard similarity
+                                        let cell_neighbors: HashSet<_> = neighbors
+                                            .iter()
+                                            .flatten()
+                                            .copied()
+                                            .collect();
+                                        let neighbor_neighbors: HashSet<_> = tds
+                                            .get_cell(*neighbor_key)
+                                            .and_then(|c| c.neighbors())
+                                            .map(|nn| nn.iter().flatten().copied().collect())
+                                            .unwrap_or_default();
+
+                                        let similarity = jaccard_index(&cell_neighbors, &neighbor_neighbors);
+                                        let intersection: Vec<_> = cell_neighbors
+                                            .intersection(&neighbor_neighbors)
+                                            .take(5)
+                                            .collect();
+
+                                        prop_assert!(
+                                            false,
+                                            "{}D neighbor relationship should be symmetric\n\
+                                             Cell {:?} has neighbor {:?}, but reciprocal not found\n\
+                                             Jaccard similarity between neighbor sets: {:.6}\n\
+                                             Cell neighbors: {} total\n\
+                                             Neighbor's neighbors: {} total\n\
+                                             Common neighbors (first 5): {:?}",
+                                            $dim,
+                                            cell_key,
+                                            neighbor_key,
+                                            similarity,
+                                            cell_neighbors.len(),
+                                            neighbor_neighbors.len(),
+                                            intersection
+                                        );
+                                    }
                                 }
                             }
                         }

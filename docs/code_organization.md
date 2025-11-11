@@ -52,7 +52,7 @@ delaunay/
 │   │   ├── collections.rs                        # Optimized collection types (re-exported via prelude)
 │   │   ├── facet.rs                              # Facet implementation
 │   │   ├── triangulation_data_structure.rs       # Main Tds struct
-│   │   ├── util.rs                               # Helper functions for triangulation operations
+│   │   ├── util.rs                               # Helper functions including Jaccard similarity testing utilities
 │   │   └── vertex.rs                             # Vertex implementation with generic support
 │   ├── geometry/                                 # Geometric algorithms and predicates
 │   │   ├── algorithms/                           # Geometric algorithms
@@ -123,6 +123,7 @@ delaunay/
 │   └── test_tds_edge_cases.rs                    # TDS edge case tests
 ├── docs/                                         # Additional documentation
 │   ├── archive/                                  # Historical documentation
+│   │   ├── jaccard.md                                 # Jaccard similarity implementation guide (completed in v0.5.4)
 │   │   ├── optimization_recommendations_historical.md  # Historical optimization notes
 │   │   ├── phase_3a_implementation_guide.md           # Phase 3A implementation history
 │   │   ├── phase_3c_action_plan.md                    # Phase 3C action plan history
@@ -137,7 +138,6 @@ delaunay/
 │   ├── OPTIMIZATION_ROADMAP.md                   # Comprehensive 4-phase optimization strategy (primary reference)
 │   ├── phase4.md                                 # Phase 4 benchmark consolidation plan and progress
 │   ├── property_testing_summary.md               # Property-based testing guide
-│   ├── jaccard.md                                # Jaccard set similarity usage and adoption plan
 │   ├── README.md                                 # Documentation index and navigation guide
 │   ├── RELEASING.md                              # Release process documentation
 │   └── topology.md                               # Topology and geometric properties guide
@@ -810,6 +810,11 @@ mod tests {
 - Hash utilities for stable, deterministic hash computation
 - Facet adjacency checking and geometric utilities
 - Combination generation for k-simplex vertex combinations
+- **Jaccard similarity testing utilities** (v0.5.4+):
+  - Set extraction helpers: `extract_vertex_coordinate_set()`, `extract_edge_set()`, `extract_hull_facet_set()`
+  - Comparison utilities: `jaccard_index()`, `jaccard_distance()`, `format_jaccard_report()`
+  - Assertion macro: `assert_jaccard_gte!` for automatic diagnostics on failure
+  - Safe f64 conversion with overflow detection (2^53 limit)
 - Multi-dimensional testing across 1D-5D with both f32 and f64 coordinate types
 - Extensive edge case testing and error handling validation with systematic test organization
 
