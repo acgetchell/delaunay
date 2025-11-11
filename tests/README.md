@@ -796,12 +796,16 @@ use delaunay::assert_jaccard_gte;
 let before = extract_vertex_coordinate_set(&tds_before);
 let after = extract_vertex_coordinate_set(&tds_after);
 
+// With custom label (4-arg form)
 assert_jaccard_gte!(
     &before,
     &after,
     0.99,  // threshold: minimum acceptable similarity
     "Vertex preservation through operation"
 );
+
+// Without label (3-arg form) - uses default message
+assert_jaccard_gte!(&before, &after, 0.99);
 ```
 
 **On failure, provides detailed diagnostics:**

@@ -110,7 +110,7 @@ Goal: Consolidate set-comparison logic across tests using `core::util::{jaccard_
   - All 4 property tests passing
 
 - [x] **Documentation updates**: Complete
-  - `docs/jaccard.md` - Implementation status, design decisions, usage examples
+  - `docs/archive/jaccard.md` - Implementation guide, design decisions, usage examples
   - `tests/README.md` - Comprehensive Jaccard utilities section with examples and threshold conventions
 
 - [ ] **Prepare for insertion-order invariance re-enablement** (coordinate with Issue #120)

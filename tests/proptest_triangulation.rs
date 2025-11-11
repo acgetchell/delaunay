@@ -115,7 +115,8 @@ macro_rules! gen_neighbor_symmetry {
                                             .map(|nn| nn.iter().flatten().copied().collect())
                                             .unwrap_or_default();
 
-                                        let similarity = jaccard_index(&cell_neighbors, &neighbor_neighbors);
+                                        let similarity = jaccard_index(&cell_neighbors, &neighbor_neighbors)
+                                            .expect("Jaccard computation should not overflow for neighbor sets");
                                         let intersection: Vec<_> = cell_neighbors
                                             .intersection(&neighbor_neighbors)
                                             .take(5)

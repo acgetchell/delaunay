@@ -154,7 +154,7 @@ macro_rules! test_serialization {
             let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
 
             // Extract edge topology before serialization
-            let edges_before = extract_edge_set(&tds);
+            let edges_before = extract_edge_set(&tds).expect("edge extraction should not fail");
 
             let serialized = serde_json::to_string(&tds).expect("serialization failed");
             let deserialized: Tds<f64, (), (), $dim> =
@@ -166,7 +166,7 @@ macro_rules! test_serialization {
 
             // Verify edge topology preservation via Jaccard similarity
             // Use strict threshold (0.999) as topology should be fully preserved
-            let edges_after = extract_edge_set(&deserialized);
+            let edges_after = extract_edge_set(&deserialized).expect("edge extraction should not fail");
             assert_jaccard_gte!(
                 &edges_before,
                 &edges_after,

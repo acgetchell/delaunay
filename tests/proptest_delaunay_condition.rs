@@ -324,7 +324,8 @@ proptest! {
         let inter = edges_a.intersection(&edges_b).count();
         let union = edges_a.union(&edges_b).count();
         if union > 0 {
-            let jaccard = jaccard_index(&edges_a, &edges_b);
+            let jaccard = jaccard_index(&edges_a, &edges_b)
+                .expect("Jaccard computation should not overflow for reasonable test sets");
             // Under floating-point and randomized insertion, allow some tolerance.
             prop_assert!(jaccard >= 0.40_f64, "Edge overlap too low: jaccard={:.3} (|A|={}, |B|={}, |∩|={}, |∪|={})", jaccard, edges_a.len(), edges_b.len(), inter, union);
         }

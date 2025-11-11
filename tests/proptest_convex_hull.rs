@@ -280,8 +280,10 @@ macro_rules! test_convex_hull_properties {
 
                                 // Extract facet sets and compare via Jaccard similarity
                                 // Should be exactly identical (Jaccard = 1.0) since same TDS
-                                let facets1 = extract_hull_facet_set(&hull1, &tds);
-                                let facets2 = extract_hull_facet_set(&hull2, &tds);
+                                let facets1 = extract_hull_facet_set(&hull1, &tds)
+                                    .expect("facet extraction should not fail");
+                                let facets2 = extract_hull_facet_set(&hull2, &tds)
+                                    .expect("facet extraction should not fail");
                                 assert_jaccard_gte!(
                                     &facets1,
                                     &facets2,

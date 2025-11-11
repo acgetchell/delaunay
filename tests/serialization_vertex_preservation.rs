@@ -40,7 +40,7 @@ fn test_vertex_preservation_with_duplicates_3d() {
         Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).expect("Tds construction failed");
 
     let tds_vertex_count = tds.vertices().count();
-    let tds_coords: HashSet<_> = tds.vertices().map(|(_, v)| *v.point()).collect();
+    let tds_coords = extract_vertex_coordinate_set(&tds);
     println!("Vertices after Tds construction: {tds_vertex_count}");
     println!(
         "Unique coordinates after Tds construction: {}",
@@ -56,7 +56,7 @@ fn test_vertex_preservation_with_duplicates_3d() {
         serde_json::from_str(&json).expect("Deserialization failed");
 
     let deser_vertex_count = deserialized.vertices().count();
-    let deser_coords: HashSet<_> = deserialized.vertices().map(|(_, v)| *v.point()).collect();
+    let deser_coords = extract_vertex_coordinate_set(&deserialized);
     println!("Vertices after deserialization: {deser_vertex_count}");
     println!(
         "Unique coordinates after deserialization: {}",

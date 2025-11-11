@@ -427,31 +427,35 @@ pub fn stable_hash_u64_slice(sorted_values: &[u64]) -> u64 {
 ///
 /// // Identical sets => similarity 1.0
 /// let a: HashSet<_> = [1, 2, 3].into_iter().collect();
-/// assert_eq!(jaccard_index(&a, &a), 1.0);
+/// assert_eq!(jaccard_index(&a, &a).unwrap(), 1.0);
 ///
 /// // Partial overlap: {1,2,3} vs {3,4} => |∩|=1, |∪|=4 => 0.25
 /// let b: HashSet<_> = [3, 4].into_iter().collect();
-/// assert!((jaccard_index(&a, &b) - 0.25).abs() < 1e-12);
+/// assert!((jaccard_index(&a, &b).unwrap() - 0.25).abs() < 1e-12);
 ///
 /// // Empty vs empty => 1.0 by convention
 /// let empty: HashSet<i32> = HashSet::new();
-/// assert_eq!(jaccard_index(&empty, &empty), 1.0);
+/// assert_eq!(jaccard_index(&empty, &empty).unwrap(), 1.0);
 /// ```
-#[must_use]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "usize→f64 conversion for ratio; counts fit safely in f64 mantissa"
-)]
+///
+/// # Errors
+///
+/// Returns `JaccardComputationError::SetSizeTooLarge` if set sizes exceed 2^53,
+/// which would cause precision loss in f64 conversion.
 pub fn jaccard_index<T, S>(
     a: &std::collections::HashSet<T, S>,
     b: &std::collections::HashSet<T, S>,
-) -> f64
+) -> Result<f64, JaccardComputationError>
 where
     T: Eq + std::hash::Hash,
     S: std::hash::BuildHasher,
 {
+    // f64 can exactly represent integers up to 2^53
+    // Use u128 for portability to 32-bit platforms where usize << 53 would overflow
+    const MAX_SAFE_INT_U128: u128 = 1u128 << 53;
+
     if a.is_empty() && b.is_empty() {
-        return 1.0;
+        return Ok(1.0);
     }
     // Iterate over the smaller set for intersection count
     let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
@@ -462,7 +466,22 @@ where
         }
     }
     let union = a.len() + b.len() - inter;
-    inter as f64 / union as f64
+
+    // Check for safe conversion before casting
+    if (inter as u128) > MAX_SAFE_INT_U128 || (union as u128) > MAX_SAFE_INT_U128 {
+        return Err(JaccardComputationError::SetSizeTooLarge {
+            intersection: inter,
+            union,
+        });
+    }
+
+    // Safe to cast: we've verified values are within safe range
+    #[allow(clippy::cast_precision_loss)]
+    let inter_f64 = inter as f64;
+    #[allow(clippy::cast_precision_loss)]
+    let union_f64 = union as f64;
+
+    Ok(inter_f64 / union_f64)
 }
 
 /// Jaccard distance between two sets: 1.0 - Jaccard index.
@@ -476,23 +495,27 @@ where
 /// let b: HashSet<_> = [3, 4].into_iter().collect();
 ///
 /// // Distance is 0.0 for identical sets
-/// assert_eq!(jaccard_distance(&a, &a), 0.0);
+/// assert_eq!(jaccard_distance(&a, &a).unwrap(), 0.0);
 ///
 /// // Index + distance = 1.0
-/// let sum = jaccard_index(&a, &b) + jaccard_distance(&a, &b);
+/// let sum = jaccard_index(&a, &b).unwrap() + jaccard_distance(&a, &b).unwrap();
 /// assert!((sum - 1.0).abs() < 1e-12);
 /// ```
+///
+/// # Errors
+///
+/// Returns `JaccardComputationError::SetSizeTooLarge` if set sizes exceed 2^53,
+/// which would cause precision loss in f64 conversion.
 #[inline]
-#[must_use]
 pub fn jaccard_distance<T, S>(
     a: &std::collections::HashSet<T, S>,
     b: &std::collections::HashSet<T, S>,
-) -> f64
+) -> Result<f64, JaccardComputationError>
 where
     T: Eq + std::hash::Hash,
     S: std::hash::BuildHasher,
 {
-    1.0 - jaccard_index(a, b)
+    Ok(1.0 - jaccard_index(a, b)?)
 }
 
 // =============================================================================
@@ -561,7 +584,13 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 ///
 /// # Returns
 ///
-/// A `HashSet` containing all edges as canonicalized `(u128, u128)` UUID pairs
+/// A `Result` containing a `HashSet` of canonicalized `(u128, u128)` UUID pairs,
+/// or a `FacetError` if vertex keys cannot be resolved
+///
+/// # Errors
+///
+/// Returns `FacetError::VertexKeyNotFoundInTriangulation` if a cell references
+/// a vertex key that doesn't exist in the TDS
 ///
 /// # Examples
 ///
@@ -578,12 +607,13 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 /// ];
 /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 ///
-/// let edge_set = extract_edge_set(&tds);
+/// let edge_set = extract_edge_set(&tds).unwrap();
 /// // A tetrahedron has 6 edges
 /// assert_eq!(edge_set.len(), 6);
 /// ```
-#[must_use]
-pub fn extract_edge_set<T, U, V, const D: usize>(tds: &Tds<T, U, V, D>) -> HashSet<(u128, u128)>
+pub fn extract_edge_set<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<HashSet<(u128, u128)>, FacetError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -596,19 +626,25 @@ where
         // Generate all pairs of vertices (edges)
         for i in 0..vertex_keys.len() {
             for j in (i + 1)..vertex_keys.len() {
-                if let (Some(v_i), Some(v_j)) = (
-                    tds.get_vertex_by_key(vertex_keys[i]),
-                    tds.get_vertex_by_key(vertex_keys[j]),
-                ) {
-                    let uuid_i = v_i.uuid().as_u128();
-                    let uuid_j = v_j.uuid().as_u128();
-                    edges.insert(canonical_edge(uuid_i, uuid_j));
-                }
+                let v_i = tds.get_vertex_by_key(vertex_keys[i]).ok_or(
+                    FacetError::VertexKeyNotFoundInTriangulation {
+                        key: vertex_keys[i],
+                    },
+                )?;
+                let v_j = tds.get_vertex_by_key(vertex_keys[j]).ok_or(
+                    FacetError::VertexKeyNotFoundInTriangulation {
+                        key: vertex_keys[j],
+                    },
+                )?;
+
+                let uuid_i = v_i.uuid().as_u128();
+                let uuid_j = v_j.uuid().as_u128();
+                edges.insert(canonical_edge(uuid_i, uuid_j));
             }
         }
     }
 
-    edges
+    Ok(edges)
 }
 
 /// Extract canonical facet identifier set from a triangulation.
@@ -686,7 +722,11 @@ where
 ///
 /// # Returns
 ///
-/// A `HashSet` of facet identifiers
+/// A `Result` containing a `HashSet` of facet identifiers, or a `FacetError`
+///
+/// # Errors
+///
+/// Returns `FacetError` if facet views cannot be created or facet keys cannot be computed
 ///
 /// # Examples
 ///
@@ -705,13 +745,13 @@ where
 /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 /// let hull = ConvexHull::from_triangulation(&tds).unwrap();
 ///
-/// let facet_set = extract_hull_facet_set(&hull, &tds);
+/// let facet_set = extract_hull_facet_set(&hull, &tds).unwrap();
 /// assert_eq!(facet_set.len(), 4);
 /// ```
 pub fn extract_hull_facet_set<T, U, V, const D: usize>(
     hull: &ConvexHull<T, U, V, D>,
     tds: &Tds<T, U, V, D>,
-) -> HashSet<u64>
+) -> Result<HashSet<u64>, FacetError>
 where
     T: CoordinateScalar + std::ops::AddAssign<T> + std::ops::SubAssign<T> + std::iter::Sum,
     U: DataType,
@@ -721,17 +761,13 @@ where
 
     for facet_handle in hull.facets() {
         // Create FacetView using cell_key() and facet_index() methods from FacetHandle
-        if let Ok(facet_view) =
-            FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index())
-        {
-            // Use the existing FacetView::key() method
-            if let Ok(facet_id) = facet_view.key() {
-                facet_ids.insert(facet_id);
-            }
-        }
+        let facet_view = FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index())?;
+        // Use the existing FacetView::key() method
+        let facet_id = facet_view.key()?;
+        facet_ids.insert(facet_id);
     }
 
-    facet_ids
+    Ok(facet_ids)
 }
 
 // =============================================================================
@@ -785,7 +821,8 @@ where
     S: std::hash::BuildHasher,
 {
     // f64 can exactly represent integers up to 2^53
-    const MAX_SAFE_INT: usize = 1_usize << 53;
+    // Use u128 for portability to 32-bit platforms where usize << 53 would overflow
+    const MAX_SAFE_INT_U128: u128 = 1u128 << 53;
 
     let size_a = a.len();
     let size_b = b.len();
@@ -799,7 +836,7 @@ where
     let jaccard = if union == 0 {
         1.0
     } else {
-        if intersection > MAX_SAFE_INT || union > MAX_SAFE_INT {
+        if (intersection as u128) > MAX_SAFE_INT_U128 || (union as u128) > MAX_SAFE_INT_U128 {
             return Err(JaccardComputationError::SetSizeTooLarge {
                 intersection,
                 union,
@@ -1437,23 +1474,27 @@ mod tests {
             fn $name() {
                 use std::collections::HashSet;
                 let empty: HashSet<[i32; $dim]> = HashSet::new();
-                assert_relative_eq!(jaccard_index(&empty, &empty), 1.0, epsilon = 1e-12);
-                assert_relative_eq!(jaccard_distance(&empty, &empty), 0.0, epsilon = 1e-12);
+                assert_relative_eq!(jaccard_index(&empty, &empty).unwrap(), 1.0, epsilon = 1e-12);
+                assert_relative_eq!(
+                    jaccard_distance(&empty, &empty).unwrap(),
+                    0.0,
+                    epsilon = 1e-12
+                );
 
                 let a: HashSet<[i32; $dim]> = HashSet::from([[1; $dim], [2; $dim], [3; $dim]]);
                 let b: HashSet<[i32; $dim]> = HashSet::from([[3; $dim], [4; $dim]]);
 
                 // Identical sets
-                assert_relative_eq!(jaccard_index(&a, &a), 1.0, epsilon = 1e-12);
-                assert_relative_eq!(jaccard_distance(&a, &a), 0.0, epsilon = 1e-12);
+                assert_relative_eq!(jaccard_index(&a, &a).unwrap(), 1.0, epsilon = 1e-12);
+                assert_relative_eq!(jaccard_distance(&a, &a).unwrap(), 0.0, epsilon = 1e-12);
 
                 // Partial overlap: |∩|=1, |∪|=4
-                assert_relative_eq!(jaccard_index(&a, &b), 0.25, epsilon = 1e-12);
-                assert_relative_eq!(jaccard_distance(&a, &b), 0.75, epsilon = 1e-12);
+                assert_relative_eq!(jaccard_index(&a, &b).unwrap(), 0.25, epsilon = 1e-12);
+                assert_relative_eq!(jaccard_distance(&a, &b).unwrap(), 0.75, epsilon = 1e-12);
 
                 // Empty vs non-empty
-                assert_relative_eq!(jaccard_index(&a, &empty), 0.0, epsilon = 1e-12);
-                assert_relative_eq!(jaccard_distance(&a, &empty), 1.0, epsilon = 1e-12);
+                assert_relative_eq!(jaccard_index(&a, &empty).unwrap(), 0.0, epsilon = 1e-12);
+                assert_relative_eq!(jaccard_distance(&a, &empty).unwrap(), 1.0, epsilon = 1e-12);
             }
         };
     }
@@ -2492,7 +2533,7 @@ mod tests {
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
-        let edge_set = extract_edge_set(&tds);
+        let edge_set = extract_edge_set(&tds).unwrap();
         // A tetrahedron has 6 edges (binomial(4,2))
         assert_eq!(edge_set.len(), 6, "Tetrahedron should have 6 edges");
     }
@@ -2525,7 +2566,7 @@ mod tests {
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
         let hull = ConvexHull::from_triangulation(&tds).unwrap();
 
-        let facet_set = extract_hull_facet_set(&hull, &tds);
+        let facet_set = extract_hull_facet_set(&hull, &tds).unwrap();
         // Hull of a tetrahedron has 4 facets
         assert_eq!(facet_set.len(), 4, "Hull should have 4 facets");
     }
