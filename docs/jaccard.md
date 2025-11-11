@@ -61,42 +61,104 @@ Below are high-value spots where Jaccard can turn brittle equality checks into r
 
 ---
 
-## Adoption plan (Next PR)
+## Adoption plan
 
 Goal: Consolidate set-comparison logic across tests using `core::util::{jaccard_index, jaccard_distance}` and introduce robust, well-instrumented similarity checks.
 
-Tasks:
+### Implementation status
 
-- [ ] Serialization tests: compute `HashSet<Point<_, D>>` (or canonicalized coordinate keys) pre/post round-trip and assert high Jaccard index.
-- [ ] Storage backend compatibility: extract canonical edge sets (sorted `(u128, u128)` UUID pairs) per backend and assert high Jaccard index.
-- [ ] Convex hull tests: introduce helper to extract canonical facet identifiers (e.g., sorted vertex-key tuples) and compare via Jaccard where applicable.
-- [ ] Triangulation invariants: add optional Jaccard diagnostics for neighbor reciprocity and facet overlaps
-      (retain current strict assertions; use Jaccard to improve failure messages and enable fuzz-tolerant checks where needed).
-- [ ] Document the new helpers and thresholds in `tests/README.md` and reference this document.
-- [ ] Prepare thresholds and notes for re-enabling insertion-order invariance properties (coordinate with Issue #120).
+- [x] **Extraction helpers** (`src/core/util.rs`): Implemented canonical set extraction utilities
+  - `extract_vertex_coordinate_set()` - Extract `HashSet<Point<T, D>>` from TDS
+  - `extract_edge_set()` - Extract canonical edge pairs as `HashSet<(u128, u128)>`
+  - `extract_facet_identifier_set()` - Extract boundary facet keys as `HashSet<u64>`
+  - `extract_hull_facet_set()` - Extract convex hull facet keys as `HashSet<u64>`
+  - Uses existing `FacetView::key()` API for facet identification
+  - All helpers include comprehensive documentation and examples
 
-Milestones:
+- [x] **Testing utilities** (`src/core/util.rs`): Implemented Jaccard assertion macro and diagnostics
+  - `JaccardComputationError` - Proper error type for set size overflow (> 2^53)
+  - `format_jaccard_report()` - Rich diagnostic reporting with:
+    - Set sizes, intersection/union counts, Jaccard index
+    - Sample symmetric differences (first 5 unique elements per set)
+    - Safe f64 conversion with overflow detection
+  - `assert_jaccard_gte!` macro - Assertion with automatic diagnostics on failure
+  - Import with `use delaunay::assert_jaccard_gte;`
 
-1. Implement helpers for canonical edge/facet set extraction reused across tests.
-2. Apply Jaccard in serialization and backend compatibility tests.
-3. Integrate hull comparisons and optional triangulation diagnostics.
-4. Update documentation and finalize threshold guidance.
+- [x] **Serialization tests** (`tests/serialization_vertex_preservation.rs`): Migrated to Jaccard similarity
+  - Replaced coordinate-by-coordinate equality checks with `extract_vertex_coordinate_set()` + `assert_jaccard_gte!()`
+  - Threshold: ≥ 0.99 (99% similarity required for vertex preservation)
+  - All 4 tests passing
 
-Acceptance criteria:
+- [ ] **Storage backend compatibility** (`tests/storage_backend_compatibility.rs`): Not yet updated
+  - Note: All tests currently ignored (Phase 4 evaluation tests)
+  - Will extract edge sets and compare via Jaccard when activated
+  - Planned threshold: ≥ 0.999
 
-- Tests compile and pass in debug and release.
-- New helpers centralized; no duplicate inline Jaccard logic in tests.
-- `tests/README.md` references Jaccard usage and thresholds.
+- [ ] **Convex hull tests**: Not yet updated
+  - `tests/convex_hull_bowyer_watson_integration.rs`
+  - `tests/proptest_convex_hull.rs`
+  - Will use `extract_hull_facet_set()` for topology comparison
+  - Planned thresholds: 0.95–1.0 depending on scenario
 
-Risk/considerations:
+- [ ] **Triangulation invariants**: Not yet updated
+  - `tests/proptest_triangulation.rs`
+  - Will add optional Jaccard diagnostics for neighbor reciprocity failures
+  - Retain strict assertions; use Jaccard only for enhanced error reporting
 
-- Ensure canonicalization (sorted tuples, stable identifiers) before set comparison.
-- Keep equality assertions where logically required; use Jaccard to prevent flakiness around near-degenerate cases.
-- Track thresholds in comments with rationale to avoid silent regressions.
+- [ ] **Documentation updates**: Partially complete
+  - This file updated with implementation progress
+  - Still TODO: Update `tests/README.md` with usage examples and threshold conventions
+
+- [ ] **Prepare for insertion-order invariance re-enablement** (coordinate with Issue #120)
+
+### Threshold conventions (as implemented)
+
+- **Serialization tests**: ≥ 0.99 (strict preservation expected)
+- **Storage backend compatibility**: ≥ 0.999 (near-exact equivalence expected)
+- **Convex hull comparisons**:
+  - Identity/roundtrip: 1.0 where appropriate
+  - Numerically sensitive: 0.98–0.99
+  - Randomized/stress tests: ≥ 0.95
+- **Property tests**: Diagnostics only (retain strict invariants)
+
+Thresholds are initial values subject to tuning based on CI feedback.
+
+### Design decisions
+
+**Facet key computation**: Uses existing `FacetView::key()` method which computes order-invariant 64-bit keys by:
+
+1. Sorting vertex keys
+2. Hashing with deterministic FNV-based algorithm (no random seeding)
+3. Avoiding external dependencies (local implementation)
+
+**Safe conversions**: All usize→f64 casts checked against 2^53 limit (f64 mantissa precision) with proper error handling via `JaccardComputationError`.
+
+**Canonicalization**:
+
+- Edges: `canonical_edge(u, v)` returns `(min(u,v), max(u,v))`
+- Facets: `FacetView::key()` sorts vertex UUIDs before hashing
+- Ensures stable, order-independent comparisons
+
+### Acceptance criteria (partially met)
+
+- [x] Tests compile and pass in debug and release
+- [x] New helpers centralized in `src/core/util.rs`; no duplicate inline Jaccard logic
+- [x] Comprehensive documentation with examples in helper functions
+- [ ] `tests/README.md` updated with Jaccard usage and thresholds
+- [ ] All test files migrated
+
+### Risk mitigation
+
+- ✅ Canonicalization enforced via helper functions
+- ✅ Equality assertions retained where logically required
+- ✅ Thresholds documented in code comments with rationale
+- ✅ Safe f64 conversion prevents silent precision loss
 
 ---
 
-## Example usage pattern
+## Example usage patterns
+
+### Basic Jaccard computation
 
 ```rust
 use std::collections::HashSet;
@@ -109,6 +171,58 @@ let sim = jaccard_index(&a, &b);      // [0.0, 1.0]
 let dist = jaccard_distance(&a, &b);  // [0.0, 1.0]
 
 assert!(sim >= 0.95, "unexpected divergence: similarity={sim:.3}");
+```
+
+### Using the assertion macro (recommended)
+
+```rust
+use delaunay::assert_jaccard_gte;
+use delaunay::core::util::extract_vertex_coordinate_set;
+use delaunay::core::Tds;
+
+let tds_before: Tds<f64, (), (), 3> = /* ... */;
+let before_coords = extract_vertex_coordinate_set(&tds_before);
+
+// ... perform operation (serialization, transformation, etc.) ...
+
+let tds_after: Tds<f64, (), (), 3> = /* ... */;
+let after_coords = extract_vertex_coordinate_set(&tds_after);
+
+// Assert with automatic diagnostics on failure
+assert_jaccard_gte!(
+    &before_coords,
+    &after_coords,
+    0.99,
+    "Vertex preservation through operation"
+);
+```
+
+### Extracting canonical sets
+
+```rust
+use delaunay::core::util::{
+    extract_vertex_coordinate_set,
+    extract_edge_set,
+    extract_facet_identifier_set,
+    extract_hull_facet_set,
+};
+use delaunay::core::Tds;
+use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+
+let tds: Tds<f64, (), (), 3> = /* ... */;
+
+// Vertex coordinates
+let vertices = extract_vertex_coordinate_set(&tds);
+
+// Edges (canonical UUID pairs)
+let edges = extract_edge_set(&tds);
+
+// Boundary facets
+let facets = extract_facet_identifier_set(&tds).unwrap();
+
+// Convex hull facets
+let hull = ConvexHull::from_triangulation(&tds).unwrap();
+let hull_facets = extract_hull_facet_set(&hull, &tds);
 ```
 
 ---

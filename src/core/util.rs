@@ -1,11 +1,15 @@
 //! General helper utilities
 
+use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::core::facet::{FacetError, FacetView};
 use crate::core::traits::data_type::DataType;
+use crate::core::triangulation_data_structure::Tds;
 use crate::core::vertex::Vertex;
+use crate::geometry::algorithms::convex_hull::ConvexHull;
+use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
 // =============================================================================
@@ -23,6 +27,21 @@ pub enum UuidValidationError {
     InvalidVersion {
         /// The version number that was found.
         found: usize,
+    },
+}
+
+/// Errors that can occur during Jaccard similarity computation.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum JaccardComputationError {
+    /// Set sizes too large for safe f64 conversion.
+    #[error(
+        "Set sizes exceed safe f64 conversion limit (2^53): intersection={intersection}, union={union}"
+    )]
+    SetSizeTooLarge {
+        /// The intersection size
+        intersection: usize,
+        /// The union size
+        union: usize,
     },
 }
 
@@ -477,6 +496,410 @@ where
 }
 
 // =============================================================================
+// CANONICAL SET EXTRACTION FOR JACCARD SIMILARITY TESTING
+// =============================================================================
+
+/// Extract vertex coordinate set from a triangulation for Jaccard similarity comparison.
+///
+/// This function creates a canonical set of vertex coordinates from a triangulation,
+/// useful for comparing triangulations before/after operations like serialization.
+///
+/// # Arguments
+///
+/// * `tds` - The triangulation data structure to extract vertex coordinates from
+///
+/// # Returns
+///
+/// A `HashSet` containing all unique vertex coordinates as `Point<T, D>`
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::core::util::extract_vertex_coordinate_set;
+/// use delaunay::core::Tds;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+///
+/// let coord_set = extract_vertex_coordinate_set(&tds);
+/// assert_eq!(coord_set.len(), 4);
+/// ```
+#[must_use]
+pub fn extract_vertex_coordinate_set<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> HashSet<Point<T, D>>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    tds.vertices().map(|(_, vertex)| *vertex.point()).collect()
+}
+
+/// Canonicalize an edge by ordering vertex UUIDs.
+///
+/// Returns the edge with UUIDs in ascending order for consistent comparison.
+const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
+    if u <= v { (u, v) } else { (v, u) }
+}
+
+/// Extract canonical edge set from a triangulation.
+///
+/// This function creates a set of all edges in the triangulation, represented as
+/// pairs of vertex UUIDs in canonical (sorted) order. This is useful for comparing
+/// triangulation topology across different storage backends or algorithms.
+///
+/// # Arguments
+///
+/// * `tds` - The triangulation data structure to extract edges from
+///
+/// # Returns
+///
+/// A `HashSet` containing all edges as canonicalized `(u128, u128)` UUID pairs
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::core::util::extract_edge_set;
+/// use delaunay::core::Tds;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+///
+/// let edge_set = extract_edge_set(&tds);
+/// // A tetrahedron has 6 edges
+/// assert_eq!(edge_set.len(), 6);
+/// ```
+#[must_use]
+pub fn extract_edge_set<T, U, V, const D: usize>(tds: &Tds<T, U, V, D>) -> HashSet<(u128, u128)>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let mut edges = HashSet::new();
+
+    for (_, cell) in tds.cells() {
+        let vertex_keys = cell.vertices();
+        // Generate all pairs of vertices (edges)
+        for i in 0..vertex_keys.len() {
+            for j in (i + 1)..vertex_keys.len() {
+                if let (Some(v_i), Some(v_j)) = (
+                    tds.get_vertex_by_key(vertex_keys[i]),
+                    tds.get_vertex_by_key(vertex_keys[j]),
+                ) {
+                    let uuid_i = v_i.uuid().as_u128();
+                    let uuid_j = v_j.uuid().as_u128();
+                    edges.insert(canonical_edge(uuid_i, uuid_j));
+                }
+            }
+        }
+    }
+
+    edges
+}
+
+/// Extract canonical facet identifier set from a triangulation.
+///
+/// This function creates a set of deterministic 64-bit identifiers for all boundary facets
+/// in the triangulation using the existing `FacetView::key()` method.
+///
+/// # Arguments
+///
+/// * `tds` - The triangulation data structure to extract facet identifiers from
+///
+/// # Returns
+///
+/// A `Result` containing a `HashSet` of facet identifiers, or a `FacetError`
+///
+/// # Errors
+///
+/// Returns an error if facet keys cannot be computed or boundary facets cannot be retrieved
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::core::util::extract_facet_identifier_set;
+/// use delaunay::core::Tds;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+///
+/// let facet_set = extract_facet_identifier_set(&tds).unwrap();
+/// // A tetrahedron has 4 facets
+/// assert_eq!(facet_set.len(), 4);
+/// ```
+pub fn extract_facet_identifier_set<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<HashSet<u64>, FacetError>
+where
+    T: CoordinateScalar + std::ops::AddAssign<T> + std::ops::SubAssign<T> + std::iter::Sum,
+    U: DataType,
+    V: DataType,
+{
+    use crate::core::traits::boundary_analysis::BoundaryAnalysis;
+
+    let mut facet_ids = HashSet::new();
+
+    // boundary_facets() returns Result<impl Iterator, TriangulationValidationError>
+    // We need to handle the error conversion
+    let boundary_facets = tds
+        .boundary_facets()
+        .map_err(|_| FacetError::CellNotFoundInTriangulation)?;
+
+    for facet_view in boundary_facets {
+        // Use the existing FacetView::key() method
+        let facet_id = facet_view.key()?;
+        facet_ids.insert(facet_id);
+    }
+
+    Ok(facet_ids)
+}
+
+/// Extract hull facet identifier set from a convex hull.
+///
+/// This function creates a set of deterministic 64-bit identifiers for all facets
+/// in a convex hull using the existing `FacetView::key()` method.
+///
+/// # Arguments
+///
+/// * `hull` - The convex hull to extract facet identifiers from
+/// * `tds` - The triangulation data structure used to create the hull
+///
+/// # Returns
+///
+/// A `HashSet` of facet identifiers
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::core::util::extract_hull_facet_set;
+/// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+/// use delaunay::core::Tds;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let hull = ConvexHull::from_triangulation(&tds).unwrap();
+///
+/// let facet_set = extract_hull_facet_set(&hull, &tds);
+/// assert_eq!(facet_set.len(), 4);
+/// ```
+pub fn extract_hull_facet_set<T, U, V, const D: usize>(
+    hull: &ConvexHull<T, U, V, D>,
+    tds: &Tds<T, U, V, D>,
+) -> HashSet<u64>
+where
+    T: CoordinateScalar + std::ops::AddAssign<T> + std::ops::SubAssign<T> + std::iter::Sum,
+    U: DataType,
+    V: DataType,
+{
+    let mut facet_ids = HashSet::new();
+
+    for facet_handle in hull.facets() {
+        // Create FacetView using cell_key() and facet_index() methods from FacetHandle
+        if let Ok(facet_view) =
+            FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index())
+        {
+            // Use the existing FacetView::key() method
+            if let Ok(facet_id) = facet_view.key() {
+                facet_ids.insert(facet_id);
+            }
+        }
+    }
+
+    facet_ids
+}
+
+// =============================================================================
+// JACCARD TESTING UTILITIES
+// =============================================================================
+
+/// Format a detailed Jaccard similarity report for test diagnostics.
+///
+/// This function produces a human-readable report showing:
+/// - Set sizes
+/// - Intersection and union sizes  
+/// - Jaccard index
+/// - Sample elements from the symmetric difference (unique to each set)
+///
+/// # Arguments
+///
+/// * `a` - First set to compare
+/// * `b` - Second set to compare
+/// * `label_a` - Descriptive label for set A
+/// * `label_b` - Descriptive label for set B
+///
+/// # Returns
+///
+/// A formatted string with detailed comparison metrics
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::HashSet;
+/// use delaunay::core::util::format_jaccard_report;
+///
+/// let a: HashSet<i32> = [1, 2, 3, 4].into_iter().collect();
+/// let b: HashSet<i32> = [3, 4, 5, 6].into_iter().collect();
+///
+/// let report = format_jaccard_report(&a, &b, "Set A", "Set B").unwrap();
+/// assert!(report.contains("Jaccard Index:"));
+/// ```
+///
+/// # Errors
+///
+/// Returns `JaccardComputationError::SetSizeTooLarge` if the set sizes exceed
+/// the safe range for f64 conversion (2^53).
+pub fn format_jaccard_report<T, S>(
+    a: &HashSet<T, S>,
+    b: &HashSet<T, S>,
+    label_a: &str,
+    label_b: &str,
+) -> Result<String, JaccardComputationError>
+where
+    T: Eq + std::hash::Hash + std::fmt::Debug,
+    S: std::hash::BuildHasher,
+{
+    // f64 can exactly represent integers up to 2^53
+    const MAX_SAFE_INT: usize = 1_usize << 53;
+
+    let size_a = a.len();
+    let size_b = b.len();
+
+    // Compute intersection and union
+    let intersection: usize = a.iter().filter(|x| b.contains(x)).count();
+    let union = size_a + size_b - intersection;
+
+    // Compute Jaccard index using safe conversion
+
+    let jaccard = if union == 0 {
+        1.0
+    } else {
+        if intersection > MAX_SAFE_INT || union > MAX_SAFE_INT {
+            return Err(JaccardComputationError::SetSizeTooLarge {
+                intersection,
+                union,
+            });
+        }
+
+        // Safe to cast: we've verified values are within safe range
+        #[allow(clippy::cast_precision_loss)]
+        let inter_f64 = intersection as f64;
+        #[allow(clippy::cast_precision_loss)]
+        let union_f64 = union as f64;
+
+        inter_f64 / union_f64
+    };
+
+    // Sample symmetric difference (elements unique to each set)
+    let only_in_a: Vec<_> = a.iter().filter(|x| !b.contains(x)).take(5).collect();
+    let only_in_b: Vec<_> = b.iter().filter(|x| !a.contains(x)).take(5).collect();
+
+    Ok(format!(
+        "\n╭─ Jaccard Similarity Report ─────────────────────────────\n\
+         │ {label_a}: {size_a} elements\n\
+         │ {label_b}: {size_b} elements\n\
+         │ Intersection: {intersection}\n\
+         │ Union: {union}\n\
+         │ Jaccard Index: {jaccard:.6}\n\
+         ├─ Symmetric Difference (sample) ────────────────────────\n\
+         │ Only in {label_a} (first 5): {only_in_a:?}\n\
+         │ Only in {label_b} (first 5): {only_in_b:?}\n\
+         ╰─────────────────────────────────────────────────────────\n"
+    ))
+}
+
+/// Assert that the Jaccard index between two sets meets or exceeds a threshold.
+///
+/// This macro computes the Jaccard similarity between two `HashSet`s and asserts
+/// that the index is greater than or equal to the specified threshold. On failure,
+/// it provides detailed diagnostics including set sizes, intersection/union counts,
+/// and samples of the symmetric difference.
+///
+/// # Arguments
+///
+/// * `$a` - First set expression (must evaluate to `&HashSet<T>`)
+/// * `$b` - Second set expression (must evaluate to `&HashSet<T>`)
+/// * `$threshold` - Minimum acceptable Jaccard index (f64)
+/// * `$($label:tt)*` - Optional format string and arguments for context message
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::HashSet;
+/// use delaunay::assert_jaccard_gte;
+///
+/// let set_a: HashSet<i32> = [1, 2, 3].into_iter().collect();
+/// let set_b: HashSet<i32> = [2, 3, 4].into_iter().collect();
+///
+/// // This will pass (Jaccard = 0.5, which is ≥ 0.4)
+/// assert_jaccard_gte!(&set_a, &set_b, 0.4, "comparing set_a and set_b");
+/// ```
+#[macro_export]
+macro_rules! assert_jaccard_gte {
+    ($a:expr, $b:expr, $threshold:expr, $($label:tt)*) => {{
+        let a_ref = $a;
+        let b_ref = $b;
+        let threshold = $threshold;
+
+        // Compute intersection and union
+        let intersection: usize = a_ref.iter().filter(|x| b_ref.contains(x)).count();
+        let union = a_ref.len() + b_ref.len() - intersection;
+
+        // Compute Jaccard index
+        let jaccard_index = if union == 0 {
+            1.0
+        } else {
+            intersection as f64 / union as f64
+        };
+
+        if jaccard_index < threshold {
+            let report = $crate::core::util::format_jaccard_report(
+                a_ref,
+                b_ref,
+                "Set A",
+                "Set B"
+            )
+            .expect("Failed to format Jaccard report - set sizes too large");
+            panic!(
+                "Jaccard assertion failed: {}\n\
+                 Expected: Jaccard index ≥ {:.6}\n\
+                 Actual: {:.6}\n\
+                 {}",
+                format!($($label)*),
+                threshold,
+                jaccard_index,
+                report
+            );
+        }
+    }};
+}
+
+// =============================================================================
 // FACET KEY UTILITIES
 // =============================================================================
 
@@ -779,6 +1202,9 @@ mod tests {
 
     use crate::core::facet::FacetView;
     use crate::core::triangulation_data_structure::{Tds, VertexKey};
+    use crate::geometry::algorithms::convex_hull::ConvexHull;
+    use crate::geometry::point::Point;
+    use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
     use std::thread;
     use std::time::Instant;
@@ -2016,6 +2442,92 @@ mod tests {
         let duration = start.elapsed();
 
         eprintln!("usize_to_u8 error conversions: 1000 iters in {duration:?}");
+    }
+
+    // =============================================================================
+    // CANONICAL SET EXTRACTION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_canonical_edge() {
+        // Test that edges are canonicalized (smaller UUID first)
+        assert_eq!(canonical_edge(1, 2), (1, 2));
+        assert_eq!(canonical_edge(2, 1), (1, 2));
+        assert_eq!(canonical_edge(9, 2), (2, 9));
+        assert_eq!(canonical_edge(100, 50), (50, 100));
+
+        // Test with identical UUIDs
+        assert_eq!(canonical_edge(5, 5), (5, 5));
+    }
+
+    #[test]
+    fn test_extract_vertex_coordinate_set() {
+        // Test vertex coordinate extraction from a simple tetrahedron
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        let coord_set = extract_vertex_coordinate_set(&tds);
+        assert_eq!(coord_set.len(), 4, "Should have 4 unique coordinates");
+
+        // Verify all original points are in the set
+        assert!(coord_set.contains(&Point::new([0.0, 0.0, 0.0])));
+        assert!(coord_set.contains(&Point::new([1.0, 0.0, 0.0])));
+        assert!(coord_set.contains(&Point::new([0.0, 1.0, 0.0])));
+        assert!(coord_set.contains(&Point::new([0.0, 0.0, 1.0])));
+    }
+
+    #[test]
+    fn test_extract_edge_set() {
+        // Test edge extraction from a tetrahedron
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        let edge_set = extract_edge_set(&tds);
+        // A tetrahedron has 6 edges (binomial(4,2))
+        assert_eq!(edge_set.len(), 6, "Tetrahedron should have 6 edges");
+    }
+
+    #[test]
+    fn test_extract_facet_identifier_set() {
+        // Test facet identifier extraction from a tetrahedron
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        let facet_set = extract_facet_identifier_set(&tds).unwrap();
+        // A tetrahedron has 4 facets
+        assert_eq!(facet_set.len(), 4, "Tetrahedron should have 4 facets");
+    }
+
+    #[test]
+    fn test_extract_hull_facet_set() {
+        // Test hull facet extraction from a simple tetrahedron
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let hull = ConvexHull::from_triangulation(&tds).unwrap();
+
+        let facet_set = extract_hull_facet_set(&hull, &tds);
+        // Hull of a tetrahedron has 4 facets
+        assert_eq!(facet_set.len(), 4, "Hull should have 4 facets");
     }
 
     #[test]
