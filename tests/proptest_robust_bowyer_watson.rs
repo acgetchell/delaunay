@@ -60,11 +60,14 @@ macro_rules! test_robust_algorithm_properties {
                         let _result = algorithm.insert_vertex(&mut tds, test_vertex);
 
                         // Property: TDS validity maintained regardless of insertion outcome
-                        prop_assert!(
-                            tds.is_valid().is_ok(),
-                            "{}D TDS should remain valid after insertion attempt",
-                            $dim
-                        );
+                        if let Err(e) = tds.is_valid() {
+                            prop_assert!(
+                                false,
+                                "{}D TDS should remain valid after insertion attempt. Validation error: {}",
+                                $dim,
+                                e
+                            );
+                        }
                     }
                 }
 
@@ -186,11 +189,14 @@ macro_rules! test_robust_algorithm_properties {
 
                         // Property: Interior point insertion should succeed (or fail gracefully)
                         // and maintain TDS validity
-                        prop_assert!(
-                            tds.is_valid().is_ok(),
-                            "{}D: TDS should remain valid after interior insertion attempt",
-                            $dim
-                        );
+                        if let Err(e) = tds.is_valid() {
+                            prop_assert!(
+                                false,
+                                "{}D: TDS should remain valid after interior insertion attempt. Validation error: {}",
+                                $dim,
+                                e
+                            );
+                        }
                     }
                 }
 

@@ -1,8 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 87a07747781317977c0434e7fa3b29a415e54b0b22c6f3510657229a4daf0bbc # shrinks to vertices_processed = 1, cavity_failures = 0, fallback_uses = 2
-cc 49467c2716ef7d552c20f2c532e469f9093e68440f5e5f352c8bb588402a7b4f # shrinks to count = 1

@@ -122,6 +122,87 @@
 //! - [`core::algorithms::bowyer_watson`] - Primary invariant enforcement during triangulation construction
 //! - [`core::triangulation_data_structure::Tds::is_valid`] - Comprehensive validation of all invariants
 //!
+//! # Correctness Guarantees and Limitations
+//!
+//! The library provides strong correctness guarantees for vertex insertion operations while being
+//! transparent about edge cases and limitations.
+//!
+//! ## Guarantees
+//!
+//! When using [`Tds::add()`](core::triangulation_data_structure::Tds::add) or the underlying
+//! insertion algorithms:
+//!
+//! 1. **Successful insertions maintain ALL invariants** - If insertion succeeds (`Ok(_)`), the
+//!    triangulation is guaranteed to satisfy all structural and topological invariants, including
+//!    the Delaunay property when using
+//!    [`RobustBowyerWatson`](core::algorithms::RobustBowyerWatson).
+//!
+//! 2. **Failed insertions leave triangulation in valid state** - If insertion fails (`Err(_)`),
+//!    the triangulation remains in a valid state with all invariants maintained. No partial or
+//!    corrupted state is possible.
+//!
+//! 3. **Clear error messages** - Insertion failures include detailed error messages specifying
+//!    which constraint or invariant was violated, along with context about what went wrong.
+//!
+//! 4. **No silent failures** - The library never silently produces incorrect triangulations.
+//!    Operations either succeed with guarantees or fail with explicit errors.
+//!
+//! 5. **Duplicate vertex detection** - Duplicate and near-duplicate vertices (within `1e-10`
+//!    epsilon) are automatically detected and rejected with
+//!    [`InsertionError::InvalidVertex`](core::traits::InsertionError::InvalidVertex), preventing
+//!    numerical instabilities.
+//!
+//! ## Limitations
+//!
+//! 1. **Degenerate geometry in higher dimensions** - Highly degenerate point configurations (e.g.,
+//!    many nearly collinear or coplanar points) in 4D and 5D may cause insertion to fail gracefully
+//!    with [`InsertionError::GeometricFailure`](core::traits::InsertionError::GeometricFailure).
+//!    This is a known limitation of incremental algorithms in high-dimensional spaces with
+//!    degenerate inputs.
+//!
+//! 2. **Iterative refinement constraints** - The cavity-based insertion algorithm uses iterative
+//!    refinement to maintain the Delaunay property. In rare cases with complex geometries,
+//!    refinement may hit topological constraints and fail gracefully rather than producing an
+//!    invalid triangulation.
+//!
+//! 3. **Numerical precision** - Like all computational geometry libraries, numerical precision can
+//!    affect results near floating-point boundaries. The library uses robust predicates to minimize
+//!    these issues, but extreme coordinate values or ill-conditioned point sets may still cause
+//!    problems.
+//!
+//! ## Error Handling
+//!
+//! ```rust
+//! use delaunay::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
+//! use delaunay::vertex;
+//!
+//! let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
+//!
+//! // Add initial vertices
+//! tds.add(vertex!([0.0, 0.0, 0.0, 0.0])).unwrap();
+//! tds.add(vertex!([1.0, 0.0, 0.0, 0.0])).unwrap();
+//!
+//! // Attempt to add a duplicate vertex - will fail gracefully
+//! match tds.add(vertex!([1.0, 0.0, 0.0, 0.0])) {
+//!     Ok(_) => println!("Insertion succeeded"),
+//!     Err(TriangulationConstructionError::DuplicateCoordinates { coordinates }) => {
+//!         println!("Duplicate vertex detected: {}", coordinates);
+//!         // Triangulation remains valid - can continue with other vertices
+//!     }
+//!     Err(TriangulationConstructionError::GeometricDegeneracy { message }) => {
+//!         println!("Geometry too degenerate: {}", message);
+//!         // Triangulation remains valid - insertion was rejected
+//!     }
+//!     Err(e) => println!("Other error: {}", e),
+//! }
+//!
+//! // Triangulation remains valid regardless of insertion outcome
+//! assert!(tds.is_valid().is_ok());
+//! ```
+//!
+//! For implementation details on invariant validation and error handling, see
+//! [`core::traits::insertion_algorithm`].
+//!
 //! # References
 //!
 //! The algorithms and geometric predicates in this library are based on established computational

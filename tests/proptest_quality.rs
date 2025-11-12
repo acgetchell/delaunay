@@ -16,6 +16,7 @@ use delaunay::geometry::quality::{normalized_volume, radius_ratio};
 use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::geometry::util::{circumradius, inradius, safe_usize_to_scalar};
 use proptest::prelude::*;
+use std::collections::HashMap;
 
 // =============================================================================
 // TEST CONFIGURATION
@@ -210,24 +211,50 @@ macro_rules! test_quality_properties {
                         let translated_vertices = Vertex::from_points(translated_vertices);
 
                         if let Ok(tds_translated) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&translated_vertices) {
-                            // Compare radius ratios for corresponding cells
-                            let original_keys: Vec<_> = tds.cell_keys().collect();
-                            let translated_keys: Vec<_> = tds_translated.cell_keys().collect();
+                            // Build mapping from original UUIDs to translated UUIDs
+                            let uuid_map: HashMap<_, _> = vertices.iter()
+                                .zip(translated_vertices.iter())
+                                .map(|(orig, trans)| (orig.uuid(), trans.uuid()))
+                                .collect();
 
-                            if original_keys.len() == translated_keys.len() {
-                                for (orig_key, trans_key) in original_keys.iter().zip(translated_keys.iter()) {
-                                    if let (Ok(ratio_orig), Ok(ratio_trans)) =
-                                        (radius_ratio(&tds, *orig_key), radius_ratio(&tds_translated, *trans_key))
-                                    {
-                                        let rel_diff = ((ratio_orig - ratio_trans).abs() / ratio_orig.max(1.0)).min(1.0);
-                                        prop_assert!(
-                                        rel_diff < 0.05,
-                                            "{}D radius ratio should be translation-invariant: {} vs {} (diff: {})",
-                                            $dim,
-                                            ratio_orig,
-                                            ratio_trans,
-                                            rel_diff
-                                        );
+                            // Match cells by translating their vertex UUIDs
+                            for orig_key in tds.cell_keys() {
+                                if let Some(orig_cell) = tds.get_cell(orig_key) {
+                                    // Get original cell's vertex UUIDs
+                                    if let Ok(orig_uuids) = orig_cell.vertex_uuids(&tds) {
+                                        // Map to translated UUIDs
+                                        let trans_uuids: Vec<_> = orig_uuids.iter()
+                                            .filter_map(|uuid| uuid_map.get(uuid))
+                                            .copied()
+                                            .collect();
+
+                                        // Find matching cell in translated triangulation
+                                        for trans_key in tds_translated.cell_keys() {
+                                            if let Some(trans_cell) = tds_translated.get_cell(trans_key) {
+                                                if let Ok(trans_cell_uuids) = trans_cell.vertex_uuids(&tds_translated) {
+                                                // Check if cells have same vertices (by UUID)
+                                                if trans_uuids.len() == trans_cell_uuids.len()
+                                                    && trans_uuids.iter().all(|u| trans_cell_uuids.contains(u))
+                                                {
+                                                    // Found matching cell - compare quality
+                                                    if let (Ok(ratio_orig), Ok(ratio_trans)) =
+                                                        (radius_ratio(&tds, orig_key), radius_ratio(&tds_translated, trans_key))
+                                                    {
+                                                        let rel_diff = ((ratio_orig - ratio_trans).abs() / ratio_orig.max(1.0)).min(1.0);
+                                                        prop_assert!(
+                                                            rel_diff < 0.05,
+                                                            "{}D radius ratio should be translation-invariant: {} vs {} (diff: {})",
+                                                            $dim,
+                                                            ratio_orig,
+                                                            ratio_trans,
+                                                            rel_diff
+                                                        );
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                                }
+                                        }
                                     }
                                 }
                             }
@@ -261,23 +288,45 @@ macro_rules! test_quality_properties {
                         let translated_vertices = Vertex::from_points(translated_vertices);
 
                         if let Ok(tds_translated) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&translated_vertices) {
-                            let original_keys: Vec<_> = tds.cell_keys().collect();
-                            let translated_keys: Vec<_> = tds_translated.cell_keys().collect();
+                            // Build UUID mapping
+                            let uuid_map: HashMap<_, _> = vertices.iter()
+                                .zip(translated_vertices.iter())
+                                .map(|(orig, trans)| (orig.uuid(), trans.uuid()))
+                                .collect();
 
-                            if original_keys.len() == translated_keys.len() {
-                                for (orig_key, trans_key) in original_keys.iter().zip(translated_keys.iter()) {
-                                    if let (Ok(vol_orig), Ok(vol_trans)) =
-                                        (normalized_volume(&tds, *orig_key), normalized_volume(&tds_translated, *trans_key))
-                                    {
-                                        let rel_diff = ((vol_orig - vol_trans).abs() / vol_orig.max(1e-6)).min(1.0);
-                                        prop_assert!(
-                                            rel_diff < 0.01,
-                                            "{}D normalized volume should be translation-invariant: {} vs {} (diff: {})",
-                                            $dim,
-                                            vol_orig,
-                                            vol_trans,
-                                            rel_diff
-                                        );
+                            // Match cells by vertex UUIDs and compare quality
+                            for orig_key in tds.cell_keys() {
+                                if let Some(orig_cell) = tds.get_cell(orig_key) {
+                                    if let Ok(orig_uuids) = orig_cell.vertex_uuids(&tds) {
+                                        let trans_uuids: Vec<_> = orig_uuids.iter()
+                                            .filter_map(|uuid| uuid_map.get(uuid))
+                                            .copied()
+                                            .collect();
+
+                                        for trans_key in tds_translated.cell_keys() {
+                                            if let Some(trans_cell) = tds_translated.get_cell(trans_key) {
+                                                if let Ok(trans_cell_uuids) = trans_cell.vertex_uuids(&tds_translated) {
+                                                    if trans_uuids.len() == trans_cell_uuids.len()
+                                                        && trans_uuids.iter().all(|u| trans_cell_uuids.contains(u))
+                                                    {
+                                                        if let (Ok(vol_orig), Ok(vol_trans)) =
+                                                            (normalized_volume(&tds, orig_key), normalized_volume(&tds_translated, trans_key))
+                                                        {
+                                                            let rel_diff = ((vol_orig - vol_trans).abs() / vol_orig.max(1e-6)).min(1.0);
+                                                            prop_assert!(
+                                                                rel_diff < 0.01,
+                                                                "{}D normalized volume should be translation-invariant: {} vs {} (diff: {})",
+                                                                $dim,
+                                                                vol_orig,
+                                                                vol_trans,
+                                                                rel_diff
+                                                            );
+                                                        }
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -311,23 +360,45 @@ macro_rules! test_quality_properties {
                         let scaled_vertices = Vertex::from_points(scaled_vertices);
 
                         if let Ok(tds_scaled) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&scaled_vertices) {
-                            let original_keys: Vec<_> = tds.cell_keys().collect();
-                            let scaled_keys: Vec<_> = tds_scaled.cell_keys().collect();
+                            // Build UUID mapping
+                            let uuid_map: HashMap<_, _> = vertices.iter()
+                                .zip(scaled_vertices.iter())
+                                .map(|(orig, scaled)| (orig.uuid(), scaled.uuid()))
+                                .collect();
 
-                            if original_keys.len() == scaled_keys.len() {
-                                for (orig_key, scaled_key) in original_keys.iter().zip(scaled_keys.iter()) {
-                                    if let (Ok(vol_orig), Ok(vol_scaled)) =
-                                        (normalized_volume(&tds, *orig_key), normalized_volume(&tds_scaled, *scaled_key))
-                                    {
-                                        let rel_diff = ((vol_orig - vol_scaled).abs() / vol_orig.max(1e-6)).min(1.0);
-                                        prop_assert!(
-                                            rel_diff < 0.01,
-                                            "{}D normalized volume should be scale-invariant: {} vs {} (diff: {})",
-                                            $dim,
-                                            vol_orig,
-                                            vol_scaled,
-                                            rel_diff
-                                        );
+                            // Match cells by vertex UUIDs and compare quality
+                            for orig_key in tds.cell_keys() {
+                                if let Some(orig_cell) = tds.get_cell(orig_key) {
+                                    if let Ok(orig_uuids) = orig_cell.vertex_uuids(&tds) {
+                                        let scaled_uuids: Vec<_> = orig_uuids.iter()
+                                            .filter_map(|uuid| uuid_map.get(uuid))
+                                            .copied()
+                                            .collect();
+
+                                        for scaled_key in tds_scaled.cell_keys() {
+                                            if let Some(scaled_cell) = tds_scaled.get_cell(scaled_key) {
+                                                if let Ok(scaled_cell_uuids) = scaled_cell.vertex_uuids(&tds_scaled) {
+                                                    if scaled_uuids.len() == scaled_cell_uuids.len()
+                                                        && scaled_uuids.iter().all(|u| scaled_cell_uuids.contains(u))
+                                                    {
+                                                        if let (Ok(vol_orig), Ok(vol_scaled)) =
+                                                            (normalized_volume(&tds, orig_key), normalized_volume(&tds_scaled, scaled_key))
+                                                        {
+                                                            let rel_diff = ((vol_orig - vol_scaled).abs() / vol_orig.max(1e-6)).min(1.0);
+                                                            prop_assert!(
+                                                                rel_diff < 0.01,
+                                                                "{}D normalized volume should be scale-invariant: {} vs {} (diff: {})",
+                                                                $dim,
+                                                                vol_orig,
+                                                                vol_scaled,
+                                                                rel_diff
+                                                            );
+                                                        }
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }

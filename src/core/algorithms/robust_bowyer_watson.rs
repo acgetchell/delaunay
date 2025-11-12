@@ -243,6 +243,52 @@ where
             if used_fallback {
                 self.stats.fallback_strategies_used += 1;
             }
+
+            // CRITICAL: RobustBowyerWatson must guarantee Delaunay property
+            // Check for violations after ANY successful insertion
+            let all_cell_keys: Vec<CellKey> = tds.cells().map(|(k, _)| k).collect();
+            let violations = self.find_delaunay_violations_in_cells(tds, &all_cell_keys)?;
+
+            if !violations.is_empty() {
+                // Attempt to fix violations by removing violating cells and re-finalizing
+                <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &violations);
+
+                // Attempt to rebuild topology
+                if let Err(e) =
+                    <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds)
+                {
+                    return Err(InsertionError::TriangulationState(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "RobustBowyerWatson found {} Delaunay violations after {:?} insertion. \
+                                 Attempted to fix by removing violating cells but finalization failed: {}",
+                                violations.len(),
+                                info.strategy,
+                                e
+                            ),
+                        },
+                    ));
+                }
+
+                // Re-check for violations
+                let remaining: Vec<CellKey> = tds.cells().map(|(k, _)| k).collect();
+                let remaining_violations =
+                    self.find_delaunay_violations_in_cells(tds, &remaining)?;
+
+                if !remaining_violations.is_empty() {
+                    return Err(InsertionError::GeometricFailure {
+                        message: format!(
+                            "RobustBowyerWatson insertion via {:?} strategy produced {} Delaunay violations. \
+                             Attempted fix by removing violating cells but {} violations remain. \
+                             This indicates invalid or degenerate input geometry.",
+                            info.strategy,
+                            violations.len(),
+                            remaining_violations.len()
+                        ),
+                        strategy_attempted: info.strategy,
+                    });
+                }
+            }
         }
 
         result
@@ -253,6 +299,7 @@ where
     /// This method adds robust predicate fallbacks on top of the standard trait implementation.
     /// The core insertion algorithm is now in the trait's default implementation (which handles
     /// the Phase 3A lightweight `FacetView` approach correctly).
+    #[expect(clippy::too_many_lines)]
     fn insert_vertex_cavity_based_with_robust_predicates(
         &mut self,
         tds: &mut Tds<T, U, V, D>,
@@ -263,11 +310,9 @@ where
         f64: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
     {
-        // Try the standard trait method first
-        // The trait's implementation now correctly handles the Phase 3A lightweight approach:
-        // - Extracts facet data BEFORE removing cells
-        // - Uses FacetView for zero-allocation vertex access
-        // - Properly manages handle invalidation
+        // Use the trait's cavity-based insertion which includes iterative refinement.
+        // The trait implementation now properly maintains the Delaunay property.
+        // We add robust predicate fallbacks if the standard method fails.
         let result = self.insert_vertex_cavity_based(tds, vertex);
 
         // If standard method succeeds, we're done
@@ -275,18 +320,26 @@ where
             return result;
         }
 
-        // If standard method fails, try with robust predicates as fallback
-        // This adds tolerance and multiple predicate strategies for degenerate cases
+        // If standard method fails, try with robust predicate fallback
         let bad_cells = self.find_bad_cells_with_robust_fallback(tds, vertex)?;
 
         if bad_cells.is_empty() {
-            return result; // No bad cells with robust method either, return original error
+            // No cells to remove - this could be a hull extension case
+            return Err(InsertionError::geometric_failure(
+                "No bad cells found - vertex may be outside convex hull",
+                InsertionStrategy::CavityBased,
+            ));
         }
 
         let boundary_handles =
             match self.find_cavity_boundary_facets_with_robust_fallback(tds, &bad_cells) {
                 Ok(handles) if !handles.is_empty() => handles,
-                _ => return result, // Can't find boundary, return original error
+                _ => {
+                    return Err(InsertionError::geometric_failure(
+                        "Failed to find cavity boundary facets",
+                        InsertionStrategy::CavityBased,
+                    ));
+                }
             };
 
         // Now perform the full cavity-based insertion using trait methods
@@ -300,7 +353,10 @@ where
                 &boundary_handles,
             )
         else {
-            return result; // Can't gather info, return original error
+            return Err(InsertionError::geometric_failure(
+                "Failed to gather boundary facet info",
+                InsertionStrategy::CavityBased,
+            ));
         };
 
         // Phase 2: Insert vertex and create new cells
@@ -312,7 +368,10 @@ where
         }
 
         let Some(inserted_vk) = tds.vertex_key_from_uuid(&vertex.uuid()) else {
-            return result; // Vertex not found after insertion, return original error
+            return Err(InsertionError::geometric_failure(
+                "Vertex not found after insertion",
+                InsertionStrategy::CavityBased,
+            ));
         };
 
         // Create all new cells BEFORE removing bad cells
@@ -323,27 +382,31 @@ where
             cell_vertices.push(inserted_vk);
 
             let Ok(new_cell) = crate::core::cell::Cell::new(cell_vertices, None) else {
-                // Rollback and return original error
-                <Self as InsertionAlgorithm<T, U, V, D>>::rollback_created_cells_and_vertex(
+                // Rollback and return error
+                <Self as InsertionAlgorithm<T, U, V, D>>::rollback_vertex_insertion(
                     tds,
-                    &created_cell_keys,
                     vertex,
                     vertex_existed_before,
                 );
-                return result;
+                return Err(InsertionError::geometric_failure(
+                    "Failed to create new cell",
+                    InsertionStrategy::CavityBased,
+                ));
             };
 
             if let Ok(key) = tds.insert_cell_with_mapping(new_cell) {
                 created_cell_keys.push(key);
             } else {
-                // Rollback and return original error
-                <Self as InsertionAlgorithm<T, U, V, D>>::rollback_created_cells_and_vertex(
+                // Rollback and return error
+                <Self as InsertionAlgorithm<T, U, V, D>>::rollback_vertex_insertion(
                     tds,
-                    &created_cell_keys,
                     vertex,
                     vertex_existed_before,
                 );
-                return result;
+                return Err(InsertionError::geometric_failure(
+                    "Failed to insert cell with mapping",
+                    InsertionStrategy::CavityBased,
+                ));
             }
         }
         let cells_created = created_cell_keys.len();
@@ -362,6 +425,113 @@ where
             &created_cell_keys,
         )?;
 
+        // Phase 4.5: Iterative cavity refinement (using trait helpers)
+        // Check if newly created cells violate the Delaunay property and fix them
+        #[allow(clippy::items_after_statements)]
+        const MAX_REFINEMENT_ITERATIONS: usize = 100;
+        let max_cell_growth_ratio = (D + 1) * 6;
+        let initial_cell_count = tds.number_of_cells();
+
+        let mut total_cells_created = cells_created;
+        let mut total_cells_removed = cells_removed;
+        let mut cells_to_check = created_cell_keys.clone();
+        let mut iteration = 0;
+
+        loop {
+            iteration += 1;
+            if iteration > MAX_REFINEMENT_ITERATIONS {
+                return Err(InsertionError::GeometricFailure {
+                    message: format!(
+                        "RobustBowyerWatson iterative cavity refinement exceeded maximum iterations ({MAX_REFINEMENT_ITERATIONS})"
+                    ),
+                    strategy_attempted: InsertionStrategy::CavityBased,
+                });
+            }
+
+            // Check for pathological cell growth
+            let current_cell_count = tds.number_of_cells();
+            if current_cell_count > initial_cell_count * max_cell_growth_ratio {
+                return Err(InsertionError::GeometricFailure {
+                    message: format!(
+                        "RobustBowyerWatson iterative cavity refinement caused excessive cell growth \
+                         ({current_cell_count} cells from {initial_cell_count} initial, limit {}). \
+                         This indicates degenerate geometry that cannot be handled even with robust predicates.",
+                        initial_cell_count * max_cell_growth_ratio
+                    ),
+                    strategy_attempted: InsertionStrategy::CavityBased,
+                });
+            }
+
+            // Check if any cells violate the Delaunay property (using robust predicates)
+            let violating_cells = self.find_delaunay_violations_in_cells(tds, &cells_to_check)?;
+
+            if violating_cells.is_empty() {
+                // No violations - we're done!
+                break;
+            }
+
+            // Found violations - expand the cavity
+            let refinement_boundary = self.find_cavity_boundary_facets(tds, &violating_cells)?;
+            if refinement_boundary.is_empty() {
+                break;
+            }
+
+            // Gather and filter boundary info
+            let refinement_infos =
+                <Self as InsertionAlgorithm<T, U, V, D>>::gather_boundary_facet_info(
+                    tds,
+                    &refinement_boundary,
+                )?;
+            let refinement_infos =
+                <Self as InsertionAlgorithm<T, U, V, D>>::deduplicate_boundary_facet_info(
+                    refinement_infos,
+                )?;
+            let refinement_infos = <Self as InsertionAlgorithm<T, U, V, D>>::filter_boundary_facets_by_valid_facet_sharing(
+                tds,
+                refinement_infos,
+                inserted_vk,
+            )?;
+
+            if refinement_infos.is_empty() {
+                // No valid boundary facets - stop refinement
+                break;
+            }
+
+            // Create new cells for the refined cavity
+            let mut refinement_cell_keys = Vec::with_capacity(refinement_infos.len());
+            for info in &refinement_infos {
+                let mut cell_vertices: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    info.facet_vertex_keys.clone();
+                cell_vertices.push(inserted_vk);
+
+                let Ok(new_cell) = crate::core::cell::Cell::new(cell_vertices, None) else {
+                    break; // Stop refinement on error
+                };
+
+                if let Ok(key) = tds.insert_cell_with_mapping(new_cell) {
+                    refinement_cell_keys.push(key);
+                } else {
+                    break; // Stop refinement on error
+                }
+            }
+
+            // Remove violating cells
+            <Self as InsertionAlgorithm<T, U, V, D>>::remove_bad_cells(tds, &violating_cells);
+            total_cells_removed += violating_cells.len();
+            total_cells_created += refinement_cell_keys.len();
+
+            // Connect the new cells
+            <Self as InsertionAlgorithm<T, U, V, D>>::connect_new_cells_to_neighbors(
+                tds,
+                inserted_vk,
+                &refinement_infos,
+                &refinement_cell_keys,
+            )?;
+
+            // Check these new cells in the next iteration
+            cells_to_check = refinement_cell_keys;
+        }
+
         // Phase 5: Finalize
         <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds).map_err(|e| {
             InsertionError::TriangulationState(
@@ -373,10 +543,27 @@ where
             )
         })?;
 
+        // Phase 6: Final validation - RobustBowyerWatson MUST guarantee Delaunay property
+        let all_cell_keys: Vec<CellKey> = tds.cells().map(|(k, _)| k).collect();
+        let remaining_violations = self.find_delaunay_violations_in_cells(tds, &all_cell_keys)?;
+
+        if !remaining_violations.is_empty() {
+            // RobustBowyerWatson found violations even after iterative refinement - fatal error
+            return Err(InsertionError::GeometricFailure {
+                message: format!(
+                    "RobustBowyerWatson insertion completed but {} cells still violate the Delaunay \
+                     property despite robust predicates and iterative refinement. This indicates \
+                     invalid input geometry that cannot be triangulated correctly.",
+                    remaining_violations.len()
+                ),
+                strategy_attempted: InsertionStrategy::CavityBased,
+            });
+        }
+
         Ok(InsertionInfo {
             strategy: InsertionStrategy::CavityBased,
-            cells_removed,
-            cells_created,
+            cells_removed: total_cells_removed,
+            cells_created: total_cells_created,
             success: true,
             degenerate_case_handled: false,
         })
@@ -1299,12 +1486,13 @@ where
     for<'a> &'a T: std::ops::Div<T>,
     na::OPoint<T, na::Const<D>>: From<[f64; D]>,
 {
-    fn insert_vertex(
+    fn insert_vertex_impl(
         &mut self,
         tds: &mut Tds<T, U, V, D>,
         vertex: Vertex<T, U, D>,
     ) -> Result<InsertionInfo, InsertionError> {
         // Use the simplified robust implementation that leverages trait methods
+        // Duplicate detection already handled by default insert_vertex
         self.robust_insert_vertex_impl(tds, &vertex)
     }
 
@@ -1665,7 +1853,8 @@ mod tests {
             let result = algorithm.insert_vertex(&mut tds, test_vertex);
             assert!(
                 result.is_ok(),
-                "Interior insertion should succeed with {name} preset"
+                "Interior insertion should succeed with {name} preset, got error: {:?}",
+                result.err()
             );
         }
 
@@ -3014,7 +3203,14 @@ mod tests {
         let result = algorithm.insert_vertex(&mut tds, vertices[4]);
 
         // Should handle precision requirements appropriately
-        assert!(result.is_ok() || matches!(result, Err(InsertionError::GeometricFailure { .. })));
+        if result.is_err() {
+            println!("Tight config result: {result:?}");
+        }
+        assert!(
+            result.is_ok()
+                || matches!(result, Err(InsertionError::GeometricFailure { .. }))
+                || matches!(result, Err(InsertionError::InvalidVertex { .. }))
+        );
 
         // Test with very loose tolerance (should be more permissive)
         let mut loose_config = config_presets::general_triangulation::<f64>();
@@ -3027,9 +3223,11 @@ mod tests {
         let result_loose = algorithm_loose.insert_vertex(&mut tds_loose, vertices[4]);
 
         // Loose tolerance might succeed where tight fails, or vice versa
+        // Note: May also fail with InvalidVertex if duplicate detection triggers
         assert!(
             result_loose.is_ok()
                 || matches!(result_loose, Err(InsertionError::GeometricFailure { .. }))
+                || matches!(result_loose, Err(InsertionError::InvalidVertex { .. }))
         );
     }
 

@@ -1,16 +1,24 @@
 //! General helper utilities
 
 use std::collections::HashSet;
+use std::ops::{AddAssign, SubAssign};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::core::cell::CellValidationError;
 use crate::core::facet::{FacetError, FacetView};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::Tds;
+use crate::core::triangulation_data_structure::{
+    CellKey, Tds, TriangulationValidationError, VertexKey,
+};
 use crate::core::vertex::Vertex;
 use crate::geometry::algorithms::convex_hull::ConvexHull;
 use crate::geometry::point::Point;
+use crate::geometry::predicates::InSphere;
+use crate::geometry::robust_predicates::robust_insphere;
 use crate::geometry::traits::coordinate::CoordinateScalar;
+use num_traits::cast::NumCast;
+use smallvec::SmallVec;
 
 // =============================================================================
 // TYPES
@@ -42,6 +50,31 @@ pub enum JaccardComputationError {
         intersection: usize,
         /// The union size
         union: usize,
+    },
+}
+
+/// Errors that can occur during Delaunay property validation.
+#[derive(Clone, Debug, Error)]
+pub enum DelaunayValidationError {
+    /// A cell violates the Delaunay property (has an external vertex inside its circumsphere).
+    #[error("Cell violates Delaunay property: cell contains vertex that is inside circumsphere")]
+    DelaunayViolation {
+        /// The key of the cell that violates the Delaunay property
+        cell_key: CellKey,
+    },
+    /// TDS data structure corruption detected during validation.
+    #[error("TDS corruption: {source}")]
+    TriangulationState {
+        /// The underlying triangulation validation error
+        #[source]
+        source: TriangulationValidationError,
+    },
+    /// Invalid cell structure detected during validation.
+    #[error("Invalid cell: {source}")]
+    InvalidCell {
+        /// The underlying cell error
+        #[source]
+        source: CellValidationError,
     },
 }
 
@@ -111,6 +144,223 @@ pub const fn validate_uuid(uuid: &Uuid) -> Result<(), UuidValidationError> {
 #[must_use]
 pub fn make_uuid() -> Uuid {
     Uuid::new_v4()
+}
+
+// =============================================================================
+// VERTEX DEDUPLICATION
+// =============================================================================
+
+/// Filters vertices to remove exact coordinate duplicates.
+///
+/// Uses bit-level comparison (`.to_bits()`) to detect exact floating-point matches.
+/// This is stricter than epsilon-based comparison and is suitable for preventing
+/// duplicate vertices with identical coordinates.
+///
+/// # Arguments
+///
+/// * `vertices` - Vector of vertices to deduplicate
+///
+/// # Returns
+///
+/// A new vector containing only unique vertices (by coordinates). The first
+/// occurrence of each unique coordinate is kept.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::core::util::dedup_vertices_exact;
+/// use delaunay::core::vertex::Vertex;
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+///
+/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([0.0, 0.0])])
+///     .into_iter().next().unwrap();
+/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([0.0, 0.0])]) // Duplicate
+///     .into_iter().next().unwrap();
+/// let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([1.0, 1.0])])
+///     .into_iter().next().unwrap();
+///
+/// let vertices = vec![v1, v2, v3];
+/// let unique = dedup_vertices_exact(vertices);
+/// assert_eq!(unique.len(), 2); // Only v1 and v3
+/// ```
+#[must_use]
+pub fn dedup_vertices_exact<T, U, const D: usize>(
+    vertices: Vec<Vertex<T, U, D>>,
+) -> Vec<Vertex<T, U, D>>
+where
+    T: CoordinateScalar,
+    U: DataType,
+{
+    let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
+
+    'outer: for v in vertices {
+        let vc: [T; D] = (&v).into();
+
+        for u in &unique {
+            let uc: [T; D] = u.into();
+
+            // Bit-level comparison for exact floating-point equality
+            if coords_equal_exact(&vc, &uc) {
+                continue 'outer; // Skip exact duplicate
+            }
+        }
+
+        unique.push(v);
+    }
+
+    unique
+}
+
+/// Filters vertices to remove near-duplicates within epsilon tolerance.
+///
+/// Uses Euclidean distance to detect vertices within `epsilon` of each other.
+/// This is more lenient than exact comparison and helps prevent numerical issues
+/// from near-duplicate insertions.
+///
+/// # Arguments
+///
+/// * `vertices` - Vector of vertices to deduplicate
+/// * `epsilon` - Distance threshold below which vertices are considered duplicates
+///
+/// # Returns
+///
+/// A new vector containing vertices that are at least `epsilon` apart from each
+/// other. The first occurrence of each cluster is kept.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::core::util::dedup_vertices_epsilon;
+/// use delaunay::core::vertex::Vertex;
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+///
+/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([0.0, 0.0])])
+///     .into_iter().next().unwrap();
+/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([1e-11, 1e-11])]) // Near duplicate
+///     .into_iter().next().unwrap();
+/// let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([1.0, 1.0])])
+///     .into_iter().next().unwrap();
+///
+/// let vertices = vec![v1, v2, v3];
+/// let unique = dedup_vertices_epsilon(vertices, 1e-10);
+/// assert_eq!(unique.len(), 2); // v2 filtered as near-duplicate of v1
+/// ```
+pub fn dedup_vertices_epsilon<T, U, const D: usize>(
+    vertices: Vec<Vertex<T, U, D>>,
+    epsilon: T,
+) -> Vec<Vertex<T, U, D>>
+where
+    T: CoordinateScalar,
+    U: DataType,
+{
+    let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
+
+    'outer: for v in vertices {
+        let vc: [T; D] = (&v).into();
+
+        for u in &unique {
+            let uc: [T; D] = u.into();
+
+            // Euclidean distance check
+            if coords_within_epsilon(&vc, &uc, epsilon) {
+                continue 'outer; // Skip near-duplicate
+            }
+        }
+
+        unique.push(v);
+    }
+
+    unique
+}
+
+/// Filters vertices to exclude those matching reference coordinates.
+///
+/// Useful for removing vertices that coincide with an initial simplex or other
+/// fixed reference points. Uses exact bit-level comparison.
+///
+/// # Arguments
+///
+/// * `vertices` - Vector of vertices to filter
+/// * `reference` - Reference vertices to exclude matches against
+///
+/// # Returns
+///
+/// A new vector containing only vertices whose coordinates don't match any
+/// reference vertex coordinates.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::core::util::filter_vertices_excluding;
+/// use delaunay::core::vertex::Vertex;
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+///
+/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([0.0, 0.0])])
+///     .into_iter().next().unwrap();
+/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([1.0, 1.0])])
+///     .into_iter().next().unwrap();
+///
+/// let reference = vec![v1]; // Exclude origin
+/// let vertices = vec![v1, v2];
+///
+/// let filtered = filter_vertices_excluding(vertices, &reference);
+/// assert_eq!(filtered.len(), 1); // Only v2 remains
+/// ```
+pub fn filter_vertices_excluding<T, U, const D: usize>(
+    vertices: Vec<Vertex<T, U, D>>,
+    reference: &[Vertex<T, U, D>],
+) -> Vec<Vertex<T, U, D>>
+where
+    T: CoordinateScalar,
+    U: DataType,
+{
+    let mut filtered = Vec::with_capacity(vertices.len());
+
+    'outer: for v in vertices {
+        let vc: [T; D] = (&v).into();
+
+        // Check against all reference vertices
+        for ref_v in reference {
+            let ref_c: [T; D] = ref_v.into();
+
+            if coords_equal_exact(&vc, &ref_c) {
+                continue 'outer; // Skip matching vertex
+            }
+        }
+
+        filtered.push(v);
+    }
+
+    filtered
+}
+
+/// Check if two coordinate arrays are exactly equal.
+///
+/// Uses `OrderedEq` which provides NaN-aware equality comparison.
+/// For f32/f64, this ensures consistent comparison including special values.
+#[inline]
+fn coords_equal_exact<T: CoordinateScalar, const D: usize>(a: &[T; D], b: &[T; D]) -> bool {
+    // OrderedEq is already in scope via CoordinateScalar bound
+    a.iter().zip(b.iter()).all(|(x, y)| x.ordered_eq(y))
+}
+
+/// Check if two coordinate arrays are within epsilon distance.
+#[inline]
+fn coords_within_epsilon<T: CoordinateScalar, const D: usize>(
+    a: &[T; D],
+    b: &[T; D],
+    epsilon: T,
+) -> bool {
+    let dist_sq: T = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| (*x - *y) * (*x - *y))
+        .fold(T::zero(), |acc, d| acc + d);
+
+    dist_sq < epsilon * epsilon
 }
 
 /// NOTE: The deprecated `facets_are_adjacent` function has been removed in Phase 3A.
@@ -1246,6 +1496,233 @@ pub fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
         original_index: idx,
         facet_count,
     })
+}
+
+// =============================================================================
+// DELAUNAY PROPERTY VALIDATION
+// =============================================================================
+
+/// Check if a triangulation satisfies the Delaunay property.
+///
+/// The Delaunay property states that no vertex should be inside the circumsphere
+/// of any cell. This function checks all cells in the triangulation using robust
+/// geometric predicates.
+///
+/// # ⚠️ Performance Warning
+///
+/// **This function is extremely expensive** - O(N×V) where N is the number of cells
+/// and V is the number of vertices. For a triangulation with 10,000 cells and 5,000
+/// vertices, this performs 50 million insphere tests. Use this primarily for:
+/// - Debugging and testing
+/// - Final validation after construction
+/// - Verification of algorithm correctness
+///
+/// **Do NOT use this in production hot paths or for every vertex insertion.**
+///
+/// # Arguments
+///
+/// * `tds` - The triangulation data structure to validate
+///
+/// # Returns
+///
+/// `Ok(())` if all cells satisfy the Delaunay property, otherwise a [`DelaunayValidationError`]
+/// describing the first violation found.
+///
+/// # Errors
+///
+/// Returns:
+/// - [`DelaunayValidationError::DelaunayViolation`] if a cell has an external vertex inside its circumsphere
+/// - [`DelaunayValidationError::TriangulationState`] if TDS corruption is detected
+/// - [`DelaunayValidationError::InvalidCell`] if a cell has invalid structure
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::util::is_delaunay;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+///
+/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+///
+/// // Check if triangulation is Delaunay
+/// assert!(is_delaunay(&tds).is_ok());
+/// ```
+pub fn is_delaunay<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<(), DelaunayValidationError>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
+    U: DataType,
+    V: DataType,
+{
+    // Use robust predicates configuration for reliability
+    let config = crate::geometry::robust_predicates::config_presets::general_triangulation::<T>();
+
+    // Reusable buffers to minimize allocations
+    let mut cell_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
+
+    // Check each cell
+    for (cell_key, cell) in tds.cells() {
+        // Validate cell structure first
+        cell.is_valid()
+            .map_err(|source| DelaunayValidationError::InvalidCell { source })?;
+
+        // Get the cell's vertex set for exclusion
+        let cell_vertex_keys: SmallVec<[VertexKey; 8]> = cell.vertices().iter().copied().collect();
+
+        // Build the cell's circumsphere
+        cell_vertex_points.clear();
+        for &vkey in &cell_vertex_keys {
+            let Some(v) = tds.get_vertex_by_key(vkey) else {
+                return Err(DelaunayValidationError::TriangulationState {
+                    source: TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell {cell_key:?} references non-existent vertex {vkey:?}"
+                        ),
+                    },
+                });
+            };
+            cell_vertex_points.push(*v.point());
+        }
+
+        // Check if any OTHER vertex is inside this cell's circumsphere
+        // Use ROBUST predicates to ensure correctness even with floating-point precision issues
+        for (test_vkey, test_vertex) in tds.vertices() {
+            // Skip if this vertex is part of the cell
+            if cell_vertex_keys.contains(&test_vkey) {
+                continue;
+            }
+
+            // Test if this vertex is inside the cell's circumsphere using ROBUST predicates
+            match robust_insphere(&cell_vertex_points, test_vertex.point(), &config) {
+                Ok(InSphere::INSIDE) => {
+                    // Found a violation - this cell has an external vertex inside its circumsphere
+                    return Err(DelaunayValidationError::DelaunayViolation { cell_key });
+                }
+                Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) | Err(_) => {
+                    // Vertex is outside/on boundary, or degenerate - continue checking
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Find cells that violate the Delaunay property.
+///
+/// This is a variant of [`is_delaunay`] that returns ALL violating cells instead of
+/// stopping at the first violation. This is useful for iterative cavity refinement
+/// and debugging.
+///
+/// # Arguments
+///
+/// * `tds` - The triangulation data structure
+/// * `cells_to_check` - Optional subset of cells to check. If `None`, checks all cells.
+///
+/// # Returns
+///
+/// A vector of `CellKey`s for cells that violate the Delaunay property.
+///
+/// # Errors
+///
+/// Returns an error if TDS corruption is detected.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::util::find_delaunay_violations;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+///
+/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+///
+/// // Find all violating cells (should be empty for valid Delaunay triangulation)
+/// let violations = find_delaunay_violations(&tds, None).unwrap();
+/// assert!(violations.is_empty());
+/// ```
+pub fn find_delaunay_violations<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cells_to_check: Option<&[CellKey]>,
+) -> Result<Vec<CellKey>, DelaunayValidationError>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
+    U: DataType,
+    V: DataType,
+{
+    let mut violating_cells = Vec::new();
+    let mut cell_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
+
+    // Use robust predicates configuration for reliability
+    let config = crate::geometry::robust_predicates::config_presets::general_triangulation::<T>();
+
+    // Determine which cells to check
+    let cells_iter: Box<dyn Iterator<Item = CellKey>> = match cells_to_check {
+        Some(keys) => Box::new(keys.iter().copied()),
+        None => Box::new(tds.cell_keys()),
+    };
+
+    // For each cell to check
+    for cell_key in cells_iter {
+        let Some(cell) = tds.get_cell(cell_key) else {
+            continue; // Cell was removed, skip
+        };
+
+        // Get the cell's vertex set for exclusion
+        let cell_vertex_keys: SmallVec<[VertexKey; 8]> = cell.vertices().iter().copied().collect();
+
+        // Build the cell's circumsphere
+        cell_vertex_points.clear();
+        for &vkey in &cell_vertex_keys {
+            let Some(v) = tds.get_vertex_by_key(vkey) else {
+                return Err(DelaunayValidationError::TriangulationState {
+                    source: TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell {cell_key:?} references non-existent vertex {vkey:?}"
+                        ),
+                    },
+                });
+            };
+            cell_vertex_points.push(*v.point());
+        }
+
+        // Check if any OTHER vertex is inside this cell's circumsphere
+        // Use ROBUST predicates to ensure correctness even with floating-point precision issues
+        for (test_vkey, test_vertex) in tds.vertices() {
+            // Skip if this vertex is part of the cell
+            if cell_vertex_keys.contains(&test_vkey) {
+                continue;
+            }
+
+            // Test if this vertex is inside the cell's circumsphere using ROBUST predicates
+            match robust_insphere(&cell_vertex_points, test_vertex.point(), &config) {
+                Ok(InSphere::INSIDE) => {
+                    // Found a violation - this cell has an external vertex inside its circumsphere
+                    violating_cells.push(cell_key);
+                    break; // No need to check more vertices for this cell
+                }
+                Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) | Err(_) => {
+                    // Vertex is outside/on boundary, or degenerate - continue checking
+                }
+            }
+        }
+    }
+
+    Ok(violating_cells)
 }
 
 #[cfg(test)]

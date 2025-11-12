@@ -1761,6 +1761,98 @@ where
         removed_count
     }
 
+    /// Removes a vertex and all cells containing it, maintaining data structure consistency.
+    ///
+    /// This is an atomic operation that:
+    /// 1. Finds all cells containing the vertex
+    /// 2. Removes all such cells
+    /// 3. Removes the vertex itself
+    ///
+    /// This operation leaves the triangulation in a valid state (though potentially incomplete).
+    /// This is the recommended way to remove a vertex from the triangulation.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertex` - Reference to the vertex to remove
+    ///
+    /// # Returns
+    ///
+    /// The number of cells that were removed along with the vertex.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    ///     vertex!([1.0, 1.0]),
+    /// ];
+    /// let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    ///
+    /// // Get a vertex to remove
+    /// let vertex_to_remove = tds.vertices().next().unwrap().1.clone();
+    /// let cells_before = tds.number_of_cells();
+    ///
+    /// // Remove the vertex and all cells containing it
+    /// let cells_removed = tds.remove_vertex(&vertex_to_remove);
+    /// println!("Removed {} cells along with the vertex", cells_removed);
+    ///
+    /// assert!(tds.is_valid().is_ok());
+    /// ```
+    pub fn remove_vertex(&mut self, vertex: &Vertex<T, U, D>) -> usize {
+        // Find the vertex key
+        let Some(vertex_key) = self.vertex_key_from_uuid(&vertex.uuid()) else {
+            return 0; // Vertex not found, nothing to remove
+        };
+
+        // Find all cells containing this vertex
+        let cells_to_remove: Vec<_> = self
+            .cells()
+            .filter_map(|(cell_key, cell)| {
+                if cell.contains_vertex(vertex_key) {
+                    Some(cell_key)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Convert to a set for O(1) lookup when clearing neighbor references
+        let cells_to_remove_set: CellKeySet = cells_to_remove.iter().copied().collect();
+
+        // Clear neighbor references in remaining cells that point to cells being removed.
+        // This prevents dangling references and maintains topology consistency.
+        for (cell_key, cell) in &mut self.cells {
+            // Skip cells that will be removed
+            if cells_to_remove_set.contains(&cell_key) {
+                continue;
+            }
+
+            // Clear any neighbor references pointing to cells being removed
+            if let Some(neighbors) = &mut cell.neighbors {
+                for neighbor_slot in neighbors.iter_mut() {
+                    if let Some(neighbor_key) = neighbor_slot
+                        && cells_to_remove_set.contains(neighbor_key)
+                    {
+                        *neighbor_slot = None; // Clear dangling reference (becomes boundary)
+                    }
+                }
+            }
+        }
+
+        // Remove all cells containing the vertex
+        let cells_removed = self.remove_cells_by_keys(&cells_to_remove);
+
+        // Remove the vertex itself
+        self.remove_vertex_by_uuid(&vertex.uuid());
+
+        cells_removed
+    }
+
     /// Removes a vertex by its UUID, maintaining data structure consistency.
     ///
     /// This method atomically removes a vertex from both the vertex storage and
@@ -1769,6 +1861,8 @@ where
     /// **Internal API**: This method is intended for internal use only (e.g., rollback
     /// operations in insertion algorithms). It does not maintain triangulation topology
     /// invariants and should not be exposed in the public API.
+    ///
+    /// **Deprecated**: Prefer `remove_vertex()` which handles both vertex and cell removal atomically.
     ///
     /// # Safety Warning
     ///
@@ -2588,7 +2682,6 @@ where
                     new_vertex_key,
                     &uuid,
                     vertex_coords,
-                    true, // Conservative: remove cells that may have been partially modified by algorithm
                     pre_algorithm_state,
                     "algorithm insertion failed",
                 );
@@ -2611,7 +2704,6 @@ where
                     new_vertex_key,
                     &uuid,
                     vertex_coords,
-                    true, // Remove cells that reference the vertex
                     Some(pre_topology_state),
                     "neighbor assignment failed",
                 );
@@ -2625,7 +2717,6 @@ where
                     new_vertex_key,
                     &uuid,
                     vertex_coords,
-                    true, // Remove cells that reference the vertex
                     Some(pre_topology_state),
                     "incident cell assignment failed",
                 );
@@ -2638,41 +2729,34 @@ where
 
     /// Rolls back TDS state after vertex insertion operations fail.
     ///
-    /// This consolidated method handles different rollback scenarios based on the parameters:
-    /// - Simple vertex-only rollback (when `remove_related_cells` is false)
-    /// - Complex algorithm rollback (when `remove_related_cells` is true)
+    /// This method atomically removes the vertex and all cells that contain it,
+    /// ensuring the triangulation remains in a consistent state.
     ///
     /// For bulk operations and debugging purposes, this method logs rollback actions to stderr
     /// to help identify problematic vertices in batch processing scenarios.
     ///
     /// # Arguments
     ///
-    /// * `vertex_key` - The key of the vertex that was successfully inserted
+    /// * `vertex_key` - The key of the vertex that was inserted
     /// * `vertex_uuid` - The UUID of the vertex for mapping cleanup
     /// * `vertex_coords` - Optional coordinates for logging (helps identify problematic vertices)
-    /// * `remove_related_cells` - Whether to remove cells that reference the vertex
     /// * `pre_state` - Optional tuple of (`vertex_count`, `cell_count`, `generation`) for verification
     /// * `failure_reason` - Description of why the rollback is needed (for logging)
     ///
-    /// # Usage Examples
+    /// # Implementation
+    ///
+    /// 1. Finds all cells containing the vertex
+    /// 2. Removes all such cells
+    /// 3. Removes the vertex itself
     ///
     /// This is an internal method used for rollback after insertion failures.
     /// Users should not need to call this directly - it's automatically invoked
     /// by `add()` when vertex insertion fails.
-    ///
-    /// ```rust,ignore
-    /// // Simple vertex rollback (internal use)
-    /// self.rollback_vertex_insertion(key, &uuid, Some(coords), false, None, "topology assignment failed");
-    ///
-    /// // Complex algorithm rollback (internal use)
-    /// self.rollback_vertex_insertion(key, &uuid, Some(coords), true, Some(pre_state), "algorithm insertion failed");
-    /// ```
     fn rollback_vertex_insertion(
         &mut self,
         vertex_key: VertexKey,
         vertex_uuid: &Uuid,
         #[allow(unused_variables)] vertex_coords: Option<String>,
-        remove_related_cells: bool,
         pre_state: Option<(usize, usize, u64)>,
         #[allow(unused_variables)] failure_reason: &str,
     ) {
@@ -2691,62 +2775,49 @@ where
             );
         }
 
-        // Always remove the vertex and its mapping
+        // Find and remove all cells containing the vertex
+        let cells_to_remove: Vec<_> = self
+            .cells()
+            .filter_map(|(cell_key, cell)| {
+                if cell.contains_vertex(vertex_key) {
+                    Some(cell_key)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let cells_removed = self.remove_cells_by_keys(&cells_to_remove);
+
+        // Remove the vertex itself
         self.vertices.remove(vertex_key);
         self.uuid_to_vertex_key.remove(vertex_uuid);
 
-        // For complex rollback, also remove cells that reference the vertex
-        if remove_related_cells {
-            // Remove any cells that were added by the algorithm
-            // We need to be careful here - we can't just truncate to pre_cell_count
-            // because storage map keys aren't sequential. Instead, we identify and remove
-            // cells that reference the removed vertex.
-            let mut cells_to_remove = Vec::new();
+        // Log cell removal
+        #[cfg(debug_assertions)]
+        if cells_removed > 0 {
+            eprintln!("   └─ Also removing {cells_removed} related cells created by the algorithm");
+        }
 
-            for (cell_key, cell) in &self.cells {
-                // Phase 3A: Check if cell contains the vertex using vertices
-                if cell.vertices().contains(&vertex_key) {
-                    cells_to_remove.push(cell_key);
-                }
-            }
+        // Verify we've restored the expected counts if provided
+        if let Some((pre_vertex_count, pre_cell_count, _pre_generation)) = pre_state {
+            // The vertex count should be exactly pre_vertex_count
+            debug_assert!(
+                self.vertices.len() <= pre_vertex_count,
+                "Vertex count after rollback ({}) should be <= pre-operation count ({})",
+                self.vertices.len(),
+                pre_vertex_count
+            );
 
-            // Log cell removal for complex rollbacks
-            #[cfg(debug_assertions)]
-            if !cells_to_remove.is_empty() {
-                let cell_count = cells_to_remove.len();
-                eprintln!(
-                    "   └─ Also removing {cell_count} related cells created by the algorithm"
-                );
-            }
-
-            // Remove the identified cells
-            for cell_key in cells_to_remove {
-                if let Some(cell) = self.cells.remove(cell_key) {
-                    // Also remove from UUID mapping
-                    self.uuid_to_cell_key.remove(&cell.uuid());
-                }
-            }
-
-            // Verify we've restored the expected counts if provided
-            if let Some((pre_vertex_count, pre_cell_count, _pre_generation)) = pre_state {
-                // The vertex count should be exactly pre_vertex_count
-                debug_assert!(
-                    self.vertices.len() <= pre_vertex_count,
-                    "Vertex count after rollback ({}) should be <= pre-operation count ({})",
-                    self.vertices.len(),
-                    pre_vertex_count
-                );
-
-                // The cell count should be at most pre_cell_count + some reasonable delta
-                // (in case the algorithm created cells that don't directly reference the vertex)
-                debug_assert!(
-                    self.cells.len() <= pre_cell_count + MAX_ROLLBACK_CELL_SLACK,
-                    "Cell count after rollback ({}) should be close to pre-algorithm state ({} + {})",
-                    self.cells.len(),
-                    pre_cell_count,
-                    MAX_ROLLBACK_CELL_SLACK
-                );
-            }
+            // The cell count should be at most pre_cell_count + some reasonable delta
+            // (in case the algorithm created cells that don't directly reference the vertex)
+            debug_assert!(
+                self.cells.len() <= pre_cell_count + MAX_ROLLBACK_CELL_SLACK,
+                "Cell count after rollback ({}) should be close to pre-algorithm state ({} + {})",
+                self.cells.len(),
+                pre_cell_count,
+                MAX_ROLLBACK_CELL_SLACK
+            );
         }
 
         // Bump generation to invalidate any caches that might reference removed entities
@@ -3968,6 +4039,98 @@ where
         Ok(())
     }
 
+    /// Checks whether the triangulation data structure is valid, with optional Delaunay property validation.
+    ///
+    /// This method performs all structural validation checks from [`is_valid()`](Self::is_valid),
+    /// and optionally checks the Delaunay property if `check_delaunay` is `true`.
+    ///
+    /// # ⚠️ Performance Warning
+    ///
+    /// **With Delaunay checking enabled, this method is EXTREMELY expensive**:
+    /// - **Time Complexity**: O(N×V + N×F + N×D²) where N is cells, V is vertices, F is facets per cell
+    /// - The Delaunay check alone is O(N×V), which can be millions of operations for moderate-sized meshes
+    /// - A triangulation with 10,000 cells and 5,000 vertices requires ~50 million insphere tests
+    ///
+    /// **Only enable Delaunay checking for**:
+    /// - Final validation after triangulation construction
+    /// - Debugging geometric algorithm correctness
+    /// - Testing and benchmarking
+    ///
+    /// # Arguments
+    ///
+    /// * `check_delaunay` - Whether to validate the Delaunay property (empty circumsphere constraint)
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if all validation checks pass, otherwise an error describing the first failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TriangulationValidationError`] for structural violations (same as [`is_valid()`](Self::is_valid)).
+    /// When `check_delaunay` is true, also returns an error if any cell violates the Delaunay property.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    ///
+    /// // Fast: structural validation only
+    /// assert!(tds.is_valid_with_options(false).is_ok());
+    ///
+    /// // Slow: full validation including Delaunay property
+    /// assert!(tds.is_valid_with_options(true).is_ok());
+    /// ```
+    pub fn is_valid_with_options(
+        &self,
+        check_delaunay: bool,
+    ) -> Result<(), TriangulationValidationError>
+    where
+        T: std::ops::AddAssign<T> + std::ops::SubAssign<T> + std::iter::Sum + num_traits::NumCast,
+    {
+        // First, do all structural validation
+        self.is_valid()?;
+
+        // Optionally check Delaunay property
+        if check_delaunay {
+            crate::core::util::is_delaunay(self).map_err(|err| {
+                // Convert DelaunayValidationError to TriangulationValidationError
+                match err {
+                    crate::core::util::DelaunayValidationError::DelaunayViolation { cell_key } => {
+                        let cell_uuid = self
+                            .cell_uuid_from_key(cell_key)
+                            .unwrap_or_else(uuid::Uuid::nil);
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Cell {cell_uuid} (key: {cell_key:?}) violates Delaunay property"
+                            ),
+                        }
+                    }
+                    crate::core::util::DelaunayValidationError::TriangulationState { source } => {
+                        source
+                    }
+                    crate::core::util::DelaunayValidationError::InvalidCell { source } => {
+                        TriangulationValidationError::InvalidCell {
+                            cell_id: uuid::Uuid::nil(), // Best effort - cell UUID not available in error
+                            source,
+                        }
+                    }
+                }
+            })?;
+        }
+
+        Ok(())
+    }
+
     /// Internal method for validating neighbor relationships.
     ///
     /// This method validates:
@@ -4618,7 +4781,6 @@ mod tests {
             vertex_key,
             &test_uuid,
             coords_str,
-            true, // Remove cells that reference the vertex (complex rollback)
             Some(pre_state),
             "topology assignment test failure",
         );
@@ -4643,6 +4805,169 @@ mod tests {
         );
 
         println!("✓ Atomic rollback works correctly on topology assignment failures");
+    }
+
+    // =============================================================================
+    // VERTEX REMOVAL TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_remove_vertex_maintains_topology_consistency() {
+        // Test that remove_vertex properly clears dangling neighbor references
+        // Create a triangulation with multiple cells
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.5, 1.0]),
+            vertex!([1.5, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+
+        // Verify initial state
+        let initial_vertices = tds.number_of_vertices();
+        let initial_cells = tds.number_of_cells();
+        assert_eq!(initial_vertices, 4);
+        assert!(initial_cells > 0);
+        assert!(tds.is_valid().is_ok(), "Initial TDS should be valid");
+
+        // Get a vertex to remove (not a corner vertex, to ensure we have remaining cells)
+        let vertex_to_remove = *tds.vertices().next().unwrap().1;
+        let vertex_uuid = vertex_to_remove.uuid();
+
+        // Remove the vertex and all cells containing it
+        let cells_removed = tds.remove_vertex(&vertex_to_remove);
+
+        // Verify the vertex was removed
+        assert!(
+            tds.vertex_key_from_uuid(&vertex_uuid).is_none(),
+            "Vertex should be removed from TDS"
+        );
+        assert!(
+            cells_removed > 0,
+            "At least one cell should have been removed"
+        );
+        assert_eq!(
+            tds.number_of_vertices(),
+            initial_vertices - 1,
+            "Vertex count should decrease by 1"
+        );
+        assert!(
+            tds.number_of_cells() < initial_cells,
+            "Cell count should decrease"
+        );
+
+        // CRITICAL: Verify that no dangling neighbor references exist
+        // This is the key test for the bug fix
+        for (cell_key, cell) in tds.cells() {
+            if let Some(neighbors) = cell.neighbors() {
+                for (i, neighbor_opt) in neighbors.iter().enumerate() {
+                    if let Some(neighbor_key) = neighbor_opt {
+                        assert!(
+                            tds.cells.contains_key(*neighbor_key),
+                            "Cell {cell_key:?} has dangling neighbor reference at index {i}: {neighbor_key:?}"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Verify the TDS is valid (this should pass with the bug fix)
+        assert!(
+            tds.is_valid().is_ok(),
+            "TDS should be valid after removing vertex"
+        );
+
+        println!("✓ remove_vertex maintains topology consistency");
+    }
+
+    #[test]
+    fn test_remove_vertex_nonexistent() {
+        // Test removing a vertex that doesn't exist
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+
+        // Create a vertex that was never added
+        let nonexistent_vertex = vertex!([5.0, 5.0]);
+
+        let initial_vertices = tds.number_of_vertices();
+        let initial_cells = tds.number_of_cells();
+
+        // Remove should return 0 (no cells removed)
+        let cells_removed = tds.remove_vertex(&nonexistent_vertex);
+
+        assert_eq!(cells_removed, 0, "No cells should be removed");
+        assert_eq!(
+            tds.number_of_vertices(),
+            initial_vertices,
+            "Vertex count should not change"
+        );
+        assert_eq!(
+            tds.number_of_cells(),
+            initial_cells,
+            "Cell count should not change"
+        );
+        assert!(tds.is_valid().is_ok(), "TDS should remain valid");
+
+        println!("✓ remove_vertex handles nonexistent vertex correctly");
+    }
+
+    #[test]
+    fn test_remove_vertex_multiple_dimensions() {
+        // Test remove_vertex in different dimensions
+
+        // 2D test
+        {
+            let vertices_2d = vec![
+                vertex!([0.0, 0.0]),
+                vertex!([1.0, 0.0]),
+                vertex!([0.0, 1.0]),
+                vertex!([1.0, 1.0]),
+            ];
+            let mut tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+            let vertex = *tds_2d.vertices().next().unwrap().1;
+            let cells_removed = tds_2d.remove_vertex(&vertex);
+            assert!(cells_removed > 0);
+            assert!(tds_2d.is_valid().is_ok());
+        }
+
+        // 3D test
+        {
+            let vertices_3d = vec![
+                vertex!([0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0]),
+                vertex!([0.0, 1.0, 0.0]),
+                vertex!([0.0, 0.0, 1.0]),
+                vertex!([1.0, 1.0, 1.0]),
+            ];
+            let mut tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
+            let vertex = *tds_3d.vertices().next().unwrap().1;
+            let cells_removed = tds_3d.remove_vertex(&vertex);
+            assert!(cells_removed > 0);
+            assert!(tds_3d.is_valid().is_ok());
+        }
+
+        // 4D test
+        {
+            let vertices_4d = vec![
+                vertex!([0.0, 0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0, 0.0]),
+                vertex!([0.0, 1.0, 0.0, 0.0]),
+                vertex!([0.0, 0.0, 1.0, 0.0]),
+                vertex!([0.0, 0.0, 0.0, 1.0]),
+                vertex!([1.0, 1.0, 1.0, 1.0]),
+            ];
+            let mut tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+            let vertex = *tds_4d.vertices().next().unwrap().1;
+            let cells_removed = tds_4d.remove_vertex(&vertex);
+            assert!(cells_removed > 0);
+            assert!(tds_4d.is_valid().is_ok());
+        }
+
+        println!("✓ remove_vertex works correctly in multiple dimensions");
     }
 
     // =============================================================================

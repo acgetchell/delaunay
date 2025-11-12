@@ -489,6 +489,14 @@ where
             });
         }
 
+        // Check for duplicate vertices early
+        let mut seen: FastHashSet<VertexKey> = FastHashSet::default();
+        for &vkey in &vertices {
+            if !seen.insert(vkey) {
+                return Err(CellValidationError::DuplicateVertices);
+            }
+        }
+
         Ok(Self {
             vertices,
             uuid: make_uuid(),
