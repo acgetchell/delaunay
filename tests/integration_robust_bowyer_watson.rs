@@ -11,7 +11,8 @@ use delaunay::core::algorithms::robust_bowyer_watson::RobustBowyerWatson;
 use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
 use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::vertex;
-use rand::Rng;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
 // =============================================================================
 // DIMENSIONAL TEST GENERATION MACRO
@@ -31,7 +32,8 @@ macro_rules! test_robust_integration {
             $(#[$attr])*
             #[test]
             fn [<test_large_random_point_set_ $dim d>]() {
-                let mut rng = rand::rng();
+                // Use seeded RNG for reproducibility
+                let mut rng = StdRng::seed_from_u64(42);
                 let mut algorithm = RobustBowyerWatson::new();
 
                 // Create initial simplex
@@ -49,12 +51,14 @@ macro_rules! test_robust_integration {
                     let result = algorithm.insert_vertex(&mut tds, test_vertex);
 
                     // TDS should remain valid regardless of insertion outcome
-                    assert!(
-                        tds.is_valid().is_ok(),
-                        "{}D: TDS should remain valid after insertion {}",
-                        $dim,
-                        i + 1
-                    );
+                    if let Err(e) = tds.is_valid() {
+                        panic!(
+                            "{}D: TDS should remain valid after insertion {} but got: {:?}",
+                            $dim,
+                            i + 1,
+                            e
+                        );
+                    }
 
                     if result.is_ok() {
                         assert!(
@@ -129,7 +133,8 @@ macro_rules! test_robust_integration {
             #[test]
             fn [<test_clustered_points_ $dim d>]() {
                 let mut algorithm = RobustBowyerWatson::new();
-                let mut rng = rand::rng();
+                // Use seeded RNG for reproducibility
+                let mut rng = StdRng::seed_from_u64(12345);
 
                 let initial_vertices = create_initial_simplex::<$dim>();
                 let mut tds: Tds<f64, Option<()>, Option<()>, $dim> =
@@ -142,12 +147,14 @@ macro_rules! test_robust_integration {
 
                     let _ = algorithm.insert_vertex(&mut tds, test_vertex);
 
-                    assert!(
-                        tds.is_valid().is_ok(),
-                        "{}D: TDS should remain valid with clustered points after insertion {}",
-                        $dim,
-                        i + 1
-                    );
+                    if let Err(e) = tds.is_valid() {
+                        panic!(
+                            "{}D: TDS should remain valid with clustered points after insertion {} but got: {:?}",
+                            $dim,
+                            i + 1,
+                            e
+                        );
+                    }
                 }
 
                 // Now insert scattered points
@@ -157,12 +164,14 @@ macro_rules! test_robust_integration {
 
                     let _ = algorithm.insert_vertex(&mut tds, test_vertex);
 
-                    assert!(
-                        tds.is_valid().is_ok(),
-                        "{}D: TDS should remain valid with scattered points after insertion {}",
-                        $dim,
-                        i + 1
-                    );
+                    if let Err(e) = tds.is_valid() {
+                        panic!(
+                            "{}D: TDS should remain valid with scattered points after insertion {} but got: {:?}",
+                            $dim,
+                            i + 1,
+                            e
+                        );
+                    }
                 }
 
                 println!(

@@ -270,13 +270,14 @@ fn test_generation_tracking_through_insertions() {
 /// works correctly with different algorithm implementations.
 #[test]
 fn test_convex_hull_cache_during_construction() {
+    // Use vertices that form a proper convex hull (tetrahedron + points on hull surface)
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-        vertex!([0.5, 0.5, 0.5]),
-        vertex!([0.2, 0.3, 0.4]),
+        vertex!([2.0, 0.0, 0.0]),
+        vertex!([0.0, 2.0, 0.0]),
+        vertex!([0.0, 0.0, 2.0]),
+        vertex!([1.0, 1.0, 0.0]), // On face of hull
+        vertex!([1.0, 0.0, 1.0]), // On face of hull
     ];
 
     let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();

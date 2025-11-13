@@ -257,12 +257,13 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Insert a single vertex into the triangulation
-    fn insert_vertex(
+    /// Insert a single vertex into the triangulation (implementation)
+    fn insert_vertex_impl(
         &mut self,
         tds: &mut Tds<T, U, V, D>,
         vertex: Vertex<T, U, D>,
     ) -> Result<InsertionInfo, InsertionError> {
+        // Duplicate detection already handled by default insert_vertex
         // Determine insertion strategy
         let strategy = self.determine_insertion_strategy(tds, &vertex);
 
