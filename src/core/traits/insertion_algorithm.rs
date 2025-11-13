@@ -66,6 +66,7 @@ use crate::core::{
 };
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{InSphere, Orientation, insphere, simplex_orientation};
+use crate::geometry::robust_predicates::{RobustPredicateConfig, robust_insphere};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use num_traits::NumCast;
 use num_traits::{One, Zero, cast};
@@ -1081,15 +1082,15 @@ where
             + Add<Output = T>
             + Sub<Output = T>,
     {
-        // Default implementation provides basic strategy determination
-        Self::determine_strategy_default(tds, vertex)
+        // Default implementation uses robust predicates via determine_strategy_default
+        self.determine_strategy_default(tds, vertex)
     }
 
     /// Default strategy determination logic
     ///
-    /// This provides a baseline strategy determination that can be used by
-    /// algorithms or as a fallback. It uses simple heuristics based on
-    /// triangulation state and vertex position.
+    /// This provides a baseline strategy determination that uses robust
+    /// geometric predicates when available. It accurately classifies vertices
+    /// as interior or exterior to determine the appropriate insertion strategy.
     ///
     /// # Arguments
     ///
@@ -1100,6 +1101,7 @@ where
     ///
     /// The recommended insertion strategy
     fn determine_strategy_default(
+        &self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
     ) -> InsertionStrategy
@@ -1115,26 +1117,24 @@ where
             + Add<Output = T>
             + Sub<Output = T>,
     {
-        // If the triangulation is empty or has very few cells, use standard approach
+        // If the triangulation is empty, use standard approach
         if tds.number_of_cells() == 0 {
             return InsertionStrategy::Standard;
         }
 
-        // If we only have one cell (initial simplex), any new vertex is likely exterior
-        if tds.number_of_cells() == 1 {
-            return InsertionStrategy::HullExtension;
-        }
-
-        // For more complex triangulations, we need to analyze the vertex position
-        // This is a simplified analysis - robust algorithms may override this
-
-        // Quick check: if the vertex is very far from existing vertices,
-        // it's likely exterior and should use hull extension
-        if Self::is_vertex_likely_exterior(tds, vertex) {
-            InsertionStrategy::HullExtension
-        } else {
-            // Default to cavity-based insertion for interior vertices
-            InsertionStrategy::CavityBased
+        // Use robust predicates to accurately determine if vertex is interior
+        // This is much more accurate than bounding box heuristics
+        match self.is_vertex_interior(tds, vertex) {
+            Ok(true) => InsertionStrategy::CavityBased, // Interior vertex
+            Ok(false) => InsertionStrategy::HullExtension, // Exterior vertex
+            Err(_) => {
+                // Fallback to heuristic if robust check fails (e.g., TDS corruption)
+                if Self::is_vertex_likely_exterior(tds, vertex) {
+                    InsertionStrategy::HullExtension
+                } else {
+                    InsertionStrategy::CavityBased
+                }
+            }
         }
     }
 
@@ -1207,8 +1207,10 @@ where
                 ));
             }
 
+            // Use robust predicate to accurately determine if vertex is interior
+            let config = RobustPredicateConfig::<T>::default();
             if matches!(
-                insphere(&vertex_points, *vertex.point()),
+                robust_insphere(&vertex_points, vertex.point(), &config),
                 Ok(InSphere::INSIDE)
             ) {
                 return Ok(true);
@@ -1370,8 +1372,10 @@ where
                 vertex_points.push(*v.point());
             }
 
-            // Test circumsphere containment
-            match insphere(&vertex_points, *vertex.point()) {
+            // Test circumsphere containment using robust predicates
+            // Use default config for general triangulation
+            let config = RobustPredicateConfig::<T>::default();
+            match robust_insphere(&vertex_points, vertex.point(), &config) {
                 Ok(InSphere::INSIDE) => {
                     // Cell is bad - vertex violates Delaunay property
                     bad_cells.push(cell_key);
@@ -1380,8 +1384,19 @@ where
                     // Vertex is outside or on boundary - cell is fine
                 }
                 Err(_) => {
-                    // Degenerate circumsphere or computation error
-                    degenerate_count += 1;
+                    // Robust predicate failed - fall back to non-robust predicate
+                    match insphere(&vertex_points, *vertex.point()) {
+                        Ok(InSphere::INSIDE) => {
+                            bad_cells.push(cell_key);
+                        }
+                        Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) => {
+                            // Cell is fine
+                        }
+                        Err(_) => {
+                            // Degenerate circumsphere or computation error
+                            degenerate_count += 1;
+                        }
+                    }
                 }
             }
         }
@@ -1776,8 +1791,15 @@ where
 
         // Filter boundary facets to prevent invalid facet sharing
         // This prevents creating cells that would violate the "facet shared by at most 2 cells" constraint
-        let boundary_infos =
-            Self::filter_boundary_facets_by_valid_facet_sharing(tds, boundary_infos, inserted_vk)?;
+        // For cavity-based insertion, bad cells will be removed (true)
+        // Initial insertion: don't allow facets containing inserted vertex (false)
+        let boundary_infos = Self::filter_boundary_facets_by_valid_facet_sharing(
+            tds,
+            boundary_infos,
+            inserted_vk,
+            true,  // remove_bad_cells
+            false, // allow_inserted_vertex_in_facets (initial insertion)
+        )?;
 
         // Hard-stop if preventive filter removed all boundary facets
         // Proceeding would leave a hole in the TDS after removing bad cells
@@ -1938,15 +1960,13 @@ where
             // Gather boundary info before removing violating cells
             let refinement_infos = Self::gather_boundary_facet_info(tds, &refinement_boundary)?;
             let refinement_infos = Self::deduplicate_boundary_facet_info(refinement_infos)?;
-            let refinement_infos = Self::filter_boundary_facets_by_valid_facet_sharing(
-                tds,
-                refinement_infos,
-                inserted_vk,
-            )?;
+            // During refinement, skip the preventive over-sharing filter
+            // We'll fix any over-sharing issues with fix_invalid_facet_sharing later
+            // This allows refinement to proceed even in complex topological situations
+            // Note: We still keep the deduplication step above
 
             if refinement_infos.is_empty() {
-                // No valid boundary facets - refinement blocked by topology constraints
-                // Stop refinement and let finalization fix remaining issues
+                // No boundary facets found - stop refinement
                 break;
             }
 
@@ -2393,6 +2413,59 @@ where
 
         Ok(())
     }
+    /// Validate that no Delaunay violations exist
+    ///
+    /// This is a validation-only method that checks for violations but does not
+    /// attempt to repair them. Violations should be fixed during the insertion
+    /// algorithm itself (via iterative cavity refinement).
+    ///
+    /// # Arguments
+    ///
+    /// * `tds` - Reference to the triangulation data structure
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if no violations exist, or an error listing the violations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any Delaunay violations are detected.
+    fn validate_no_delaunay_violations(
+        tds: &Tds<T, U, V, D>,
+    ) -> Result<(), TriangulationConstructionError>
+    where
+        T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    {
+        let violations =
+            crate::core::util::find_delaunay_violations(tds, None).map_err(|e| match e {
+                crate::core::util::DelaunayValidationError::TriangulationState { source } => {
+                    TriangulationConstructionError::ValidationError(source)
+                }
+                crate::core::util::DelaunayValidationError::DelaunayViolation { .. }
+                | crate::core::util::DelaunayValidationError::InvalidCell { .. } => {
+                    TriangulationConstructionError::ValidationError(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!("Delaunay validation error: {e}"),
+                        },
+                    )
+                }
+            })?;
+
+        if !violations.is_empty() {
+            return Err(TriangulationConstructionError::ValidationError(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Triangulation has {} Delaunay violations. \
+                         The empty circumsphere property is not satisfied. \
+                         This indicates the insertion algorithm failed to maintain the Delaunay property.",
+                        violations.len()
+                    ),
+                },
+            ));
+        }
+
+        Ok(())
+    }
 
     /// Finalizes the triangulation by cleaning up and establishing relationships
     ///
@@ -2414,6 +2487,7 @@ where
     /// - Fixing invalid facet sharing fails.
     /// - Assigning neighbor relationships fails.
     /// - Assigning incident cells to vertices fails.
+    /// - Delaunay property violations are detected.
     fn finalize_triangulation(
         tds: &mut Tds<T, U, V, D>,
     ) -> Result<(), TriangulationConstructionError>
@@ -2440,6 +2514,11 @@ where
         // Assign incident cells to vertices
         tds.assign_incident_cells()
             .map_err(TriangulationConstructionError::ValidationError)?;
+
+        // Final Delaunay validation: ensure no violations exist
+        // Violations at this stage indicate the insertion algorithm failed to maintain
+        // the Delaunay property during iterative refinement
+        Self::validate_no_delaunay_violations(tds)?;
 
         Ok(())
     }
@@ -2885,8 +2964,15 @@ where
 
         // Phase 1.5: Filter boundary facets to prevent invalid facet sharing
         // This prevents creating cells that would violate the "facet shared by at most 2 cells" constraint
-        let boundary_infos =
-            Self::filter_boundary_facets_by_valid_facet_sharing(tds, boundary_infos, inserted_vk)?;
+        // For hull extension, cells are NOT removed (false)
+        // Hull extension: don't allow facets containing inserted vertex (false)
+        let boundary_infos = Self::filter_boundary_facets_by_valid_facet_sharing(
+            tds,
+            boundary_infos,
+            inserted_vk,
+            false, // remove_bad_cells (hull extension)
+            false, // allow_inserted_vertex_in_facets (initial insertion)
+        )?;
 
         // Hard-stop if preventive filter removed all boundary facets
         // Creating zero cells would be invalid
@@ -3046,6 +3132,11 @@ where
     /// * `tds` - Reference to the triangulation data structure
     /// * `boundary_infos` - Deduplicated boundary facet information
     /// * `inserted_vk` - Vertex key of the newly inserted vertex
+    /// * `remove_bad_cells` - Whether the bad cells will be removed (cavity) or kept (hull extension)
+    /// * `allow_inserted_vertex_in_facets` - Whether to allow facets containing the inserted vertex
+    ///   (true during iterative refinement, false during initial insertion)
+    /// * `skip_oversharing_check` - Whether to skip the over-sharing validation
+    ///   (true during iterative refinement to allow more flexibility, false during initial insertion)
     ///
     /// # Returns
     ///
@@ -3065,6 +3156,8 @@ where
         tds: &Tds<T, U, V, D>,
         boundary_infos: SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE>,
         inserted_vk: VertexKey,
+        remove_bad_cells: bool,
+        allow_inserted_vertex_in_facets: bool,
     ) -> Result<SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE>, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
@@ -3106,7 +3199,9 @@ where
                 info.facet_vertex_keys.clone();
 
             // Skip if facet already contains the inserted vertex (prevents duplicate vertices)
-            if cell_vertices.contains(&inserted_vk) {
+            // During iterative refinement, we expect facets to contain the inserted vertex
+            // (since we're refining cells that we just created with that vertex)
+            if !allow_inserted_vertex_in_facets && cell_vertices.contains(&inserted_vk) {
                 #[cfg(debug_assertions)]
                 eprintln!(
                     "Filtering out boundary facet: already contains inserted vertex {inserted_vk:?}"
@@ -3134,9 +3229,10 @@ where
                 // Check current cell count for this facet
                 let mut current_count = facet_cell_counts.get(&facet_key).copied().unwrap_or(0);
 
-                // The facet we're replacing is still counted via the bad cell; discount it
-                // since the bad cell is about to be deleted
-                if let Some(handles) = facet_map.get(&facet_key)
+                // If bad cells will be removed (cavity-based), discount their contribution
+                // For hull extension, bad cells stay, so we don't discount them
+                if remove_bad_cells
+                    && let Some(handles) = facet_map.get(&facet_key)
                     && handles.iter().any(|handle| handle.cell_key() == bad_cell)
                 {
                     current_count = current_count.saturating_sub(1);
@@ -3171,8 +3267,9 @@ where
                     }
                     let facet_key = facet_key_from_vertices(&facet_vertices_buffer);
                     let entry = facet_cell_counts.entry(facet_key).or_insert(0);
-                    // Discount the bad cell contribution if present before incrementing
-                    if let Some(handles) = facet_map.get(&facet_key)
+                    // Discount the bad cell contribution only if cells will be removed
+                    if remove_bad_cells
+                        && let Some(handles) = facet_map.get(&facet_key)
                         && handles.iter().any(|handle| handle.cell_key() == bad_cell)
                     {
                         *entry = entry.saturating_sub(1);
@@ -3564,10 +3661,11 @@ where
         Ok(())
     }
 
-    /// Rollback vertex insertion by removing all cells containing the vertex and the vertex itself.
+    /// Rollback vertex insertion by removing the vertex if it was newly created.
     ///
-    /// This is a smart rollback utility that delegates to `Tds::remove_vertex()` which atomically
-    /// finds and removes all cells containing the vertex, then removes the vertex itself.
+    /// This function respects pre-existing vertices and only removes the vertex if it was
+    /// created during the current insertion attempt. The caller is responsible for cleaning
+    /// up any newly created cells explicitly.
     ///
     /// # Arguments
     ///
@@ -3577,21 +3675,29 @@ where
     ///
     /// # Implementation
     ///
-    /// Delegates to `Tds::remove_vertex()` which:
-    /// 1. Finds all cells containing the vertex
-    /// 2. Removes all such cells
-    /// 3. Removes the vertex itself (if newly inserted)
+    /// - If vertex was newly inserted: calls `Tds::remove_vertex()` which removes the vertex
+    ///   and all its incident cells atomically
+    /// - If vertex existed before: does nothing to preserve the pre-existing vertex and its
+    ///   legitimate incident cells
+    ///
+    /// # Safety
+    ///
+    /// Unconditionally removing vertices that existed before would corrupt the TDS by deleting
+    /// legitimate vertices and their incident cells.
     fn rollback_vertex_insertion(
         tds: &mut Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-        _vertex_existed_before: bool,
+        vertex_existed_before: bool,
     ) where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
-        // Note: remove_vertex() handles both cells and vertex atomically
-        // This works regardless of whether the vertex existed before because
-        // remove_vertex() safely handles all cases
-        tds.remove_vertex(vertex);
+        if !vertex_existed_before {
+            // Only remove the vertex (and its incident cells) when it was created during this attempt.
+            // This atomically removes all cells containing the vertex and the vertex itself.
+            // Ignore errors during rollback - we're already in an error path
+            let _ = tds.remove_vertex(vertex);
+        }
+        // Otherwise the vertex was pre-existing; caller must clean up any newly created cells explicitly.
     }
 
     /// Legacy rollback function that takes explicit cell keys.
@@ -3720,7 +3826,8 @@ where
             // Get the vertex by key so we can call remove_vertex
             // Copy the vertex to avoid borrow checker issues
             if let Some(&vertex) = tds.get_vertex_by_key(vertex_key) {
-                tds.remove_vertex(&vertex);
+                // Ignore errors during rollback - we're already in an error path
+                let _ = tds.remove_vertex(&vertex);
             }
         }
     }
@@ -5703,15 +5810,14 @@ mod tests {
     fn test_insertion_strategy_determination_edge_cases() {
         println!("Testing InsertionStrategy determination edge cases");
 
+        // Create algorithm instance for strategy determination
+        let algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
         // Test with empty TDS
         let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
-        let strategy =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::determine_strategy_default(
-                &empty_tds,
-                &test_vertex,
-            );
+        let strategy = algorithm.determine_strategy_default(&empty_tds, &test_vertex);
         assert_eq!(
             strategy,
             InsertionStrategy::Standard,
@@ -5719,7 +5825,7 @@ mod tests {
         );
         println!("  ✓ Empty TDS correctly uses Standard strategy");
 
-        // Test with single cell TDS
+        // Test with single cell TDS - strategy uses robust predicates to accurately determine interior/exterior
         let single_cell_vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -5734,17 +5840,25 @@ mod tests {
             "Should have exactly one cell"
         );
 
-        let strategy =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::determine_strategy_default(
-                &single_cell_tds,
-                &test_vertex,
-            );
+        // Test exterior vertex [1,1,1] - outside the tetrahedron
+        let strategy = algorithm.determine_strategy_default(&single_cell_tds, &test_vertex);
         assert_eq!(
             strategy,
             InsertionStrategy::HullExtension,
-            "Single cell TDS should use HullExtension"
+            "Exterior vertex should use HullExtension even with single cell"
         );
-        println!("  ✓ Single cell TDS correctly uses HullExtension strategy");
+        println!("  ✓ Single cell TDS with exterior vertex correctly uses HullExtension strategy");
+
+        // Test interior vertex [0.1,0.1,0.1] - inside the tetrahedron
+        let interior_single = vertex!([0.1, 0.1, 0.1]);
+        let strategy_interior =
+            algorithm.determine_strategy_default(&single_cell_tds, &interior_single);
+        assert_eq!(
+            strategy_interior,
+            InsertionStrategy::CavityBased,
+            "Interior vertex should use CavityBased even with single cell"
+        );
+        println!("  ✓ Single cell TDS with interior vertex correctly uses CavityBased strategy");
 
         // Test is_vertex_likely_exterior with various positions
         let multi_cell_vertices = vec![
@@ -5814,10 +5928,7 @@ mod tests {
 
         // Test complete strategy determination with exterior vertex
         let exterior_strategy =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::determine_strategy_default(
-                &multi_cell_tds,
-                &far_exterior_vertex,
-            );
+            algorithm.determine_strategy_default(&multi_cell_tds, &far_exterior_vertex);
         assert_eq!(
             exterior_strategy,
             InsertionStrategy::HullExtension,
@@ -5827,10 +5938,7 @@ mod tests {
 
         // Test complete strategy determination with interior vertex
         let interior_strategy =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::determine_strategy_default(
-                &multi_cell_tds,
-                &interior_vertex,
-            );
+            algorithm.determine_strategy_default(&multi_cell_tds, &interior_vertex);
         assert_eq!(
             interior_strategy,
             InsertionStrategy::CavityBased,
@@ -7615,6 +7723,8 @@ mod tests {
                     &tds,
                     infos_buffer,
                     new_vk,
+                    true,  // For this test, assume cavity-based insertion
+                    false, // Initial insertion phase
                 )
                 .expect("Filter should succeed");
 
@@ -8074,11 +8184,13 @@ mod tests {
             boundary_infos_buffer.push(info);
         }
 
-        // Apply preventive filtering
+        // Apply preventive filtering (cavity-based insertion removes bad cells)
         let filtered = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::filter_boundary_facets_by_valid_facet_sharing(
             &tds,
             boundary_infos_buffer,
             inserted_vk,
+            true,  // Cavity-based insertion removes bad cells
+            false, // Initial insertion phase
         )
         .expect("Filter should succeed");
 

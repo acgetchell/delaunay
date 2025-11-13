@@ -154,7 +154,7 @@ loop {
 
 // After finalization
 Self::finalize_after_insertion(tds)?;
-self.validate_triangulation_invariants(tds, check_delaunay: false)?;
+self.validate_triangulation_invariants(tds, false)?;
 ```
 
 ### Step 4: Handle validation failures gracefully

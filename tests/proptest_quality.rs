@@ -227,6 +227,7 @@ macro_rules! test_quality_properties {
                                             .filter_map(|uuid| uuid_map.get(uuid))
                                             .copied()
                                             .collect();
+                                        let mut matched = false;
 
                                         // Find matching cell in translated triangulation
                                         for trans_key in tds_translated.cell_keys() {
@@ -236,6 +237,7 @@ macro_rules! test_quality_properties {
                                                 if trans_uuids.len() == trans_cell_uuids.len()
                                                     && trans_uuids.iter().all(|u| trans_cell_uuids.contains(u))
                                                 {
+                                                    matched = true;
                                                     // Found matching cell - compare quality
                                                     if let (Ok(ratio_orig), Ok(ratio_trans)) =
                                                         (radius_ratio(&tds, orig_key), radius_ratio(&tds_translated, trans_key))
@@ -255,6 +257,12 @@ macro_rules! test_quality_properties {
                                             }
                                                 }
                                         }
+                                        prop_assert!(
+                                            matched,
+                                            "{}D radius ratio: no translated cell matched original cell {:?}",
+                                            $dim,
+                                            orig_cell.uuid()
+                                        );
                                     }
                                 }
                             }
@@ -302,6 +310,7 @@ macro_rules! test_quality_properties {
                                             .filter_map(|uuid| uuid_map.get(uuid))
                                             .copied()
                                             .collect();
+                                        let mut matched = false;
 
                                         for trans_key in tds_translated.cell_keys() {
                                             if let Some(trans_cell) = tds_translated.get_cell(trans_key) {
@@ -309,6 +318,7 @@ macro_rules! test_quality_properties {
                                                     if trans_uuids.len() == trans_cell_uuids.len()
                                                         && trans_uuids.iter().all(|u| trans_cell_uuids.contains(u))
                                                     {
+                                                        matched = true;
                                                         if let (Ok(vol_orig), Ok(vol_trans)) =
                                                             (normalized_volume(&tds, orig_key), normalized_volume(&tds_translated, trans_key))
                                                         {
@@ -327,6 +337,12 @@ macro_rules! test_quality_properties {
                                                 }
                                             }
                                         }
+                                        prop_assert!(
+                                            matched,
+                                            "{}D normalized volume: no translated cell matched original cell {:?}",
+                                            $dim,
+                                            orig_cell.uuid()
+                                        );
                                     }
                                 }
                             }
@@ -374,6 +390,7 @@ macro_rules! test_quality_properties {
                                             .filter_map(|uuid| uuid_map.get(uuid))
                                             .copied()
                                             .collect();
+                                        let mut matched = false;
 
                                         for scaled_key in tds_scaled.cell_keys() {
                                             if let Some(scaled_cell) = tds_scaled.get_cell(scaled_key) {
@@ -381,6 +398,7 @@ macro_rules! test_quality_properties {
                                                     if scaled_uuids.len() == scaled_cell_uuids.len()
                                                         && scaled_uuids.iter().all(|u| scaled_cell_uuids.contains(u))
                                                     {
+                                                        matched = true;
                                                         if let (Ok(vol_orig), Ok(vol_scaled)) =
                                                             (normalized_volume(&tds, orig_key), normalized_volume(&tds_scaled, scaled_key))
                                                         {
@@ -399,6 +417,12 @@ macro_rules! test_quality_properties {
                                                 }
                                             }
                                         }
+                                        prop_assert!(
+                                            matched,
+                                            "{}D normalized volume: no scaled cell matched original cell {:?}",
+                                            $dim,
+                                            orig_cell.uuid()
+                                        );
                                     }
                                 }
                             }

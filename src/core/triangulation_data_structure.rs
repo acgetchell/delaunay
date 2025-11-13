@@ -192,7 +192,7 @@ use num_traits::cast::NumCast;
 
 // Parent module imports
 use super::{
-    algorithms::bowyer_watson::IncrementalBowyerWatson,
+    algorithms::robust_bowyer_watson::RobustBowyerWatson,
     cell::{Cell, CellValidationError},
     facet::{FacetHandle, facet_key_from_vertices},
     traits::{
@@ -1766,7 +1766,8 @@ where
     /// This is an atomic operation that:
     /// 1. Finds all cells containing the vertex
     /// 2. Removes all such cells
-    /// 3. Removes the vertex itself
+    /// 3. Rebuilds vertex-cell incidence to prevent dangling `incident_cell` pointers
+    /// 4. Removes the vertex itself
     ///
     /// This operation leaves the triangulation in a valid state (though potentially incomplete).
     /// This is the recommended way to remove a vertex from the triangulation.
@@ -1777,7 +1778,13 @@ where
     ///
     /// # Returns
     ///
-    /// The number of cells that were removed along with the vertex.
+    /// `Ok(usize)` with the number of cells that were removed along with the vertex,
+    /// or `Err(TriangulationValidationError)` if incident cell assignment fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TriangulationValidationError` if the vertex-cell incidence cannot be rebuilt
+    /// after removing cells. This indicates a corrupted data structure.
     ///
     /// # Examples
     ///
@@ -1798,15 +1805,18 @@ where
     /// let cells_before = tds.number_of_cells();
     ///
     /// // Remove the vertex and all cells containing it
-    /// let cells_removed = tds.remove_vertex(&vertex_to_remove);
+    /// let cells_removed = tds.remove_vertex(&vertex_to_remove).unwrap();
     /// println!("Removed {} cells along with the vertex", cells_removed);
     ///
     /// assert!(tds.is_valid().is_ok());
     /// ```
-    pub fn remove_vertex(&mut self, vertex: &Vertex<T, U, D>) -> usize {
+    pub fn remove_vertex(
+        &mut self,
+        vertex: &Vertex<T, U, D>,
+    ) -> Result<usize, TriangulationValidationError> {
         // Find the vertex key
         let Some(vertex_key) = self.vertex_key_from_uuid(&vertex.uuid()) else {
-            return 0; // Vertex not found, nothing to remove
+            return Ok(0); // Vertex not found, nothing to remove
         };
 
         // Find all cells containing this vertex
@@ -1847,10 +1857,16 @@ where
         // Remove all cells containing the vertex
         let cells_removed = self.remove_cells_by_keys(&cells_to_remove);
 
+        // Rebuild vertex incidence before removing the vertex to ensure surviving vertices
+        // no longer point at the deleted cells. This prevents dangling incident_cell references.
+        // Any vertex whose incident_cell previously referenced one of the removed cells will
+        // have its pointer updated to a valid remaining cell (or None if isolated).
+        self.assign_incident_cells()?;
+
         // Remove the vertex itself
         self.remove_vertex_by_uuid(&vertex.uuid());
 
-        cells_removed
+        Ok(cells_removed)
     }
 
     /// Removes a vertex by its UUID, maintaining data structure consistency.
@@ -2655,7 +2671,7 @@ where
             return Ok(());
         }
 
-        // Case 3: Adding to existing triangulation - use IncrementalBowyerWatson
+        // Case 3: Adding to existing triangulation - use RobustBowyerWatson
         if self.number_of_cells() > 0 {
             // Insert the vertex into the existing triangulation using the trait method
             //
@@ -2675,7 +2691,7 @@ where
             } else {
                 None
             };
-            let mut algorithm = IncrementalBowyerWatson::new();
+            let mut algorithm = RobustBowyerWatson::new();
             if let Err(e) = algorithm.insert_vertex(self, vertex) {
                 let vertex_coords = Some(format!("{new_coords:?}"));
                 self.rollback_vertex_insertion(
@@ -2787,6 +2803,7 @@ where
             })
             .collect();
 
+        #[cfg_attr(not(debug_assertions), allow(unused_variables))]
         let cells_removed = self.remove_cells_by_keys(&cells_to_remove);
 
         // Remove the vertex itself
@@ -2826,7 +2843,7 @@ where
 
     /// Performs the incremental Bowyer-Watson algorithm to construct a Delaunay triangulation.
     ///
-    /// This method uses the new incremental Bowyer-Watson algorithm implementation that provides
+    /// This method uses the robust Bowyer-Watson algorithm implementation that provides
     /// robust vertex insertion without supercells. The algorithm maintains the Delaunay property
     /// throughout construction and handles both interior and exterior vertex insertion.
     ///
@@ -2844,12 +2861,13 @@ where
     ///
     /// # Algorithm Overview
     ///
-    /// The new incremental approach:
+    /// The robust incremental approach:
     /// 1. **Initialization**: Creates initial simplex from first D+1 vertices
     /// 2. **Incremental insertion**: For each remaining vertex:
     ///    - Determines if vertex is inside or outside current convex hull
-    ///    - Uses cavity-based insertion for interior vertices
+    ///    - Uses cavity-based insertion for interior vertices with robust predicates
     ///    - Uses convex hull extension for exterior vertices
+    ///    - Verifies Delaunay property is maintained
     /// 3. **Cleanup**: Removes degenerate cells and establishes neighbor relationships
     ///
     /// # Examples
@@ -2885,8 +2903,8 @@ where
             return Ok(());
         }
 
-        // Use the new incremental Bowyer-Watson algorithm
-        let mut algorithm = IncrementalBowyerWatson::new();
+        // Use the robust Bowyer-Watson algorithm to ensure Delaunay property is maintained
+        let mut algorithm = RobustBowyerWatson::new();
         algorithm.triangulate(self, &vertices)?;
 
         // Update construction state
@@ -4835,7 +4853,7 @@ mod tests {
         let vertex_uuid = vertex_to_remove.uuid();
 
         // Remove the vertex and all cells containing it
-        let cells_removed = tds.remove_vertex(&vertex_to_remove);
+        let cells_removed = tds.remove_vertex(&vertex_to_remove).unwrap();
 
         // Verify the vertex was removed
         assert!(
@@ -4897,7 +4915,7 @@ mod tests {
         let initial_cells = tds.number_of_cells();
 
         // Remove should return 0 (no cells removed)
-        let cells_removed = tds.remove_vertex(&nonexistent_vertex);
+        let cells_removed = tds.remove_vertex(&nonexistent_vertex).unwrap();
 
         assert_eq!(cells_removed, 0, "No cells should be removed");
         assert_eq!(
@@ -4929,7 +4947,7 @@ mod tests {
             ];
             let mut tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
             let vertex = *tds_2d.vertices().next().unwrap().1;
-            let cells_removed = tds_2d.remove_vertex(&vertex);
+            let cells_removed = tds_2d.remove_vertex(&vertex).unwrap();
             assert!(cells_removed > 0);
             assert!(tds_2d.is_valid().is_ok());
         }
@@ -4945,7 +4963,7 @@ mod tests {
             ];
             let mut tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
             let vertex = *tds_3d.vertices().next().unwrap().1;
-            let cells_removed = tds_3d.remove_vertex(&vertex);
+            let cells_removed = tds_3d.remove_vertex(&vertex).unwrap();
             assert!(cells_removed > 0);
             assert!(tds_3d.is_valid().is_ok());
         }
@@ -4962,12 +4980,83 @@ mod tests {
             ];
             let mut tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
             let vertex = *tds_4d.vertices().next().unwrap().1;
-            let cells_removed = tds_4d.remove_vertex(&vertex);
+            let cells_removed = tds_4d.remove_vertex(&vertex).unwrap();
             assert!(cells_removed > 0);
             assert!(tds_4d.is_valid().is_ok());
         }
 
         println!("✓ remove_vertex works correctly in multiple dimensions");
+    }
+
+    #[test]
+    fn test_remove_vertex_no_dangling_references() {
+        // Test that after removing a vertex:
+        // 1. No cells contain the deleted vertex
+        // 2. No vertices have incident_cell pointing to a removed cell
+        // 3. All remaining incident_cell pointers are valid
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]), // Interior vertex to remove
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Get a vertex to remove and its key
+        let vertex_to_remove = *tds.vertices().nth(4).unwrap().1; // Get the interior vertex
+        let removed_vertex_key = tds.vertex_key_from_uuid(&vertex_to_remove.uuid()).unwrap();
+        let removed_vertex_uuid = vertex_to_remove.uuid();
+
+        // Remove the vertex
+        let cells_removed = tds.remove_vertex(&vertex_to_remove).unwrap();
+        assert!(cells_removed > 0, "Should have removed at least one cell");
+
+        // CRITICAL CHECK 1: No cells should contain the deleted vertex
+        for (cell_key, cell) in tds.cells() {
+            for &vk in cell.vertices() {
+                assert_ne!(
+                    vk, removed_vertex_key,
+                    "Cell {cell_key:?} still references deleted vertex {removed_vertex_key:?}"
+                );
+            }
+        }
+
+        // CRITICAL CHECK 2: The vertex should no longer exist in TDS
+        assert!(
+            tds.vertex_key_from_uuid(&removed_vertex_uuid).is_none(),
+            "Deleted vertex UUID should not be in mapping"
+        );
+        assert!(
+            tds.get_vertex_by_key(removed_vertex_key).is_none(),
+            "Deleted vertex key should not exist in storage"
+        );
+
+        // CRITICAL CHECK 3: All remaining vertices should have valid incident_cell pointers
+        for (vertex_key, vertex) in tds.vertices() {
+            if let Some(incident_cell_key) = vertex.incident_cell {
+                assert!(
+                    tds.cells.contains_key(incident_cell_key),
+                    "Vertex {vertex_key:?} has dangling incident_cell pointer to {incident_cell_key:?}"
+                );
+
+                // Verify the incident cell actually contains this vertex
+                let incident_cell = tds.get_cell(incident_cell_key).unwrap();
+                assert!(
+                    incident_cell.contains_vertex(vertex_key),
+                    "Vertex {vertex_key:?} incident_cell {incident_cell_key:?} does not contain the vertex"
+                );
+            }
+        }
+
+        // CRITICAL CHECK 4: TDS should be valid
+        assert!(
+            tds.is_valid().is_ok(),
+            "TDS should be valid after vertex removal"
+        );
+
+        println!("✓ remove_vertex leaves no dangling references to deleted vertex");
     }
 
     // =============================================================================

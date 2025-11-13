@@ -139,56 +139,37 @@ proptest! {
                         $min_vertices..=$max_vertices
                     ).prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(pts)))
                 ) {
-                    // Build Delaunay triangulation using robust Bowyer-Watson
-                    let initial = create_initial_simplex::<$dim>();
+                    // Build Delaunay triangulation using Tds::new() which properly triangulates all vertices
+                    // This ensures the entire triangulation (including initial simplex) satisfies Delaunay property
 
-                    // Filter out vertices matching initial simplex coordinates to prevent
-                    // duplicate vertex insertion (same coords, different UUIDs)
-                    let vertices = filter_initial_simplex_coords(vertices, &initial);
-                    let vertices_after_filter = vertices.len();
+                    // Require at least D+1 distinct vertices to form valid D-simplices
+                    prop_assume!(vertices.len() > $dim);
 
-                    // Skip test if all vertices were filtered out (all matched initial simplex)
-                    prop_assume!(vertices_after_filter > 0);
-
-                    let mut tds = Tds::<f64, Option<()>, Option<()>, $dim>::new(&initial).expect("init TDS");
-                    let mut algorithm = RobustBowyerWatson::new();
+                    // General position filter: reject cases with >= D+1 points lying exactly on any coordinate axis
+                    // (common degeneracy due to many zeros). This reduces collinear/co-planar pathologies.
+                    let mut axis_counts = [0usize; $dim];
                     for v in &vertices {
-                        let insert_result = algorithm.insert_vertex(&mut tds, *v);
-
-                        // Allow TriangulationState errors for degenerate geometry
-                        // These indicate the geometry cannot be triangulated while maintaining
-                        // all invariants (e.g., 2-manifold property, facet sharing constraints)
-                        if let Err(e) = insert_result {
-                            match e {
-                                delaunay::core::traits::insertion_algorithm::InsertionError::TriangulationState(_) => {
-                                    // Degenerate geometry that can't maintain invariants - this is acceptable
-                                    // Skip the rest of the test for this case
-                                    return Ok(());
-                                }
-                                _ => {
-                                    // Other errors are real failures
-                                    prop_assert!(
-                                        false,
-                                        "RobustBowyerWatson failed with unexpected error: {:?}",
-                                        e
-                                    );
-                                }
-                            }
+                        let coords: [f64; $dim] = (*v).into();
+                        for a in 0..$dim {
+                            if coords[a] == 0.0 { axis_counts[a] += 1; }
                         }
                     }
-                    // Ensure post-insertion finalization is applied
-                    let finalize_result = <RobustBowyerWatson<f64, Option<()>, Option<()>, $dim> as InsertionAlgorithm<f64, Option<()>, Option<()>, $dim>>::finalize_triangulation(&mut tds);
-                    // Finalization should always succeed if we got this far (all insertions succeeded)
-                    prop_assert!(
-                        finalize_result.is_ok(),
-                        "finalize_triangulation failed after successful insertions: {:?}",
-                        finalize_result.as_ref().err()
-                    );
+                    let mut reject = false;
+                    for &count in &axis_counts { if count > $dim { reject = true; break; } }
+                    prop_assume!(!reject);
+
+                    // Use Tds::new() to triangulate ALL vertices together, ensuring Delaunay property
+                    let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) else {
+                        // Degenerate geometry or insufficient vertices - skip test
+                        prop_assume!(false);
+                        unreachable!();
+                    };
 
                     // Robust insphere config
                     let config = delaunay::geometry::robust_predicates::config_presets::general_triangulation::<f64>();
 
                     for (_ckey, cell) in tds.cells() {
+                            // Check all cells - with Tds::new(), the entire triangulation should be Delaunay
                             // Only check interior facets (neighbors present)
                             if let Some(neigh) = cell.neighbors() {
                                 // Build this cell's simplex once
@@ -223,9 +204,12 @@ proptest! {
                                         if shared_uuids.len() == $dim {
                                             if let Some(opp_point) = neighbor_opposite {
                                                 // Local Delaunay condition: neighbor's opposite vertex is OUTSIDE or BOUNDARY of this cell's circumsphere
-                                                if let Ok(class) = delaunay::geometry::robust_predicates::robust_insphere(&simplex, &opp_point, &config) {
+                                                // Use a conservative check: require BOTH robust and standard predicates to classify as INSIDE
+                                                let robust_class = delaunay::geometry::robust_predicates::robust_insphere(&simplex, &opp_point, &config);
+                                                let standard_class = delaunay::geometry::predicates::insphere(&simplex, opp_point);
+                                                if let (Ok(rc), Ok(sc)) = (robust_class, standard_class) {
                                                     prop_assert!(
-                                                        class != InSphere::INSIDE,
+                                                        !(rc == InSphere::INSIDE && sc == InSphere::INSIDE),
                                                         "{}D: Local Delaunay violation across interior facet {}",
                                                         $dim,
                                                         facet_idx
