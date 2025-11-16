@@ -1711,6 +1711,14 @@ where
             // Test if this vertex is inside the cell's circumsphere using ROBUST predicates
             match robust_insphere(&cell_vertex_points, test_vertex.point(), &config) {
                 Ok(InSphere::INSIDE) => {
+                    #[cfg(test)]
+                    {
+                        println!(
+                            "[find_delaunay_violations] cell {cell_key:?} with vertices: {:?} has external vertex key {test_vkey:?} at {:?} inside its circumsphere",
+                            cell_vertex_points,
+                            test_vertex.point().coords(),
+                        );
+                    }
                     // Found a violation - this cell has an external vertex inside its circumsphere
                     violating_cells.push(cell_key);
                     break; // No need to check more vertices for this cell

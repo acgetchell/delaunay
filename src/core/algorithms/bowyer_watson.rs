@@ -25,7 +25,7 @@
 //! | **Delaunay Property** | `find_bad_cells()` | Empty circumsphere test using `insphere()` |
 //! | **Facet Sharing** | `validate_facet_sharing()` | Each facet shared by ≤ 2 cells |
 //! | **No Duplicate Cells** | `validate_no_duplicate_cells()` | No cells with identical vertex sets |
-//! | **Neighbor Consistency** | `validate_neighbors_internal()` | Mutual neighbor relationships |
+//! | **Neighbor Consistency** | `validate_neighbors()` | Mutual neighbor relationships |
 //! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + `cell.is_valid()` (comprehensive) | Construction + runtime validation |
 //! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
 //!

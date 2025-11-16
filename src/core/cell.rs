@@ -1885,12 +1885,14 @@ mod tests {
         println!("Testing eq_by_vertices on cells from same TDS");
 
         // Create TDS with multiple cells
+        // Use an interior vertex that is offset from the tetrahedron's circumcenter
+        // to avoid pathological degeneracy in robust Delaunay insertion.
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.5, 0.5, 0.5]), // Extra vertex to create multiple cells
+            vertex!([0.2, 0.2, 0.2]), // Interior vertex to create multiple cells without circumcenter degeneracy
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 

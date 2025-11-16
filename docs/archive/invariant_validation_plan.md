@@ -7,21 +7,31 @@ invariants satisfied or fail with clear error messages describing which invarian
 
 ## Key Insight
 
-The `Tds::is_valid()` method already checks most invariants! We should leverage it instead of reimplementing checks.
+The `Tds::is_valid()` method already checks most structural invariants, using the
+same underlying machinery as `Tds::validation_report()`. We should leverage this
+instead of reimplementing checks, and only add Delaunay- or topology-specific
+validation where needed.
 
-## Documented Invariants (from src/lib.rs lines 103-119)
+## Documented Invariants (from crate-level docs in `src/lib.rs`)
 
 | Invariant | Checked by `is_valid()` | Location |
 |-----------|------------------------|----------|
 | **Facet Sharing** | ✅ Yes | `validate_facet_sharing()` - each facet ≤ 2 cells |
 | **No Duplicate Cells** | ✅ Yes | `validate_no_duplicate_cells()` - via UUID sets |
-| **Neighbor Consistency** | ✅ Yes | `validate_neighbors_internal()` - mutual neighbors |
+| **Neighbor Consistency** | ✅ Yes | `validate_neighbors()` - mutual neighbors |
 | **Cell Validity** | ✅ Yes | `cell.is_valid()` for each cell |
 | **Vertex Validity** | ✅ Yes | Via cell validity |
 | **Vertex Mappings** | ✅ Yes | `validate_vertex_mappings()` |
 | **Cell Mappings** | ✅ Yes | `validate_cell_mappings()` |
 | **Delaunay Property** | ❌ No | Need separate check (expensive) |
 | **Euler Characteristic** | ❌ No | Not yet implemented |
+
+Internally, `Tds::is_valid()` delegates to
+`Tds::validation_report(ValidationOptions::default())`, which aggregates all
+structural invariant failures into a `TriangulationValidationReport` grouped by
+`InvariantKind`. The Delaunay property remains opt-in and is only checked via
+`Tds::validate_delaunay()` or when `ValidationOptions::check_delaunay` is
+enabled.
 
 ## Current Problem
 

@@ -5,7 +5,7 @@
 As of the completion of the Pure Incremental Delaunay Triangulation refactoring project, most critical optimizations have been **successfully implemented**:
 
 - **✅ Buffer reuse**: InsertionBuffers with reusable collections implemented in algorithms
-- **✅ Optimized validation**: `validate_neighbors_internal()` uses pre-computed vertex maps and early termination
+- **✅ Optimized validation**: `validate_neighbors()` uses pre-computed vertex maps and early termination
 - **✅ Pure incremental approach**: No supercells, clean separation of algorithm and data structure
 - **✅ Robust predicates**: Enhanced geometric predicates with numerical stability
 - **✅ Multi-strategy insertion**: Cavity-based and hull extension strategies
@@ -18,7 +18,7 @@ As of the completion of the Pure Incremental Delaunay Triangulation refactoring 
 **Optimizations IMPLEMENTED:**
 
 - **✅ Early termination**: Validation stops on first error
-- **✅ Pre-computed vertex maps**: `validate_neighbors_internal()` uses `HashMap<CellKey, HashSet<VertexKey>>`
+- **✅ Pre-computed vertex maps**: `validate_neighbors()` uses `HashMap<CellKey, HashSet<VertexKey>>`
 - **✅ Optimized neighbor validation**: Uses HashSet intersection counting and O(1) lookups
 - **✅ Efficient mapping validation**: Separate `validate_vertex_mappings()` and `validate_cell_mappings()`
 - **✅ Structured validation approach**: Step-by-step validation with clear error propagation
@@ -213,7 +213,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
 
 **Optimizations IMPLEMENTED:**
 
-- **✅ Pre-computed vertex sets**: `validate_neighbors_internal()` builds `HashMap<CellKey, HashSet<VertexKey>>`
+- **✅ Pre-computed vertex sets**: `validate_neighbors()` builds `HashMap<CellKey, HashSet<VertexKey>>`
 - **✅ Early termination**: Validation stops immediately on first neighbor validation failure
 - **✅ Efficient intersection counting**: Uses `HashSet::intersection().count()` without creating intermediate collections
 - **✅ O(1) neighbor lookups**: Uses `HashSet` for mutual neighbor relationship checks

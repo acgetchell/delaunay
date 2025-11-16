@@ -35,7 +35,9 @@
 //! assert_eq!(tds.number_of_vertices(), 6);
 //! assert_eq!(tds.dim(), 4);                    // Full 4D triangulation
 //! assert!(tds.number_of_cells() > 1);          // Bowyer-Watson creates additional 4-simplices
-//! assert!(tds.is_valid().is_ok());             // Maintains Delaunay property in 4D
+//! assert!(tds.is_valid().is_ok());             // Structural invariants hold for the triangulation
+//! // Optional (expensive): validate global Delaunay property
+//! // tds.validate_delaunay().unwrap();
 //! ```
 //!
 //! **Key insight**: The transition happens at D+1 vertices (5 vertices for 4D), where the first
@@ -102,25 +104,45 @@
 //!
 //! # Triangulation Invariants
 //!
-//! The library maintains several critical triangulation invariants that ensure geometric and topological correctness:
+//! The triangulation data structure maintains a set of **structural** and **geometric** invariants
+//! that are checked by [`Tds::is_valid`](core::triangulation_data_structure::Tds::is_valid) and
+//! [`Tds::validation_report`](core::triangulation_data_structure::Tds::validation_report):
 //!
-//! ## Invariant Enforcement
+//! - **Vertex mappings** – every vertex UUID has a corresponding key and vice versa.
+//! - **Cell mappings** – every cell UUID has a corresponding key and vice versa.
+//! - **No duplicate cells** – no two maximal cells share the same vertex set.
+//! - **Cell validity** – each cell has the correct number of vertices and passes internal
+//!   consistency checks.
+//! - **Facet sharing** – each facet is shared by at most 2 cells (1 on the boundary, 2 in the interior).
+//! - **Neighbor consistency** – neighbor relationships are mutual and reference a shared facet.
+//! - **Optional Delaunay property** – no vertex lies strictly inside the circumsphere of any maximal cell.
 //!
-//! | Invariant Type | Enforcement Location | Method | Timing |
-//! |---|---|---|---|
-//! | **Delaunay Property** | `bowyer_watson::find_bad_cells()` | Empty circumsphere test using `insphere()` | **Proactive** (during construction) |
-//! | **Facet Sharing** | `validate_facet_sharing()` | Each facet shared by ≤ 2 cells | **Reactive** (via validation) |
-//! | **No Duplicate Cells** | `validate_no_duplicate_cells()` | No cells with identical vertex sets | **Reactive** (via validation) |
-//! | **Neighbor Consistency** | `validate_neighbors_internal()` | Mutual neighbor relationships | **Reactive** (via validation) |
-//! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + [`cell.is_valid()`](core::cell::Cell::is_valid) (comprehensive) | Construction + runtime validation | **Both** (construction + validation) |
-//! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation | **Both** (construction + validation) |
+//! ## Validation helpers
 //!
-//! The **Delaunay property** (empty circumsphere) is enforced **proactively** during construction by removing
-//! violating cells, while **structural invariants** are enforced **reactively** through validation methods.
+//! These invariants are exposed through focused validation helpers on
+//! [`core::triangulation_data_structure::Tds`]:
+//!
+//! | Invariant | Helper method | Notes |
+//! |---|---|---|
+//! | Vertex mappings | [`Tds::validate_vertex_mappings`](core::triangulation_data_structure::Tds::validate_vertex_mappings) | Ensures UUID↔key consistency for all vertices. |
+//! | Cell mappings | [`Tds::validate_cell_mappings`](core::triangulation_data_structure::Tds::validate_cell_mappings) | Ensures UUID↔key consistency for all cells. |
+//! | Duplicate cells | [`Tds::validate_no_duplicate_cells`](core::triangulation_data_structure::Tds::validate_no_duplicate_cells) | Detects maximal cells with identical vertex sets. |
+//! | Cell validity | [`Cell::is_valid`](core::cell::Cell::is_valid) (aggregated via [`Tds::validation_report`](core::triangulation_data_structure::Tds::validation_report)) | Per-cell structural checks. |
+//! | Facet sharing | [`Tds::validate_facet_sharing`](core::triangulation_data_structure::Tds::validate_facet_sharing) | Verifies that each facet is shared by ≤ 2 cells. |
+//! | Neighbor consistency | [`Tds::validate_neighbors`](core::triangulation_data_structure::Tds::validate_neighbors) | Verifies neighbor topology and mutual relationships. |
+//! | Delaunay property | [`Tds::validate_delaunay`](core::triangulation_data_structure::Tds::validate_delaunay) | Expensive global empty-circumsphere check (optional). |
+//!
+//! [`Tds::is_valid`](core::triangulation_data_structure::Tds::is_valid) runs all **structural**
+//! invariants (mappings, duplicates, per-cell validity, facet sharing, neighbors) and returns
+//! only the first failure for convenience. For full diagnostics or to include the Delaunay
+//! invariant, use [`core::triangulation_data_structure::Tds::validation_report`]
+//! with
+//! [`core::triangulation_data_structure::ValidationOptions::check_delaunay`]
+//! set to `true`.
 //!
 //! For detailed information, see:
 //! - [`core::algorithms::bowyer_watson`] - Primary invariant enforcement during triangulation construction
-//! - [`core::triangulation_data_structure::Tds::is_valid`] - Comprehensive validation of all invariants
+//! - [`core::triangulation_data_structure::Tds::validation_report`] - Comprehensive validation of all invariants
 //!
 //! # Correctness Guarantees and Limitations
 //!
@@ -237,6 +259,8 @@ pub mod core {
         pub mod bowyer_watson;
         /// Robust Bowyer-Watson implementation with enhanced numerical stability
         pub mod robust_bowyer_watson;
+        /// Internal unified fast+robust insertion pipeline for Stage 2
+        pub mod unified_insertion_pipeline;
         pub use bowyer_watson::*;
         pub use robust_bowyer_watson::*;
     }

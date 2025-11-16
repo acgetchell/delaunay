@@ -33,7 +33,8 @@ Delaunay triangulations possess well-defined topological properties that can be 
 2. **Euler Characteristic Validation**: Implement Euler characteristic calculation and validation
 3. **Extensible Architecture**: Design for future topology types (spherical, toroidal)
 4. **Dimensional Genericity**: Support topology validation across all dimensions D ≥ 2
-5. **Integration with Existing Validation**: Extend current `is_valid()` framework
+5. **Integration with Existing Validation**: Extend current
+   `Tds::is_valid()` / `Tds::validation_report()` framework
 6. **Comprehensive Testing**: Validate randomly generated triangulations
 
 ---
@@ -94,6 +95,10 @@ The topology module integrates with existing modules through:
 - **Geometry Integration**: Use existing geometric predicates for topological calculations
 - **Trait System**: Follow established trait patterns from `core::traits`
 - **Testing Integration**: Extend existing validation and testing frameworks
+
+Topology validation is layered on top of the existing structural invariants
+validated by `Tds::validation_report()` / `Tds::is_valid()`, rather than
+duplicating those checks.
 
 ---
 
@@ -1411,7 +1416,7 @@ where
     }
     
     self.validate_facet_sharing()?;
-    self.validate_neighbors_internal()?;
+    self.validate_neighbors()?;
     
     // NEW: Euler characteristic validation
     // Only run if enabled via feature flag or debug mode
