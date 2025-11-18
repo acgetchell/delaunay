@@ -2724,11 +2724,13 @@ mod tests {
 
     #[test]
     fn cell_debug_format() {
+        // Use a simple non-degenerate 3D tetrahedron so `Tds::new` can construct
+        // a valid simplex for debug-format testing.
         let vertices = vec![
-            vertex!([1.0, 2.0, 3.0]),
-            vertex!([4.0, 5.0, 6.0]),
-            vertex!([7.0, 8.0, 9.0]),
-            vertex!([10.0, 11.0, 12.0]),
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
         ];
         let tds = Tds::<f64, Option<()>, i32, 3>::new(&vertices).unwrap();
         let (_, cell_ref) = tds.cells().next().unwrap();
@@ -2753,11 +2755,13 @@ mod tests {
     #[test]
     fn cell_to_and_from_json() {
         // Phase 3A: Test serialization through TDS context (proper way)
+        // Use a non-degenerate 3D tetrahedron so `Tds::new` can construct a
+        // valid initial simplex.
         let vertices = vec![
-            vertex!([1.0, 2.0, 3.0]),
-            vertex!([4.0, 5.0, 6.0]),
-            vertex!([7.0, 8.0, 9.0]),
-            vertex!([10.0, 11.0, 12.0]),
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
@@ -2862,11 +2866,12 @@ mod tests {
     #[test]
     fn cell_serialization_with_some_data_includes_field() {
         // Test that when data is Some, the JSON includes the data field
+        // Use a non-degenerate 3D tetrahedron so `Tds::new` can construct a valid simplex.
         let vertices = vec![
-            vertex!([1.0, 2.0, 3.0]),
-            vertex!([4.0, 5.0, 6.0]),
-            vertex!([7.0, 8.0, 9.0]),
-            vertex!([10.0, 11.0, 12.0]),
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
         ];
         let tds: Tds<f64, Option<()>, i32, 3> = Tds::new(&vertices).unwrap();
         let (_, cell) = tds.cells().next().unwrap();
@@ -2892,11 +2897,12 @@ mod tests {
     #[test]
     fn cell_serialization_with_none_data_omits_field() {
         // Test that when data is None, the JSON omits the data field entirely
+        // Use a non-degenerate 3D tetrahedron so `Tds::new` can construct a valid simplex.
         let vertices = vec![
-            vertex!([1.0, 2.0, 3.0]),
-            vertex!([4.0, 5.0, 6.0]),
-            vertex!([7.0, 8.0, 9.0]),
-            vertex!([10.0, 11.0, 12.0]),
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<i32>, 3> = Tds::new(&vertices).unwrap();
         let (_, cell) = tds.cells().next().unwrap();
@@ -2937,11 +2943,12 @@ mod tests {
 
     #[test]
     fn cell_negative_coordinates() {
+        // Use a non-degenerate tetrahedron fully in the negative octant.
         let vertices = vec![
-            vertex!([-1.0, -2.0, -3.0]),
-            vertex!([-4.0, -5.0, -6.0]),
-            vertex!([-7.0, -8.0, -9.0]),
-            vertex!([-10.0, -11.0, -12.0]),
+            vertex!([-1.0, -1.0, -1.0]),
+            vertex!([-2.0, -1.0, -1.0]),
+            vertex!([-1.0, -2.0, -1.0]),
+            vertex!([-1.0, -1.0, -2.0]),
         ];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
         let (_, cell) = tds.cells().next().unwrap();
@@ -2952,11 +2959,12 @@ mod tests {
 
     #[test]
     fn cell_large_coordinates() {
+        // Use a non-degenerate tetrahedron with large-magnitude coordinates.
         let vertices = vec![
-            vertex!([1e6, 2e6, 3e6]),
-            vertex!([4e6, 5e6, 6e6]),
-            vertex!([7e6, 8e6, 9e6]),
-            vertex!([10e6, 11e6, 12e6]),
+            vertex!([1e6, 1e6, 1e6]),
+            vertex!([2e6, 1e6, 1e6]),
+            vertex!([1e6, 2e6, 1e6]),
+            vertex!([1e6, 1e6, 2e6]),
         ];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
         let (_, cell) = tds.cells().next().unwrap();
@@ -2967,11 +2975,15 @@ mod tests {
 
     #[test]
     fn cell_small_coordinates() {
+        // Use a scaled-down non-degenerate tetrahedron to exercise small
+        // coordinate behavior without introducing degeneracy. Coordinates are
+        // small but not so close to zero that robust orientation treats them
+        // as numerically degenerate.
         let vertices = vec![
-            vertex!([1e-6, 2e-6, 3e-6]),
-            vertex!([4e-6, 5e-6, 6e-6]),
-            vertex!([7e-6, 8e-6, 9e-6]),
-            vertex!([10e-6, 11e-6, 12e-6]),
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1e-3, 0.0, 0.0]),
+            vertex!([0.0, 1e-3, 0.0]),
+            vertex!([0.0, 0.0, 1e-3]),
         ];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
         let (_, cell) = tds.cells().next().unwrap();
@@ -3006,12 +3018,14 @@ mod tests {
 
     #[test]
     fn cell_mixed_positive_negative_coordinates() {
+        // Use a translated 4D simplex with both positive and negative
+        // coordinates to avoid affine degeneracy.
         let vertices = vec![
-            vertex!([1.0, -2.0, 3.0, -4.0]),
-            vertex!([-5.0, 6.0, -7.0, 8.0]),
-            vertex!([9.0, -10.0, 11.0, -12.0]),
-            vertex!([-13.0, 14.0, -15.0, 16.0]),
-            vertex!([17.0, -18.0, 19.0, -20.0]),
+            vertex!([1.0, -1.0, 1.0, -1.0]),
+            vertex!([2.0, -1.0, 1.0, -1.0]),
+            vertex!([1.0, -2.0, 1.0, -1.0]),
+            vertex!([1.0, -1.0, 2.0, -1.0]),
+            vertex!([1.0, -1.0, 1.0, -2.0]),
         ];
         let tds = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices).unwrap();
         let (_, cell) = tds.cells().next().unwrap();

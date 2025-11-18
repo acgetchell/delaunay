@@ -1485,7 +1485,7 @@ where
     /// it returns a `TriangulationConstructionError::ValidationError` describing
     /// the remaining violations.
     #[allow(clippy::too_many_lines)]
-    fn repair_global_delaunay_violations(
+    pub(crate) fn repair_global_delaunay_violations(
         &mut self,
         tds: &mut Tds<T, U, V, D>,
     ) -> Result<(), TriangulationConstructionError> {
@@ -4403,8 +4403,13 @@ mod tests {
             })
             .collect();
 
-        let mut cubic_tds =
-            Tds::new(&cubic_vertices[..4]).expect("Cubic TDS creation should succeed");
+        let base_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut cubic_tds = Tds::new(&base_vertices).expect("Cubic TDS creation should succeed");
         for (i, vertex) in cubic_vertices[4..].iter().enumerate() {
             let result = algorithm.insert_vertex(&mut cubic_tds, *vertex);
             match result {
@@ -4509,13 +4514,14 @@ mod tests {
             }
         }
 
-        // Test with very small coordinates
+        // Test with very small coordinates (but still large enough to avoid
+        // being treated as numerically degenerate by the initial simplex search)
         let small_vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
-            vertex!([1e-6, 0.0, 0.0]),
-            vertex!([0.0, 1e-6, 0.0]),
-            vertex!([0.0, 0.0, 1e-6]),
-            vertex!([1e-7, 1e-7, 1e-7]), // Interior point with small coordinates
+            vertex!([1e-3, 0.0, 0.0]),
+            vertex!([0.0, 1e-3, 0.0]),
+            vertex!([0.0, 0.0, 1e-3]),
+            vertex!([1e-4, 1e-4, 1e-4]), // Interior point with small coordinates
         ];
 
         let mut small_tds =

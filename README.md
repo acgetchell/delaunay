@@ -68,16 +68,16 @@ just --list           # See all available commands
 ```bash
 just examples         # Run all examples
 # Or run specific examples:
-cargo run --release --example triangulation_3d_100_points
-cargo run --release --example convex_hull_3d_100_points
+cargo run --release --example triangulation_3d_20_points
+cargo run --release --example convex_hull_3d_20_points
 ```
 
 ## 📋 Examples
 
 The `examples/` directory contains several demonstrations:
 
-- **`triangulation_3d_100_points`**: Complete 3D Delaunay triangulation with 100 random points
-- **`convex_hull_3d_100_points`**: 3D convex hull extraction and analysis with performance benchmarks
+- **`triangulation_3d_20_points`**: 3D Delaunay triangulation with a stable 20-point random configuration
+- **`convex_hull_3d_20_points`**: 3D convex hull extraction and analysis on the same 20-point configuration
 - **`into_from_conversions`**: Demonstrates Into/From trait conversions and utilities
 - **`point_comparison_and_hashing`**: Demonstrates point comparison and hashing behavior
 - **`memory_analysis`**: Memory usage analysis for triangulations across dimensions with allocation tracking

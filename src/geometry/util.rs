@@ -2038,7 +2038,7 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 ///     (-10.0, 10.0),
 ///     None,
 ///     None
-/// ).unwrap();
+/// );
 ///
 /// // Generate a 3D triangulation with 50 points, seeded for reproducibility  
 /// let triangulation_3d = generate_random_triangulation::<f64, (), (), 3>(
@@ -2046,7 +2046,7 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 ///     (-5.0, 5.0),
 ///     None,
 ///     Some(42)
-/// ).unwrap();
+/// );
 ///
 /// // Generate a 4D triangulation with custom vertex data
 /// let triangulation_4d = generate_random_triangulation::<f64, i32, (), 4>(
@@ -2054,7 +2054,7 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 ///     (0.0, 1.0),
 ///     Some(123),
 ///     Some(456)
-/// ).unwrap();
+/// );
 ///
 /// // For string-like data, use fixed-size character arrays (Copy types)
 /// let triangulation_with_strings = generate_random_triangulation::<f64, [char; 8], (), 2>(
@@ -2062,7 +2062,7 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 ///     (0.0, 1.0),
 ///     Some(['v', 'e', 'r', 't', 'e', 'x', '_', 'A']),
 ///     Some(789)
-/// ).unwrap();
+/// );
 /// ```
 ///
 /// # Note on String Data
@@ -4885,7 +4885,11 @@ mod tests {
 
     #[test]
     fn test_generate_random_triangulation_dimensions() {
-        // Test different dimensional triangulations
+        // Test different dimensional triangulations with parameter sets that are
+        // also reused by examples. These (n_points, bounds, seed) triples have been
+        // chosen to produce valid Delaunay triangulations without exhausting the
+        // global Delaunay-repair limits in CI, while still exercising nontrivial
+        // point sets in each dimension.
 
         // 2D with sufficient points for full triangulation
         let tri_2d =

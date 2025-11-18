@@ -1682,6 +1682,10 @@ where
             continue; // Cell was removed, skip
         };
 
+        // Validate cell structure first, mirroring `is_delaunay` semantics
+        cell.is_valid()
+            .map_err(|source| DelaunayValidationError::InvalidCell { source })?;
+
         // Get the cell's vertex set for exclusion
         let cell_vertex_keys: SmallVec<[VertexKey; 8]> = cell.vertices().iter().copied().collect();
 
@@ -1731,6 +1735,177 @@ where
     }
 
     Ok(violating_cells)
+}
+
+/// Debug helper: print detailed information about the first detected Delaunay
+/// violation (or all vertices if none are found) to aid in debugging.
+///
+/// This function is intended for use in tests and debug builds only. It uses the
+/// same robust predicates as [`is_delaunay`] / [`find_delaunay_violations`] and
+/// prints:
+/// - A triangulation summary (vertex and cell counts)
+/// - All vertices (keys, UUIDs, coordinates)
+/// - All violating cells' vertices
+/// - For the first violating cell:
+///   - At least one offending external vertex (if found)
+///   - Neighbor information for each facet
+#[cfg(any(test, debug_assertions))]
+#[allow(clippy::too_many_lines)]
+pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cells_subset: Option<&[CellKey]>,
+) where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
+    U: DataType,
+    V: DataType,
+{
+    use crate::geometry::robust_predicates::config_presets;
+
+    // First, find violating cells using the standard helper.
+    let violations = match find_delaunay_violations(tds, cells_subset) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "[Delaunay debug] debug_print_first_delaunay_violation: error while finding violations: {e}"
+            );
+            return;
+        }
+    };
+
+    eprintln!(
+        "[Delaunay debug] Triangulation summary: {} vertices, {} cells",
+        tds.number_of_vertices(),
+        tds.number_of_cells()
+    );
+
+    // Dump all input vertices once for reproducibility.
+    for (vkey, vertex) in tds.vertices() {
+        eprintln!(
+            "[Delaunay debug] Vertex {:?}: uuid={}, point={:?}",
+            vkey,
+            vertex.uuid(),
+            vertex.point()
+        );
+    }
+
+    if violations.is_empty() {
+        eprintln!("[Delaunay debug] No Delaunay violations detected for requested cell subset");
+        return;
+    }
+
+    eprintln!(
+        "[Delaunay debug] Delaunay violations detected in {} cell(s):",
+        violations.len()
+    );
+
+    // Reusable buffer for cell vertex points.
+    let mut cell_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
+
+    // Dump each violating cell with its vertices.
+    for cell_key in &violations {
+        match tds.get_cell(*cell_key) {
+            Some(cell) => {
+                eprintln!(
+                    "[Delaunay debug]  Cell {:?}: uuid={}, vertices:",
+                    cell_key,
+                    cell.uuid()
+                );
+                for &vkey in cell.vertices() {
+                    match tds.get_vertex_by_key(vkey) {
+                        Some(v) => {
+                            eprintln!(
+                                "[Delaunay debug]    vkey={:?}, uuid={}, point={:?}",
+                                vkey,
+                                v.uuid(),
+                                v.point()
+                            );
+                        }
+                        None => {
+                            eprintln!("[Delaunay debug]    vkey={vkey:?} (missing in TDS)");
+                        }
+                    }
+                }
+            }
+            None => {
+                eprintln!(
+                    "[Delaunay debug]  Cell {cell_key:?} not found in TDS during violation dump"
+                );
+            }
+        }
+    }
+
+    // Focus on the first violating cell to identify at least one offending
+    // external vertex and neighbor information.
+    let first_cell_key = violations[0];
+    let Some(cell) = tds.get_cell(first_cell_key) else {
+        eprintln!("[Delaunay debug] First violating cell {first_cell_key:?} not found in TDS");
+        return;
+    };
+
+    let cell_vertex_keys: SmallVec<[VertexKey; 8]> = cell.vertices().iter().copied().collect();
+
+    cell_vertex_points.clear();
+    for &vkey in &cell_vertex_keys {
+        if let Some(v) = tds.get_vertex_by_key(vkey) {
+            cell_vertex_points.push(*v.point());
+        }
+    }
+
+    let config = config_presets::general_triangulation::<T>();
+    let mut offending: Option<(VertexKey, Point<T, D>)> = None;
+
+    for (test_vkey, test_vertex) in tds.vertices() {
+        if cell_vertex_keys.contains(&test_vkey) {
+            continue;
+        }
+
+        match robust_insphere(&cell_vertex_points, test_vertex.point(), &config) {
+            Ok(InSphere::INSIDE) => {
+                offending = Some((test_vkey, *test_vertex.point()));
+                break;
+            }
+            Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) | Err(_) => {}
+        }
+    }
+
+    if let Some((off_vkey, off_point)) = offending {
+        eprintln!(
+            "[Delaunay debug]  Offending external vertex: vkey={off_vkey:?}, point={off_point:?}",
+        );
+    } else {
+        eprintln!(
+            "[Delaunay debug]  No offending external vertex found for first violating cell (possible degeneracy or removed vertices)"
+        );
+    }
+
+    // Neighbor information for the first violating cell.
+    if let Some(neighbors) = cell.neighbors() {
+        for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+            match neighbor_key_opt {
+                Some(neighbor_key) => {
+                    if let Some(neighbor_cell) = tds.get_cell(*neighbor_key) {
+                        eprintln!(
+                            "[Delaunay debug]  facet {facet_idx}: neighbor cell {neighbor_key:?}, uuid={}",
+                            neighbor_cell.uuid()
+                        );
+                    } else {
+                        eprintln!(
+                            "[Delaunay debug]  facet {facet_idx}: neighbor cell {neighbor_key:?} missing from TDS",
+                        );
+                    }
+                }
+                None => {
+                    eprintln!(
+                        "[Delaunay debug]  facet {facet_idx}: no neighbor (hull facet or unassigned)"
+                    );
+                }
+            }
+        }
+    } else {
+        eprintln!(
+            "[Delaunay debug]  First violating cell has no neighbors assigned (neighbors() == None)"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -2218,6 +2393,35 @@ mod tests {
     // FACET KEY UTILITIES TESTS
     // =============================================================================
 
+    #[test]
+    fn delaunay_validator_reports_no_violations_for_simple_tetrahedron() {
+        println!("Testing Delaunay validator and debug helper on a simple 3D tetrahedron");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Basic Delaunay helpers should report no violations.
+        assert!(
+            is_delaunay(&tds).is_ok(),
+            "Simple tetrahedron should be Delaunay"
+        );
+        let violations = find_delaunay_violations(&tds, None).unwrap();
+        assert!(
+            violations.is_empty(),
+            "find_delaunay_violations should report no violating cells for a tetrahedron"
+        );
+
+        // Smoke test for the debug helper: it should not panic and should print a
+        // summary indicating that no violations were found.
+        #[cfg(any(test, debug_assertions))]
+        debug_print_first_delaunay_violation(&tds, None);
+    }
     #[test]
     #[expect(clippy::too_many_lines)]
     fn test_derive_facet_key_from_vertex_keys_comprehensive() {

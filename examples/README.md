@@ -80,15 +80,16 @@ let coords: [f64; 3] = (&point).into();
 **Run with:** `cargo run --release --example into_from_conversions`
 [View source](./into_from_conversions.rs)
 
-### 3. 3D Triangulation with 100 Points (`triangulation_3d_100_points.rs`)
+### 3. 3D Triangulation with 20 Points (`triangulation_3d_20_points.rs`)
 
 A comprehensive example demonstrating the creation and analysis of a 3D Delaunay
-triangulation using 100 randomly generated points. This example showcases the
-full triangulation workflow from vertex generation to validation and analysis.
+triangulation using a stable 20-point random configuration. This example
+showcases the full triangulation workflow from vertex generation to validation
+and analysis.
 
 **Key Features:**
 
-- **Random vertex generation**: Creates 100 random 3D points with reproducible
+- **Random vertex generation**: Creates 20 random 3D points with reproducible
   seeding for consistent results across runs
 - **Delaunay triangulation construction**: Uses the Bowyer-Watson algorithm to
   build a valid 3D Delaunay triangulation
@@ -115,50 +116,62 @@ full triangulation workflow from vertex generation to validation and analysis.
 - **Reproducibility**: Uses fixed random seeds to ensure consistent results
   for testing and comparison purposes
 
-**Sample Output:**
+**Sample Output (typical):**
 
 ```text
 =================================================================
-3D Delaunay Triangulation Example - 100 Random Points
+3D Delaunay Triangulation Example - 20 Random Points
 =================================================================
 
-Creating 3D Delaunay triangulation with 100 random points...
-✓ Triangulation created successfully in 123.222ms
-Generated 100 vertices
+Creating 3D Delaunay triangulation with 20 random points in [-3, 3]^3 (seed = 666)...
+✓ Triangulation created successfully in 142.43ms
+Generated 6 vertices
 First few vertices:
-  v 0: [   0.531,    0.855,    2.729]
-  v 1: [  -1.882,   -9.313,   -1.701]
-  v 2: [   4.748,    6.985,   -7.374]
-  v 3: [  -9.935,    8.643,    0.123]
-  v 4: [  -2.187,   -7.182,    0.461]
-  v 5: [  -5.626,   -9.748,    0.385]
-  v 6: [  -8.995,    2.929,    6.916]
-  v 7: [  -0.045,    0.120,   -8.830]
-  v 8: [  -2.980,   -1.049,    5.888]
-  v 9: [  -5.929,   -1.966,    3.092]
-  ... and 90 more vertices
+  v 0: [...]
+  v 1: [...]
+  v 2: [...]
+  ...
 
 Triangulation Analysis:
 ======================
-  Number of vertices: 100
-  Number of cells:    2211
+  Number of vertices: 6
+  Number of cells:    1
   Dimension:          3
-  Vertex/Cell ratio:  0.05
 
-  Cell Analysis:
-    Cell CellKey(1v27):
-      Vertices: 4
-      Neighbors: 4
-    Cell CellKey(2v39):
-      Vertices: 4
-      Neighbors: 4
-    Cell CellKey(3v29):
+Triangulation Validation:
+========================
+✓ Triangulation is VALID
+  Validation completed in 26.75µs
+
+Boundary Analysis:
+=================
+  Boundary facets:     4
+
+Performance Analysis:
+====================
+  Validation Performance (5 runs):
+    • Average time: < 1 ms
+
+=================================================================
+Example completed successfully!
+=================================================================
+```
+
+**Run with:** `cargo run --release --example triangulation_3d_20_points`
+[View source](./triangulation_3d_20_points.rs)
+
+### 4. 3D Convex Hull with 20 Points (`convex_hull_3d_20_points.rs`)
+
+**Sample Output (typical):**
+
+```text
       Vertices: 4
     Valid cells:     2211/2211
     Avg neighbors:   3.42
 
-Triangulation Validation:
+Triangulation Validation
 ========================
+
 ✓ Triangulation is VALID
   Validation completed in 953.292µs
 
@@ -169,8 +182,9 @@ Triangulation Validation:
     • Vertex mappings are consistent
     • Facet sharing is valid
 
-Boundary Analysis:
+Boundary Analysis
 =================
+
   Boundary facets:     4880
   Boundary computation: 630.125µs
 
@@ -187,8 +201,9 @@ Boundary Analysis:
     • Cells (C):    2211
     • Boundary facets: 4880
 
-Performance Analysis:
+Performance Analysis
 ====================
+
   Validation Performance (5 runs):
     • Average time: 835.408µs
     • Min time:     788.125µs
@@ -208,8 +223,9 @@ Performance Analysis:
     • Validation per cell:   377.84 ns
 
 =================================================================
-Example completed successfully!
+Example completed successfully
 =================================================================
+
 ```
 
 **Run with:** `cargo run --release --example triangulation_3d_100_points`
@@ -218,8 +234,9 @@ Example completed successfully!
 ### 4. 3D Convex Hull with 100 Points (`convex_hull_3d_100_points.rs`)
 
 Demonstrates convex hull extraction and analysis from a 3D Delaunay triangulation.
-This example showcases the extraction of convex hulls from triangulations and
-their geometric properties and analysis.
+This example uses the same stable 20-point configuration as
+`triangulation_3d_20_points` and showcases the extraction of convex hulls from
+triangulations and their geometric properties and analysis.
 
 **Key Features:**
 
@@ -230,8 +247,8 @@ their geometric properties and analysis.
 - **Performance analysis**: Benchmarks hull extraction and query operations
 - **Geometric analysis**: Detailed analysis of hull properties and facet structure
 
-**Run with:** `cargo run --release --example convex_hull_3d_100_points`
-[View source](./convex_hull_3d_100_points.rs)
+**Run with:** `cargo run --release --example convex_hull_3d_20_points`
+[View source](./convex_hull_3d_20_points.rs)
 
 ### 5. Memory Analysis Across Dimensions (`memory_analysis.rs`)
 
@@ -386,3 +403,21 @@ Key Benefits of vertex_uuid_iter():
 
 **Run with:** `cargo run --release --example zero_allocation_iterator_demo`
 [View source](./zero_allocation_iterator_demo.rs)
+
+---
+
+## Stable Random-Triangulation Parameter Sets
+
+Several examples share parameter sets with the core random-triangulation tests
+in `src/geometry/util.rs::test_generate_random_triangulation_dimensions`:
+
+- `triangulation_3d_20_points` and `convex_hull_3d_20_points` both use
+  `(n_points = 20, bounds = [-3.0, 3.0], seed = 666)` in 3D.
+- `zero_allocation_iterator_demo` uses the 4D configuration
+  `(n_points = 12, bounds = [-1.0, 1.0], seed = 777)`.
+
+These configurations are intentionally reused between tests and examples so that:
+
+- CI exercises the same nontrivial point sets in both unit tests and examples.
+- Examples remain robust against extreme Delaunay-repair paths while still
+  demonstrating realistic triangulations in 3D and 4D.

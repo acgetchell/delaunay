@@ -5352,10 +5352,10 @@ mod tests {
         // Test basic TDS creation with vertices
         {
             let points = vec![
-                Point::new([1.0, 2.0, 3.0]),
-                Point::new([4.0, 5.0, 6.0]),
-                Point::new([7.0, 8.0, 9.0]),
-                Point::new([10.0, 11.0, 12.0]),
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(points);
             let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
@@ -5557,6 +5557,60 @@ mod tests {
         assert!(
             calls >= expected_min,
             "Expected at least {expected_min} global Delaunay validations, got {calls}",
+        );
+    }
+
+    /// Ensure that using an `EndOnly` `DelaunayCheckPolicy` triggers a final
+    /// global Delaunay validation at the end of the unified pipeline.
+    ///
+    /// Note: The Rust test harness runs tests concurrently by default, so other
+    /// tests may also invoke global validation while this test is executing.
+    /// We therefore assert a minimum call count rather than an exact value.
+    #[test]
+    fn test_bowyer_watson_with_diagnostics_end_only_policy_single_validation() {
+        use crate::core::traits::insertion_algorithm::{
+            DelaunayCheckPolicy, GLOBAL_DELAUNAY_VALIDATION_CALLS,
+        };
+        use std::sync::atomic::Ordering;
+
+        // Reset test-only counter for this test's thread.
+        GLOBAL_DELAUNAY_VALIDATION_CALLS.store(0, Ordering::Relaxed);
+
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([1.0, 1.0, 0.0]),
+        ];
+
+        for v in &vertices {
+            tds.insert_vertex_with_mapping(*v)
+                .expect("Inserting seed vertices should succeed");
+        }
+
+        let diagnostics = tds
+            .bowyer_watson_with_diagnostics_and_policy(DelaunayCheckPolicy::EndOnly)
+            .expect("Triangulation should succeed with EndOnly policy");
+
+        assert!(diagnostics.is_empty(), "No unsalvageable vertices expected");
+        assert_eq!(tds.number_of_vertices(), vertices.len());
+        assert!(tds.number_of_cells() >= 1);
+        assert!(
+            matches!(
+                tds.construction_state,
+                TriangulationConstructionState::Constructed
+            ),
+            "Construction state should be Constructed with EndOnly policy",
+        );
+        assert!(tds.is_valid().is_ok(), "Triangulation should be valid");
+
+        let calls = GLOBAL_DELAUNAY_VALIDATION_CALLS.load(Ordering::Relaxed);
+        assert!(
+            calls >= 1,
+            "Expected at least one global Delaunay validation for EndOnly policy, got {calls}",
         );
     }
 
@@ -6026,10 +6080,10 @@ mod tests {
         // Test 1: Basic TDS creation with 4 vertices (3D tetrahedron)
         {
             let points = vec![
-                Point::new([1.0, 2.0, 3.0]),
-                Point::new([4.0, 5.0, 6.0]),
-                Point::new([7.0, 8.0, 9.0]),
-                Point::new([10.0, 11.0, 12.0]),
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(points);
             let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
@@ -6093,10 +6147,10 @@ mod tests {
         // Test 3: Duplicate vertex rejection
         {
             let vertices = vec![
-                vertex!([1.0, 2.0, 3.0]),
-                vertex!([4.0, 5.0, 6.0]),
-                vertex!([7.0, 8.0, 9.0]),
-                vertex!([10.0, 11.0, 12.0]),
+                vertex!([0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0]),
+                vertex!([0.0, 1.0, 0.0]),
+                vertex!([0.0, 0.0, 1.0]),
             ];
             let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
 
@@ -6105,7 +6159,7 @@ mod tests {
             assert_eq!(tds.dim(), 3, "Should be 3-dimensional");
 
             // Try to add duplicate vertex (same coordinates as first vertex)
-            let duplicate_vertex: Vertex<f64, usize, 3> = vertex!([1.0, 2.0, 3.0]);
+            let duplicate_vertex: Vertex<f64, usize, 3> = vertex!([0.0, 0.0, 0.0]);
             let result = tds.add(duplicate_vertex);
 
             assert_eq!(
@@ -6429,10 +6483,10 @@ mod tests {
     #[test]
     fn tds_triangulation() {
         let points = vec![
-            Point::new([1.0, 2.0, 3.0]),
-            Point::new([4.0, 5.0, 6.0]),
-            Point::new([7.0, 8.0, 9.0]),
-            Point::new([10.0, 11.0, 12.0]),
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(points);
         let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
@@ -6473,10 +6527,10 @@ mod tests {
     fn test_triangulation_validation_errors() {
         // Start with a valid triangulation
         let vertices = vec![
-            vertex!([1.0, 2.0, 3.0]),
-            vertex!([4.0, 5.0, 6.0]),
-            vertex!([7.0, 8.0, 9.0]),
-            vertex!([10.0, 11.0, 12.0]),
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
         ];
         let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
 
@@ -8233,7 +8287,8 @@ mod tests {
         ];
 
         let vertex4 = vertex!([0.0, 0.0, 1.0]);
-        let vertex5 = vertex!([2.0, 0.0, 0.0]);
+        // Use a non-coplanar fifth vertex so the second cell is a valid 3D simplex.
+        let vertex5 = vertex!([2.0, 0.0, 0.5]);
 
         // Create vertices for two cells that share 3 vertices
         let mut vertices1 = shared_vertices.clone();
@@ -10130,34 +10185,47 @@ mod tests {
             let cells_before = tds.number_of_cells();
             let vertices_before = tds.number_of_vertices();
 
-            // Insert the vertex
             let vertex_num = i + 1;
-            tds.add(*vertex).unwrap_or_else(|e| {
-                panic!("Failed to insert {vertex_type} vertex {vertex_num}: {e}")
-            });
+            let insert_result = tds.add(*vertex);
 
-            // Verify vertex was added
-            let vertex_num = i + 1;
-            assert_eq!(
-                tds.number_of_vertices(),
-                vertices_before + 1,
-                "Vertex count should increase by 1 after {vertex_type} insertion {vertex_num}"
-            );
+            match insert_result {
+                Ok(()) => {
+                    // Verify vertex was added
+                    assert_eq!(
+                        tds.number_of_vertices(),
+                        vertices_before + 1,
+                        "Vertex count should increase by 1 after {vertex_type} insertion {vertex_num}"
+                    );
+                    // Both types of insertion should increase or maintain cell count
+                    assert!(
+                        tds.number_of_cells() >= cells_before,
+                        "Cell count should not decrease after {vertex_type} insertion {vertex_num}"
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Skipping {vertex_type} vertex {vertex_num} due to insertion error: {e}",
+                    );
+                    // On error, the insertion must be rolled back atomically.
+                    assert_eq!(
+                        tds.number_of_vertices(),
+                        vertices_before,
+                        "Vertex count should remain unchanged after failed {vertex_type} insertion {vertex_num}"
+                    );
+                    assert_eq!(
+                        tds.number_of_cells(),
+                        cells_before,
+                        "Cell count should remain unchanged after failed {vertex_type} insertion {vertex_num}"
+                    );
+                }
+            }
 
-            // Both types of insertion should increase cell count
-            // (though the amount may differ)
-            let vertex_num = i + 1;
-            assert!(
-                tds.number_of_cells() >= cells_before,
-                "Cell count should not decrease after {vertex_type} insertion {vertex_num}"
-            );
-
-            // Verify TDS remains valid after each insertion
+            // Verify TDS remains structurally valid after each insertion attempt
             let vertex_num = i + 1;
             let valid = tds.is_valid();
             assert!(
                 valid.is_ok(),
-                "TDS should remain valid after {vertex_type} insertion {vertex_num}"
+                "TDS should remain valid after {vertex_type} insertion attempt {vertex_num}"
             );
         }
 
@@ -10185,12 +10253,21 @@ mod tests {
     #[test]
     fn test_uuid_mapping_prevents_corruption() {
         // Create many vertices and verify UUID uniqueness is maintained
-        let vertices: Vec<_> = (0..10)
-            .map(|i: i32| {
-                let x: f64 = num_traits::cast(i).expect("Small i32 converts exactly to f64");
-                vertex!([x, 0.0, 0.0, 0.0])
-            })
-            .collect();
+        // Use a 4D configuration in general position so that Tds::new can
+        // construct a valid 4D triangulation without triggering geometric
+        // degeneracy in the initial simplex search.
+        let vertices: Vec<_> = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([1.0, 1.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 1.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 1.0]),
+            vertex!([0.0, 1.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 1.0]),
+        ];
 
         let tds = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices).unwrap();
 

@@ -506,6 +506,9 @@ pub struct InsertionStatistics {
     pub total_cells_removed: usize,
     /// Number of times fallback strategies were used
     pub fallback_strategies_used: usize,
+    /// Number of vertices that were explicitly skipped as unsalvageable
+    /// (for example, due to recoverable geometric failures).
+    pub skipped_vertices: usize,
     /// Number of degenerate cases handled
     pub degenerate_cases_handled: usize,
     /// Number of cavity boundary detection failures
@@ -527,6 +530,7 @@ impl InsertionStatistics {
             total_cells_created: 0,
             total_cells_removed: 0,
             fallback_strategies_used: 0,
+            skipped_vertices: 0,
             degenerate_cases_handled: 0,
             cavity_boundary_failures: 0,
             cavity_boundary_recoveries: 0,
@@ -540,7 +544,7 @@ impl InsertionStatistics {
         *self = Self::new();
     }
 
-    /// Record a successful vertex insertion
+    /// Record a vertex insertion attempt and its outcome.
     pub const fn record_vertex_insertion(&mut self, info: &InsertionInfo) {
         self.vertices_processed += 1;
         self.total_cells_created += info.cells_created;
@@ -548,6 +552,10 @@ impl InsertionStatistics {
 
         if info.degenerate_case_handled {
             self.degenerate_cases_handled += 1;
+        }
+
+        if matches!(info.strategy, InsertionStrategy::Skip) {
+            self.skipped_vertices += 1;
         }
 
         match info.strategy {
@@ -623,7 +631,8 @@ impl InsertionStatistics {
 pub(crate) enum NearDuplicateMode {
     /// Use a scalar Euclidean distance threshold ‖p - q‖ < ε.
     ScalarEuclidean,
-    /// Use a per-coordinate threshold |p_i - q_i| < ε for all components.
+    #[allow(dead_code)]
+    /// Use a per-coordinate threshold `|p_i - q_i|` < ε for all components.
     PerCoordinate,
 }
 
@@ -1582,18 +1591,18 @@ where
 
 /// Policy controlling when global Delaunay validation/repair runs for a triangulation.
 ///
-/// This is currently wired only to the final global Delaunay validation step
-/// (equivalent to the previous behavior). Future work will extend this to
-/// support periodic validation/repair during incremental insertion.
+/// The policy itself does not perform validation; it is interpreted by insertion
+/// algorithms and pipelines (for example, the unified insertion pipeline used by
+/// `Tds::bowyer_watson_with_diagnostics_and_policy`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DelaunayCheckPolicy {
     /// Run a single global Delaunay validation/repair pass at the end of
-    /// `triangulate`. This matches the pre-policy behavior.
+    /// triangulation. This matches the legacy behavior.
     EndOnly,
-    /// Run global Delaunay validation/repair after every N successful
-    /// insertions. This variant is currently a placeholder; insertion
-    /// algorithms treat it the same as `EndOnly` until cadence support is
-    /// implemented.
+    /// Run global Delaunay validation/repair after every N successful insertions,
+    /// in addition to a final pass at the end. The unified insertion pipeline
+    /// uses this to schedule periodic calls into the global validator while
+    /// preserving the final validation step.
     EveryN(NonZeroUsize),
 }
 
@@ -3339,63 +3348,14 @@ where
             })?;
 
         if !violations.is_empty() {
-            // Debug output: summarize vertices and violating cells for diagnostics.
-            eprintln!(
-                "[Delaunay debug] Triangulation summary: {} vertices, {} cells",
-                tds.number_of_vertices(),
-                tds.number_of_cells()
-            );
-
-            // Dump all input vertices once for reproducibility.
-            for (vkey, vertex) in tds.vertices() {
-                eprintln!(
-                    "[Delaunay debug] Vertex {:?}: uuid={}, point={:?}",
-                    vkey,
-                    vertex.uuid(),
-                    vertex.point()
-                );
-            }
-
-            // Dump each violating cell with its vertices.
-            eprintln!(
-                "[Delaunay debug] Delaunay violations detected in {} cell(s):",
-                violations.len()
-            );
-            for cell_key in &violations {
-                match tds.get_cell(*cell_key) {
-                    Some(cell) => {
-                        eprintln!(
-                            "[Delaunay debug]  Cell {:?}: uuid={}, vertices:",
-                            cell_key,
-                            cell.uuid()
-                        );
-                        for &vkey in cell.vertices() {
-                            match tds.get_vertex_by_key(vkey) {
-                                Some(v) => {
-                                    eprintln!(
-                                        "[Delaunay debug]    vkey={:?}, uuid={}, point={:?}",
-                                        vkey,
-                                        v.uuid(),
-                                        v.point()
-                                    );
-                                }
-                                None => {
-                                    eprintln!("[Delaunay debug]    vkey={vkey:?} (missing in TDS)");
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        eprintln!(
-                            "[Delaunay debug]  Cell {cell_key:?} not found in TDS during violation dump"
-                        );
-                    }
-                }
+            // Debug-only: print detailed information about the first violation and
+            // overall triangulation state. This is compiled out in release builds.
+            #[cfg(any(test, debug_assertions))]
+            {
+                crate::core::util::debug_print_first_delaunay_violation(tds, Some(&violations));
             }
 
             // Run structural validation (without Delaunay) to see if any other
-            // invariants are violated. This is diagnostic-only and helps
-            // distinguish "pure" Delaunay failures from deeper structural issues.
             let structural_summary = match tds.validation_report(ValidationOptions {
                 check_delaunay: false,
             }) {
@@ -3454,8 +3414,9 @@ where
 
     /// Run global Delaunay validation/repair according to the given policy.
     ///
-    /// For now, both `EndOnly` and `EveryN(_)` are treated as a single final
-    /// validation pass, so behavior matches the pre-policy implementation.
+    /// Callers are responsible for deciding *when* to invoke this helper based on
+    /// their chosen [`DelaunayCheckPolicy`]; each call performs at most a single
+    /// global Delaunay validation pass and is a no-op for zero-cell triangulations.
     ///
     /// # Errors
     ///
@@ -3468,12 +3429,19 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + Sum + NumCast,
     {
+        #[cfg(test)]
+        {
+            GLOBAL_DELAUNAY_VALIDATION_CALLS.fetch_add(1, Ordering::Relaxed);
+        }
+
+        // Zero-cell triangulations (e.g., Stage 1 degeneracy fallback) have no
+        // Delaunay constraints to validate, so skip global validation entirely.
+        if tds.number_of_cells() == 0 {
+            return Ok(());
+        }
+
         match policy {
             DelaunayCheckPolicy::EndOnly | DelaunayCheckPolicy::EveryN(_) => {
-                #[cfg(test)]
-                {
-                    GLOBAL_DELAUNAY_VALIDATION_CALLS.fetch_add(1, Ordering::Relaxed);
-                }
                 Self::validate_no_delaunay_violations(tds)
             }
         }
@@ -6439,24 +6407,21 @@ mod tests {
         assert!(display_with_total.contains("Too many degenerate circumspheres (8/12)"));
     }
 
-    /// Test `InsertionStatistics` comprehensive functionality
-    #[test]
-    fn test_insertion_statistics_comprehensive() {
-        let mut stats = InsertionStatistics::new();
-
-        // Test initial state
+    fn assert_initial_insertion_statistics(stats: &InsertionStatistics) {
         assert_eq!(stats.vertices_processed, 0);
         assert_eq!(stats.total_cells_created, 0);
         assert_eq!(stats.total_cells_removed, 0);
         assert_eq!(stats.fallback_strategies_used, 0);
+        assert_eq!(stats.skipped_vertices, 0);
         assert_abs_diff_eq!(
             stats.cavity_boundary_success_rate(),
             1.0,
             epsilon = f64::EPSILON
         ); // No attempts = 100%
         assert_abs_diff_eq!(stats.fallback_usage_rate(), 0.0, epsilon = f64::EPSILON);
+    }
 
-        // Test recording various insertion types
+    fn record_sample_insertions(stats: &mut InsertionStatistics) {
         let cavity_info = InsertionInfo {
             strategy: InsertionStrategy::CavityBased,
             cells_removed: 3,
@@ -6483,16 +6448,18 @@ mod tests {
             degenerate_case_handled: false,
         };
         stats.record_vertex_insertion(&fallback_info);
+    }
 
-        // Verify statistics
+    fn assert_post_insertion_statistics(stats: &InsertionStatistics) {
         assert_eq!(stats.vertices_processed, 3);
         assert_eq!(stats.total_cells_created, 9); // 5 + 2 + 2
         assert_eq!(stats.total_cells_removed, 4); // 3 + 0 + 1
         assert_eq!(stats.hull_extensions, 1);
         assert_eq!(stats.fallback_strategies_used, 1);
         assert_eq!(stats.degenerate_cases_handled, 1);
+    }
 
-        // Test manual recording methods
+    fn exercise_manual_stat_updates(stats: &mut InsertionStatistics) {
         stats.record_fallback_usage();
         assert_eq!(stats.fallback_strategies_used, 2);
 
@@ -6501,8 +6468,9 @@ mod tests {
 
         stats.record_cavity_boundary_recovery();
         assert_eq!(stats.cavity_boundary_recoveries, 1);
+    }
 
-        // Test success rate calculations
+    fn assert_rate_metrics(stats: &InsertionStatistics) {
         let success_rate = stats.cavity_boundary_success_rate();
         let expected_rate = (3.0 - 1.0) / 3.0; // (processed - failures) / processed
         assert_abs_diff_eq!(success_rate, expected_rate, epsilon = f64::EPSILON);
@@ -6514,18 +6482,59 @@ mod tests {
             expected_fallback_rate,
             epsilon = f64::EPSILON
         );
+    }
 
-        // Test basic tuple conversion
+    fn assert_basic_tuple_conversion(stats: &InsertionStatistics) {
         let (processed, created, removed) = stats.as_basic_tuple();
         assert_eq!(processed, 3);
         assert_eq!(created, 9);
         assert_eq!(removed, 4);
+    }
 
-        // Test reset
+    fn assert_reset_behavior(stats: &mut InsertionStatistics) {
         stats.reset();
         assert_eq!(stats.vertices_processed, 0);
         assert_eq!(stats.total_cells_created, 0);
         assert_eq!(stats.fallback_strategies_used, 0);
+        assert_eq!(stats.skipped_vertices, 0);
+    }
+
+    /// Test `InsertionStatistics` comprehensive functionality
+    #[test]
+    fn test_insertion_statistics_comprehensive() {
+        let mut stats = InsertionStatistics::new();
+
+        assert_initial_insertion_statistics(&stats);
+
+        record_sample_insertions(&mut stats);
+        assert_post_insertion_statistics(&stats);
+
+        exercise_manual_stat_updates(&mut stats);
+        assert_rate_metrics(&stats);
+        assert_basic_tuple_conversion(&stats);
+
+        assert_reset_behavior(&mut stats);
+    }
+
+    /// Test that running global validation on a zero-cell TDS is a no-op.
+    #[test]
+    fn test_run_global_delaunay_validation_with_policy_zero_cells_noop() {
+        use crate::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
+        use crate::core::triangulation_data_structure::Tds;
+
+        type Alg = IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3>;
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+
+        let result = <Alg as InsertionAlgorithm<f64, Option<()>, Option<()>, 3>>::run_global_delaunay_validation_with_policy(
+            &tds,
+            DelaunayCheckPolicy::EndOnly,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Global Delaunay validation on a zero-cell TDS should be a no-op",
+        );
     }
 
     /// Test `InsertionBuffers` functionality
@@ -7468,6 +7477,43 @@ mod tests {
             }
             other => panic!("Expected DuplicateWithinTolerance classification, got: {other:?}",),
         }
+    }
+
+    /// Test that the per-coordinate tolerance mode classifies near duplicates differently from the scalar mode.
+    #[test]
+    fn test_vertex_classification_per_coordinate_mode() {
+        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+
+        let base: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+        tds.insert_vertex_with_mapping(base).unwrap();
+
+        let candidate: Vertex<f64, Option<()>, 2> = vertex!([9e-3, 9e-3]);
+
+        let per_coordinate_tolerance = NearDuplicateTolerance {
+            epsilon: 1e-2,
+            mode: NearDuplicateMode::PerCoordinate,
+        };
+        let scalar_tolerance = NearDuplicateTolerance {
+            epsilon: 1e-2,
+            mode: NearDuplicateMode::ScalarEuclidean,
+        };
+
+        let per_coordinate_classification =
+            classify_vertex_against_tds_with_tolerance(&tds, &candidate, per_coordinate_tolerance);
+        match per_coordinate_classification {
+            VertexClassification::DuplicateWithinTolerance { .. } => {}
+            other => {
+                panic!("Expected DuplicateWithinTolerance with per-coordinate mode, got: {other:?}")
+            }
+        }
+
+        let scalar_classification =
+            classify_vertex_against_tds_with_tolerance(&tds, &candidate, scalar_tolerance);
+        assert_eq!(
+            scalar_classification,
+            VertexClassification::Unique,
+            "Scalar mode should treat this vertex as unique because ‖candidate‖ > epsilon"
+        );
     }
 
     /// Test classification of degenerate collinear vertices in 2D.
@@ -9314,59 +9360,62 @@ mod tests {
 
         /// Property: Filter operations should never increase facet count
         #[test]
-        fn prop_filter_never_increases_count(vertex_count in 4usize..10) {
-            // Create vertices
-            #[expect(clippy::cast_precision_loss)]
-            let vertices: Vec<_> = (0..vertex_count)
-                .map(|i| vertex!([(i as f64), 0.0, 0.0]))
-                .collect();
+        fn prop_filter_never_increases_count(_vertex_count in 4usize..10) {
+            // Use a fixed non-degenerate 3D tetrahedron as the base triangulation;
+            // the specific coordinates are irrelevant for this property.
+            let base_vertices = vec![
+                vertex!([0.0, 0.0, 0.0]),
+                vertex!([1.0, 0.0, 0.0]),
+                vertex!([0.0, 1.0, 0.0]),
+                vertex!([0.0, 0.0, 1.0]),
+            ];
+            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&base_vertices).unwrap();
+            let cell_key = tds.cell_keys().next().unwrap();
+            let vk_list: Vec<_> = tds.vertex_keys().collect();
 
-            if vertices.len() >= 4 {
-                let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices[..4]).unwrap();
-                let cell_key = tds.cell_keys().next().unwrap();
-                let vk_list: Vec<_> = tds.vertex_keys().collect();
-
-                // Create boundary infos
-                let mut infos = Vec::new();
-                for (i, _) in vk_list[..3].iter().enumerate() {
-                    let mut facet_vks = SmallBuffer::new();
-                    for (j, &vk) in vk_list[..3].iter().enumerate() {
-                        if j != i {
-                            facet_vks.push(vk);
-                        }
+            // Create boundary infos
+            let mut infos = Vec::new();
+            for (i, _) in vk_list[..3].iter().enumerate() {
+                let mut facet_vks = SmallBuffer::new();
+                for (j, &vk) in vk_list[..3].iter().enumerate() {
+                    if j != i {
+                        facet_vks.push(vk);
                     }
-                    facet_vks.push(vk_list[3]);
-
-                    infos.push(BoundaryFacetInfo {
-                        bad_cell: cell_key,
-                        bad_facet_index: i,
-                        facet_vertex_keys: facet_vks,
-                        outside_neighbor: None,
-                    });
                 }
+                facet_vks.push(vk_list[3]);
 
-                let initial_count = infos.len();
-                let new_vk = vk_list[0]; // Use existing vertex
-
-                // Convert to SmallBuffer
-                let mut infos_buffer: SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE> = SmallBuffer::new();
-                for info in infos {
-                    infos_buffer.push(info);
-                }
-
-                let filtered = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::filter_boundary_facets_by_valid_facet_sharing(
-                    &tds,
-                    infos_buffer,
-                    new_vk,
-                    true,  // For this test, assume cavity-based insertion
-                    false, // Initial insertion phase
-                )
-                .expect("Filter should succeed");
-
-                prop_assert!(filtered.len() <= initial_count,
-                    "Filter should never increase facet count: {initial_count} -> {}",
-                    filtered.len());
+                infos.push(BoundaryFacetInfo {
+                    bad_cell: cell_key,
+                    bad_facet_index: i,
+                    facet_vertex_keys: facet_vks,
+                    outside_neighbor: None,
+                });
             }
+
+            let initial_count = infos.len();
+            let new_vk = vk_list[0]; // Use existing vertex
+
+            // Convert to SmallBuffer
+            let mut infos_buffer: SmallBuffer<BoundaryFacetInfo, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::new();
+            for info in infos {
+                infos_buffer.push(info);
+            }
+
+            let filtered = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::filter_boundary_facets_by_valid_facet_sharing(
+                &tds,
+                infos_buffer,
+                new_vk,
+                true,  // For this test, assume cavity-based insertion
+                false, // Initial insertion phase
+            )
+            .expect("Filter should succeed");
+
+            prop_assert!(
+                filtered.len() <= initial_count,
+                "Filter should never increase facet count: {initial_count} -> {}",
+                filtered.len()
+            );
         }
 
         /// Property: Saturating arithmetic should not panic

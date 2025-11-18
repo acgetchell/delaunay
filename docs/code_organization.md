@@ -65,14 +65,14 @@ delaunay/
 │   │   ├── quality.rs                            # Mesh quality metrics and analysis
 │   │   ├── robust_predicates.rs                  # Robust geometric predicates
 │   │   └── util.rs                               # Geometric utility functions
-│   └── lib.rs                                    # Main library file with module declarations and prelude
-├── examples/                                     # Usage examples and demonstrations
-│   ├── README.md                                 # Examples documentation
-│   ├── convex_hull_3d_100_points.rs              # 3D convex hull extraction and analysis example
-│   ├── into_from_conversions.rs                  # Into/From trait conversion examples
-│   ├── memory_analysis.rs                        # Memory usage analysis example with allocation counting
-│   ├── point_comparison_and_hashing.rs           # Point operations examples
-│   ├── triangulation_3d_100_points.rs            # 3D triangulation example
+│   ├── examples/                                     # Usage examples and demonstrations
+│   │   ├── README.md                                 # Examples documentation
+│   │   ├── convex_hull_3d_20_points.rs               # 3D convex hull extraction and analysis example (20-point stable config)
+│   │   ├── into_from_conversions.rs                  # Into/From trait conversion examples
+│   │   ├── memory_analysis.rs                        # Memory usage analysis example with allocation counting
+│   │   ├── point_comparison_and_hashing.rs           # Point operations examples
+│   │   ├── triangulation_3d_20_points.rs             # 3D triangulation example (20-point stable config)
+│   │   └── zero_allocation_iterator_demo.rs          # Zero-allocation iterator performance demonstration
 │   └── zero_allocation_iterator_demo.rs          # Zero-allocation iterator performance demonstration
 ├── benches/                                      # Performance benchmarks
 │   ├── README.md                                 # Benchmarking guide and usage instructions
@@ -91,6 +91,7 @@ delaunay/
 │   ├── circumsphere_debug_tools.rs               # Interactive circumsphere testing and debugging utilities
 │   ├── convex_hull_bowyer_watson_integration.rs  # Integration tests for convex hull and Bowyer-Watson
 │   ├── coordinate_conversion_errors.rs           # Coordinate conversion error handling tests
+│   ├── debug_delaunay_violation_5d.rs            # Deterministic reproduction of a known 5D Delaunay violation
 │   ├── integration_robust_bowyer_watson.rs       # Integration tests for robust Bowyer-Watson algorithm
 │   ├── proptest_bowyer_watson.rs                 # Property-based tests for Bowyer-Watson vertex insertion (2D-5D)
 │   ├── proptest_cell.rs                          # Property-based tests for Cell data structure
@@ -110,6 +111,7 @@ delaunay/
 │   ├── proptest_invariants.rs                    # Additional property-based invariants and consistency checks
 │   ├── robust_predicates_comparison.rs           # Robust vs standard predicates comparison tests
 │   ├── robust_predicates_showcase.rs             # Robust predicates demonstration tests
+│   ├── regression_delaunay_known_configs.rs      # Regression tests for canonical Delaunay-violation point sets
 │   ├── serialization_vertex_preservation.rs      # Serialization vertex UUID preservation tests
 │   ├── storage_backend_compatibility.rs          # Storage backend (SlotMap) compatibility tests
 │   ├── tds_basic_integration.rs                  # Basic TDS creation, neighbor assignment, and validation tests
@@ -198,6 +200,32 @@ cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocap
 cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
 # Or run all debug tests at once
 cargo test --test circumsphere_debug_tools -- --nocapture
+```
+
+**Note**: Delaunay-specific regression and debug harnesses live in:
+
+- `tests/debug_delaunay_violation_5d.rs` – deterministic reproduction of a
+  known 5D Delaunay violation, used to inspect violating cells and witness
+  vertices via `debug_print_first_delaunay_violation`.
+- `tests/regression_delaunay_known_configs.rs` – macro-based regression tests
+  for canonical Delaunay-violation point sets (currently 5D), kept `#[ignore]`
+  until the insertion pipeline is fixed.
+- `src/core/algorithms/unified_insertion_pipeline.rs` (test module) – contains
+  the stepwise unified-insertion debug test
+  `debug_5d_stepwise_insertion_of_seventh_vertex` and the generic helper
+  `run_stepwise_unified_insertion_debug` for 2D–5D.
+
+Example invocations:
+
+```bash
+# Run the 5D debug harness (ignored by default)
+cargo test --test debug_delaunay_violation_5d -- --ignored --nocapture
+
+# Run the 5D unified insertion stepwise debug test
+cargo test --lib unified_insertion_pipeline::tests::debug_5d_stepwise_insertion_of_seventh_vertex -- --ignored --nocapture
+
+# Run all known-config regression tests (ignored by default)
+cargo test --test regression_delaunay_known_configs -- --ignored --nocapture
 ```
 
 **Note**: Memory allocation profiling is available through the `count-allocations` feature:
