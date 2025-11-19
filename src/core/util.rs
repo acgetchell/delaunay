@@ -16,7 +16,7 @@ use crate::geometry::algorithms::convex_hull::ConvexHull;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::InSphere;
 use crate::geometry::robust_predicates::robust_insphere;
-use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use num_traits::cast::NumCast;
 use smallvec::SmallVec;
 
@@ -62,7 +62,7 @@ pub enum DelaunayValidationError {
         /// The key of the cell that violates the Delaunay property
         cell_key: CellKey,
     },
-    /// TDS data structure corruption detected during validation.
+    /// TDS data structure corruption or other structural issues detected during validation.
     #[error("TDS corruption: {source}")]
     TriangulationState {
         /// The underlying triangulation validation error
@@ -75,6 +75,19 @@ pub enum DelaunayValidationError {
         /// The underlying cell error
         #[source]
         source: CellValidationError,
+    },
+    /// Numeric predicate failure during Delaunay validation.
+    #[error(
+        "Numeric predicate failure while validating Delaunay property for cell {cell_key:?}, vertex {vertex_key:?}: {source}"
+    )]
+    NumericPredicateError {
+        /// The key of the cell whose circumsphere was being tested.
+        cell_key: CellKey,
+        /// The key of the vertex being classified relative to the circumsphere.
+        vertex_key: VertexKey,
+        /// Underlying robust predicate error (e.g., conversion failure).
+        #[source]
+        source: CoordinateConversionError,
     },
 }
 
@@ -255,6 +268,11 @@ where
     T: CoordinateScalar,
     U: DataType,
 {
+    debug_assert!(
+        epsilon >= T::zero(),
+        "dedup_vertices_epsilon expects non-negative epsilon",
+    );
+
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
 
     'outer: for v in vertices {
@@ -1606,8 +1624,18 @@ where
                     // Found a violation - this cell has an external vertex inside its circumsphere
                     return Err(DelaunayValidationError::DelaunayViolation { cell_key });
                 }
-                Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) | Err(_) => {
-                    // Vertex is outside/on boundary, or degenerate - continue checking
+                Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) => {
+                    // Vertex is outside/on boundary; continue checking other vertices.
+                }
+                Err(source) => {
+                    // Surface robust predicate failures as explicit validation errors
+                    // so callers can distinguish numeric issues from clean OUTSIDE/BOUNDARY
+                    // classifications.
+                    return Err(DelaunayValidationError::NumericPredicateError {
+                        cell_key,
+                        vertex_key: test_vkey,
+                        source,
+                    });
                 }
             }
         }
@@ -1727,8 +1755,18 @@ where
                     violating_cells.push(cell_key);
                     break; // No need to check more vertices for this cell
                 }
-                Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) | Err(_) => {
-                    // Vertex is outside/on boundary, or degenerate - continue checking
+                Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) => {
+                    // Vertex is outside/on boundary; continue checking other vertices.
+                }
+                Err(source) => {
+                    // Surface robust predicate failures as explicit validation errors
+                    // so callers can distinguish numeric issues from clean OUTSIDE/BOUNDARY
+                    // classifications.
+                    return Err(DelaunayValidationError::NumericPredicateError {
+                        cell_key,
+                        vertex_key: test_vkey,
+                        source,
+                    });
                 }
             }
         }
@@ -1864,7 +1902,12 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
                 offending = Some((test_vkey, *test_vertex.point()));
                 break;
             }
-            Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) | Err(_) => {}
+            Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) => {}
+            Err(e) => {
+                eprintln!(
+                    "[Delaunay debug] robust_insphere error while searching for offending vertex in cell {first_cell_key:?}: {e}",
+                );
+            }
         }
     }
 

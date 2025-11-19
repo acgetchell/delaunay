@@ -182,6 +182,7 @@ use crate::core::collections::{
     MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, StorageMap, UuidToCellKeyMap, UuidToVertexKeyMap,
     ValidCellsBuffer, VertexKeyBuffer, VertexKeySet, VertexToCellsMap, fast_hash_map_with_capacity,
 };
+use crate::core::util::DelaunayValidationError;
 use crate::geometry::{
     point::Point, quality::radius_ratio, traits::coordinate::CoordinateScalar,
     util::safe_scalar_to_f64,
@@ -201,7 +202,8 @@ use super::{
     traits::{
         data_type::DataType,
         insertion_algorithm::{
-            DelaunayCheckPolicy, InsertionAlgorithm, InsertionError, UnsalvageableVertexReport,
+            DelaunayCheckPolicy, InitialSimplexSearchStats, InsertionAlgorithm, InsertionError,
+            InsertionStatistics, UnsalvageableVertexReport,
         },
     },
     util::usize_to_u8,
@@ -291,11 +293,43 @@ pub enum EntityKind {
     Cell,
 }
 
+/// Aggregated statistics for a Bowyer–Watson triangulation run.
+///
+/// This structure summarizes both Stage 1 (initial simplex search) and Stage 2
+/// (per-vertex unified fast → robust → skip insertion) behavior. It is intended
+/// primarily for observability and diagnostics; additional fields may be added in
+/// minor releases without breaking changes to existing code.
+#[derive(Clone, Debug, Default)]
+pub struct TriangulationStatistics {
+    /// Combined per-vertex statistics aggregated from the fast and robust algorithms.
+    pub insertion: InsertionStatistics,
+    /// Number of vertices for which the fast path was attempted.
+    pub fast_path_attempts: usize,
+    /// Number of vertices for which the robust path was attempted.
+    pub robust_path_attempts: usize,
+    /// Number of vertices that successfully used the fast path.
+    pub fast_path_successes: usize,
+    /// Number of vertices that successfully used the robust path.
+    pub robust_path_successes: usize,
+    /// Total number of vertices skipped by the unified pipeline (duplicates or unsalvageable).
+    pub skipped_vertices: usize,
+    /// Number of skipped vertices classified as exact or near duplicates of an existing vertex.
+    pub duplicate_vertices: usize,
+    /// Number of skipped vertices that were not duplicates (typically due to geometric
+    /// or numerical failures).
+    pub unsalvageable_vertices: usize,
+    /// Number of times global Delaunay validation was invoked in this run, according to
+    /// the configured [`DelaunayCheckPolicy`].
+    pub global_delaunay_validation_runs: usize,
+    /// Statistics from the Stage 1 initial simplex search.
+    pub initial_simplex: InitialSimplexSearchStats,
+}
+
 /// Diagnostics produced during triangulation construction.
 ///
 /// This structure is returned by [`Tds::bowyer_watson_with_diagnostics`] and contains
 /// per-vertex reports for vertices that could not be inserted by the unified
-/// fast → robust → skip pipeline.
+/// fast → robust → skip pipeline, as well as aggregated statistics for the run.
 #[derive(Clone, Debug)]
 pub struct TriangulationDiagnostics<T, U, const D: usize>
 where
@@ -305,6 +339,8 @@ where
     /// Vertices that were skipped by the unified insertion pipeline, along with
     /// their classification and error-chain diagnostics.
     pub unsalvageable_vertices: Vec<UnsalvageableVertexReport<T, U, D>>,
+    /// Aggregated statistics for this triangulation run.
+    pub statistics: TriangulationStatistics,
 }
 
 impl<T, U, const D: usize> TriangulationDiagnostics<T, U, D>
@@ -609,6 +645,15 @@ where
     ///
     /// Note: Not serialized - generation is runtime-only.
     generation: Arc<AtomicU64>,
+
+    /// Aggregated statistics for the most recent Bowyer–Watson-based triangulation
+    /// run (if any).
+    ///
+    /// This is a runtime-only cache: it is not serialized and is only updated by
+    /// [`Tds::new`], [`Tds::bowyer_watson_with_diagnostics`], and
+    /// [`Tds::bowyer_watson_with_diagnostics_and_policy`]. Incremental operations
+    /// such as [`Tds::add`] do not currently update this field.
+    last_triangulation_statistics: Option<TriangulationStatistics>,
 }
 
 // =============================================================================
@@ -689,6 +734,18 @@ where
     /// ```
     pub fn cells_values(&self) -> impl Iterator<Item = &Cell<T, U, V, D>> {
         self.cells.values()
+    }
+
+    /// Returns statistics for the most recent Bowyer–Watson-based triangulation
+    /// run that constructed or updated this triangulation, if any.
+    ///
+    /// Statistics are populated by [`Tds::new`],
+    /// [`Tds::bowyer_watson_with_diagnostics`], and
+    /// [`Tds::bowyer_watson_with_diagnostics_and_policy`]. If no such run has
+    /// occurred yet, this returns `None`.
+    #[must_use]
+    pub const fn last_triangulation_statistics(&self) -> Option<&TriangulationStatistics> {
+        self.last_triangulation_statistics.as_ref()
     }
 
     /// Returns an iterator over all vertices in the triangulation.
@@ -1879,8 +1936,9 @@ where
 
             if let Some(neighbors) = &mut cell.neighbors {
                 for neighbor_slot in neighbors.iter_mut() {
-                    if let Some(neighbor_key) = neighbor_slot
-                        && cells_to_remove.contains(neighbor_key)
+                    if neighbor_slot
+                        .as_ref()
+                        .is_some_and(|neighbor_key| cells_to_remove.contains(neighbor_key))
                     {
                         *neighbor_slot = None; // Clear dangling reference (becomes boundary)
                     }
@@ -1976,30 +2034,8 @@ where
             })
             .collect();
 
-        // Convert to a set for O(1) lookup when clearing neighbor references
-        let cells_to_remove_set: CellKeySet = cells_to_remove.iter().copied().collect();
-
-        // Clear neighbor references in remaining cells that point to cells being removed.
-        // This prevents dangling references and maintains topology consistency.
-        for (cell_key, cell) in &mut self.cells {
-            // Skip cells that will be removed
-            if cells_to_remove_set.contains(&cell_key) {
-                continue;
-            }
-
-            // Clear any neighbor references pointing to cells being removed
-            if let Some(neighbors) = &mut cell.neighbors {
-                for neighbor_slot in neighbors.iter_mut() {
-                    if let Some(neighbor_key) = neighbor_slot
-                        && cells_to_remove_set.contains(neighbor_key)
-                    {
-                        *neighbor_slot = None; // Clear dangling reference (becomes boundary)
-                    }
-                }
-            }
-        }
-
-        // Remove all cells containing the vertex
+        // Remove all cells containing the vertex. Neighbor references in surviving
+        // cells that pointed to these cells are cleared by `remove_cells_by_keys`.
         let cells_removed = self.remove_cells_by_keys(&cells_to_remove);
 
         // Rebuild vertex incidence before removing the vertex to ensure surviving vertices
@@ -2041,6 +2077,10 @@ where
     /// # Returns
     ///
     /// `true` if the vertex was found and removed, `false` if not found.
+    #[deprecated(
+        since = "0.5.3",
+        note = "Use `remove_vertex()` which atomically removes the vertex and related cells."
+    )]
     pub(crate) fn remove_vertex_by_uuid(&mut self, uuid: &uuid::Uuid) -> bool {
         if let Some(vk) = self.vertex_key_from_uuid(uuid) {
             self.vertices.remove(vk);
@@ -2441,6 +2481,7 @@ where
             uuid_to_cell_key: UuidToCellKeyMap::default(),
             construction_state: TriangulationConstructionState::Incomplete(0),
             generation: Arc::new(AtomicU64::new(0)),
+            last_triangulation_statistics: None,
         }
     }
 
@@ -2569,6 +2610,7 @@ where
                 TriangulationConstructionState::Constructed
             },
             generation: Arc::new(AtomicU64::new(0)),
+            last_triangulation_statistics: None,
         };
 
         // Add vertices to storage map and create bidirectional UUID-to-key mappings
@@ -2926,7 +2968,8 @@ where
     ///
     /// 1. Finds all cells containing the vertex
     /// 2. Removes all such cells
-    /// 3. Removes the vertex itself
+    /// 3. Rebuilds vertex→cell incidence so surviving vertices no longer point at removed cells
+    /// 4. Removes the vertex itself
     ///
     /// This is an internal method used for rollback after insertion failures.
     /// Users should not need to call this directly - it's automatically invoked
@@ -2968,6 +3011,18 @@ where
 
         #[cfg_attr(not(debug_assertions), allow(unused_variables))]
         let cells_removed = self.remove_cells_by_keys(&cells_to_remove);
+
+        // Rebuild vertex incidence before removing the vertex to ensure surviving vertices
+        // no longer point at the deleted cells. This mirrors the behavior of `remove_vertex`
+        // and prevents dangling `incident_cell` references after rollback.
+        #[cfg(debug_assertions)]
+        if let Err(e) = self.assign_incident_cells() {
+            eprintln!(
+                "⚠️  Vertex insertion rollback: failed to reassign incident cells after removing related cells: {e}",
+            );
+        }
+        #[cfg(not(debug_assertions))]
+        let _ = self.assign_incident_cells();
 
         // Remove the vertex itself
         self.vertices.remove(vertex_key);
@@ -3082,8 +3137,11 @@ where
     {
         let vertices: Vec<_> = self.vertices.values().copied().collect();
         if vertices.is_empty() {
+            let statistics = TriangulationStatistics::default();
+            self.last_triangulation_statistics = Some(statistics.clone());
             return Ok(TriangulationDiagnostics {
                 unsalvageable_vertices: Vec::new(),
+                statistics,
             });
         }
 
@@ -3093,9 +3151,12 @@ where
         match InsertionAlgorithm::triangulate(&mut pipeline, self, &vertices) {
             Ok(()) => {
                 self.construction_state = TriangulationConstructionState::Constructed;
+                let statistics = pipeline.unified_statistics();
+                self.last_triangulation_statistics = Some(statistics.clone());
                 let unsalvageable_vertices = pipeline.take_unsalvageable_reports();
                 Ok(TriangulationDiagnostics {
                     unsalvageable_vertices,
+                    statistics,
                 })
             }
             Err(err) => {
@@ -4292,7 +4353,7 @@ where
     {
         crate::core::util::is_delaunay(self).map_err(|err| {
             match err {
-                crate::core::util::DelaunayValidationError::DelaunayViolation { cell_key } => {
+                DelaunayValidationError::DelaunayViolation { cell_key } => {
                     let cell_uuid = self
                         .cell_uuid_from_key(cell_key)
                         .unwrap_or_else(uuid::Uuid::nil);
@@ -4302,13 +4363,22 @@ where
                         ),
                     }
                 }
-                crate::core::util::DelaunayValidationError::TriangulationState { source } => source,
-                crate::core::util::DelaunayValidationError::InvalidCell { source } => {
+                DelaunayValidationError::TriangulationState { source } => source,
+                DelaunayValidationError::InvalidCell { source } => {
                     TriangulationValidationError::InvalidCell {
                         cell_id: uuid::Uuid::nil(), // Best effort - cell UUID not available in error
                         source,
                     }
                 }
+                DelaunayValidationError::NumericPredicateError {
+                    cell_key,
+                    vertex_key,
+                    source,
+                } => TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Numeric predicate failure while validating Delaunay property for cell {cell_key:?}, vertex {vertex_key:?}: {source}",
+                    ),
+                },
             }
         })
     }
@@ -4802,6 +4872,9 @@ where
                     // This ensures cached data from before serialization is not incorrectly
                     // considered valid after deserialization.
                     generation: Arc::new(AtomicU64::new(0)),
+                    // No triangulation statistics are serialized; this cache is recomputed
+                    // on demand by subsequent Bowyer–Watson runs.
+                    last_triangulation_statistics: None,
                 };
 
                 // Rebuild topology; fail fast on any inconsistency.
@@ -5090,22 +5163,43 @@ mod tests {
         assert_eq!(
             tds.number_of_vertices(),
             initial_vertex_count,
-            "Vertex count should be restored after rollback"
+            "Vertex count should be restored after rollback",
         );
         assert!(
             tds.vertex_key_from_uuid(&test_uuid).is_none(),
-            "Vertex UUID mapping should be removed after rollback"
+            "Vertex UUID mapping should be removed after rollback",
         );
         assert!(
             tds.generation() > initial_generation,
-            "Generation should be bumped after rollback to invalidate caches"
+            "Generation should be bumped after rollback to invalidate caches",
         );
         assert!(
             tds.is_valid().is_ok(),
-            "TDS should remain valid after rollback"
+            "TDS should remain structurally valid after rollback",
         );
 
-        println!("✓ Atomic rollback works correctly on topology assignment failures");
+        // Explicitly assert incident_cell invariants, since `is_valid()` does not
+        // currently inspect vertex incident-cell pointers:
+        // 1. No vertex has `incident_cell` pointing to a removed cell.
+        // 2. Any non-None `incident_cell` corresponds to a real cell that actually
+        //    contains that vertex.
+        for (vkey, vertex) in tds.vertices() {
+            if let Some(ck) = vertex.incident_cell {
+                let cell = tds
+                    .get_cell(ck)
+                    .unwrap_or_else(|| panic!(
+                        "Vertex {vkey:?} has incident_cell {ck:?} that does not exist after rollback",
+                    ));
+                assert!(
+                    cell.vertices().contains(&vkey),
+                    "Vertex {vkey:?} has incident_cell {ck:?}, but that cell does not contain the vertex",
+                );
+            }
+        }
+
+        println!(
+            "✓ Atomic rollback works correctly on topology failures and incident_cell invariants"
+        );
     }
 
     // =============================================================================
@@ -5495,6 +5589,108 @@ mod tests {
         assert!(
             tds.is_valid().is_ok(),
             "Triangulation should remain valid even when some vertices are skipped"
+        );
+        assert!(
+            tds.validate_delaunay().is_ok(),
+            "Triangulation should remain globally Delaunay even when some vertices are skipped"
+        );
+    }
+
+    /// Ensure that unsalvageable vertex reporting covers all input vertices:
+    /// every vertex is either used by some cell or reported as unsalvageable.
+    #[test]
+    fn test_unsalvageable_vertex_coverage_kept_union_equals_input() {
+        use std::collections::HashSet;
+
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+
+        // Four unique vertices plus two exact duplicates to force unsalvageable vertices.
+        let v0 = vertex!([0.0, 0.0, 0.0]);
+        let v1 = vertex!([1.0, 0.0, 0.0]);
+        let v2 = vertex!([0.0, 1.0, 0.0]);
+        let v3 = vertex!([0.0, 0.0, 1.0]);
+        let duplicate0 = vertex!([0.0, 0.0, 0.0]);
+        let duplicate1 = vertex!([1.0, 0.0, 0.0]);
+
+        let input_vertices = vec![v0, v1, v2, v3, duplicate0, duplicate1];
+
+        // Insert all vertices without public duplicate filtering so the TDS vertex set
+        // matches the input set (at the UUID level).
+        for v in &input_vertices {
+            tds.insert_vertex_with_mapping(*v).unwrap();
+        }
+
+        let diagnostics = tds
+            .bowyer_watson_with_diagnostics()
+            .expect("Triangulation should succeed even with duplicate coordinates");
+
+        // Input UUIDs: all vertices that were actually inserted into the TDS.
+        let input_uuids: HashSet<_> = tds.vertices().map(|(_, v)| v.uuid()).collect();
+
+        // Kept UUIDs: vertices that appear in at least one cell of the final triangulation.
+        let kept_uuids: HashSet<_> = tds
+            .cells()
+            .flat_map(|(_, cell)| cell.vertices())
+            .map(|vk| tds.get_vertex_by_key(*vk).expect("vertex exists").uuid())
+            .collect();
+
+        // Unsalvageable UUIDs: vertices reported by the unified insertion pipeline.
+        let unsalvageable_uuids: HashSet<_> = diagnostics
+            .unsalvageable_vertices
+            .iter()
+            .map(|r| r.vertex().uuid())
+            .collect();
+
+        assert!(
+            kept_uuids.is_subset(&input_uuids),
+            "Kept vertex UUIDs must be a subset of input UUIDs",
+        );
+        assert!(
+            unsalvageable_uuids.is_subset(&input_uuids),
+            "Unsalvageable vertex UUIDs must be a subset of input UUIDs",
+        );
+
+        let union: HashSet<_> = kept_uuids.union(&unsalvageable_uuids).copied().collect();
+        assert_eq!(
+            union, input_uuids,
+            "Every input vertex must be either used by some cell or reported as unsalvageable",
+        );
+    }
+
+    /// Ensure that `last_triangulation_statistics` records at least one global
+    /// Delaunay validation run for a typical `Tds::new` construction.
+    #[test]
+    fn test_last_triangulation_statistics_records_global_validation_runs() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> =
+            Tds::new(&vertices).expect("Tds::new should succeed for simple tetrahedron");
+
+        let stats = tds
+            .last_triangulation_statistics()
+            .expect("last_triangulation_statistics should be populated after Tds::new");
+
+        assert!(
+            stats.global_delaunay_validation_runs >= 1,
+            "Expected at least one global Delaunay validation run during Bowyer–Watson construction",
+        );
+        assert_eq!(
+            stats.insertion.vertices_processed,
+            stats.fast_path_successes + stats.robust_path_successes,
+            "Vertices processed should equal fast+robust successes for this simple input",
+        );
+        assert!(
+            stats.fast_path_attempts >= stats.fast_path_successes,
+            "Fast path attempts should be greater than or equal to fast path successes",
+        );
+        assert!(
+            stats.robust_path_attempts >= stats.robust_path_successes,
+            "Robust path attempts should be greater than or equal to robust path successes",
         );
     }
 
@@ -10364,6 +10560,72 @@ mod tests {
         assert_eq!(
             uuid_count, 4,
             "Should have exactly 4 UUID mappings for 4 vertices"
+        );
+    }
+
+    #[test]
+    fn test_rollback_clears_incident_cells_pointing_to_removed_cells() {
+        // Build a simple 2D triangulation: a single triangle with 3 vertices.
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+
+        // Sanity: we have at least one cell, and incident_cell is set for all vertices.
+        assert!(
+            tds.number_of_cells() > 0,
+            "Expected at least one cell in the initial triangulation"
+        );
+        for (_, v) in tds.vertices() {
+            assert!(
+                v.incident_cell.is_some(),
+                "incident_cell should be set before rollback"
+            );
+        }
+
+        // Pick one vertex to roll back; capture its key, UUID, and point.
+        let (vertex_key, vertex) = tds
+            .vertices()
+            .next()
+            .expect("Expected at least one vertex in TDS");
+        let vertex_uuid = vertex.uuid();
+        let pre_state = (
+            tds.number_of_vertices(),
+            tds.number_of_cells(),
+            tds.generation(),
+        );
+        let coords_str = Some(format!("{:?}", vertex.point()));
+
+        // Invoke rollback as if an insertion had failed for this vertex.
+        tds.rollback_vertex_insertion(
+            vertex_key,
+            &vertex_uuid,
+            coords_str,
+            Some(pre_state),
+            "incident_cell rollback test",
+        );
+
+        // After rollback, the triangle cell has been removed and only the other
+        // vertices remain. There should be no cells, and no remaining vertex
+        // should have incident_cell pointing at a removed cell.
+        assert_eq!(
+            tds.number_of_cells(),
+            0,
+            "All cells containing the rolled-back vertex should be removed"
+        );
+        for (_, v) in tds.vertices() {
+            assert!(
+                v.incident_cell.is_none(),
+                "incident_cell must be cleared for remaining vertices after rollback"
+            );
+        }
+
+        // Structural validity should still hold.
+        assert!(
+            tds.is_valid().is_ok(),
+            "TDS should remain structurally valid after rollback"
         );
     }
 }

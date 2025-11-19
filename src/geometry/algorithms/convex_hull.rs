@@ -3509,44 +3509,46 @@ mod tests {
             TriangulationConstructionError,
         > = Tds::new(&vertices_extreme);
 
-        if let Ok(tds_extreme) = tds_extreme_result {
-            let hull_extreme: ConvexHull<f64, Option<()>, Option<()>, 3> =
-                ConvexHull::from_triangulation(&tds_extreme).unwrap();
+        match tds_extreme_result {
+            Ok(tds_extreme) => {
+                let hull_extreme: ConvexHull<f64, Option<()>, Option<()>, 3> =
+                    ConvexHull::from_triangulation(&tds_extreme).unwrap();
 
-            // Test visibility with extreme coordinates
-            let test_point = Point::new([
-                f64::MIN_POSITIVE * 2.0,
-                f64::MIN_POSITIVE * 2.0,
-                f64::MIN_POSITIVE * 2.0,
-            ]);
-            let result = hull_extreme.is_point_outside(&test_point, &tds_extreme);
-            assert!(
-                result.is_ok(),
-                "Extreme precision coordinates should not crash visibility testing"
-            );
-
-            // Test fallback visibility with extreme coordinates
-            let facet_vertices =
-                extract_facet_vertices(&hull_extreme.hull_facets[0], &tds_extreme).unwrap();
-            let fallback_result =
-                ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
-                    &facet_vertices,
-                    &test_point,
+                // Test visibility with extreme coordinates
+                let test_point = Point::new([
+                    f64::MIN_POSITIVE * 2.0,
+                    f64::MIN_POSITIVE * 2.0,
+                    f64::MIN_POSITIVE * 2.0,
+                ]);
+                let result = hull_extreme.is_point_outside(&test_point, &tds_extreme);
+                assert!(
+                    result.is_ok(),
+                    "Extreme precision coordinates should not crash visibility testing",
                 );
-            println!("  Extreme precision fallback result: {fallback_result:?}");
-        } else if let Err(TriangulationConstructionError::GeometricDegeneracy { .. }) =
-            tds_extreme_result
-        {
-            // On some platforms, these extreme coordinates may be judged too
-            // numerically unstable to form a reliable 3D simplex. In that
-            // case, it's acceptable for Tds::new to fail with geometric
-            // degeneracy; later parts of this test still exercise max-scale
-            // behavior.
-            println!(
-                "  [33mWarning:[0m skipping MIN_POSITIVE extreme simplex due to geometric degeneracy",
-            );
-        } else if let Err(other) = tds_extreme_result {
-            panic!("Unexpected triangulation error for extreme precision test: {other}");
+
+                // Test fallback visibility with extreme coordinates
+                let facet_vertices =
+                    extract_facet_vertices(&hull_extreme.hull_facets[0], &tds_extreme).unwrap();
+                let fallback_result =
+                    ConvexHull::<f64, Option<()>, Option<()>, 3>::fallback_visibility_test(
+                        &facet_vertices,
+                        &test_point,
+                    );
+                println!("  Extreme precision fallback result: {fallback_result:?}");
+            }
+            Err(TriangulationConstructionError::GeometricDegeneracy { .. }) => {
+                // On some platforms, these extreme coordinates may be judged too
+                // numerically unstable to form a reliable 3D simplex. In that
+                // case, it's acceptable for Tds::new to fail with geometric
+                // degeneracy; later parts of this test still exercise max-scale
+                // behavior.
+                println!(
+                    "  \x1b[33mWarning:\x1b[0m skipping MIN_POSITIVE extreme simplex due to geometric degeneracy",
+                );
+            }
+            Err(other) => {
+                panic!("Unexpected triangulation error for extreme precision test: {other}");
+            }
         }
 
         // Test with maximum finite values

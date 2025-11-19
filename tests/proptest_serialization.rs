@@ -216,7 +216,7 @@ test_serialization_properties!(4, 6, 14);
 test_serialization_properties!(5, 7, 16);
 
 // Debug regression test for neighbor preservation in 2D
-// Uses the minimal failing case captured by proptest regressions to
+// Uses the minimal failing case previously captured by proptest to
 // inspect neighbor counts before and after JSON roundtrip.
 #[test]
 #[ignore = "debug-only: investigate neighbor preservation regression"]
@@ -226,7 +226,7 @@ fn debug_neighbor_preservation_2d_regression() {
     use delaunay::geometry::point::Point;
     use delaunay::geometry::traits::coordinate::Coordinate;
 
-    // Regression case from `proptest_serialization.proptest-regressions`
+    // Regression case derived from an earlier proptest failure (inlined for stability)
     let points: Vec<Point<f64, 2>> = vec![
         Point::new([0.0, 28.167_639_636_534_61]),
         Point::new([-81.778_725_768_602_44, -77.483_132_207_214_21]),
@@ -238,8 +238,10 @@ fn debug_neighbor_preservation_2d_regression() {
     ];
 
     let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(points);
-    let tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices)
+    let mut tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices)
         .expect("regression case should construct a valid Tds");
+    tds.assign_neighbors()
+        .expect("assign_neighbors should succeed for constructed Tds");
 
     println!(
         "Original: dim={} cells={} vertices={}",

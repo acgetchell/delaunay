@@ -2032,17 +2032,17 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 /// ```
 /// use delaunay::geometry::util::generate_random_triangulation;
 ///
-/// // Generate a 2D triangulation with 100 points, no seed (random each time)
+/// // Generate a 2D triangulation with 50 points, no seed (random each time)
 /// let triangulation_2d = generate_random_triangulation::<f64, (), (), 2>(
-///     100,
+///     50,
 ///     (-10.0, 10.0),
 ///     None,
 ///     None
 /// );
 ///
-/// // Generate a 3D triangulation with 50 points, seeded for reproducibility  
+/// // Generate a 3D triangulation with 30 points, seeded for reproducibility  
 /// let triangulation_3d = generate_random_triangulation::<f64, (), (), 3>(
-///     50,
+///     30,
 ///     (-5.0, 5.0),
 ///     None,
 ///     Some(42)
@@ -2050,7 +2050,7 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 ///
 /// // Generate a 4D triangulation with custom vertex data
 /// let triangulation_4d = generate_random_triangulation::<f64, i32, (), 4>(
-///     25,
+///     20,
 ///     (0.0, 1.0),
 ///     Some(123),
 ///     Some(456)

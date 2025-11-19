@@ -115,7 +115,9 @@
 //!   consistency checks.
 //! - **Facet sharing** – each facet is shared by at most 2 cells (1 on the boundary, 2 in the interior).
 //! - **Neighbor consistency** – neighbor relationships are mutual and reference a shared facet.
-//! - **Optional Delaunay property** – no vertex lies strictly inside the circumsphere of any maximal cell.
+//! - **Delaunay property** – triangulations constructed via the Bowyer–Watson
+//!   pipeline maintain the empty circumsphere invariant; no vertex lies strictly
+//!   inside the circumsphere of any maximal cell.
 //!
 //! ## Validation helpers
 //!
@@ -156,8 +158,8 @@
 //!
 //! 1. **Successful insertions maintain ALL invariants** - If insertion succeeds (`Ok(_)`), the
 //!    triangulation is guaranteed to satisfy all structural and topological invariants, including
-//!    the Delaunay property when using
-//!    [`RobustBowyerWatson`](core::algorithms::RobustBowyerWatson).
+//!    the Delaunay property. The unified fast+robust Bowyer–Watson pipeline may skip
+//!    unsalvageable vertices, but it never leaves a non-Delaunay triangulation.
 //!
 //! 2. **Failed insertions leave triangulation in valid state** - If insertion fails (`Err(_)`),
 //!    the triangulation remains in a valid state with all invariants maintained. No partial or
@@ -173,6 +175,174 @@
 //!    epsilon) are automatically detected and rejected with
 //!    [`InsertionError::InvalidVertex`](core::traits::InsertionError::InvalidVertex), preventing
 //!    numerical instabilities.
+//!
+//! When constructing a triangulation from a batch of vertices using
+//! [`Tds::new`](core::triangulation_data_structure::Tds::new):
+//!
+//! - Successful construction yields a triangulation that passes both
+//!   `tds.is_valid()` and `tds.validate_delaunay()`.
+//! - Duplicate coordinates are silently filtered during construction.
+//! - Any vertices that cannot be inserted without breaking invariants are reported via
+//!   [`TriangulationDiagnostics::unsalvageable_vertices`](core::triangulation_data_structure::TriangulationDiagnostics).
+//!
+//! Incremental construction via [`Tds::add`](core::triangulation_data_structure::Tds::add)
+//! follows the same invariant rules on each insertion: on success the triangulation
+//! remains structurally valid and Delaunay; on failure the data structure is rolled
+//! back to its previous state.
+//!
+//! ## Two-stage insertion pipeline and diagnostics
+//!
+//! Triangulations are built by a unified Bowyer–Watson pipeline with two conceptual
+//! stages:
+//!
+//! - **Stage 1 – robust initial simplex search** filters exact and near-duplicate
+//!   coordinates, then searches for D+1 affinely independent vertices using robust
+//!   orientation predicates. If such a simplex is found it seeds the triangulation.
+//!   If no non-degenerate simplex exists, construction fails with
+//!   [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation_data_structure::TriangulationConstructionError::GeometricDegeneracy)
+//!   and, when possible, leaves behind a **zero-cell triangulation**: all unique
+//!   input vertices are present, but no cells are created.
+//!
+//! - **Stage 2 – per-vertex fast → robust → skip insertion** classifies the remaining
+//!   vertices (unique, duplicate, near-duplicate, or degenerate) and inserts them via
+//!   a shared fast/robust pipeline. The fast path uses an incremental Bowyer–Watson
+//!   implementation; if it encounters a recoverable geometric failure, a robust
+//!   fallback is tried. If both paths fail, the vertex is marked *unsalvageable* and
+//!   skipped without modifying the triangulation, and processing continues with later
+//!   vertices.
+//!
+//! After Stage 2 the triangulation is finalized (duplicate cells removed, facet
+//! sharing repaired, neighbors and incident cells assigned) and a global Delaunay
+//! validation/repair pass is run. A successful construction therefore satisfies both
+//! the structural invariants described above and the global Delaunay empty-
+//! circumsphere property.
+//!
+//! ## Delaunay validation cadence
+//!
+//! Global Delaunay checks can be expensive, so the pipeline exposes a policy type
+//! [`DelaunayCheckPolicy`](core::traits::insertion_algorithm::DelaunayCheckPolicy) to
+//! control how often they run:
+//!
+//! - `DelaunayCheckPolicy::EndOnly` (the default) runs validation once at the end of
+//!   triangulation. This matches the legacy behavior used by most callers.
+//! - `DelaunayCheckPolicy::EveryN(k)` runs validation after every `k` successful
+//!   vertex insertions *in addition* to the final pass, which is useful for tests and
+//!   debug builds.
+//!
+//! Zero-cell triangulations are a special case: when `number_of_cells() == 0` there
+//! is nothing to validate, so the policy-based validator is a no-op.
+//!
+//! You can select a policy explicitly via
+//! [`Tds::bowyer_watson_with_diagnostics_and_policy`](core::triangulation_data_structure::Tds::bowyer_watson_with_diagnostics_and_policy);
+//! higher-level constructors such as
+//! [`Tds::new`](core::triangulation_data_structure::Tds::new) use
+//! `DelaunayCheckPolicy::EndOnly` internally.
+//!
+//! ## Observability, statistics, and unsalvageable vertices
+//!
+//! To inspect how a triangulation was constructed, use
+//! [`Tds::bowyer_watson_with_diagnostics`](core::triangulation_data_structure::Tds::bowyer_watson_with_diagnostics),
+//! which returns a [`TriangulationDiagnostics`](core::triangulation_data_structure::TriangulationDiagnostics)
+//! value containing:
+//!
+//! - `unsalvageable_vertices`: a list of
+//!   [`UnsalvageableVertexReport`](core::traits::insertion_algorithm::UnsalvageableVertexReport)
+//!   entries, each with the original vertex, its classification (duplicate,
+//!   near-duplicate, or degenerate), the sequence of insertion strategies that were
+//!   attempted, and the corresponding error chain.
+//! - `statistics`: a
+//!   [`TriangulationStatistics`](core::triangulation_data_structure::TriangulationStatistics)
+//!   record aggregating Stage 1 + Stage 2 behavior (fast/robust attempts and
+//!   successes, how many vertices were skipped as duplicates vs genuinely
+//!   unsalvageable, and how many global Delaunay validation runs occurred under the
+//!   selected
+//!   [`DelaunayCheckPolicy`](core::traits::insertion_algorithm::DelaunayCheckPolicy)).
+//!
+//! Vertices that appear in `unsalvageable_vertices` are guaranteed not to appear in
+//! any triangulation cell: the unified pipeline fully skips them, so the final
+//! triangulation is always described entirely by the kept subset of vertices.
+//!
+//! ```rust
+//! use delaunay::core::triangulation_data_structure::{Tds, TriangulationStatistics};
+//! use delaunay::vertex;
+//!
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0]),
+//! ];
+//!
+//! let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+//! let diagnostics = tds.bowyer_watson_with_diagnostics().unwrap();
+//!
+//! // Aggregated statistics for this triangulation run.
+//! let stats: &TriangulationStatistics = &diagnostics.statistics;
+//! assert!(stats.fast_path_successes + stats.robust_path_successes >= 0);
+//! assert!(
+//!     stats.global_delaunay_validation_runs >= 1,
+//!     "Bowyer–Watson pipeline should run at least one global Delaunay validation",
+//! );
+//!
+//! // Convenience: access the last triangulation statistics directly from the TDS.
+//! if let Some(last) = tds.last_triangulation_statistics() {
+//!     assert_eq!(last.insertion.vertices_processed, stats.insertion.vertices_processed);
+//!     assert!(last.global_delaunay_validation_runs >= 1);
+//! }
+//! ```
+//!
+//! The accessor
+//! [`Tds::last_triangulation_statistics`](core::triangulation_data_structure::Tds::last_triangulation_statistics)
+//! always returns the statistics for the most recent successful Bowyer–Watson-based
+//! construction (`Tds::new` or a subsequent call to one of the `bowyer_watson_*` helpers).
+//!
+//! ### Zero-cell triangulations and recovery
+//!
+//! When Stage 1 cannot find a non-degenerate simplex (for example, when all points
+//! are collinear in 2D), the library reports geometric degeneracy but leaves behind
+//! a valid zero-cell triangulation that still contains the unique input vertices.
+//! Callers can then recover by incrementally adding additional vertices.
+//!
+//! ```no_run
+//! use delaunay::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
+//! use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
+//! use delaunay::core::triangulation_data_structure::{
+//!     Tds, TriangulationConstructionError,
+//! };
+//! use delaunay::vertex;
+//!
+//! type Alg = IncrementalBowyerWatson<f64, Option<()>, Option<()>, 2>;
+//!
+//! // All points lie on a line in 2D: no non-degenerate simplex exists.
+//! let degenerate = vec![
+//!     vertex!([0.0, 0.0]),
+//!     vertex!([1.0, 0.0]),
+//!     vertex!([2.0, 0.0]),
+//!     vertex!([3.0, 0.0]),
+//! ];
+//!
+//! let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+//! let mut algorithm: Alg = Alg::new();
+//!
+//! let result = <Alg as InsertionAlgorithm<_, _, _, 2>>::triangulate(
+//!     &mut algorithm,
+//!     &mut tds,
+//!     &degenerate,
+//! );
+//!
+//! if let Err(TriangulationConstructionError::GeometricDegeneracy { .. }) = result {
+//!     // Zero-cell fallback: vertices are retained, no cells are created, and the
+//!     // triangulation remains structurally valid.
+//!     assert_eq!(tds.number_of_cells(), 0);
+//!     assert_eq!(tds.number_of_vertices(), degenerate.len());
+//!     assert!(tds.is_valid().is_ok());
+//! }
+//! ```
+//!
+//! From this state you can continue building the triangulation incrementally with
+//! [`Tds::add`](core::triangulation_data_structure::Tds::add); additional
+//! non-degenerate vertices can be inserted without rebuilding from scratch, and the
+//! TDS remains valid throughout.
 //!
 //! ## Limitations
 //!

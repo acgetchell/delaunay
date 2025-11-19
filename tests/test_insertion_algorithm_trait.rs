@@ -12,12 +12,14 @@
 //! unit tests in `src/core/traits/insertion_algorithm.rs` and is not duplicated here.
 
 use approx::assert_relative_eq;
+use delaunay::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
 use delaunay::core::facet::FacetHandle;
 use delaunay::core::traits::insertion_algorithm::{
-    BadCellsError, InsertionBuffers, InsertionError, InsertionStrategy,
+    BadCellsError, InsertionAlgorithm, InsertionBuffers, InsertionError, InsertionStrategy,
 };
 use delaunay::core::triangulation_data_structure::{CellKey, Tds, TriangulationValidationError};
 use delaunay::geometry::Coordinate;
+use delaunay::vertex;
 // These tests focus on public accessor methods that are not tested by unit tests
 // in the source module (which use private field access)
 
@@ -341,6 +343,50 @@ fn test_insertion_error_is_recoverable() {
 
     let hull_failure = InsertionError::hull_extension_failure("test");
     assert!(!hull_failure.is_recoverable());
+}
+
+#[test]
+fn test_incremental_bowyer_watson_insert_vertex_is_transactional_on_duplicate() {
+    // Build a simple 3D triangulation
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
+    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+    let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+    let vertices_before = tds.number_of_vertices();
+    let cells_before = tds.number_of_cells();
+
+    // Attempt to insert a duplicate vertex (same coordinates as an existing vertex).
+    let duplicate = vertex!([0.0, 0.0, 0.0]);
+    let result = algorithm.insert_vertex(&mut tds, duplicate);
+
+    // The algorithm should report a useful InvalidVertex error and leave the TDS unchanged.
+    match result {
+        Err(InsertionError::InvalidVertex { reason }) => {
+            assert!(reason.contains("duplicate") || reason.contains("Duplicate"));
+        }
+        other => panic!("Expected InvalidVertex error for duplicate insertion, got {other:?}"),
+    }
+
+    assert_eq!(
+        tds.number_of_vertices(),
+        vertices_before,
+        "insert_vertex must not change the number of vertices on error",
+    );
+    assert_eq!(
+        tds.number_of_cells(),
+        cells_before,
+        "insert_vertex must not change the number of cells on error",
+    );
+    assert!(
+        tds.is_valid().is_ok(),
+        "TDS should remain structurally valid after a failed insertion",
+    );
 }
 
 // Note: BadCellsError and TooManyDegenerateCellsError display tests are covered

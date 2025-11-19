@@ -4,12 +4,13 @@ use crate::core::algorithms::{
 use crate::core::collections::{FastHashSet, fast_hash_set_with_capacity};
 use crate::core::traits::data_type::DataType;
 use crate::core::traits::insertion_algorithm::{
-    DelaunayCheckPolicy, InsertionAlgorithm, InsertionError, InsertionInfo,
-    UnifiedPerVertexInsertionOutcome, UnsalvageableVertexReport, VertexClassification,
-    find_initial_simplex, unified_insert_vertex_fast_robust_or_skip,
+    DelaunayCheckPolicy, InitialSimplexSearchStats, InsertionAlgorithm, InsertionError,
+    InsertionInfo, InsertionStatistics, UnifiedPerVertexInsertionOutcome,
+    UnsalvageableVertexReport, VertexClassification, find_initial_simplex,
+    unified_insert_vertex_fast_robust_or_skip,
 };
 use crate::core::triangulation_data_structure::{
-    Tds, TriangulationConstructionError, TriangulationConstructionState,
+    Tds, TriangulationConstructionError, TriangulationConstructionState, TriangulationStatistics,
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -33,7 +34,21 @@ where
     pub(crate) robust: RobustBowyerWatson<T, U, V, D>,
     pub(crate) unsalvageable_reports: Vec<UnsalvageableVertexReport<T, U, D>>,
     pub(crate) delaunay_check_policy: DelaunayCheckPolicy,
+    /// Total number of successful insertions (fast + robust). Used to drive
+    /// [`DelaunayCheckPolicy`] scheduling.
     pub(crate) successful_insertions: usize,
+    /// Number of vertices for which the fast path was attempted.
+    pub(crate) fast_path_attempts: usize,
+    /// Number of vertices for which the robust path was attempted.
+    pub(crate) robust_path_attempts: usize,
+    /// Number of vertices that were successfully inserted via the fast path.
+    pub(crate) successful_fast_insertions: usize,
+    /// Number of vertices that were successfully inserted via the robust path.
+    pub(crate) successful_robust_insertions: usize,
+    /// Number of times global Delaunay validation was invoked for this pipeline.
+    pub(crate) global_delaunay_validation_runs: usize,
+    /// Stage 1 initial simplex search statistics for the last triangulation run.
+    pub(crate) initial_simplex_stats: Option<InitialSimplexSearchStats>,
 }
 
 impl<T, U, V, const D: usize> UnifiedInsertionPipeline<T, U, V, D>
@@ -54,6 +69,70 @@ where
             unsalvageable_reports: Vec::new(),
             delaunay_check_policy: policy,
             successful_insertions: 0,
+            fast_path_attempts: 0,
+            robust_path_attempts: 0,
+            successful_fast_insertions: 0,
+            successful_robust_insertions: 0,
+            global_delaunay_validation_runs: 0,
+            initial_simplex_stats: None,
+        }
+    }
+
+    // Aggregate statistics from the fast and robust algorithms together with
+    // pipeline-level counters into a single [`TriangulationStatistics`] value.
+    pub(crate) fn unified_statistics(&self) -> TriangulationStatistics {
+        // Aggregate per-algorithm statistics.
+        let fast_stats = self.fast.statistics();
+        let robust_stats = self.robust.statistics();
+
+        let mut insertion = InsertionStatistics::new();
+        insertion.vertices_processed =
+            fast_stats.vertices_processed + robust_stats.vertices_processed;
+        insertion.total_cells_created =
+            fast_stats.total_cells_created + robust_stats.total_cells_created;
+        insertion.total_cells_removed =
+            fast_stats.total_cells_removed + robust_stats.total_cells_removed;
+        insertion.fallback_strategies_used =
+            fast_stats.fallback_strategies_used + robust_stats.fallback_strategies_used;
+        insertion.skipped_vertices = fast_stats.skipped_vertices + robust_stats.skipped_vertices;
+        insertion.degenerate_cases_handled =
+            fast_stats.degenerate_cases_handled + robust_stats.degenerate_cases_handled;
+        insertion.cavity_boundary_failures =
+            fast_stats.cavity_boundary_failures + robust_stats.cavity_boundary_failures;
+        insertion.cavity_boundary_recoveries =
+            fast_stats.cavity_boundary_recoveries + robust_stats.cavity_boundary_recoveries;
+        insertion.hull_extensions = fast_stats.hull_extensions + robust_stats.hull_extensions;
+        insertion.vertex_perturbations =
+            fast_stats.vertex_perturbations + robust_stats.vertex_perturbations;
+
+        // Derive duplicate vs unsalvageable counts from per-vertex reports.
+        let mut duplicate_vertices = 0usize;
+        let mut unsalvageable_vertices = 0usize;
+        for report in &self.unsalvageable_reports {
+            match report.classification() {
+                VertexClassification::DuplicateExact
+                | VertexClassification::DuplicateWithinTolerance { .. } => {
+                    duplicate_vertices += 1;
+                }
+                _ => {
+                    unsalvageable_vertices += 1;
+                }
+            }
+        }
+
+        let skipped_vertices = self.unsalvageable_reports.len();
+
+        TriangulationStatistics {
+            insertion,
+            fast_path_attempts: self.fast_path_attempts,
+            robust_path_attempts: self.robust_path_attempts,
+            fast_path_successes: self.successful_fast_insertions,
+            robust_path_successes: self.successful_robust_insertions,
+            skipped_vertices,
+            duplicate_vertices,
+            unsalvageable_vertices,
+            global_delaunay_validation_runs: self.global_delaunay_validation_runs,
+            initial_simplex: self.initial_simplex_stats.clone().unwrap_or_default(),
         }
     }
 
@@ -82,6 +161,9 @@ where
                 self.delaunay_check_policy,
             )
             .map_err(InsertionError::TriangulationConstruction)?;
+
+            self.global_delaunay_validation_runs =
+                self.global_delaunay_validation_runs.saturating_add(1);
         }
 
         Ok(())
@@ -123,6 +205,8 @@ where
                 classification,
                 info,
             } => {
+                // Fast path was attempted once and succeeded.
+                self.fast_path_attempts = self.fast_path_attempts.saturating_add(1);
                 debug_assert!(
                     matches!(
                         classification,
@@ -134,6 +218,8 @@ where
                     "Unexpected vertex classification for fast-path success: {classification:?}",
                 );
                 if info.success {
+                    self.successful_fast_insertions =
+                        self.successful_fast_insertions.saturating_add(1);
                     self.on_successful_insertion(tds)?;
                 }
                 Ok(info)
@@ -143,6 +229,9 @@ where
                 fast_error,
                 info,
             } => {
+                // Both fast and robust paths were attempted; robust succeeded.
+                self.fast_path_attempts = self.fast_path_attempts.saturating_add(1);
+                self.robust_path_attempts = self.robust_path_attempts.saturating_add(1);
                 debug_assert!(
                     matches!(
                         classification,
@@ -158,11 +247,30 @@ where
                     "RobustSuccess is expected to follow a recoverable fast-path error",
                 );
                 if info.success {
+                    self.successful_robust_insertions =
+                        self.successful_robust_insertions.saturating_add(1);
                     self.on_successful_insertion(tds)?;
                 }
                 Ok(info)
             }
             UnifiedPerVertexInsertionOutcome::Skipped(report) => {
+                // For skipped vertices, count fast/robust attempts based on the
+                // recorded strategy chain. Duplicate classifications never attempt
+                // either algorithm.
+                match report.classification() {
+                    VertexClassification::DuplicateExact
+                    | VertexClassification::DuplicateWithinTolerance { .. } => {}
+                    _ => {
+                        let strategies = report.attempted_strategies();
+                        if !strategies.is_empty() {
+                            self.fast_path_attempts = self.fast_path_attempts.saturating_add(1);
+                        }
+                        if strategies.len() >= 2 {
+                            self.robust_path_attempts = self.robust_path_attempts.saturating_add(1);
+                        }
+                    }
+                }
+
                 // Per-vertex failure: record diagnostics and treat as a soft failure.
                 // The underlying algorithms must guarantee transactional semantics on
                 // error, so the TDS should be unchanged here.
@@ -204,6 +312,7 @@ where
 
         // Stage 1: robust initial simplex search with duplicate/degenerate handling.
         let search_result = find_initial_simplex::<T, U, D>(vertices);
+        self.initial_simplex_stats = Some(search_result.stats.clone());
 
         if let Some(initial_simplex_vertices) = search_result.simplex_vertices {
             // Successful initial simplex: create the initial cell set.
@@ -256,6 +365,8 @@ where
                 tds,
                 self.delaunay_check_policy,
             )?;
+            self.global_delaunay_validation_runs =
+                self.global_delaunay_validation_runs.saturating_add(1);
 
             Ok(())
         } else {
@@ -309,6 +420,12 @@ where
         self.robust.reset();
         self.unsalvageable_reports.clear();
         self.successful_insertions = 0;
+        self.fast_path_attempts = 0;
+        self.robust_path_attempts = 0;
+        self.successful_fast_insertions = 0;
+        self.successful_robust_insertions = 0;
+        self.global_delaunay_validation_runs = 0;
+        self.initial_simplex_stats = None;
         // Policy remains unchanged across resets; callers can construct a new
         // pipeline if they need to change it.
     }
@@ -361,28 +478,41 @@ mod tests {
                 D,
             >>::insert_vertex(&mut pipeline, &mut tds, new_vertex);
 
-        // Current behavior (for known failing configurations): insertion itself is
-        // expected to succeed (i.e., local cavity/hull refinement completes), but
-        // the final global validation in `finalize_triangulation` reports
-        // violations.
+        // After tightening unified-pipeline semantics, hard geometric failures from
+        // the fast path (e.g., stalled cavity refinement) are treated as
+        // unsalvageable and cause the vertex to be skipped. We still expect the
+        // insertion call itself to succeed at the API level, but it may report a
+        // `Skip` strategy with `success = false`.
+        let info = insert_info.unwrap_or_else(|_| {
+            panic!(
+                "{}",
+                format!(
+                    "{context}: unified pipeline insertion call should succeed at the API level"
+                )
+            )
+        });
         assert!(
-            insert_info.is_ok(),
-            "{context}: unified pipeline insertion of the new vertex is expected to succeed; if this fails instead, update this debug test accordingly: {insert_info:?}",
+            !info.success,
+            "{context}: for this canonical 5D configuration the 7th vertex is expected to be skipped, not inserted successfully: {info:?}",
+        );
+        assert!(
+            matches!(
+                info.strategy,
+                crate::core::traits::insertion_algorithm::InsertionStrategy::Skip
+            ),
+            "{context}: expected unified pipeline to report a Skip strategy for the unsalvageable 7th vertex, got {info:?}",
         );
 
-        // Check global Delaunay property immediately after insertion, before running
-        // the final `finalize_triangulation` pass. This helps us determine whether
-        // the violation is already present after the per-insertion pipeline, or if
-        // it arises only during the final global cleanup/validation step.
+        // The triangulation must remain globally Delaunay immediately after the
+        // attempted insertion, since the unsalvageable vertex is fully skipped.
         let pre_finalize_delaunay = tds.validate_delaunay();
-        if pre_finalize_delaunay.is_err() {
+        if let Err(err) = pre_finalize_delaunay {
             eprintln!(
-                "[{context}] Delaunay violation detected immediately after insertion, before finalize_triangulation",
+                "[{context}] Unexpected Delaunay violation detected immediately after insertion attempt: {err:?}",
             );
             debug_print_first_delaunay_violation(&tds, None);
-        } else {
-            eprintln!(
-                "[{context}] Triangulation is Delaunay immediately after insertion; violation arises during finalize_triangulation",
+            panic!(
+                "{context}: unified insertion pipeline must not leave a non-Delaunay triangulation after skipping an unsalvageable vertex",
             );
         }
 
@@ -395,24 +525,38 @@ mod tests {
                 D,
             >>::finalize_triangulation(&mut tds);
 
-        assert!(
-            finalize_result.is_err(),
-            "{context}: expected finalize_triangulation to currently fail with a Delaunay validation error for this configuration; once fixed, flip this expectation and remove #[ignore]",
-        );
+        if let Err(err) = finalize_result {
+            eprintln!(
+                "[{context}] finalize_triangulation unexpectedly failed after skipping unsalvageable vertex: {err:?}",
+            );
+            debug_print_first_delaunay_violation(&tds, None);
+            panic!(
+                "{context}: finalize_triangulation must succeed when the per-vertex pipeline skips an unsalvageable vertex",
+            );
+        }
 
-        // Print detailed diagnostics for the post-insertion state.
-        debug_print_first_delaunay_violation(&tds, None);
+        // After finalization the triangulation must still be globally Delaunay.
+        if let Err(err) = tds.validate_delaunay() {
+            eprintln!(
+                "[{context}] Delaunay violation detected after finalize_triangulation: {err:?}",
+            );
+            debug_print_first_delaunay_violation(&tds, None);
+            panic!(
+                "{context}: finalize_triangulation must not introduce Delaunay violations for this configuration",
+            );
+        }
     }
 
-    /// Stepwise debug: construct a base 5D triangulation from the first 6 points
-    /// of the canonical configuration, then insert the 7th point via the unified
-    /// insertion pipeline and observe where the Delaunay violation arises.
+    /// Stepwise debug/regression: construct a base 5D triangulation from the
+    /// first 6 points of the canonical configuration, then attempt to insert the
+    /// 7th point via the unified insertion pipeline.
     ///
-    /// This test is ignored for now because it documents current failing behavior.
-    /// Once the insertion pipeline is fixed for this configuration, the expectations
-    /// should be flipped and the `ignore` removed.
+    /// The expected behavior is now:
+    /// - The unified pipeline reports a `Skip` strategy for the 7th vertex
+    ///   (unsalvageable for this configuration).
+    /// - The triangulation remains globally Delaunay both before and after
+    ///   `finalize_triangulation`.
     #[test]
-    #[ignore = "documents current failing unified insertion behavior; remove once fixed"]
     fn debug_5d_stepwise_insertion_of_seventh_vertex() {
         // Reconstruct the full 7-point configuration.
         let v1 = vertex!([

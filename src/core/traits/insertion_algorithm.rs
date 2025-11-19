@@ -62,7 +62,7 @@ use crate::core::{
         InvariantKind, Tds, TriangulationConstructionError, TriangulationConstructionState,
         TriangulationValidationError, ValidationOptions, VertexKey,
     },
-    util::usize_to_u8,
+    util::{DelaunayValidationError, usize_to_u8},
     vertex::Vertex,
 };
 use crate::geometry::point::Point;
@@ -288,6 +288,24 @@ impl InsertionError {
             Self::GeometricFailure { .. }
                 | Self::PrecisionFailure { .. }
                 | Self::BadCellsDetection(_)
+        )
+    }
+
+    /// Check if the error should be treated as recoverable by the unified
+    /// fast → robust → skip pipeline.
+    ///
+    /// This is intentionally more conservative than [`InsertionError::is_recoverable`]:
+    /// certain hard geometric failures (for example, stalled cavity refinement
+    /// with excessive iterations or cell growth) are better handled by
+    /// skipping the vertex entirely rather than attempting a robust fallback
+    /// that might leave a non-Delaunay intermediate state. The unified
+    /// Stage 2 pipeline prefers to mark such vertices as unsalvageable and
+    /// keep the triangulation strictly Delaunay for the kept subset.
+    #[must_use]
+    pub const fn is_recoverable_in_unified_pipeline(&self) -> bool {
+        matches!(
+            self,
+            Self::PrecisionFailure { .. } | Self::BadCellsDetection(_)
         )
     }
 
@@ -1034,13 +1052,20 @@ where
 ///
 /// Behavior:
 /// - First classify the vertex using `classify_vertex_against_tds`.
-/// - For `Unique` vertices:
+/// - For `Unique` and `Degenerate*` vertices:
 ///   - Attempt insertion with `fast_algorithm`.
-///   - If this fails with a *recoverable* error (`is_recoverable`), attempt
-///     insertion with `robust_algorithm`.
-///   - If both attempts fail, return a `Skipped` report with full diagnostics.
+///   - If this fails with an error that is **recoverable for the unified
+///     pipeline** (`is_recoverable_in_unified_pipeline`), attempt insertion with
+///     `robust_algorithm`.
+///   - If the fast error is not recoverable for the unified pipeline, or if both
+///     fast and robust attempts fail, return a `Skipped` report with full
+///     diagnostics.
 /// - For duplicate classifications, skip insertion entirely and return a `Skipped`
 ///   report without invoking either algorithm.
+///
+/// See tests `test_insertion_error_is_recoverable_in_unified_pipeline` and
+/// `test_unified_pipeline_hard_geometric_failure_skips_vertex` for regression
+/// coverage of the unified recoverability semantics.
 pub(crate) fn unified_insert_vertex_fast_robust_or_skip<
     T,
     U,
@@ -1088,7 +1113,7 @@ where
                         .unwrap_or(InsertionStrategy::Standard);
                     attempted_strategies.push(strategy);
 
-                    if !fast_error.is_recoverable() {
+                    if !fast_error.is_recoverable_in_unified_pipeline() {
                         errors.push(fast_error);
                         return UnifiedPerVertexInsertionOutcome::Skipped(
                             UnsalvageableVertexReport {
@@ -1100,7 +1125,8 @@ where
                         );
                     }
 
-                    // Recoverable fast-path failure: try robust algorithm.
+                    // Recoverable fast-path failure (for unified pipeline semantics):
+                    // try the robust algorithm.
                     errors.push(fast_error.clone());
                     let robust_result = robust_algorithm.insert_vertex(tds, vertex);
 
@@ -1145,16 +1171,20 @@ where
 }
 
 /// Statistics collected during Stage 1 initial simplex search.
-#[derive(Debug, Clone)]
-pub(crate) struct InitialSimplexSearchStats {
+///
+/// This type is public to support observability of the unified insertion
+/// pipeline. It is primarily intended for diagnostics; additional fields may
+/// be added in minor releases.
+#[derive(Debug, Clone, Default)]
+pub struct InitialSimplexSearchStats {
     /// Number of vertices considered unique after duplicate/near-duplicate filtering.
-    pub(crate) unique_vertices: usize,
+    pub unique_vertices: usize,
     /// Number of vertices skipped as exact duplicates.
-    pub(crate) duplicate_exact: usize,
+    pub duplicate_exact: usize,
     /// Number of vertices skipped as near-duplicates within tolerance.
-    pub(crate) duplicate_within_tolerance: usize,
+    pub duplicate_within_tolerance: usize,
     /// Number of candidate simplices rejected as degenerate or numerically unstable.
-    pub(crate) degenerate_candidates: usize,
+    pub degenerate_candidates: usize,
 }
 
 /// Result of attempting to build an initial D-simplex from a batch of vertices.
@@ -2203,11 +2233,12 @@ where
         // Use the centralized Delaunay validation function from util.rs
         crate::core::util::find_delaunay_violations(tds, Some(cells_to_check)).map_err(|err| {
             match err {
-                crate::core::util::DelaunayValidationError::TriangulationState { source } => {
+                DelaunayValidationError::TriangulationState { source } => {
                     InsertionError::TriangulationState(source)
                 }
-                crate::core::util::DelaunayValidationError::DelaunayViolation { .. }
-                | crate::core::util::DelaunayValidationError::InvalidCell { .. } => {
+                DelaunayValidationError::DelaunayViolation { .. }
+                | DelaunayValidationError::InvalidCell { .. }
+                | DelaunayValidationError::NumericPredicateError { .. } => {
                     // These shouldn't happen during insertion, but convert to InsertionError for safety
                     InsertionError::TriangulationState(
                         TriangulationValidationError::InconsistentDataStructure {
@@ -3334,14 +3365,23 @@ where
     {
         let violations =
             crate::core::util::find_delaunay_violations(tds, None).map_err(|e| match e {
-                crate::core::util::DelaunayValidationError::TriangulationState { source } => {
+                DelaunayValidationError::TriangulationState { source } => {
                     TriangulationConstructionError::ValidationError(source)
                 }
-                crate::core::util::DelaunayValidationError::DelaunayViolation { .. }
-                | crate::core::util::DelaunayValidationError::InvalidCell { .. } => {
+                DelaunayValidationError::DelaunayViolation { .. }
+                | DelaunayValidationError::InvalidCell { .. } => {
                     TriangulationConstructionError::ValidationError(
                         TriangulationValidationError::DelaunayViolation {
                             message: format!("Delaunay validation error: {e}"),
+                        },
+                    )
+                }
+                DelaunayValidationError::NumericPredicateError { .. } => {
+                    TriangulationConstructionError::ValidationError(
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Numeric predicate failure during Delaunay validation: {e}",
+                            ),
                         },
                     )
                 }
@@ -6840,6 +6880,149 @@ mod tests {
         println!("✓ Comprehensive InsertionError functionality works correctly");
     }
 
+    /// Test unified-pipeline-specific recoverability semantics.
+    #[test]
+    fn test_insertion_error_is_recoverable_in_unified_pipeline() {
+        let geometric =
+            InsertionError::geometric_failure("Hard failure", InsertionStrategy::CavityBased);
+        assert!(
+            geometric.is_recoverable(),
+            "GeometricFailure should be recoverable for standalone algorithms",
+        );
+        assert!(
+            !geometric.is_recoverable_in_unified_pipeline(),
+            "GeometricFailure should be non-recoverable for the unified pipeline",
+        );
+
+        let precision = InsertionError::precision_failure(1e-10, 3);
+        assert!(precision.is_recoverable());
+        assert!(precision.is_recoverable_in_unified_pipeline());
+
+        let bad_cells = InsertionError::BadCellsDetection(BadCellsError::NoCells);
+        assert!(bad_cells.is_recoverable());
+        assert!(bad_cells.is_recoverable_in_unified_pipeline());
+
+        let invalid_vertex = InsertionError::invalid_vertex("duplicate");
+        assert!(!invalid_vertex.is_recoverable());
+        assert!(!invalid_vertex.is_recoverable_in_unified_pipeline());
+
+        let hull_failure = InsertionError::hull_extension_failure("test");
+        assert!(!hull_failure.is_recoverable());
+        assert!(!hull_failure.is_recoverable_in_unified_pipeline());
+    }
+
+    /// Dummy fast-path algorithm that always fails with a hard geometric failure.
+    ///
+    /// This is used to exercise the unified fast → robust → skip helper in a
+    /// controlled way without relying on the real geometric predicates.
+    struct HardFailFastAlgorithm;
+
+    impl InsertionAlgorithm<f64, Option<()>, Option<()>, 3> for HardFailFastAlgorithm {
+        fn insert_vertex_impl(
+            &mut self,
+            _tds: &mut Tds<f64, Option<()>, Option<()>, 3>,
+            _vertex: Vertex<f64, Option<()>, 3>,
+        ) -> Result<InsertionInfo, InsertionError> {
+            Err(InsertionError::geometric_failure(
+                "synthetic hard failure",
+                InsertionStrategy::CavityBased,
+            ))
+        }
+
+        fn get_statistics(&self) -> (usize, usize, usize) {
+            (0, 0, 0)
+        }
+
+        fn reset(&mut self) {}
+    }
+
+    /// Ensure that a hard geometric failure in the fast algorithm causes the
+    /// unified pipeline to skip the vertex without modifying the TDS.
+    #[test]
+    fn test_unified_pipeline_hard_geometric_failure_skips_vertex() {
+        // Simple 3D tetrahedron as baseline triangulation.
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        assert!(tds.is_valid().is_ok(), "Initial TDS should be valid");
+
+        let original_vertex_count = tds.number_of_vertices();
+        let original_cell_count = tds.number_of_cells();
+
+        // Choose a vertex that is not a duplicate; exact position is not critical.
+        let new_vertex = vertex!([0.25, 0.25, 0.25]);
+
+        let mut fast = HardFailFastAlgorithm;
+        // Robust algorithm should never be called, but we pass a real instance
+        // to satisfy the generic constraints.
+        let mut robust = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+
+        let outcome =
+            unified_insert_vertex_fast_robust_or_skip(&mut tds, &mut fast, &mut robust, new_vertex);
+
+        match outcome {
+            UnifiedPerVertexInsertionOutcome::Skipped(report) => {
+                // The vertex should be classified as unique/degenerate, not duplicate.
+                matches!(
+                    report.classification(),
+                    VertexClassification::Unique
+                        | VertexClassification::DegenerateCollinear
+                        | VertexClassification::DegenerateCoplanar
+                        | VertexClassification::DegenerateOther
+                )
+                .then_some(())
+                .expect("Vertex should not be classified as duplicate");
+
+                // Fast path should have attempted a cavity-based insertion and failed.
+                assert_eq!(
+                    report.attempted_strategies().len(),
+                    1,
+                    "Exactly one strategy should have been attempted",
+                );
+                assert_eq!(
+                    report.attempted_strategies()[0],
+                    InsertionStrategy::CavityBased,
+                    "HardFailFastAlgorithm uses CavityBased strategy",
+                );
+
+                assert_eq!(
+                    report.errors().len(),
+                    1,
+                    "Exactly one error (from fast path) should be recorded",
+                );
+                assert!(
+                    matches!(report.errors()[0], InsertionError::GeometricFailure { .. }),
+                    "Error should be a geometric failure",
+                );
+
+                // The unsalvageable vertex must have no footprint in the TDS.
+                assert_eq!(
+                    tds.number_of_vertices(),
+                    original_vertex_count,
+                    "Vertex count must be unchanged after skip",
+                );
+                assert_eq!(
+                    tds.number_of_cells(),
+                    original_cell_count,
+                    "Cell count must be unchanged after skip",
+                );
+                assert!(
+                    tds.vertex_key_from_uuid(&report.vertex().uuid()).is_none(),
+                    "Skipped vertex must not be present in the TDS",
+                );
+
+                // The triangulation should remain valid.
+                assert!(tds.is_valid().is_ok(), "TDS should remain valid after skip");
+            }
+            other => panic!("Expected Skipped outcome, got: {other:?}"),
+        }
+    }
+
     /// Test `InsertionStrategy` determination edge cases
     #[test]
     #[expect(clippy::too_many_lines)]
@@ -7579,7 +7762,9 @@ mod tests {
         fn reset(&mut self) {}
     }
 
-    /// Simple fast-path algorithm stub that always fails with a recoverable geometric error.
+    /// Simple fast-path algorithm stub that always fails with a recoverable
+    /// precision-related error that the unified pipeline should treat as
+    /// eligible for robust fallback.
     struct FastFailingAlgorithm;
 
     impl InsertionAlgorithm<f64, Option<()>, Option<()>, 2> for FastFailingAlgorithm {
@@ -7588,10 +7773,7 @@ mod tests {
             _tds: &mut Tds<f64, Option<()>, Option<()>, 2>,
             _vertex: Vertex<f64, Option<()>, 2>,
         ) -> Result<InsertionInfo, InsertionError> {
-            Err(InsertionError::geometric_failure(
-                "fast path failed (test stub)",
-                InsertionStrategy::CavityBased,
-            ))
+            Err(InsertionError::precision_failure(1e-10, 3))
         }
 
         fn get_statistics(&self) -> (usize, usize, usize) {
@@ -7626,7 +7808,9 @@ mod tests {
         fn reset(&mut self) {}
     }
 
-    /// Simple robust algorithm stub that always fails with a recoverable geometric error.
+    /// Simple robust algorithm stub that always fails with a recoverable
+    /// precision-related error so the unified pipeline produces a skipped
+    /// unsalvageable vertex with a two-step error chain.
     struct RobustFailingAlgorithm;
 
     impl InsertionAlgorithm<f64, Option<()>, Option<()>, 2> for RobustFailingAlgorithm {
@@ -7635,10 +7819,7 @@ mod tests {
             _tds: &mut Tds<f64, Option<()>, Option<()>, 2>,
             _vertex: Vertex<f64, Option<()>, 2>,
         ) -> Result<InsertionInfo, InsertionError> {
-            Err(InsertionError::geometric_failure(
-                "robust path failed (test stub)",
-                InsertionStrategy::CavityBased,
-            ))
+            Err(InsertionError::precision_failure(1e-12, 5))
         }
 
         fn get_statistics(&self) -> (usize, usize, usize) {

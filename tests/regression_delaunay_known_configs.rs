@@ -1,9 +1,8 @@
-//! Deterministic regression tests for previously failing Delaunay configurations.
+//! Deterministic regression tests for canonical Delaunay configurations.
 //!
-//! Each test encodes a small, fixed point set that either used to violate the
-//! global Delaunay condition or is known to be numerically challenging. These
-//! tests ensure that once the algorithm is corrected, the configurations remain
-//! Delaunay-consistent.
+//! Each test encodes a small, fixed point set that either (a) previously
+//! violated the global Delaunay condition or (b) is a canonical baseline
+//! configuration we want to keep Delaunay-consistent across releases.
 
 use delaunay::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
 use delaunay::vertex;
@@ -19,7 +18,6 @@ macro_rules! regression_delaunay_violation_test {
     (
         $name:ident,
         $dim:literal,
-        $ignore_reason:expr,
         $build_vertices:block
     ) => {
         pastey::paste! {
@@ -49,22 +47,70 @@ macro_rules! regression_delaunay_violation_test {
     };
 }
 
+/// Helper macro to register multiple canonical configurations across dimensions.
+macro_rules! regression_delaunay_known_configs_all_dims {
+    ( $( $name:ident, $dim:literal => $build_vertices:block ),+ $(,)? ) => {
+        $(
+            regression_delaunay_violation_test!($name, $dim, $build_vertices);
+        )+
+    };
+}
+
 // =============================================================================
-// 5D CANONICAL CONFIGURATION (FROM DEBUG LOGS)
+// CANONICAL CONFIGURATIONS (2D–5D)
 // =============================================================================
 //
-// This configuration matches the 7-point 5D vertex set reconstructed from
-// Delaunay debug output and used in:
-// - `tests/debug_delaunay_violation_5d.rs`
-// - `src/core/algorithms/unified_insertion_pipeline.rs` (stepwise 5D test)
-//
-// It was previously known to trigger a global Delaunay validation failure
-// after construction. This regression test ensures it now remains Delaunay.
-regression_delaunay_violation_test!(
-    regression_delaunay_violation_5d_known_config,
-    5,
-    "Known 5D Delaunay violation; see docs/fix-delaunay.md (Captured seeds) and debug_delaunay_violation_5d.rs",
-    {
+// 2D–4D cases are simple, non-degenerate point sets that exercise basic
+// interior/exterior behavior. The 5D case below is reconstructed from a
+// historically failing `proptest_delaunay_condition` configuration and
+// must remain Delaunay under `Tds::new`.
+regression_delaunay_known_configs_all_dims! {
+    regression_delaunay_violation_2d_canonical, 2 => {
+        // Simple 2D set: base triangle with one interior and one exterior point.
+        vec![
+            vertex!([0.0, 0.0]),
+            vertex!([2.0, 0.0]),
+            vertex!([0.0, 2.0]),
+            vertex!([0.8, 0.7]),   // interior-ish
+            vertex!([-0.5, -0.4]), // exterior
+        ]
+    },
+    regression_delaunay_violation_3d_canonical, 3 => {
+        // 3D tetrahedron plus a point strictly inside the tetrahedron.
+        vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([0.0, 2.0, 0.0]),
+            vertex!([0.0, 0.0, 2.0]),
+            vertex!([0.4, 0.4, 0.3]), // interior
+        ]
+    },
+    regression_delaunay_violation_4d_canonical, 4 => {
+        // 4D simplex (5 vertices) plus one interior point.
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 2.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 2.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 2.0]),
+            vertex!([0.4, 0.3, 0.3, 0.3]), // interior
+        ]
+    },
+    regression_delaunay_violation_5d_known_config, 5 => {
+        // 5D CANONICAL CONFIGURATION (FROM DEBUG LOGS)
+        //
+        // This configuration matches the 7-point 5D vertex set reconstructed from
+        // Delaunay debug output and used in:
+        // - `tests/debug_delaunay_violation_5d.rs`
+        // - `src/core/algorithms/unified_insertion_pipeline.rs` (stepwise 5D test)
+        //
+        // It was previously known to trigger a global Delaunay validation failure
+        // after construction. This regression test ensures it now remains Delaunay.
+        //
+        // NOTE: The 5D vertex coordinates below are intentionally duplicated in
+        // `tests/debug_delaunay_violation_5d.rs`. Keeping both tests self-contained
+        // avoids a shared test-only helper module and makes it easier to inspect
+        // each regression in isolation when debugging.
         vec![
             vertex!([
                 61.994_906_139_357_86,
@@ -116,5 +162,5 @@ regression_delaunay_violation_test!(
                 -26.000_263_271_298_543,
             ]),
         ]
-    }
-);
+    },
+}

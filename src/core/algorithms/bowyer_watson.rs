@@ -188,6 +188,14 @@ where
         }
     }
 
+    /// Returns a snapshot of the internal insertion statistics.
+    ///
+    /// This method is public to support advanced diagnostics and benchmarking.
+    #[must_use]
+    pub const fn statistics(&self) -> &InsertionStatistics {
+        &self.stats
+    }
+
     /// Determines the appropriate insertion strategy for a vertex
     ///
     /// # Arguments

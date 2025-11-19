@@ -25,6 +25,7 @@ use crate::core::{
         CellKey, Tds, TriangulationConstructionError, TriangulationConstructionState,
         TriangulationValidationError,
     },
+    util::DelaunayValidationError,
     vertex::Vertex,
 };
 use crate::geometry::{
@@ -81,6 +82,14 @@ where
     #[must_use]
     pub fn unsalvageable_vertices(&self) -> &[Vertex<T, U, D>] {
         &self.unsalvageable_vertices
+    }
+
+    /// Returns a snapshot of the internal insertion statistics.
+    ///
+    /// This method is public to support advanced diagnostics and benchmarking.
+    #[must_use]
+    pub const fn statistics(&self) -> &InsertionStatistics {
+        &self.stats
     }
 
     /// Consumes and returns the list of unsalvageable vertices accumulated during
@@ -549,7 +558,20 @@ where
             }
 
             // Check if any cells violate the Delaunay property (using robust predicates)
-            let violating_cells = self.find_delaunay_violations_in_cells(tds, &cells_to_check)?;
+            let violating_cells = match self.find_delaunay_violations_in_cells(tds, &cells_to_check)
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                        tds,
+                        &saved_cavity_cells,
+                        &created_cell_keys,
+                        !vertex_existed_before,
+                        inserted_vk,
+                    );
+                    return Err(e);
+                }
+            };
 
             if violating_cells.is_empty() {
                 // No violations - we're done!
@@ -557,28 +579,77 @@ where
             }
 
             // Found violations - expand the cavity
-            let refinement_boundary = self.find_cavity_boundary_facets(tds, &violating_cells)?;
+            let refinement_boundary = match self.find_cavity_boundary_facets(tds, &violating_cells)
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                        tds,
+                        &saved_cavity_cells,
+                        &created_cell_keys,
+                        !vertex_existed_before,
+                        inserted_vk,
+                    );
+                    return Err(e);
+                }
+            };
             if refinement_boundary.is_empty() {
                 break;
             }
 
             // Gather and filter boundary info
             let refinement_infos =
-                <Self as InsertionAlgorithm<T, U, V, D>>::gather_boundary_facet_info(
+                match <Self as InsertionAlgorithm<T, U, V, D>>::gather_boundary_facet_info(
                     tds,
                     &refinement_boundary,
-                )?;
+                ) {
+                    Ok(infos) => infos,
+                    Err(e) => {
+                        <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                            tds,
+                            &saved_cavity_cells,
+                            &created_cell_keys,
+                            !vertex_existed_before,
+                            inserted_vk,
+                        );
+                        return Err(e);
+                    }
+                };
             let refinement_infos =
-                <Self as InsertionAlgorithm<T, U, V, D>>::deduplicate_boundary_facet_info(
+                match <Self as InsertionAlgorithm<T, U, V, D>>::deduplicate_boundary_facet_info(
                     refinement_infos,
-                )?;
-            let refinement_infos = <Self as InsertionAlgorithm<T, U, V, D>>::filter_boundary_facets_by_valid_facet_sharing(
+                ) {
+                    Ok(infos) => infos,
+                    Err(e) => {
+                        <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                            tds,
+                            &saved_cavity_cells,
+                            &created_cell_keys,
+                            !vertex_existed_before,
+                            inserted_vk,
+                        );
+                        return Err(e);
+                    }
+                };
+            let refinement_infos = match <Self as InsertionAlgorithm<T, U, V, D>>::filter_boundary_facets_by_valid_facet_sharing(
                 tds,
                 refinement_infos,
                 inserted_vk,
                 true, // Refinement removes violating cells
                 true, // Allow facets containing inserted vertex (refinement phase)
-            )?;
+            ) {
+                Ok(infos) => infos,
+                Err(e) => {
+                    <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                        tds,
+                        &saved_cavity_cells,
+                        &created_cell_keys,
+                        !vertex_existed_before,
+                        inserted_vk,
+                    );
+                    return Err(e);
+                }
+            };
 
             if refinement_infos.is_empty() {
                 // No valid boundary facets - stop refinement
@@ -705,7 +776,20 @@ where
 
         // Phase 6: Final validation - RobustBowyerWatson MUST guarantee Delaunay property
         let all_cell_keys: Vec<CellKey> = tds.cells().map(|(k, _)| k).collect();
-        let remaining_violations = self.find_delaunay_violations_in_cells(tds, &all_cell_keys)?;
+        let remaining_violations = match self.find_delaunay_violations_in_cells(tds, &all_cell_keys)
+        {
+            Ok(v) => v,
+            Err(e) => {
+                <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                    tds,
+                    &saved_cavity_cells,
+                    &created_cell_keys,
+                    !vertex_existed_before,
+                    inserted_vk,
+                );
+                return Err(e);
+            }
+        };
 
         if !remaining_violations.is_empty() {
             // RobustBowyerWatson found violations even after iterative refinement - rollback and error
@@ -1444,19 +1528,16 @@ where
             let scale = self.predicate_config.perturbation_scale;
             let multiplier = self.predicate_config.visibility_threshold_multiplier;
             let raw = scale * scale * multiplier;
-            // Clamp to finite max to avoid overflow with extreme configs
-            <f64 as NumCast>::from(raw).map_or_else(
-                || <T as NumCast>::from(1e100).unwrap(),
-                |raw_f64| {
-                    if raw_f64.is_finite() {
-                        raw
-                    } else {
-                        // Use safe conversion for extreme values
-                        <T as NumCast>::from(f64::MAX / 2.0)
-                            .unwrap_or_else(|| <T as NumCast>::from(1e100).unwrap()) // Fallback for safety
-                    }
-                },
-            )
+            // Clamp to finite max to avoid overflow with extreme configs.
+            // Use the existing `f64: From<T>` bound instead of `NumCast` on `f64`.
+            let raw_f64: f64 = <f64 as From<T>>::from(raw);
+            if raw_f64.is_finite() {
+                raw
+            } else {
+                // Safe fallback for extreme values; convert back from f64 -> T.
+                <T as NumCast>::from(f64::MAX / 2.0)
+                    .unwrap_or_else(|| <T as NumCast>::from(1e100).unwrap())
+            }
         };
         Ok(distance_squared > threshold)
     }
@@ -1501,15 +1582,24 @@ where
             // Find all currently violating cells
             let violating_cells = crate::core::util::find_delaunay_violations(tds, None).map_err(
                 |err| match err {
-                    crate::core::util::DelaunayValidationError::TriangulationState { source } => {
+                    DelaunayValidationError::TriangulationState { source } => {
                         TriangulationConstructionError::ValidationError(source)
                     }
-                    crate::core::util::DelaunayValidationError::DelaunayViolation { .. }
-                    | crate::core::util::DelaunayValidationError::InvalidCell { .. } => {
+                    DelaunayValidationError::DelaunayViolation { .. }
+                    | DelaunayValidationError::InvalidCell { .. } => {
                         TriangulationConstructionError::ValidationError(
                             TriangulationValidationError::DelaunayViolation {
                                 message: format!(
                                     "Delaunay validation failed during global repair: {err}"
+                                ),
+                            },
+                        )
+                    }
+                    DelaunayValidationError::NumericPredicateError { .. } => {
+                        TriangulationConstructionError::ValidationError(
+                            TriangulationValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Numeric predicate failure during global Delaunay repair: {err}",
                                 ),
                             },
                         )
@@ -6829,6 +6919,76 @@ mod tests {
             &tds,
             "after finalization in debug_small_triangulation_robust_stepwise",
         );
+    }
+
+    /// Debug helper: 2D interior insertion starting from a single triangle
+    /// [ (0,0), (10,0), (0,10) ] and interior point
+    /// [5.531148180055476, 5.854504198062877].
+    ///
+    /// Enables inspecting strategy, bad-cell detection, and cavity-based insertion
+    /// behavior for the minimal configuration that currently triggers Delaunay
+    /// violations in integration tests.
+    #[test]
+    #[ignore = "debug helper; run manually when investigating 2D robust cavity insertion"]
+    fn debug_2d_cavity_insertion_interior_point() {
+        use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
+
+        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 2>::new();
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([10.0, 0.0]),
+            vertex!([0.0, 10.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&initial_vertices).unwrap();
+
+        let test_vertex = vertex!([5.531_148_180_055_476, 5.854_504_198_062_877]);
+
+        println!(
+            "2D debug: initial TDS vertices={}, cells={}",
+            tds.number_of_vertices(),
+            tds.number_of_cells()
+        );
+        println!("2D debug: test vertex = {:?}", test_vertex.point().coords());
+
+        let is_interior = algorithm.is_vertex_interior(&tds, &test_vertex);
+        println!("2D debug: is_vertex_interior = {is_interior:?}");
+
+        let strategy_default = algorithm.determine_strategy_default(&tds, &test_vertex);
+        println!("2D debug: determine_strategy_default = {strategy_default:?}");
+
+        let bad_cells_result = algorithm.find_bad_cells(&tds, &test_vertex);
+        println!("2D debug: find_bad_cells = {bad_cells_result:?}");
+
+        // Try the shared cavity-based insertion implementation directly
+        let cavity_result =
+            <RobustBowyerWatson<f64, Option<()>, Option<()>, 2> as InsertionAlgorithm<
+                f64,
+                Option<()>,
+                Option<()>,
+                2,
+            >>::insert_vertex_cavity_based(&mut algorithm, &mut tds, &test_vertex);
+
+        println!("2D debug: insert_vertex_cavity_based result = {cavity_result:?}");
+        println!(
+            "2D debug: TDS after cavity attempt: vertices={}, cells={}",
+            tds.number_of_vertices(),
+            tds.number_of_cells()
+        );
+
+        if tds.is_valid().is_ok() {
+            println!("2D debug: TDS is structurally valid after cavity attempt");
+        } else {
+            println!("2D debug: TDS is NOT structurally valid after cavity attempt");
+        }
+
+        match tds.validate_delaunay() {
+            Ok(()) => {
+                println!("2D debug: TDS is globally Delaunay after cavity attempt");
+            }
+            Err(e) => {
+                println!("2D debug: Delaunay validation failed after cavity attempt: {e:?}");
+            }
+        }
     }
 
     /// Test that facet cache is properly validated

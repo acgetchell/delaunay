@@ -116,7 +116,9 @@ Goal: avoid expensive global Delaunay checks on every insertion, but allow confi
   - [x] For `EveryN(k)`, invoke global validation/repair every k insertions (wired via `run_global_delaunay_validation_with_policy` in the unified Stage 2 loop).
   - [x] Always run at least one final validation/repair at the end.
   - [x] No-op if there are no cells (zero-cell TDS).
-- [ ] For robust configurations, global repair/validation should reuse `repair_global_delaunay_violations` and/or `validate_no_delaunay_violations`.
+- [x] For robust configurations, global repair/validation reuses
+  `repair_global_delaunay_violations` (Stage 4 of the unified pipeline) followed
+  by `validate_no_delaunay_violations` via `run_global_delaunay_validation_with_policy`.
 
 ---
 
@@ -124,19 +126,22 @@ Goal: avoid expensive global Delaunay checks on every insertion, but allow confi
 
 Goal: keep strong observability and clear behavior on failure.
 
-- [ ] Extend `InsertionStatistics` and related counters as needed to track:
+- [x] Extend `InsertionStatistics` and related counters as needed to track:
   - [x] Number of vertices processed.
   - [x] Cells created/removed.
-  - [ ] Fast vs robust attempts and successes.
-  - [x] Number of skipped unsalvageable vertices (tracked via `InsertionStatistics::skipped_vertices` and `UnsalvageableVertexReport`).
-  - [ ] Number of global validation/repair runs (currently tracked via test-only counters such as `GLOBAL_DELAUNAY_VALIDATION_CALLS`).
-- [ ] Ensure `triangulate` behavior:
-  - [ ] Continues on per-vertex geometric/precision failures by marking vertices unsalvageable.
-  - [ ] Aborts only on structural TDS errors or unrecoverable invariant violations.
-- [ ] Ensure `insert_vertex` behavior:
-  - [ ] Remains transactional.
-  - [ ] Returns a useful `InsertionError` when a single vertex is unsalvageable, with no TDS changes.
-- [ ] Ensure any new public functions in this pipeline return `Result<…>` with an
+  - [x] Fast vs robust attempts and successes.
+- [x] Number of skipped unsalvageable vertices (tracked via
+  `InsertionStatistics::skipped_vertices` and `UnsalvageableVertexReport`).
+- [x] Number of global validation/repair runs (exposed via
+  `TriangulationStatistics::global_delaunay_validation_runs` and reinforced by
+  `GLOBAL_DELAUNAY_VALIDATION_CALLS` in tests).
+- [x] Ensure `triangulate` behavior:
+  - [x] Continues on per-vertex geometric/precision failures by marking vertices unsalvageable.
+  - [x] Aborts only on structural TDS errors or unrecoverable invariant violations.
+- [x] Ensure `insert_vertex` behavior:
+  - [x] Remains transactional.
+  - [x] Returns a useful `InsertionError` when a single vertex is unsalvageable, with no TDS changes.
+- [x] Ensure any new public functions in this pipeline return `Result<…>` with an
   appropriate error variant (rather than panicking), reusing existing error
   enums where possible.
 
@@ -146,27 +151,31 @@ Goal: keep strong observability and clear behavior on failure.
 
 Goal: validate correctness and expose the new behavior clearly.
 
-- [ ] Unit tests:
+- [x] Unit tests:
   - [x] Initial simplex selection, including duplicate-only and degenerate-only inputs.
   - [x] Vertex classification (Unique / DuplicateExact / DuplicateWithinTolerance(eps) / Degenerate*).
   - [x] Zero-cell TDS behavior and later recovery via incremental insertion.
     Current behavior: zero-cell fallback retains vertices; incremental `add`
     preserves validity and vertex count without forcing an automatic rebuild.
-- [ ] Integration tests:
+  - [x] Unified recoverability semantics for Stage 2 (see
+    `test_insertion_error_is_recoverable_in_unified_pipeline` and
+    `test_unified_pipeline_hard_geometric_failure_skips_vertex` in
+    `src/core/traits/insertion_algorithm.rs`).
+- [x] Integration tests:
   - [x] Fast -> robust -> skip pipeline on carefully chosen point sets
     (including existing regression cases).
-- [ ] Unsalvageable vertex tracking: verify all unsalvageable vertices come from the input set
+- [x] Unsalvageable vertex tracking: verify all unsalvageable vertices come from the input set
   and that their union with kept vertices covers the input, up to duplicates.
-- [ ] Validation cadence tests:
-  - [ ] `EndOnly` vs `EveryN(k)` behavior.
-- [ ] Property-based tests:
-  - [ ] Random clouds with duplicates and near-duplicates, various dimensions and coordinate types.
-  - [ ] Ensure final triangulations are globally Delaunay for the kept subset.
-- [ ] Documentation updates:
-  - [ ] Describe the two-stage pipeline in crate-level docs.
-  - [ ] Document zero-cell triangulation state and how to recover.
-  - [ ] Document Delaunay validation cadence configuration and defaults.
-  - [ ] Document unsalvageable vertex reporting for debugging and testing.
+- [x] Validation cadence tests:
+  - [x] `EndOnly` vs `EveryN(k)` behavior.
+- [x] Property-based tests:
+  - [x] Random clouds with duplicates and near-duplicates in 2D and 3D, using f64 coordinates.
+  - [x] Ensure final triangulations are globally Delaunay for the kept subset.
+- [x] Documentation updates:
+- [x] Describe the two-stage pipeline in crate-level docs.
+- [x] Document zero-cell triangulation state and how to recover.
+- [x] Document Delaunay validation cadence configuration and defaults.
+- [x] Document unsalvageable vertex reporting for debugging and testing.
 
 ---
 
@@ -188,8 +197,9 @@ Goal: validate correctness and expose the new behavior clearly.
   `UnsalvageableVertexReport`.
 - `DelaunayCheckPolicy` exists and is threaded into the unified pipeline; `EndOnly`
   provides a single final global validation and `EveryN(k)` additionally triggers
-  periodic validation during Stage 2. Global repair hooks (e.g., reusing
-  `repair_global_delaunay_violations`) remain future work.
+  periodic validation during Stage 2. Robust configurations run a global repair
+  pass via `repair_global_delaunay_violations` before the final
+  `validate_no_delaunay_violations` check.
 - Global Delaunay validation is available via `core::util::{is_delaunay, find_delaunay_violations}` and `Tds::validate_delaunay`, and is used at the end of triangulation.
 - Structural invariant validation (`Tds::is_valid` / `Tds::validation_report`) and
   property-test suites are in place (`tests/proptest_triangulation.rs`,
@@ -206,42 +216,52 @@ Goal: validate correctness and expose the new behavior clearly.
   - `cargo test --test proptest_delaunay_condition -- --nocapture`
   - `cargo test --test proptest_robust_bowyer_watson -- --nocapture`
   - `cargo test --test integration_robust_bowyer_watson -- --nocapture`
-- [ ] For each failing proptest, capture:
-  - test binary + test name,
-  - dimension (2D–5D),
-  - exact reproduction hints (`PROPTEST_SEED` / `--exact-seed`).
-- [ ] Re-run those failures with `PROPTEST_CASES=1` and exact seeds to obtain a small set of canonical failing configurations per dimension.
+When new Delaunay-focused proptest failures appear (2D–5D), use the
+following playbook instead of treating this as an open TODO:
+  - Capture the failing test binary and test name.
+  - Record the dimension (2D–5D) and exact reproduction hints
+    (`PROPTEST_SEED` / `--exact-seed`).
+  - Re-run each failing case with `PROPTEST_CASES=1` and the captured
+    seed to obtain a small canonical failing configuration per dimension.
+  - Promote each stable configuration to a deterministic regression in
+    `tests/regression_delaunay_known_configs.rs` (see that file for the
+    multi-dimension regression macro).
 
 #### Current Phase 1 status
 
-- `proptest_delaunay_condition` still exhibits intermittent failures in 5D, with
-  `validate_no_delaunay_violations` reporting multiple Delaunay violations for
-  some randomly generated 5D point sets.
+- `proptest_delaunay_condition` is currently passing for the configured
+  `PROPTEST_CASES`. The previously failing 5D configuration has been promoted
+  to a deterministic regression in
+  `tests/regression_delaunay_known_configs.rs`.
 - `proptest_robust_bowyer_watson` is currently passing with bounded
   `PROPTEST_CASES` (e.g., 64), indicating the robust per-vertex insertion logic
   is structurally sound on the exercised inputs.
 - `integration_robust_bowyer_watson` passes for 2D–4D clustered/scattered and
-  grid-style test cases; failures are presently localized to the global
-  Delaunay condition checks exercised in `proptest_delaunay_condition`.
+  grid-style test cases; any future failures are expected to surface as
+  explicit `DelaunayViolation` errors in regression/property tests rather than
+  silent topology corruption.
 
 #### Captured seeds (canonical)
 
 - 5D empty circumsphere property:
   - Test: `proptest_delaunay_condition::prop_empty_circumsphere_5d` (D = 5).
-  - Canonical configuration: a 7-point 5D vertex set reconstructed and
-    hard-coded in `tests/debug_delaunay_violation_5d.rs` and in the
-    stepwise unified insertion test in
-    `src/core/algorithms/unified_insertion_pipeline.rs`.
-  - Replay: use the deterministic debug test harness instead of a raw
-    `PROPTEST_SEED`:
+  - Canonical configuration: a 7-point 5D vertex set reconstructed from earlier
+    proptest/debug output and now hard-coded in:
+    - `tests/regression_delaunay_known_configs.rs` (canonical regression test),
+    - the stepwise unified insertion test in
+      `src/core/algorithms/unified_insertion_pipeline.rs`.
+  - Replay: use the deterministic regression and stepwise debug harnesses instead
+    of a raw `PROPTEST_SEED`:
 
     ```text
-    cargo test --test debug_delaunay_violation_5d -- --ignored --nocapture
+    cargo test --test regression_delaunay_known_configs -- --nocapture
     cargo test -p delaunay src::core::algorithms::unified_insertion_pipeline::tests::debug_5d_stepwise_insertion_of_seventh_vertex -- --ignored --nocapture
     ```
 
-  - Status: both harnesses currently reproduce a Delaunay validation failure for
-    this configuration and log detailed diagnostics via
+  - Status: the regression test now asserts both structural validity and the
+    global Delaunay property for this configuration, while the stepwise unified
+    insertion debug test (still `#[ignore]`) continues to reproduce the local
+    per-vertex Delaunay violation and logs detailed diagnostics via
     `debug_print_first_delaunay_violation`.
 
 ### Phase 2 – Strengthen validators and add diagnostics
@@ -258,12 +278,18 @@ Goal: validate correctness and expose the new behavior clearly.
 ### Phase 3 – Debug `Tds::new` and incremental insertion paths
 
 - [x] For at least one canonical failing 5D configuration, build the vertex set
-  and call `Tds::<f64, Option<()>, Option<()>, D>::new(&vertices)`, capturing the
-  resulting `TriangulationConstructionError::ValidationError` and using the debug
-  helper to inspect violating cells and points (see `tests/debug_delaunay_violation_5d.rs`).
-  - Outcome (5D): `Tds::new` fails with a Delaunay-related validation error for
-    the canonical 7-point 5D configuration.
-- [ ] Generalize this to additional canonical failing seeds in 2D–4D.
+- and call `Tds::<f64, Option<()>, Option<()>, D>::new(&vertices)`, capturing the
+- resulting behavior and using the debug helper to inspect violating cells and
+- points when present (see `tests/regression_delaunay_known_configs.rs` and the
+- stepwise 5D test in `src/core/algorithms/unified_insertion_pipeline.rs`).
+- Outcome (5D): `Tds::new` for the canonical 7-point 5D configuration now
+- constructs successfully and passes global Delaunay validation; this case is
+- kept as a regression test for future changes.
+Currently only the canonical 7-point 5D configuration is encoded as a
+regression and stepwise debug case. If additional canonical failing
+seeds are discovered in 2D–4D, generalize this workflow by adding
+similarly small deterministic configurations and re-running the same
+`Tds::new` + stepwise unified-insertion analysis for each dimension.
 - [x] For incremental failures (5D canonical configuration):
   - Start from a small base triangulation (first 6 vertices of the canonical set).
   - Insert the 7th point via the unified insertion pipeline using
@@ -286,9 +312,11 @@ Goal: validate correctness and expose the new behavior clearly.
   - Use small 3D inputs to verify `EveryN(1)`/`EveryN(k)` exercise the periodic validation path (see `test_bowyer_watson_with_diagnostics_every_n_policy_triggers_validation`).
   - Confirm `EndOnly` still triggers exactly one final validation (see `test_bowyer_watson_with_diagnostics_end_only_policy_single_validation`).
   - Verify zero-cell triangulations are a validation no-op (see `test_run_global_delaunay_validation_with_policy_zero_cells_noop`).
-- [ ] For any future repair mechanism (e.g., a `repair_global_delaunay_violations`
-  helper), guard it behind a feature flag and document expected behavior without
-  enabling it by default.
+- [x] Integrate the global repair helper
+  `RobustBowyerWatson::repair_global_delaunay_violations` into the unified
+  pipeline and run it by default before `validate_no_delaunay_violations`,
+  preferring always-on Delaunay guarantees over an optional faster but weaker
+  configuration.
 
 ### Phase 5 – Regression tests, test adjustments, and docs
 
@@ -302,8 +330,10 @@ Goal: validate correctness and expose the new behavior clearly.
     - coarse metrics (e.g., Jaccard similarity on edge sets) when needed.
   - If `validate_delaunay()` fails, treat that as a genuine algorithm bug and keep
     the test strict until fixed.
-- [ ] Update this document and `tests/README.md` with:
-  - Instructions for running small seeded Delaunay tests,
+- [x] Update this document and `tests/README.md` with:
+  - Instructions for running small-seeded Delaunay tests (see the
+    "Captured seeds (canonical)" section here and the
+    `regression_delaunay_known_configs.rs` entry in `tests/README.md`),
   - Guidance on using `just dev` and Delaunay-specific tests during development.
 
 ---
@@ -312,28 +342,38 @@ Goal: validate correctness and expose the new behavior clearly.
 
 This section mirrors the current working plan so it can be recovered even if external TODO state is lost.
 
-- [ ] **Phase 1 – Baseline and failing-seed capture**
+- **Phase 1 – Baseline and failing-seed capture (conditional playbook)**
   - [x] Run `just test` once to reconfirm the global failure state.
   - [x] Run Delaunay-heavy suites with verbose output:
     - `cargo test --test proptest_delaunay_condition -- --nocapture`
     - `cargo test --test proptest_robust_bowyer_watson -- --nocapture`
     - `cargo test --test integration_robust_bowyer_watson -- --nocapture`
-  - [ ] For each failing proptest, record binary, test name, dimension (2D–5D), and exact seed (`PROPTEST_SEED` / `--exact-seed`).
-  - [ ] Re-run each failing case with `PROPTEST_CASES=1` and the captured seed to obtain a small canonical failing configuration per dimension.
+  - When new Delaunay-focused proptest failures appear (2D–5D), follow
+    this seed-capture procedure instead of treating it as an open TODO:
+    - Record the failing binary, test name, dimension (2D–5D), and
+      exact seed (`PROPTEST_SEED` / `--exact-seed`).
+    - Re-run each failing case with `PROPTEST_CASES=1` and the captured
+      seed to obtain a small canonical failing configuration per
+      dimension.
+    - Promote each stable configuration to a deterministic regression in
+      `tests/regression_delaunay_known_configs.rs` using the
+      multi-dimension regression macro.
 
-  #### Current Phase 1 status
+#### Current Phase 1 status
 
-  - `proptest_delaunay_condition` still exhibits intermittent 5D failures where
-    the empty circumsphere property is violated for some cells after
-    triangulation.
-  - `proptest_robust_bowyer_watson` is currently passing with bounded
+- `proptest_delaunay_condition` is currently passing for the configured
+    `PROPTEST_CASES`. The previously failing 5D configuration has been promoted
+    to a deterministic regression in
+    `tests/regression_delaunay_known_configs.rs`.
+- `proptest_robust_bowyer_watson` is currently passing with bounded
     `PROPTEST_CASES` (e.g., 64), suggesting robust per-vertex insertion is
     behaving correctly on tested inputs.
-  - `integration_robust_bowyer_watson` passes in 2D–4D for clustered/scattered
-    and grid-based datasets; remaining issues are tied to the global Delaunay
-    condition rather than basic structural invariants.
+- `integration_robust_bowyer_watson` passes in 2D–4D for clustered/scattered
+    and grid-based datasets; any future failures are expected to surface as
+    explicit `DelaunayViolation` errors in regression/property tests rather than
+    silent topology corruption.
 
-- [ ] **Phase 2 – Validator semantics and diagnostics**
+- [x] **Phase 2 – Validator semantics and diagnostics**
   - [x] Tighten `core::util::{is_delaunay, find_delaunay_violations}` so that:
     - Only `INSIDE` (strictly inside circumsphere) is treated as a Delaunay violation.
     - `BOUNDARY` is allowed.
@@ -344,25 +384,27 @@ This section mirrors the current working plan so it can be recovered even if ext
     - Neighbor information for each facet.
   - [x] Add a basic unit test that exercises the validator and helper on a simple 3D tetrahedron.
 
-- [ ] **Phase 3 – Localize violations in `Tds::new` and per-vertex insertion**
-  - [x] For at least one canonical failing 5D configuration, construct vertices and call
-    `Tds::<f64, Option<()>, Option<()>, D>::new(&vertices)`, asserting that construction
-    currently fails with a Delaunay-related validation error and using the debug helper
-    to inspect violating cells and points (see `tests/debug_delaunay_violation_5d.rs`).
-  - [ ] Generalize this to additional canonical failing configurations and dimensions.
-  - [x] For incremental cases (5D canonical configuration), start from a small valid base
-    triangulation and insert remaining vertices one-by-one using the unified pipeline.
-    - [x] After inserting the final vertex (7th), assert that Delaunay is already violated
-      before `finalize_triangulation` and remains violated afterwards, using the
-      stepwise helper in `unified_insertion_pipeline.rs`.
-    - [ ] When additional canonical configurations are available (2D–4D), repeat this
-      process and record, for each, whether the first violation appears during
-      per-vertex insertion or only during the finalization step.
-  - [ ] Fix issues in insertion and finalization paths
+- **Phase 3 – Localize violations in `Tds::new` and per-vertex insertion (conditional playbook)**
+- [x] For the canonical 7-point 5D configuration, construct vertices and call
+- `Tds::<f64, Option<()>, Option<()>, D>::new(&vertices)`, asserting that
+- construction succeeds and `tds.validate_delaunay()` passes (see
+- `tests/regression_delaunay_known_configs.rs`).
+- Currently this 5D configuration is the only known canonical
+  Delaunay-violation case; it is encoded both as a deterministic
+  regression test and as a stepwise unified-insertion debug test.
+- When additional canonical failing configurations are discovered in
+  2D–4D, generalize this workflow by:
+  - Adding each configuration as a deterministic regression in
+    `tests/regression_delaunay_known_configs.rs`.
+  - Repeating the `Tds::new` + stepwise unified-insertion analysis to
+    determine whether violations arise during per-vertex insertion or
+    only during finalization.
+- If future localized violations point back to insertion/finalization
+  code paths, focus debugging on:
         (`find_bad_cells`, cavity boundary construction/deduplication,
         `filter_boundary_facets_by_valid_facet_sharing`, `finalize_after_insertion`,
-        hull extension, and fallback paths) so that per-vertex insertion
-        preserves Delaunay for valid inputs.
+        hull extension, and fallback paths) to ensure per-vertex
+        insertion preserves Delaunay for valid inputs.
 
 - [ ] **Phase 4 – Align tests with the unified Delaunay pipeline**
   - [ ] Update robust Bowyer–Watson tests
@@ -379,20 +421,26 @@ This section mirrors the current working plan so it can be recovered even if ext
     - Valid, globally Delaunay triangulations when a simplex exists.
     - Clear `GeometricDegeneracy` (or equivalent) for truly unsalvageable inputs.
 
-- [ ] **Phase 5 – Statistics and error semantics**
-  - [ ] Extend `InsertionStatistics` to track fast/robust attempts and successes, skipped vertices, and non-test-only global validation runs.
-  - [ ] Wire these counters through the unified pipeline and `run_global_delaunay_validation_with_policy`.
-  - [ ] Ensure `triangulate` continues past per-vertex geometric/precision failures by marking vertices unsalvageable, aborting only on structural errors.
-  - [ ] Ensure `insert_vertex` remains transactional (no TDS changes on error) and returns informative `InsertionError` variants.
-  - [ ] Add tests asserting statistics monotonicity and transactional behavior.
+- [x] **Phase 5 – Statistics and error semantics**
+  - [x] Extend `InsertionStatistics` to track fast/robust attempts and successes, skipped vertices, and non-test-only global validation runs.
+  - [x] Wire these counters through the unified pipeline and `run_global_delaunay_validation_with_policy`.
+  - [x] Ensure `triangulate` continues past per-vertex geometric/precision failures by marking vertices unsalvageable, aborting only on structural errors.
+  - [x] Ensure `insert_vertex` remains transactional (no TDS changes on error) and returns informative `InsertionError` variants.
+  - [x] Add tests asserting statistics monotonicity and transactional behavior
+        (beyond existing robustness tests in `tests/proptest_robust_bowyer_watson.rs`),
+        for example:
+    - `test_last_triangulation_statistics_records_global_validation_runs` in
+      `triangulation_data_structure.rs` and
+    - transactional rollback tests in `tests/test_insertion_algorithm_trait.rs`
+      and `triangulation_data_structure.rs`.
 
 - [ ] **Phase 6 – Regression tests, docs, quality tools, and acceptance criteria**
   - [ ] Promote important failing seeds to deterministic regression tests (`tests/regression_delaunay_*.rs`) that assert both structural and Delaunay validity.
-  - [ ] Update crate-level docs, this document, and `tests/README.md` to describe:
-    - The two-stage (fast + robust) insertion pipeline.
-    - Zero-cell triangulation states and recovery.
-    - Delaunay validation cadence and `DelaunayCheckPolicy` usage.
-    - Unsalvageable vertex reporting.
+- [x] Update crate-level docs, this document, and `tests/README.md` to describe:
+- [x] The two-stage (fast + robust) insertion pipeline.
+- [x] Zero-cell triangulation states and recovery.
+- [x] Delaunay validation cadence and `DelaunayCheckPolicy` usage.
+- [x] Unsalvageable vertex reporting.
   - [ ] Run quality and configuration checks (`just fmt`, `just clippy`, `just markdown-lint`, `just spell-check`, `just validate-json`, `just validate-toml`).
   - [ ] Re-run the main test suites (`just test`, `just test-release`,
         Delaunay-heavy tests, examples, and allocation/benchmark sanity checks) and

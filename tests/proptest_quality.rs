@@ -217,6 +217,11 @@ macro_rules! test_quality_properties {
                                 .map(|(orig, trans)| (orig.uuid(), trans.uuid()))
                                 .collect();
 
+                            // Track whether we actually compared at least one matched cell to
+                            // avoid vacuous success when robustness-driven topology changes
+                            // prevent any UUID-matched cells between the two triangulations.
+                            let mut matched_any = false;
+
                             // Match cells by translating their vertex UUIDs
                             for orig_key in tds.cell_keys() {
                                 if let Some(orig_cell) = tds.get_cell(orig_key) {
@@ -266,17 +271,17 @@ macro_rules! test_quality_properties {
                                             }
                                         }
 
-                                        // If no matching cell is found in the translated triangulation,
-                                        // skip this cell. The robust construction pipeline may legitimately
-                                        // drop or re-triangulate cells differently under extreme
-                                        // translations; in those cases we cannot meaningfully compare
-                                        // quality metrics.
-                                        if !matched {
-                                            continue;
+                                        if matched {
+                                            matched_any = true;
                                         }
                                     }
                                 }
                             }
+
+                            // If absolutely no cells matched between original and translated
+                            // triangulations, discard this case rather than "proving" the
+                            // property without any comparisons.
+                            prop_assume!(matched_any);
                         }
                     }
                 }
@@ -312,6 +317,10 @@ macro_rules! test_quality_properties {
                                 .zip(translated_vertices.iter())
                                 .map(|(orig, trans)| (orig.uuid(), trans.uuid()))
                                 .collect();
+
+                            // Track whether we actually compared any matched cells to avoid
+                            // vacuous success when topology changes prevent UUID matches.
+                            let mut matched_any = false;
 
                             // Match cells by vertex UUIDs and compare quality
                             for orig_key in tds.cell_keys() {
@@ -357,19 +366,19 @@ macro_rules! test_quality_properties {
                                             }
                                         }
 
-                                        // As with radius ratio, skip cells that cannot be matched in the
-                                        // translated triangulation due to robustness-driven topology changes.
-                                        if !matched {
-                                            continue;
+                                        if matched {
+                                            matched_any = true;
                                         }
                                     }
                                 }
                             }
+
+                            prop_assume!(matched_any);
                         }
                     }
                 }
 
-                /// Property: Radius ratio is scale-invariant (uniform scaling)
+                /// Property: Normalized volume is scale-invariant (uniform scaling)
                 #[test]
                 fn [<prop_normalized_volume_scale_invariant_ $dim d>](
                     vertices in prop::collection::vec(
@@ -400,6 +409,10 @@ macro_rules! test_quality_properties {
                                 .zip(scaled_vertices.iter())
                                 .map(|(orig, scaled)| (orig.uuid(), scaled.uuid()))
                                 .collect();
+
+                            // Track whether any cells were actually compared to avoid vacuous
+                            // success when scaling changes the topology too much to match by UUID.
+                            let mut matched_any = false;
 
                             // Match cells by vertex UUIDs and compare quality
                             for orig_key in tds.cell_keys() {
@@ -445,15 +458,14 @@ macro_rules! test_quality_properties {
                                             }
                                         }
 
-                                        // Skip unmatched cells where the scaled triangulation no longer
-                                        // contains an equivalent combinatorial cell (e.g., due to
-                                        // degeneracy detection changing under scaling).
-                                        if !matched {
-                                            continue;
+                                        if matched {
+                                            matched_any = true;
                                         }
                                     }
                                 }
                             }
+
+                            prop_assume!(matched_any);
                         }
                     }
                 }
