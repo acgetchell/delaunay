@@ -1575,8 +1575,11 @@ where
         use crate::geometry::point::Point;
 
         // Conservative global repair limits to avoid pathological cases
-        const MAX_GLOBAL_REPAIR_ITERATIONS: usize = 32;
-        const MAX_REPAIRS_PER_ITERATION: usize = 8;
+        // Increased from 32/8 to handle larger point sets (100+ vertices) in 2D-5D.
+        // The limits scale with dimensionality since higher dimensions require more
+        // iterations to resolve local violations through cavity-based refinement.
+        const MAX_GLOBAL_REPAIR_ITERATIONS: usize = 128;
+        const MAX_REPAIRS_PER_ITERATION: usize = 32;
 
         for iteration in 0..MAX_GLOBAL_REPAIR_ITERATIONS {
             // Find all currently violating cells

@@ -158,12 +158,16 @@ help-workflows:
     @echo "  just test          # Rust lib and doc tests (debug mode)"
     @echo "  just test-all      # All tests (Rust + Python, debug mode)"
     @echo "  just test-release  # All tests in release mode"
+    @echo "  just test-slow     # Include slow/stress tests (100+ vertices)"
+    @echo "  just test-slow-release # Slow tests in release mode (faster)"
     @echo "  just test-debug    # Run debug tools with output"
     @echo "  just test-allocation # Memory allocation profiling"
     @echo "  just examples      # Run all examples"
     @echo "  just coverage      # Generate coverage report"
     @echo ""
     @echo "Quality Check Groups:"
+    @echo "  just quality       # All quality checks + tests (standard, fast)"
+    @echo "  just quality-slow  # All quality checks + tests including slow tests"
     @echo "  just lint          # All linting (code + docs + config)"
     @echo "  just lint-code     # Code linting (Rust, Python, Shell)"
     @echo "  just lint-docs     # Documentation linting (Markdown, Spelling)"
@@ -294,6 +298,10 @@ python-lint: _ensure-uv
 quality: lint-code lint-docs lint-config test-all
     @echo "✅ All quality checks and tests passed!"
 
+# Comprehensive quality check including slow tests (for local development/pre-commit)
+quality-slow: lint-code lint-docs lint-config test-all test-slow-release
+    @echo "✅ All quality checks and tests (including slow tests) passed!"
+
 # Development setup
 setup:
     #!/usr/bin/env bash
@@ -411,6 +419,14 @@ test-python: _ensure-uv
 
 test-release:
     cargo test --release
+
+# Run tests including slow/stress tests (100+ vertices, multiple dimensions)
+# These are gated behind the 'slow-tests' feature to keep CI fast
+test-slow:
+    cargo test --features slow-tests
+
+test-slow-release:
+    cargo test --release --features slow-tests
 
 # File validation
 validate-json:

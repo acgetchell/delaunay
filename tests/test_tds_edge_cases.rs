@@ -344,7 +344,10 @@ fn test_add_duplicate_vertex() {
 // ============================================================================
 
 #[test]
-#[ignore = "Stress test - slow for CI, run manually"]
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    ignore = "Stress test - enable with --features slow-tests"
+)]
 fn test_stress_1000_vertices_2d() {
     use rand::Rng;
     let mut rng = rand::rng();
@@ -372,7 +375,10 @@ fn test_stress_1000_vertices_2d() {
 }
 
 #[test]
-#[ignore = "Stress test - slow for CI, run manually"]
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    ignore = "Stress test - enable with --features slow-tests"
+)]
 fn test_stress_1000_vertices_3d() {
     use rand::Rng;
     let mut rng = rand::rng();
@@ -401,7 +407,10 @@ fn test_stress_1000_vertices_3d() {
 }
 
 #[test]
-#[ignore = "Stress test - slow for CI, run manually"]
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    ignore = "Stress test - enable with --features slow-tests"
+)]
 fn test_stress_5000_vertices_3d() {
     use rand::Rng;
     let mut rng = rand::rng();
@@ -430,7 +439,10 @@ fn test_stress_5000_vertices_3d() {
 }
 
 #[test]
-#[ignore = "Stress test - slow for CI, run manually"]
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    ignore = "Stress test - enable with --features slow-tests"
+)]
 fn test_stress_removal_operations() {
     use rand::Rng;
     let mut rng = rand::rng();

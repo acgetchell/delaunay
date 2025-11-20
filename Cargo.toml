@@ -46,6 +46,7 @@ count-allocations = ["allocation-counter"]
 bench = []  # Enable benchmark-style tests and performance analysis
 test-debug = []  # Enable verbose debug output in tests for development
 dense-slotmap = []  # Use DenseSlotMap instead of SlotMap for performance comparison
+slow-tests = []  # Enable slow-running integration tests (100+ vertices, multiple dimensions)
 
 [[bench]]
 name = "circumsphere_containment"

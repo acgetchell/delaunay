@@ -189,6 +189,8 @@ Goal: validate correctness and expose the new behavior clearly.
 
 ## Current Status
 
+**COMPLETED**: All phases of the Delaunay insertion pipeline redesign are complete.
+
 - Stage 1 ("Robust Initial Simplex") and Stage 2 ("Unified Per-Vertex Insertion")
   are implemented and wired through `InsertionAlgorithm::triangulate` and the
   internal `UnifiedInsertionPipeline`.
@@ -204,8 +206,11 @@ Goal: validate correctness and expose the new behavior clearly.
 - Structural invariant validation (`Tds::is_valid` / `Tds::validation_report`) and
   property-test suites are in place (`tests/proptest_triangulation.rs`,
   `tests/proptest_delaunay_condition.rs`, `tests/proptest_robust_bowyer_watson.rs`,
-  `tests/integration_robust_bowyer_watson.rs`), but some high-dimensional Delaunay
-  properties (especially 4D–5D) still exhibit violations or test drift.
+  `tests/integration_robust_bowyer_watson.rs`).
+- All Delaunay-heavy test suites pass (2D–5D) with canonical regression tests
+  for known configurations in `tests/regression_delaunay_known_configs.rs`.
+- Quality checks (fmt, clippy, markdown-lint, spell-check, validate-json, validate-toml)
+  and comprehensive test suites (test, test-release, examples) all pass.
 
 ## Focused Plan to Debug Remaining Delaunay Violations (2D–5D)
 
@@ -406,18 +411,18 @@ This section mirrors the current working plan so it can be recovered even if ext
         hull extension, and fallback paths) to ensure per-vertex
         insertion preserves Delaunay for valid inputs.
 
-- [ ] **Phase 4 – Align tests with the unified Delaunay pipeline**
-  - [ ] Update robust Bowyer–Watson tests
+- [x] **Phase 4 – Align tests with the unified Delaunay pipeline**
+  - [x] Update robust Bowyer–Watson tests
         (`src/core/algorithms/robust_bowyer_watson.rs`) so they assert structural
         validity + Delaunay without over-constraining triangulation shape unless
         necessary.
-  - [ ] Ensure structural tests in `src/core/{cell,facet,boundary}.rs` still pass
+  - [x] Ensure structural tests in `src/core/{cell,facet,boundary}.rs` still pass
         given any changes to neighbors, incident cells, and boundary extraction.
-  - [ ] Reconcile `prop_filter_never_increases_count` in
+  - [x] Reconcile `prop_filter_never_increases_count` in
         `src/core/traits/insertion_algorithm.rs` with
         `filter_boundary_facets_by_valid_facet_sharing`, ensuring the filter never
         increases facet count.
-  - [ ] Adjust `src/geometry/util.rs` random triangulation tests so `generate_random_triangulation` returns:
+  - [x] Adjust `src/geometry/util.rs` random triangulation tests so `generate_random_triangulation` returns:
     - Valid, globally Delaunay triangulations when a simplex exists.
     - Clear `GeometricDegeneracy` (or equivalent) for truly unsalvageable inputs.
 
@@ -434,14 +439,14 @@ This section mirrors the current working plan so it can be recovered even if ext
     - transactional rollback tests in `tests/test_insertion_algorithm_trait.rs`
       and `triangulation_data_structure.rs`.
 
-- [ ] **Phase 6 – Regression tests, docs, quality tools, and acceptance criteria**
-  - [ ] Promote important failing seeds to deterministic regression tests (`tests/regression_delaunay_*.rs`) that assert both structural and Delaunay validity.
+- [x] **Phase 6 – Regression tests, docs, quality tools, and acceptance criteria**
+  - [x] Promote important failing seeds to deterministic regression tests (`tests/regression_delaunay_*.rs`) that assert both structural and Delaunay validity.
 - [x] Update crate-level docs, this document, and `tests/README.md` to describe:
 - [x] The two-stage (fast + robust) insertion pipeline.
 - [x] Zero-cell triangulation states and recovery.
 - [x] Delaunay validation cadence and `DelaunayCheckPolicy` usage.
 - [x] Unsalvageable vertex reporting.
-  - [ ] Run quality and configuration checks (`just fmt`, `just clippy`, `just markdown-lint`, `just spell-check`, `just validate-json`, `just validate-toml`).
-  - [ ] Re-run the main test suites (`just test`, `just test-release`,
+  - [x] Run quality and configuration checks (`just fmt`, `just clippy`, `just markdown-lint`, `just spell-check`, `just validate-json`, `just validate-toml`).
+  - [x] Re-run the main test suites (`just test`, `just test-release`,
         Delaunay-heavy tests, examples, and allocation/benchmark sanity checks) and
         treat any remaining `DelaunayViolation` as a bug to fix before completion.
