@@ -285,4 +285,9 @@ fn debug_neighbor_preservation_2d_regression() {
     println!(
         "Deserialized neighbor count: {deserialized_neighbor_count} (original {original_neighbor_count})"
     );
+
+    assert_eq!(
+        deserialized_neighbor_count, original_neighbor_count,
+        "Neighbor count should be preserved during JSON roundtrip"
+    );
 }

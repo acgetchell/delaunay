@@ -67,13 +67,14 @@ jobs:
           # - Implicit test threads: --implicit-test-threads
           echo "::group::Running tarpaulin"
           # Use explicit arguments for reliability (config file approach has issues)
-          # Reduce proptest cases for faster coverage runs (default is 256)
-          # Using 16 cases for CI to prevent timeouts under instrumentation (especially 5D tests)
+          # Exclude proptest files: they take 3+ hours under tarpaulin instrumentation
+          # Property-based tests provide excellent coverage but are too slow under instrumentation
+          # Regular integration tests and unit tests provide sufficient coverage metrics
           # Note: NOT using --all-features to avoid slow-tests feature (stress tests that timeout under tarpaulin)
-          PROPTEST_CASES=16 cargo tarpaulin \
+          cargo tarpaulin \
             --out Xml \
             --output-dir coverage \
-            --exclude-files "benches/*" "examples/*" \
+            --exclude-files "benches/*" "examples/*" "tests/proptest_*.rs" \
             --workspace \
             --timeout 600 \
             --verbose \

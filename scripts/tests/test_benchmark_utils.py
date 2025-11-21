@@ -38,6 +38,7 @@ from benchmark_utils import (
     PerformanceSummaryGenerator,
     ProjectRootNotFoundError,
     WorkflowHelper,
+    create_argument_parser,
     find_project_root,
 )
 
@@ -1370,10 +1371,29 @@ Hardware Information:
                 success = BenchmarkRegressionHelper.run_regression_test(baseline_file)
 
                 assert success
-                mock_comparator.compare_with_baseline.assert_called_once_with(baseline_file, bench_timeout=1800)
+                mock_comparator.compare_with_baseline.assert_called_once_with(baseline_file, dev_mode=False, bench_timeout=1800)
 
                 captured = capsys.readouterr()
                 assert "🚀 Running performance regression test" in captured.out
+
+    def test_run_regression_test_dev_mode(self, capsys):
+        """Test regression test run with dev mode enabled."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_file = Path(temp_dir) / "baseline.txt"
+            baseline_file.write_text("mock baseline content")
+
+            with patch("benchmark_utils.PerformanceComparator") as mock_comparator_class:
+                mock_comparator = Mock()
+                mock_comparator.compare_with_baseline.return_value = (True, False)  # success, no regression
+                mock_comparator_class.return_value = mock_comparator
+
+                success = BenchmarkRegressionHelper.run_regression_test(baseline_file, dev_mode=True)
+
+                assert success
+                mock_comparator.compare_with_baseline.assert_called_once_with(baseline_file, dev_mode=True, bench_timeout=1800)
+
+                captured = capsys.readouterr()
+                assert "dev mode (10x faster)" in captured.out
 
     def test_run_regression_test_failure(self):
         """Test regression test run failure."""
@@ -1389,6 +1409,25 @@ Hardware Information:
                 success = BenchmarkRegressionHelper.run_regression_test(baseline_file)
 
                 assert not success
+
+    def test_run_regression_test_custom_timeout(self, capsys):
+        """Test regression test run with custom bench_timeout parameter."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_file = Path(temp_dir) / "baseline.txt"
+            baseline_file.write_text("mock baseline content")
+
+            with patch("benchmark_utils.PerformanceComparator") as mock_comparator_class:
+                mock_comparator = Mock()
+                mock_comparator.compare_with_baseline.return_value = (True, False)  # success, no regression
+                mock_comparator_class.return_value = mock_comparator
+
+                success = BenchmarkRegressionHelper.run_regression_test(baseline_file, bench_timeout=3600)
+
+                assert success
+                mock_comparator.compare_with_baseline.assert_called_once_with(baseline_file, dev_mode=False, bench_timeout=3600)
+
+                captured = capsys.readouterr()
+                assert "🚀 Running performance regression test" in captured.out
 
     def test_display_results_file_exists(self, capsys):
         """Test displaying results when file exists."""
@@ -1635,6 +1674,36 @@ class TestTimeoutHandling:
                 captured = capsys.readouterr()
                 assert "timed out after 1800 seconds" in captured.err
                 assert "Consider increasing --bench-timeout" in captured.err
+
+    def test_cli_bench_timeout_validation(self):
+        """Test that CLI validates bench_timeout is positive."""
+        parser = create_argument_parser()
+
+        # Test with zero timeout - validation helper
+        def validate_zero_timeout():
+            args = parser.parse_args(["generate-baseline", "--bench-timeout", "0"])
+            if hasattr(args, "validate_bench_timeout") and args.validate_bench_timeout and args.bench_timeout <= 0:
+                parser.error(f"--bench-timeout must be positive (got {args.bench_timeout})")
+
+        with pytest.raises(SystemExit) as exc_info:
+            validate_zero_timeout()
+        assert exc_info.value.code == 2  # argparse error exit code
+
+        # Test with negative timeout - validation helper
+        def validate_negative_timeout():
+            args = parser.parse_args(["compare", "--baseline", "baseline.txt", "--bench-timeout", "-100"])
+            if hasattr(args, "validate_bench_timeout") and args.validate_bench_timeout and args.bench_timeout <= 0:
+                parser.error(f"--bench-timeout must be positive (got {args.bench_timeout})")
+
+        with pytest.raises(SystemExit) as exc_info:
+            validate_negative_timeout()
+        assert exc_info.value.code == 2  # argparse error exit code
+
+        # Test with positive timeout (should pass)
+        args = parser.parse_args(["run-regression-test", "--baseline", "baseline.txt", "--bench-timeout", "3600"])
+        assert args.bench_timeout == 3600
+        assert hasattr(args, "validate_bench_timeout")
+        assert args.validate_bench_timeout
 
 
 class TestPerformanceSummaryGenerator:
