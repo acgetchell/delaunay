@@ -68,7 +68,8 @@ jobs:
           echo "::group::Running tarpaulin"
           # Use explicit arguments for reliability (config file approach has issues)
           # Reduce proptest cases for faster coverage runs (default is 256)
-          PROPTEST_CASES=64 cargo tarpaulin \
+          # Using 16 cases for CI to prevent timeouts under instrumentation (especially 5D tests)
+          PROPTEST_CASES=16 cargo tarpaulin \
             --out Xml \
             --output-dir coverage \
             --exclude-files "benches/*" "examples/*" \

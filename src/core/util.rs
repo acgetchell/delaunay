@@ -54,7 +54,7 @@ pub enum JaccardComputationError {
 }
 
 /// Errors that can occur during Delaunay property validation.
-#[derive(Clone, Debug, Error)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum DelaunayValidationError {
     /// A cell violates the Delaunay property (has an external vertex inside its circumsphere).
     #[error("Cell violates Delaunay property: cell contains vertex that is inside circumsphere")]
@@ -1671,6 +1671,7 @@ where
     U: DataType,
     V: DataType,
 {
+    // PERFORMANCE: O(N×V) - extremely expensive, use only for testing/validation
     // Check structural invariants first to distinguish "bad triangulation" from
     // "good triangulation but non-Delaunay"
     tds.is_valid()
@@ -1954,6 +1955,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
 #[cfg(test)]
 mod tests {
 
+    use crate::core::cell::Cell;
     use crate::core::facet::FacetView;
     use crate::core::triangulation_data_structure::{Tds, VertexKey};
     use crate::geometry::algorithms::convex_hull::ConvexHull;
@@ -2711,6 +2713,67 @@ mod tests {
         #[cfg(any(test, debug_assertions))]
         debug_print_first_delaunay_violation(&tds, None);
     }
+
+    #[test]
+    #[allow(deprecated)]
+    fn delaunay_validator_detects_violations() {
+        println!("Testing Delaunay validator violation detection");
+
+        // Create vertices for a 2D configuration where we can create a violation:
+        // Three vertices forming a large triangle, and one vertex inside
+        let v0 = vertex!([0.0, 0.0]);
+        let v1 = vertex!([3.0, 0.0]);
+        let v2 = vertex!([1.5, 3.0]);
+        let v_inside = vertex!([1.5, 1.0]); // Point inside the triangle
+
+        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+
+        // Insert vertices
+        let vk0 = tds.insert_vertex_with_mapping(v0).unwrap();
+        let vk1 = tds.insert_vertex_with_mapping(v1).unwrap();
+        let vk2 = tds.insert_vertex_with_mapping(v2).unwrap();
+        let _vk_inside = tds.insert_vertex_with_mapping(v_inside).unwrap();
+
+        // Create a cell using the three outer vertices (v0, v1, v2)
+        // This cell will have v_inside inside its circumcircle, violating Delaunay property
+        let cell_outer = Cell::new(vec![vk0, vk1, vk2], None).unwrap();
+
+        // Use low-level API to insert the cell without Delaunay checks
+        #[allow(deprecated)]
+        let cell_key = tds.insert_cell_unchecked(cell_outer);
+
+        println!("  Created cell with vertices at (0,0), (3,0), (1.5,3)");
+        println!("  Interior vertex at (1.5, 1.0) should be inside circumcircle");
+
+        // Test find_delaunay_violations - should find the violation
+        let violations = find_delaunay_violations(&tds, None).unwrap();
+        println!("  Found {} violating cells", violations.len());
+
+        assert!(
+            !violations.is_empty(),
+            "Should detect Delaunay violation when vertex is inside cell's circumcircle"
+        );
+
+        assert!(
+            violations.contains(&cell_key),
+            "Violating cell should be in the violations list"
+        );
+
+        // Test is_delaunay - because we used insert_cell_unchecked, the UUID mapping
+        // is inconsistent, so is_delaunay() will detect TDS corruption first.
+        // This demonstrates that is_delaunay() correctly checks structural invariants
+        // before checking the Delaunay property.
+        let result = is_delaunay(&tds);
+        println!("  is_delaunay() result: {result:?}");
+        assert!(
+            result.is_err(),
+            "is_delaunay() should return an error (either TDS corruption or Delaunay violation)"
+        );
+
+        // find_delaunay_violations() skips the structural check (by design, for targeted checking)
+        // so it correctly identifies the Delaunay violation
+    }
+
     #[test]
     #[expect(clippy::too_many_lines)]
     fn test_derive_facet_key_from_vertex_keys_comprehensive() {

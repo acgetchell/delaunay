@@ -43,6 +43,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   CRITERION_QUIET_MODE: 1
+  BENCHMARK_TIMEOUT: 3600  # Increase timeout to 60 minutes for CI benchmarks
 
 jobs:
   performance-regression:
