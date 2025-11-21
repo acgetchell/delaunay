@@ -267,6 +267,7 @@
     "nrows",
     "ntasks",
     "nullglob",
+    "octree",
     "oldname",
     "oneline",
     "orcid",

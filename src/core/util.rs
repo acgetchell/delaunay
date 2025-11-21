@@ -169,6 +169,12 @@ pub fn make_uuid() -> Uuid {
 /// This treats NaN as equal to NaN and +0.0 as equal to -0.0, which is appropriate
 /// for deduplication. More strict than epsilon-based comparison.
 ///
+/// # Complexity
+///
+/// O(n²) where n is the number of vertices. This is acceptable for small to moderate
+/// vertex counts (hundreds to low thousands). For very large point clouds, consider
+/// spatial indexing structures or sorting-based approaches.
+///
 /// # Arguments
 ///
 /// * `vertices` - Vector of vertices to deduplicate
@@ -230,6 +236,12 @@ where
 /// Uses Euclidean distance to detect vertices within `epsilon` of each other.
 /// This is more lenient than exact comparison and helps prevent numerical issues
 /// from near-duplicate insertions.
+///
+/// # Complexity
+///
+/// O(n²) where n is the number of vertices. This is acceptable for small to moderate
+/// vertex counts (hundreds to low thousands). For very large point clouds, consider
+/// spatial indexing structures (e.g., k-d tree, octree) for efficient nearest-neighbor queries.
 ///
 /// # Arguments
 ///
@@ -297,6 +309,12 @@ where
 ///
 /// Useful for removing vertices that coincide with an initial simplex or other
 /// fixed reference points. Uses `OrderedFloat`-based exact comparison (NaN-aware).
+///
+/// # Complexity
+///
+/// O(n·m) where n is the number of vertices and m is the number of reference vertices.
+/// Typically m is small (D+1 for an initial simplex in dimension D), making this effectively
+/// O(n) in practice.
 ///
 /// # Arguments
 ///
@@ -1688,6 +1706,7 @@ where
 ///
 /// * `tds` - The triangulation data structure
 /// * `cells_to_check` - Optional subset of cells to check. If `None`, checks all cells.
+///   Missing cells (e.g., already removed during refinement) are silently skipped.
 ///
 /// # Returns
 ///
@@ -1695,7 +1714,13 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if TDS corruption is detected.
+/// Returns [`DelaunayValidationError`] if:
+/// - A cell references a non-existent vertex (TDS corruption)
+/// - A cell has invalid structure (cell-level corruption)
+/// - Robust geometric predicates fail (numerical issues)
+///
+/// Note: Missing cells in `cells_to_check` are silently skipped and do not cause errors,
+/// as they may have been legitimately removed during iterative refinement.
 ///
 /// # Examples
 ///
@@ -2153,6 +2178,252 @@ mod tests {
             stable_hash_u64_slice(&different_large),
             "Different large values should produce different hashes"
         );
+    }
+
+    // =============================================================================
+    // VERTEX DEDUPLICATION UTILITIES TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_dedup_vertices_exact_basic() {
+        // Basic deduplication
+        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+
+        let vertices = vec![v1, v2, v3];
+        let unique = dedup_vertices_exact(vertices);
+        assert_eq!(unique.len(), 2, "Should remove exact duplicate");
+    }
+
+    #[test]
+    fn test_dedup_vertices_exact_nan_handling() {
+        // NaN should equal NaN for deduplication purposes
+        let v1: Vertex<f64, Option<()>, 2> =
+            Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
+                .into_iter()
+                .next()
+                .unwrap();
+        let v2: Vertex<f64, Option<()>, 2> =
+            Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
+                .into_iter()
+                .next()
+                .unwrap();
+        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+
+        let vertices = vec![v1, v2, v3];
+        let unique = dedup_vertices_exact(vertices);
+        assert_eq!(
+            unique.len(),
+            2,
+            "NaN should be considered equal to NaN for deduplication"
+        );
+    }
+
+    #[test]
+    fn test_dedup_vertices_exact_zero_handling() {
+        // +0.0 should equal -0.0 for deduplication
+        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([-0.0, -0.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+
+        let vertices = vec![v1, v2, v3];
+        let unique = dedup_vertices_exact(vertices);
+        assert_eq!(
+            unique.len(),
+            2,
+            "+0.0 and -0.0 should be considered equal for deduplication"
+        );
+    }
+
+    #[test]
+    fn test_dedup_vertices_epsilon_basic() {
+        // Near-duplicates should be filtered
+        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1e-11, 1e-11])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+
+        let vertices = vec![v1, v2, v3];
+        let unique = dedup_vertices_epsilon(vertices, 1e-10);
+        assert_eq!(
+            unique.len(),
+            2,
+            "Near-duplicate within epsilon should be removed"
+        );
+    }
+
+    #[test]
+    fn test_dedup_vertices_epsilon_boundary() {
+        // Test strict < epsilon semantics (distance = epsilon should NOT be filtered)
+        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+        // Distance exactly epsilon (1e-10) in x direction
+        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1e-10, 0.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+        // Distance slightly less than epsilon
+        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.99e-10, 0.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+
+        let vertices = vec![v1, v2, v3];
+        let unique = dedup_vertices_epsilon(vertices, 1e-10);
+        // v1 kept, v3 filtered (< epsilon), v2 kept (= epsilon, not < epsilon)
+        assert_eq!(
+            unique.len(),
+            2,
+            "Distance exactly equal to epsilon should NOT be filtered (strict < semantics)"
+        );
+    }
+
+    #[test]
+    fn test_dedup_vertices_epsilon_preserves_first_occurrence() {
+        // Verify that first occurrence is kept, later duplicates removed
+        let points = [
+            Point::new([0.0, 0.0]),
+            Point::new([1e-11, 1e-11]), // Near-duplicate of first
+            Point::new([1.0, 1.0]),
+            Point::new([1.0 + 1e-11, 1.0 + 1e-11]), // Near-duplicate of third
+        ];
+        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
+
+        let unique = dedup_vertices_epsilon(vertices, 1e-10);
+        assert_eq!(unique.len(), 2, "Should keep first of each cluster");
+
+        // Verify first occurrences are kept
+        let unique_coords: Vec<_> = unique
+            .iter()
+            .map(<&Vertex<_, _, _> as Into<[f64; 2]>>::into)
+            .collect();
+        assert_relative_eq!(unique_coords[0][0], 0.0, epsilon = 1e-12);
+        assert_relative_eq!(unique_coords[0][1], 0.0, epsilon = 1e-12);
+        assert_relative_eq!(unique_coords[1][0], 1.0, epsilon = 1e-12);
+        assert_relative_eq!(unique_coords[1][1], 1.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn test_filter_vertices_excluding_basic() {
+        // Basic exclusion
+        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([2.0, 2.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+
+        let reference = vec![v1];
+        let vertices = vec![v1, v2, v3];
+
+        let filtered = filter_vertices_excluding(vertices, &reference);
+        assert_eq!(
+            filtered.len(),
+            2,
+            "Should exclude vertex matching reference"
+        );
+    }
+
+    #[test]
+    fn test_filter_vertices_excluding_nan() {
+        // NaN reference should match NaN vertices
+        let v_nan: Vertex<f64, Option<()>, 2> =
+            Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
+                .into_iter()
+                .next()
+                .unwrap();
+
+        let reference = vec![v_nan];
+        let vertices_with_nan: Vec<Vertex<f64, Option<()>, 2>> =
+            Vertex::from_points(&[Point::new([f64::NAN, f64::NAN]), Point::new([1.0, 1.0])]);
+
+        let filtered = filter_vertices_excluding(vertices_with_nan, &reference);
+        assert_eq!(filtered.len(), 1, "NaN reference should exclude NaN vertex");
+    }
+
+    #[test]
+    fn test_filter_vertices_excluding_zero() {
+        // +0.0 reference should match -0.0 vertices
+        let v_pos_zero: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+
+        let reference = vec![v_pos_zero];
+        let vertices_with_neg_zero: Vec<Vertex<f64, Option<()>, 2>> =
+            Vertex::from_points(&[Point::new([-0.0, -0.0]), Point::new([1.0, 1.0])]);
+
+        let filtered = filter_vertices_excluding(vertices_with_neg_zero, &reference);
+        assert_eq!(
+            filtered.len(),
+            1,
+            "+0.0 reference should exclude -0.0 vertex"
+        );
+    }
+
+    #[test]
+    fn test_filter_vertices_excluding_multiple_references() {
+        // Multiple reference vertices
+        let points = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 1.0]),
+            Point::new([2.0, 2.0]),
+            Point::new([3.0, 3.0]),
+        ];
+        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
+
+        let reference = vec![vertices[0], vertices[2]]; // Exclude first and third
+        let filtered = filter_vertices_excluding(vertices, &reference);
+
+        assert_eq!(filtered.len(), 2, "Should exclude both reference vertices");
+
+        // Verify remaining vertices are second and fourth
+        let filtered_coords: Vec<_> = filtered
+            .iter()
+            .map(<&Vertex<_, _, _> as Into<[f64; 2]>>::into)
+            .collect();
+        assert_relative_eq!(filtered_coords[0][0], 1.0, epsilon = 1e-12);
+        assert_relative_eq!(filtered_coords[0][1], 1.0, epsilon = 1e-12);
+        assert_relative_eq!(filtered_coords[1][0], 3.0, epsilon = 1e-12);
+        assert_relative_eq!(filtered_coords[1][1], 3.0, epsilon = 1e-12);
     }
 
     // =============================================================================

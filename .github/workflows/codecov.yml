@@ -62,18 +62,19 @@ jobs:
           # - Exclusions: --exclude-files "benches/*" "examples/*"
           # - All features: --all-features
           # - Workspace: --workspace
-          # - Timeout: --timeout 240 (increased for 5D integration tests)
+          # - Timeout: --timeout 600 (increased for property-based tests under instrumentation)
           # - Verbose: --verbose
           # - Implicit test threads: --implicit-test-threads
           echo "::group::Running tarpaulin"
           # Use explicit arguments for reliability (config file approach has issues)
-          cargo tarpaulin \
+          # Reduce proptest cases for faster coverage runs (default is 256)
+          PROPTEST_CASES=64 cargo tarpaulin \
             --out Xml \
             --output-dir coverage \
             --exclude-files "benches/*" "examples/*" \
             --all-features \
             --workspace \
-            --timeout 240 \
+            --timeout 600 \
             --verbose \
             --implicit-test-threads
           echo "::endgroup::"

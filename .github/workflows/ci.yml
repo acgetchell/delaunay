@@ -51,19 +51,27 @@ jobs:
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
       - name: Install just
+        if: matrix.os != 'windows-latest'
         uses: taiki-e/install-action@62da238c048aa0f865cc5a322082957d34e7fc1a  # v2.62.54
         with:
           tool: just
 
       - name: Install uv (for Python scripts and pytest)
+        if: matrix.os != 'windows-latest'
         uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41  # v7.1.2
         with:
           version: "latest"
 
       - name: Install Node.js (for markdownlint and cspell)
+        if: matrix.os != 'windows-latest'
         uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: '20'
+
+      - name: Install Node.js packages
+        if: matrix.os != 'windows-latest'
+        run: |
+          npm install -g markdownlint-cli cspell
 
       - name: Install additional tools (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -86,15 +94,13 @@ jobs:
           # Install shellcheck, shfmt, and jq via Homebrew
           brew install shellcheck shfmt jq
 
-      - name: Install additional tools (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          # Install shfmt via Chocolatey
-          choco install shfmt -y
-          # Install jq via Chocolatey
-          choco install jq -y
-          # Note: shellcheck is handled by shell-lint gracefully skipping on Windows
-
-      - name: Run CI checks
+      - name: Run CI checks (Linux/macOS)
+        if: matrix.os != 'windows-latest'
         run: just ci
+
+      - name: Build and test (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cargo build --verbose --all-targets
+          cargo test --lib --verbose
+          cargo test --doc --verbose
