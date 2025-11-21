@@ -39,7 +39,7 @@ macro_rules! test_bowyer_watson_properties {
                     initial_vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     new_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new)
                 ) {
                     // Create initial triangulation
@@ -47,7 +47,7 @@ macro_rules! test_bowyer_watson_properties {
                         let initial_vertex_count = tds.vertices().count();
 
                         // Insert new vertex
-                        let new_vertex = Vertex::from_points(vec![new_point]);
+                        let new_vertex = Vertex::from_points(&[new_point]);
                         if let Ok(_) = tds.add(new_vertex[0].clone()) {
                             // Verify validity after insertion
                             prop_assert!(
@@ -76,7 +76,7 @@ macro_rules! test_bowyer_watson_properties {
                     initial_vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     new_points in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         1..=5
@@ -88,7 +88,7 @@ macro_rules! test_bowyer_watson_properties {
 
                         // Insert multiple vertices
                         for point in new_points {
-                            let new_vertex = Vertex::from_points(vec![point]);
+                            let new_vertex = Vertex::from_points(&[point]);
                             if tds.add(new_vertex[0].clone()).is_ok() {
                                 successful_insertions += 1;
                                 // Check validity after each insertion
@@ -121,13 +121,13 @@ macro_rules! test_bowyer_watson_properties {
                     initial_vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     duplicate_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new)
                 ) {
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&initial_vertices) {
                         // Try inserting the same point multiple times
                         for attempt in 0..3 {
-                            let new_vertex = Vertex::from_points(vec![duplicate_point]);
+                            let new_vertex = Vertex::from_points(&[duplicate_point]);
                             let _ = tds.add(new_vertex[0].clone());
 
                             // Triangulation should remain valid regardless
@@ -148,7 +148,7 @@ macro_rules! test_bowyer_watson_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=($max_vertices + 3)
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         if tds.is_valid().is_ok() {
@@ -194,7 +194,7 @@ macro_rules! test_bowyer_watson_properties {
                     initial_vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     new_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new)
                 ) {
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&initial_vertices) {
@@ -203,7 +203,7 @@ macro_rules! test_bowyer_watson_properties {
                             let initial_vertex_count = tds.vertices().count();
 
                             // Insert new vertex
-                            let new_vertex = Vertex::from_points(vec![new_point]);
+                            let new_vertex = Vertex::from_points(&[new_point]);
                             if tds.add(new_vertex[0].clone()).is_ok() {
                                 // After successful insertion, triangulation MUST remain valid
                                 prop_assert!(

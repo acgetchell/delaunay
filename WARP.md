@@ -240,7 +240,7 @@ just changelog-tag <version>  # e.g., just changelog-tag v0.4.2
 
 The `delaunay` library implements d-dimensional Delaunay triangulations in Rust, inspired by CGAL. Key facts for AI assistants:
 
-- **Language**: Rust (MSRV 1.90.0, Edition 2024)
+- **Language**: Rust (MSRV 1.91.0, Edition 2024)
 - **Unsafe code**: Forbidden via `#![forbid(unsafe_code)]`
 - **Published to**: crates.io (documentation build failures will prevent publishing)
 - **CI**: GitHub Actions with strict quality requirements (clippy pedantic mode, rustfmt, no security vulnerabilities)

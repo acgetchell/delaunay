@@ -151,7 +151,7 @@ Before you begin, ensure you have:
 The project uses:
 
 - **Edition**: Rust 2024
-- **MSRV**: Rust 1.90.0
+- **MSRV**: Rust 1.91.0
 - **Linting**: Strict clippy pedantic mode
 - **Testing**: Standard `#[test]` with comprehensive coverage
 - **Benchmarking**: Criterion with allocation tracking
@@ -177,7 +177,7 @@ When you enter the project directory, `rustup` will automatically:
 **First time in the project?** You'll see:
 
 ```text
-info: syncing channel updates for '1.90.0-<your-platform>'
+info: syncing channel updates for '1.91.0-<your-platform>'
 info: downloading component 'cargo'
 info: downloading component 'clippy'
 ...
@@ -189,7 +189,7 @@ This is normal and only happens once. After that, the correct toolchain is used 
 
 ```bash
 rustup show
-# Should show: active toolchain: 1.90.0-<platform> (overridden by '/path/to/delaunay/rust-toolchain.toml')
+# Should show: active toolchain: 1.91.0-<platform> (overridden by '/path/to/delaunay/rust-toolchain.toml')
 ```
 
 ### Python Development Environment

@@ -1624,22 +1624,17 @@ where
 /// The policy itself does not perform validation; it is interpreted by insertion
 /// algorithms and pipelines (for example, the unified insertion pipeline used by
 /// `Tds::bowyer_watson_with_diagnostics_and_policy`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DelaunayCheckPolicy {
     /// Run a single global Delaunay validation/repair pass at the end of
     /// triangulation. This matches the legacy behavior.
+    #[default]
     EndOnly,
     /// Run global Delaunay validation/repair after every N successful insertions,
     /// in addition to a final pass at the end. The unified insertion pipeline
     /// uses this to schedule periodic calls into the global validator while
     /// preserving the final validation step.
     EveryN(NonZeroUsize),
-}
-
-impl Default for DelaunayCheckPolicy {
-    fn default() -> Self {
-        Self::EndOnly
-    }
 }
 
 /// Test-only counter tracking how many times global Delaunay validation was
@@ -5431,7 +5426,7 @@ mod tests {
         let algorithm = IncrementalBowyerWatson::new();
 
         // Test multiple vertices at different positions
-        let test_vertices = vec![
+        let test_vertices = [
             (vertex!([2.0, 0.0, 0.0]), "exterior +X"),
             (vertex!([0.0, 2.0, 0.0]), "exterior +Y"),
             (vertex!([0.0, 0.0, 2.0]), "exterior +Z"),

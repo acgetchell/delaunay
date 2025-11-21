@@ -23,7 +23,7 @@ macro_rules! gen_duplicate_coords_test {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min..=$max
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         // Select a vertex that is actually present in the triangulation.
@@ -34,7 +34,7 @@ macro_rules! gen_duplicate_coords_test {
                             .next()
                             .expect("Tds::new returned Ok but has no vertices");
                         let p = *existing_vertex.point();
-                        let dup = Vertex::from_points(vec![p])[0];
+                        let dup = Vertex::from_points(&[p])[0];
                         let result = tds.add(dup);
                         prop_assert!(
                             matches!(result, Err(TriangulationConstructionError::DuplicateCoordinates { .. })),
@@ -57,7 +57,7 @@ macro_rules! gen_cell_vertex_count_test {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min..=$max
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         for (_, c) in tds.cells() {

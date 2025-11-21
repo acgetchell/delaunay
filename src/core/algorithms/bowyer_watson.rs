@@ -598,7 +598,7 @@ mod tests {
             }
         }
 
-        let vertices = Vertex::from_points(points);
+        let vertices = Vertex::from_points(&points);
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
         #[cfg(debug_assertions)]
@@ -769,7 +769,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
 
-        let vertices = Vertex::from_points(points);
+        let vertices = Vertex::from_points(&points);
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
         // For a single tetrahedron, we expect:
@@ -815,7 +815,7 @@ mod tests {
 
         // Add point outside to trigger Bowyer-Watson
         points.push(Point::new([0.5, 0.5, 2.0]));
-        let all_vertices = Vertex::from_points(points);
+        let all_vertices = Vertex::from_points(&points);
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&all_vertices).unwrap();
 
         // Verify triangulation invariants are maintained
@@ -843,7 +843,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
 
-        let vertices = Vertex::from_points(initial_points);
+        let vertices = Vertex::from_points(&initial_points);
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
         let new_vertex = vertex!([0.5, 0.5, 2.0]);

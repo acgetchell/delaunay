@@ -1,6 +1,8 @@
 # Fixing Delaunay Insertion Pipeline
 
-Working notes and checklist for redesigning the vertex insertion pipeline so that:
+## Status: COMPLETED AND ARCHIVED (November 2025)
+
+This document contains working notes and checklists for the completed redesign of the vertex insertion pipeline.
 
 - We have a **unified two-stage algorithm** (fast + robust) for triangulation.
 - The **Delaunay property is maintained by construction**, with configurable global checks.
@@ -325,10 +327,10 @@ similarly small deterministic configurations and re-running the same
 
 ### Phase 5 – Regression tests, test adjustments, and docs
 
-- [ ] Promote important failing seeds to deterministic regression tests (no proptest) in `tests/regression_delaunay_*.rs`:
+- [x] Promote important failing seeds to deterministic regression tests (no proptest) in `tests/regression_delaunay_*.rs`:
   - Hard-code small 2D–5D point sets that previously violated the Delaunay property,
   - Assert both `tds.is_valid()` and `tds.validate_delaunay()` succeed.
-- [ ] For tests whose expectations have drifted relative to the current algorithm:
+- [x] For tests whose expectations have drifted relative to the current algorithm:
   - If `validate_delaunay()` passes, but the test expects an exact triangulation
     shape, relax expectations to:
     - structural invariants and global Delaunay property, plus

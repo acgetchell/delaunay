@@ -96,8 +96,8 @@ ci-baseline tag="ci":
     just ci
     just perf-baseline {{tag}}
 
-# CI simulation: quality checks + release tests + benchmark compilation
-ci: quality test-release bench-compile
+# CI simulation: quality checks + tests + benchmark compilation (matches .github/workflows/ci.yml)
+ci: quality test bench-compile
     @echo "🎯 CI simulation complete!"
 
 # Clean build artifacts

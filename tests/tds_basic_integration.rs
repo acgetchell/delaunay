@@ -30,7 +30,7 @@ fn test_tds_creates_one_cell() {
         Point::new([0.0, 1.0, 0.0]),
         Point::new([0.0, 0.0, 1.0]),
     ];
-    let vertices = Vertex::from_points(points);
+    let vertices = Vertex::from_points(&points);
     let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
 
     println!(
@@ -57,7 +57,7 @@ fn test_tds_creates_two_cells() {
         Point::new([0.5, 0.5, 1.0]),
         Point::new([0.5, 0.5, -1.0]), // Point on opposite side creates second cell
     ];
-    let vertices = Vertex::from_points(points);
+    let vertices = Vertex::from_points(&points);
     let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
 
     println!(
@@ -87,7 +87,7 @@ fn test_initial_simplex_has_neighbors() {
         Point::new([0.5, 1.0, 0.0]),
         Point::new([0.5, 0.5, 1.0]),
     ];
-    let vertices = Vertex::from_points(points);
+    let vertices = Vertex::from_points(&points);
     let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
 
     println!("TDS has {} cells", tds.number_of_cells());
@@ -134,7 +134,7 @@ fn test_two_cells_share_facet() {
         Point::new([0.5, 0.5, 1.0]),
         Point::new([0.5, 0.5, -1.0]),
     ];
-    let vertices = Vertex::from_points(points);
+    let vertices = Vertex::from_points(&points);
     let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
 
     assert_eq!(tds.number_of_cells(), 2, "Should have 2 cells");

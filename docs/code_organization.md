@@ -57,6 +57,7 @@ delaunay/
 ├── cspell.json
 ├── docs/
 │   ├── archive/
+│   │   ├── fix-delaunay.md
 │   │   ├── invariant_validation_plan.md
 │   │   ├── jaccard.md
 │   │   ├── optimization_recommendations_historical.md
@@ -66,7 +67,6 @@ delaunay/
 │   │   ├── phase2_uuid_iter_optimization.md
 │   │   └── testing.md
 │   ├── code_organization.md
-│   ├── fix-delaunay.md
 │   ├── numerical_robustness_guide.md
 │   ├── OPTIMIZATION_ROADMAP.md
 │   ├── phase4.md

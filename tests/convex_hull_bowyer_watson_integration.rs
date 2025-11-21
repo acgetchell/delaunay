@@ -97,7 +97,7 @@ fn test_comprehensive_hull_extension_execution() {
     analyze_triangulation_state(&tds, "initial");
 
     // Test multiple exterior vertices to comprehensively test hull extensions
-    let exterior_vertices = vec![
+    let exterior_vertices = [
         (vertex!([2.0, 0.0, 0.0]), "+X direction"),
         (vertex!([0.0, 2.0, 0.0]), "+Y direction"),
         (vertex!([0.0, 0.0, 2.0]), "+Z direction"),

@@ -3401,7 +3401,7 @@ mod tests {
         let mut algorithm = RobustBowyerWatson::new();
 
         // Create initial triangulation
-        let initial_vertices = vec![
+        let initial_vertices = [
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -3415,7 +3415,7 @@ mod tests {
         println!("Initial TDS has {initial_cells} cells");
 
         // Insert exterior vertices that should trigger hull extension
-        let test_vertices = vec![
+        let test_vertices = [
             vertex!([2.0, 0.0, 0.0]),  // Exterior point extending in x
             vertex!([-1.0, 0.0, 0.0]), // Exterior point in negative x
             vertex!([0.0, 2.0, 0.0]),  // Exterior point extending in y
@@ -3601,7 +3601,7 @@ mod tests {
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
 
         // Test a sequence of insertions that could create inconsistencies without proper finalization
-        let test_sequence = vec![
+        let test_sequence = [
             vertex!([1.0, 1.0, 1.0]),   // Interior
             vertex!([4.0, 0.0, 0.0]),   // Exterior
             vertex!([0.5, 0.5, 0.5]),   // Interior
@@ -4334,7 +4334,7 @@ mod tests {
             RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(tight_config);
 
         // Create vertices that would be problematic with loose tolerance
-        let vertices = vec![
+        let vertices = [
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -4577,7 +4577,7 @@ mod tests {
         let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
 
         // Test with very large coordinates
-        let large_vertices = vec![
+        let large_vertices = [
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1e6, 0.0, 0.0]),
             vertex!([0.0, 1e6, 0.0]),
@@ -4609,7 +4609,7 @@ mod tests {
 
         // Test with very small coordinates (but still large enough to avoid
         // being treated as numerically degenerate by the initial simplex search)
-        let small_vertices = vec![
+        let small_vertices = [
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1e-3, 0.0, 0.0]),
             vertex!([0.0, 1e-3, 0.0]),
@@ -4640,7 +4640,7 @@ mod tests {
         }
 
         // Test with mixed large and small coordinates
-        let mixed_vertices = vec![
+        let mixed_vertices = [
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1e6, 0.0, 0.0]),
             vertex!([0.0, 1e-6, 0.0]),

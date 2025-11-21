@@ -186,11 +186,11 @@ pub fn make_uuid() -> Uuid {
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
-/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([0.0, 0.0])])
+/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
 ///     .into_iter().next().unwrap();
-/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([0.0, 0.0])]) // Duplicate
+/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])]) // Duplicate
 ///     .into_iter().next().unwrap();
-/// let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([1.0, 1.0])])
+/// let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
 ///     .into_iter().next().unwrap();
 ///
 /// let vertices = vec![v1, v2, v3];
@@ -249,11 +249,11 @@ where
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
-/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([0.0, 0.0])])
+/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
 ///     .into_iter().next().unwrap();
-/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([1e-11, 1e-11])]) // Near duplicate
+/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1e-11, 1e-11])]) // Near duplicate
 ///     .into_iter().next().unwrap();
-/// let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([1.0, 1.0])])
+/// let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
 ///     .into_iter().next().unwrap();
 ///
 /// let vertices = vec![v1, v2, v3];
@@ -316,9 +316,9 @@ where
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
-/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([0.0, 0.0])])
+/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
 ///     .into_iter().next().unwrap();
-/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(vec![Point::new([1.0, 1.0])])
+/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
 ///     .into_iter().next().unwrap();
 ///
 /// let reference = vec![v1]; // Exclude origin

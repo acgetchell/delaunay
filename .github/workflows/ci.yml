@@ -50,45 +50,23 @@ jobs:
           cache: true  # Built-in caching
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
-      - name: Check formatting
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo fmt --all -- --check
+      - name: Install just
+        uses: taiki-e/install-action@62da238c048aa0f865cc5a322082957d34e7fc1a  # v2.62.54
+        with:
+          tool: just
 
-      - name: Run clippy
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Check documentation
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          # Build documentation with warnings as errors
-          RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
-          # Also check that examples in documentation compile
-          cargo test --doc --all-features
-
-      - name: Install uv (for Python linting)
+      - name: Install uv (for Python scripts and pytest)
         if: matrix.os == 'ubuntu-latest'
         uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41  # v7.1.2
         with:
           version: "latest"
 
-      - name: Lint Python scripts
+      - name: Install additional tools (ubuntu)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          # Format check with ruff (non-blocking for now)
-          uvx ruff format --check scripts/ || echo "Python formatting issues found"
-
-          # Lint check with ruff (non-blocking for now)
-          uvx ruff check scripts/ || echo "Python linting issues found"
-
-          # Note: Pylint retired in favor of comprehensive ruff linting
-
-      - name: Install shellcheck and shfmt
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          # Install shellcheck
+          # Install shellcheck and shfmt for shell script linting
           sudo apt-get update
-          sudo apt-get install -y shellcheck
+          sudo apt-get install -y shellcheck jq
 
           # Install shfmt
           SHFMT_VERSION="3.7.0"
@@ -98,38 +76,13 @@ jobs:
           chmod +x shfmt
           sudo mv shfmt /usr/local/bin/
 
-      - name: Lint shell scripts
+      - name: Run CI checks (ubuntu)
         if: matrix.os == 'ubuntu-latest'
+        run: just ci
+
+      - name: Build and test (non-ubuntu)
+        if: matrix.os != 'ubuntu-latest'
         run: |
-          # Lint shell scripts with shellcheck
-          find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck
-
-          # Check shell script formatting with shfmt
-          find scripts -type f -name '*.sh' -exec shfmt -d {} +
-
-      - name: Lint Markdown files
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          # Lint Markdown files
-          npx markdownlint "*.md" "scripts/*.md" "docs/*.md" ".github/*.md" || true
-
-      - name: Lint YAML files
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          # Install yamllint
-          pip install yamllint
-
-          # Lint YAML files
-          find . -type f \( -name '*.yml' -o -name '*.yaml' \) -exec yamllint -c .yamllint {} + || true
-
-      - name: Build (debug)
-        run: cargo build --verbose --all-targets
-
-      - name: Build (release)
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo build --release --verbose
-
-      - name: Run tests
-        run: |
-          cargo test --lib --tests --verbose
-          cargo test --examples --verbose
+          cargo build --verbose --all-targets
+          cargo test --lib --verbose
+          cargo test --doc --verbose

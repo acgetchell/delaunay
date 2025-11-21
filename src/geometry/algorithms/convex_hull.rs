@@ -6262,7 +6262,7 @@ mod tests {
         println!("Testing stale hull detection after invalidate_cache (regression test)");
 
         // Step 1: Create hull from initial TDS
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),

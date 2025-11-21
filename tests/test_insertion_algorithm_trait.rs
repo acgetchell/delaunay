@@ -162,12 +162,13 @@ fn test_insertion_buffers_set_boundary_facet_handles() {
 fn test_insertion_buffers_boundary_facets_as_views() {
     let buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::new();
     // Create a TDS with minimal vertices for testing
-    let vertices = delaunay::core::vertex::Vertex::from_points(vec![
+    let points = vec![
         delaunay::geometry::point::Point::new([0.0, 0.0, 0.0]),
         delaunay::geometry::point::Point::new([1.0, 0.0, 0.0]),
         delaunay::geometry::point::Point::new([0.0, 1.0, 0.0]),
         delaunay::geometry::point::Point::new([0.0, 0.0, 1.0]),
-    ]);
+    ];
+    let vertices = delaunay::core::vertex::Vertex::from_points(&points);
     let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).expect("valid tetrahedron");
 
     // With empty buffers, should return empty vec
@@ -205,12 +206,13 @@ fn test_insertion_buffers_set_visible_facet_handles() {
 fn test_insertion_buffers_visible_facets_as_views() {
     let buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::new();
     // Create a TDS with minimal vertices for testing
-    let vertices = delaunay::core::vertex::Vertex::from_points(vec![
+    let points = vec![
         delaunay::geometry::point::Point::new([0.0, 0.0, 0.0]),
         delaunay::geometry::point::Point::new([1.0, 0.0, 0.0]),
         delaunay::geometry::point::Point::new([0.0, 1.0, 0.0]),
         delaunay::geometry::point::Point::new([0.0, 0.0, 1.0]),
-    ]);
+    ];
+    let vertices = delaunay::core::vertex::Vertex::from_points(&points);
     let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).expect("valid tetrahedron");
 
     // With empty buffers, should return empty vec

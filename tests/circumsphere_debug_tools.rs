@@ -1130,7 +1130,7 @@ fn debug_3d_circumsphere_properties() {
     let vertex2 = vertex!([1.0, 0.0, 0.0], 1);
     let vertex3 = vertex!([0.0, 1.0, 0.0], 1);
     let vertex4 = vertex!([0.0, 0.0, 1.0], 2);
-    let simplex_vertices = vec![vertex1, vertex2, vertex3, vertex4];
+    let simplex_vertices = [vertex1, vertex2, vertex3, vertex4];
 
     let simplex_points: Vec<Point<f64, 3>> = simplex_vertices.iter().map(Point::from).collect();
     let center = circumcenter(&simplex_points).unwrap();
@@ -1169,7 +1169,7 @@ fn debug_4d_circumsphere_properties() {
     let vertex3 = vertex!([-1.0, 1.0, -1.0, -1.0]);
     let vertex4 = vertex!([-1.0, -1.0, 1.0, -1.0]);
     let vertex5 = vertex!([-1.0, -1.0, -1.0, 1.0]);
-    let simplex_vertices_4d = vec![vertex1, vertex2, vertex3, vertex4, vertex5];
+    let simplex_vertices_4d = [vertex1, vertex2, vertex3, vertex4, vertex5];
 
     let simplex_points_4d: Vec<Point<f64, 4>> =
         simplex_vertices_4d.iter().map(Point::from).collect();

@@ -110,7 +110,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         for cell_key in tds.cell_keys() {
@@ -190,7 +190,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
@@ -208,7 +208,7 @@ macro_rules! test_quality_properties {
                             })
                             .collect::<Vec<_>>();
 
-                        let translated_vertices = Vertex::from_points(translated_vertices);
+                        let translated_vertices = Vertex::from_points(&translated_vertices);
 
                         if let Ok(tds_translated) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&translated_vertices) {
                             // Build mapping from original UUIDs to translated UUIDs
@@ -292,7 +292,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
@@ -309,7 +309,7 @@ macro_rules! test_quality_properties {
                             })
                             .collect::<Vec<_>>();
 
-                        let translated_vertices = Vertex::from_points(translated_vertices);
+                        let translated_vertices = Vertex::from_points(&translated_vertices);
 
                         if let Ok(tds_translated) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&translated_vertices) {
                             // Build UUID mapping
@@ -384,7 +384,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     scale in 0.1f64..10.0f64
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
@@ -401,7 +401,7 @@ macro_rules! test_quality_properties {
                             })
                             .collect::<Vec<_>>();
 
-                        let scaled_vertices = Vertex::from_points(scaled_vertices);
+                        let scaled_vertices = Vertex::from_points(&scaled_vertices);
 
                         if let Ok(tds_scaled) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&scaled_vertices) {
                             // Build UUID mapping
@@ -476,7 +476,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         for cell_key in tds.cell_keys() {

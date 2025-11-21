@@ -375,7 +375,7 @@ fn test_degenerate_robust_configuration_3d() {
         vertex!([0.0, 0.0, 1.0]),
     ];
 
-    let near_degenerate_vertices = vec![
+    let near_degenerate_vertices = [
         vertex!([1e-10, 1e-10, 1e-10]),
         vertex!([0.5 + 1e-11, 0.5, 0.5]),
         vertex!([0.5, 0.5 + 1e-11, 0.5]),

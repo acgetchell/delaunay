@@ -41,7 +41,7 @@ macro_rules! test_facet_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         for cell_key in tds.cell_keys() {
@@ -70,7 +70,7 @@ macro_rules! test_facet_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         for cell_key in tds.cell_keys() {
@@ -101,7 +101,7 @@ macro_rules! test_facet_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         // Check that each facet is valid
@@ -125,7 +125,7 @@ macro_rules! test_facet_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         for cell_key in tds.cell_keys() {
@@ -167,7 +167,7 @@ macro_rules! test_facet_multiplicity {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         // Ensure we're checking a valid triangulation to avoid degenerate edge cases

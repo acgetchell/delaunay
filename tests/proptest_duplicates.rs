@@ -103,7 +103,7 @@ proptest! {
         let unique = count_unique_coords_by_bits(&points);
         prop_assume!(unique > 2);
 
-        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(points);
+        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
 
         // First, construct via Tds::new to ensure the standard pipeline succeeds
         // and yields a globally Delaunay triangulation for the kept subset.
@@ -152,7 +152,7 @@ proptest! {
         let unique = count_unique_coords_by_bits(&points);
         prop_assume!(unique > 3);
 
-        let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(points);
+        let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(&points);
 
         // First, construct via Tds::new to ensure the standard pipeline succeeds
         // and yields a globally Delaunay triangulation for the kept subset.

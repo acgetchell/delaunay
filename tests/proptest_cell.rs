@@ -40,7 +40,7 @@ macro_rules! test_cell_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         for (_cell_key, cell) in tds.cells() {
@@ -57,7 +57,7 @@ macro_rules! test_cell_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         for (_cell_key, cell) in tds.cells() {
@@ -72,7 +72,7 @@ macro_rules! test_cell_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         for (_cell_key, cell) in tds.cells() {
@@ -89,7 +89,7 @@ macro_rules! test_cell_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         let mut seen_uuids = HashSet::new();
@@ -105,7 +105,7 @@ macro_rules! test_cell_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         if tds.is_valid().is_ok() {

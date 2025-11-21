@@ -106,8 +106,9 @@ fn dedup_points_2d(points: Vec<Point<f64, 2>>) -> Vec<Point<f64, 2>> {
 fn create_initial_simplex<const D: usize>() -> Vec<Vertex<f64, Option<()>, D>> {
     let mut vertices = Vec::with_capacity(D + 1);
     // origin
+    let origin_point = vec![Point::new([0.0; D])];
     vertices.push(
-        Vertex::from_points(vec![Point::new([0.0; D])])
+        Vertex::from_points(&origin_point)
             .into_iter()
             .next()
             .unwrap(),
@@ -116,12 +117,8 @@ fn create_initial_simplex<const D: usize>() -> Vec<Vertex<f64, Option<()>, D>> {
     for i in 0..D {
         let mut coords = [0.0_f64; D];
         coords[i] = 10.0;
-        vertices.push(
-            Vertex::from_points(vec![Point::new(coords)])
-                .into_iter()
-                .next()
-                .unwrap(),
-        );
+        let axis_point = vec![Point::new(coords)];
+        vertices.push(Vertex::from_points(&axis_point).into_iter().next().unwrap());
     }
     vertices
 }
@@ -137,7 +134,7 @@ proptest! {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(pts)))
+                    ).prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(&pts)))
                 ) {
                     // Build Delaunay triangulation using Tds::new() which properly triangulates all vertices
                     // This ensures the entire triangulation (including initial simplex) satisfies Delaunay property
@@ -314,7 +311,7 @@ proptest! {
             }
         }
 
-        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(points);
+        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
 
         // Build Delaunay triangulations using robust Bowyer-Watson
         let initial = create_initial_simplex::<2>();

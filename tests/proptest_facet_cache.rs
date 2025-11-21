@@ -45,7 +45,7 @@ macro_rules! test_facet_cache_properties {
                     proptest!(|(vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points))| {
+                    ).prop_map(|v| Vertex::from_points(&v)))| {
                         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                             let algorithm = IncrementalBowyerWatson::new();
 
@@ -81,7 +81,7 @@ macro_rules! test_facet_cache_properties {
                     proptest!(|(vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points))| {
+                    ).prop_map(|v| Vertex::from_points(&v)))| {
                         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                             let algorithm = IncrementalBowyerWatson::new();
                             let cache = algorithm
@@ -108,7 +108,7 @@ macro_rules! test_facet_cache_properties {
                     proptest!(|(vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points))| {
+                    ).prop_map(|v| Vertex::from_points(&v)))| {
                         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                             let algorithm = IncrementalBowyerWatson::new();
 
@@ -151,7 +151,7 @@ macro_rules! test_facet_cache_properties {
                     proptest!(|(vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points))| {
+                    ).prop_map(|v| Vertex::from_points(&v)))| {
                         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                             let algorithm = IncrementalBowyerWatson::new();
 
@@ -178,7 +178,7 @@ macro_rules! test_facet_cache_properties {
                     proptest!(|(vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points), new_coord in prop::array::[<uniform $dim>](finite_coordinate()))| {
+                    ).prop_map(|v| Vertex::from_points(&v)), new_coord in prop::array::[<uniform $dim>](finite_coordinate()))| {
                         if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                             let mut algorithm = IncrementalBowyerWatson::new();
 
@@ -233,7 +233,7 @@ macro_rules! test_facet_cache_properties {
                     proptest!(|(vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points))| {
+                    ).prop_map(|v| Vertex::from_points(&v)))| {
                         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                             let algorithm = IncrementalBowyerWatson::new();
 
@@ -273,7 +273,7 @@ macro_rules! test_facet_cache_properties {
                     proptest!(|(vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points))| {
+                    ).prop_map(|v| Vertex::from_points(&v)))| {
                         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                             let tds_arc = Arc::new(tds);
 
@@ -305,7 +305,7 @@ macro_rules! test_facet_cache_properties {
                     proptest!(|(vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points))| {
+                    ).prop_map(|v| Vertex::from_points(&v)))| {
                         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                             let algorithm = IncrementalBowyerWatson::new();
 
@@ -341,7 +341,7 @@ macro_rules! test_facet_cache_properties {
                     proptest!(|(vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points))| {
+                    ).prop_map(|v| Vertex::from_points(&v)))| {
                         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                             let algorithm = IncrementalBowyerWatson::new();
 

@@ -48,7 +48,7 @@ macro_rules! test_serialization_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         // Serialize to JSON
@@ -86,7 +86,7 @@ macro_rules! test_serialization_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         if tds.is_valid().is_ok() {
@@ -112,7 +112,7 @@ macro_rules! test_serialization_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         // Filter: Skip minimal/degenerate configurations
@@ -166,7 +166,7 @@ macro_rules! test_serialization_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         // Ensure neighbor relationships are fully assigned before comparison.
@@ -237,7 +237,7 @@ fn debug_neighbor_preservation_2d_regression() {
         Point::new([0.0, 0.0]),
     ];
 
-    let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(points);
+    let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
     let mut tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices)
         .expect("regression case should construct a valid Tds");
     tds.assign_neighbors()

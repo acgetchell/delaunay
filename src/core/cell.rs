@@ -198,9 +198,12 @@ pub enum CellValidationError {
 #[macro_export]
 macro_rules! cell {
     // Pattern 1: Just vertices - creates via TDS
+    // Accepts any expression that can be borrowed as a slice: &[...], arrays, or existing slices
     ($vertices:expr) => {{
         use $crate::core::triangulation_data_structure::Tds;
-        let tds = Tds::new(&$vertices).expect("Failed to create triangulation from vertices");
+        // Borrow as slice to accept both owned and borrowed forms
+        let vertices_slice = &$vertices;
+        let tds = Tds::new(vertices_slice).expect("Failed to create triangulation from vertices");
         tds.cells()
             .map(|(_, cell)| cell)
             .next()
@@ -211,7 +214,8 @@ macro_rules! cell {
     // Pattern 2: Vertices with data - creates via TDS then sets data
     ($vertices:expr, $data:expr) => {{
         use $crate::core::triangulation_data_structure::Tds;
-        let tds = Tds::new(&$vertices).expect("Failed to create triangulation from vertices");
+        let vertices_slice = &$vertices;
+        let tds = Tds::new(vertices_slice).expect("Failed to create triangulation from vertices");
         let mut cell = tds
             .cells()
             .map(|(_, cell)| cell)
@@ -3247,9 +3251,8 @@ mod tests {
 
         // Exactly 4 vertices for 3D (D+1 = 3+1 = 4) should work
         // Phase 3A: Create via TDS
-        let tds =
-            Tds::<f64, Option<()>, Option<()>, 3>::new(&vec![vertex1, vertex2, vertex3, vertex4])
-                .unwrap();
+        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&[vertex1, vertex2, vertex3, vertex4])
+            .unwrap();
         let (_, cell) = tds.cells().next().unwrap();
         assert!(cell.is_valid().is_ok());
 
@@ -3543,9 +3546,8 @@ mod tests {
         let vertex2 = vertex!([0.0, 1.0, 0.0]);
         let vertex3 = vertex!([1.0, 0.0, 0.0]);
         let vertex4 = vertex!([0.0, 0.0, 0.0]);
-        let tds =
-            Tds::<f64, Option<()>, Option<()>, 3>::new(&vec![vertex1, vertex2, vertex3, vertex4])
-                .unwrap();
+        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&[vertex1, vertex2, vertex3, vertex4])
+            .unwrap();
         let (_, cell_ref) = tds.cells().next().unwrap();
         let mut invalid_uuid_cell = cell_ref.clone();
 
