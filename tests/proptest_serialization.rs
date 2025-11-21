@@ -215,11 +215,10 @@ test_serialization_properties!(3, 5, 12);
 test_serialization_properties!(4, 6, 14);
 test_serialization_properties!(5, 7, 16);
 
-// Debug regression test for neighbor preservation in 2D
-// Uses the minimal failing case previously captured by proptest to
-// inspect neighbor counts before and after JSON roundtrip.
+// Regression test for neighbor preservation in 2D
+// Uses a previously failing case to ensure neighbor relationships
+// are correctly preserved during JSON serialization roundtrip.
 #[test]
-#[ignore = "debug-only: investigate neighbor preservation regression"]
 fn debug_neighbor_preservation_2d_regression() {
     use delaunay::core::triangulation_data_structure::Tds;
     use delaunay::core::vertex::Vertex;

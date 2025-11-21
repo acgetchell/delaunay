@@ -1370,7 +1370,7 @@ Hardware Information:
                 success = BenchmarkRegressionHelper.run_regression_test(baseline_file)
 
                 assert success
-                mock_comparator.compare_with_baseline.assert_called_once_with(baseline_file)
+                mock_comparator.compare_with_baseline.assert_called_once_with(baseline_file, bench_timeout=1800)
 
                 captured = capsys.readouterr()
                 assert "🚀 Running performance regression test" in captured.out

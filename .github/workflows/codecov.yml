@@ -60,7 +60,7 @@ jobs:
           # - XML output: --out Xml
           # - Output directory: --output-dir coverage
           # - Exclusions: --exclude-files "benches/*" "examples/*"
-          # - All features: --all-features
+          # - Features: NOT using --all-features to respect slow-tests feature gate
           # - Workspace: --workspace
           # - Timeout: --timeout 600 (increased for property-based tests under instrumentation)
           # - Verbose: --verbose
@@ -69,11 +69,11 @@ jobs:
           # Use explicit arguments for reliability (config file approach has issues)
           # Reduce proptest cases for faster coverage runs (default is 256)
           # Using 16 cases for CI to prevent timeouts under instrumentation (especially 5D tests)
+          # Note: NOT using --all-features to avoid slow-tests feature (stress tests that timeout under tarpaulin)
           PROPTEST_CASES=16 cargo tarpaulin \
             --out Xml \
             --output-dir coverage \
             --exclude-files "benches/*" "examples/*" \
-            --all-features \
             --workspace \
             --timeout 600 \
             --verbose \

@@ -2227,12 +2227,13 @@ class BenchmarkRegressionHelper:
         print("   4. Baselines use full benchmark settings for accurate comparisons")
 
     @staticmethod
-    def run_regression_test(baseline_path: Path) -> bool:
+    def run_regression_test(baseline_path: Path, bench_timeout: int = 1800) -> bool:
         """
         Run performance regression test against baseline.
 
         Args:
             baseline_path: Path to baseline file
+            bench_timeout: Timeout for cargo bench commands in seconds (default: 1800)
 
         Returns:
             True if comparison ran and no regressions detected; False on regressions or error
@@ -2244,7 +2245,7 @@ class BenchmarkRegressionHelper:
             # Use existing PerformanceComparator
             project_root = find_project_root()
             comparator = PerformanceComparator(project_root)
-            success, regression_found = comparator.compare_with_baseline(baseline_path)
+            success, regression_found = comparator.compare_with_baseline(baseline_path, bench_timeout=bench_timeout)
 
             if not success:
                 print("❌ Performance regression test failed", file=sys.stderr)
@@ -2389,6 +2390,12 @@ def create_argument_parser() -> argparse.ArgumentParser:
 
     regress_parser = subparsers.add_parser("run-regression-test", help="Run performance regression test")
     regress_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
+    regress_parser.add_argument(
+        "--bench-timeout",
+        type=int,
+        default=int(os.getenv("BENCHMARK_TIMEOUT", "1800")),
+        help="Timeout for cargo bench commands in seconds (default: 1800, from BENCHMARK_TIMEOUT env)",
+    )
 
     results_parser = subparsers.add_parser("display-results", help="Display regression test results")
     results_parser.add_argument("--results", type=Path, default=Path("benches/compare_results.txt"), help="Results file path")
@@ -2485,7 +2492,7 @@ def execute_regression_commands(args: argparse.Namespace) -> None:
         sys.exit(0)
 
     elif args.command == "run-regression-test":
-        success = BenchmarkRegressionHelper.run_regression_test(args.baseline)
+        success = BenchmarkRegressionHelper.run_regression_test(args.baseline, bench_timeout=args.bench_timeout)
         sys.exit(0 if success else 1)
 
     elif args.command == "display-results":
