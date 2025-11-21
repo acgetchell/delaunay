@@ -15,6 +15,7 @@ import math
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import time
 from io import StringIO
@@ -40,6 +41,7 @@ from benchmark_utils import (
     WorkflowHelper,
     create_argument_parser,
     find_project_root,
+    main,
 )
 
 THRESHOLD_PERCENT = f"{DEFAULT_REGRESSION_THRESHOLD:.1f}%"
@@ -1675,35 +1677,34 @@ class TestTimeoutHandling:
                 assert "timed out after 1800 seconds" in captured.err
                 assert "Consider increasing --bench-timeout" in captured.err
 
-    def test_cli_bench_timeout_validation(self):
-        """Test that CLI validates bench_timeout is positive."""
-        parser = create_argument_parser()
+    def test_cli_bench_timeout_validation(self, monkeypatch, temp_chdir):
+        """Test that CLI validates bench_timeout is positive via main()."""
+        # Create a temporary project with Cargo.toml to satisfy find_project_root
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            (temp_path / "Cargo.toml").write_text('[package]\nname = "test"\n')
 
-        # Test with zero timeout - validation helper
-        def validate_zero_timeout():
-            args = parser.parse_args(["generate-baseline", "--bench-timeout", "0"])
-            if hasattr(args, "validate_bench_timeout") and args.validate_bench_timeout and args.bench_timeout <= 0:
-                parser.error(f"--bench-timeout must be positive (got {args.bench_timeout})")
+            with temp_chdir(temp_path):
+                # Test with zero timeout
+                monkeypatch.setattr(sys, "argv", ["benchmark_utils.py", "generate-baseline", "--bench-timeout", "0"])
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+                assert exc_info.value.code == 2  # argparse error exit code
 
-        with pytest.raises(SystemExit) as exc_info:
-            validate_zero_timeout()
-        assert exc_info.value.code == 2  # argparse error exit code
+                # Test with negative timeout
+                baseline_file = temp_path / "baseline.txt"
+                baseline_file.write_text("mock baseline")
+                monkeypatch.setattr(sys, "argv", ["benchmark_utils.py", "compare", "--baseline", str(baseline_file), "--bench-timeout", "-100"])
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+                assert exc_info.value.code == 2  # argparse error exit code
 
-        # Test with negative timeout - validation helper
-        def validate_negative_timeout():
-            args = parser.parse_args(["compare", "--baseline", "baseline.txt", "--bench-timeout", "-100"])
-            if hasattr(args, "validate_bench_timeout") and args.validate_bench_timeout and args.bench_timeout <= 0:
-                parser.error(f"--bench-timeout must be positive (got {args.bench_timeout})")
-
-        with pytest.raises(SystemExit) as exc_info:
-            validate_negative_timeout()
-        assert exc_info.value.code == 2  # argparse error exit code
-
-        # Test with positive timeout (should pass)
-        args = parser.parse_args(["run-regression-test", "--baseline", "baseline.txt", "--bench-timeout", "3600"])
-        assert args.bench_timeout == 3600
-        assert hasattr(args, "validate_bench_timeout")
-        assert args.validate_bench_timeout
+                # Test with positive timeout (should parse successfully, will fail on execution but that's ok)
+                parser = create_argument_parser()
+                args = parser.parse_args(["run-regression-test", "--baseline", str(baseline_file), "--bench-timeout", "3600"])
+                assert args.bench_timeout == 3600
+                assert hasattr(args, "validate_bench_timeout")
+                assert args.validate_bench_timeout
 
 
 class TestPerformanceSummaryGenerator:

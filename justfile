@@ -124,10 +124,37 @@ compare-storage-large: _ensure-uv
     @echo "📊 Comparing storage backends at large scale (~8-12 hours, use on compute cluster)"
     BENCH_LARGE_SCALE=1 uv run compare-storage-backends --bench large_scale_performance
 
-# Coverage analysis (matches CI configuration)
+# Common tarpaulin arguments for all coverage runs
+_coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/*' --lib \
+  --test allocation_api \
+  --test circumsphere_debug_tools \
+  --test convex_hull_bowyer_watson_integration \
+  --test coordinate_conversion_errors \
+  --test integration_robust_bowyer_watson \
+  --test regression_delaunay_known_configs \
+  --test robust_predicates_comparison \
+  --test robust_predicates_showcase \
+  --test serialization_vertex_preservation \
+  --test storage_backend_compatibility \
+  --test tds_basic_integration \
+  --test test_cavity_boundary_error \
+  --test test_convex_hull_error_paths \
+  --test test_facet_cache_integration \
+  --test test_geometry_util \
+  --test test_insertion_algorithm_trait \
+  --test test_insertion_algorithm_utils \
+  --test test_robust_fallbacks \
+  --test test_tds_edge_cases \
+  --workspace --timeout 600 --verbose --implicit-test-threads'''
+
+# Coverage analysis for local development (HTML output)
 coverage:
-    cargo tarpaulin --exclude-files 'benches/*' --exclude-files 'examples/*' --exclude-files 'tests/proptest_*.rs' --all-features --workspace --out Html --output-dir target/tarpaulin
+    cargo tarpaulin {{_coverage_base_args}} --out Html --output-dir target/tarpaulin
     @echo "📊 Coverage report generated: target/tarpaulin/tarpaulin-report.html"
+
+# Coverage analysis for CI (XML output for codecov/codacy)
+coverage-ci:
+    cargo tarpaulin {{_coverage_base_args}} --out Xml --output-dir coverage
 
 # Default recipe shows available commands
 default:

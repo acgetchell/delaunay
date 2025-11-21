@@ -48,37 +48,21 @@ jobs:
             cargo install cargo-tarpaulin --locked --version "${TARPAULIN_VERSION}"
           fi
 
+      - name: Install just
+        uses: taiki-e/install-action@62da238c048aa0f865cc5a322082957d34e7fc1a  # v2.62.54
+        with:
+          tool: just
+
       - name: Run coverage
         run: |
           # Create coverage directory with proper permissions
           mkdir -p coverage
           chmod 755 coverage
 
-          echo "::debug::Current directory: $(pwd)"
-          echo "::debug::Coverage directory permissions: $(ls -ld coverage)"
-          # Tarpaulin configuration (explicit arguments):
-          # - XML output: --out Xml
-          # - Output directory: --output-dir coverage
-          # - Exclusions: --exclude-files "benches/*" "examples/*"
-          # - Features: NOT using --all-features to respect slow-tests feature gate
-          # - Workspace: --workspace
-          # - Timeout: --timeout 600 (increased for property-based tests under instrumentation)
-          # - Verbose: --verbose
-          # - Implicit test threads: --implicit-test-threads
-          echo "::group::Running tarpaulin"
-          # Use explicit arguments for reliability (config file approach has issues)
-          # Exclude proptest files: they take 3+ hours under tarpaulin instrumentation
-          # Property-based tests provide excellent coverage but are too slow under instrumentation
-          # Regular integration tests and unit tests provide sufficient coverage metrics
-          # Note: NOT using --all-features to avoid slow-tests feature (stress tests that timeout under tarpaulin)
-          cargo tarpaulin \
-            --out Xml \
-            --output-dir coverage \
-            --exclude-files "benches/*" "examples/*" "tests/proptest_*.rs" \
-            --workspace \
-            --timeout 600 \
-            --verbose \
-            --implicit-test-threads
+          echo "::group::Running coverage"
+          # Use just coverage-ci for single source of truth
+          # Configuration is maintained in justfile to avoid duplication
+          just coverage-ci
           echo "::endgroup::"
 
           # Detailed sanity check: verify coverage report was generated
@@ -103,7 +87,7 @@ jobs:
           if rg -n '(^|/)(benches|examples)/' coverage/cobertura.xml; then
             echo "::warning::benches/ or examples/ paths detected in coverage report"
           fi
-          echo "::endgroup::"
+          echo "::endgroup:"
         env:
           RUST_BACKTRACE: 1
 

@@ -2329,6 +2329,19 @@ class BenchmarkRegressionHelper:
             print("Result: ⏭️ Benchmarks skipped (no baseline available)")
 
 
+def get_default_bench_timeout() -> int:
+    """
+    Get the default benchmark timeout from environment or fallback.
+
+    Returns:
+        Timeout in seconds (from BENCHMARK_TIMEOUT env var or 1800 default)
+    """
+    try:
+        return int(os.getenv("BENCHMARK_TIMEOUT", "1800"))
+    except (ValueError, TypeError):
+        return 1800
+
+
 def create_argument_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(description="Benchmark utilities for baseline generation and comparison")
@@ -2342,8 +2355,8 @@ def create_argument_parser() -> argparse.ArgumentParser:
     gen_parser.add_argument(
         "--bench-timeout",
         type=int,
-        default=int(os.getenv("BENCHMARK_TIMEOUT", "1800")),
-        help="Timeout for cargo bench commands in seconds (default: 1800, from BENCHMARK_TIMEOUT env)",
+        default=get_default_bench_timeout(),
+        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
     )
     gen_parser.set_defaults(validate_bench_timeout=True)
 
@@ -2355,8 +2368,8 @@ def create_argument_parser() -> argparse.ArgumentParser:
     cmp_parser.add_argument(
         "--bench-timeout",
         type=int,
-        default=int(os.getenv("BENCHMARK_TIMEOUT", "1800")),
-        help="Timeout for cargo bench commands in seconds (default: 1800, from BENCHMARK_TIMEOUT env)",
+        default=get_default_bench_timeout(),
+        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
     )
     cmp_parser.set_defaults(validate_bench_timeout=True)
 
@@ -2398,8 +2411,8 @@ def create_argument_parser() -> argparse.ArgumentParser:
     regress_parser.add_argument(
         "--bench-timeout",
         type=int,
-        default=int(os.getenv("BENCHMARK_TIMEOUT", "1800")),
-        help="Timeout for cargo bench commands in seconds (default: 1800, from BENCHMARK_TIMEOUT env)",
+        default=get_default_bench_timeout(),
+        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
     )
     regress_parser.set_defaults(validate_bench_timeout=True)
 
