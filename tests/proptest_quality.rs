@@ -9,7 +9,7 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
-use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::triangulation_data_structure::{CellKey, Tds};
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::quality::{normalized_volume, radius_ratio};
@@ -17,6 +17,7 @@ use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::geometry::util::{circumradius, inradius, safe_usize_to_scalar};
 use proptest::prelude::*;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 // =============================================================================
 // TEST CONFIGURATION
@@ -25,6 +26,89 @@ use std::collections::HashMap;
 /// Strategy for generating finite f64 coordinates
 fn finite_coordinate() -> impl Strategy<Value = f64> {
     (-100.0..100.0).prop_filter("must be finite", |x: &f64| x.is_finite())
+}
+
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+/// Compare quality metrics between two triangulations by matching cells via vertex UUIDs.
+///
+/// This helper function matches cells between an original and transformed triangulation
+/// by mapping vertex UUIDs, then compares their quality metrics using the provided
+/// comparison function.
+///
+/// # Arguments
+/// * `tds_orig` - Original triangulation
+/// * `tds_transformed` - Transformed triangulation (translated, scaled, rotated, etc.)
+/// * `uuid_map` - Mapping from original vertex UUIDs to transformed vertex UUIDs
+/// * `metric_name` - Name of the metric being tested (for error messages)
+/// * `dimension` - Dimensionality (for error messages)
+/// * `compare_fn` - Function to compute and compare quality metrics for matched cells.
+///   Returns `Ok(())` if metrics match within tolerance, `Err(TestCaseError)` otherwise.
+///
+/// # Returns
+/// * `Ok(true)` - At least one cell was successfully matched and compared
+/// * `Ok(false)` - No cells could be matched (topology changed too much)
+/// * `Err(TestCaseError)` - A metric comparison failed
+///
+/// # Purpose
+/// This function centralizes the UUID-based cell matching logic used across multiple
+/// transformation invariance tests (translation, scaling, rotation). It eliminates
+/// ~200 lines of duplicated code by extracting the common pattern:
+/// 1. Iterate through cells in original triangulation
+/// 2. Map their vertex UUIDs to transformed triangulation
+/// 3. Find matching cell in transformed triangulation
+/// 4. Compare quality metrics between matched cells
+/// 5. Track whether any cells were successfully matched (to avoid vacuous success)
+fn compare_transformed_cells<const D: usize, F>(
+    tds_orig: &Tds<f64, Option<()>, Option<()>, D>,
+    tds_transformed: &Tds<f64, Option<()>, Option<()>, D>,
+    uuid_map: &HashMap<Uuid, Uuid>,
+    _metric_name: &str,
+    _dimension: usize,
+    mut compare_fn: F,
+) -> Result<bool, TestCaseError>
+where
+    F: FnMut(CellKey, CellKey) -> Result<(), TestCaseError>,
+{
+    let mut matched_any = false;
+
+    // Iterate through all cells in original triangulation
+    for orig_key in tds_orig.cell_keys() {
+        if let Some(orig_cell) = tds_orig.get_cell(orig_key) {
+            // Get original cell's vertex UUIDs
+            if let Ok(orig_uuids) = orig_cell.vertex_uuids(tds_orig) {
+                // Map to transformed UUIDs
+                let transformed_uuids: Vec<_> = orig_uuids
+                    .iter()
+                    .filter_map(|uuid| uuid_map.get(uuid))
+                    .copied()
+                    .collect();
+
+                // Find matching cell in transformed triangulation
+                for trans_key in tds_transformed.cell_keys() {
+                    if let Some(trans_cell) = tds_transformed.get_cell(trans_key)
+                        && let Ok(trans_cell_uuids) = trans_cell.vertex_uuids(tds_transformed)
+                    {
+                        // Check if cells have same vertices (by UUID)
+                        if transformed_uuids.len() == trans_cell_uuids.len()
+                            && transformed_uuids
+                                .iter()
+                                .all(|u| trans_cell_uuids.contains(u))
+                        {
+                            // Found matching cell - compare quality metrics
+                            compare_fn(orig_key, trans_key)?;
+                            matched_any = true;
+                            break; // Found the match, no need to check other cells
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(matched_any)
 }
 
 // =============================================================================
@@ -203,7 +287,6 @@ macro_rules! test_quality_properties {
                                 for i in 0..$dim {
                                     translated[i] = coords[i] + translation[i];
                                 }
-                                // Use from_points to create vertices with auto-generated UUIDs
                                 Point::new(translated)
                             })
                             .collect::<Vec<_>>();
@@ -217,70 +300,35 @@ macro_rules! test_quality_properties {
                                 .map(|(orig, trans)| (orig.uuid(), trans.uuid()))
                                 .collect();
 
-                            // Track whether we actually compared at least one matched cell to
-                            // avoid vacuous success when robustness-driven topology changes
-                            // prevent any UUID-matched cells between the two triangulations.
-                            let mut matched_any = false;
-
-                            // Match cells by translating their vertex UUIDs
-                            for orig_key in tds.cell_keys() {
-                                if let Some(orig_cell) = tds.get_cell(orig_key) {
-                                    // Get original cell's vertex UUIDs
-                                    if let Ok(orig_uuids) = orig_cell.vertex_uuids(&tds) {
-                                        // Map to translated UUIDs
-                                        let trans_uuids: Vec<_> = orig_uuids
-                                            .iter()
-                                            .filter_map(|uuid| uuid_map.get(uuid))
-                                            .copied()
-                                            .collect();
-                                        let mut matched = false;
-
-                                        // Find matching cell in translated triangulation
-                                        for trans_key in tds_translated.cell_keys() {
-                                            if let Some(trans_cell) = tds_translated.get_cell(trans_key) {
-                                                if let Ok(trans_cell_uuids) =
-                                                    trans_cell.vertex_uuids(&tds_translated)
-                                                {
-                                                    // Check if cells have same vertices (by UUID)
-                                                    if trans_uuids.len() == trans_cell_uuids.len()
-                                                        && trans_uuids
-                                                            .iter()
-                                                            .all(|u| trans_cell_uuids.contains(u))
-                                                    {
-                                                        matched = true;
-                                                        // Found matching cell - compare quality
-                                                        if let (Ok(ratio_orig), Ok(ratio_trans)) = (
-                                                            radius_ratio(&tds, orig_key),
-                                                            radius_ratio(&tds_translated, trans_key),
-                                                        ) {
-                                                            let rel_diff = ((ratio_orig - ratio_trans).abs()
-                                                                / ratio_orig.max(1.0))
-                                                            .min(1.0);
-                                                            prop_assert!(
-                                                                rel_diff < 0.05,
-                                                                "{}D radius ratio should be translation-invariant: {} vs {} (diff: {})",
-                                                                $dim,
-                                                                ratio_orig,
-                                                                ratio_trans,
-                                                                rel_diff
-                                                            );
-                                                        }
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if matched {
-                                            matched_any = true;
-                                        }
+                            // Compare cells using helper function
+                            let matched_any = compare_transformed_cells(
+                                &tds,
+                                &tds_translated,
+                                &uuid_map,
+                                "radius_ratio",
+                                $dim,
+                                |orig_key, trans_key| {
+                                    if let (Ok(ratio_orig), Ok(ratio_trans)) = (
+                                        radius_ratio(&tds, orig_key),
+                                        radius_ratio(&tds_translated, trans_key),
+                                    ) {
+                                        let rel_diff = ((ratio_orig - ratio_trans).abs()
+                                            / ratio_orig.max(1.0))
+                                        .min(1.0);
+                                        prop_assert!(
+                                            rel_diff < 0.05,
+                                            "{}D radius ratio should be translation-invariant: {} vs {} (diff: {})",
+                                            $dim,
+                                            ratio_orig,
+                                            ratio_trans,
+                                            rel_diff
+                                        );
                                     }
-                                }
-                            }
+                                    Ok(())
+                                },
+                            )?;
 
-                            // If absolutely no cells matched between original and translated
-                            // triangulations, discard this case rather than "proving" the
-                            // property without any comparisons.
+                            // If no cells matched, discard this case to avoid vacuous success
                             prop_assume!(matched_any);
                         }
                     }
@@ -318,61 +366,35 @@ macro_rules! test_quality_properties {
                                 .map(|(orig, trans)| (orig.uuid(), trans.uuid()))
                                 .collect();
 
-                            // Track whether we actually compared any matched cells to avoid
-                            // vacuous success when topology changes prevent UUID matches.
-                            let mut matched_any = false;
-
-                            // Match cells by vertex UUIDs and compare quality
-                            for orig_key in tds.cell_keys() {
-                                if let Some(orig_cell) = tds.get_cell(orig_key) {
-                                    if let Ok(orig_uuids) = orig_cell.vertex_uuids(&tds) {
-                                        let trans_uuids: Vec<_> = orig_uuids
-                                            .iter()
-                                            .filter_map(|uuid| uuid_map.get(uuid))
-                                            .copied()
-                                            .collect();
-                                        let mut matched = false;
-
-                                        for trans_key in tds_translated.cell_keys() {
-                                            if let Some(trans_cell) = tds_translated.get_cell(trans_key) {
-                                                if let Ok(trans_cell_uuids) =
-                                                    trans_cell.vertex_uuids(&tds_translated)
-                                                {
-                                                    if trans_uuids.len() == trans_cell_uuids.len()
-                                                        && trans_uuids
-                                                            .iter()
-                                                            .all(|u| trans_cell_uuids.contains(u))
-                                                    {
-                                                        matched = true;
-                                                        if let (Ok(vol_orig), Ok(vol_trans)) = (
-                                                            normalized_volume(&tds, orig_key),
-                                                            normalized_volume(&tds_translated, trans_key),
-                                                        ) {
-                                                            let rel_diff = ((vol_orig - vol_trans).abs()
-                                                                / vol_orig.max(1e-6))
-                                                            .min(1.0);
-                                                            prop_assert!(
-                                                                rel_diff < 0.01,
-                                                                "{}D normalized volume should be translation-invariant: {} vs {} (diff: {})",
-                                                                $dim,
-                                                                vol_orig,
-                                                                vol_trans,
-                                                                rel_diff
-                                                            );
-                                                        }
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if matched {
-                                            matched_any = true;
-                                        }
+                            // Compare cells using helper function
+                            let matched_any = compare_transformed_cells(
+                                &tds,
+                                &tds_translated,
+                                &uuid_map,
+                                "normalized_volume",
+                                $dim,
+                                |orig_key, trans_key| {
+                                    if let (Ok(vol_orig), Ok(vol_trans)) = (
+                                        normalized_volume(&tds, orig_key),
+                                        normalized_volume(&tds_translated, trans_key),
+                                    ) {
+                                        let rel_diff = ((vol_orig - vol_trans).abs()
+                                            / vol_orig.max(1e-6))
+                                        .min(1.0);
+                                        prop_assert!(
+                                            rel_diff < 0.01,
+                                            "{}D normalized volume should be translation-invariant: {} vs {} (diff: {})",
+                                            $dim,
+                                            vol_orig,
+                                            vol_trans,
+                                            rel_diff
+                                        );
                                     }
-                                }
-                            }
+                                    Ok(())
+                                },
+                            )?;
 
+                            // If no cells matched, discard this case to avoid vacuous success
                             prop_assume!(matched_any);
                         }
                     }
@@ -410,61 +432,35 @@ macro_rules! test_quality_properties {
                                 .map(|(orig, scaled)| (orig.uuid(), scaled.uuid()))
                                 .collect();
 
-                            // Track whether any cells were actually compared to avoid vacuous
-                            // success when scaling changes the topology too much to match by UUID.
-                            let mut matched_any = false;
-
-                            // Match cells by vertex UUIDs and compare quality
-                            for orig_key in tds.cell_keys() {
-                                if let Some(orig_cell) = tds.get_cell(orig_key) {
-                                    if let Ok(orig_uuids) = orig_cell.vertex_uuids(&tds) {
-                                        let scaled_uuids: Vec<_> = orig_uuids
-                                            .iter()
-                                            .filter_map(|uuid| uuid_map.get(uuid))
-                                            .copied()
-                                            .collect();
-                                        let mut matched = false;
-
-                                        for scaled_key in tds_scaled.cell_keys() {
-                                            if let Some(scaled_cell) = tds_scaled.get_cell(scaled_key) {
-                                                if let Ok(scaled_cell_uuids) =
-                                                    scaled_cell.vertex_uuids(&tds_scaled)
-                                                {
-                                                    if scaled_uuids.len() == scaled_cell_uuids.len()
-                                                        && scaled_uuids
-                                                            .iter()
-                                                            .all(|u| scaled_cell_uuids.contains(u))
-                                                    {
-                                                        matched = true;
-                                                        if let (Ok(vol_orig), Ok(vol_scaled)) = (
-                                                            normalized_volume(&tds, orig_key),
-                                                            normalized_volume(&tds_scaled, scaled_key),
-                                                        ) {
-                                                            let rel_diff = ((vol_orig - vol_scaled).abs()
-                                                                / vol_orig.max(1e-6))
-                                                            .min(1.0);
-                                                            prop_assert!(
-                                                                rel_diff < 0.01,
-                                                                "{}D normalized volume should be scale-invariant: {} vs {} (diff: {})",
-                                                                $dim,
-                                                                vol_orig,
-                                                                vol_scaled,
-                                                                rel_diff
-                                                            );
-                                                        }
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if matched {
-                                            matched_any = true;
-                                        }
+                            // Compare cells using helper function
+                            let matched_any = compare_transformed_cells(
+                                &tds,
+                                &tds_scaled,
+                                &uuid_map,
+                                "normalized_volume",
+                                $dim,
+                                |orig_key, scaled_key| {
+                                    if let (Ok(vol_orig), Ok(vol_scaled)) = (
+                                        normalized_volume(&tds, orig_key),
+                                        normalized_volume(&tds_scaled, scaled_key),
+                                    ) {
+                                        let rel_diff = ((vol_orig - vol_scaled).abs()
+                                            / vol_orig.max(1e-6))
+                                        .min(1.0);
+                                        prop_assert!(
+                                            rel_diff < 0.01,
+                                            "{}D normalized volume should be scale-invariant: {} vs {} (diff: {})",
+                                            $dim,
+                                            vol_orig,
+                                            vol_scaled,
+                                            rel_diff
+                                        );
                                     }
-                                }
-                            }
+                                    Ok(())
+                                },
+                            )?;
 
+                            // If no cells matched, discard this case to avoid vacuous success
                             prop_assume!(matched_any);
                         }
                     }

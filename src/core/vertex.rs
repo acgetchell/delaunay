@@ -384,12 +384,12 @@ where
         }
     }
 
-    /// The function `from_points` takes a vector of points and returns a
+    /// The function `from_points` takes a slice of points and returns a
     /// vector of vertices, using the `new` method.
     ///
     /// # Arguments
     ///
-    /// * `points`: `points` is a vector of [Point] objects.
+    /// * `points`: `points` is a slice of [Point] objects.
     ///
     /// # Returns
     ///

@@ -475,8 +475,9 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `CellValidationError::InsufficientVertices` if `vertices` doesn't
-    /// have exactly D+1 elements.
+    /// Returns:
+    /// - `CellValidationError::InsufficientVertices` if `vertices` doesn't have exactly D+1 elements.
+    /// - `CellValidationError::DuplicateVertices` if any vertex key appears more than once.
     pub(crate) fn new(
         vertices: impl Into<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
         data: Option<V>,

@@ -165,9 +165,9 @@ pub fn make_uuid() -> Uuid {
 
 /// Filters vertices to remove exact coordinate duplicates.
 ///
-/// Uses bit-level comparison (`.to_bits()`) to detect exact floating-point matches.
-/// This is stricter than epsilon-based comparison and is suitable for preventing
-/// duplicate vertices with identical coordinates.
+/// Uses `OrderedFloat`-based comparison to detect exact floating-point matches.
+/// This treats NaN as equal to NaN and +0.0 as equal to -0.0, which is appropriate
+/// for deduplication. More strict than epsilon-based comparison.
 ///
 /// # Arguments
 ///
@@ -213,7 +213,7 @@ where
         for u in &unique {
             let uc: [T; D] = u.into();
 
-            // Bit-level comparison for exact floating-point equality
+            // Exact floating-point equality (NaN-aware, treats +0.0 == -0.0)
             if coords_equal_exact(&vc, &uc) {
                 continue 'outer; // Skip exact duplicate
             }
@@ -238,8 +238,8 @@ where
 ///
 /// # Returns
 ///
-/// A new vector containing vertices that are at least `epsilon` apart from each
-/// other. The first occurrence of each cluster is kept.
+/// A new vector containing vertices that are more than `epsilon` apart from each
+/// other (strictly: distance > epsilon). The first occurrence of each cluster is kept.
 ///
 /// # Examples
 ///
@@ -296,7 +296,7 @@ where
 /// Filters vertices to exclude those matching reference coordinates.
 ///
 /// Useful for removing vertices that coincide with an initial simplex or other
-/// fixed reference points. Uses exact bit-level comparison.
+/// fixed reference points. Uses `OrderedFloat`-based exact comparison (NaN-aware).
 ///
 /// # Arguments
 ///
@@ -366,6 +366,8 @@ fn coords_equal_exact<T: CoordinateScalar, const D: usize>(a: &[T; D], b: &[T; D
 }
 
 /// Check if two coordinate arrays are within epsilon distance.
+///
+/// Returns true if Euclidean distance is strictly less than epsilon (distance < epsilon).
 #[inline]
 fn coords_within_epsilon<T: CoordinateScalar, const D: usize>(
     a: &[T; D],
@@ -1520,6 +1522,77 @@ pub fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
 // DELAUNAY PROPERTY VALIDATION
 // =============================================================================
 
+/// Internal helper: Check if a single cell violates the Delaunay property.
+///
+/// Returns `Ok(None)` if the cell satisfies the Delaunay property,
+/// `Ok(Some(cell_key))` if it violates (has an external vertex inside its circumsphere),
+/// or `Err(...)` if validation fails due to structural or numeric issues.
+fn validate_cell_delaunay<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+    cell_vertex_points: &mut SmallVec<[Point<T, D>; 8]>,
+    config: &crate::geometry::robust_predicates::RobustPredicateConfig<T>,
+) -> Result<Option<CellKey>, DelaunayValidationError>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
+    U: DataType,
+    V: DataType,
+{
+    let Some(cell) = tds.get_cell(cell_key) else {
+        // Cell doesn't exist (possibly removed), skip validation
+        return Ok(None);
+    };
+
+    // Validate cell structure first
+    cell.is_valid()
+        .map_err(|source| DelaunayValidationError::InvalidCell { source })?;
+
+    // Get the cell's vertex set for exclusion
+    let cell_vertex_keys: SmallVec<[VertexKey; 8]> = cell.vertices().iter().copied().collect();
+
+    // Build the cell's circumsphere
+    cell_vertex_points.clear();
+    for &vkey in &cell_vertex_keys {
+        let Some(v) = tds.get_vertex_by_key(vkey) else {
+            return Err(DelaunayValidationError::TriangulationState {
+                source: TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Cell {cell_key:?} references non-existent vertex {vkey:?}"),
+                },
+            });
+        };
+        cell_vertex_points.push(*v.point());
+    }
+
+    // Check if any OTHER vertex is inside this cell's circumsphere
+    for (test_vkey, test_vertex) in tds.vertices() {
+        // Skip if this vertex is part of the cell
+        if cell_vertex_keys.contains(&test_vkey) {
+            continue;
+        }
+
+        // Test if this vertex is inside the cell's circumsphere using ROBUST predicates
+        match robust_insphere(cell_vertex_points, test_vertex.point(), config) {
+            Ok(InSphere::INSIDE) => {
+                // Found a violation - this cell has an external vertex inside its circumsphere
+                return Ok(Some(cell_key));
+            }
+            Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) => {
+                // Vertex is outside/on boundary; continue checking other vertices
+            }
+            Err(source) => {
+                // Surface robust predicate failures as explicit validation errors
+                return Err(DelaunayValidationError::NumericPredicateError {
+                    cell_key,
+                    vertex_key: test_vkey,
+                    source,
+                });
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 /// Check if a triangulation satisfies the Delaunay property.
 ///
 /// The Delaunay property states that no vertex should be inside the circumsphere
@@ -1580,64 +1653,25 @@ where
     U: DataType,
     V: DataType,
 {
+    // Check structural invariants first to distinguish "bad triangulation" from
+    // "good triangulation but non-Delaunay"
+    tds.is_valid()
+        .map_err(|source| DelaunayValidationError::TriangulationState { source })?;
+
     // Use robust predicates configuration for reliability
     let config = crate::geometry::robust_predicates::config_presets::general_triangulation::<T>();
 
-    // Reusable buffers to minimize allocations
+    // Reusable buffer to minimize allocations
     let mut cell_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
 
-    // Check each cell
-    for (cell_key, cell) in tds.cells() {
-        // Validate cell structure first
-        cell.is_valid()
-            .map_err(|source| DelaunayValidationError::InvalidCell { source })?;
-
-        // Get the cell's vertex set for exclusion
-        let cell_vertex_keys: SmallVec<[VertexKey; 8]> = cell.vertices().iter().copied().collect();
-
-        // Build the cell's circumsphere
-        cell_vertex_points.clear();
-        for &vkey in &cell_vertex_keys {
-            let Some(v) = tds.get_vertex_by_key(vkey) else {
-                return Err(DelaunayValidationError::TriangulationState {
-                    source: TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Cell {cell_key:?} references non-existent vertex {vkey:?}"
-                        ),
-                    },
-                });
-            };
-            cell_vertex_points.push(*v.point());
-        }
-
-        // Check if any OTHER vertex is inside this cell's circumsphere
-        // Use ROBUST predicates to ensure correctness even with floating-point precision issues
-        for (test_vkey, test_vertex) in tds.vertices() {
-            // Skip if this vertex is part of the cell
-            if cell_vertex_keys.contains(&test_vkey) {
-                continue;
-            }
-
-            // Test if this vertex is inside the cell's circumsphere using ROBUST predicates
-            match robust_insphere(&cell_vertex_points, test_vertex.point(), &config) {
-                Ok(InSphere::INSIDE) => {
-                    // Found a violation - this cell has an external vertex inside its circumsphere
-                    return Err(DelaunayValidationError::DelaunayViolation { cell_key });
-                }
-                Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) => {
-                    // Vertex is outside/on boundary; continue checking other vertices.
-                }
-                Err(source) => {
-                    // Surface robust predicate failures as explicit validation errors
-                    // so callers can distinguish numeric issues from clean OUTSIDE/BOUNDARY
-                    // classifications.
-                    return Err(DelaunayValidationError::NumericPredicateError {
-                        cell_key,
-                        vertex_key: test_vkey,
-                        source,
-                    });
-                }
-            }
+    // Check each cell using the shared validation helper
+    for cell_key in tds.cell_keys() {
+        if let Some(violating_cell) =
+            validate_cell_delaunay(tds, cell_key, &mut cell_vertex_points, &config)?
+        {
+            return Err(DelaunayValidationError::DelaunayViolation {
+                cell_key: violating_cell,
+            });
         }
     }
 
@@ -1704,71 +1738,12 @@ where
         None => Box::new(tds.cell_keys()),
     };
 
-    // For each cell to check
+    // For each cell to check using the shared validation helper
     for cell_key in cells_iter {
-        let Some(cell) = tds.get_cell(cell_key) else {
-            continue; // Cell was removed, skip
-        };
-
-        // Validate cell structure first, mirroring `is_delaunay` semantics
-        cell.is_valid()
-            .map_err(|source| DelaunayValidationError::InvalidCell { source })?;
-
-        // Get the cell's vertex set for exclusion
-        let cell_vertex_keys: SmallVec<[VertexKey; 8]> = cell.vertices().iter().copied().collect();
-
-        // Build the cell's circumsphere
-        cell_vertex_points.clear();
-        for &vkey in &cell_vertex_keys {
-            let Some(v) = tds.get_vertex_by_key(vkey) else {
-                return Err(DelaunayValidationError::TriangulationState {
-                    source: TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Cell {cell_key:?} references non-existent vertex {vkey:?}"
-                        ),
-                    },
-                });
-            };
-            cell_vertex_points.push(*v.point());
-        }
-
-        // Check if any OTHER vertex is inside this cell's circumsphere
-        // Use ROBUST predicates to ensure correctness even with floating-point precision issues
-        for (test_vkey, test_vertex) in tds.vertices() {
-            // Skip if this vertex is part of the cell
-            if cell_vertex_keys.contains(&test_vkey) {
-                continue;
-            }
-
-            // Test if this vertex is inside the cell's circumsphere using ROBUST predicates
-            match robust_insphere(&cell_vertex_points, test_vertex.point(), &config) {
-                Ok(InSphere::INSIDE) => {
-                    #[cfg(test)]
-                    {
-                        println!(
-                            "[find_delaunay_violations] cell {cell_key:?} with vertices: {:?} has external vertex key {test_vkey:?} at {:?} inside its circumsphere",
-                            cell_vertex_points,
-                            test_vertex.point().coords(),
-                        );
-                    }
-                    // Found a violation - this cell has an external vertex inside its circumsphere
-                    violating_cells.push(cell_key);
-                    break; // No need to check more vertices for this cell
-                }
-                Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) => {
-                    // Vertex is outside/on boundary; continue checking other vertices.
-                }
-                Err(source) => {
-                    // Surface robust predicate failures as explicit validation errors
-                    // so callers can distinguish numeric issues from clean OUTSIDE/BOUNDARY
-                    // classifications.
-                    return Err(DelaunayValidationError::NumericPredicateError {
-                        cell_key,
-                        vertex_key: test_vkey,
-                        source,
-                    });
-                }
-            }
+        if let Some(violating_cell) =
+            validate_cell_delaunay(tds, cell_key, &mut cell_vertex_points, &config)?
+        {
+            violating_cells.push(violating_cell);
         }
     }
 

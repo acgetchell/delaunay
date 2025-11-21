@@ -11,7 +11,10 @@ use delaunay::core::algorithms::robust_bowyer_watson::RobustBowyerWatson;
 use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
 use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::vertex;
+
+#[cfg(feature = "slow-tests")]
 use rand::rngs::StdRng;
+#[cfg(feature = "slow-tests")]
 use rand::{Rng, SeedableRng};
 
 // =============================================================================
@@ -19,6 +22,7 @@ use rand::{Rng, SeedableRng};
 // =============================================================================
 
 /// Macro to generate integration tests for a given dimension
+#[cfg(feature = "slow-tests")]
 macro_rules! test_robust_integration {
     ($dim:literal, $num_random_points:literal) => {
         test_robust_integration!(@impl $dim, $num_random_points, );
@@ -224,6 +228,7 @@ macro_rules! test_robust_integration {
 // =============================================================================
 
 /// Create initial simplex for dimension D
+#[cfg(feature = "slow-tests")]
 fn create_initial_simplex<const D: usize>()
 -> Vec<delaunay::core::vertex::Vertex<f64, Option<()>, D>> {
     let mut vertices = Vec::with_capacity(D + 1);
@@ -452,6 +457,14 @@ fn test_algorithm_reset_and_reuse() {
         "Should have processed vertices in first run"
     );
 
+    // Check unsalvageable vertices (may exist even for simple configurations if duplicate detection kicks in)
+    let unsalvageable_count_1 = algorithm.unsalvageable_vertices().len();
+    println!(
+        "First run: {} unsalvageable vertices out of {} input vertices",
+        unsalvageable_count_1,
+        vertices1.len()
+    );
+
     // Reset algorithm
     algorithm.reset();
 
@@ -463,6 +476,13 @@ fn test_algorithm_reset_and_reuse() {
     );
     assert_eq!(created_after_reset, 0, "Created should be 0 after reset");
     assert_eq!(removed_after_reset, 0, "Removed should be 0 after reset");
+
+    // Verify unsalvageable_vertices bookkeeping is also reset
+    assert!(
+        algorithm.unsalvageable_vertices().is_empty(),
+        "Unsalvageable vertices should be cleared after reset"
+    );
+    println!("After reset: unsalvageable vertices cleared");
 
     // Second run with fresh TDS and a different configuration.
     let vertices2 = vec![
@@ -490,4 +510,17 @@ fn test_algorithm_reset_and_reuse() {
         processed2 > 0,
         "Should have processed vertices in second run"
     );
+
+    // Check unsalvageable vertices in second run
+    let unsalvageable_count_2 = algorithm.unsalvageable_vertices().len();
+    println!(
+        "Second run: {} unsalvageable vertices out of {} input vertices",
+        unsalvageable_count_2,
+        vertices2.len()
+    );
+
+    // The key assertion: reset() should have cleared first run's unsalvageable vertices,
+    // so the second run's count is independent and starts fresh.
+    // We don't assert zero unsalvageable vertices since even simple configurations
+    // may have duplicates detected during construction.
 }

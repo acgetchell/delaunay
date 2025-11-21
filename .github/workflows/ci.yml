@@ -56,15 +56,19 @@ jobs:
           tool: just
 
       - name: Install uv (for Python scripts and pytest)
-        if: matrix.os == 'ubuntu-latest'
         uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41  # v7.1.2
         with:
           version: "latest"
 
-      - name: Install additional tools (ubuntu)
+      - name: Install Node.js (for markdownlint and cspell)
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: '20'
+
+      - name: Install additional tools (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          # Install shellcheck and shfmt for shell script linting
+          # Install shellcheck, shfmt, and jq
           sudo apt-get update
           sudo apt-get install -y shellcheck jq
 
@@ -76,13 +80,21 @@ jobs:
           chmod +x shfmt
           sudo mv shfmt /usr/local/bin/
 
-      - name: Run CI checks (ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        run: just ci
-
-      - name: Build and test (non-ubuntu)
-        if: matrix.os != 'ubuntu-latest'
+      - name: Install additional tools (macOS)
+        if: matrix.os == 'macos-latest'
         run: |
-          cargo build --verbose --all-targets
-          cargo test --lib --verbose
-          cargo test --doc --verbose
+          # Install shellcheck, shfmt, and jq via Homebrew
+          brew install shellcheck shfmt jq
+
+      - name: Install additional tools (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          # Install shfmt via Chocolatey
+          choco install shfmt -y
+          # Install jq via Chocolatey
+          choco install jq -y
+          # Note: shellcheck is handled by shell-lint gracefully skipping on Windows
+
+      - name: Run CI checks
+        run: just ci

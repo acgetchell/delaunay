@@ -154,6 +154,7 @@
     "cdef",
     "chacha",
     "checkmake",
+    "choco",
     "circumcenter",
     "circumcircle",
     "circumradius",

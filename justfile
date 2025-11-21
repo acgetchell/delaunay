@@ -108,6 +108,7 @@ clean:
 
 # Code quality and formatting
 clippy:
+    cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Pre-commit workflow: CI + examples (most comprehensive validation)
@@ -370,7 +371,12 @@ shell-lint:
     done < <(git ls-files -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
         printf '%s\0' "${files[@]}" | xargs -0 -n1 shfmt -w
-        printf '%s\0' "${files[@]}" | xargs -0 -n4 shellcheck -x
+        # Only run shellcheck if available (may not be on Windows)
+        if command -v shellcheck &> /dev/null; then
+            printf '%s\0' "${files[@]}" | xargs -0 -n4 shellcheck -x
+        else
+            echo "⚠️ shellcheck not found, skipping shell script linting (formatting still applied)"
+        fi
     else
         echo "No shell files found to lint."
     fi
