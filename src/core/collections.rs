@@ -323,13 +323,13 @@ pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<crate::core::facet::Face
 /// # Optimization Rationale
 ///
 /// - **Key**: `CellKey` identifying the cell
-/// - **Value**: `SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>` - handles up to 8 neighbors on stack
+/// - **Value**: `NeighborBuffer<Option<CellKey>>` - handles up to 8 neighbors on stack
 /// - **Typical Pattern**: 2D=3 neighbors, 3D=4 neighbors, 4D=5 neighbors
 /// - **Performance**: Stack allocation for dimensions up to ~7D
 ///
 /// # Note
 ///
-/// This type mirrors `Cell::neighbors()` which returns `Option<&SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>>`.
+/// This type mirrors `Cell::neighbors()` which returns `Option<&NeighborBuffer<Option<CellKey>>>`.
 ///
 /// # Examples
 ///
@@ -339,8 +339,7 @@ pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<crate::core::facet::Face
 /// let mut neighbors: CellNeighborsMap = CellNeighborsMap::default();
 /// // Efficient for typical triangulation dimensions
 /// ```
-pub type CellNeighborsMap =
-    FastHashMap<CellKey, SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>>;
+pub type CellNeighborsMap = FastHashMap<CellKey, NeighborBuffer<Option<CellKey>>>;
 
 /// Vertex-to-cells mapping optimized for typical vertex degrees.
 /// Most vertices are incident to a small number of cells in well-conditioned triangulations.
@@ -1034,11 +1033,29 @@ mod tests {
 
     #[test]
     fn test_collection_type_instantiation() {
+        use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+        use slotmap::SlotMap;
+
         // Test domain-specific UUID-based types compile and instantiate
         let _facet_map: FacetToCellsMap = FacetToCellsMap::default();
         let _neighbors: CellNeighborsMap = CellNeighborsMap::default();
         let _vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
         let _cell_vertices: CellVerticesMap = CellVerticesMap::default();
+
+        // Test CellVertexKeysMap with SmallBuffer for D+1 usage pattern
+        let mut cell_vertex_keys: CellVertexKeysMap = CellVertexKeysMap::default();
+        let mut cell_slots: SlotMap<CellKey, i32> = SlotMap::default();
+        let mut vertex_slots: SlotMap<VertexKey, i32> = SlotMap::default();
+
+        let cell_key = cell_slots.insert(1);
+        let mut vertex_buffer: CellVertexBuffer = CellVertexBuffer::new();
+        // Simulate D+1 vertices for a 2D cell (3 vertices)
+        for _ in 0..3 {
+            vertex_buffer.push(vertex_slots.insert(1));
+        }
+        assert!(!vertex_buffer.spilled()); // Should be on stack for D=2
+        cell_vertex_keys.insert(cell_key, vertex_buffer);
+        assert_eq!(cell_vertex_keys.len(), 1);
 
         // Test Phase 1 key-based types compile and instantiate
         let _cell_set: CellKeySet = CellKeySet::default();
