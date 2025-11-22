@@ -51,7 +51,10 @@
 //! - **Bounded overhead**: Extra work scales with cavity size, not TDS size
 //! - **Cache-friendly**: Uses `SmallBuffer` and pre-allocated `Vec` containers
 
-use crate::core::collections::{CellKeySet, FastHashSet, SmallBuffer, fast_hash_set_with_capacity};
+use crate::core::collections::{
+    CellKeySet, FastHashMap, FastHashSet, SmallBuffer, ViolationBuffer,
+    fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+};
 use crate::core::facet::{FacetError, FacetHandle, FacetView, facet_key_from_vertices};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::triangulation_data_structure::CellKey;
@@ -2218,12 +2221,18 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error if TDS corruption is detected.
+    /// Returns [`InsertionError`] if validation fails due to:
+    /// - **TDS corruption**: Cell references non-existent vertex, missing neighbor data
+    /// - **Invalid cell structure**: Cell has wrong number of vertices for dimension
+    /// - **Numeric errors**: Geometric predicate computation fails (coordinate conversion, overflow)
+    ///
+    /// All error variants are mapped to [`InsertionError::TriangulationState`] to maintain
+    /// consistent error handling in insertion algorithms.
     fn find_delaunay_violations_in_cells(
         &self,
         tds: &Tds<T, U, V, D>,
         cells_to_check: Option<&[CellKey]>,
-    ) -> Result<crate::core::collections::ViolationBuffer, InsertionError>
+    ) -> Result<ViolationBuffer, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
@@ -4179,8 +4188,6 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
-        use crate::core::collections::{FastHashMap, fast_hash_map_with_capacity};
-
         // Build facet-to-cells map from current TDS state
         let facet_map = tds.build_facet_to_cells_map().map_err(|e| {
             InsertionError::TriangulationState(
@@ -4556,8 +4563,6 @@ where
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
-        use crate::core::collections::{FastHashMap, fast_hash_map_with_capacity};
-
         if created_cells.len() != boundary_infos.len() {
             #[cfg(test)]
             eprintln!(

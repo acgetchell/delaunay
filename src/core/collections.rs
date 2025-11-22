@@ -435,6 +435,17 @@ pub type CellRemovalBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>
 /// - **Typical Size**: 0-4 violations in well-conditioned triangulations
 pub type ViolationBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
 
+/// Collection for tracking cell keys during insertion operations.
+/// Most insertion operations create a small number of cells.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Up to 16 cells (covers most insertion scenarios)
+/// - **Use Case**: Cavity-based insertion, cell creation tracking
+/// - **Performance**: Avoids heap allocation during cell creation
+/// - **Typical Size**: 4-8 cells in well-conditioned triangulations (D+1 for simple cavity)
+pub type CellKeyBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
+
 /// Collection for tracking valid cells during facet sharing fixes.
 /// Most invalid sharing situations involve only a few cells per facet.
 ///
@@ -1082,6 +1093,37 @@ mod tests {
         let cell_map: KeyBasedCellMap<f64> = KeyBasedCellMap::default();
         assert!(cell_map.is_empty());
         assert_eq!(cell_map.len(), 0);
+    }
+
+    #[test]
+    fn test_cell_vertex_buffer_stack_allocation_boundary() {
+        use crate::core::triangulation_data_structure::VertexKey;
+        use slotmap::SlotMap;
+
+        let mut vertex_slots: SlotMap<VertexKey, i32> = SlotMap::default();
+
+        // Test D=7 case: 8 vertices (D+1) should stay on stack
+        // MAX_PRACTICAL_DIMENSION_SIZE is 8, so inline capacity is 8
+        let mut buffer_d7: CellVertexBuffer = CellVertexBuffer::new();
+        for _ in 0..8 {
+            buffer_d7.push(vertex_slots.insert(1));
+        }
+        assert_eq!(buffer_d7.len(), 8);
+        assert!(
+            !buffer_d7.spilled(),
+            "D=7 (8 vertices) should stay on stack"
+        );
+
+        // Test D=8 case: 9 vertices (D+1) should spill to heap
+        let mut buffer_d8: CellVertexBuffer = CellVertexBuffer::new();
+        for _ in 0..9 {
+            buffer_d8.push(vertex_slots.insert(1));
+        }
+        assert_eq!(buffer_d8.len(), 9);
+        assert!(buffer_d8.spilled(), "D=8 (9 vertices) should spill to heap");
+
+        // Validate the constant MAX_PRACTICAL_DIMENSION_SIZE=8 is correctly sized
+        // for practical use cases (D=0 through D=7)
     }
 
     #[test]

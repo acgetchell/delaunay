@@ -2111,6 +2111,29 @@ where
     ///
     /// A buffer of `Option<CellKey>` where `None` indicates no neighbor
     /// at that position (boundary facet). Uses stack allocation for typical dimensions.
+    ///
+    /// **Special case**: If the cell does not exist (invalid `cell_key`), returns a buffer
+    /// filled with `None` values. This is a non-panicking fallback that allows callers to
+    /// distinguish "cell missing" from "no neighbors assigned" by checking cell existence
+    /// separately with `get_cell()` if needed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let (cell_key, _) = tds.cells().next().unwrap();
+    ///
+    /// // Get neighbors for existing cell
+    /// let neighbors = tds.find_neighbors_by_key(cell_key);
+    /// assert_eq!(neighbors.len(), 3); // D+1 for 2D
+    /// ```
     #[must_use]
     pub fn find_neighbors_by_key(
         &self,
