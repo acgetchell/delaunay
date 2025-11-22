@@ -51,9 +51,7 @@ use super::{
 };
 
 use super::vertex::Vertex;
-use crate::core::collections::{
-    FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
-};
+use crate::core::collections::{CellVertexBuffer, FastHashMap, FastHashSet, NeighborBuffer};
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use serde::{
     Deserialize, Deserializer, Serialize,
@@ -280,20 +278,20 @@ where
     V: DataType,
 {
     /// Keys to the vertices forming this cell.
-    /// Phase 3A: Changed from `Vec<Vertex>` to `SmallBuffer<VertexKey, 8>` for:
+    /// Phase 3A: Changed from `Vec<Vertex>` to `CellVertexBuffer` for:
     /// - Zero heap allocation for D ≤ 7 (stack-allocated)
     /// - Direct key access without UUID lookup
     /// - Better cache locality
     ///
     /// Note: Not serialized - vertices are serialized separately and keys
     /// are reconstructed during deserialization.
-    vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    vertices: CellVertexBuffer,
 
     /// The unique identifier of the cell.
     uuid: Uuid,
 
     /// Keys to neighboring cells, indexed by opposite vertex.
-    /// Phase 3A: Changed from `Option<Vec<Option<Uuid>>>` to `Option<SmallBuffer<Option<CellKey>, 8>>`.
+    /// Phase 3A: Changed from `Option<Vec<Option<Uuid>>>` to `Option<NeighborBuffer<Option<CellKey>>>`.
     ///
     /// Positional semantics: `neighbors[i]` is the neighbor opposite `vertices[i]`.
     ///
@@ -306,7 +304,7 @@ where
     ///
     /// Note: Not serialized — neighbors are reconstructed during deserialization by the TDS.
     /// Access via `neighbors()` method. Writable by TDS for neighbor assignment.
-    pub(crate) neighbors: Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>>,
+    pub(crate) neighbors: Option<NeighborBuffer<Option<CellKey>>>,
 
     /// The optional data associated with the cell.
     pub data: Option<V>,
@@ -428,7 +426,7 @@ where
                 // They will be reconstructed by TDS deserialization using:
                 // - vertices: rebuilt by the TDS using its serialized cell→vertex mapping
                 // - neighbors: rebuilt by the TDS via assign_neighbors()
-                let vertices = SmallBuffer::new();
+                let vertices = CellVertexBuffer::new();
 
                 Ok(Cell {
                     vertices,
@@ -479,7 +477,7 @@ where
     /// - `CellValidationError::InsufficientVertices` if `vertices` doesn't have exactly D+1 elements.
     /// - `CellValidationError::DuplicateVertices` if any vertex key appears more than once.
     pub(crate) fn new(
-        vertices: impl Into<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+        vertices: impl Into<CellVertexBuffer>,
         data: Option<V>,
     ) -> Result<Self, CellValidationError> {
         let vertices = vertices.into();
@@ -649,9 +647,7 @@ where
     /// }
     /// ```
     #[inline]
-    pub const fn neighbors(
-        &self,
-    ) -> Option<&SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>> {
+    pub const fn neighbors(&self) -> Option<&NeighborBuffer<Option<CellKey>>> {
         self.neighbors.as_ref()
     }
 
@@ -726,11 +722,9 @@ where
     ///
     /// Inline to zero cost in release builds. Only allocates if the buffer doesn't exist.
     #[inline]
-    pub(crate) fn ensure_neighbors_buffer_mut(
-        &mut self,
-    ) -> &mut SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> {
+    pub(crate) fn ensure_neighbors_buffer_mut(&mut self) -> &mut NeighborBuffer<Option<CellKey>> {
         self.neighbors.get_or_insert_with(|| {
-            let mut buffer = SmallBuffer::new();
+            let mut buffer = NeighborBuffer::new();
             buffer.resize(D + 1, None);
             buffer
         })
