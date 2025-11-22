@@ -723,6 +723,10 @@ where
     /// Inline to zero cost in release builds. Only allocates if the buffer doesn't exist.
     #[inline]
     pub(crate) fn ensure_neighbors_buffer_mut(&mut self) -> &mut NeighborBuffer<Option<CellKey>> {
+        debug_assert!(
+            self.neighbors.as_ref().is_none_or(|buf| buf.len() == D + 1),
+            "neighbors buffer must always have length D+1"
+        );
         self.neighbors.get_or_insert_with(|| {
             let mut buffer = NeighborBuffer::new();
             buffer.resize(D + 1, None);
