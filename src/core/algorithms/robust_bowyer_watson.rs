@@ -2532,6 +2532,7 @@ mod tests {
     use crate::core::traits::insertion_algorithm::{
         InsertionAlgorithm, InsertionError, InsertionStrategy,
     };
+    use crate::core::triangulation_data_structure::TriangulationValidationError;
     use crate::core::util::{derive_facet_key_from_vertex_keys, verify_facet_index_consistency};
     use crate::core::vertex::VertexBuilder;
     use crate::vertex;
@@ -7070,6 +7071,88 @@ mod tests {
         assert!(
             result.is_ok(),
             "Valid TDS should have valid facet mapping without over-shared facets"
+        );
+    }
+
+    /// Test the `rollback_cavity_and_err` helper correctly performs rollback and returns error
+    #[test]
+    fn test_rollback_cavity_and_err() {
+        // Create a simple 3D triangulation
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Get the initial state
+        let initial_cell_count = tds.number_of_cells();
+        let initial_vertex_count = tds.number_of_vertices();
+
+        // Add a new vertex to get a vertex key for rollback testing
+        let test_vertex = vertex!([0.5, 0.5, 0.5]);
+        let _algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
+            RobustBowyerWatson::new();
+        let _ = <RobustBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
+            f64,
+            Option<()>,
+            Option<()>,
+            3,
+        >>::ensure_vertex_in_tds(&mut tds, &test_vertex);
+
+        let Some(inserted_vk) = tds.vertex_key_from_uuid(&test_vertex.uuid()) else {
+            panic!("Failed to get vertex key");
+        };
+
+        // Save current state (empty for this test)
+        let saved_cells = vec![];
+        let created_keys = vec![];
+
+        // Create a test error
+        let test_error = InsertionError::TriangulationState(
+            TriangulationValidationError::InconsistentDataStructure {
+                message: "Test error for rollback".to_string(),
+            },
+        );
+
+        // Call the rollback helper
+        let result = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::rollback_cavity_and_err(
+            &mut tds,
+            &saved_cells,
+            &created_keys,
+            true, // remove_vertex = true
+            inserted_vk,
+            test_error,
+        );
+
+        // Verify error is returned
+        assert!(
+            result.is_err(),
+            "rollback_cavity_and_err should return error"
+        );
+
+        // Verify error message is preserved
+        match result {
+            Err(InsertionError::TriangulationState(err)) => {
+                assert!(
+                    err.to_string().contains("Test error for rollback"),
+                    "Error message should be preserved"
+                );
+            }
+            _ => panic!("Expected TriangulationState error"),
+        }
+
+        // Verify rollback occurred (vertex should be removed)
+        assert_eq!(
+            tds.number_of_vertices(),
+            initial_vertex_count,
+            "Vertex count should be restored after rollback"
+        );
+        assert_eq!(
+            tds.number_of_cells(),
+            initial_cell_count,
+            "Cell count should be restored after rollback"
         );
     }
 }

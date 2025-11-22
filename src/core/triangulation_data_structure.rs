@@ -178,9 +178,9 @@ use uuid::Uuid;
 // Crate-internal imports
 use crate::core::collections::{
     CellKeySet, CellRemovalBuffer, CellVerticesMap, Entry, FacetToCellsMap, FastHashMap,
-    FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, StorageMap, UuidToCellKeyMap,
-    UuidToVertexKeyMap, ValidCellsBuffer, VertexKeyBuffer, VertexKeySet, VertexToCellsMap,
-    fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+    FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, StorageMap,
+    UuidToCellKeyMap, UuidToVertexKeyMap, ValidCellsBuffer, VertexKeyBuffer, VertexKeySet,
+    VertexToCellsMap, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::util::DelaunayValidationError;
 use crate::geometry::{
@@ -2024,7 +2024,7 @@ where
 
         // Find all cells containing this vertex
         // Use CellRemovalBuffer for stack allocation (typical case: few cells per vertex)
-        let cells_to_remove: crate::core::collections::CellRemovalBuffer = self
+        let cells_to_remove: CellRemovalBuffer = self
             .cells()
             .filter_map(|(cell_key, cell)| {
                 if cell.contains_vertex(vertex_key) {
@@ -2135,11 +2135,8 @@ where
     /// assert_eq!(neighbors.len(), 3); // D+1 for 2D
     /// ```
     #[must_use]
-    pub fn find_neighbors_by_key(
-        &self,
-        cell_key: CellKey,
-    ) -> crate::core::collections::NeighborBuffer<Option<CellKey>> {
-        let mut neighbors = crate::core::collections::NeighborBuffer::new();
+    pub fn find_neighbors_by_key(&self, cell_key: CellKey) -> NeighborBuffer<Option<CellKey>> {
+        let mut neighbors = NeighborBuffer::new();
         neighbors.resize(D + 1, None);
 
         let Some(cell) = self.get_cell(cell_key) else {
@@ -3027,7 +3024,7 @@ where
 
         // Find and remove all cells containing the vertex
         // Use CellRemovalBuffer for stack allocation (typical case: few cells created during failed insertion)
-        let cells_to_remove: crate::core::collections::CellRemovalBuffer = self
+        let cells_to_remove: CellRemovalBuffer = self
             .cells()
             .filter_map(|(cell_key, cell)| {
                 if cell.contains_vertex(vertex_key) {

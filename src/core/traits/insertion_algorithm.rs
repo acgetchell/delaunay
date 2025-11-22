@@ -2198,6 +2198,28 @@ where
         Ok(bad_cells)
     }
 
+    /// Helper to map `DelaunayValidationError` to `InsertionError`.
+    ///
+    /// Centralizes the error mapping pattern used in validation methods to reduce duplication.
+    #[must_use]
+    fn map_delaunay_error_to_insertion_error(err: DelaunayValidationError) -> InsertionError {
+        match err {
+            DelaunayValidationError::TriangulationState { source } => {
+                InsertionError::TriangulationState(source)
+            }
+            DelaunayValidationError::DelaunayViolation { .. }
+            | DelaunayValidationError::InvalidCell { .. }
+            | DelaunayValidationError::NumericPredicateError { .. } => {
+                // These shouldn't happen during insertion, but convert to InsertionError for safety
+                InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!("Delaunay validation error: {err}"),
+                    },
+                )
+            }
+        }
+    }
+
     /// Check if specific cells violate the Delaunay property with respect to existing vertices.
     ///
     /// This is used for iterative cavity refinement: after creating new cells, we check if
@@ -2237,23 +2259,8 @@ where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
         // Use the centralized Delaunay validation function from util.rs
-        crate::core::util::find_delaunay_violations(tds, cells_to_check).map_err(|err| {
-            match err {
-                DelaunayValidationError::TriangulationState { source } => {
-                    InsertionError::TriangulationState(source)
-                }
-                DelaunayValidationError::DelaunayViolation { .. }
-                | DelaunayValidationError::InvalidCell { .. }
-                | DelaunayValidationError::NumericPredicateError { .. } => {
-                    // These shouldn't happen during insertion, but convert to InsertionError for safety
-                    InsertionError::TriangulationState(
-                        TriangulationValidationError::InconsistentDataStructure {
-                            message: format!("Delaunay validation error: {err}"),
-                        },
-                    )
-                }
-            }
-        })
+        crate::core::util::find_delaunay_violations(tds, cells_to_check)
+            .map_err(Self::map_delaunay_error_to_insertion_error)
     }
 
     /// Find the boundary facets of a cavity formed by removing bad cells
@@ -3077,7 +3084,10 @@ where
 
             // Delaunay check: ensure the new cell does not violate the empty
             // circumsphere property with respect to existing vertices.
-            let violations = self.find_delaunay_violations_in_cells(tds, Some(&[new_cell_key]))?;
+            let violations = self.find_delaunay_violations_in_cells(
+                tds,
+                Some(std::slice::from_ref(&new_cell_key)),
+            )?;
             if !violations.is_empty() {
                 // Roll back this vertex insertion and report a geometric failure
                 // so that callers (e.g., robust algorithms) can handle the
@@ -4982,11 +4992,14 @@ mod tests {
     use crate::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
     use crate::core::facet::facet_key_from_vertices;
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
-    use crate::core::util::{extract_vertex_coordinate_set, jaccard_index};
+    use crate::core::util::{
+        DelaunayValidationError, extract_vertex_coordinate_set, jaccard_index,
+    };
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
     use approx::{assert_abs_diff_eq, assert_relative_eq};
+    use slotmap::SlotMap;
     use std::collections::HashSet;
 
     /// Macro to generate dimension-specific insertion algorithm tests for dimensions 2D-5D.
@@ -7454,6 +7467,81 @@ mod tests {
         println!("  ✓ Correct vertex count succeeded");
 
         println!("✓ create_initial_simplex edge cases work correctly");
+    }
+
+    /// Test the `map_delaunay_error_to_insertion_error` helper correctly maps error variants
+    #[test]
+    fn test_map_delaunay_error_to_insertion_error_helper() {
+        // Test mapping TriangulationState variant
+        let tds_error = DelaunayValidationError::TriangulationState {
+            source: TriangulationValidationError::InconsistentDataStructure {
+                message: "Test TDS corruption".to_string(),
+            },
+        };
+
+        let mapped = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::map_delaunay_error_to_insertion_error(tds_error);
+        match mapped {
+            InsertionError::TriangulationState(err) => {
+                assert!(err.to_string().contains("Test TDS corruption"));
+            }
+            _ => panic!("Expected TriangulationState error"),
+        }
+
+        // Test mapping DelaunayViolation variant
+        let mut cell_slots: SlotMap<CellKey, i32> = SlotMap::default();
+        let test_cell_key = cell_slots.insert(1);
+        let delaunay_error = DelaunayValidationError::DelaunayViolation {
+            cell_key: test_cell_key,
+        };
+
+        let mapped = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::map_delaunay_error_to_insertion_error(delaunay_error);
+        match mapped {
+            InsertionError::TriangulationState(err) => {
+                // Should be wrapped in InconsistentDataStructure
+                assert!(err.to_string().contains("Delaunay validation error"));
+            }
+            _ => panic!("Expected TriangulationState error"),
+        }
+
+        // Test mapping InvalidCell variant
+        let invalid_cell_error = DelaunayValidationError::InvalidCell {
+            source: crate::core::cell::CellValidationError::InsufficientVertices {
+                actual: 2,
+                expected: 4,
+                dimension: 3,
+            },
+        };
+
+        let mapped = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::map_delaunay_error_to_insertion_error(invalid_cell_error);
+        match mapped {
+            InsertionError::TriangulationState(err) => {
+                assert!(err.to_string().contains("Delaunay validation error"));
+            }
+            _ => panic!("Expected TriangulationState error"),
+        }
+
+        // Test mapping NumericPredicateError variant
+        let mut vertex_slots: SlotMap<VertexKey, i32> = SlotMap::default();
+        let test_vertex_key = vertex_slots.insert(1);
+        let numeric_error = DelaunayValidationError::NumericPredicateError {
+            cell_key: test_cell_key,
+            vertex_key: test_vertex_key,
+            source:
+                crate::geometry::traits::coordinate::CoordinateConversionError::ConversionFailed {
+                    coordinate_index: 0,
+                    coordinate_value: "test".to_string(),
+                    from_type: "f32",
+                    to_type: "f64",
+                },
+        };
+
+        let mapped = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::map_delaunay_error_to_insertion_error(numeric_error);
+        match mapped {
+            InsertionError::TriangulationState(err) => {
+                assert!(err.to_string().contains("Delaunay validation error"));
+            }
+            _ => panic!("Expected TriangulationState error"),
+        }
     }
 
     /// Test the Stage 1 initial simplex search helper for a basic 2D triangle.

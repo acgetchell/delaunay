@@ -805,6 +805,7 @@ mod tests {
     use super::*;
     use crate::geometry::point::Point;
     use approx::assert_relative_eq;
+    use nalgebra::DMatrix;
 
     #[test]
     fn test_robust_insphere_general() {
@@ -1169,8 +1170,6 @@ mod tests {
     #[test]
     fn test_matrix_conditioning_edge_cases() {
         // Test matrix conditioning with various edge cases
-        use nalgebra::DMatrix;
-
         let config = config_presets::general_triangulation::<f64>();
 
         // Test matrix with very small elements
@@ -1399,8 +1398,6 @@ mod tests {
     #[test]
     fn test_adaptive_tolerance_computation() {
         // Test adaptive tolerance computation with different matrix sizes and values
-        use nalgebra::DMatrix;
-
         let config = config_presets::general_triangulation::<f64>();
 
         // Small matrix with moderate values

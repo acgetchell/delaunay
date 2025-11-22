@@ -178,6 +178,9 @@ pub fn invert(matrix: &Matrix) -> Result<Matrix, MatrixError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::point::Point;
+    use crate::geometry::traits::coordinate::Coordinate;
+    use crate::geometry::util::{CircumcenterError, circumcenter};
     use approx::assert_relative_eq;
 
     macro_rules! gen_adaptive_tol_tests {
@@ -331,10 +334,6 @@ mod tests {
 
     #[test]
     fn matrix_error_integration_with_circumcenter() {
-        use crate::geometry::point::Point;
-        use crate::geometry::traits::coordinate::Coordinate;
-        use crate::geometry::util::{CircumcenterError, circumcenter};
-
         // Test with collinear points that should cause matrix inversion to fail
         let points = vec![
             Point::new([0.0, 0.0]),
