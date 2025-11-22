@@ -2208,11 +2208,13 @@ where
     /// # Arguments
     ///
     /// * `tds` - Reference to the triangulation data structure
-    /// * `cells_to_check` - Keys of cells to check for violations
+    /// * `cells_to_check` - Optional slice of cell keys to check. If `None`, checks all cells in the TDS.
     ///
     /// # Returns
     ///
-    /// A vector of cell keys that violate the Delaunay property (have existing vertices inside their circumspheres).
+    /// A stack-allocated buffer of cell keys that violate the Delaunay property.
+    /// Uses `ViolationBuffer` (stack allocation for ≤16 violations) to avoid heap allocation
+    /// in the common case where few violations are found.
     ///
     /// # Errors
     ///
@@ -2220,13 +2222,13 @@ where
     fn find_delaunay_violations_in_cells(
         &self,
         tds: &Tds<T, U, V, D>,
-        cells_to_check: &[CellKey],
-    ) -> Result<Vec<CellKey>, InsertionError>
+        cells_to_check: Option<&[CellKey]>,
+    ) -> Result<crate::core::collections::ViolationBuffer, InsertionError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
         // Use the centralized Delaunay validation function from util.rs
-        crate::core::util::find_delaunay_violations(tds, Some(cells_to_check)).map_err(|err| {
+        crate::core::util::find_delaunay_violations(tds, cells_to_check).map_err(|err| {
             match err {
                 DelaunayValidationError::TriangulationState { source } => {
                     InsertionError::TriangulationState(source)
@@ -2704,7 +2706,8 @@ where
             }
 
             // Check if any of the cells violate the Delaunay property
-            let violating_cells = self.find_delaunay_violations_in_cells(tds, &cells_to_check)?;
+            let violating_cells =
+                self.find_delaunay_violations_in_cells(tds, Some(&cells_to_check))?;
             #[cfg(test)]
             println!(
                 "[default insert_vertex_cavity_based] iteration {iteration}: found {} violating cells",
@@ -2849,8 +2852,7 @@ where
         // Final validation: check if any cells still violate the Delaunay property
         // For IncrementalBowyerWatson, this will trigger fallback to RobustBowyerWatson
         // For RobustBowyerWatson, this ensures strict Delaunay guarantees
-        let all_cell_keys: Vec<CellKey> = tds.cells().map(|(k, _)| k).collect();
-        let remaining_violations = self.find_delaunay_violations_in_cells(tds, &all_cell_keys)?;
+        let remaining_violations = self.find_delaunay_violations_in_cells(tds, None)?;
 
         if !remaining_violations.is_empty() {
             Self::restore_cavity_insertion_failure(
@@ -2952,7 +2954,7 @@ where
 
         if !new_cells.is_empty() {
             // Check Delaunay property for cells created by this hull extension.
-            let violations = self.find_delaunay_violations_in_cells(tds, &new_cells)?;
+            let violations = self.find_delaunay_violations_in_cells(tds, Some(&new_cells))?;
 
             if !violations.is_empty() {
                 // Roll back this insertion to keep the triangulation strictly Delaunay.
@@ -3066,7 +3068,7 @@ where
 
             // Delaunay check: ensure the new cell does not violate the empty
             // circumsphere property with respect to existing vertices.
-            let violations = self.find_delaunay_violations_in_cells(tds, &[new_cell_key])?;
+            let violations = self.find_delaunay_violations_in_cells(tds, Some(&[new_cell_key]))?;
             if !violations.is_empty() {
                 // Roll back this vertex insertion and report a geometric failure
                 // so that callers (e.g., robust algorithms) can handle the

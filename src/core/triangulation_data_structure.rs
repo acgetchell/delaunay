@@ -156,7 +156,6 @@
 // Standard library imports
 use std::{
     cmp::Ordering as CmpOrdering,
-    collections::HashSet,
     fmt::{self, Debug},
     iter::Sum,
     marker::PhantomData,
@@ -179,8 +178,9 @@ use uuid::Uuid;
 // Crate-internal imports
 use crate::core::collections::{
     CellKeySet, CellRemovalBuffer, CellVerticesMap, Entry, FacetToCellsMap, FastHashMap,
-    MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, StorageMap, UuidToCellKeyMap, UuidToVertexKeyMap,
-    ValidCellsBuffer, VertexKeyBuffer, VertexKeySet, VertexToCellsMap, fast_hash_map_with_capacity,
+    FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, StorageMap, UuidToCellKeyMap,
+    UuidToVertexKeyMap, ValidCellsBuffer, VertexKeyBuffer, VertexKeySet, VertexToCellsMap,
+    fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::util::DelaunayValidationError;
 use crate::geometry::{
@@ -2023,7 +2023,8 @@ where
         };
 
         // Find all cells containing this vertex
-        let cells_to_remove: Vec<_> = self
+        // Use CellRemovalBuffer for stack allocation (typical case: few cells per vertex)
+        let cells_to_remove: crate::core::collections::CellRemovalBuffer = self
             .cells()
             .filter_map(|(cell_key, cell)| {
                 if cell.contains_vertex(vertex_key) {
@@ -2619,8 +2620,8 @@ where
 
         // Add vertices to storage map and create bidirectional UUID-to-key mappings
         // Skip duplicate coordinates (unlike `add()`, which errors on duplicates)
-        // Use HashSet with Point for O(n) duplicate detection instead of O(n²) sequential scan
-        let mut seen_points: HashSet<Point<T, D>> = HashSet::with_capacity(vertices.len());
+        // Use FastHashSet with Point for O(n) duplicate detection instead of O(n²) sequential scan
+        let mut seen_points: FastHashSet<Point<T, D>> = fast_hash_set_with_capacity(vertices.len());
 
         for vertex in vertices {
             // CRITICAL: Check for duplicate UUID first, before checking coordinates
@@ -3002,7 +3003,8 @@ where
         }
 
         // Find and remove all cells containing the vertex
-        let cells_to_remove: Vec<_> = self
+        // Use CellRemovalBuffer for stack allocation (typical case: few cells created during failed insertion)
+        let cells_to_remove: crate::core::collections::CellRemovalBuffer = self
             .cells()
             .filter_map(|(cell_key, cell)| {
                 if cell.contains_vertex(vertex_key) {
@@ -4914,7 +4916,7 @@ mod tests {
     use super::*;
     use crate::cell;
     use crate::core::{
-        collections::FastHashMap,
+        collections::{FastHashMap, FastHashSet},
         facet::FacetView,
         traits::{boundary_analysis::BoundaryAnalysis, insertion_algorithm::VertexClassification},
         util::facet_views_are_adjacent,
@@ -5606,8 +5608,6 @@ mod tests {
     /// every vertex is either used by some cell or reported as unsalvageable.
     #[test]
     fn test_unsalvageable_vertex_coverage_kept_union_equals_input() {
-        use std::collections::HashSet;
-
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
 
         // Four unique vertices plus two exact duplicates to force unsalvageable vertices.
@@ -5631,17 +5631,17 @@ mod tests {
             .expect("Triangulation should succeed even with duplicate coordinates");
 
         // Input UUIDs: all vertices that were actually inserted into the TDS.
-        let input_uuids: HashSet<_> = tds.vertices().map(|(_, v)| v.uuid()).collect();
+        let input_uuids: FastHashSet<_> = tds.vertices().map(|(_, v)| v.uuid()).collect();
 
         // Kept UUIDs: vertices that appear in at least one cell of the final triangulation.
-        let kept_uuids: HashSet<_> = tds
+        let kept_uuids: FastHashSet<_> = tds
             .cells()
             .flat_map(|(_, cell)| cell.vertices())
             .map(|vk| tds.get_vertex_by_key(*vk).expect("vertex exists").uuid())
             .collect();
 
         // Unsalvageable UUIDs: vertices reported by the unified insertion pipeline.
-        let unsalvageable_uuids: HashSet<_> = diagnostics
+        let unsalvageable_uuids: FastHashSet<_> = diagnostics
             .unsalvageable_vertices
             .iter()
             .map(|r| r.vertex().uuid())
@@ -5656,7 +5656,7 @@ mod tests {
             "Unsalvageable vertex UUIDs must be a subset of input UUIDs",
         );
 
-        let union: HashSet<_> = kept_uuids.union(&unsalvageable_uuids).copied().collect();
+        let union: FastHashSet<_> = kept_uuids.union(&unsalvageable_uuids).copied().collect();
         assert_eq!(
             union, input_uuids,
             "Every input vertex must be either used by some cell or reported as unsalvageable",

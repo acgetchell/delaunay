@@ -310,8 +310,8 @@ where
             // Hull extension builds up from boundary facets and doesn't guarantee local Delaunay
             // (it will be fixed during subsequent cavity-based insertions)
             if matches!(info.strategy, InsertionStrategy::CavityBased) {
-                let all_cell_keys: Vec<CellKey> = tds.cells().map(|(k, _)| k).collect();
-                let violations = self.find_delaunay_violations_in_cells(tds, &all_cell_keys)?;
+                // Pass None to check all cells without collecting
+                let violations = self.find_delaunay_violations_in_cells(tds, None)?;
 
                 if !violations.is_empty() {
                     // Attempt to fix violations by removing violating cells and re-finalizing
@@ -335,9 +335,7 @@ where
                     }
 
                     // Re-check for violations
-                    let remaining: Vec<CellKey> = tds.cells().map(|(k, _)| k).collect();
-                    let remaining_violations =
-                        self.find_delaunay_violations_in_cells(tds, &remaining)?;
+                    let remaining_violations = self.find_delaunay_violations_in_cells(tds, None)?;
 
                     if !remaining_violations.is_empty() {
                         return Err(InsertionError::GeometricFailure {
@@ -558,20 +556,20 @@ where
             }
 
             // Check if any cells violate the Delaunay property (using robust predicates)
-            let violating_cells = match self.find_delaunay_violations_in_cells(tds, &cells_to_check)
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
-                        tds,
-                        &saved_cavity_cells,
-                        &created_cell_keys,
-                        !vertex_existed_before,
-                        inserted_vk,
-                    );
-                    return Err(e);
-                }
-            };
+            let violating_cells =
+                match self.find_delaunay_violations_in_cells(tds, Some(&cells_to_check)) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                            tds,
+                            &saved_cavity_cells,
+                            &created_cell_keys,
+                            !vertex_existed_before,
+                            inserted_vk,
+                        );
+                        return Err(e);
+                    }
+                };
 
             if violating_cells.is_empty() {
                 // No violations - we're done!
@@ -775,9 +773,7 @@ where
         }
 
         // Phase 6: Final validation - RobustBowyerWatson MUST guarantee Delaunay property
-        let all_cell_keys: Vec<CellKey> = tds.cells().map(|(k, _)| k).collect();
-        let remaining_violations = match self.find_delaunay_violations_in_cells(tds, &all_cell_keys)
-        {
+        let remaining_violations = match self.find_delaunay_violations_in_cells(tds, None) {
             Ok(v) => v,
             Err(e) => {
                 <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
@@ -1002,7 +998,8 @@ where
             Ok(handles) if !handles.is_empty() => Ok(handles),
             _ => {
                 // Fallback: robust check via Facet conversion (slow path)
-                let mut handles = Vec::new();
+                // Use FacetInfoBuffer for stack allocation (typical case: few boundary facets)
+                let mut handles = crate::core::collections::FacetInfoBuffer::new();
                 for fv in tds
                     .boundary_facets()
                     .map_err(InsertionError::TriangulationState)?
@@ -1011,7 +1008,7 @@ where
                         handles.push(FacetHandle::new(fv.cell_key(), fv.facet_index()));
                     }
                 }
-                Ok(handles)
+                Ok(handles.into_vec())
             }
         }
     }
@@ -1109,10 +1106,11 @@ where
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
     ) -> Result<Vec<FacetHandle>, InsertionError> {
-        let mut boundary_handles = Vec::new();
+        // Use FacetInfoBuffer for stack allocation (typical case: D+1 facets per cell)
+        let mut boundary_handles = crate::core::collections::FacetInfoBuffer::new();
 
         if bad_cells.is_empty() {
-            return Ok(boundary_handles);
+            return Ok(boundary_handles.into_vec());
         }
 
         let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
@@ -1187,7 +1185,8 @@ where
             Self::validate_boundary_facets(&boundary_handles, bad_cells.len())?;
         }
 
-        Ok(boundary_handles)
+        // Convert to Vec for return (stack-allocated for typical D≤7 during loop)
+        Ok(boundary_handles.into_vec())
     }
 
     // ========================================================================
@@ -2263,7 +2262,7 @@ strategy={strategy:?}, created={created}, removed={removed}, success={success}, 
                 <Self as InsertionAlgorithm<T, U, V, D>>::find_delaunay_violations_in_cells(
                     self,
                     tds,
-                    &[new_cell_key],
+                    Some(&[new_cell_key]),
                 )?;
             #[cfg(test)]
             if !violations.is_empty() {
@@ -3185,17 +3184,21 @@ mod tests {
             // Check what boundary facets exist before trying visibility
             println!("Getting all boundary facets...");
             if let Ok(all_boundary_facets) = tds.boundary_facets() {
-                let all_boundary_facets_vec: Vec<_> = all_boundary_facets.collect();
-                println!("Total boundary facets: {}", all_boundary_facets_vec.len());
-                for (i, facet) in all_boundary_facets_vec.iter().enumerate() {
-                    println!(
-                        "  Boundary facet {}: {} vertices",
-                        i,
-                        facet
-                            .vertices()
-                            .map(std::iter::Iterator::count)
-                            .unwrap_or(0)
-                    );
+                // Use iterator directly to avoid allocation in debug code
+                let count = all_boundary_facets.count();
+                println!("Total boundary facets: {count}");
+                // Re-fetch for iteration (debug code only, performance not critical)
+                if let Ok(boundary_iter) = tds.boundary_facets() {
+                    for (i, facet) in boundary_iter.enumerate() {
+                        println!(
+                            "  Boundary facet {}: {} vertices",
+                            i,
+                            facet
+                                .vertices()
+                                .map(std::iter::Iterator::count)
+                                .unwrap_or(0)
+                        );
+                    }
                 }
             }
 

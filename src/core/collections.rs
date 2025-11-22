@@ -424,6 +424,17 @@ const SMALL_CELL_OPERATION_BUFFER_SIZE: usize = 4;
 /// - **Performance**: Avoids heap allocation for typical cleanup operations
 pub type CellRemovalBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
 
+/// Collection for tracking Delaunay violations during iterative refinement.
+/// Most violation checks find a small number of violating cells.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Up to 16 cells (covers most violation scenarios)
+/// - **Use Case**: Iterative cavity refinement, Delaunay validation
+/// - **Performance**: Avoids heap allocation in hot paths during insertion
+/// - **Typical Size**: 0-4 violations in well-conditioned triangulations
+pub type ViolationBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
+
 /// Collection for tracking valid cells during facet sharing fixes.
 /// Most invalid sharing situations involve only a few cells per facet.
 ///
