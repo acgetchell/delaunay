@@ -48,34 +48,21 @@ jobs:
             cargo install cargo-tarpaulin --locked --version "${TARPAULIN_VERSION}"
           fi
 
+      - name: Install just
+        uses: taiki-e/install-action@62da238c048aa0f865cc5a322082957d34e7fc1a  # v2.62.54
+        with:
+          tool: just
+
       - name: Run coverage
         run: |
           # Create coverage directory with proper permissions
           mkdir -p coverage
           chmod 755 coverage
 
-          echo "::debug::Current directory: $(pwd)"
-          echo "::debug::Coverage directory permissions: $(ls -ld coverage)"
-          # Tarpaulin configuration (explicit arguments):
-          # - XML output: --out Xml
-          # - Output directory: --output-dir coverage
-          # - Exclusions: --exclude-files "benches/*" "examples/*"
-          # - All features: --all-features
-          # - Workspace: --workspace
-          # - Timeout: --timeout 240 (increased for 5D integration tests)
-          # - Verbose: --verbose
-          # - Implicit test threads: --implicit-test-threads
-          echo "::group::Running tarpaulin"
-          # Use explicit arguments for reliability (config file approach has issues)
-          cargo tarpaulin \
-            --out Xml \
-            --output-dir coverage \
-            --exclude-files "benches/*" "examples/*" \
-            --all-features \
-            --workspace \
-            --timeout 240 \
-            --verbose \
-            --implicit-test-threads
+          echo "::group::Running coverage"
+          # Use just coverage-ci for single source of truth
+          # Configuration is maintained in justfile to avoid duplication
+          just coverage-ci
           echo "::endgroup::"
 
           # Detailed sanity check: verify coverage report was generated

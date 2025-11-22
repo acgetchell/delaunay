@@ -19,10 +19,36 @@
 //! error conditions that are difficult to trigger through normal usage.
 
 use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::vertex::Vertex;
 use delaunay::geometry::algorithms::convex_hull::{ConvexHull, ConvexHullConstructionError};
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::vertex;
+
+// =============================================================================
+// TEST FIXTURES
+// =============================================================================
+
+/// Standard 3D tetrahedron vertices (origin + unit vectors)
+fn simplex_3d() -> [Vertex<f64, Option<()>, 3>; 4] {
+    [
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ]
+}
+
+/// Standard 4D simplex vertices (origin + 4D unit vectors)
+fn simplex_4d() -> [Vertex<f64, Option<()>, 4>; 5] {
+    [
+        vertex!([0.0, 0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 0.0, 1.0]),
+    ]
+}
 
 // =============================================================================
 // CONSTRUCTION ERROR PATHS
@@ -87,13 +113,7 @@ fn test_insufficient_data_no_cells() {
 /// **Coverage target:** Lines checking `creation_gen != tds_gen` in `is_facet_visible_from_point()`
 #[test]
 fn test_stale_hull_detection_visibility() {
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     let hull = ConvexHull::from_triangulation(&tds).unwrap();
     assert!(
@@ -137,13 +157,7 @@ fn test_stale_hull_detection_visibility() {
 /// **Coverage target:** Staleness check in `find_visible_facets()` method
 #[test]
 fn test_stale_hull_detection_find_visible() {
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     let hull = ConvexHull::from_triangulation(&tds).unwrap();
 
@@ -175,13 +189,7 @@ fn test_stale_hull_detection_find_visible() {
 /// **Coverage target:** `invalidate_cache()` method and cache rebuild logic
 #[test]
 fn test_cache_invalidation() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     let hull = ConvexHull::from_triangulation(&tds).unwrap();
 
@@ -228,13 +236,7 @@ fn test_cache_invalidation() {
 /// **Coverage target:** Orientation comparison logic and degenerate case handling
 #[test]
 fn test_visibility_various_positions() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     let hull = ConvexHull::from_triangulation(&tds).unwrap();
 
@@ -266,13 +268,7 @@ fn test_visibility_various_positions() {
 /// **Coverage target:** Batch visibility checking logic
 #[test]
 fn test_find_visible_facets_various_positions() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     let hull = ConvexHull::from_triangulation(&tds).unwrap();
 
@@ -312,13 +308,7 @@ fn test_find_visible_facets_various_positions() {
 /// **Coverage target:** Simple getter methods that may not be exercised by integration tests
 #[test]
 fn test_hull_accessors() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     let hull = ConvexHull::from_triangulation(&tds).unwrap();
 
@@ -390,14 +380,7 @@ fn test_2d_convex_hull() {
 /// **Coverage target:** Higher-dimensional code paths
 #[test]
 fn test_4d_convex_hull() {
-    let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&simplex_4d()).unwrap();
 
     let hull = ConvexHull::from_triangulation(&tds).unwrap();
 
@@ -430,13 +413,7 @@ fn test_default_hull() {
     assert_eq!(hull.dimension(), 3, "Default hull preserves dimension");
 
     // Default hull should be invalid for any TDS
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     assert!(
         !hull.is_valid_for_tds(&tds),
@@ -457,7 +434,7 @@ fn test_default_hull() {
 #[test]
 fn test_near_degenerate_visibility() {
     // Create a flat configuration (nearly coplanar in 3D)
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),
         vertex!([0.0, 1.0, 0.0]),
@@ -489,7 +466,7 @@ fn test_near_degenerate_visibility() {
 #[test]
 fn test_large_coordinates_visibility() {
     let scale = 1e8;
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
         vertex!([0.0, 0.0, 0.0]),
         vertex!([scale, 0.0, 0.0]),
         vertex!([0.0, scale, 0.0]),
@@ -518,13 +495,7 @@ fn test_large_coordinates_visibility() {
 /// **Coverage target:** Lines 1227-1303 in `convex_hull.rs`
 #[test]
 fn test_find_nearest_visible_facet() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     let hull = ConvexHull::from_triangulation(&tds).unwrap();
 
@@ -558,13 +529,7 @@ fn test_find_nearest_visible_facet() {
 /// **Coverage target:** Staleness check in `find_nearest_visible_facet`
 #[test]
 fn test_find_nearest_visible_facet_stale() {
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     let hull = ConvexHull::from_triangulation(&tds).unwrap();
 
@@ -592,13 +557,7 @@ fn test_find_nearest_visible_facet_stale() {
 /// **Coverage target:** Lines 1350-1357 in `convex_hull.rs`
 #[test]
 fn test_is_point_outside() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     let hull = ConvexHull::from_triangulation(&tds).unwrap();
 
@@ -629,13 +588,7 @@ fn test_is_point_outside() {
 /// **Coverage target:** Lines 1394-1459 in `convex_hull.rs`
 #[test]
 fn test_validate_valid_hull() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     let hull = ConvexHull::from_triangulation(&tds).unwrap();
 
@@ -652,13 +605,7 @@ fn test_validate_valid_hull() {
 /// **Coverage target:** Empty hull validation path
 #[test]
 fn test_validate_empty_hull() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     let empty_hull: ConvexHull<f64, Option<()>, Option<()>, 3> = ConvexHull::default();
 
@@ -690,14 +637,7 @@ fn test_validate_multiple_dimensions() {
     );
 
     // 4D validation
-    let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&[
-        vertex!([0.0, 0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 0.0, 1.0]),
-    ])
-    .unwrap();
+    let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&simplex_4d()).unwrap();
 
     let hull_4d = ConvexHull::from_triangulation(&tds_4d).unwrap();
     assert!(

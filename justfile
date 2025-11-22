@@ -96,8 +96,8 @@ ci-baseline tag="ci":
     just ci
     just perf-baseline {{tag}}
 
-# CI simulation: quality checks + release tests + benchmark compilation
-ci: quality test-release bench-compile
+# CI simulation: quality checks + tests + benchmark compilation (matches .github/workflows/ci.yml)
+ci: quality test bench-compile
     @echo "🎯 CI simulation complete!"
 
 # Clean build artifacts
@@ -105,9 +105,11 @@ clean:
     cargo clean
     rm -rf target/tarpaulin
     rm -rf coverage_report
+    rm -rf coverage
 
 # Code quality and formatting
 clippy:
+    cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Pre-commit workflow: CI + examples (most comprehensive validation)
@@ -123,10 +125,37 @@ compare-storage-large: _ensure-uv
     @echo "📊 Comparing storage backends at large scale (~8-12 hours, use on compute cluster)"
     BENCH_LARGE_SCALE=1 uv run compare-storage-backends --bench large_scale_performance
 
-# Coverage analysis (matches CI configuration)
+# Common tarpaulin arguments for all coverage runs
+_coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/*' --lib \
+  --test allocation_api \
+  --test circumsphere_debug_tools \
+  --test convex_hull_bowyer_watson_integration \
+  --test coordinate_conversion_errors \
+  --test integration_robust_bowyer_watson \
+  --test regression_delaunay_known_configs \
+  --test robust_predicates_comparison \
+  --test robust_predicates_showcase \
+  --test serialization_vertex_preservation \
+  --test storage_backend_compatibility \
+  --test tds_basic_integration \
+  --test test_cavity_boundary_error \
+  --test test_convex_hull_error_paths \
+  --test test_facet_cache_integration \
+  --test test_geometry_util \
+  --test test_insertion_algorithm_trait \
+  --test test_insertion_algorithm_utils \
+  --test test_robust_fallbacks \
+  --test test_tds_edge_cases \
+  --workspace --timeout 600 --verbose --implicit-test-threads'''
+
+# Coverage analysis for local development (HTML output)
 coverage:
-    cargo tarpaulin --exclude-files 'benches/*' --exclude-files 'examples/*' --all-features --workspace --out Html --output-dir target/tarpaulin
+    cargo tarpaulin {{_coverage_base_args}} --out Html --output-dir target/tarpaulin
     @echo "📊 Coverage report generated: target/tarpaulin/tarpaulin-report.html"
+
+# Coverage analysis for CI (XML output for codecov/codacy)
+coverage-ci:
+    cargo tarpaulin {{_coverage_base_args}} --out Xml --output-dir coverage
 
 # Default recipe shows available commands
 default:
@@ -150,7 +179,7 @@ help-workflows:
     @echo "Common Just workflows:"
     @echo "  just dev           # Quick development cycle (format, lint, test)"
     @echo "  just quality       # All quality checks + tests (comprehensive)"
-    @echo "  just ci            # CI simulation (quality + release tests + bench compile)"
+    @echo "  just ci            # CI simulation (quality + tests + bench compile)"
     @echo "  just commit-check  # Pre-commit validation (CI + examples) - most thorough"
     @echo "  just ci-baseline   # CI + save performance baseline"
     @echo ""
@@ -158,12 +187,17 @@ help-workflows:
     @echo "  just test          # Rust lib and doc tests (debug mode)"
     @echo "  just test-all      # All tests (Rust + Python, debug mode)"
     @echo "  just test-release  # All tests in release mode"
+    @echo "  just test-slow     # Include slow/stress tests (100+ vertices)"
+    @echo "  just test-slow-release # Slow tests in release mode (faster)"
     @echo "  just test-debug    # Run debug tools with output"
     @echo "  just test-allocation # Memory allocation profiling"
     @echo "  just examples      # Run all examples"
-    @echo "  just coverage      # Generate coverage report"
+    @echo "  just coverage      # Generate coverage report (HTML)"
+    @echo "  just coverage-ci   # Generate coverage for CI (XML)"
     @echo ""
     @echo "Quality Check Groups:"
+    @echo "  just quality       # All quality checks + tests (standard, fast)"
+    @echo "  just quality-slow  # All quality checks + tests including slow tests"
     @echo "  just lint          # All linting (code + docs + config)"
     @echo "  just lint-code     # Code linting (Rust, Python, Shell)"
     @echo "  just lint-docs     # Documentation linting (Markdown, Spelling)"
@@ -294,6 +328,10 @@ python-lint: _ensure-uv
 quality: lint-code lint-docs lint-config test-all
     @echo "✅ All quality checks and tests passed!"
 
+# Comprehensive quality check including slow tests (for local development/pre-commit)
+quality-slow: lint-code lint-docs lint-config test-all test-slow-release
+    @echo "✅ All quality checks and tests (including slow tests) passed!"
+
 # Development setup
 setup:
     #!/usr/bin/env bash
@@ -362,7 +400,12 @@ shell-lint:
     done < <(git ls-files -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
         printf '%s\0' "${files[@]}" | xargs -0 -n1 shfmt -w
-        printf '%s\0' "${files[@]}" | xargs -0 -n4 shellcheck -x
+        # Only run shellcheck if available (may not be on Windows)
+        if command -v shellcheck &> /dev/null; then
+            printf '%s\0' "${files[@]}" | xargs -0 -n4 shellcheck -x
+        else
+            echo "⚠️ shellcheck not found, skipping shell script linting (formatting still applied)"
+        fi
     else
         echo "No shell files found to lint."
     fi
@@ -411,6 +454,14 @@ test-python: _ensure-uv
 
 test-release:
     cargo test --release
+
+# Run tests including slow/stress tests (100+ vertices, multiple dimensions)
+# These are gated behind the 'slow-tests' feature to keep CI fast
+test-slow:
+    cargo test --features slow-tests
+
+test-slow-release:
+    cargo test --release --features slow-tests
 
 # File validation
 validate-json:

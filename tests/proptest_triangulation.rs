@@ -47,22 +47,22 @@ fn vertex_5d() -> impl Strategy<Value = Point<f64, 5>> {
 
 /// Strategy for generating a small collection of 2D vertices (4-10 vertices)
 fn small_vertex_set_2d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 2>>> {
-    prop::collection::vec(vertex_2d(), 4..=10).prop_map(Vertex::from_points)
+    prop::collection::vec(vertex_2d(), 4..=10).prop_map(|v| Vertex::from_points(&v))
 }
 
 /// Strategy for generating a small collection of 3D vertices (5-12 vertices)
 fn small_vertex_set_3d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 3>>> {
-    prop::collection::vec(vertex_3d(), 5..=12).prop_map(Vertex::from_points)
+    prop::collection::vec(vertex_3d(), 5..=12).prop_map(|v| Vertex::from_points(&v))
 }
 
 /// Strategy for generating a small collection of 4D vertices (6-14 vertices)
 fn small_vertex_set_4d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 4>>> {
-    prop::collection::vec(vertex_4d(), 6..=14).prop_map(Vertex::from_points)
+    prop::collection::vec(vertex_4d(), 6..=14).prop_map(|v| Vertex::from_points(&v))
 }
 
 /// Strategy for generating a small collection of 5D vertices (7-16 vertices)
 fn small_vertex_set_5d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 5>>> {
-    prop::collection::vec(vertex_5d(), 7..=16).prop_map(Vertex::from_points)
+    prop::collection::vec(vertex_5d(), 7..=16).prop_map(|v| Vertex::from_points(&v))
 }
 
 // =============================================================================
@@ -244,7 +244,7 @@ macro_rules! gen_incremental_insertion_validity {
                     initial_points in prop::collection::vec([<vertex_ $dim d>](), $min..=$max),
                     additional_point in [<vertex_ $dim d>](),
                 ) {
-                    let initial_vertices = Vertex::from_points(initial_points);
+                    let initial_vertices = Vertex::from_points(&initial_points);
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&initial_vertices) {
                         prop_assert!(tds.is_valid().is_ok(), "Initial {}D triangulation should be valid", $dim);
                         let additional_vertex = vertex!(additional_point);

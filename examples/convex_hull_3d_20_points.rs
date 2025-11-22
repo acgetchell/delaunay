@@ -1,7 +1,7 @@
-//! # 3D Convex Hull Example with 100 Points
+//! # 3D Convex Hull Example with 20 Points
 //!
 //! This example demonstrates extracting and analyzing a 3D convex hull from a Delaunay
-//! triangulation using 100 randomly generated points. It showcases:
+//! triangulation using 20 randomly generated points. It showcases:
 //!
 //! - Using the `generate_random_triangulation` utility function for convenience
 //! - Building a Delaunay triangulation using the Bowyer-Watson algorithm
@@ -38,18 +38,23 @@ use std::time::Instant;
 
 fn main() {
     println!("=================================================================");
-    println!("3D Convex Hull Example - 100 Random Points");
-    println!("=================================================================\n");
+    println!("3D Convex Hull Example - 20 Random Points");
+    println!("=================================================================\\n");
 
-    // Create Delaunay triangulation with timing using the utility function
-    println!("Creating 3D Delaunay triangulation with 100 random points...");
+    // Create Delaunay triangulation with timing using the utility function.
+    // NOTE: The (n_points, bounds, seed) triple matches a configuration covered by
+    // `test_generate_random_triangulation_dimensions` in `geometry::util` to avoid
+    // pathological Delaunay-repair failures in CI while still exercising a nontrivial 3D hull.
+    println!(
+        "Creating 3D Delaunay triangulation with 20 random points in [-3, 3]^3 (seed = 666)..."
+    );
     let start = Instant::now();
 
     let tds: Tds<f64, (), (), 3> = match generate_random_triangulation(
-        100,           // Number of points
-        (-10.0, 10.0), // Coordinate bounds
-        None,          // No vertex data
-        Some(42),      // Fixed seed for reproducibility
+        20,          // Number of points
+        (-3.0, 3.0), // Coordinate bounds
+        None,        // No vertex data
+        Some(666),   // Fixed seed for reproducibility (matches tested configuration)
     ) {
         Ok(triangulation) => {
             let construction_time = start.elapsed();

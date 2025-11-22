@@ -9,13 +9,15 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
-use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::triangulation_data_structure::{CellKey, Tds};
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::quality::{normalized_volume, radius_ratio};
 use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::geometry::util::{circumradius, inradius, safe_usize_to_scalar};
 use proptest::prelude::*;
+use std::collections::HashMap;
+use uuid::Uuid;
 
 // =============================================================================
 // TEST CONFIGURATION
@@ -24,6 +26,89 @@ use proptest::prelude::*;
 /// Strategy for generating finite f64 coordinates
 fn finite_coordinate() -> impl Strategy<Value = f64> {
     (-100.0..100.0).prop_filter("must be finite", |x: &f64| x.is_finite())
+}
+
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+/// Compare quality metrics between two triangulations by matching cells via vertex UUIDs.
+///
+/// This helper function matches cells between an original and transformed triangulation
+/// by mapping vertex UUIDs, then compares their quality metrics using the provided
+/// comparison function.
+///
+/// # Arguments
+/// * `tds_orig` - Original triangulation
+/// * `tds_transformed` - Transformed triangulation (translated, scaled, rotated, etc.)
+/// * `uuid_map` - Mapping from original vertex UUIDs to transformed vertex UUIDs
+/// * `metric_name` - Name of the metric being tested (for error messages)
+/// * `dimension` - Dimensionality (for error messages)
+/// * `compare_fn` - Function to compute and compare quality metrics for matched cells.
+///   Returns `Ok(())` if metrics match within tolerance, `Err(TestCaseError)` otherwise.
+///
+/// # Returns
+/// * `Ok(true)` - At least one cell was successfully matched and compared
+/// * `Ok(false)` - No cells could be matched (topology changed too much)
+/// * `Err(TestCaseError)` - A metric comparison failed
+///
+/// # Purpose
+/// This function centralizes the UUID-based cell matching logic used across multiple
+/// transformation invariance tests (translation, scaling, rotation). It eliminates
+/// ~200 lines of duplicated code by extracting the common pattern:
+/// 1. Iterate through cells in original triangulation
+/// 2. Map their vertex UUIDs to transformed triangulation
+/// 3. Find matching cell in transformed triangulation
+/// 4. Compare quality metrics between matched cells
+/// 5. Track whether any cells were successfully matched (to avoid vacuous success)
+fn compare_transformed_cells<const D: usize, F>(
+    tds_orig: &Tds<f64, Option<()>, Option<()>, D>,
+    tds_transformed: &Tds<f64, Option<()>, Option<()>, D>,
+    uuid_map: &HashMap<Uuid, Uuid>,
+    _metric_name: &str,
+    _dimension: usize,
+    mut compare_fn: F,
+) -> Result<bool, TestCaseError>
+where
+    F: FnMut(CellKey, CellKey) -> Result<(), TestCaseError>,
+{
+    let mut matched_any = false;
+
+    // Iterate through all cells in original triangulation
+    for orig_key in tds_orig.cell_keys() {
+        if let Some(orig_cell) = tds_orig.get_cell(orig_key) {
+            // Get original cell's vertex UUIDs
+            if let Ok(orig_uuids) = orig_cell.vertex_uuids(tds_orig) {
+                // Map to transformed UUIDs
+                let transformed_uuids: Vec<_> = orig_uuids
+                    .iter()
+                    .filter_map(|uuid| uuid_map.get(uuid))
+                    .copied()
+                    .collect();
+
+                // Find matching cell in transformed triangulation
+                for trans_key in tds_transformed.cell_keys() {
+                    if let Some(trans_cell) = tds_transformed.get_cell(trans_key)
+                        && let Ok(trans_cell_uuids) = trans_cell.vertex_uuids(tds_transformed)
+                    {
+                        // Check if cells have same vertices (by UUID)
+                        if transformed_uuids.len() == trans_cell_uuids.len()
+                            && transformed_uuids
+                                .iter()
+                                .all(|u| trans_cell_uuids.contains(u))
+                        {
+                            // Found matching cell - compare quality metrics
+                            compare_fn(orig_key, trans_key)?;
+                            matched_any = true;
+                            break; // Found the match, no need to check other cells
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(matched_any)
 }
 
 // =============================================================================
@@ -109,7 +194,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         for cell_key in tds.cell_keys() {
@@ -189,7 +274,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
@@ -202,26 +287,36 @@ macro_rules! test_quality_properties {
                                 for i in 0..$dim {
                                     translated[i] = coords[i] + translation[i];
                                 }
-                                // Use from_points to create vertices with auto-generated UUIDs
                                 Point::new(translated)
                             })
                             .collect::<Vec<_>>();
 
-                        let translated_vertices = Vertex::from_points(translated_vertices);
+                        let translated_vertices = Vertex::from_points(&translated_vertices);
 
                         if let Ok(tds_translated) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&translated_vertices) {
-                            // Compare radius ratios for corresponding cells
-                            let original_keys: Vec<_> = tds.cell_keys().collect();
-                            let translated_keys: Vec<_> = tds_translated.cell_keys().collect();
+                            // Build mapping from original UUIDs to translated UUIDs
+                            let uuid_map: HashMap<_, _> = vertices.iter()
+                                .zip(translated_vertices.iter())
+                                .map(|(orig, trans)| (orig.uuid(), trans.uuid()))
+                                .collect();
 
-                            if original_keys.len() == translated_keys.len() {
-                                for (orig_key, trans_key) in original_keys.iter().zip(translated_keys.iter()) {
-                                    if let (Ok(ratio_orig), Ok(ratio_trans)) =
-                                        (radius_ratio(&tds, *orig_key), radius_ratio(&tds_translated, *trans_key))
-                                    {
-                                        let rel_diff = ((ratio_orig - ratio_trans).abs() / ratio_orig.max(1.0)).min(1.0);
+                            // Compare cells using helper function
+                            let matched_any = compare_transformed_cells(
+                                &tds,
+                                &tds_translated,
+                                &uuid_map,
+                                "radius_ratio",
+                                $dim,
+                                |orig_key, trans_key| {
+                                    if let (Ok(ratio_orig), Ok(ratio_trans)) = (
+                                        radius_ratio(&tds, orig_key),
+                                        radius_ratio(&tds_translated, trans_key),
+                                    ) {
+                                        let rel_diff = ((ratio_orig - ratio_trans).abs()
+                                            / ratio_orig.max(1.0))
+                                        .min(1.0);
                                         prop_assert!(
-                                        rel_diff < 0.05,
+                                            rel_diff < 0.05,
                                             "{}D radius ratio should be translation-invariant: {} vs {} (diff: {})",
                                             $dim,
                                             ratio_orig,
@@ -229,8 +324,12 @@ macro_rules! test_quality_properties {
                                             rel_diff
                                         );
                                     }
-                                }
-                            }
+                                    Ok(())
+                                },
+                            )?;
+
+                            // If no cells matched, discard this case to avoid vacuous success
+                            prop_assume!(matched_any);
                         }
                     }
                 }
@@ -241,7 +340,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
@@ -258,18 +357,30 @@ macro_rules! test_quality_properties {
                             })
                             .collect::<Vec<_>>();
 
-                        let translated_vertices = Vertex::from_points(translated_vertices);
+                        let translated_vertices = Vertex::from_points(&translated_vertices);
 
                         if let Ok(tds_translated) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&translated_vertices) {
-                            let original_keys: Vec<_> = tds.cell_keys().collect();
-                            let translated_keys: Vec<_> = tds_translated.cell_keys().collect();
+                            // Build UUID mapping
+                            let uuid_map: HashMap<_, _> = vertices.iter()
+                                .zip(translated_vertices.iter())
+                                .map(|(orig, trans)| (orig.uuid(), trans.uuid()))
+                                .collect();
 
-                            if original_keys.len() == translated_keys.len() {
-                                for (orig_key, trans_key) in original_keys.iter().zip(translated_keys.iter()) {
-                                    if let (Ok(vol_orig), Ok(vol_trans)) =
-                                        (normalized_volume(&tds, *orig_key), normalized_volume(&tds_translated, *trans_key))
-                                    {
-                                        let rel_diff = ((vol_orig - vol_trans).abs() / vol_orig.max(1e-6)).min(1.0);
+                            // Compare cells using helper function
+                            let matched_any = compare_transformed_cells(
+                                &tds,
+                                &tds_translated,
+                                &uuid_map,
+                                "normalized_volume",
+                                $dim,
+                                |orig_key, trans_key| {
+                                    if let (Ok(vol_orig), Ok(vol_trans)) = (
+                                        normalized_volume(&tds, orig_key),
+                                        normalized_volume(&tds_translated, trans_key),
+                                    ) {
+                                        let rel_diff = ((vol_orig - vol_trans).abs()
+                                            / vol_orig.max(1e-6))
+                                        .min(1.0);
                                         prop_assert!(
                                             rel_diff < 0.01,
                                             "{}D normalized volume should be translation-invariant: {} vs {} (diff: {})",
@@ -279,19 +390,23 @@ macro_rules! test_quality_properties {
                                             rel_diff
                                         );
                                     }
-                                }
-                            }
+                                    Ok(())
+                                },
+                            )?;
+
+                            // If no cells matched, discard this case to avoid vacuous success
+                            prop_assume!(matched_any);
                         }
                     }
                 }
 
-                /// Property: Radius ratio is scale-invariant (uniform scaling)
+                /// Property: Normalized volume is scale-invariant (uniform scaling)
                 #[test]
                 fn [<prop_normalized_volume_scale_invariant_ $dim d>](
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     scale in 0.1f64..10.0f64
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
@@ -308,18 +423,30 @@ macro_rules! test_quality_properties {
                             })
                             .collect::<Vec<_>>();
 
-                        let scaled_vertices = Vertex::from_points(scaled_vertices);
+                        let scaled_vertices = Vertex::from_points(&scaled_vertices);
 
                         if let Ok(tds_scaled) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&scaled_vertices) {
-                            let original_keys: Vec<_> = tds.cell_keys().collect();
-                            let scaled_keys: Vec<_> = tds_scaled.cell_keys().collect();
+                            // Build UUID mapping
+                            let uuid_map: HashMap<_, _> = vertices.iter()
+                                .zip(scaled_vertices.iter())
+                                .map(|(orig, scaled)| (orig.uuid(), scaled.uuid()))
+                                .collect();
 
-                            if original_keys.len() == scaled_keys.len() {
-                                for (orig_key, scaled_key) in original_keys.iter().zip(scaled_keys.iter()) {
-                                    if let (Ok(vol_orig), Ok(vol_scaled)) =
-                                        (normalized_volume(&tds, *orig_key), normalized_volume(&tds_scaled, *scaled_key))
-                                    {
-                                        let rel_diff = ((vol_orig - vol_scaled).abs() / vol_orig.max(1e-6)).min(1.0);
+                            // Compare cells using helper function
+                            let matched_any = compare_transformed_cells(
+                                &tds,
+                                &tds_scaled,
+                                &uuid_map,
+                                "normalized_volume",
+                                $dim,
+                                |orig_key, scaled_key| {
+                                    if let (Ok(vol_orig), Ok(vol_scaled)) = (
+                                        normalized_volume(&tds, orig_key),
+                                        normalized_volume(&tds_scaled, scaled_key),
+                                    ) {
+                                        let rel_diff = ((vol_orig - vol_scaled).abs()
+                                            / vol_orig.max(1e-6))
+                                        .min(1.0);
                                         prop_assert!(
                                             rel_diff < 0.01,
                                             "{}D normalized volume should be scale-invariant: {} vs {} (diff: {})",
@@ -329,8 +456,12 @@ macro_rules! test_quality_properties {
                                             rel_diff
                                         );
                                     }
-                                }
-                            }
+                                    Ok(())
+                                },
+                            )?;
+
+                            // If no cells matched, discard this case to avoid vacuous success
+                            prop_assume!(matched_any);
                         }
                     }
                 }
@@ -341,7 +472,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         for cell_key in tds.cell_keys() {

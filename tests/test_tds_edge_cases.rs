@@ -217,7 +217,7 @@ fn test_set_neighbors_by_key() {
     let cell_key = tds.cell_keys().next().unwrap();
     let new_neighbors = vec![None, None, None, None];
 
-    let result = tds.set_neighbors_by_key(cell_key, new_neighbors);
+    let result = tds.set_neighbors_by_key(cell_key, &new_neighbors);
     assert!(result.is_ok(), "Should set neighbors successfully");
 
     // Verify neighbors were cleared
@@ -344,7 +344,10 @@ fn test_add_duplicate_vertex() {
 // ============================================================================
 
 #[test]
-#[ignore = "Stress test - slow for CI, run manually"]
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    ignore = "Stress test - enable with --features slow-tests"
+)]
 fn test_stress_1000_vertices_2d() {
     use rand::Rng;
     let mut rng = rand::rng();
@@ -357,7 +360,7 @@ fn test_stress_1000_vertices_2d() {
             Point::new([x, y])
         })
         .collect();
-    let vertices = Vertex::<f64, (), 2>::from_points(points);
+    let vertices = Vertex::<f64, (), 2>::from_points(&points);
 
     let tds = Tds::<f64, (), (), 2>::new(&vertices);
     assert!(tds.is_ok(), "Should handle 1000 vertices in 2D");
@@ -372,7 +375,10 @@ fn test_stress_1000_vertices_2d() {
 }
 
 #[test]
-#[ignore = "Stress test - slow for CI, run manually"]
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    ignore = "Stress test - enable with --features slow-tests"
+)]
 fn test_stress_1000_vertices_3d() {
     use rand::Rng;
     let mut rng = rand::rng();
@@ -386,7 +392,7 @@ fn test_stress_1000_vertices_3d() {
             Point::new([x, y, z])
         })
         .collect();
-    let vertices = Vertex::<f64, (), 3>::from_points(points);
+    let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
     let tds = Tds::<f64, (), (), 3>::new(&vertices);
     assert!(tds.is_ok(), "Should handle 1000 vertices in 3D");
@@ -401,7 +407,10 @@ fn test_stress_1000_vertices_3d() {
 }
 
 #[test]
-#[ignore = "Stress test - slow for CI, run manually"]
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    ignore = "Stress test - enable with --features slow-tests"
+)]
 fn test_stress_5000_vertices_3d() {
     use rand::Rng;
     let mut rng = rand::rng();
@@ -415,7 +424,7 @@ fn test_stress_5000_vertices_3d() {
             Point::new([x, y, z])
         })
         .collect();
-    let vertices = Vertex::<f64, (), 3>::from_points(points);
+    let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
     let tds = Tds::<f64, (), (), 3>::new(&vertices);
     assert!(tds.is_ok(), "Should handle 5000 vertices in 3D");
@@ -430,7 +439,10 @@ fn test_stress_5000_vertices_3d() {
 }
 
 #[test]
-#[ignore = "Stress test - slow for CI, run manually"]
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    ignore = "Stress test - enable with --features slow-tests"
+)]
 fn test_stress_removal_operations() {
     use rand::Rng;
     let mut rng = rand::rng();
@@ -444,7 +456,7 @@ fn test_stress_removal_operations() {
             Point::new([x, y, z])
         })
         .collect();
-    let vertices = Vertex::<f64, (), 3>::from_points(points);
+    let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
     let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 

@@ -384,12 +384,12 @@ where
         }
     }
 
-    /// The function `from_points` takes a vector of points and returns a
+    /// The function `from_points` takes a slice of points and returns a
     /// vector of vertices, using the `new` method.
     ///
     /// # Arguments
     ///
-    /// * `points`: `points` is a vector of [Point] objects.
+    /// * `points`: `points` is a slice of [Point] objects.
     ///
     /// # Returns
     ///
@@ -409,17 +409,17 @@ where
     /// use delaunay::core::vertex::Vertex;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
-    /// let points = vec![Point::new([1.0, 2.0, 3.0])];
-    /// let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(points.clone());
+    /// let points = [Point::new([1.0, 2.0, 3.0])];
+    /// let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(&points);
     /// assert_eq!(vertices.len(), 1);
     /// assert_eq!(vertices[0].point().coords(), &[1.0, 2.0, 3.0]);
     /// ```
     #[inline]
     #[must_use]
-    pub fn from_points(points: Vec<Point<T, D>>) -> Vec<Self> {
+    pub fn from_points(points: &[Point<T, D>]) -> Vec<Self> {
         points
-            .into_iter()
-            .map(|p| VertexBuilder::default().point(p).build().unwrap())
+            .iter()
+            .map(|p| VertexBuilder::default().point(*p).build().unwrap())
             .collect()
     }
 
@@ -443,7 +443,7 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     /// let points = vec![Point::new([1.0, 2.0]), Point::new([3.0, 4.0])];
-    /// let vertices = Vertex::<f64, Option<()>, 2>::from_points(points.clone());
+    /// let vertices = Vertex::<f64, Option<()>, 2>::from_points(&points);
     /// let map: HashMap<_, _> = Vertex::into_hashmap(vertices);
     /// assert_eq!(map.len(), 2);
     /// assert!(map.values().all(|v| v.dim() == 2));
@@ -953,7 +953,7 @@ mod tests {
             Point::new([4.0, 5.0, 6.0]),
             Point::new([7.0, 8.0, 9.0]),
         ];
-        let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(points);
+        let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(&points);
 
         assert_relative_eq!(
             vertices[0].point().coords().as_slice(),
@@ -985,7 +985,7 @@ mod tests {
             Point::new([4.0, 5.0, 6.0]),
             Point::new([7.0, 8.0, 9.0]),
         ];
-        let mut vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(points);
+        let mut vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(&points);
         let hashmap = Vertex::into_hashmap(vertices.clone());
         let mut values: Vec<Vertex<f64, Option<()>, 3>> = hashmap.into_values().collect();
 
@@ -1266,7 +1266,7 @@ mod tests {
         type VertexType = Vertex<f64, Option<()>, 3>;
 
         // Test equality using references and in collections
-        let vertices = vec![
+        let vertices = [
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -1512,7 +1512,7 @@ mod tests {
     #[test]
     fn vertex_from_points_empty() {
         let points: Vec<Point<f64, 3>> = Vec::new();
-        let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(points);
+        let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(&points);
 
         assert!(vertices.is_empty());
     }
@@ -1520,7 +1520,7 @@ mod tests {
     #[test]
     fn vertex_from_points_single() {
         let points = vec![Point::new([1.0, 2.0, 3.0])];
-        let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(points);
+        let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(&points);
 
         assert_eq!(vertices.len(), 1);
         assert_relative_eq!(

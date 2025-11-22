@@ -2227,24 +2227,27 @@ class BenchmarkRegressionHelper:
         print("   4. Baselines use full benchmark settings for accurate comparisons")
 
     @staticmethod
-    def run_regression_test(baseline_path: Path) -> bool:
+    def run_regression_test(baseline_path: Path, bench_timeout: int = 1800, dev_mode: bool = False) -> bool:
         """
         Run performance regression test against baseline.
 
         Args:
             baseline_path: Path to baseline file
+            bench_timeout: Timeout for cargo bench commands in seconds (default: 1800)
+            dev_mode: Use development mode with faster benchmark settings (default: False)
 
         Returns:
             True if comparison ran and no regressions detected; False on regressions or error
         """
         try:
-            print("🚀 Running performance regression test...")
+            mode_str = "dev mode (10x faster)" if dev_mode else "full mode"
+            print(f"🚀 Running performance regression test ({mode_str})...")
             print(f"   Using CI performance suite against baseline: {baseline_path}")
 
             # Use existing PerformanceComparator
             project_root = find_project_root()
             comparator = PerformanceComparator(project_root)
-            success, regression_found = comparator.compare_with_baseline(baseline_path)
+            success, regression_found = comparator.compare_with_baseline(baseline_path, dev_mode=dev_mode, bench_timeout=bench_timeout)
 
             if not success:
                 print("❌ Performance regression test failed", file=sys.stderr)
@@ -2326,6 +2329,19 @@ class BenchmarkRegressionHelper:
             print("Result: ⏭️ Benchmarks skipped (no baseline available)")
 
 
+def get_default_bench_timeout() -> int:
+    """
+    Get the default benchmark timeout from environment or fallback.
+
+    Returns:
+        Timeout in seconds (from BENCHMARK_TIMEOUT env var or 1800 default)
+    """
+    try:
+        return int(os.getenv("BENCHMARK_TIMEOUT", "1800"))
+    except (ValueError, TypeError):
+        return 1800
+
+
 def create_argument_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(description="Benchmark utilities for baseline generation and comparison")
@@ -2339,9 +2355,10 @@ def create_argument_parser() -> argparse.ArgumentParser:
     gen_parser.add_argument(
         "--bench-timeout",
         type=int,
-        default=int(os.getenv("BENCHMARK_TIMEOUT", "1800")),
-        help="Timeout for cargo bench commands in seconds (default: 1800, from BENCHMARK_TIMEOUT env)",
+        default=get_default_bench_timeout(),
+        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
     )
+    gen_parser.set_defaults(validate_bench_timeout=True)
 
     # Compare benchmarks command
     cmp_parser = subparsers.add_parser("compare", help="Compare current performance against baseline")
@@ -2351,9 +2368,10 @@ def create_argument_parser() -> argparse.ArgumentParser:
     cmp_parser.add_argument(
         "--bench-timeout",
         type=int,
-        default=int(os.getenv("BENCHMARK_TIMEOUT", "1800")),
-        help="Timeout for cargo bench commands in seconds (default: 1800, from BENCHMARK_TIMEOUT env)",
+        default=get_default_bench_timeout(),
+        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
     )
+    cmp_parser.set_defaults(validate_bench_timeout=True)
 
     # Workflow helper commands
     subparsers.add_parser("determine-tag", help="Determine tag name for baseline generation")
@@ -2389,6 +2407,14 @@ def create_argument_parser() -> argparse.ArgumentParser:
 
     regress_parser = subparsers.add_parser("run-regression-test", help="Run performance regression test")
     regress_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
+    regress_parser.add_argument("--dev", action="store_true", help="Use development mode with faster benchmark settings")
+    regress_parser.add_argument(
+        "--bench-timeout",
+        type=int,
+        default=get_default_bench_timeout(),
+        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
+    )
+    regress_parser.set_defaults(validate_bench_timeout=True)
 
     results_parser = subparsers.add_parser("display-results", help="Display regression test results")
     results_parser.add_argument("--results", type=Path, default=Path("benches/compare_results.txt"), help="Results file path")
@@ -2485,7 +2511,7 @@ def execute_regression_commands(args: argparse.Namespace) -> None:
         sys.exit(0)
 
     elif args.command == "run-regression-test":
-        success = BenchmarkRegressionHelper.run_regression_test(args.baseline)
+        success = BenchmarkRegressionHelper.run_regression_test(args.baseline, bench_timeout=args.bench_timeout, dev_mode=args.dev)
         sys.exit(0 if success else 1)
 
     elif args.command == "display-results":
@@ -2539,6 +2565,10 @@ def main():
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    # Validate bench_timeout if present
+    if hasattr(args, "validate_bench_timeout") and args.validate_bench_timeout and args.bench_timeout <= 0:
+        parser.error(f"--bench-timeout must be positive (got {args.bench_timeout})")
 
     try:
         project_root = find_project_root()

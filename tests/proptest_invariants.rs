@@ -23,15 +23,22 @@ macro_rules! gen_duplicate_coords_test {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min..=$max
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
-                        let p = *vertices[0].point();
-                        let dup = Vertex::from_points(vec![p])[0];
+                        // Select a vertex that is actually present in the triangulation.
+                        // `Tds::new` may skip some input vertices (e.g., due to degeneracy),
+                        // so we must use stored vertices to test duplicate rejection.
+                        let (_, existing_vertex) = tds
+                            .vertices()
+                            .next()
+                            .expect("Tds::new returned Ok but has no vertices");
+                        let p = *existing_vertex.point();
+                        let dup = Vertex::from_points(&[p])[0];
                         let result = tds.add(dup);
                         prop_assert!(
                             matches!(result, Err(TriangulationConstructionError::DuplicateCoordinates { .. })),
-                            "expected DuplicateCoordinates error"
+                            "expected DuplicateCoordinates error, got {result:?}"
                         );
                     }
                 }
@@ -50,7 +57,7 @@ macro_rules! gen_cell_vertex_count_test {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min..=$max
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         for (_, c) in tds.cells() {

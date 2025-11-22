@@ -43,11 +43,12 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   CRITERION_QUIET_MODE: 1
+  BENCHMARK_TIMEOUT: 3600  # Increase timeout to 60 minutes for CI benchmarks
 
 jobs:
   performance-regression:
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 75  # Allow 60min benchmark timeout + 15min for setup/teardown
 
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
@@ -278,9 +279,11 @@ jobs:
         run: |
           echo "   Baseline origin: ${BASELINE_ORIGIN:-unknown}"
 
-          # Run regression test using Python utility
+          # Run regression test using Python utility with dev mode for faster execution
           uv run benchmark-utils run-regression-test \
-            --baseline "baseline-artifact/baseline_results.txt"
+            --baseline "baseline-artifact/baseline_results.txt" \
+            --bench-timeout "${BENCHMARK_TIMEOUT}" \
+            --dev
 
       - name: Display regression test results
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()

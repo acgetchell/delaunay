@@ -2,7 +2,12 @@
 
 ## Overview
 
-This document summarizes the property-based testing infrastructure added to the delaunay project using [proptest](https://github.com/proptest-rs/proptest).
+This document summarizes the property-based testing infrastructure added to the
+`delaunay` project using [proptest](https://github.com/proptest-rs/proptest).
+
+For the full set of structural and geometric invariants referenced here, see the
+"Triangulation Invariants" section in the crate-level docs (`src/lib.rs`) and
+`Tds::validation_report()` on `Tds`.
 
 ## Implementation Date
 
@@ -73,7 +78,8 @@ Tests fundamental Point properties:
 Tests structural properties of Delaunay triangulations:
 
 - **Triangulation Validity** (2 property tests):
-  - Constructed triangulations pass `is_valid()` (2D/3D)
+  - Constructed triangulations pass `Tds::is_valid()` (2D/3D), which runs the
+    structural invariant checks that back `Tds::validation_report()`.
   
 - **Neighbor Symmetry** (2 property tests):
   - If A neighbors B, then B neighbors A (2D/3D)

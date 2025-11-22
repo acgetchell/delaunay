@@ -47,12 +47,12 @@ macro_rules! test_robust_algorithm_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     test_coords in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         let mut algorithm = RobustBowyerWatson::new();
-                        let test_vertex = Vertex::from_points(vec![Point::new(test_coords)])
+                        let test_vertex = Vertex::from_points(&[Point::new(test_coords)])
                             .into_iter()
                             .next()
                             .expect("single vertex");
@@ -60,11 +60,14 @@ macro_rules! test_robust_algorithm_properties {
                         let _result = algorithm.insert_vertex(&mut tds, test_vertex);
 
                         // Property: TDS validity maintained regardless of insertion outcome
-                        prop_assert!(
-                            tds.is_valid().is_ok(),
-                            "{}D TDS should remain valid after insertion attempt",
-                            $dim
-                        );
+                        if let Err(e) = tds.is_valid() {
+                            prop_assert!(
+                                false,
+                                "{}D TDS should remain valid after insertion attempt. Validation error: {}",
+                                $dim,
+                                e
+                            );
+                        }
                     }
                 }
 
@@ -74,7 +77,7 @@ macro_rules! test_robust_algorithm_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     test_points in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         1..5_usize
@@ -88,7 +91,7 @@ macro_rules! test_robust_algorithm_properties {
                         let mut prev_removed = 0;
 
                         for point in test_points {
-                            let test_vertex = Vertex::from_points(vec![point])
+                            let test_vertex = Vertex::from_points(&[point])
                                 .into_iter()
                                 .next()
                                 .expect("single vertex");
@@ -125,12 +128,12 @@ macro_rules! test_robust_algorithm_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     test_coords in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         let mut algorithm = RobustBowyerWatson::new();
-                        let test_vertex = Vertex::from_points(vec![Point::new(test_coords)])
+                        let test_vertex = Vertex::from_points(&[Point::new(test_coords)])
                             .into_iter()
                             .next()
                             .expect("single vertex");
@@ -159,7 +162,7 @@ macro_rules! test_robust_algorithm_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         let mut algorithm = RobustBowyerWatson::new();
@@ -178,7 +181,7 @@ macro_rules! test_robust_algorithm_properties {
                             *coord /= vertex_count_f64;
                         }
 
-                        let interior_vertex = Vertex::from_points(vec![Point::new(interior_coords)])
+                        let interior_vertex = Vertex::from_points(&[Point::new(interior_coords)])
                             .into_iter()
                             .next()
                             .expect("single vertex");
@@ -186,11 +189,14 @@ macro_rules! test_robust_algorithm_properties {
 
                         // Property: Interior point insertion should succeed (or fail gracefully)
                         // and maintain TDS validity
-                        prop_assert!(
-                            tds.is_valid().is_ok(),
-                            "{}D: TDS should remain valid after interior insertion attempt",
-                            $dim
-                        );
+                        if let Err(e) = tds.is_valid() {
+                            prop_assert!(
+                                false,
+                                "{}D: TDS should remain valid after interior insertion attempt. Validation error: {}",
+                                $dim,
+                                e
+                            );
+                        }
                     }
                 }
 
@@ -200,7 +206,7 @@ macro_rules! test_robust_algorithm_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     test_points in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         1..5_usize
@@ -212,7 +218,7 @@ macro_rules! test_robust_algorithm_properties {
                         let initial_gen = algorithm.cached_generation().load(Ordering::Acquire);
 
                         for point in test_points {
-                            let test_vertex = Vertex::from_points(vec![point])
+                            let test_vertex = Vertex::from_points(&[point])
                                 .into_iter()
                                 .next()
                                 .expect("single vertex");
@@ -236,14 +242,14 @@ macro_rules! test_robust_algorithm_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     test_coords in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         let mut algorithm = RobustBowyerWatson::new();
 
                         // Insert a vertex to potentially change state
-                        let test_vertex = Vertex::from_points(vec![Point::new(test_coords)])
+                        let test_vertex = Vertex::from_points(&[Point::new(test_coords)])
                             .into_iter()
                             .next()
                             .expect("single vertex");
@@ -285,16 +291,15 @@ macro_rules! test_robust_algorithm_properties {
                         scaled_points.push(Point::new(coords));
                     }
 
-                    let vertices: Vec<Vertex<f64, Option<()>, $dim>> = Vertex::from_points(scaled_points);
+                    let vertices: Vec<Vertex<f64, Option<()>, $dim>> = Vertex::from_points(&scaled_points);
                     let mut algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, $dim> = RobustBowyerWatson::new();
                     let tds_result = algorithm.new_triangulation(&vertices);
 
                     if let Ok(mut tds) = tds_result {
                         // Try inserting at center
                         let center_coord = scale * 0.25;
-                        let test_vertex = Vertex::from_points(
-                            vec![Point::new([center_coord; $dim])]
-                        )
+                        let center_point = vec![Point::new([center_coord; $dim])];
+                        let test_vertex = Vertex::from_points(&center_point)
                             .into_iter()
                             .next()
                             .expect("single vertex");

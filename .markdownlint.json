@@ -6,5 +6,6 @@
   "MD033": false,
   "MD038": false,
   "MD041": false,
-  "_comment": "MD029 disabled - we prefer manual numbering over lazy numbering (1. 1. 1.) for better readability"
+  "MD060": false,
+  "_comment": "MD029 disabled - we prefer manual numbering over lazy numbering (1. 1. 1.) for better readability; MD060 disabled to avoid auto-reformatting tables"
 }

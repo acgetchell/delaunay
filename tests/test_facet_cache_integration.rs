@@ -1,7 +1,7 @@
 //! Integration tests for facet cache behavior under real-world usage
 //!
 //! These tests exercise the facet cache implementation through actual algorithm
-//! implementations (`IncrementalBowyerWatson`, `ConvexHull`) to cover complex code
+//! implementations (`RobustBowyerWatson`, `ConvexHull`) to cover complex code
 //! paths that are difficult to trigger via unit tests:
 //!
 //! - Concurrent cache access during TDS modifications
@@ -12,7 +12,7 @@
 
 use delaunay::{
     core::{
-        algorithms::bowyer_watson::IncrementalBowyerWatson,
+        algorithms::robust_bowyer_watson::RobustBowyerWatson,
         traits::{facet_cache::FacetCacheProvider, insertion_algorithm::InsertionAlgorithm},
         triangulation_data_structure::Tds,
     },
@@ -46,7 +46,7 @@ fn test_sequential_cache_invalidation_during_insertion() {
         vertex!([0.0, 0.0, 1.0]),
     ];
     let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-    let mut algorithm = IncrementalBowyerWatson::new();
+    let mut algorithm = RobustBowyerWatson::new();
 
     // Create vertices to insert
     let new_vertices: Vec<_> = (0..10)
@@ -102,7 +102,7 @@ fn test_cache_invalidation_during_incremental_building() {
         vertex!([0.0, 0.0, 1.0]),
     ];
     let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-    let mut algorithm = IncrementalBowyerWatson::new();
+    let mut algorithm = RobustBowyerWatson::new();
 
     let initial_generation = tds.generation();
 
@@ -154,7 +154,7 @@ fn test_rcu_contention_multiple_threads() {
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
     let tds_arc = Arc::new(tds);
-    let algorithm = Arc::new(IncrementalBowyerWatson::new());
+    let algorithm = Arc::new(RobustBowyerWatson::new());
 
     // Ensure cache is empty initially
     algorithm.invalidate_facet_cache();
@@ -232,7 +232,7 @@ fn test_generation_tracking_through_insertions() {
         vertex!([0.0, 0.0, 1.0]),
     ];
     let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-    let mut algorithm = IncrementalBowyerWatson::new();
+    let mut algorithm = RobustBowyerWatson::new();
 
     // Initial cache build
     let cache1 = algorithm.try_get_or_build_facet_cache(&tds).unwrap();
@@ -270,13 +270,14 @@ fn test_generation_tracking_through_insertions() {
 /// works correctly with different algorithm implementations.
 #[test]
 fn test_convex_hull_cache_during_construction() {
+    // Use vertices that form a proper convex hull (tetrahedron + points on hull surface)
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-        vertex!([0.5, 0.5, 0.5]),
-        vertex!([0.2, 0.3, 0.4]),
+        vertex!([2.0, 0.0, 0.0]),
+        vertex!([0.0, 2.0, 0.0]),
+        vertex!([0.0, 0.0, 2.0]),
+        vertex!([1.0, 1.0, 0.0]), // On face of hull
+        vertex!([1.0, 0.0, 1.0]), // On face of hull
     ];
 
     let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
@@ -315,7 +316,7 @@ fn test_retry_loop_on_generation_change() {
         vertex!([0.0, 0.0, 1.0]),
     ];
     let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-    let mut algorithm = IncrementalBowyerWatson::new();
+    let mut algorithm = RobustBowyerWatson::new();
 
     // Clear cache to force rebuild
     algorithm.invalidate_facet_cache();
@@ -359,7 +360,7 @@ fn test_rapid_invalidation_cycles() {
         vertex!([0.0, 0.0, 1.0]),
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    let algorithm = IncrementalBowyerWatson::new();
+    let algorithm = RobustBowyerWatson::new();
 
     // Rapid invalidate-rebuild cycles
     for _ in 0..50 {

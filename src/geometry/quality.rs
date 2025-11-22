@@ -380,7 +380,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::triangulation_data_structure::Tds;
+    use crate::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
     use approx::assert_relative_eq;
@@ -683,18 +683,26 @@ mod tests {
 
     #[test]
     fn test_radius_ratio_perfectly_collinear_3points() {
-        // Three points on a line - perfectly degenerate
+        // Three points on a line - perfectly degenerate for 2D triangulation.
+        // With the robust initial simplex search, these are now rejected at
+        // construction time as geometric degeneracy.
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([2.0, 0.0]), // Collinear
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
+        let tds_result: Result<
+            Tds<f64, Option<()>, Option<()>, 2>,
+            TriangulationConstructionError,
+        > = Tds::new(&vertices);
 
-        let result = radius_ratio(&tds, cell_key);
-        // Should fail with degenerate or numerical error
-        assert!(result.is_err());
+        assert!(
+            matches!(
+                tds_result,
+                Err(TriangulationConstructionError::GeometricDegeneracy { .. })
+            ),
+            "Collinear vertices should be rejected as geometric degeneracy, got: {tds_result:?}",
+        );
     }
 
     #[test]
@@ -1141,16 +1149,30 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.5, 1e-15]), // Very small but non-zero height
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
+        let tds_result: Result<
+            Tds<f64, Option<()>, Option<()>, 2>,
+            TriangulationConstructionError,
+        > = Tds::new(&vertices);
 
-        // Should either compute or return degenerate/numerical error (no panic)
-        let result = radius_ratio(&tds, cell_key);
-        assert!(
-            result.is_ok()
-                || matches!(result, Err(QualityError::DegenerateCell { .. }))
-                || matches!(result, Err(QualityError::NumericalError { .. }))
-        );
+        match tds_result {
+            Ok(tds) => {
+                let cell_key = tds.cell_keys().next().unwrap();
+
+                // Should either compute or return degenerate/numerical error (no panic)
+                let result = radius_ratio(&tds, cell_key);
+                assert!(
+                    result.is_ok()
+                        || matches!(result, Err(QualityError::DegenerateCell { .. }))
+                        || matches!(result, Err(QualityError::NumericalError { .. }))
+                );
+            }
+            Err(TriangulationConstructionError::GeometricDegeneracy { .. }) => {
+                // For sufficiently extreme configurations, the robust initial simplex
+                // search may reject the input up-front as geometrically degenerate.
+                // This is acceptable as long as it is reported cleanly.
+            }
+            Err(other) => panic!("Unexpected triangulation error for numerical edge case: {other}"),
+        }
     }
 
     #[test]
@@ -1162,16 +1184,32 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1e-14]), // Very small but non-zero
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
+        let tds_result: Result<
+            Tds<f64, Option<()>, Option<()>, 3>,
+            TriangulationConstructionError,
+        > = Tds::new(&vertices);
 
-        // Should either compute or return degenerate/numerical error (no panic)
-        let result = normalized_volume(&tds, cell_key);
-        assert!(
-            result.is_ok()
-                || matches!(result, Err(QualityError::DegenerateCell { .. }))
-                || matches!(result, Err(QualityError::NumericalError { .. }))
-        );
+        match tds_result {
+            Ok(tds) => {
+                let cell_key = tds.cell_keys().next().unwrap();
+
+                // Should either compute or return degenerate/numerical error (no panic)
+                let result = normalized_volume(&tds, cell_key);
+                assert!(
+                    result.is_ok()
+                        || matches!(result, Err(QualityError::DegenerateCell { .. }))
+                        || matches!(result, Err(QualityError::NumericalError { .. }))
+                );
+            }
+            Err(TriangulationConstructionError::GeometricDegeneracy { .. }) => {
+                // Extremely flat/near-degenerate configurations may now be rejected
+                // up-front by the initial simplex search. This is acceptable as
+                // long as the error is reported as geometric degeneracy.
+            }
+            Err(other) => panic!(
+                "Unexpected triangulation error for normalized_volume numerical edge case: {other}",
+            ),
+        }
     }
 
     #[test]
@@ -1187,19 +1225,36 @@ mod tests {
 
     #[test]
     fn test_degenerate_cell_error_details() {
-        // Test that degenerate errors include helpful details
+        // Test that degenerate errors include helpful details when they occur.
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([2.0, 1e-20]), // Nearly collinear
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
+        let tds_result: Result<
+            Tds<f64, Option<()>, Option<()>, 2>,
+            TriangulationConstructionError,
+        > = Tds::new(&vertices);
 
-        let result = radius_ratio(&tds, cell_key);
-        if let Err(QualityError::DegenerateCell { detail }) = result {
-            // Should include numeric information
-            assert!(detail.contains("inradius") || detail.contains("volume"));
+        match tds_result {
+            Ok(tds) => {
+                let cell_key = tds.cell_keys().next().unwrap();
+
+                let result = radius_ratio(&tds, cell_key);
+                if let Err(QualityError::DegenerateCell { detail }) = result {
+                    // Should include numeric information when we surface a degenerate cell
+                    assert!(detail.contains("inradius") || detail.contains("volume"));
+                }
+            }
+            Err(TriangulationConstructionError::GeometricDegeneracy { .. }) => {
+                // In some numeric regimes, degeneracy is now detected at construction
+                // time instead of by the quality metrics. That is still acceptable
+                // as long as it is reported via the dedicated GeometricDegeneracy
+                // error variant.
+            }
+            Err(other) => {
+                panic!("Unexpected triangulation error for degenerate cell test: {other}")
+            }
         }
     }
 }

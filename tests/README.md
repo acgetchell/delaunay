@@ -228,6 +228,28 @@ cargo test --release --test proptest_quality
 PROPTEST_CASES=1024 cargo test --release --test proptest_quality -- --nocapture
 ```
 
+#### [`proptest_duplicates.rs`](./proptest_duplicates.rs)
+
+Property-based tests for the unified Bowyer–Watson pipeline on random point
+clouds containing exact duplicates and small jittered near-duplicates.
+
+**Test Coverage:**
+
+- 2D and 3D point clouds with injected duplicates and near-duplicates (f64 coordinates)
+- Construction via `Tds::new` and `Tds::bowyer_watson_with_diagnostics`
+- Global Delaunay validation for the kept subset of vertices
+- Integrity of `TriangulationDiagnostics::unsalvageable_vertices` (all unsalvageable
+  vertices originate from the input set)
+
+**Run with:**
+
+```bash
+cargo test --test proptest_duplicates -- --nocapture
+
+# With increased test cases for thorough validation
+PROPTEST_CASES=512 cargo test --test proptest_duplicates -- --nocapture
+```
+
 #### [`proptest_serialization.rs`](./proptest_serialization.rs)
 
 Property-based tests for serialization and deserialization verifying data preservation via randomized structures.
@@ -618,6 +640,30 @@ Tests error handling for coordinate conversion operations, particularly focusing
 - Error message validation and context
 
 **Run with:** `cargo test --test coordinate_conversion_errors` or `just test-release`
+
+#### [`regression_delaunay_known_configs.rs`](./regression_delaunay_known_configs.rs)
+
+Deterministic regression tests for small canonical point sets in 2D–5D that
+must remain globally Delaunay.
+
+**Test Coverage:**
+
+- Canonical 2D–4D configurations exercising basic interior/exterior behavior
+  (simple simplices with interior and exterior points).
+- A fixed 5D configuration reconstructed from a historically failing
+  `proptest_delaunay_condition` case.
+- All configurations assert successful construction via `Tds::new` and the
+  global Delaunay property via `tds.validate_delaunay()`.
+
+This file is the target for promoting important failing seeds captured via
+Delaunay-focused property tests (see the conditional playbook in
+`docs/fix-delaunay.md`).
+
+**Run with:**
+
+```bash
+cargo test --test regression_delaunay_known_configs -- --nocapture
+```
 
 ### 📊 Performance and Memory Testing
 

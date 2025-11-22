@@ -21,7 +21,7 @@ fn test_geometric_degeneracy_cases() {
         Point::new([0.2, 0.3, -1e-10]), // Very slightly off the other side
     ];
 
-    let vertices = Vertex::from_points(near_coplanar_points);
+    let vertices = Vertex::from_points(&near_coplanar_points);
     match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
         Ok(_) => println!("  Near-coplanar points: Success"),
         Err(e) => println!("  Near-coplanar points: Failed with {e:?}"),
@@ -36,7 +36,7 @@ fn test_geometric_degeneracy_cases() {
         Point::new([5.0, 5.0, 0.01]), // Very small height
     ];
 
-    let vertices = Vertex::from_points(flat_tetrahedron);
+    let vertices = Vertex::from_points(&flat_tetrahedron);
     match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
         Ok(_) => println!("  Flat tetrahedron: Success"),
         Err(e) => println!("  Flat tetrahedron: Failed with {e:?}"),
@@ -57,7 +57,7 @@ fn test_geometric_degeneracy_cases() {
         ]));
     }
 
-    let vertices = Vertex::from_points(clustered_points);
+    let vertices = Vertex::from_points(&clustered_points);
     match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
         Ok(_) => println!("  Clustered points: Success"),
         Err(e) => println!("  Clustered points: Failed with {e:?}"),
@@ -77,7 +77,7 @@ fn test_geometric_degeneracy_cases() {
         Point::new([7.5, 4.33, 6.12]), // And another
     ];
 
-    let vertices = Vertex::from_points(problematic_points);
+    let vertices = Vertex::from_points(&problematic_points);
     match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
         Ok(tds) => {
             println!(
@@ -123,7 +123,7 @@ fn test_reproduce_cavity_boundary_error_fast() {
             })
             .collect();
 
-        let vertices = Vertex::from_points(points);
+        let vertices = Vertex::from_points(&points);
 
         match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
             Ok(_) => {
@@ -182,7 +182,7 @@ fn test_reproduce_cavity_boundary_error_comprehensive() {
             })
             .collect();
 
-        let vertices = Vertex::from_points(points);
+        let vertices = Vertex::from_points(&points);
 
         match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
             Ok(tds) => {

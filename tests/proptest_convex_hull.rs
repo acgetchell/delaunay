@@ -43,7 +43,7 @@ macro_rules! test_convex_hull_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         // Filter: Skip degenerate configurations (no boundary facets)
@@ -84,7 +84,7 @@ macro_rules! test_convex_hull_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         if let Ok(hull) = ConvexHull::from_triangulation(&tds) {
@@ -130,7 +130,7 @@ macro_rules! test_convex_hull_properties {
                     initial_vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points),
+                    ).prop_map(|v| Vertex::from_points(&v)),
                     new_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new)
                 ) {
                     if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&initial_vertices) {
@@ -147,7 +147,7 @@ macro_rules! test_convex_hull_properties {
                             );
 
                             // Modify the TDS
-                            let new_vertex = Vertex::from_points(vec![new_point]);
+                            let new_vertex = Vertex::from_points(&[new_point]);
                             if tds.add(new_vertex[0].clone()).is_ok() {
                                 // Filter: Skip if modification resulted in degenerate configuration
                                 let modified_boundary_count = tds.number_of_boundary_facets().unwrap_or(0);
@@ -186,7 +186,7 @@ macro_rules! test_convex_hull_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         if let Ok(hull) = ConvexHull::from_triangulation(&tds) {
@@ -236,7 +236,7 @@ macro_rules! test_convex_hull_properties {
                         points.push(Point::new(coords));
                     }
 
-                    let vertices = Vertex::from_points(points);
+                    let vertices = Vertex::from_points(&points);
 
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         if let Ok(hull) = ConvexHull::from_triangulation(&tds) {
@@ -258,7 +258,7 @@ macro_rules! test_convex_hull_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
-                    ).prop_map(Vertex::from_points)
+                    ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         if let Ok(hull1) = ConvexHull::from_triangulation(&tds) {

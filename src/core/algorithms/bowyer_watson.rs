@@ -25,7 +25,7 @@
 //! | **Delaunay Property** | `find_bad_cells()` | Empty circumsphere test using `insphere()` |
 //! | **Facet Sharing** | `validate_facet_sharing()` | Each facet shared by ≤ 2 cells |
 //! | **No Duplicate Cells** | `validate_no_duplicate_cells()` | No cells with identical vertex sets |
-//! | **Neighbor Consistency** | `validate_neighbors_internal()` | Mutual neighbor relationships |
+//! | **Neighbor Consistency** | `validate_neighbors()` | Mutual neighbor relationships |
 //! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + `cell.is_valid()` (comprehensive) | Construction + runtime validation |
 //! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
 //!
@@ -188,6 +188,14 @@ where
         }
     }
 
+    /// Returns a snapshot of the internal insertion statistics.
+    ///
+    /// This method is public to support advanced diagnostics and benchmarking.
+    #[must_use]
+    pub const fn statistics(&self) -> &InsertionStatistics {
+        &self.stats
+    }
+
     /// Determines the appropriate insertion strategy for a vertex
     ///
     /// # Arguments
@@ -257,12 +265,13 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Insert a single vertex into the triangulation
-    fn insert_vertex(
+    /// Insert a single vertex into the triangulation (implementation)
+    fn insert_vertex_impl(
         &mut self,
         tds: &mut Tds<T, U, V, D>,
         vertex: Vertex<T, U, D>,
     ) -> Result<InsertionInfo, InsertionError> {
+        // Duplicate detection already handled by default insert_vertex
         // Determine insertion strategy
         let strategy = self.determine_insertion_strategy(tds, &vertex);
 
@@ -589,7 +598,7 @@ mod tests {
             }
         }
 
-        let vertices = Vertex::from_points(points);
+        let vertices = Vertex::from_points(&points);
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
         #[cfg(debug_assertions)]
@@ -760,7 +769,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
 
-        let vertices = Vertex::from_points(points);
+        let vertices = Vertex::from_points(&points);
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
         // For a single tetrahedron, we expect:
@@ -806,7 +815,7 @@ mod tests {
 
         // Add point outside to trigger Bowyer-Watson
         points.push(Point::new([0.5, 0.5, 2.0]));
-        let all_vertices = Vertex::from_points(points);
+        let all_vertices = Vertex::from_points(&points);
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&all_vertices).unwrap();
 
         // Verify triangulation invariants are maintained
@@ -834,7 +843,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
 
-        let vertices = Vertex::from_points(initial_points);
+        let vertices = Vertex::from_points(&initial_points);
         let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
         let new_vertex = vertex!([0.5, 0.5, 2.0]);

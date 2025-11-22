@@ -33,7 +33,8 @@ Delaunay triangulations possess well-defined topological properties that can be 
 2. **Euler Characteristic Validation**: Implement Euler characteristic calculation and validation
 3. **Extensible Architecture**: Design for future topology types (spherical, toroidal)
 4. **Dimensional Genericity**: Support topology validation across all dimensions D ≥ 2
-5. **Integration with Existing Validation**: Extend current `is_valid()` framework
+5. **Integration with Existing Validation**: Extend current
+   `Tds::is_valid()` / `Tds::validation_report()` framework
 6. **Comprehensive Testing**: Validate randomly generated triangulations
 
 ---
@@ -94,6 +95,10 @@ The topology module integrates with existing modules through:
 - **Geometry Integration**: Use existing geometric predicates for topological calculations
 - **Trait System**: Follow established trait patterns from `core::traits`
 - **Testing Integration**: Extend existing validation and testing frameworks
+
+Topology validation is layered on top of the existing structural invariants
+validated by `Tds::validation_report()` / `Tds::is_valid()`, rather than
+duplicating those checks.
 
 ---
 
@@ -270,7 +275,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 ///
 /// This represents triangulations embedded in Euclidean space with:
 /// - Genus 0 (no holes)
-/// - Standard Euler characteristics based on dimension
+/// - Closed (D-1)-sphere boundary semantics for Euler characteristic
 /// - Convex boundary (for finite triangulations)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlanarTopology;
@@ -283,9 +288,9 @@ where
 {
     fn expected_euler_characteristic(&self) -> i64 {
         match D {
-            2 => 1, // Planar graph with outer face: χ = 2 - 1 = 1
-            3 => 2, // 3D convex polytope: χ = 2 (by Euler's polyhedron formula)
-            4 => 0, // 4D convex polytope: χ = 2 - 2 = 0
+            2 => 0, // Boundary is S^1 (circle): χ = 0
+            3 => 2, // Boundary is S^2: χ = 2
+            4 => 0, // Boundary is S^3: χ = 0
             _ => self.calculate_expected_for_dimension(D),
         }
     }
@@ -327,12 +332,13 @@ where
 }
 
 impl PlanarTopology {
-    /// Calculate expected Euler characteristic for arbitrary dimension
-    /// Using the general formula for convex polytopes
+    /// Calculate expected Euler characteristic for arbitrary dimension.
+    ///
+    /// We validate the closed (D-1)-dimensional boundary S^{D-1} of the
+    /// triangulation. For spheres, χ(S^n) = 1 + (-1)^n.
     fn calculate_expected_for_dimension(&self, d: usize) -> i64 {
-        // For convex d-polytopes: χ = 1 + (-1)^d
-        // This gives: 2D→1, 3D→2, 4D→1, 5D→2, etc.
-        1 + if d % 2 == 0 { -1 } else { 1 }
+        let n = d - 1; // boundary dimension
+        1 + if n % 2 == 0 { 1 } else { -1 }
     }
 }
 ```
@@ -961,8 +967,8 @@ simplicial complexes. Unlike local checks (neighbor symmetry, facet sharing), th
 
 **Why this matters for Delaunay triangulations:**
 
-- Finite Delaunay triangulations in R^D form a **topological ball** (homeomorphic to D-ball) with χ = 1
-- The boundary (convex hull) forms a **(D-1)-sphere** with χ depending on dimension parity
+- Finite Delaunay triangulations in R^D have a convex-hull boundary that is a **closed (D-1)-sphere**, and this boundary complex is what we validate topologically
+- The full complex (including interior cells) is a **topological D-ball** with χ = 1, but for Euler-Poincaré invariants we care about the closed boundary sphere
 - Violations indicate serious algorithmic failures that may not be caught by local checks
 
 ### Background: Mathematical Foundations
@@ -1002,15 +1008,18 @@ For a finite simplicial complex:
 
 #### Expected χ by Topological Classification
 
-| Topology | Has Boundary | χ (General) | χ (D=2) | χ (D=3) | χ (D=4) |
-|----------|--------------|-------------|---------|---------|----------|
-| **Empty** | N/A | 0 | 0 | 0 | 0 |
-| **Single Simplex** | Yes | 1 | 1 | 1 | 1 |
-| **Ball (D-ball)** | Yes | 1 | 1 | 1 | 1 |
-| **Closed Sphere (S^D)** | No | 1+(-1)^D | 0 | 2 | 0 |
-| **Unknown/Invalid** | Varies | N/A | ? | ? | ? |
+|| Topology | Has Boundary | χ (General) | χ (D=2) | χ (D=3) | χ (D=4) |
+||----------|--------------|-------------|---------|---------|----------|
+|| **Empty** | N/A | 0 | 0 | 0 | 0 |
+|| **Single Simplex** | Yes | 1 | 1 | 1 | 1 |
+|| **Ball (D-ball)** | Yes | 1 | 1 | 1 | 1 |
+|| **Closed Sphere (S^D)** | No | 1+(-1)^D | 2 | 0 | 2 |
+|| **Unknown/Invalid** | Varies | N/A | ? | ? | ? |
 
-**Key insight:** Finite Delaunay triangulations of point sets in R^D are topological D-balls, so **χ should always equal 1**.
+**Key insight:** For Euler-Poincaré validation we treat finite Delaunay
+triangulations as triangulations of the closed (D-1)-sphere boundary, so the
+expected Euler characteristic is **χ(S^{D-1}) = 1 + (-1)^{D-1}** (e.g., χ=0 in
+2D, χ=2 in 3D, χ=0 in 4D).
 
 ### Design Overview: New Topology Module
 
@@ -1411,7 +1420,7 @@ where
     }
     
     self.validate_facet_sharing()?;
-    self.validate_neighbors_internal()?;
+    self.validate_neighbors()?;
     
     // NEW: Euler characteristic validation
     // Only run if enabled via feature flag or debug mode

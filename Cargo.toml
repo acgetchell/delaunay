@@ -2,7 +2,7 @@
 name = "delaunay"
 version = "0.5.3"
 edition = "2024"
-rust-version = "1.90.0"
+rust-version = "1.91.0"
 authors = ["Adam Getchell <adam@adamgetchell.org>"]
 homepage = "https://github.com/acgetchell/delaunay"
 documentation = "https://docs.rs/delaunay"
@@ -20,10 +20,10 @@ allocation-counter = { version = "0.8.1", optional = true }  # for memory profil
 anyhow = "1.0.100"
 arc-swap = "1.7.1"
 approx = "0.5.1"
-clap = { version = "4.5.51", features = ["derive"] }
+clap = { version = "4.5.53", features = ["derive"] }
 derive_builder = "0.20.2"
 rustc-hash = "2.1.1"  # Fast non-cryptographic hashing for performance
-smallvec = { version = "1.13.2", features = ["serde"] }  # Stack allocation for small collections
+smallvec = { version = "1.15.1", features = ["serde"] }  # Stack allocation for small collections
 nalgebra = "0.34.1"
 num-traits = "0.2.19"
 ordered-float = { version = "5.1.0", features = ["serde"] }
@@ -37,7 +37,7 @@ uuid = { version = "1.18.1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
-pastey = "0.1.1"
+pastey = "0.2.0"
 proptest = "1.9.0"
 sysinfo = "0.37.2"  # Process memory monitoring for benchmarks
 
@@ -46,6 +46,7 @@ count-allocations = ["allocation-counter"]
 bench = []  # Enable benchmark-style tests and performance analysis
 test-debug = []  # Enable verbose debug output in tests for development
 dense-slotmap = []  # Use DenseSlotMap instead of SlotMap for performance comparison
+slow-tests = []  # Enable slow-running integration tests (100+ vertices, multiple dimensions)
 
 [[bench]]
 name = "circumsphere_containment"

@@ -1185,12 +1185,12 @@ mod tests {
 
     #[test]
     fn facet_debug() {
-        // Create a 3D triangulation
+        // Create a 3D triangulation with a non-degenerate tetrahedron
         let vertices = vec![
-            vertex!([1.0, 2.0, 3.0]),
-            vertex!([4.0, 5.0, 6.0]),
-            vertex!([7.0, 8.0, 9.0]),
-            vertex!([10.0, 11.0, 12.0]),
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
