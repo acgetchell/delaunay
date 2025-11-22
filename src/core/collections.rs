@@ -323,13 +323,13 @@ pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<crate::core::facet::Face
 /// # Optimization Rationale
 ///
 /// - **Key**: `CellKey` identifying the cell
-/// - **Value**: `SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>` - handles up to 8 neighbors on stack
+/// - **Value**: `NeighborBuffer<Option<CellKey>>` - handles up to 8 neighbors on stack
 /// - **Typical Pattern**: 2D=3 neighbors, 3D=4 neighbors, 4D=5 neighbors
 /// - **Performance**: Stack allocation for dimensions up to ~7D
 ///
 /// # Note
 ///
-/// This type mirrors `Cell::neighbors()` which returns `Option<&SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>>`.
+/// This type mirrors `Cell::neighbors()` which returns `Option<&NeighborBuffer<Option<CellKey>>>`.
 ///
 /// # Examples
 ///
@@ -339,8 +339,7 @@ pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<crate::core::facet::Face
 /// let mut neighbors: CellNeighborsMap = CellNeighborsMap::default();
 /// // Efficient for typical triangulation dimensions
 /// ```
-pub type CellNeighborsMap =
-    FastHashMap<CellKey, SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>>;
+pub type CellNeighborsMap = FastHashMap<CellKey, NeighborBuffer<Option<CellKey>>>;
 
 /// Vertex-to-cells mapping optimized for typical vertex degrees.
 /// Most vertices are incident to a small number of cells in well-conditioned triangulations.
@@ -384,14 +383,14 @@ pub type VertexToCellsMap =
 pub type CellVerticesMap = FastHashMap<CellKey, FastHashSet<VertexKey>>;
 
 /// Cell vertex keys mapping optimized for validation operations requiring positional access.
-/// Each cell typically has D+1 vertices, stored as a Vec for efficient positional access.
+/// Each cell typically has D+1 vertices, stored in a stack-allocated buffer for efficiency.
 ///
 /// # Optimization Rationale
 ///
 /// - **Key**: `CellKey` identifying the cell
-/// - **Value**: `Vec<VertexKey>` - preserves vertex order for positional semantics
+/// - **Value**: `CellVertexBuffer` - stack-allocated for D ≤ 7, preserves vertex order
 /// - **Use Case**: Validation algorithms that need positional vertex access (e.g., neighbors\[i\] opposite vertices\[i\])
-/// - **Performance**: Complements `CellVerticesMap` by providing ordered access
+/// - **Performance**: Eliminates heap allocation for typical dimensions, better cache locality
 ///
 /// # Examples
 ///
@@ -399,9 +398,9 @@ pub type CellVerticesMap = FastHashMap<CellKey, FastHashSet<VertexKey>>;
 /// use delaunay::core::collections::CellVertexKeysMap;
 ///
 /// let mut cell_vertices: CellVertexKeysMap = CellVertexKeysMap::default();
-/// // Efficient positional access during validation
+/// // Efficient positional access during validation with stack allocation
 /// ```
-pub type CellVertexKeysMap = FastHashMap<CellKey, Vec<VertexKey>>;
+pub type CellVertexKeysMap = FastHashMap<CellKey, CellVertexBuffer>;
 
 // =============================================================================
 // ALGORITHM-SPECIFIC BUFFER TYPES
@@ -424,6 +423,28 @@ const SMALL_CELL_OPERATION_BUFFER_SIZE: usize = 4;
 /// - **Use Case**: Duplicate cell removal, invalid facet cleanup
 /// - **Performance**: Avoids heap allocation for typical cleanup operations
 pub type CellRemovalBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
+
+/// Collection for tracking Delaunay violations during iterative refinement.
+/// Most violation checks find a small number of violating cells.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Up to 16 cells (covers most violation scenarios)
+/// - **Use Case**: Iterative cavity refinement, Delaunay validation
+/// - **Performance**: Avoids heap allocation in hot paths during insertion
+/// - **Typical Size**: 0-4 violations in well-conditioned triangulations
+pub type ViolationBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
+
+/// Collection for tracking cell keys during insertion operations.
+/// Most insertion operations create a small number of cells.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Up to 16 cells (covers most insertion scenarios)
+/// - **Use Case**: Cavity-based insertion, cell creation tracking
+/// - **Performance**: Avoids heap allocation during cell creation
+/// - **Typical Size**: 4-8 cells in well-conditioned triangulations (D+1 for simple cavity)
+pub type CellKeyBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
 
 /// Collection for tracking valid cells during facet sharing fixes.
 /// Most invalid sharing situations involve only a few cells per facet.
@@ -490,6 +511,72 @@ pub type VertexUuidBuffer = SimplexVertexBuffer<Uuid>;
 /// - Cell vertex key collections
 pub type VertexKeyBuffer = SimplexVertexBuffer<VertexKey>;
 
+/// Buffer for storing cell neighbors (D+1 neighbors for a D-dimensional cell).
+/// Uses stack allocation for typical dimensions (2D-7D).
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: D+1 neighbors fit on stack for D ≤ 7
+/// - **Use Case**: Neighbor queries, neighbor assignment, validation
+/// - **Performance**: Avoids heap allocation in 90%+ of cases
+/// - **Memory Layout**: Better cache locality than heap-allocated Vec
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::NeighborBuffer;
+/// use delaunay::core::triangulation_data_structure::CellKey;
+///
+/// // Store neighbor keys for a 3D cell (4 neighbors)
+/// let mut neighbors: NeighborBuffer<Option<CellKey>> = NeighborBuffer::new();
+/// // neighbors.push(Some(cell_key)); // Stack allocated
+/// ```
+pub type NeighborBuffer<T> = SmallBuffer<T, MAX_PRACTICAL_DIMENSION_SIZE>;
+
+/// Buffer for vertex key collections from a single cell (D+1 vertices).
+/// Avoids heap allocation for typical triangulation dimensions.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: D+1 vertex keys fit on stack for D ≤ 7
+/// - **Use Case**: Cell vertex storage, validation, geometric operations
+/// - **Performance**: Eliminates heap allocation for typical dimensions
+/// - **Ordering**: Preserves vertex order for positional semantics
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::CellVertexBuffer;
+/// use delaunay::core::triangulation_data_structure::VertexKey;
+///
+/// // Store vertex keys for a 3D cell (4 vertices)
+/// let mut vertices: CellVertexBuffer = CellVertexBuffer::new();
+/// // vertices.push(vertex_key); // Stack allocated
+/// ```
+pub type CellVertexBuffer = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>;
+
+/// Buffer for vertex UUID collections from a single cell (D+1 vertex UUIDs).
+/// Uses stack allocation to avoid heap overhead for cell operations.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: D+1 vertex UUIDs fit on stack for D ≤ 7
+/// - **Use Case**: Extracting vertex UUIDs from a cell, validation, duplicate detection
+/// - **Performance**: Avoids allocation for temporary UUID collections
+/// - **Memory Efficiency**: 16 bytes per UUID × 8 = 128 bytes on stack
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::CellVertexUuidBuffer;
+/// use uuid::Uuid;
+///
+/// // Store vertex UUIDs from a cell
+/// let mut vertex_uuids: CellVertexUuidBuffer = CellVertexUuidBuffer::new();
+/// // vertex_uuids.push(vertex.uuid()); // Stack allocated
+/// ```
+pub type CellVertexUuidBuffer = SmallBuffer<Uuid, MAX_PRACTICAL_DIMENSION_SIZE>;
+
 /// Buffer sized for Point collections in geometric operations.
 /// Generic over coordinate type T and dimension D, with practical size limit.
 ///
@@ -524,6 +611,33 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 /// - **Use Case**: Hull algorithms, visibility determination
 /// - **Performance**: Optimized for geometric algorithm patterns
 pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
+
+/// Mapping from cell UUIDs to their vertex UUIDs (optimized for internal operations).
+/// Uses stack-allocated buffers for vertex UUID storage.
+///
+/// # Optimization Rationale
+///
+/// - **Key**: Cell UUID for stable identification
+/// - **Value**: `CellVertexUuidBuffer` for stack-allocated vertex UUID storage (D+1 UUIDs)
+/// - **Use Case**: Internal operations, temporary mappings, validation
+/// - **Performance**: Stack allocation for typical cell vertex counts, avoids heap for D ≤ 7
+///
+/// # Serialization Note
+///
+/// For serialization/deserialization, use `FastHashMap<Uuid, Vec<Uuid>>` instead,
+/// as serde doesn't natively serialize `SmallVec`. Convert using `.to_vec()` when serializing.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::CellToVertexUuidsMap;
+/// use uuid::Uuid;
+///
+/// // Internal usage with stack allocation
+/// let mut mapping: CellToVertexUuidsMap = CellToVertexUuidsMap::default();
+/// // mapping.insert(cell_uuid, vertex_uuids_buffer);
+/// ```
+pub type CellToVertexUuidsMap = FastHashMap<Uuid, CellVertexUuidBuffer>;
 
 // =============================================================================
 // UUID-KEY MAPPING TYPES
@@ -941,11 +1055,29 @@ mod tests {
 
     #[test]
     fn test_collection_type_instantiation() {
+        use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+        use slotmap::SlotMap;
+
         // Test domain-specific UUID-based types compile and instantiate
         let _facet_map: FacetToCellsMap = FacetToCellsMap::default();
         let _neighbors: CellNeighborsMap = CellNeighborsMap::default();
         let _vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
         let _cell_vertices: CellVerticesMap = CellVerticesMap::default();
+
+        // Test CellVertexKeysMap with SmallBuffer for D+1 usage pattern
+        let mut cell_vertex_keys: CellVertexKeysMap = CellVertexKeysMap::default();
+        let mut cell_slots: SlotMap<CellKey, i32> = SlotMap::default();
+        let mut vertex_slots: SlotMap<VertexKey, i32> = SlotMap::default();
+
+        let cell_key = cell_slots.insert(1);
+        let mut vertex_buffer: CellVertexBuffer = CellVertexBuffer::new();
+        // Simulate D+1 vertices for a 2D cell (3 vertices)
+        for _ in 0..3 {
+            vertex_buffer.push(vertex_slots.insert(1));
+        }
+        assert!(!vertex_buffer.spilled()); // Should be on stack for D=2
+        cell_vertex_keys.insert(cell_key, vertex_buffer);
+        assert_eq!(cell_vertex_keys.len(), 1);
 
         // Test Phase 1 key-based types compile and instantiate
         let _cell_set: CellKeySet = CellKeySet::default();
@@ -961,6 +1093,37 @@ mod tests {
         let cell_map: KeyBasedCellMap<f64> = KeyBasedCellMap::default();
         assert!(cell_map.is_empty());
         assert_eq!(cell_map.len(), 0);
+    }
+
+    #[test]
+    fn test_cell_vertex_buffer_stack_allocation_boundary() {
+        use crate::core::triangulation_data_structure::VertexKey;
+        use slotmap::SlotMap;
+
+        let mut vertex_slots: SlotMap<VertexKey, i32> = SlotMap::default();
+
+        // Test D=7 case: 8 vertices (D+1) should stay on stack
+        // MAX_PRACTICAL_DIMENSION_SIZE is 8, so inline capacity is 8
+        let mut buffer_d7: CellVertexBuffer = CellVertexBuffer::new();
+        for _ in 0..8 {
+            buffer_d7.push(vertex_slots.insert(1));
+        }
+        assert_eq!(buffer_d7.len(), 8);
+        assert!(
+            !buffer_d7.spilled(),
+            "D=7 (8 vertices) should stay on stack"
+        );
+
+        // Test D=8 case: 9 vertices (D+1) should spill to heap
+        let mut buffer_d8: CellVertexBuffer = CellVertexBuffer::new();
+        for _ in 0..9 {
+            buffer_d8.push(vertex_slots.insert(1));
+        }
+        assert_eq!(buffer_d8.len(), 9);
+        assert!(buffer_d8.spilled(), "D=8 (9 vertices) should spill to heap");
+
+        // Validate the constant MAX_PRACTICAL_DIMENSION_SIZE=8 is correctly sized
+        // for practical use cases (D=0 through D=7)
     }
 
     #[test]

@@ -48,7 +48,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "  vertex_uuid_iter().collect() returned {} UUIDs",
         iter_uuids.len()
     );
-    println!("  Results are identical: {}", vec_uuids == iter_uuids);
+    // Compare as slices since vertex_uuids() now returns SmallVec
+    println!(
+        "  Results are identical: {}",
+        vec_uuids.as_slice() == iter_uuids.as_slice()
+    );
     println!();
 
     // Performance comparison

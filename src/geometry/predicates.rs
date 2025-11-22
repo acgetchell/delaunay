@@ -628,6 +628,7 @@ mod tests {
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::prelude::circumradius;
     use approx::assert_relative_eq;
+    use std::collections::HashMap;
 
     #[test]
     fn test_enum_display_and_debug_implementations() {
@@ -1471,7 +1472,6 @@ mod tests {
     #[test]
     fn test_method_consistency_stress_test() {
         // Stress test with random points to ensure all methods agree
-        use std::collections::HashMap;
         let mut disagreement_count = HashMap::new();
         let mut total_tests = 0;
 

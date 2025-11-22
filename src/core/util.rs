@@ -6,6 +6,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::core::cell::CellValidationError;
+use crate::core::collections::ViolationBuffer;
 use crate::core::facet::{FacetError, FacetView};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
@@ -1746,13 +1747,13 @@ where
 pub fn find_delaunay_violations<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cells_to_check: Option<&[CellKey]>,
-) -> Result<Vec<CellKey>, DelaunayValidationError>
+) -> Result<ViolationBuffer, DelaunayValidationError>
 where
     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     U: DataType,
     V: DataType,
 {
-    let mut violating_cells = Vec::new();
+    let mut violating_cells = ViolationBuffer::new();
     let mut cell_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
 
     // Use robust predicates configuration for reliability

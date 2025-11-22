@@ -6,7 +6,8 @@
 
 use crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use crate::core::collections::{
-    CellKeySet, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer, fast_hash_set_with_capacity,
+    CellKeyBuffer, CellKeySet, FacetInfoBuffer, FacetToCellsMap, FastHashMap, FastHashSet,
+    SmallBuffer, fast_hash_set_with_capacity,
 };
 use crate::core::facet::FacetHandle;
 use crate::core::traits::facet_cache::FacetCacheProvider;
@@ -310,8 +311,8 @@ where
             // Hull extension builds up from boundary facets and doesn't guarantee local Delaunay
             // (it will be fixed during subsequent cavity-based insertions)
             if matches!(info.strategy, InsertionStrategy::CavityBased) {
-                let all_cell_keys: Vec<CellKey> = tds.cells().map(|(k, _)| k).collect();
-                let violations = self.find_delaunay_violations_in_cells(tds, &all_cell_keys)?;
+                // Pass None to check all cells without collecting
+                let violations = self.find_delaunay_violations_in_cells(tds, None)?;
 
                 if !violations.is_empty() {
                     // Attempt to fix violations by removing violating cells and re-finalizing
@@ -335,9 +336,7 @@ where
                     }
 
                     // Re-check for violations
-                    let remaining: Vec<CellKey> = tds.cells().map(|(k, _)| k).collect();
-                    let remaining_violations =
-                        self.find_delaunay_violations_in_cells(tds, &remaining)?;
+                    let remaining_violations = self.find_delaunay_violations_in_cells(tds, None)?;
 
                     if !remaining_violations.is_empty() {
                         return Err(InsertionError::GeometricFailure {
@@ -357,6 +356,28 @@ where
         }
 
         result
+    }
+
+    /// Helper to perform cavity insertion rollback and return error.
+    ///
+    /// Centralizes the rollback pattern used throughout cavity-based insertion
+    /// to reduce code duplication and ensure consistent error handling.
+    fn rollback_cavity_and_err(
+        tds: &mut Tds<T, U, V, D>,
+        saved_cells: &[crate::core::cell::Cell<T, U, V, D>],
+        created_keys: &[CellKey],
+        remove_vertex: bool,
+        vertex_key: crate::core::triangulation_data_structure::VertexKey,
+        error: InsertionError,
+    ) -> Result<InsertionInfo, InsertionError> {
+        <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+            tds,
+            saved_cells,
+            created_keys,
+            remove_vertex,
+            vertex_key,
+        );
+        Err(error)
     }
 
     /// Cavity-based insertion with robust predicates as enhancement
@@ -440,7 +461,8 @@ where
         };
 
         // Create all new cells BEFORE removing bad cells
-        let mut created_cell_keys = Vec::with_capacity(boundary_infos.len());
+        // Use stack allocation for typical cavity sizes (≤16 cells)
+        let mut created_cell_keys = CellKeyBuffer::with_capacity(boundary_infos.len());
         for info in &boundary_infos {
             let mut cell_vertices: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> =
                 info.facet_vertex_keys.clone();
@@ -496,14 +518,14 @@ where
             &boundary_infos,
             &created_cell_keys,
         ) {
-            <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+            return Self::rollback_cavity_and_err(
                 tds,
                 &saved_cavity_cells,
                 &created_cell_keys,
                 !vertex_existed_before,
                 inserted_vk,
+                e,
             );
-            return Err(e);
         }
 
         // Phase 4.5: Iterative cavity refinement (using trait helpers)
@@ -521,57 +543,57 @@ where
         loop {
             iteration += 1;
             if iteration > MAX_REFINEMENT_ITERATIONS {
-                <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                return Self::rollback_cavity_and_err(
                     tds,
                     &saved_cavity_cells,
                     &created_cell_keys,
                     !vertex_existed_before,
                     inserted_vk,
+                    InsertionError::GeometricFailure {
+                        message: format!(
+                            "RobustBowyerWatson iterative cavity refinement exceeded maximum iterations ({MAX_REFINEMENT_ITERATIONS})"
+                        ),
+                        strategy_attempted: InsertionStrategy::CavityBased,
+                    },
                 );
-                return Err(InsertionError::GeometricFailure {
-                    message: format!(
-                        "RobustBowyerWatson iterative cavity refinement exceeded maximum iterations ({MAX_REFINEMENT_ITERATIONS})"
-                    ),
-                    strategy_attempted: InsertionStrategy::CavityBased,
-                });
             }
 
             // Check for pathological cell growth
             let current_cell_count = tds.number_of_cells();
             if current_cell_count > initial_cell_count * max_cell_growth_ratio {
-                <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                return Self::rollback_cavity_and_err(
                     tds,
                     &saved_cavity_cells,
                     &created_cell_keys,
                     !vertex_existed_before,
                     inserted_vk,
+                    InsertionError::GeometricFailure {
+                        message: format!(
+                            "RobustBowyerWatson iterative cavity refinement caused excessive cell growth \
+                             ({current_cell_count} cells from {initial_cell_count} initial, limit {}). \
+                             This indicates degenerate geometry that cannot be handled even with robust predicates.",
+                            initial_cell_count * max_cell_growth_ratio
+                        ),
+                        strategy_attempted: InsertionStrategy::CavityBased,
+                    },
                 );
-                return Err(InsertionError::GeometricFailure {
-                    message: format!(
-                        "RobustBowyerWatson iterative cavity refinement caused excessive cell growth \
-                         ({current_cell_count} cells from {initial_cell_count} initial, limit {}). \
-                         This indicates degenerate geometry that cannot be handled even with robust predicates.",
-                        initial_cell_count * max_cell_growth_ratio
-                    ),
-                    strategy_attempted: InsertionStrategy::CavityBased,
-                });
             }
 
             // Check if any cells violate the Delaunay property (using robust predicates)
-            let violating_cells = match self.find_delaunay_violations_in_cells(tds, &cells_to_check)
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
-                        tds,
-                        &saved_cavity_cells,
-                        &created_cell_keys,
-                        !vertex_existed_before,
-                        inserted_vk,
-                    );
-                    return Err(e);
-                }
-            };
+            let violating_cells =
+                match self.find_delaunay_violations_in_cells(tds, Some(&cells_to_check)) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Self::rollback_cavity_and_err(
+                            tds,
+                            &saved_cavity_cells,
+                            &created_cell_keys,
+                            !vertex_existed_before,
+                            inserted_vk,
+                            e,
+                        );
+                    }
+                };
 
             if violating_cells.is_empty() {
                 // No violations - we're done!
@@ -583,14 +605,14 @@ where
             {
                 Ok(b) => b,
                 Err(e) => {
-                    <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                    return Self::rollback_cavity_and_err(
                         tds,
                         &saved_cavity_cells,
                         &created_cell_keys,
                         !vertex_existed_before,
                         inserted_vk,
+                        e,
                     );
-                    return Err(e);
                 }
             };
             if refinement_boundary.is_empty() {
@@ -605,14 +627,14 @@ where
                 ) {
                     Ok(infos) => infos,
                     Err(e) => {
-                        <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                        return Self::rollback_cavity_and_err(
                             tds,
                             &saved_cavity_cells,
                             &created_cell_keys,
                             !vertex_existed_before,
                             inserted_vk,
+                            e,
                         );
-                        return Err(e);
                     }
                 };
             let refinement_infos =
@@ -621,14 +643,14 @@ where
                 ) {
                     Ok(infos) => infos,
                     Err(e) => {
-                        <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                        return Self::rollback_cavity_and_err(
                             tds,
                             &saved_cavity_cells,
                             &created_cell_keys,
                             !vertex_existed_before,
                             inserted_vk,
+                            e,
                         );
-                        return Err(e);
                     }
                 };
             let refinement_infos = match <Self as InsertionAlgorithm<T, U, V, D>>::filter_boundary_facets_by_valid_facet_sharing(
@@ -640,14 +662,14 @@ where
             ) {
                 Ok(infos) => infos,
                 Err(e) => {
-                    <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                    return Self::rollback_cavity_and_err(
                         tds,
                         &saved_cavity_cells,
                         &created_cell_keys,
                         !vertex_existed_before,
                         inserted_vk,
+                        e,
                     );
-                    return Err(e);
                 }
             };
 
@@ -657,7 +679,8 @@ where
             }
 
             // Create new cells for the refined cavity
-            let mut refinement_cell_keys = Vec::with_capacity(refinement_infos.len());
+            // Use stack allocation for typical refinement sizes (≤16 cells)
+            let mut refinement_cell_keys = CellKeyBuffer::with_capacity(refinement_infos.len());
             for info in &refinement_infos {
                 let mut cell_vertices: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> =
                     info.facet_vertex_keys.clone();
@@ -666,18 +689,18 @@ where
                 let Ok(new_cell) = crate::core::cell::Cell::new(cell_vertices, None) else {
                     // Cell creation failed - clean up partial cells and rollback
                     tds.remove_cells_by_keys(&refinement_cell_keys);
-                    <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                    return Self::rollback_cavity_and_err(
                         tds,
                         &saved_cavity_cells,
                         &created_cell_keys,
                         !vertex_existed_before,
                         inserted_vk,
+                        InsertionError::TriangulationState(
+                            TriangulationValidationError::FailedToCreateCell {
+                                message: "Failed to create refinement cell during iterative cavity refinement".to_string(),
+                            },
+                        ),
                     );
-                    return Err(InsertionError::TriangulationState(
-                        TriangulationValidationError::FailedToCreateCell {
-                            message: "Failed to create refinement cell during iterative cavity refinement".to_string(),
-                        },
-                    ));
                 };
 
                 match tds.insert_cell_with_mapping(new_cell) {
@@ -685,14 +708,14 @@ where
                     Err(e) => {
                         // Cell insertion failed - clean up partial cells and rollback
                         tds.remove_cells_by_keys(&refinement_cell_keys);
-                        <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                        return Self::rollback_cavity_and_err(
                             tds,
                             &saved_cavity_cells,
                             &created_cell_keys,
                             !vertex_existed_before,
                             inserted_vk,
+                            InsertionError::TriangulationConstruction(e),
                         );
-                        return Err(InsertionError::TriangulationConstruction(e));
                     }
                 }
             }
@@ -701,22 +724,22 @@ where
             if refinement_cell_keys.len() != refinement_infos.len() {
                 // Partial cell creation - clean up and rollback
                 tds.remove_cells_by_keys(&refinement_cell_keys);
-                <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                return Self::rollback_cavity_and_err(
                     tds,
                     &saved_cavity_cells,
                     &created_cell_keys,
                     !vertex_existed_before,
                     inserted_vk,
+                    InsertionError::TriangulationState(
+                        TriangulationValidationError::FailedToCreateCell {
+                            message: format!(
+                                "Partial refinement cell creation: created {} of {} cells",
+                                refinement_cell_keys.len(),
+                                refinement_infos.len()
+                            ),
+                        },
+                    ),
                 );
-                return Err(InsertionError::TriangulationState(
-                    TriangulationValidationError::FailedToCreateCell {
-                        message: format!(
-                            "Partial refinement cell creation: created {} of {} cells",
-                            refinement_cell_keys.len(),
-                            refinement_infos.len()
-                        ),
-                    },
-                ));
             }
 
             // Track all removed and created cells for potential rollback
@@ -742,14 +765,14 @@ where
                 &refinement_infos,
                 &refinement_cell_keys,
             ) {
-                <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                return Self::rollback_cavity_and_err(
                     tds,
                     &saved_cavity_cells,
                     &created_cell_keys,
                     !vertex_existed_before,
                     inserted_vk,
+                    e,
                 );
-                return Err(e);
             }
 
             // Check these new cells in the next iteration
@@ -758,57 +781,55 @@ where
 
         // Phase 5: Finalize
         if let Err(e) = <Self as InsertionAlgorithm<T, U, V, D>>::finalize_after_insertion(tds) {
-            <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+            return Self::rollback_cavity_and_err(
                 tds,
                 &saved_cavity_cells,
                 &created_cell_keys,
                 !vertex_existed_before,
                 inserted_vk,
+                InsertionError::TriangulationState(
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Failed to finalize triangulation after robust cavity-based insertion: {e}"
+                        ),
+                    },
+                ),
             );
-            return Err(InsertionError::TriangulationState(
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Failed to finalize triangulation after robust cavity-based insertion: {e}"
-                    ),
-                },
-            ));
         }
 
         // Phase 6: Final validation - RobustBowyerWatson MUST guarantee Delaunay property
-        let all_cell_keys: Vec<CellKey> = tds.cells().map(|(k, _)| k).collect();
-        let remaining_violations = match self.find_delaunay_violations_in_cells(tds, &all_cell_keys)
-        {
+        let remaining_violations = match self.find_delaunay_violations_in_cells(tds, None) {
             Ok(v) => v,
             Err(e) => {
-                <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+                return Self::rollback_cavity_and_err(
                     tds,
                     &saved_cavity_cells,
                     &created_cell_keys,
                     !vertex_existed_before,
                     inserted_vk,
+                    e,
                 );
-                return Err(e);
             }
         };
 
         if !remaining_violations.is_empty() {
             // RobustBowyerWatson found violations even after iterative refinement - rollback and error
-            <Self as InsertionAlgorithm<T, U, V, D>>::restore_cavity_insertion_failure(
+            return Self::rollback_cavity_and_err(
                 tds,
                 &saved_cavity_cells,
                 &created_cell_keys,
                 !vertex_existed_before,
                 inserted_vk,
+                InsertionError::GeometricFailure {
+                    message: format!(
+                        "RobustBowyerWatson insertion completed but {} cells still violate the Delaunay \
+                         property despite robust predicates and iterative refinement. This indicates \
+                         invalid input geometry that cannot be triangulated correctly.",
+                        remaining_violations.len()
+                    ),
+                    strategy_attempted: InsertionStrategy::CavityBased,
+                },
             );
-            return Err(InsertionError::GeometricFailure {
-                message: format!(
-                    "RobustBowyerWatson insertion completed but {} cells still violate the Delaunay \
-                     property despite robust predicates and iterative refinement. This indicates \
-                     invalid input geometry that cannot be triangulated correctly.",
-                    remaining_violations.len()
-                ),
-                strategy_attempted: InsertionStrategy::CavityBased,
-            });
         }
 
         Ok(InsertionInfo {
@@ -1002,7 +1023,8 @@ where
             Ok(handles) if !handles.is_empty() => Ok(handles),
             _ => {
                 // Fallback: robust check via Facet conversion (slow path)
-                let mut handles = Vec::new();
+                // Use FacetInfoBuffer for stack allocation (typical case: few boundary facets)
+                let mut handles = FacetInfoBuffer::new();
                 for fv in tds
                     .boundary_facets()
                     .map_err(InsertionError::TriangulationState)?
@@ -1011,7 +1033,7 @@ where
                         handles.push(FacetHandle::new(fv.cell_key(), fv.facet_index()));
                     }
                 }
-                Ok(handles)
+                Ok(handles.into_vec())
             }
         }
     }
@@ -1109,11 +1131,13 @@ where
         tds: &Tds<T, U, V, D>,
         bad_cells: &[CellKey],
     ) -> Result<Vec<FacetHandle>, InsertionError> {
-        let mut boundary_handles = Vec::new();
-
+        // Fast path: empty result for no bad cells (avoids buffer construction)
         if bad_cells.is_empty() {
-            return Ok(boundary_handles);
+            return Ok(Vec::new());
         }
+
+        // Use FacetInfoBuffer for stack allocation (typical case: D+1 facets per cell)
+        let mut boundary_handles = FacetInfoBuffer::new();
 
         let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
 
@@ -1187,7 +1211,8 @@ where
             Self::validate_boundary_facets(&boundary_handles, bad_cells.len())?;
         }
 
-        Ok(boundary_handles)
+        // Convert to Vec for return (stack-allocated for typical D≤7 during loop)
+        Ok(boundary_handles.into_vec())
     }
 
     // ========================================================================
@@ -2263,7 +2288,7 @@ strategy={strategy:?}, created={created}, removed={removed}, success={success}, 
                 <Self as InsertionAlgorithm<T, U, V, D>>::find_delaunay_violations_in_cells(
                     self,
                     tds,
-                    &[new_cell_key],
+                    Some(&[new_cell_key]),
                 )?;
             #[cfg(test)]
             if !violations.is_empty() {
@@ -2507,6 +2532,7 @@ mod tests {
     use crate::core::traits::insertion_algorithm::{
         InsertionAlgorithm, InsertionError, InsertionStrategy,
     };
+    use crate::core::triangulation_data_structure::TriangulationValidationError;
     use crate::core::util::{derive_facet_key_from_vertex_keys, verify_facet_index_consistency};
     use crate::core::vertex::VertexBuilder;
     use crate::vertex;
@@ -3185,17 +3211,22 @@ mod tests {
             // Check what boundary facets exist before trying visibility
             println!("Getting all boundary facets...");
             if let Ok(all_boundary_facets) = tds.boundary_facets() {
-                let all_boundary_facets_vec: Vec<_> = all_boundary_facets.collect();
-                println!("Total boundary facets: {}", all_boundary_facets_vec.len());
-                for (i, facet) in all_boundary_facets_vec.iter().enumerate() {
-                    println!(
-                        "  Boundary facet {}: {} vertices",
-                        i,
-                        facet
-                            .vertices()
-                            .map(std::iter::Iterator::count)
-                            .unwrap_or(0)
-                    );
+                // Double traversal (count then iterate) trades minor redundant work
+                // for zero intermediate allocation - acceptable for diagnostic code
+                let count = all_boundary_facets.count();
+                println!("Total boundary facets: {count}");
+                // Re-fetch for detailed iteration (debug/test code, performance not critical)
+                if let Ok(boundary_iter) = tds.boundary_facets() {
+                    for (i, facet) in boundary_iter.enumerate() {
+                        println!(
+                            "  Boundary facet {}: {} vertices",
+                            i,
+                            facet
+                                .vertices()
+                                .map(std::iter::Iterator::count)
+                                .unwrap_or(0)
+                        );
+                    }
                 }
             }
 
@@ -7040,6 +7071,88 @@ mod tests {
         assert!(
             result.is_ok(),
             "Valid TDS should have valid facet mapping without over-shared facets"
+        );
+    }
+
+    /// Test the `rollback_cavity_and_err` helper correctly performs rollback and returns error
+    #[test]
+    fn test_rollback_cavity_and_err() {
+        // Create a simple 3D triangulation
+        let initial_vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+
+        // Get the initial state
+        let initial_cell_count = tds.number_of_cells();
+        let initial_vertex_count = tds.number_of_vertices();
+
+        // Add a new vertex to get a vertex key for rollback testing
+        let test_vertex = vertex!([0.5, 0.5, 0.5]);
+        let _algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
+            RobustBowyerWatson::new();
+        let _ = <RobustBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
+            f64,
+            Option<()>,
+            Option<()>,
+            3,
+        >>::ensure_vertex_in_tds(&mut tds, &test_vertex);
+
+        let Some(inserted_vk) = tds.vertex_key_from_uuid(&test_vertex.uuid()) else {
+            panic!("Failed to get vertex key");
+        };
+
+        // Save current state (empty for this test)
+        let saved_cells = vec![];
+        let created_keys = vec![];
+
+        // Create a test error
+        let test_error = InsertionError::TriangulationState(
+            TriangulationValidationError::InconsistentDataStructure {
+                message: "Test error for rollback".to_string(),
+            },
+        );
+
+        // Call the rollback helper
+        let result = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::rollback_cavity_and_err(
+            &mut tds,
+            &saved_cells,
+            &created_keys,
+            true, // remove_vertex = true
+            inserted_vk,
+            test_error,
+        );
+
+        // Verify error is returned
+        assert!(
+            result.is_err(),
+            "rollback_cavity_and_err should return error"
+        );
+
+        // Verify error message is preserved
+        match result {
+            Err(InsertionError::TriangulationState(err)) => {
+                assert!(
+                    err.to_string().contains("Test error for rollback"),
+                    "Error message should be preserved"
+                );
+            }
+            _ => panic!("Expected TriangulationState error"),
+        }
+
+        // Verify rollback occurred (vertex should be removed)
+        assert_eq!(
+            tds.number_of_vertices(),
+            initial_vertex_count,
+            "Vertex count should be restored after rollback"
+        );
+        assert_eq!(
+            tds.number_of_cells(),
+            initial_cell_count,
+            "Cell count should be restored after rollback"
         );
     }
 }

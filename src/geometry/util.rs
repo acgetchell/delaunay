@@ -2142,6 +2142,7 @@ where
 mod tests {
     use super::*;
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
+    use crate::geometry::matrix::Matrix;
     use crate::geometry::point::Point;
     use crate::vertex;
     use approx::assert_relative_eq;
@@ -3070,8 +3071,7 @@ mod tests {
     #[test]
     fn test_compute_gram_determinant_degenerate_edges() {
         // Test completely degenerate edge matrix (parallel edges)
-        use crate::geometry::matrix::Matrix;
-
+        // Create exactly parallel edge vectors
         let mut edge_matrix = Matrix::zeros(2, 3);
         // Two parallel edges
         edge_matrix[(0, 0)] = 1.0;
@@ -3093,9 +3093,7 @@ mod tests {
     #[test]
     fn test_compute_gram_determinant_clamping_small_negative() {
         // Test that small negative determinants are clamped to zero and produce error
-        use crate::geometry::matrix::Matrix;
-
-        // Create nearly degenerate edge matrix
+        // Create edge matrix that will produce a small negative determinant
         let mut edge_matrix = Matrix::zeros(2, 3);
         edge_matrix[(0, 0)] = 1.0;
         edge_matrix[(0, 1)] = 0.0;
