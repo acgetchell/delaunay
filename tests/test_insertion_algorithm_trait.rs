@@ -128,7 +128,7 @@ fn test_insertion_buffers_set_bad_cells_from_vec() {
     let mut buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::new();
 
     let cells = vec![CellKey::default(), CellKey::default()];
-    buffers.set_bad_cells_from_vec(cells);
+    buffers.set_bad_cells_from_vec(&cells);
 
     assert_eq!(buffers.bad_cells_buffer().len(), 2);
 }
@@ -153,7 +153,7 @@ fn test_insertion_buffers_set_boundary_facet_handles() {
 
     let dummy_handle = FacetHandle::new(CellKey::default(), 0);
     let handles = vec![dummy_handle, dummy_handle];
-    buffers.set_boundary_facet_handles(handles);
+    buffers.set_boundary_facet_handles(&handles);
 
     assert_eq!(buffers.boundary_facets_buffer().len(), 2);
 }
@@ -197,7 +197,7 @@ fn test_insertion_buffers_set_visible_facet_handles() {
 
     let dummy_handle = FacetHandle::new(CellKey::default(), 0);
     let handles = vec![dummy_handle];
-    buffers.set_visible_facet_handles(handles);
+    buffers.set_visible_facet_handles(&handles);
 
     assert_eq!(buffers.visible_facets_buffer().len(), 1);
 }

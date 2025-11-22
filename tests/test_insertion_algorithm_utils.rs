@@ -144,7 +144,7 @@ fn test_insertion_buffers_vec_compatibility() {
 
     // Test bad_cells_as_vec and set_bad_cells_from_vec
     let cell_keys = vec![CellKey::default(), CellKey::default()];
-    buffers.set_bad_cells_from_vec(cell_keys);
+    buffers.set_bad_cells_from_vec(&cell_keys);
     let retrieved = buffers.bad_cells_as_vec();
     assert_eq!(retrieved.len(), 2);
 
@@ -153,13 +153,13 @@ fn test_insertion_buffers_vec_compatibility() {
         FacetHandle::new(CellKey::default(), 0),
         FacetHandle::new(CellKey::default(), 1),
     ];
-    buffers.set_boundary_facet_handles(facet_handles);
+    buffers.set_boundary_facet_handles(&facet_handles);
     let retrieved_facets = buffers.boundary_facet_handles();
     assert_eq!(retrieved_facets.len(), 2);
 
     // Test vertex_points_as_vec and set_vertex_points_from_vec
     let points = vec![Point::new([0.0, 0.0, 0.0]), Point::new([1.0, 1.0, 1.0])];
-    buffers.set_vertex_points_from_vec(points);
+    buffers.set_vertex_points_from_vec(&points);
     let retrieved_points = buffers.vertex_points_as_vec();
     assert_eq!(retrieved_points.len(), 2);
 
@@ -168,7 +168,7 @@ fn test_insertion_buffers_vec_compatibility() {
         FacetHandle::new(CellKey::default(), 0),
         FacetHandle::new(CellKey::default(), 2),
     ];
-    buffers.set_visible_facet_handles(visible_handles);
+    buffers.set_visible_facet_handles(&visible_handles);
     let retrieved_visible = buffers.visible_facet_handles();
     assert_eq!(retrieved_visible.len(), 2);
 }
@@ -190,7 +190,7 @@ fn test_insertion_buffers_facet_views() {
 
     // Test boundary_facets_as_views
     let facet_handle = FacetHandle::new(cell_key, 0);
-    buffers.set_boundary_facet_handles(vec![facet_handle]);
+    buffers.set_boundary_facet_handles(&[facet_handle]);
 
     let facet_views = buffers.boundary_facets_as_views(&tds).unwrap();
     assert_eq!(facet_views.len(), 1);
@@ -199,7 +199,7 @@ fn test_insertion_buffers_facet_views() {
 
     // Test visible_facets_as_views
     let visible_handle = FacetHandle::new(cell_key, 1);
-    buffers.set_visible_facet_handles(vec![visible_handle]);
+    buffers.set_visible_facet_handles(&[visible_handle]);
 
     let visible_views = buffers.visible_facets_as_views(&tds).unwrap();
     assert_eq!(visible_views.len(), 1);

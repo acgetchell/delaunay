@@ -87,7 +87,7 @@ jobs:
           if rg -n '(^|/)(benches|examples)/' coverage/cobertura.xml; then
             echo "::warning::benches/ or examples/ paths detected in coverage report"
           fi
-          echo "::endgroup:"
+          echo "::endgroup::"
         env:
           RUST_BACKTRACE: 1
 

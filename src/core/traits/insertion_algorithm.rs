@@ -1517,13 +1517,13 @@ where
         self.bad_cells_buffer.iter().copied().collect()
     }
 
-    /// Set bad cells from a Vec for compatibility with previous Vec-based APIs
+    /// Set bad cells from a slice for compatibility with previous Vec-based APIs
     pub fn set_bad_cells_from_vec(
         &mut self,
-        vec: Vec<crate::core::triangulation_data_structure::CellKey>,
+        slice: &[crate::core::triangulation_data_structure::CellKey],
     ) {
         self.bad_cells_buffer.clear();
-        self.bad_cells_buffer.extend(vec);
+        self.bad_cells_buffer.extend(slice.iter().copied());
     }
 
     /// Extract the boundary facet handles as a Vec
@@ -1533,9 +1533,9 @@ where
     }
 
     /// Set boundary facets from handles
-    pub fn set_boundary_facet_handles(&mut self, handles: Vec<FacetHandle>) {
+    pub fn set_boundary_facet_handles(&mut self, handles: &[FacetHandle]) {
         self.boundary_facets_buffer.clear();
-        self.boundary_facets_buffer.extend(handles);
+        self.boundary_facets_buffer.extend(handles.iter().copied());
     }
 
     /// Extract the boundary facets as `FacetViews` for iteration
@@ -1572,10 +1572,10 @@ where
         self.vertex_points_buffer.iter().copied().collect()
     }
 
-    /// Set vertex points from a Vec for compatibility with previous Vec-based APIs
-    pub fn set_vertex_points_from_vec(&mut self, vec: Vec<crate::geometry::point::Point<T, D>>) {
+    /// Set vertex points from a slice for compatibility with previous Vec-based APIs
+    pub fn set_vertex_points_from_vec(&mut self, slice: &[crate::geometry::point::Point<T, D>]) {
         self.vertex_points_buffer.clear();
-        self.vertex_points_buffer.extend(vec);
+        self.vertex_points_buffer.extend(slice.iter().copied());
     }
 
     /// Extract the visible facet handles as a Vec
@@ -1585,9 +1585,9 @@ where
     }
 
     /// Set visible facets from handles
-    pub fn set_visible_facet_handles(&mut self, handles: Vec<FacetHandle>) {
+    pub fn set_visible_facet_handles(&mut self, handles: &[FacetHandle]) {
         self.visible_facets_buffer.clear();
-        self.visible_facets_buffer.extend(handles);
+        self.visible_facets_buffer.extend(handles.iter().copied());
     }
 
     /// Extract the visible facets as `FacetViews` for iteration

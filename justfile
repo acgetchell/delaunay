@@ -105,6 +105,7 @@ clean:
     cargo clean
     rm -rf target/tarpaulin
     rm -rf coverage_report
+    rm -rf coverage
 
 # Code quality and formatting
 clippy:
@@ -178,7 +179,7 @@ help-workflows:
     @echo "Common Just workflows:"
     @echo "  just dev           # Quick development cycle (format, lint, test)"
     @echo "  just quality       # All quality checks + tests (comprehensive)"
-    @echo "  just ci            # CI simulation (quality + release tests + bench compile)"
+    @echo "  just ci            # CI simulation (quality + tests + bench compile)"
     @echo "  just commit-check  # Pre-commit validation (CI + examples) - most thorough"
     @echo "  just ci-baseline   # CI + save performance baseline"
     @echo ""
@@ -191,7 +192,8 @@ help-workflows:
     @echo "  just test-debug    # Run debug tools with output"
     @echo "  just test-allocation # Memory allocation profiling"
     @echo "  just examples      # Run all examples"
-    @echo "  just coverage      # Generate coverage report"
+    @echo "  just coverage      # Generate coverage report (HTML)"
+    @echo "  just coverage-ci   # Generate coverage for CI (XML)"
     @echo ""
     @echo "Quality Check Groups:"
     @echo "  just quality       # All quality checks + tests (standard, fast)"
