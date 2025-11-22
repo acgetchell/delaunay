@@ -461,7 +461,7 @@ where
         };
 
         // Create all new cells BEFORE removing bad cells
-        // Use stack allocation for typical cavity sizes (≤16 cells)
+        // Use stack allocation for typical cavity sizes (≤16 cells) - already using CellKeyBuffer
         let mut created_cell_keys = CellKeyBuffer::with_capacity(boundary_infos.len());
         for info in &boundary_infos {
             let mut cell_vertices: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -500,7 +500,8 @@ where
 
         // Phase 3: Save bad cells for potential restoration, then remove them
         // After this point, we must use restore_cavity_insertion_failure on error
-        let mut saved_cavity_cells: Vec<_> = bad_cells
+        // Use SmallBuffer for stack allocation (typical cavity sizes ≤16 cells for D ≤ 7)
+        let mut saved_cavity_cells: SmallBuffer<_, 16> = bad_cells
             .iter()
             .filter_map(|&ck| tds.get_cell(ck).cloned())
             .collect();
@@ -1136,7 +1137,7 @@ where
             return Ok(Vec::new());
         }
 
-        // Use FacetInfoBuffer for stack allocation (typical case: D+1 facets per cell)
+        // Use FacetInfoBuffer for stack allocation (typical case: D+1 facets per cell) - already optimized
         let mut boundary_handles = FacetInfoBuffer::new();
 
         let bad_cell_set: CellKeySet = bad_cells.iter().copied().collect();
@@ -3404,7 +3405,8 @@ mod tests {
             );
 
             if let Ok(boundary_facets) = boundary_result {
-                let boundary_facets_vec: Vec<_> = boundary_facets.collect();
+                // Use SmallBuffer for stack allocation (typical boundary facet count ≤16)
+                let boundary_facets_vec: SmallBuffer<_, 16> = boundary_facets.collect();
                 println!("  Boundary facets: {}", boundary_facets_vec.len());
                 // Each boundary facet should have exactly 3 vertices (for 3D)
                 for facet in &boundary_facets_vec {
@@ -3576,7 +3578,8 @@ mod tests {
             );
 
             if let Ok(boundary_facets) = boundary_result {
-                let boundary_facets_vec: Vec<_> = boundary_facets.collect();
+                // Use SmallBuffer for stack allocation (typical boundary facet count ≤16)
+                let boundary_facets_vec: SmallBuffer<_, 16> = boundary_facets.collect();
                 let final_boundary_facets = boundary_facets_vec.len();
                 println!(
                     "  Initial boundary facets: {initial_boundary_facets}, final: {final_boundary_facets}"
@@ -4780,7 +4783,8 @@ mod tests {
     #[test]
     fn test_validate_boundary_facets() {
         // Test with empty boundary facets but non-zero bad cell count (should error)
-        let empty_handles: Vec<FacetHandle> = vec![];
+        // Use SmallBuffer for consistency (even though empty)
+        let empty_handles: SmallBuffer<FacetHandle, 16> = SmallBuffer::new();
         let result = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::validate_boundary_facets(
             &empty_handles,
             3,
@@ -4812,7 +4816,8 @@ mod tests {
         let boundary_facets = tds.boundary_facets().unwrap();
 
         // Collect lightweight boundary facet handles
-        let boundary_handles: Vec<FacetHandle> = boundary_facets
+        // Use SmallBuffer for stack allocation (typical boundary facet count ≤16)
+        let boundary_handles: SmallBuffer<FacetHandle, 16> = boundary_facets
             .map(|fv| FacetHandle::new(fv.cell_key(), fv.facet_index()))
             .collect();
 
@@ -4882,7 +4887,8 @@ mod tests {
 
         // Get a boundary facet
         let boundary_facets = tds.boundary_facets().unwrap();
-        let boundary_facets_vec: Vec<_> = boundary_facets.collect();
+        // Use SmallBuffer for stack allocation (typical boundary facet count ≤16)
+        let boundary_facets_vec: SmallBuffer<_, 16> = boundary_facets.collect();
         assert!(!boundary_facets_vec.is_empty());
         let test_facet = &boundary_facets_vec[0];
 
@@ -5090,7 +5096,8 @@ mod tests {
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
 
         // Get a subset of cells as "bad cells"
-        let all_cell_keys: Vec<_> = tds.cell_keys().collect();
+        // Use SmallBuffer for stack allocation (small number of cell keys)
+        let all_cell_keys: SmallBuffer<_, 16> = tds.cell_keys().collect();
         let bad_cells = &all_cell_keys[..1];
 
         let result = algorithm.robust_find_cavity_boundary_facets(&tds, bad_cells);

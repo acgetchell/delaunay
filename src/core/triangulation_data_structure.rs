@@ -177,10 +177,10 @@ use uuid::Uuid;
 
 // Crate-internal imports
 use crate::core::collections::{
-    CellKeySet, CellRemovalBuffer, CellVerticesMap, Entry, FacetToCellsMap, FastHashMap,
-    FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, StorageMap,
-    UuidToCellKeyMap, UuidToVertexKeyMap, ValidCellsBuffer, VertexKeyBuffer, VertexKeySet,
-    VertexToCellsMap, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+    CellKeySet, CellRemovalBuffer, CellVertexUuidBuffer, CellVerticesMap, Entry, FacetToCellsMap,
+    FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer,
+    StorageMap, UuidToCellKeyMap, UuidToVertexKeyMap, ValidCellsBuffer, VertexKeyBuffer,
+    VertexKeySet, VertexToCellsMap, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::util::DelaunayValidationError;
 use crate::geometry::{
@@ -1964,6 +1964,36 @@ where
         removed_count
     }
 
+    /// Finds all cells containing a specific vertex.
+    ///
+    /// This is an internal helper used by `remove_vertex` and `rollback_vertex_insertion`
+    /// to efficiently collect cells that need to be removed when a vertex is deleted.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertex_key` - The key of the vertex to search for
+    ///
+    /// # Returns
+    ///
+    /// A `CellRemovalBuffer` containing the keys of all cells that contain the vertex.
+    /// Uses stack allocation for typical cases (few cells per vertex).
+    ///
+    /// # Performance
+    ///
+    /// Time complexity: O(n) where n is the number of cells
+    /// Space complexity: O(1) for typical dimensions (D ≤ 7), O(k) otherwise where k is result count
+    fn find_cells_containing_vertex(&self, vertex_key: VertexKey) -> CellRemovalBuffer {
+        self.cells()
+            .filter_map(|(cell_key, cell)| {
+                if cell.contains_vertex(vertex_key) {
+                    Some(cell_key)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Removes a vertex and all cells containing it, maintaining data structure consistency.
     ///
     /// This is an atomic operation that:
@@ -2023,17 +2053,7 @@ where
         };
 
         // Find all cells containing this vertex
-        // Use CellRemovalBuffer for stack allocation (typical case: few cells per vertex)
-        let cells_to_remove: CellRemovalBuffer = self
-            .cells()
-            .filter_map(|(cell_key, cell)| {
-                if cell.contains_vertex(vertex_key) {
-                    Some(cell_key)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let cells_to_remove = self.find_cells_containing_vertex(vertex_key);
 
         // Remove all cells containing the vertex. Neighbor references in surviving
         // cells that pointed to these cells are cleared by `remove_cells_by_keys`.
@@ -3023,17 +3043,7 @@ where
         }
 
         // Find and remove all cells containing the vertex
-        // Use CellRemovalBuffer for stack allocation (typical case: few cells created during failed insertion)
-        let cells_to_remove: CellRemovalBuffer = self
-            .cells()
-            .filter_map(|(cell_key, cell)| {
-                if cell.contains_vertex(vertex_key) {
-                    Some(cell_key)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let cells_to_remove = self.find_cells_containing_vertex(vertex_key);
 
         #[cfg_attr(not(debug_assertions), allow(unused_variables))]
         let cells_removed = self.remove_cells_by_keys(&cells_to_remove);
@@ -4195,14 +4205,17 @@ where
 
             // Canonicalize by vertex UUIDs for backend-agnostic equality
             // Note: Don't sort by VertexKey as slotmap::Key's Ord is implementation-defined
-            let mut vertex_uuids: Vec<Uuid> =
+            // Use CellVertexUuidBuffer for stack allocation (D+1 UUIDs fit on stack for D ≤ 7)
+            let mut vertex_uuids: CellVertexUuidBuffer =
                 vertices.iter().map(|&k| self.vertices[k].uuid()).collect();
             vertex_uuids.sort_unstable();
 
-            if let Some(existing_cell_key) = unique_cells.get(&vertex_uuids) {
-                duplicates.push((cell_key, *existing_cell_key, vertex_uuids.clone()));
+            // Convert to Vec for HashMap key (SmallVec doesn't implement Borrow<Vec>)
+            let vertex_uuids_vec = vertex_uuids.to_vec();
+            if let Some(existing_cell_key) = unique_cells.get(&vertex_uuids_vec) {
+                duplicates.push((cell_key, *existing_cell_key, vertex_uuids_vec.clone()));
             } else {
-                unique_cells.insert(vertex_uuids, cell_key);
+                unique_cells.insert(vertex_uuids_vec, cell_key);
             }
         }
 
@@ -5463,6 +5476,61 @@ mod tests {
         );
 
         println!("✓ remove_vertex leaves no dangling references to deleted vertex");
+    }
+
+    #[test]
+    fn test_find_cells_containing_vertex() {
+        // Test the helper function that finds all cells containing a specific vertex
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]), // Interior vertex
+        ];
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+
+        // Get any vertex from the triangulation
+        let some_vertex_key = tds.vertices().next().map(|(k, _)| k).unwrap();
+        let cells_with_vertex = tds.find_cells_containing_vertex(some_vertex_key);
+
+        // Verify the result
+        assert!(
+            !cells_with_vertex.is_empty(),
+            "Vertex should be in at least one cell"
+        );
+
+        // Verify all returned cells actually contain the vertex
+        for &cell_key in &cells_with_vertex {
+            let cell = tds.get_cell(cell_key).unwrap();
+            assert!(
+                cell.contains_vertex(some_vertex_key),
+                "Cell {cell_key:?} should contain vertex {some_vertex_key:?}"
+            );
+        }
+
+        // Verify we found ALL cells containing this vertex
+        let expected_count = tds
+            .cells()
+            .filter(|(_, cell)| cell.contains_vertex(some_vertex_key))
+            .count();
+        assert_eq!(
+            cells_with_vertex.len(),
+            expected_count,
+            "Should find all cells containing the vertex"
+        );
+
+        // Test finding cells for another vertex
+        let another_vertex_key = tds.vertices().nth(1).map(|(k, _)| k).unwrap();
+        let cells_with_another = tds.find_cells_containing_vertex(another_vertex_key);
+        assert!(
+            !cells_with_another.is_empty(),
+            "Another vertex should also be in at least one cell"
+        );
+
+        println!(
+            "✓ find_cells_containing_vertex correctly identifies all cells containing a vertex"
+        );
     }
 
     // =============================================================================

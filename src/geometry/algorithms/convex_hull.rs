@@ -1040,7 +1040,8 @@ where
         facet_vertices: &[Vertex<T, U, D>],
         point: &Point<T, D>,
     ) -> Result<bool, ConvexHullConstructionError> {
-        let vertex_points: Vec<Point<T, D>> = facet_vertices
+        // Use SmallBuffer for stack allocation (D vertices fit on stack for D ≤ 7)
+        let vertex_points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> = facet_vertices
             .iter()
             .map(|vertex| *vertex.point())
             .collect();

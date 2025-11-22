@@ -513,8 +513,9 @@ where
         let facet_index = usize::from(self.facet_index);
 
         // Collect first so missing vertex keys become an error, not silent drops.
-        let mut refs: Vec<&'tds Vertex<T, U, D>> =
-            Vec::with_capacity(cell.number_of_vertices().saturating_sub(1));
+        // Use SmallBuffer for stack allocation (D vertices fit on stack for D ≤ 7)
+        let mut refs: SmallBuffer<&'tds Vertex<T, U, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(cell.number_of_vertices().saturating_sub(1));
         for (i, &vkey) in cell.vertices().iter().enumerate() {
             if i == facet_index {
                 continue;
