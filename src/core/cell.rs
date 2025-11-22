@@ -842,8 +842,8 @@ where
     ///
     /// # Returns
     ///
-    /// A `Result<Vec<Uuid>, CellValidationError>` containing the UUIDs of all vertices in this cell,
-    /// or an error if a vertex key is not found in the TDS.
+    /// A `Result<CellVertexUuidBuffer, CellValidationError>` containing the UUIDs of all vertices in this cell,
+    /// or an error if a vertex key is not found in the TDS. Uses stack allocation for typical dimensions.
     ///
     /// # Errors
     ///
@@ -868,7 +868,10 @@ where
     /// assert_eq!(uuids.len(), 4);
     /// ```
     #[inline]
-    pub fn vertex_uuids(&self, tds: &Tds<T, U, V, D>) -> Result<Vec<Uuid>, CellValidationError> {
+    pub fn vertex_uuids(
+        &self,
+        tds: &Tds<T, U, V, D>,
+    ) -> Result<crate::core::collections::CellVertexUuidBuffer, CellValidationError> {
         self.vertices
             .iter()
             .map(|&vkey| {

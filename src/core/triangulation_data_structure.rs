@@ -2108,11 +2108,15 @@ where
     ///
     /// # Returns
     ///
-    /// A vector of `Option<CellKey>` where `None` indicates no neighbor
-    /// at that position (boundary facet).
+    /// A buffer of `Option<CellKey>` where `None` indicates no neighbor
+    /// at that position (boundary facet). Uses stack allocation for typical dimensions.
     #[must_use]
-    pub fn find_neighbors_by_key(&self, cell_key: CellKey) -> Vec<Option<CellKey>> {
-        let mut neighbors = vec![None; D + 1];
+    pub fn find_neighbors_by_key(
+        &self,
+        cell_key: CellKey,
+    ) -> crate::core::collections::NeighborBuffer<Option<CellKey>> {
+        let mut neighbors = crate::core::collections::NeighborBuffer::new();
+        neighbors.resize(D + 1, None);
 
         let Some(cell) = self.get_cell(cell_key) else {
             return neighbors;
@@ -4733,13 +4737,15 @@ where
         use serde::ser::SerializeStruct;
 
         // Build cell UUID → vertex UUIDs mapping
+        // Note: Using Vec<Uuid> for serde compatibility (SmallVec isn't natively serializable)
         let cell_vertices: FastHashMap<Uuid, Vec<Uuid>> = self
             .cells
             .iter()
             .map(|(_cell_key, cell)| {
                 let cell_uuid = cell.uuid();
                 let vertex_uuids = cell.vertex_uuids(self).map_err(serde::ser::Error::custom)?;
-                Ok((cell_uuid, vertex_uuids))
+                // Convert CellVertexUuidBuffer (SmallVec) to Vec for serde
+                Ok((cell_uuid, vertex_uuids.to_vec()))
             })
             .collect::<Result<_, _>>()?;
 

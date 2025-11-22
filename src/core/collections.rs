@@ -384,14 +384,14 @@ pub type VertexToCellsMap =
 pub type CellVerticesMap = FastHashMap<CellKey, FastHashSet<VertexKey>>;
 
 /// Cell vertex keys mapping optimized for validation operations requiring positional access.
-/// Each cell typically has D+1 vertices, stored as a Vec for efficient positional access.
+/// Each cell typically has D+1 vertices, stored in a stack-allocated buffer for efficiency.
 ///
 /// # Optimization Rationale
 ///
 /// - **Key**: `CellKey` identifying the cell
-/// - **Value**: `Vec<VertexKey>` - preserves vertex order for positional semantics
+/// - **Value**: `CellVertexBuffer` - stack-allocated for D ≤ 7, preserves vertex order
 /// - **Use Case**: Validation algorithms that need positional vertex access (e.g., neighbors\[i\] opposite vertices\[i\])
-/// - **Performance**: Complements `CellVerticesMap` by providing ordered access
+/// - **Performance**: Eliminates heap allocation for typical dimensions, better cache locality
 ///
 /// # Examples
 ///
@@ -399,9 +399,9 @@ pub type CellVerticesMap = FastHashMap<CellKey, FastHashSet<VertexKey>>;
 /// use delaunay::core::collections::CellVertexKeysMap;
 ///
 /// let mut cell_vertices: CellVertexKeysMap = CellVertexKeysMap::default();
-/// // Efficient positional access during validation
+/// // Efficient positional access during validation with stack allocation
 /// ```
-pub type CellVertexKeysMap = FastHashMap<CellKey, Vec<VertexKey>>;
+pub type CellVertexKeysMap = FastHashMap<CellKey, CellVertexBuffer>;
 
 // =============================================================================
 // ALGORITHM-SPECIFIC BUFFER TYPES
@@ -490,6 +490,72 @@ pub type VertexUuidBuffer = SimplexVertexBuffer<Uuid>;
 /// - Cell vertex key collections
 pub type VertexKeyBuffer = SimplexVertexBuffer<VertexKey>;
 
+/// Buffer for storing cell neighbors (D+1 neighbors for a D-dimensional cell).
+/// Uses stack allocation for typical dimensions (2D-7D).
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: D+1 neighbors fit on stack for D ≤ 7
+/// - **Use Case**: Neighbor queries, neighbor assignment, validation
+/// - **Performance**: Avoids heap allocation in 90%+ of cases
+/// - **Memory Layout**: Better cache locality than heap-allocated Vec
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::NeighborBuffer;
+/// use delaunay::core::triangulation_data_structure::CellKey;
+///
+/// // Store neighbor keys for a 3D cell (4 neighbors)
+/// let mut neighbors: NeighborBuffer<Option<CellKey>> = NeighborBuffer::new();
+/// // neighbors.push(Some(cell_key)); // Stack allocated
+/// ```
+pub type NeighborBuffer<T> = SmallBuffer<T, MAX_PRACTICAL_DIMENSION_SIZE>;
+
+/// Buffer for vertex key collections from a single cell (D+1 vertices).
+/// Avoids heap allocation for typical triangulation dimensions.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: D+1 vertex keys fit on stack for D ≤ 7
+/// - **Use Case**: Cell vertex storage, validation, geometric operations
+/// - **Performance**: Eliminates heap allocation for typical dimensions
+/// - **Ordering**: Preserves vertex order for positional semantics
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::CellVertexBuffer;
+/// use delaunay::core::triangulation_data_structure::VertexKey;
+///
+/// // Store vertex keys for a 3D cell (4 vertices)
+/// let mut vertices: CellVertexBuffer = CellVertexBuffer::new();
+/// // vertices.push(vertex_key); // Stack allocated
+/// ```
+pub type CellVertexBuffer = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>;
+
+/// Buffer for vertex UUID collections from a single cell (D+1 vertex UUIDs).
+/// Uses stack allocation to avoid heap overhead for cell operations.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: D+1 vertex UUIDs fit on stack for D ≤ 7
+/// - **Use Case**: Extracting vertex UUIDs from a cell, validation, duplicate detection
+/// - **Performance**: Avoids allocation for temporary UUID collections
+/// - **Memory Efficiency**: 16 bytes per UUID × 8 = 128 bytes on stack
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::CellVertexUuidBuffer;
+/// use uuid::Uuid;
+///
+/// // Store vertex UUIDs from a cell
+/// let mut vertex_uuids: CellVertexUuidBuffer = CellVertexUuidBuffer::new();
+/// // vertex_uuids.push(vertex.uuid()); // Stack allocated
+/// ```
+pub type CellVertexUuidBuffer = SmallBuffer<Uuid, MAX_PRACTICAL_DIMENSION_SIZE>;
+
 /// Buffer sized for Point collections in geometric operations.
 /// Generic over coordinate type T and dimension D, with practical size limit.
 ///
@@ -524,6 +590,33 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 /// - **Use Case**: Hull algorithms, visibility determination
 /// - **Performance**: Optimized for geometric algorithm patterns
 pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
+
+/// Mapping from cell UUIDs to their vertex UUIDs (optimized for internal operations).
+/// Uses stack-allocated buffers for vertex UUID storage.
+///
+/// # Optimization Rationale
+///
+/// - **Key**: Cell UUID for stable identification
+/// - **Value**: `CellVertexUuidBuffer` for stack-allocated vertex UUID storage (D+1 UUIDs)
+/// - **Use Case**: Internal operations, temporary mappings, validation
+/// - **Performance**: Stack allocation for typical cell vertex counts, avoids heap for D ≤ 7
+///
+/// # Serialization Note
+///
+/// For serialization/deserialization, use `FastHashMap<Uuid, Vec<Uuid>>` instead,
+/// as serde doesn't natively serialize `SmallVec`. Convert using `.to_vec()` when serializing.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::CellToVertexUuidsMap;
+/// use uuid::Uuid;
+///
+/// // Internal usage with stack allocation
+/// let mut mapping: CellToVertexUuidsMap = CellToVertexUuidsMap::default();
+/// // mapping.insert(cell_uuid, vertex_uuids_buffer);
+/// ```
+pub type CellToVertexUuidsMap = FastHashMap<Uuid, CellVertexUuidBuffer>;
 
 // =============================================================================
 // UUID-KEY MAPPING TYPES
