@@ -96,8 +96,8 @@ macro_rules! gen_orientation_cyclic_invariance {
                 ) {
                     // For 2D: simplex has 3 points
                     let simplex1 = simplex.clone();
-                    let simplex2 = vec![simplex1[1], simplex1[2], simplex1[0]];
-                    let simplex3 = vec![simplex1[2], simplex1[0], simplex1[1]];
+                    let simplex2 = [simplex1[1], simplex1[2], simplex1[0]];
+                    let simplex3 = [simplex1[2], simplex1[0], simplex1[1]];
 
                     if let (Ok(o1), Ok(o2), Ok(o3)) = (
                         simplex_orientation(&simplex1),
@@ -296,7 +296,7 @@ proptest! {
         let p1 = Point::new([coords0[0] + 1.0, coords0[1]]);
         let p2 = Point::new([coords0[0] + 2.0, f64::mul_add(scale, 0.01, coords0[1])]);  // Very small y offset
 
-        let simplex = vec![p0, p1, p2];
+        let simplex = [p0, p1, p2];
 
         // Check orientation
         if let Ok(orientation) = simplex_orientation(&simplex) {

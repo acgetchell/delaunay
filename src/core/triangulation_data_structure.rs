@@ -1976,12 +1976,17 @@ where
     /// # Returns
     ///
     /// A `CellRemovalBuffer` containing the keys of all cells that contain the vertex.
-    /// Uses stack allocation for typical cases (few cells per vertex).
+    /// Uses stack-backed `SmallBuffer` for typical vertex stars (≤16 incident cells).
     ///
     /// # Performance
     ///
-    /// Time complexity: O(n) where n is the number of cells
-    /// Space complexity: O(1) for typical dimensions (D ≤ 7), O(k) otherwise where k is result count
+    /// - Time complexity: O(n) where n is the number of cells
+    /// - Space: Stack-allocated for ≤16 results, heap fallback for larger vertex stars
+    ///
+    /// # Related
+    ///
+    /// See also `find_cells_containing_vertex_by_key` which returns an iterator and
+    /// allows custom filtering during traversal.
     fn find_cells_containing_vertex(&self, vertex_key: VertexKey) -> CellRemovalBuffer {
         self.cells()
             .filter_map(|(cell_key, cell)| {
@@ -4195,7 +4200,8 @@ where
     /// [`Tds::validation_report`](Self::validation_report) and is included in
     /// [`Tds::is_valid`](Self::is_valid).
     pub fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError> {
-        let mut unique_cells: FastHashMap<Vec<Uuid>, CellKey> = FastHashMap::default();
+        // Use CellVertexUuidBuffer as HashMap key directly to avoid extra Vec allocation
+        let mut unique_cells: FastHashMap<CellVertexUuidBuffer, CellKey> = FastHashMap::default();
         let mut duplicates = Vec::new();
 
         for (cell_key, _cell) in &self.cells {
@@ -4210,12 +4216,12 @@ where
                 vertices.iter().map(|&k| self.vertices[k].uuid()).collect();
             vertex_uuids.sort_unstable();
 
-            // Convert to Vec for HashMap key (SmallVec doesn't implement Borrow<Vec>)
-            let vertex_uuids_vec = vertex_uuids.to_vec();
-            if let Some(existing_cell_key) = unique_cells.get(&vertex_uuids_vec) {
-                duplicates.push((cell_key, *existing_cell_key, vertex_uuids_vec.clone()));
+            // Use buffer directly as HashMap key (keeps stack allocation, avoids Vec copy)
+            if let Some(existing_cell_key) = unique_cells.get(&vertex_uuids) {
+                // Convert to Vec only for error message payload
+                duplicates.push((cell_key, *existing_cell_key, vertex_uuids.to_vec()));
             } else {
-                unique_cells.insert(vertex_uuids_vec, cell_key);
+                unique_cells.insert(vertex_uuids, cell_key);
             }
         }
 

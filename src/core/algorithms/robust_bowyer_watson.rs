@@ -501,6 +501,7 @@ where
         // Phase 3: Save bad cells for potential restoration, then remove them
         // After this point, we must use restore_cavity_insertion_failure on error
         // Use SmallBuffer for stack allocation (typical cavity sizes ≤16 cells for D ≤ 7)
+        // Capacity constant: CAVITY_CELL_BUFFER_SIZE (see src/core/collections.rs)
         let mut saved_cavity_cells: SmallBuffer<_, 16> = bad_cells
             .iter()
             .filter_map(|&ck| tds.get_cell(ck).cloned())
@@ -5098,6 +5099,10 @@ mod tests {
         // Get a subset of cells as "bad cells"
         // Use SmallBuffer for stack allocation (small number of cell keys)
         let all_cell_keys: SmallBuffer<_, 16> = tds.cell_keys().collect();
+        assert!(
+            !all_cell_keys.is_empty(),
+            "TDS should have at least one cell after initialization"
+        );
         let bad_cells = &all_cell_keys[..1];
 
         let result = algorithm.robust_find_cavity_boundary_facets(&tds, bad_cells);

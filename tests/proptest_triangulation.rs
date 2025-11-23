@@ -155,6 +155,8 @@ macro_rules! gen_neighbor_index_semantics {
             proptest! {
                 #[test]
                 fn [<prop_neighbor_index_semantics_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
+                    // Use stack-allocated buffer for D facet vertices (D ≤ 7 typical)
+                    use delaunay::core::collections::SimplexVertexBuffer;
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         prop_assume!(tds.is_valid().is_ok());
                         for (cell_key, cell) in tds.cells() {
@@ -164,16 +166,16 @@ macro_rules! gen_neighbor_index_semantics {
                                     if let Some(b_key) = nb {
                                         let b_cell = tds.get_cell(*b_key).unwrap();
                                         let b_vertices = b_cell.vertices();
-                                        let mut a_facet: Vec<_> = a_vertices.iter().enumerate()
+                                        let mut a_facet: SimplexVertexBuffer<_> = a_vertices.iter().enumerate()
                                             .filter_map(|(idx, &vk)| (idx != i).then_some(vk))
                                             .collect();
-                                        a_facet.sort();
+                                        a_facet.sort_unstable();
                                         let mut found_j = None;
                                         for j in 0..b_vertices.len() {
-                                            let mut b_facet: Vec<_> = b_vertices.iter().enumerate()
+                                            let mut b_facet: SimplexVertexBuffer<_> = b_vertices.iter().enumerate()
                                                 .filter_map(|(idx, &vk)| (idx != j).then_some(vk))
                                                 .collect();
-                                            b_facet.sort();
+                                            b_facet.sort_unstable();
                                             if b_facet == a_facet { found_j = Some(j); break; }
                                         }
                                         prop_assert!(found_j.is_some(), "Facet mismatch between neighbor cells");
@@ -221,10 +223,12 @@ macro_rules! gen_no_duplicate_cells {
                 #[test]
                 fn [<prop_no_duplicate_cells_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     use std::collections::HashSet;
+                    use delaunay::core::collections::CellVertexBuffer;
                     if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
                         let mut seen = HashSet::new();
                         for (_cell_key, cell) in tds.cells() {
-                            let mut vs = cell.vertices().to_vec();
+                            // Use stack-allocated buffer for D+1 vertices (D ≤ 7 typical)
+                            let mut vs: CellVertexBuffer = cell.vertices().iter().copied().collect();
                             vs.sort();
                             prop_assert!(seen.insert(vs), "Found duplicate {}D cell", $dim);
                         }

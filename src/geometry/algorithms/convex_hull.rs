@@ -6357,4 +6357,457 @@ mod tests {
             "  ✓ Regression test passed: stale hull detection works correctly after invalidate_cache()"
         );
     }
+
+    // ============================================================================
+    // COMPREHENSIVE STALE HULL SAFETY TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_stale_hull_all_operations_fail() {
+        println!("Testing that all hull operations fail on stale hull");
+
+        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ])
+        .unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        // Modify TDS to make hull stale
+        tds.add(vertex!([0.5, 0.5, 0.5])).unwrap();
+
+        let test_point = Point::new([2.0, 2.0, 2.0]);
+
+        // Test that all operations detect staleness
+        println!("  Testing find_visible_facets...");
+        let visible_result = hull.find_visible_facets(&test_point, &tds);
+        assert!(
+            matches!(
+                visible_result,
+                Err(ConvexHullConstructionError::StaleHull { .. })
+            ),
+            "find_visible_facets should fail with StaleHull error"
+        );
+
+        println!("  Testing find_nearest_visible_facet...");
+        let nearest_result = hull.find_nearest_visible_facet(&test_point, &tds);
+        assert!(
+            matches!(
+                nearest_result,
+                Err(ConvexHullConstructionError::StaleHull { .. })
+            ),
+            "find_nearest_visible_facet should fail with StaleHull error"
+        );
+
+        println!("  Testing is_point_outside...");
+        let outside_result = hull.is_point_outside(&test_point, &tds);
+        assert!(
+            matches!(
+                outside_result,
+                Err(ConvexHullConstructionError::StaleHull { .. })
+            ),
+            "is_point_outside should fail with StaleHull error"
+        );
+
+        println!("  Testing validate...");
+        let validate_result = hull.validate(&tds);
+        // validate() will fail because it tries to build cache with stale hull
+        assert!(
+            validate_result.is_err(),
+            "validate should fail on stale hull"
+        );
+
+        println!("  ✓ All operations correctly detect stale hull");
+    }
+
+    // ============================================================================
+    // DEGENERATE GEOMETRY TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_fallback_visibility_degenerate_facets() {
+        println!("Testing fallback visibility check for degenerate facets");
+
+        // Create hull with nearly coplanar points (z << x,y) but still valid simplex
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 1e-6]),
+            vertex!([0.0, 1.0, 1e-6]),
+            vertex!([0.0, 0.0, 1.0]),
+        ])
+        .unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        println!("  Testing point visibility with degenerate geometry...");
+        let test_point = Point::new([0.5, 0.5, 1.0]);
+        let result = hull.is_point_outside(&test_point, &tds);
+
+        assert!(
+            result.is_ok(),
+            "Visibility test should handle degenerate geometry: {:?}",
+            result.err()
+        );
+        println!("  ✓ Degenerate geometry handled gracefully");
+    }
+
+    #[test]
+    fn test_extreme_aspect_ratio_facets() {
+        println!("Testing convex hull with extreme aspect ratio facets");
+
+        // Create a very flat triangulation (extreme aspect ratio)
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1000.0, 0.0, 0.0]), // Very long in x
+            vertex!([0.0, 0.001, 0.0]),  // Very short in y
+            vertex!([0.0, 0.0, 0.001]),  // Very short in z
+        ])
+        .unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        println!("  Testing operations with extreme aspect ratio...");
+        let test_point = Point::new([500.0, 10.0, 10.0]);
+        let result = hull.is_point_outside(&test_point, &tds);
+
+        assert!(
+            result.is_ok(),
+            "Should handle extreme aspect ratios: {:?}",
+            result.err()
+        );
+        println!("  ✓ Extreme aspect ratio handled correctly");
+    }
+
+    // ============================================================================
+    // BOUNDARY CONDITION TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_point_exactly_on_hull_surface() {
+        println!("Testing points exactly on hull surface");
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ])
+        .unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        println!("  Testing point on facet plane...");
+        // Point on the plane defined by (1,0,0), (0,1,0), (0,0,0)
+        let on_facet = Point::new([0.5, 0.5, 0.0]);
+        let result = hull.is_point_outside(&on_facet, &tds);
+        // Should handle boundary case without panic
+        assert!(result.is_ok(), "Point on facet should be handled");
+        println!("  ✓ Point on facet handled: inside={}", !result.unwrap());
+
+        println!("  Testing point at vertex...");
+        let at_vertex = Point::new([1.0, 0.0, 0.0]);
+        let result = hull.is_point_outside(&at_vertex, &tds);
+        assert!(result.is_ok(), "Point at vertex should be handled");
+        // Point at vertex should be inside hull
+        assert!(!result.unwrap(), "Point at vertex should be inside");
+        println!("  ✓ Point at vertex correctly identified as inside");
+
+        println!("  Testing point on edge...");
+        let on_edge = Point::new([0.5, 0.0, 0.0]);
+        let result = hull.is_point_outside(&on_edge, &tds);
+        assert!(result.is_ok(), "Point on edge should be handled");
+        println!("  ✓ Point on edge handled");
+    }
+
+    #[test]
+    fn test_point_very_close_to_surface() {
+        println!("Testing points very close to hull surface (epsilon distance)");
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ])
+        .unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        println!("  Testing point just outside (epsilon away)...");
+        let just_outside = Point::new([0.5, 0.5, f64::EPSILON * 10.0]);
+        let result = hull.is_point_outside(&just_outside, &tds);
+        assert!(result.is_ok(), "Near-surface point should be handled");
+        println!("  ✓ Epsilon-distance point handled");
+
+        println!("  Testing point just inside (negative epsilon)...");
+        let just_inside = Point::new([0.25, 0.25, -f64::EPSILON * 10.0]);
+        let result = hull.is_point_outside(&just_inside, &tds);
+        assert!(result.is_ok(), "Near-surface point should be handled");
+        println!("  ✓ Negative epsilon-distance point handled");
+    }
+
+    // ============================================================================
+    // HIGH-DIMENSIONAL CONVEX HULL TESTS (2D-5D)
+    // ============================================================================
+
+    macro_rules! test_convex_hull_dimension {
+        ($dim:expr, $test_name:ident) => {
+            #[test]
+            fn $test_name() {
+                // Items must be before statements
+                use crate::vertex;
+
+                // Origin - use nested macro to get correct type
+                macro_rules! make_vertex {
+                    ($coords:expr) => {{
+                        let v: crate::core::vertex::Vertex<f64, Option<()>, $dim> =
+                            vertex!($coords);
+                        v
+                    }};
+                }
+
+                println!("Testing {}D convex hull construction and operations", $dim);
+
+                // Generate simplex vertices for dimension D
+                let mut vertices = Vec::new();
+                vertices.push(make_vertex!([0.0; $dim]));
+
+                // Unit vectors along each axis
+                for i in 0..$dim {
+                    let mut coords = [0.0; $dim];
+                    coords[i] = 1.0;
+                    vertices.push(make_vertex!(coords));
+                }
+
+                println!(
+                    "  Creating {}D triangulation with {} vertices...",
+                    $dim,
+                    vertices.len()
+                );
+                let tds = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices)
+                    .expect(&format!("Failed to create {}D TDS", $dim));
+
+                println!("  Constructing {}D convex hull...", $dim);
+                let hull = ConvexHull::from_triangulation(&tds)
+                    .expect(&format!("Failed to create {}D hull", $dim));
+
+                // A D-simplex has D+1 facets
+                let expected_facets = $dim + 1;
+                assert_eq!(
+                    hull.facet_count(),
+                    expected_facets,
+                    "{}D simplex should have {} facets",
+                    $dim,
+                    expected_facets
+                );
+                println!(
+                    "  ✓ {}D hull has correct facet count: {}",
+                    $dim, expected_facets
+                );
+
+                // Test point outside
+                println!("  Testing point outside {}D hull...", $dim);
+                let outside_coords = [2.0; $dim];
+                let outside_point = Point::new(outside_coords);
+                let is_outside = hull
+                    .is_point_outside(&outside_point, &tds)
+                    .expect(&format!("Failed to test outside point in {}D", $dim));
+                assert!(
+                    is_outside,
+                    "Point at {:?} should be outside {}D hull",
+                    outside_coords, $dim
+                );
+                println!("  ✓ Outside point correctly identified in {}D", $dim);
+
+                // Test point inside (centroid)
+                println!("  Testing point inside {}D hull...", $dim);
+                let mut inside_coords = [0.0; $dim];
+                for i in 0..$dim {
+                    inside_coords[i] = 1.0 / <f64 as std::convert::From<i32>>::from($dim + 1);
+                }
+                let inside_point = Point::new(inside_coords);
+                let is_outside = hull
+                    .is_point_outside(&inside_point, &tds)
+                    .expect(&format!("Failed to test inside point in {}D", $dim));
+                assert!(!is_outside, "Centroid should be inside {}D hull", $dim);
+                println!("  ✓ Inside point correctly identified in {}D", $dim);
+
+                // Test visibility
+                println!("  Testing visibility in {}D...", $dim);
+                let visible_facets = hull
+                    .find_visible_facets(&outside_point, &tds)
+                    .expect(&format!("Failed to find visible facets in {}D", $dim));
+                assert!(
+                    !visible_facets.is_empty(),
+                    "Outside point should see some facets in {}D",
+                    $dim
+                );
+                println!(
+                    "  ✓ Visibility test passed in {}D: {} visible facets",
+                    $dim,
+                    visible_facets.len()
+                );
+
+                // Test validation
+                println!("  Validating {}D hull...", $dim);
+                hull.validate(&tds)
+                    .expect(&format!("{}D hull validation failed", $dim));
+                println!("  ✓ {}D hull validation passed", $dim);
+
+                println!("  ✓ All {}D convex hull tests passed", $dim);
+            }
+        };
+    }
+
+    // Generate tests for dimensions 2-5
+    test_convex_hull_dimension!(2, test_convex_hull_2d_comprehensive);
+    test_convex_hull_dimension!(3, test_convex_hull_3d_comprehensive);
+    test_convex_hull_dimension!(4, test_convex_hull_4d_comprehensive);
+    test_convex_hull_dimension!(5, test_convex_hull_5d_comprehensive);
+
+    // ============================================================================
+    // CACHE LIFECYCLE MANAGEMENT TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_cache_lifecycle_multiple_operations() {
+        println!("Testing cache lifecycle through multiple operations");
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ])
+        .unwrap();
+        let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        let test_point = Point::new([2.0, 2.0, 2.0]);
+
+        println!("  Initial state: cache already built during construction");
+        let initial_gen = hull.cached_generation().load(Ordering::Acquire);
+        assert!(
+            initial_gen > 0,
+            "Generation should be set after construction"
+        );
+
+        println!("  First operation: should build cache");
+        hull.find_visible_facets(&test_point, &tds).unwrap();
+        assert!(
+            hull.facet_cache().load().is_some(),
+            "Cache should be built after first operation"
+        );
+        let gen_after_build = hull.cached_generation().load(Ordering::Acquire);
+        assert!(
+            gen_after_build > 0,
+            "Generation should be updated after build"
+        );
+
+        println!("  Second operation: should reuse cache");
+        let gen_before_reuse = hull.cached_generation().load(Ordering::Acquire);
+        hull.find_visible_facets(&test_point, &tds).unwrap();
+        let gen_after_reuse = hull.cached_generation().load(Ordering::Acquire);
+        assert_eq!(
+            gen_after_reuse, gen_before_reuse,
+            "Generation should not change when reusing cache"
+        );
+
+        println!("  Manual invalidation: should clear cache and reset generation");
+        hull.invalidate_cache();
+        assert!(
+            hull.facet_cache().load().is_none(),
+            "Cache should be cleared after invalidation"
+        );
+        let gen_after_invalidation = hull.cached_generation().load(Ordering::Acquire);
+        assert_eq!(
+            gen_after_invalidation, 0,
+            "Generation should be reset to 0 after invalidation"
+        );
+
+        // Verify that cache was actually cleared from non-zero state
+        assert!(
+            gen_before_reuse > 0,
+            "Should have had cache before invalidation"
+        );
+
+        println!("  Operation after invalidation: should rebuild cache");
+        hull.find_visible_facets(&test_point, &tds).unwrap();
+        assert!(
+            hull.facet_cache().load().is_some(),
+            "Cache should be rebuilt"
+        );
+        let gen_after_rebuild = hull.cached_generation().load(Ordering::Acquire);
+        assert!(
+            gen_after_rebuild > 0,
+            "Generation should be updated after rebuild"
+        );
+
+        println!("  ✓ Cache lifecycle behaves correctly through all operations");
+    }
+
+    #[test]
+    fn test_cache_independence_multiple_hulls() {
+        println!("Testing cache independence between multiple hull instances");
+
+        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ])
+        .unwrap();
+
+        println!("  Creating first hull and building cache...");
+        let hull1: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+        let test_point = Point::new([2.0, 2.0, 2.0]);
+        hull1.find_visible_facets(&test_point, &tds).unwrap();
+
+        println!("  Creating second hull from same TDS...");
+        let hull2: ConvexHull<f64, Option<()>, Option<()>, 3> =
+            ConvexHull::from_triangulation(&tds).unwrap();
+
+        println!("  Second hull also has cache built during construction...");
+        let hull2_gen_initial = hull2.cached_generation().load(Ordering::Acquire);
+        assert!(
+            hull2_gen_initial > 0,
+            "Hull2 should have cache built during construction"
+        );
+
+        println!("  Building cache in second hull...");
+        hull2.find_visible_facets(&test_point, &tds).unwrap();
+        let hull2_gen = hull2.cached_generation().load(Ordering::Acquire);
+        assert!(hull2_gen > 0, "Hull2 should have built cache");
+
+        // Both should have cache
+        assert!(
+            hull1.facet_cache().load().is_some(),
+            "Hull1 should have cache"
+        );
+        assert!(
+            hull2.facet_cache().load().is_some(),
+            "Hull2 should have cache"
+        );
+
+        println!("  Invalidating first hull cache...");
+        hull1.invalidate_cache();
+
+        // Hull1 should be cleared
+        assert!(
+            hull1.facet_cache().load().is_none(),
+            "Hull1 cache should be cleared"
+        );
+
+        // Hull2 should still have cache (independent instances)
+        assert!(
+            hull2.facet_cache().load().is_some(),
+            "Hull2 cache should be independent"
+        );
+
+        println!("  ✓ Cache independence between multiple hull instances verified");
+    }
 }
