@@ -474,6 +474,35 @@ pub type ValidCellsBuffer = SmallBuffer<CellKey, SMALL_CELL_OPERATION_BUFFER_SIZ
 /// - Enable future extensions without breaking changes
 pub type FacetInfoBuffer = SmallBuffer<FacetHandle, MAX_PRACTICAL_DIMENSION_SIZE>;
 
+/// Buffer for storing cells that share a facet.
+/// Facets are shared by at most 2 cells (boundary=1, interior=2).
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Exactly 2 cells (no heap allocation needed)
+/// - **Use Case**: Facet-to-cells mapping validation, cavity boundary detection
+/// - **Performance**: Eliminates heap allocation for 100% of facets
+/// - **Memory Efficiency**: 2 × 8 bytes = 16 bytes on stack per facet
+///
+/// # Invariant
+///
+/// Valid triangulations have the following facet sharing invariants:
+/// - **Boundary facets**: Shared by exactly 1 cell (hull facets)
+/// - **Interior facets**: Shared by exactly 2 cells (adjacent cells)
+/// - **Invalid**: Shared by >2 cells (indicates TDS corruption)
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::FacetSharingCellsBuffer;
+/// use delaunay::core::triangulation_data_structure::CellKey;
+///
+/// // Store cells sharing a facet (always ≤2 cells)
+/// let mut sharing_cells: FacetSharingCellsBuffer = FacetSharingCellsBuffer::new();
+/// // sharing_cells.push(cell_key); // Stack allocated, no heap
+/// ```
+pub type FacetSharingCellsBuffer = SmallBuffer<CellKey, 2>;
+
 // =============================================================================
 // SEMANTIC SIZE CONSTANTS AND TYPE ALIASES
 // =============================================================================

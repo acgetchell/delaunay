@@ -6414,7 +6414,7 @@ mod tests {
 
         println!("  Testing validate...");
         let validate_result = hull.validate(&tds);
-        // validate() will fail because it tries to build cache with stale hull
+        // validate() will fail because hull's facets reference outdated TDS state
         assert!(
             validate_result.is_err(),
             "validate should fail on stale hull"

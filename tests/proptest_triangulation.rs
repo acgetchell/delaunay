@@ -229,7 +229,7 @@ macro_rules! gen_no_duplicate_cells {
                         for (_cell_key, cell) in tds.cells() {
                             // Use stack-allocated buffer for D+1 vertices (D ≤ 7 typical)
                             let mut vs: CellVertexBuffer = cell.vertices().iter().copied().collect();
-                            vs.sort();
+                            vs.sort_unstable();
                             prop_assert!(seen.insert(vs), "Found duplicate {}D cell", $dim);
                         }
                     }

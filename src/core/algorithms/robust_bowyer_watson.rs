@@ -6,8 +6,8 @@
 
 use crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use crate::core::collections::{
-    CellKeyBuffer, CellKeySet, FacetInfoBuffer, FacetToCellsMap, FastHashMap, FastHashSet,
-    SmallBuffer, fast_hash_set_with_capacity,
+    CellKeyBuffer, CellKeySet, FacetInfoBuffer, FacetSharingCellsBuffer, FacetToCellsMap,
+    FastHashMap, FastHashSet, SmallBuffer, fast_hash_set_with_capacity,
 };
 use crate::core::facet::FacetHandle;
 use crate::core::traits::facet_cache::FacetCacheProvider;
@@ -396,6 +396,9 @@ where
         f64: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
     {
+        // Capacity for cavity cell backup (matches CLEANUP_OPERATION_BUFFER_SIZE)
+        const CAVITY_BACKUP_CAPACITY: usize = 16;
+
         // Use the trait's cavity-based insertion which includes iterative refinement.
         // The trait implementation now properly maintains the Delaunay property.
         // We add robust predicate fallbacks if the standard method fails.
@@ -501,8 +504,7 @@ where
         // Phase 3: Save bad cells for potential restoration, then remove them
         // After this point, we must use restore_cavity_insertion_failure on error
         // Use SmallBuffer for stack allocation (typical cavity sizes ≤16 cells for D ≤ 7)
-        // Capacity constant: CAVITY_CELL_BUFFER_SIZE (see src/core/collections.rs)
-        let mut saved_cavity_cells: SmallBuffer<_, 16> = bad_cells
+        let mut saved_cavity_cells: SmallBuffer<_, CAVITY_BACKUP_CAPACITY> = bad_cells
             .iter()
             .filter_map(|&ck| tds.get_cell(ck).cloned())
             .collect();
@@ -908,7 +910,7 @@ where
         &mut self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<CellKey>, InsertionError>
+    ) -> Result<SmallBuffer<CellKey, 16>, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
@@ -932,8 +934,8 @@ where
                 self.robust_find_bad_cells(tds, vertex)?
             }
             Err(crate::core::traits::insertion_algorithm::BadCellsError::NoCells) => {
-                // No cells - return empty
-                return Ok(Vec::new());
+                // No cells - return empty (no allocation)
+                return Ok(SmallBuffer::new());
             }
             Err(crate::core::traits::insertion_algorithm::BadCellsError::TdsCorruption {
                 cell_key,
@@ -1050,8 +1052,8 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<CellKey>, InsertionError> {
-        let mut bad_cells = SmallBuffer::<CellKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+    ) -> Result<SmallBuffer<CellKey, 16>, InsertionError> {
+        let mut bad_cells = SmallBuffer::<CellKey, 16>::new();
         let mut vertex_points = SmallBuffer::<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         vertex_points.reserve_exact(D + 1);
 
@@ -1119,7 +1121,7 @@ where
             }
         }
 
-        Ok(bad_cells.into_vec())
+        Ok(bad_cells)
     }
 
     /// Find cavity boundary facets with enhanced error handling, returning lightweight handles.
@@ -1224,18 +1226,19 @@ where
     fn build_validated_facet_mapping(
         &self,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<FastHashMap<u64, Vec<CellKey>>, InsertionError> {
+    ) -> Result<FastHashMap<u64, FacetSharingCellsBuffer>, InsertionError> {
         // Use cached facet mapping to avoid recomputation with proper error handling
         let tds_map = self
             .try_get_or_build_facet_cache(tds)
             .map_err(InsertionError::TriangulationState)?;
 
         // Transform the TDS map into the required format with validation
-        let facet_to_cells: FastHashMap<u64, Vec<CellKey>> = tds_map
+        let facet_to_cells: FastHashMap<u64, FacetSharingCellsBuffer> = tds_map
             .iter()
             .map(|(&facet_key, cell_facet_pairs)| {
                 // Extract just the CellKeys, discarding facet indices
-                let mut cell_keys = Vec::with_capacity(cell_facet_pairs.len());
+                // Use stack-allocated buffer (facets shared by ≤2 cells)
+                let mut cell_keys = FacetSharingCellsBuffer::new();
                 cell_keys.extend(cell_facet_pairs.iter().map(FacetHandle::cell_key));
 
                 // Defensively deduplicate cell keys in case build_facet_to_cells_hashmap()

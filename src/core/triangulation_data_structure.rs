@@ -1985,8 +1985,14 @@ where
     ///
     /// # Related
     ///
-    /// See also `find_cells_containing_vertex_by_key` which returns an iterator and
-    /// allows custom filtering during traversal.
+    /// This method is optimized for **removal/rollback operations** where the result
+    /// is consumed once for batch removal. For **set operations** (intersection, union)
+    /// or custom filtering during traversal, use `find_cells_containing_vertex_by_key`
+    /// which returns an iterator without allocating a buffer.
+    ///
+    /// The two methods serve different use cases:
+    /// - This method: Buffer collection → optimized for removal
+    /// - `find_cells_containing_vertex_by_key`: Iterator → optimized for set operations
     fn find_cells_containing_vertex(&self, vertex_key: VertexKey) -> CellRemovalBuffer {
         self.cells()
             .filter_map(|(cell_key, cell)| {
@@ -5496,8 +5502,9 @@ mod tests {
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
-        // Get any vertex from the triangulation
-        let some_vertex_key = tds.vertices().next().map(|(k, _)| k).unwrap();
+        // Pick a vertex known to belong to at least one cell (from an existing cell)
+        let first_cell_key = tds.cell_keys().next().unwrap();
+        let some_vertex_key = tds.get_cell_vertices(first_cell_key).unwrap()[0];
         let cells_with_vertex = tds.find_cells_containing_vertex(some_vertex_key);
 
         // Verify the result
