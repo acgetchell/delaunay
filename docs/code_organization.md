@@ -108,6 +108,7 @@ delaunay/
 │       ├── conftest.py
 │       ├── test_benchmark_models.py
 │       ├── test_benchmark_utils.py
+│       ├── test_changelog_tag_size_limit.py
 │       ├── test_changelog_utils.py
 │       ├── test_compare_storage_backends.py
 │       ├── test_enhance_commits.py
@@ -270,15 +271,20 @@ cargo test --test coordinate_conversion_errors
 **Note**: Python tests in `scripts/tests/` are executed via pytest (use `uv run pytest` for reproducible envs) and discovered via `pyproject.toml`. Run with:
 
 ```bash
-# Run all Python utility tests (just command)
+# Run all Python utility tests (just command - 452 tests)
 just test-python
 
 # Or run specific test files directly
 uv run pytest scripts/tests/test_benchmark_utils.py
+uv run pytest scripts/tests/test_changelog_tag_size_limit.py  # GitHub 125KB limit tests
 
 # Without uv:
 pytest scripts/tests/test_benchmark_utils.py
 ```
+
+**Note**: The `changelog_utils.py` module automatically handles GitHub's 125KB tag annotation limit. When creating tags for releases with large
+changelogs (like v0.5.4 at 152KB), it creates lightweight tags and provides instructions for extracting the changelog section for GitHub release
+creation. See `test_changelog_tag_size_limit.py` for comprehensive tests using real v0.5.4 data.
 
 **Note**: Performance summary generation is available through the benchmark utilities CLI:
 
@@ -326,7 +332,11 @@ with convenient `just` shortcuts for common workflows.
   debugging utilities, regression testing, allocation profiling tools
   (see: [tests/allocation_api.rs](../tests/README.md#allocation_apirs)), and robust predicates validation
 - **`docs/`** - Architecture guides, performance documentation, numerical robustness guide, and templates
-- **`scripts/`** - Python utilities for automation and CI integration
+- **`scripts/`** - Python utilities for automation and CI integration (452 tests)
+  - **`changelog_utils.py`** - Changelog generation and git tag management with automatic 125KB limit handling
+  - **`benchmark_utils.py`** - Performance benchmarking, regression testing, and baseline management
+  - **`hardware_utils.py`** - Cross-platform hardware detection for performance tracking
+  - **`tests/`** - Comprehensive test suite with 452 tests including regression tests for real-world issues
 
 #### Configuration
 

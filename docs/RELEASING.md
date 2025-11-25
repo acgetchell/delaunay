@@ -171,6 +171,8 @@ git tag -d "$TAG" 2>/dev/null || true
 
 # Create the final annotated tag with the changelog section as the tag message
 # Using the new Python-based tagging tool
+# Note: For large changelogs (>125KB), this automatically creates an annotated tag
+# with a reference message pointing to CHANGELOG.md instead of the full content
 just changelog-tag "$TAG"
 # uv run changelog-utils tag "$TAG" --force
 ```
@@ -179,6 +181,14 @@ just changelog-tag "$TAG"
 
 ```bash
 git tag -l --format='%(contents)' "$TAG"
+
+# Note: Large changelogs (>125KB) will show a reference message like:
+# "Version X.Y.Z
+#
+# This release contains extensive changes. See full changelog:
+# https://github.com/acgetchell/delaunay/blob/vX.Y.Z/CHANGELOG.md#xyz
+#
+# For detailed release notes, refer to CHANGELOG.md in the repository."
 ```
 
 4. Push the tag
@@ -191,7 +201,11 @@ git push origin "$TAG"
 
 ```bash
 # Requires GitHub CLI (gh) and authenticated session
+# Works for both normal and large changelogs - always use --notes-from-tag
 gh release create "$TAG" --notes-from-tag
+
+# For large changelogs, the release will show the reference message with a link
+# to the full changelog in CHANGELOG.md. Users can click the link to see all details.
 ```
 
 6. Publish to crates.io

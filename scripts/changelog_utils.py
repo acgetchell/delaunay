@@ -792,7 +792,7 @@ class ChangelogUtils:
     def create_git_tag(tag_version: str, force_recreate: bool = False) -> None:
         """
         Create or recreate a git tag with changelog content as the tag message.
-        This enables GitHub releases to use the changelog content via --notes-from-tag.
+        For large changelogs (>125KB), creates a lightweight tag instead.
 
         Args:
             tag_version: The version tag to create (e.g., 'v0.3.5')
@@ -810,17 +810,17 @@ class ChangelogUtils:
         # Handle existing tag
         ChangelogUtils._handle_existing_tag(tag_version, force_recreate)
 
-        # Get changelog content
-        tag_message = ChangelogUtils._get_changelog_content(tag_version)
+        # Get changelog content (may be truncated if too large)
+        tag_message, is_truncated = ChangelogUtils._get_changelog_content(tag_version)
 
         # Check git configuration
         ChangelogUtils._check_git_config()
 
-        # Create the tag
-        ChangelogUtils._create_tag_with_message(tag_version, tag_message)
+        # Create the tag (always annotated, but with reference if truncated)
+        ChangelogUtils._create_tag_with_message(tag_version, tag_message, is_truncated=is_truncated)
 
         # Show success message
-        ChangelogUtils._show_success_message(tag_version)
+        ChangelogUtils._show_success_message(tag_version, is_truncated)
 
     @staticmethod
     def _handle_existing_tag(tag_version: str, force_recreate: bool) -> None:
@@ -856,7 +856,7 @@ class ChangelogUtils:
             raise GitRepoError(msg) from e
 
     @staticmethod
-    def _get_changelog_content(tag_version: str) -> str:
+    def _get_changelog_content(tag_version: str) -> tuple[str, bool]:
         """
         Get and preview changelog content for the tag.
 
@@ -864,20 +864,43 @@ class ChangelogUtils:
             tag_version: The version tag
 
         Returns:
-            Changelog content for the tag message
+            Tuple of (tag_message, is_truncated)
+            - tag_message: Content for git tag annotation
+            - is_truncated: True if content was truncated due to size limit
         """
+        # GitHub's git tag annotation limit
+        MAX_TAG_SIZE = 125000  # 125KB
 
         changelog_path = ChangelogUtils.find_changelog_path()
         version = ChangelogUtils.parse_version(tag_version)
-        tag_message = ChangelogUtils.extract_changelog_section(changelog_path, version)
+        full_content = ChangelogUtils.extract_changelog_section(changelog_path, version)
 
+        # Check if content exceeds GitHub's limit
+        content_size = len(full_content.encode("utf-8"))
+
+        if content_size > MAX_TAG_SIZE:
+            print(f"{COLOR_YELLOW}⚠ Changelog content ({content_size:,} bytes) exceeds GitHub's tag limit ({MAX_TAG_SIZE:,} bytes){COLOR_RESET}")
+            print(f"{COLOR_BLUE}→ Creating annotated tag with CHANGELOG.md reference{COLOR_RESET}")
+
+            # Create short message referencing CHANGELOG.md
+            short_message = f"""Version {version}
+
+This release contains extensive changes. See full changelog:
+https://github.com/acgetchell/delaunay/blob/{tag_version}/CHANGELOG.md#{version.replace(".", "")}
+
+For detailed release notes, refer to CHANGELOG.md in the repository.
+"""
+            return short_message, True
         # Show preview
-        print(f"{COLOR_BLUE}Tag message preview:{COLOR_RESET}")
+        print(f"{COLOR_BLUE}Tag message preview ({content_size:,} bytes):{COLOR_RESET}")
         print("----------------------------------------")
-        print(tag_message)
+        preview_lines = full_content.split("\n")[:20]
+        print("\n".join(preview_lines))
+        if len(full_content.split("\n")) > 20:
+            print("... (truncated for preview)")
         print("----------------------------------------")
 
-        return tag_message
+        return full_content, False
 
     @staticmethod
     def _check_git_config() -> None:
@@ -895,24 +918,25 @@ class ChangelogUtils:
             )
 
     @staticmethod
-    def _create_tag_with_message(tag_version: str, tag_message: str) -> None:
+    def _create_tag_with_message(tag_version: str, tag_message: str, is_truncated: bool = False) -> None:
         """
         Create the git tag with the provided message.
 
         Args:
             tag_version: The version tag to create
             tag_message: The tag message content
+            is_truncated: Whether the changelog was truncated (still creates annotated tag)
 
         Raises:
             GitRepoError: If tag creation fails
         """
-
-        print(f"{COLOR_BLUE}Creating tag '{tag_version}' with changelog content...{COLOR_RESET}")
-
         try:
-            # Tag format already validated by validate_semver(); no second check needed
+            if is_truncated:
+                print(f"{COLOR_BLUE}Creating annotated tag '{tag_version}' with CHANGELOG.md reference...{COLOR_RESET}")
+            else:
+                print(f"{COLOR_BLUE}Creating annotated tag '{tag_version}' with full changelog content...{COLOR_RESET}")
 
-            # Use secure wrapper for git command with stdin input
+            # Always create annotated tag
             run_git_command_with_input(["tag", "-a", tag_version, "-F", "-"], input_data=tag_message)
 
         except Exception as e:
@@ -920,12 +944,13 @@ class ChangelogUtils:
             raise GitRepoError(msg) from e
 
     @staticmethod
-    def _show_success_message(tag_version: str) -> None:
+    def _show_success_message(tag_version: str, is_truncated: bool = False) -> None:
         """
         Show success message and next steps.
 
         Args:
             tag_version: The created tag version
+            is_truncated: Whether the changelog was truncated
         """
 
         print(f"{COLOR_GREEN}✓ Successfully created tag '{tag_version}'{COLOR_RESET}")
@@ -933,6 +958,10 @@ class ChangelogUtils:
         print("Next steps:")
         print(f"  1. Push the tag: {COLOR_BLUE}git push origin {tag_version}{COLOR_RESET}")
         print(f"  2. Create GitHub release: {COLOR_BLUE}gh release create {tag_version} --notes-from-tag{COLOR_RESET}")
+
+        if is_truncated:
+            print(f"\n{COLOR_YELLOW}Note: Tag annotation references CHANGELOG.md due to size (>125KB).{COLOR_RESET}")
+            print(f"{COLOR_YELLOW}The --notes-from-tag will use the reference message. Full details in CHANGELOG.md.{COLOR_RESET}")
 
 
 def main() -> None:
