@@ -449,6 +449,33 @@ pub type ViolationBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
 /// - **Typical Size**: 4-8 cells in well-conditioned triangulations (D+1 for simple cavity)
 pub type CellKeyBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
 
+/// Collection for tracking bad cells (Delaunay violations) during insertion.
+/// Bad cells are those whose circumsphere contains the newly inserted point.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Up to 16 cells (covers most cavity scenarios)
+/// - **Use Case**: Bowyer-Watson algorithm, `find_bad_cells()` return type
+/// - **Performance**: Avoids heap allocation in hot path during point insertion
+/// - **Typical Size**: 1-8 cells in well-conditioned triangulations
+///
+/// # Usage
+///
+/// This buffer is used as the return type for `find_bad_cells()` and related methods.
+/// The capacity of 16 is generous for typical Delaunay cavities while remaining stack-allocated.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::BadCellBuffer;
+/// use delaunay::core::triangulation_data_structure::CellKey;
+///
+/// // Accumulate bad cells during Bowyer-Watson insertion
+/// let mut bad_cells: BadCellBuffer = BadCellBuffer::new();
+/// // bad_cells.push(cell_key); // Stack allocated for typical cavities
+/// ```
+pub type BadCellBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
+
 /// Collection for tracking valid cells during facet sharing fixes.
 /// Most invalid sharing situations involve only a few cells per facet.
 ///
@@ -482,9 +509,9 @@ pub type FacetInfoBuffer = SmallBuffer<FacetHandle, MAX_PRACTICAL_DIMENSION_SIZE
 ///
 /// # Optimization Rationale
 ///
-/// - **Stack Allocation**: Exactly 2 cells (no heap allocation needed)
+/// - **Stack Allocation**: Exactly 2 cells (no heap allocation for valid triangulations)
 /// - **Use Case**: Facet-to-cells mapping validation, cavity boundary detection
-/// - **Performance**: Eliminates heap allocation for 100% of facets
+/// - **Performance**: Eliminates heap allocation when invariant holds (≤2 cells per facet)
 /// - **Memory Efficiency**: 2 × 8 bytes = 16 bytes on stack per facet
 ///
 /// # Invariant

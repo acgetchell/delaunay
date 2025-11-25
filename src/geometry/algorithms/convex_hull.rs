@@ -533,6 +533,28 @@ where
             .map_or(self.is_empty(), |&g| g == tds.generation())
     }
 
+    /// Helper to construct a `StaleHull` error with generation info
+    ///
+    /// Centralizes the error construction pattern to avoid duplication.
+    #[inline]
+    fn stale_hull_error(&self, tds: &Tds<T, U, V, D>) -> ConvexHullValidationError {
+        ConvexHullValidationError::StaleHull {
+            hull_generation: self.creation_generation.get().copied().unwrap_or(0),
+            tds_generation: tds.generation(),
+        }
+    }
+
+    /// Helper to construct a `StaleHull` construction error with generation info
+    ///
+    /// Centralizes the error construction pattern to avoid duplication.
+    #[inline]
+    fn stale_hull_construction_error(&self, tds: &Tds<T, U, V, D>) -> ConvexHullConstructionError {
+        ConvexHullConstructionError::StaleHull {
+            hull_generation: self.creation_generation.get().copied().unwrap_or(0),
+            tds_generation: tds.generation(),
+        }
+    }
+
     /// Invalidates the internal facet-to-cells cache and resets the cached generation counter
     ///
     /// This method forces the cache to be rebuilt on the next visibility test.
@@ -962,16 +984,18 @@ where
 
         // Materialize facet vertices only when needed for orientation computation
         // This happens after cache lookup and inside vertex identification
-        let facet_vertices: Vec<_> = facet_vertex_keys
-            .iter()
-            .map(|&k| {
-                tds.get_vertex_by_key(k).copied().ok_or(
-                    ConvexHullConstructionError::FacetDataAccessFailed {
-                        source: FacetError::VertexKeyNotFoundInTriangulation { key: k },
-                    },
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        // Use SmallBuffer to avoid heap allocation for typical dimensions (up to 7D on stack)
+        let facet_vertices: SmallBuffer<Vertex<T, U, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            facet_vertex_keys
+                .iter()
+                .map(|&k| {
+                    tds.get_vertex_by_key(k).copied().ok_or(
+                        ConvexHullConstructionError::FacetDataAccessFailed {
+                            source: FacetError::VertexKeyNotFoundInTriangulation { key: k },
+                        },
+                    )
+                })
+                .collect::<Result<SmallBuffer<_, _>, _>>()?;
 
         // Create test simplices to compare orientations
         // Build facet_points from the vertices (fetched only once, when needed)
@@ -1162,13 +1186,8 @@ where
         tds: &Tds<T, U, V, D>,
     ) -> Result<Vec<usize>, ConvexHullConstructionError> {
         // Fail fast if hull is stale relative to this TDS (using immutable creation_generation)
-        let creation_gen = self.creation_generation.get().copied().unwrap_or(0);
-        let tds_gen = tds.generation();
-        if creation_gen != tds_gen {
-            return Err(ConvexHullConstructionError::StaleHull {
-                hull_generation: creation_gen,
-                tds_generation: tds_gen,
-            });
+        if !self.is_valid_for_tds(tds) {
+            return Err(self.stale_hull_construction_error(tds));
         }
 
         // Optimization: Load cache once before the loop to avoid redundant atomic loads
@@ -1244,13 +1263,8 @@ where
         T: PartialOrd + Copy,
     {
         // Fail fast if hull is stale relative to this TDS (using immutable creation_generation)
-        let creation_gen = self.creation_generation.get().copied().unwrap_or(0);
-        let tds_gen = tds.generation();
-        if creation_gen != tds_gen {
-            return Err(ConvexHullConstructionError::StaleHull {
-                hull_generation: creation_gen,
-                tds_generation: tds_gen,
-            });
+        if !self.is_valid_for_tds(tds) {
+            return Err(self.stale_hull_construction_error(tds));
         }
 
         let visible_facets = self.find_visible_facets(point, tds)?;
@@ -1407,10 +1421,7 @@ where
         // This makes the test behavior robust: validate() fails due to staleness check,
         // not because facet handles happen to point to removed cells
         if !self.is_valid_for_tds(tds) {
-            return Err(ConvexHullValidationError::StaleHull {
-                hull_generation: self.creation_generation.get().copied().unwrap_or(0),
-                tds_generation: tds.generation(),
-            });
+            return Err(self.stale_hull_error(tds));
         }
 
         // Check that all facets have exactly D vertices (for D-dimensional triangulation,
@@ -6436,10 +6447,13 @@ mod tests {
 
         println!("  Testing validate...");
         let validate_result = hull.validate(&tds);
-        // validate() will fail because hull's facets reference outdated TDS state
+        // validate() should fail with explicit StaleHull error
         assert!(
-            validate_result.is_err(),
-            "validate should fail on stale hull"
+            matches!(
+                validate_result,
+                Err(ConvexHullValidationError::StaleHull { .. })
+            ),
+            "validate should fail on stale hull with StaleHull error, got: {validate_result:?}"
         );
 
         println!("  ✓ All operations correctly detect stale hull");

@@ -2075,10 +2075,10 @@ where
     ///
     /// # Returns
     ///
-    /// A stack-allocated buffer of bad cell keys on success.
-    /// Uses `SmallBuffer<CellKey, 16>` which provides stack allocation for typical cavities
-    /// (≤16 bad cells) and automatically falls back to heap for larger cavities.
-    /// The buffer derefs to `&[CellKey]` for convenient slice access.
+    /// A [`BadCellBuffer`](crate::core::collections::BadCellBuffer) containing the keys of cells
+    /// whose circumsphere contains the vertex. This is a stack-allocated buffer (capacity 16) that
+    /// provides efficient performance for typical cavities while automatically falling back to heap
+    /// for larger cavities. The buffer derefs to `&[CellKey]` for convenient slice access.
     ///
     /// # Errors
     ///
@@ -2090,7 +2090,7 @@ where
         &mut self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<SmallBuffer<CellKey, 16>, BadCellsError>
+    ) -> Result<crate::core::collections::BadCellBuffer, BadCellsError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
@@ -2099,9 +2099,9 @@ where
             return Err(BadCellsError::NoCells);
         }
 
-        // Use stack-allocated buffer for typical small cavities (D+1 to 2*D cells)
+        // Use BadCellBuffer (stack-allocated, capacity 16) for typical small cavities
         // Falls back to heap for larger cavities (pathological or high-D cases)
-        let mut bad_cells = SmallBuffer::<CellKey, 16>::new();
+        let mut bad_cells = crate::core::collections::BadCellBuffer::new();
         let mut cells_tested = 0;
         let mut degenerate_count = 0;
         // Reuse a small stack-allocated buffer to avoid heap traffic

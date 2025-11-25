@@ -13,6 +13,36 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - You may suggest git commands for the user to run, but never execute them
 - This ensures the user maintains full control over version control operations
 
+#### Commit Message Generation (AI Assistant Shortcut)
+
+When the user asks to "write commit message" or "write commit" or "generate commit message":
+
+1. **Check staged changes**: Run `git --no-pager diff --cached --stat` to see what's staged
+2. **Generate comprehensive commit message** following conventional commits format:
+   - **Subject line**: `<type>: <brief summary>` (50-72 chars)
+   - **Types**: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `style`, `ci`, `build`
+   - **Body**: Detailed explanation organized by component/topic with bullet points
+   - **Include**: Architecture decisions, performance impacts, test results
+   - **Footer**: Related issues, breaking changes if applicable
+3. **Format**: Use markdown code block with no language specifier for easy copy-paste
+4. **Present the message** to the user - they will run `git commit` manually
+
+**Example output format**:
+
+```text
+refactor: optimize buffer usage and improve code organization
+
+Address code review feedback with targeted optimizations:
+
+Collections & Type Safety:
+- Add BadCellBuffer type alias for cleanup operations
+- Make CLEANUP_OPERATION_BUFFER_SIZE public for reuse
+
+[... detailed organized sections ...]
+
+All 1102 library tests + 231 doc tests passing, 0 clippy warnings.
+```
+
 ### Code Quality Tools
 
 - **ALLOWED** to automatically run all code quality and formatting tools

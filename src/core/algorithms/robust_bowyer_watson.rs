@@ -5,7 +5,7 @@
 //! "No cavity boundary facets found" error.
 
 use crate::core::collections::{
-    CLEANUP_OPERATION_BUFFER_SIZE, CellKeyBuffer, CellKeySet, FacetInfoBuffer,
+    BadCellBuffer, CLEANUP_OPERATION_BUFFER_SIZE, CellKeyBuffer, CellKeySet, FacetInfoBuffer,
     FacetSharingCellsBuffer, FacetToCellsMap, FastHashMap, FastHashSet,
     MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, fast_hash_set_with_capacity,
 };
@@ -907,7 +907,7 @@ where
         &mut self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<SmallBuffer<CellKey, 16>, InsertionError>
+    ) -> Result<BadCellBuffer, InsertionError>
     where
         T: AddAssign<T> + ComplexField<RealField = T> + SubAssign<T> + Sum + From<f64>,
         f64: From<T>,
@@ -932,7 +932,7 @@ where
             }
             Err(crate::core::traits::insertion_algorithm::BadCellsError::NoCells) => {
                 // No cells - return empty (no allocation)
-                return Ok(SmallBuffer::new());
+                return Ok(BadCellBuffer::new());
             }
             Err(crate::core::traits::insertion_algorithm::BadCellsError::TdsCorruption {
                 cell_key,
@@ -1049,8 +1049,8 @@ where
         &self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<SmallBuffer<CellKey, 16>, InsertionError> {
-        let mut bad_cells = SmallBuffer::<CellKey, 16>::new();
+    ) -> Result<BadCellBuffer, InsertionError> {
+        let mut bad_cells = BadCellBuffer::new();
         let mut vertex_points = SmallBuffer::<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         vertex_points.reserve_exact(D + 1);
 

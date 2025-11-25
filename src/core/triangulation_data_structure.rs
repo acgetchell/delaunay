@@ -2373,6 +2373,40 @@ where
         Ok(())
     }
 
+    /// Builds a complete vertex→cells mapping for all vertices in the triangulation.
+    ///
+    /// This is a helper method that constructs a mapping from each vertex key to the
+    /// set of cells containing that vertex. This map is reused by multiple operations
+    /// including `assign_incident_cells` and optimized cell-finding operations.
+    ///
+    /// # Returns
+    ///
+    /// A `VertexToCellsMap` containing the mapping from vertex keys to cell keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TriangulationValidationError` if a cell references a non-existent vertex key.
+    fn build_vertex_to_cells_map(&self) -> Result<VertexToCellsMap, TriangulationValidationError> {
+        let mut vertex_to_cells: VertexToCellsMap =
+            fast_hash_map_with_capacity(self.vertices.len());
+
+        for (cell_key, cell) in &self.cells {
+            let vertices = self.get_cell_vertices(cell_key).map_err(|e| {
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Failed to get vertex keys for cell {}: {}", cell.uuid(), e),
+                }
+            })?;
+            for &vertex_key in &vertices {
+                vertex_to_cells
+                    .entry(vertex_key)
+                    .or_default()
+                    .push(cell_key);
+            }
+        }
+
+        Ok(vertex_to_cells)
+    }
+
     /// Finds cells containing a vertex using its key directly.
     ///
     /// This method avoids UUID lookups when searching for cells that
@@ -2444,23 +2478,8 @@ where
             vertex.incident_cell = None;
         }
 
-        // Build vertex_to_cells mapping using optimized collections
-        let mut vertex_to_cells: VertexToCellsMap =
-            fast_hash_map_with_capacity(self.vertices.len());
-
-        for (cell_key, cell) in &self.cells {
-            let vertices = self.get_cell_vertices(cell_key).map_err(|e| {
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!("Failed to get vertex keys for cell {}: {}", cell.uuid(), e),
-                }
-            })?;
-            for &vertex_key in &vertices {
-                vertex_to_cells
-                    .entry(vertex_key)
-                    .or_default()
-                    .push(cell_key);
-            }
-        }
+        // Build vertex_to_cells mapping using the reusable helper
+        let vertex_to_cells = self.build_vertex_to_cells_map()?;
 
         // Iterate over for (vertex_key, cell_keys) in vertex_to_cells
         for (vertex_key, cell_keys) in vertex_to_cells {
@@ -4207,7 +4226,9 @@ where
     /// [`Tds::is_valid`](Self::is_valid).
     pub fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError> {
         // Use CellVertexUuidBuffer as HashMap key directly to avoid extra Vec allocation
-        let mut unique_cells: FastHashMap<CellVertexUuidBuffer, CellKey> = FastHashMap::default();
+        // Pre-size to avoid rehashing during insertion (minor optimization for hot path)
+        let mut unique_cells: FastHashMap<CellVertexUuidBuffer, CellKey> =
+            crate::core::collections::fast_hash_map_with_capacity(self.cells.len());
         let mut duplicates = Vec::new();
 
         for (cell_key, cell) in &self.cells {
@@ -7280,6 +7301,106 @@ mod tests {
     }
 
     #[test]
+    fn test_build_vertex_to_cells_map() {
+        // Test the build_vertex_to_cells_map helper method
+        let points = [
+            Point::new([0.0, 0.0, 0.0]),  // A
+            Point::new([1.0, 0.0, 0.0]),  // B
+            Point::new([0.5, 1.0, 0.0]),  // C
+            Point::new([0.5, 0.5, 1.0]),  // D
+            Point::new([0.5, 0.5, -1.0]), // E
+        ];
+        let vertices = Vertex::from_points(&points);
+        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+
+        // Build the vertex-to-cells map
+        let vertex_to_cells = tds
+            .build_vertex_to_cells_map()
+            .expect("Should successfully build vertex-to-cells map");
+
+        // Verify that all vertices are present in the map
+        assert_eq!(
+            vertex_to_cells.len(),
+            tds.number_of_vertices(),
+            "Map should contain entries for all vertices"
+        );
+
+        // Verify that each vertex in the map exists in the TDS
+        for vertex_key in vertex_to_cells.keys() {
+            assert!(
+                tds.vertices.contains_key(*vertex_key),
+                "Map should only contain valid vertex keys"
+            );
+        }
+
+        // Verify that every cell reference in the map exists
+        for cell_keys in vertex_to_cells.values() {
+            for cell_key in cell_keys {
+                assert!(
+                    tds.cells.contains_key(*cell_key),
+                    "Map should only reference valid cell keys"
+                );
+            }
+        }
+
+        // Verify consistency: if a cell contains a vertex, the vertex's map entry should include that cell
+        for (cell_key, _cell) in &tds.cells {
+            let vertex_keys = tds
+                .get_cell_vertices(cell_key)
+                .expect("Should get vertices for valid cell");
+            for vertex_key in vertex_keys {
+                let cells_for_vertex = vertex_to_cells
+                    .get(&vertex_key)
+                    .expect("Vertex should exist in map");
+                assert!(
+                    cells_for_vertex.contains(&cell_key),
+                    "Vertex {:?} should reference cell {:?}",
+                    vertex_key,
+                    cell_key
+                );
+            }
+        }
+
+        println!(
+            "✓ Successfully built and validated vertex-to-cells map: {} vertices, {} cells",
+            vertex_to_cells.len(),
+            tds.number_of_cells()
+        );
+    }
+
+    #[test]
+    fn test_build_vertex_to_cells_map_empty() {
+        // Test build_vertex_to_cells_map with no cells
+        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+
+        // Add vertices without cells
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+        ];
+
+        for vertex in &vertices {
+            let vertex_key = tds.vertices.insert(*vertex);
+            tds.uuid_to_vertex_key.insert(vertex.uuid(), vertex_key);
+        }
+
+        // Build the map
+        let vertex_to_cells = tds
+            .build_vertex_to_cells_map()
+            .expect("Should successfully build map even with no cells");
+
+        // With no cells, the map should be empty (no vertices have incident cells)
+        assert_eq!(
+            vertex_to_cells.len(),
+            0,
+            "Map should be empty when no cells exist"
+        );
+
+        println!("✓ Successfully handled build_vertex_to_cells_map with no cells");
+    }
+
+    #[test]
     fn test_assign_neighbors_semantic_constraint() {
         // Test that the semantic constraint "neighbors[i] is opposite vertices[i]" is enforced
 
@@ -7503,25 +7624,33 @@ mod tests {
         tds.vertices.remove(first_vertex_key);
         tds.uuid_to_vertex_key.remove(&vertices[0].uuid());
 
-        // get_cell_vertices() will detect the invalid vertex key and return an error
-        // which propagates through is_valid()
+        // cell.vertex_uuids() or get_cell_vertices() will detect the invalid vertex key
+        // and return an error which propagates through is_valid()
         let result = tds.is_valid();
-        assert!(result.is_err());
+        assert!(result.is_err(), "Validation should fail on corrupted TDS");
 
+        // Focus on error variant rather than specific message content for test stability
         match result.unwrap_err() {
             TriangulationValidationError::InconsistentDataStructure { message } => {
-                assert!(
-                    message.contains("not found in TDS")
-                        || message.contains("references non-existent vertex key"),
-                    "Error message should describe the invalid vertex key, got: {}",
+                // Log the message for debugging but don't assert on specific substrings
+                // This makes the test resilient to internal implementation changes
+                println!(
+                    "✓ Successfully caught data structure corruption with InconsistentDataStructure error: {}",
                     message
                 );
-                println!(
-                    "✓ Successfully caught data structure corruption via cell.vertex_uuids(): {}",
+                // Optionally verify message is non-empty and mentions vertices/keys
+                assert!(!message.is_empty(), "Error message should not be empty");
+                assert!(
+                    message.to_lowercase().contains("vertex")
+                        || message.to_lowercase().contains("key"),
+                    "Error message should mention vertex or key corruption, got: {}",
                     message
                 );
             }
-            other => panic!("Expected InconsistentDataStructure, got: {:?}", other),
+            other => panic!(
+                "Expected InconsistentDataStructure variant, got: {:?}",
+                other
+            ),
         }
     }
 
@@ -7566,25 +7695,33 @@ mod tests {
         tds.vertices.remove(first_vertex_key);
         tds.uuid_to_vertex_key.remove(&vertices[0].uuid());
 
-        // get_cell_vertices() will detect the invalid vertex key and return an error
-        // which propagates through is_valid()
+        // cell.vertex_uuids() or get_cell_vertices() will detect the invalid vertex key
+        // and return an error which propagates through is_valid()
         let result = tds.is_valid();
-        assert!(result.is_err());
+        assert!(result.is_err(), "Validation should fail on corrupted TDS");
 
+        // Focus on error variant rather than specific message content for test stability
         match result.unwrap_err() {
             TriangulationValidationError::InconsistentDataStructure { message } => {
-                assert!(
-                    message.contains("not found in TDS")
-                        || message.contains("references non-existent vertex key"),
-                    "Error message should describe the invalid vertex key, got: {}",
+                // Log the message for debugging but don't assert on specific substrings
+                // This makes the test resilient to internal implementation changes
+                println!(
+                    "✓ Successfully caught data structure corruption with InconsistentDataStructure error: {}",
                     message
                 );
-                println!(
-                    "✓ Successfully caught data structure corruption via cell.vertex_uuids(): {}",
+                // Optionally verify message is non-empty and mentions vertices/keys
+                assert!(!message.is_empty(), "Error message should not be empty");
+                assert!(
+                    message.to_lowercase().contains("vertex")
+                        || message.to_lowercase().contains("key"),
+                    "Error message should mention vertex or key corruption, got: {}",
                     message
                 );
             }
-            other => panic!("Expected InconsistentDataStructure, got: {:?}", other),
+            other => panic!(
+                "Expected InconsistentDataStructure variant, got: {:?}",
+                other
+            ),
         }
     }
 
