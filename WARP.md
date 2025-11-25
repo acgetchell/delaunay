@@ -13,6 +13,14 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - You may suggest git commands for the user to run, but never execute them
 - This ensures the user maintains full control over version control operations
 
+#### GitHub CLI (gh) Usage
+
+- **ALWAYS** provide explicit IDs when using `gh` commands (e.g., `gh run view <run-id>`)
+- **DO NOT** rely on interactive mode or assume `gh` can infer context
+- **REQUIRED**: When checking CI status, first get the run ID: `gh run list --workflow=<workflow>.yml --limit 1 --json databaseId --jq '.[0].databaseId'`
+- **EXAMPLE**: `gh run view <run-id> --log` instead of just `gh run view --log`
+- This ensures commands work in non-interactive environments
+
 #### Commit Message Generation (AI Assistant Shortcut)
 
 When the user asks to "write commit message" or "write commit" or "generate commit message":

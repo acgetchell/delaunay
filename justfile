@@ -128,6 +128,7 @@ compare-storage-large: _ensure-uv
 # Common tarpaulin arguments for all coverage runs
 # Note: -t 300 sets per-test timeout to 5 minutes (needed for slow CI environments)
 #       test_cavity_boundary_error can take ~3 min locally, longer in CI (was hitting default 60s timeout)
+# Excludes: storage_backend_compatibility (all tests ignored - Phase 4 evaluation tests)
 _coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/*' --lib \
   --test allocation_api \
   --test circumsphere_debug_tools \
@@ -138,7 +139,6 @@ _coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/
   --test robust_predicates_comparison \
   --test robust_predicates_showcase \
   --test serialization_vertex_preservation \
-  --test storage_backend_compatibility \
   --test tds_basic_integration \
   --test test_cavity_boundary_error \
   --test test_convex_hull_error_paths \

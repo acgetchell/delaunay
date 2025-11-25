@@ -8,11 +8,11 @@ This directory contains utility scripts for building, testing, and benchmarking 
 
 Before running these scripts, ensure you have the following dependencies installed:
 
-### Python 3.13+ (Required)
+### Python 3.11+ (Required)
 
 ```bash
-# Install Python 3.13+ and uv package manager
-brew install python@3.13 uv  # macOS with Homebrew
+# Install Python 3.11+ and uv package manager
+brew install python@3.11 uv  # macOS with Homebrew
 # or follow installation instructions for your platform
 ```
 
@@ -30,7 +30,7 @@ sudo apt-get install -y jq
 
 ### Python Utilities (Primary)
 
-All Python utilities require Python 3.13+ and support `--help` for detailed usage. The project uses modern Python with comprehensive utilities for
+All Python utilities require Python 3.11+ and support `--help` for detailed usage. The project uses modern Python with comprehensive utilities for
 benchmarking, changelog management, and hardware detection.
 
 **Available Commands**:
@@ -54,7 +54,7 @@ benchmarking, changelog management, and hardware detection.
 - **Hardware Integration**: Automatic hardware info inclusion and comparison
 - **Development Mode**: `--dev` flag for faster benchmarks (10x speedup)
 - **Timezone-Aware Dating**: Proper timezone handling for timestamps
-- **Modern Python**: Python 3.13+ with type hints and union syntax
+- **Modern Python**: Python 3.11+ with type hints and union syntax
 
 **Commands**:
 
@@ -81,7 +81,7 @@ Time Change: [+0.45%, +0.45%, +0.45%]
 ✅ OK: Time change within acceptable range
 ```
 
-**Dependencies**: Python 3.13+, `hardware_utils.py`
+**Dependencies**: Python 3.11+, `hardware_utils.py`
 
 **Regression Testing Workflow Commands**:
 
@@ -152,7 +152,7 @@ uv run changelog-utils tag vX.Y.Z --force
 - **AI Categorization**: Uses Keep a Changelog format (Added/Changed/Fixed/Removed/Deprecated/Security)
 - **GitHub Integration**: Tag messages work with `gh release create --notes-from-tag`
 
-**Dependencies**: Python 3.13+, `enhance_commits.py`, `subprocess_utils.py`, Node.js (`npx`), `auto-changelog`
+**Dependencies**: Python 3.11+, `enhance_commits.py`, `subprocess_utils.py`, Node.js (`npx`), `auto-changelog`
 
 ---
 
@@ -198,7 +198,7 @@ Hardware Information:
   Target: aarch64-apple-darwin
 ```
 
-**Dependencies**: Python 3.13+, `subprocess_utils.py`, system tools (`sysctl`, `lscpu`, PowerShell)
+**Dependencies**: Python 3.11+, `subprocess_utils.py`, system tools (`sysctl`, `lscpu`, PowerShell)
 
 ---
 
@@ -215,7 +215,7 @@ Hardware Information:
 
 **Usage**: This is an internal utility called by `changelog-utils`. Not typically used directly.
 
-**Dependencies**: Python 3.13+
+**Dependencies**: Python 3.11+
 
 ---
 
@@ -242,7 +242,7 @@ Hardware Information:
 
 **Usage**: This is a shared library used by all other Python utilities. Not typically used directly.
 
-**Dependencies**: Python 3.13+ standard library
+**Dependencies**: Python 3.11+ standard library
 
 ---
 
@@ -286,7 +286,7 @@ uv run compare-storage-backends --filter "construction/3D"
 - Recommendations based on results
 - Reproduction instructions
 
-**Dependencies**: Python 3.13+, `subprocess_utils.py`
+**Dependencies**: Python 3.11+, `subprocess_utils.py`
 
 ---
 
@@ -442,7 +442,7 @@ uv run changelog-utils generate           # Generate enhanced changelog
 uv run changelog-utils generate --debug   # Keep intermediate files for debugging
 ```
 
-**Dependencies**: Requires Python 3.13+, `uv`, `git`, and access to CHANGELOG.md
+**Dependencies**: Requires Python 3.11+, `uv`, `git`, and access to CHANGELOG.md
 
 ---
 
@@ -620,7 +620,7 @@ The repository includes automated performance regression testing via GitHub Acti
 2. **Permission Errors**: Ensure scripts are executable with `chmod +x scripts/*.sh`
 3. **Path Issues**: Run scripts from the project root directory
 4. **Missing Baseline**: Create a git tag to automatically generate baseline via CI, or run `uv run benchmark-utils generate-baseline` locally
-5. **Python Version**: Ensure Python 3.13+ is installed and available
+5. **Python Version**: Ensure Python 3.11+ is installed and available
 6. **Baseline Format Issues**: The system automatically handles different baseline file formats:
    - `baseline-vX.Y.Z.txt` (from generate-baseline workflow) → converted to `baseline_results.txt`
    - `baseline_results.txt` (standard format) → used directly
@@ -689,7 +689,7 @@ All scripts follow consistent patterns:
 
 ### Python Scripts
 
-- **Modern Python**: Python 3.13+ with type hints and union syntax
+- **Modern Python**: Python 3.11+ with type hints and union syntax
 - **Security**: Uses `subprocess_utils.py` for secure subprocess execution
 - **Error Handling**: Custom exception classes with clear error messages
 - **Configuration**: Uses `pyproject.toml` for dependencies and tool configuration

@@ -5,7 +5,7 @@ Shared utilities for changelog operations.
 This module provides common functionality used by multiple scripts
 for changelog generation, parsing, and git tag management.
 
-Requires Python 3.13+ for modern typing features and datetime.UTC.
+Requires Python 3.11+ for PEP 604 union types and datetime.UTC.
 """
 
 import argparse

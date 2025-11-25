@@ -53,9 +53,9 @@ The results are automatically generated and updated by the benchmark infrastruct
 
 ### Performance Ranking
 
-1. **insphere** - (fastest) - Consistently best performance across all tests
-2. **insphere_distance** - (middle) - ~1.1x slower than fastest
-3. **insphere_lifted** - (slowest) - ~1.1x slower than fastest
+1. **insphere** - (fastest average) - Best performance on boundary vertex cases, competitive on others
+2. **insphere_distance** - (middle) - ~1.1x slower than fastest, best on 3D/4D basic cases
+3. **insphere_lifted** - (slowest) - ~1.1x slower than fastest, best on 2D/5D basic cases
 
 ### Numerical Accuracy Analysis
 

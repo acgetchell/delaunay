@@ -7,7 +7,7 @@ name = "delaunay-scripts"
 version = "0.4.1"
 description = "Python utility scripts for the delaunay Rust library"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 license = {text = "BSD-3-Clause"}
 authors = [
     {name = "Adam Getchell", email = "adam@adamgetchell.org"},
@@ -20,6 +20,8 @@ classifiers = [
     "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Mathematics",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -52,7 +54,7 @@ py-modules = ["benchmark_utils", "changelog_utils", "compare_storage_backends", 
 
 [tool.ruff]
 line-length = 150
-target-version = "py313"
+target-version = "py311"
 src = ["scripts"]
 
 [tool.ruff.lint]
