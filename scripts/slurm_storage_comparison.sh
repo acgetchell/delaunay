@@ -1,12 +1,13 @@
-#!/bin/bash
+#!/bin/bash -l
 #SBATCH --job-name=delaunay-storage-comparison
+#SBATCH --account=adamgrp
+#SBATCH --partition=med2
 #SBATCH --output=slurm-%j-storage-comparison.out
 #SBATCH --error=slurm-%j-storage-comparison.err
 #SBATCH --time=12:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --partition=compute
 
 # Storage Backend Comparison for Delaunay Triangulation
 # Compares SlotMap vs DenseSlotMap performance using Phase 4 benchmarks
@@ -43,10 +44,22 @@ echo "Start time: $(date)"
 echo "=================================="
 echo
 
-# Load any required modules (adjust for your cluster)
-# Examples:
-module load rust/1.91.0
-module load python/3.11
+# Initialize module system if possible
+if [[ -f /etc/profile.d/modules.sh ]]; then
+	# shellcheck disable=SC1091
+	source /etc/profile.d/modules.sh
+elif [[ -f /usr/share/lmod/lmod/init/bash ]]; then
+	# shellcheck disable=SC1091
+	source /usr/share/lmod/lmod/init/bash
+fi
+
+# Load modules if the module system is available
+if command -v module &>/dev/null; then
+	module load rust/1.91.0 || echo "⚠️  Warning: failed to load rust/1.91.0" >&2
+	module load python/3.11 || echo "⚠️  Warning: failed to load python/3.11" >&2
+else
+	echo "ℹ️  module command not available; using existing PATH for rust/python" >&2
+fi
 
 # Verify Rust is available
 if ! command -v cargo &>/dev/null; then
@@ -65,6 +78,14 @@ PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 cd "$PROJECT_DIR"
 echo "📂 Project directory: $PROJECT_DIR"
 echo
+
+# Use node-local scratch for build artifacts if available
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+	SCRATCH_BASE="${SLURM_TMPDIR:-${TMPDIR:-/tmp}}"
+	export CARGO_TARGET_DIR="${SCRATCH_BASE}/delaunay-target-${SLURM_JOB_ID}"
+	mkdir -p "$CARGO_TARGET_DIR"
+	echo "📂 Using CARGO_TARGET_DIR=$CARGO_TARGET_DIR"
+fi
 
 # Create artifacts directory
 mkdir -p artifacts
@@ -85,31 +106,46 @@ echo "   Timeout: $TIMEOUT"
 echo "   Threads: ${SLURM_CPUS_PER_TASK:-$(nproc)}"
 echo
 
+# Track status of each phase for summary
+SLOTMAP_STATUS="not-run"
+DENSESLOTMAP_STATUS="not-run"
+
 # Ensure project is clean and dependencies are up to date
 echo "🧹 Cleaning previous build artifacts..."
-cargo clean
+if ! cargo clean; then
+	echo "⚠️  Warning: cargo clean failed (likely NFS .nfs* file still in use); continuing anyway." >&2
+fi
 echo
 
-echo "📦 Updating dependencies..."
-cargo update
-echo
+if [[ "${CARGO_UPDATE_IN_JOB:-0}" == "1" ]]; then
+	echo "📦 Updating dependencies (CARGO_UPDATE_IN_JOB=1)..."
+	cargo update
+	echo
+else
+	echo "📦 Skipping cargo update (CARGO_UPDATE_IN_JOB=0)."
+	echo
+fi
 
 # Run benchmarks with SlotMap (default backend)
 echo "=================================="
 echo "Phase 1: SlotMap Benchmarks"
 echo "=================================="
+SLOTMAP_STATUS="pending"
 SLOTMAP_START=$(date +%s)
 echo "⏰ Start time: $(date)"
 echo
 
 if timeout "$TIMEOUT" cargo bench --bench large_scale_performance -- --save-baseline slotmap; then
 	echo "✅ SlotMap benchmarks completed successfully"
+	SLOTMAP_STATUS="ok"
 else
 	EXIT_CODE=$?
 	if [[ $EXIT_CODE -eq 124 ]]; then
 		echo "⏰ SlotMap benchmarks timed out after $TIMEOUT"
+		SLOTMAP_STATUS="timeout"
 	else
 		echo "❌ SlotMap benchmarks failed with exit code: $EXIT_CODE"
+		SLOTMAP_STATUS="failed"
 		exit $EXIT_CODE
 	fi
 fi
@@ -120,26 +156,32 @@ echo "⏱️  Duration: ${SLOTMAP_DURATION}s ($(date -ud "@$SLOTMAP_DURATION" +%
 echo
 
 # Clean build artifacts before switching backends
-echo "🧹 Cleaning build artifacts..."
-cargo clean
+echo "🧹 Cleaning previous build artifacts..."
+if ! cargo clean; then
+	echo "⚠️  Warning: cargo clean failed (likely NFS .nfs* file still in use); continuing anyway." >&2
+fi
 echo
 
 # Run benchmarks with DenseSlotMap backend
 echo "=================================="
 echo "Phase 2: DenseSlotMap Benchmarks"
 echo "=================================="
+DENSESLOTMAP_STATUS="pending"
 DENSESLOTMAP_START=$(date +%s)
 echo "⏰ Start time: $(date)"
 echo
 
 if timeout "$TIMEOUT" cargo bench --bench large_scale_performance --features dense-slotmap -- --save-baseline denseslotmap; then
 	echo "✅ DenseSlotMap benchmarks completed successfully"
+	DENSESLOTMAP_STATUS="ok"
 else
 	EXIT_CODE=$?
 	if [[ $EXIT_CODE -eq 124 ]]; then
 		echo "⏰ DenseSlotMap benchmarks timed out after $TIMEOUT"
+		DENSESLOTMAP_STATUS="timeout"
 	else
 		echo "❌ DenseSlotMap benchmarks failed with exit code: $EXIT_CODE"
+		DENSESLOTMAP_STATUS="failed"
 		exit $EXIT_CODE
 	fi
 fi
@@ -190,7 +232,7 @@ cargo criterion --baseline slotmap --load-baseline denseslotmap
 ## Artifacts
 
 Benchmark results saved in:
-- \`target/criterion/\` - Detailed Criterion reports
+- \`criterion/\` under the job's \`CARGO_TARGET_DIR\` - Detailed Criterion reports
 - Baselines: \`slotmap\` and \`denseslotmap\`
 
 ---
@@ -217,9 +259,12 @@ mkdir -p "$ARCHIVE_DIR"
 
 echo "📦 Archiving results..."
 # Copy Criterion results
-if [[ -d target/criterion ]]; then
-	cp -r target/criterion "$ARCHIVE_DIR/"
-	echo "   ✓ Copied Criterion reports"
+CRIT_DIR="${CARGO_TARGET_DIR:-target}/criterion"
+if [[ -d "$CRIT_DIR" ]]; then
+	cp -r "$CRIT_DIR" "$ARCHIVE_DIR/"
+	echo "   ✓ Copied Criterion reports from $CRIT_DIR"
+else
+	echo "ℹ️  No Criterion directory found at $CRIT_DIR; skipping copy."
 fi
 
 # Copy report
@@ -228,16 +273,25 @@ echo "   ✓ Copied comparison report"
 
 # Create tarball
 TARBALL="artifacts/storage-comparison-${SLURM_JOB_ID:-local}.tar.gz"
-tar -czf "$TARBALL" -C artifacts "storage-comparison-${SLURM_JOB_ID:-local}"
-echo "   ✓ Created archive: $TARBALL"
-echo
+if tar -czf "$TARBALL" -C artifacts "storage-comparison-${SLURM_JOB_ID:-local}"; then
+	echo "   ✓ Created archive: $TARBALL"
+else
+	echo "⚠️  Warning: failed to create archive $TARBALL" >&2
+fi
 
 # Print summary
 TOTAL_DURATION=$((DENSESLOTMAP_END - SLOTMAP_START))
 echo "=================================="
 echo "Job Summary"
 echo "=================================="
-echo "Status: ✅ COMPLETED"
+echo "Status:"
+echo "  SlotMap:      $SLOTMAP_STATUS"
+echo "  DenseSlotMap: $DENSESLOTMAP_STATUS"
+OVERALL_STATUS="COMPLETED"
+if [[ "$SLOTMAP_STATUS" != "ok" || "$DENSESLOTMAP_STATUS" != "ok" ]]; then
+	OVERALL_STATUS="COMPLETED_WITH_ISSUES"
+fi
+echo "Overall: $OVERALL_STATUS"
 echo "Total Duration: ${TOTAL_DURATION}s ($(date -ud "@$TOTAL_DURATION" +%H:%M:%S))"
 echo "Report: $REPORT_FILE"
 echo "Archive: $TARBALL"

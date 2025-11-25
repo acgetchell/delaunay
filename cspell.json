@@ -26,6 +26,7 @@
     "**/.*.{md,yml,yaml,toml,json}"
   ],
   "words": [
+    "adamgrp",
     "Algorithmica",
     "Alpes",
     "Antisymmetry",
@@ -242,6 +243,7 @@
     "levelname",
     "libc",
     "libm",
+    "lmod",
     "logicalcpu",
     "luacheck",
     "machdep",
