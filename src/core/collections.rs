@@ -408,7 +408,10 @@ pub type CellVertexKeysMap = FastHashMap<CellKey, CellVertexBuffer>;
 
 /// Size constant for operations that may affect multiple cells during cleanup.
 /// 16 provides generous headroom for duplicate removal and topology repair operations.
-const CLEANUP_OPERATION_BUFFER_SIZE: usize = 16;
+///
+/// This constant is publicly exposed to allow external modules to derive buffer sizes
+/// from it, ensuring consistent sizing across the codebase.
+pub const CLEANUP_OPERATION_BUFFER_SIZE: usize = 16;
 
 /// Size constant for operations that work with a small number of valid cells.
 /// 4 is sufficient since valid facets are shared by at most 2 cells, with some headroom.
@@ -446,6 +449,33 @@ pub type ViolationBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
 /// - **Typical Size**: 4-8 cells in well-conditioned triangulations (D+1 for simple cavity)
 pub type CellKeyBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
 
+/// Collection for tracking bad cells (Delaunay violations) during insertion.
+/// Bad cells are those whose circumsphere contains the newly inserted point.
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Up to 16 cells (covers most cavity scenarios)
+/// - **Use Case**: Bowyer-Watson algorithm, `find_bad_cells()` return type
+/// - **Performance**: Avoids heap allocation in hot path during point insertion
+/// - **Typical Size**: 1-8 cells in well-conditioned triangulations
+///
+/// # Usage
+///
+/// This buffer is used as the return type for `find_bad_cells()` and related methods.
+/// The capacity of 16 is generous for typical Delaunay cavities while remaining stack-allocated.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::BadCellBuffer;
+/// use delaunay::core::triangulation_data_structure::CellKey;
+///
+/// // Accumulate bad cells during Bowyer-Watson insertion
+/// let mut bad_cells: BadCellBuffer = BadCellBuffer::new();
+/// // bad_cells.push(cell_key); // Stack allocated for typical cavities
+/// ```
+pub type BadCellBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
+
 /// Collection for tracking valid cells during facet sharing fixes.
 /// Most invalid sharing situations involve only a few cells per facet.
 ///
@@ -473,6 +503,35 @@ pub type ValidCellsBuffer = SmallBuffer<CellKey, SMALL_CELL_OPERATION_BUFFER_SIZ
 /// - Make the API more self-documenting
 /// - Enable future extensions without breaking changes
 pub type FacetInfoBuffer = SmallBuffer<FacetHandle, MAX_PRACTICAL_DIMENSION_SIZE>;
+
+/// Buffer for storing cells that share a facet.
+/// Facets are shared by at most 2 cells (boundary=1, interior=2).
+///
+/// # Optimization Rationale
+///
+/// - **Stack Allocation**: Exactly 2 cells (no heap allocation for valid triangulations)
+/// - **Use Case**: Facet-to-cells mapping validation, cavity boundary detection
+/// - **Performance**: Eliminates heap allocation when invariant holds (≤2 cells per facet)
+/// - **Memory Efficiency**: 2 × 8 bytes = 16 bytes on stack per facet
+///
+/// # Invariant
+///
+/// Valid triangulations have the following facet sharing invariants:
+/// - **Boundary facets**: Shared by exactly 1 cell (hull facets)
+/// - **Interior facets**: Shared by exactly 2 cells (adjacent cells)
+/// - **Invalid**: Shared by >2 cells (indicates TDS corruption)
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::FacetSharingCellsBuffer;
+/// use delaunay::core::triangulation_data_structure::CellKey;
+///
+/// // Store cells sharing a facet (always ≤2 cells)
+/// let mut sharing_cells: FacetSharingCellsBuffer = FacetSharingCellsBuffer::new();
+/// // sharing_cells.push(cell_key); // Stack allocated, no heap
+/// ```
+pub type FacetSharingCellsBuffer = SmallBuffer<CellKey, 2>;
 
 // =============================================================================
 // SEMANTIC SIZE CONSTANTS AND TYPE ALIASES

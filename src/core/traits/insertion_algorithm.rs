@@ -768,7 +768,8 @@ where
 
     // Collect a small sample of existing vertices (excluding the candidate
     // itself) to use in orientation tests.
-    let mut existing_points = Vec::new();
+    // Use stack-allocated buffer (MAX_DEGENERACY_CHECK_VERTICES=16 fits on stack)
+    let mut existing_points = SmallBuffer::<Point<T, D>, MAX_DEGENERACY_CHECK_VERTICES>::new();
     for (_vkey, existing) in tds.vertices() {
         if existing.uuid() == candidate_uuid {
             continue;
@@ -790,10 +791,8 @@ where
         // collinear with them (degenerate triangle in 2D).
         for i in 0..existing_points.len() {
             for j in (i + 1)..existing_points.len() {
-                let mut simplex = Vec::with_capacity(3);
-                simplex.push(existing_points[i]);
-                simplex.push(existing_points[j]);
-                simplex.push(candidate_point);
+                // Stack-allocate simplex (3 points for 2D triangle)
+                let simplex = [existing_points[i], existing_points[j], candidate_point];
 
                 match robust_orientation::<T, D>(&simplex, &config) {
                     Ok(Orientation::DEGENERATE) => {
@@ -813,11 +812,13 @@ where
         for i in 0..existing_points.len() {
             for j in (i + 1)..existing_points.len() {
                 for k in (j + 1)..existing_points.len() {
-                    let mut simplex = Vec::with_capacity(4);
-                    simplex.push(existing_points[i]);
-                    simplex.push(existing_points[j]);
-                    simplex.push(existing_points[k]);
-                    simplex.push(candidate_point);
+                    // Stack-allocate simplex (4 points for 3D tetrahedron)
+                    let simplex = [
+                        existing_points[i],
+                        existing_points[j],
+                        existing_points[k],
+                        candidate_point,
+                    ];
 
                     match robust_orientation::<T, D>(&simplex, &config) {
                         Ok(Orientation::DEGENERATE) => {
@@ -2074,7 +2075,10 @@ where
     ///
     /// # Returns
     ///
-    /// A vector of bad cell keys on success.
+    /// A [`BadCellBuffer`](crate::core::collections::BadCellBuffer) containing the keys of cells
+    /// whose circumsphere contains the vertex. This is a stack-allocated buffer (capacity 16) that
+    /// provides efficient performance for typical cavities while automatically falling back to heap
+    /// for larger cavities. The buffer derefs to `&[CellKey]` for convenient slice access.
     ///
     /// # Errors
     ///
@@ -2086,7 +2090,7 @@ where
         &mut self,
         tds: &Tds<T, U, V, D>,
         vertex: &Vertex<T, U, D>,
-    ) -> Result<Vec<crate::core::triangulation_data_structure::CellKey>, BadCellsError>
+    ) -> Result<crate::core::collections::BadCellBuffer, BadCellsError>
     where
         T: AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
     {
@@ -2095,7 +2099,9 @@ where
             return Err(BadCellsError::NoCells);
         }
 
-        let mut bad_cells = Vec::with_capacity(tds.number_of_cells());
+        // Use BadCellBuffer (stack-allocated, capacity 16) for typical small cavities
+        // Falls back to heap for larger cavities (pathological or high-D cases)
+        let mut bad_cells = crate::core::collections::BadCellBuffer::new();
         let mut cells_tested = 0;
         let mut degenerate_count = 0;
         // Reuse a small stack-allocated buffer to avoid heap traffic
