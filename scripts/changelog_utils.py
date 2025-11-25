@@ -5,7 +5,7 @@ Shared utilities for changelog operations.
 This module provides common functionality used by multiple scripts
 for changelog generation, parsing, and git tag management.
 
-Requires Python 3.13+ for modern typing features and datetime.UTC.
+Requires Python 3.11+ for PEP 604 union types and datetime.UTC.
 """
 
 import argparse
@@ -635,6 +635,52 @@ class ChangelogUtils:
         return re.sub(r"'[0-9 *-]+'|\"[0-9 *-]+\"", protect_match, line)
 
     @staticmethod
+    def _convert_setext_to_atx(body_lines: list[str]) -> list[str]:
+        """
+        Convert setext-style headings (underlined with === or ---) to ATX style (####).
+
+        Setext-style headings use underlines:
+        - Level 1: Text\n====
+        - Level 2: Text\n----
+
+        These are converted to #### to avoid conflicts with changelog structure
+        and to satisfy markdownlint requirements.
+
+        Args:
+            body_lines: List of body lines that may contain setext headings
+
+        Returns:
+            List of lines with setext headings converted to ATX style
+        """
+        result = []
+        i = 0
+        while i < len(body_lines):
+            # Check if the next line is a setext underline
+            if i + 1 < len(body_lines):
+                current_line = body_lines[i].strip()
+                next_line = body_lines[i + 1].strip()
+
+                # Check for setext level 1 (=== underline) or level 2 (--- underline)
+                if current_line and next_line:
+                    if re.match(r"^=+$", next_line):
+                        # Level 1 heading - convert to ####
+                        result.append(f"#### {current_line}")
+                        i += 2  # Skip both the heading and underline
+                        continue
+                    if re.match(r"^-+$", next_line) and not re.match(r"^-\s", current_line):
+                        # Level 2 heading - convert to ####
+                        # (but not if current line starts with "- " which is a list item)
+                        result.append(f"#### {current_line}")
+                        i += 2  # Skip both the heading and underline
+                        continue
+
+            # Not a setext heading, keep the line as-is
+            result.append(body_lines[i])
+            i += 1
+
+        return result
+
+    @staticmethod
     def _downgrade_headers(line: str) -> str:
         """
         Downgrade markdown headers to #### for commit message bodies.
@@ -676,6 +722,9 @@ class ChangelogUtils:
         """
         if not body_lines:
             return []
+
+        # First, convert setext-style headings to ATX style
+        body_lines = ChangelogUtils._convert_setext_to_atx(body_lines)
 
         body_content = []
         for line in body_lines:

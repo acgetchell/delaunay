@@ -122,12 +122,13 @@ Before you begin, ensure you have:
    
    # See all available commands
    just --list
+   just help-workflows   # Show common workflow patterns
    
    # Common workflows (from quick to comprehensive)
-   just dev             # Quick development cycle (format, lint, test)
-   just quality         # All quality checks + tests
-   just ci              # CI simulation (quality + release tests + benchmarks)
-   just commit-check    # Pre-commit validation (most thorough: CI + examples)
+   just ci              # Fast iteration (linting + lib/doc tests + bench compile)
+   just commit-check    # Pre-commit validation (linting + all tests + examples)
+   just commit-check-slow # Comprehensive with slow tests (100+ vertices)
+   just ci-baseline     # CI + save performance baseline
    
    # Granular quality checks
    just lint            # All linting (code + docs + config)
@@ -162,7 +163,7 @@ The project uses:
 
 When you enter the project directory, `rustup` will automatically:
 
-- **Install the correct Rust version** (1.90.0) if you don't have it
+- **Install the correct Rust version** (1.91.0) if you don't have it
 - **Switch to the pinned version** for this project
 - **Install required components** (clippy, rustfmt, rust-docs, rust-src)
 - **Add cross-compilation targets** for supported platforms
@@ -344,28 +345,34 @@ just --version
 ```bash
 # See all available commands
 just --list
-just help-workflows   # Show organized workflow help
+just help-workflows   # Show common workflow patterns
 
-# Quick development cycle
-just dev              # Format, lint, and test (fast feedback)
+# Quick iteration cycle
+just ci               # Fast iteration (linting + lib/doc tests + bench compile)
 
-# Comprehensive quality checks
-just quality          # All quality checks + tests (Rust + Python)
-
-# CI simulation
-just ci               # Quality + release tests + benchmark compilation
-
-# Pre-commit validation (most thorough)
-just commit-check     # CI + examples validation
+# Pre-commit validation
+just commit-check     # Pre-commit validation (linting + all tests + examples)
+just commit-check-slow # Comprehensive with slow tests (100+ vertices)
+just ci-baseline      # CI + save performance baseline
 
 # Testing workflows
-just test-all         # All tests (Rust + Python)
-just test-release     # Tests in release mode (performance)
-just coverage         # Generate HTML coverage report
+just test             # Lib and doc tests only (fast, used by CI)
+just test-integration # All integration tests (includes proptests)
+just test-all         # All tests (lib + doc + integration + Python)
+just test-python      # Python tests only (pytest)
+just test-release     # All tests in release mode
+just test-slow        # Run slow/stress tests with --features slow-tests
+just test-slow-release # Slow tests in release mode (faster)
+just coverage         # Generate HTML coverage report (5-min timeout per test)
+just coverage-ci      # Generate XML coverage for CI (5-min timeout per test)
 
 # Benchmark workflows
+just bench            # Run all benchmarks
 just bench-baseline   # Generate performance baseline
+just bench-ci         # CI regression benchmarks (fast, ~5-10 min)
 just bench-compare    # Compare against baseline
+just bench-dev        # Development mode (10x faster, ~1-2 min)
+just bench-quick      # Quick validation (minimal samples, ~30 sec)
 ```
 
 ### Individual Task Recipes
@@ -374,43 +381,62 @@ just bench-compare    # Compare against baseline
 
 - `just fmt` - Format all code
 - `just clippy` - Run strict clippy
-- `just lint` - Format + clippy + doc validation
+- `just doc-check` - Validate documentation builds
+- `just lint` - All linting (code + docs + config)
+- `just lint-code` - Code linting (Rust, Python, Shell)
+- `just lint-docs` - Documentation linting (Markdown, Spelling)
+- `just lint-config` - Configuration validation (JSON, TOML, Actions)
 - `just python-lint` - Format and lint Python scripts
 - `just spell-check` - Check spelling across project files
+- `just shell-lint` - Format and lint shell scripts
+- `just markdown-lint` - Lint markdown files
+- `just action-lint` - GitHub Actions workflow validation
 
 #### Testing
 
-- `just test` - Standard library and doc tests
+- `just test` - Lib and doc tests only (fast, used by CI)
+- `just test-integration` - All integration tests (includes proptests)
+- `just test-all` - All tests (lib + doc + integration + Python)
+- `just test-python` - Python tests only (pytest)
+- `just test-release` - All tests in release mode
+- `just test-slow` - Run slow/stress tests with --features slow-tests
+- `just test-slow-release` - Slow tests in release mode (faster)
 - `just test-debug` - Debug tools with output
 - `just test-allocation` - Memory allocation profiling
 - `just examples` - Run all examples to verify functionality
 
-#### Validation
+#### Validation and Linting
 
 - `just validate-json` - Validate all JSON files
 - `just validate-toml` - Validate all TOML files
 - `just shell-lint` - Format and lint shell scripts
 - `just markdown-lint` - Lint markdown files
+- `just action-lint` - GitHub Actions workflow validation
+- `just spell-check` - Check spelling across project files
 
 #### Utilities
 
 - `just setup` - Set up development environment
 - `just clean` - Clean build artifacts
+- `just build` - Build the project
+- `just build-release` - Build in release mode
 - `just changelog` - Generate enhanced changelog
-- `just help-workflows` - Show workflow guidance
+- `just changelog-tag <version>` - Create git tag with changelog content
+- `just help-workflows` - Show common workflow patterns
 
 ### Workflow Recommendations
 
 **During active development:**
 
 ```bash
-just dev              # Quick cycle: format, lint, test
+just ci               # Fast iteration: format, lint, test (matches CI)
 ```
 
 **Before committing:**
 
 ```bash
-just commit-check     # Most comprehensive: CI + examples
+just commit-check     # Pre-commit validation: lint + all tests + examples
+just commit-check-slow # Also includes slow/stress tests (100+ vertices)
 ```
 
 **When working on performance:**
@@ -419,12 +445,20 @@ just commit-check     # Most comprehensive: CI + examples
 just bench-baseline   # Generate baseline
 # Make changes...
 just bench-compare    # Check for regressions
+just bench-dev        # Quick development iteration (10x faster)
 ```
 
 **Testing CI locally:**
 
 ```bash
-just ci               # Simulate what CI runs
+just ci               # Fast iteration (linting + lib/doc tests + bench compile)
+```
+
+**See all available commands:**
+
+```bash
+just --list           # Show all commands
+just help-workflows   # Show common workflow patterns with descriptions
 ```
 
 ## Development Workflow
@@ -486,7 +520,7 @@ The project uses comprehensive CI workflows:
 - **Security** (`.github/workflows/audit.yml`): Dependency vulnerability scanning
 - **Code Quality** (`.github/workflows/rust-clippy.yml`): Strict linting
 - **Codacy** (`.github/workflows/codacy.yml`): Code quality analysis using project configurations
-- **Coverage** (`.github/workflows/codecov.yml`): Test coverage tracking
+- **Coverage** (`.github/workflows/codecov.yml`): Test coverage tracking with 5-minute per-test timeout
 
 All PRs must pass CI checks before merging.
 

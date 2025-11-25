@@ -57,10 +57,11 @@ cargo install just
 just setup            # Installs all development tools and dependencies
 
 # Development workflow
-just dev              # Quick development cycle: format, lint, test
-just quality          # Comprehensive quality checks before pushing
-just commit-check     # Verify your changes will pass CI
+just ci               # Fast iteration (linting + lib/doc tests + bench compile)
+just commit-check     # Pre-commit validation (linting + all tests + examples)
+just commit-check-slow # Comprehensive with slow tests (100+ vertices)
 just --list           # See all available commands
+just help-workflows   # Show common workflow patterns
 ```
 
 **Try the examples:**
@@ -109,7 +110,7 @@ For a comprehensive list of academic references and bibliographic citations used
 > - [KiloCode]
 > - [WARP](WARP.md)
 >
-> All code was reviewed and/or edited by the author.
+> All code was written and/or reviewed and validated by the author.
 
 [Rust]: https://rust-lang.org
 [CGAL]: https://www.cgal.org/

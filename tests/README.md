@@ -619,6 +619,8 @@ normal usage. Focuses on defensive validation and staleness detection.
 
 Reproduces and tests specific cavity boundary errors encountered during triangulation, ensuring fixes remain effective.
 
+**Note**: This test can be slow (~3 minutes locally, longer in CI). The comprehensive test is gated behind `EXPENSIVE_TESTS=1` to avoid excessive CI time.
+
 **Purpose:**
 
 - Systematic reproduction of reported boundary errors
@@ -770,7 +772,7 @@ just test-debug
 All integration tests are automatically run in the CI pipeline:
 
 - **GitHub Actions**: `.github/workflows/ci.yml`
-- **Coverage Tracking**: Results are uploaded to Codecov
+- **Coverage Tracking**: Results are uploaded to Codecov (5-minute per-test timeout for slow CI environments)
 - **Performance Regression**: Baseline comparisons are performed
 
 ### Development Testing
