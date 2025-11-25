@@ -45,8 +45,8 @@ echo
 
 # Load any required modules (adjust for your cluster)
 # Examples:
-# module load rust/1.90.0
-# module load python/3.11
+module load rust/1.91.0
+module load python/3.11
 
 # Verify Rust is available
 if ! command -v cargo &>/dev/null; then

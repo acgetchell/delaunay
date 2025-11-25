@@ -156,6 +156,7 @@
     "checkmake",
     "choco",
     "circumcenter",
+    "clonable",
     "circumcircle",
     "circumradius",
     "circumsphere",
@@ -322,6 +323,7 @@
     "seahash",
     "semgrep",
     "serde",
+    "setext",
     "setuptools",
     "sharings",
     "shellcheck",
@@ -368,6 +370,7 @@
     "vkeys",
     "wasi",
     "winget",
+    "wordlist",
     "xlarge",
     "zenodo",
     "zerocopy"
