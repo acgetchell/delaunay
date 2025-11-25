@@ -1609,8 +1609,23 @@ where
         // Increased from 32/8 to handle larger point sets (100+ vertices) in 2D-5D.
         // The limits scale with dimensionality since higher dimensions require more
         // iterations to resolve local violations through cavity-based refinement.
-        const MAX_GLOBAL_REPAIR_ITERATIONS: usize = 128;
-        const MAX_REPAIRS_PER_ITERATION: usize = 32;
+        // TODO(issue#XXX): Increased from 128→512→2048 to handle large point sets (1000+ vertices)
+        // that were hitting the iteration limit. The repair algorithm removes vertices that
+        // cannot be reinserted, requiring many iterations for large point sets.
+        // Root cause: Each iteration can only repair MAX_REPAIRS_PER_ITERATION violations,
+        // and some repairs fail, requiring vertex removal and restarting the scan.
+        const MAX_GLOBAL_REPAIR_ITERATIONS: usize = 2048;
+        const MAX_REPAIRS_PER_ITERATION: usize = 64; // Increased from 32 to process more violations per iteration
+
+        // Diagnostic logging enabled via environment variable
+        let log_enabled = std::env::var("DELAUNAY_DEBUG_REPAIR").is_ok();
+        if log_enabled {
+            eprintln!(
+                "[REPAIR] Starting global Delaunay repair for TDS with {} vertices, {} cells",
+                tds.number_of_vertices(),
+                tds.number_of_cells()
+            );
+        }
 
         for iteration in 0..MAX_GLOBAL_REPAIR_ITERATIONS {
             // Find all currently violating cells
@@ -1643,8 +1658,22 @@ where
 
             if violating_cells.is_empty() {
                 // No remaining violations – run final global validator to be sure
+                if log_enabled {
+                    eprintln!(
+                        "[REPAIR] Iteration {}: No violations found, repair complete",
+                        iteration
+                    );
+                }
                 return <Self as InsertionAlgorithm<T, U, V, D>>::validate_no_delaunay_violations(
                     tds,
+                );
+            }
+
+            let num_violations = violating_cells.len();
+            if log_enabled {
+                eprintln!(
+                    "[REPAIR] Iteration {}: Found {} violating cells",
+                    iteration, num_violations
                 );
             }
 
@@ -1728,6 +1757,12 @@ where
 
                 let Some(witness_vertex) = witness_vertex else {
                     // No suitable witness found for this cell – skip and try the next one
+                    if log_enabled {
+                        eprintln!(
+                            "[REPAIR] Iteration {}: No witness vertex found for cell {:?}",
+                            iteration, cell_key
+                        );
+                    }
                     continue;
                 };
 
@@ -1744,6 +1779,12 @@ where
                         // Record statistics and note progress
                         self.stats.record_vertex_insertion(&info);
                         repairs_performed += 1;
+                        if log_enabled {
+                            eprintln!(
+                                "[REPAIR] Iteration {}: Successfully repaired cell {:?} (strategy: {:?}, cells +{} -{}, total repairs: {})",
+                                iteration, cell_key, info.strategy, info.cells_created, info.cells_removed, repairs_performed
+                            );
+                        }
                     }
                     Err(e) => {
                         // Decide whether this failure is recoverable in the sense of
@@ -1770,6 +1811,12 @@ where
                             // remove it (and its incident cells) from the
                             // triangulation. This reduces the vertex set but keeps
                             // the remaining triangulation valid.
+                            if log_enabled {
+                                eprintln!(
+                                    "[REPAIR] Iteration {}: Removing unsalvageable witness vertex at {:?} (error: {})",
+                                    iteration, witness_vertex.point(), e
+                                );
+                            }
                             self.unsalvageable_vertices.push(witness_vertex);
                             if let Err(remove_err) = tds.remove_vertex(&witness_vertex) {
                                 return Err(TriangulationConstructionError::ValidationError(
@@ -1810,6 +1857,12 @@ where
             if repairs_performed == 0 {
                 // No progress made despite existing violations – abort and
                 // surface a comprehensive validation error.
+                if log_enabled {
+                    eprintln!(
+                        "[REPAIR] Iteration {}: No progress made ({} violations remain, 0 repairs performed)",
+                        iteration, num_violations
+                    );
+                }
                 return Err(TriangulationConstructionError::ValidationError(
                     TriangulationValidationError::DelaunayViolation {
                         message: format!(
@@ -1818,6 +1871,13 @@ where
                         ),
                     },
                 ));
+            }
+
+            if log_enabled {
+                eprintln!(
+                    "[REPAIR] Iteration {}: Completed {} repairs",
+                    iteration, repairs_performed
+                );
             }
         }
 
