@@ -2451,8 +2451,8 @@ where
     /// # Errors
     ///
     /// Returns a `TriangulationValidationError` if:
-    /// - A vertex UUID in a cell cannot be found in the vertex UUID-to-key mapping (`InconsistentDataStructure`)
-    /// - A cell key cannot be found in the cell UUID-to-key mapping (`InconsistentDataStructure`)
+    /// - A cell references a non-existent vertex key (`InconsistentDataStructure`)
+    /// - A cell key cannot be found in the cells storage map (`InconsistentDataStructure`)
     /// - A vertex key cannot be found in the vertices storage map (`InconsistentDataStructure`)
     ///
     /// # Algorithm
@@ -4213,8 +4213,8 @@ where
     /// This is useful for validation where you want to detect duplicates
     /// without automatically removing them.
     ///
-    /// **Phase 1 Migration**: This method now uses the optimized `get_cell_vertices`
-    /// method to eliminate UUID→Key hash lookups, improving performance.
+    /// **Implementation Note**: This method uses `Cell::vertex_uuids()` to get canonical
+    /// vertex UUIDs for each cell, which are then sorted and compared for duplicate detection.
     ///
     /// # Errors
     ///

@@ -488,6 +488,9 @@ where
     /// meaning the hull's facet handles are still valid for this TDS.
     /// Returns `false` if the TDS has been modified since the hull was created.
     ///
+    /// **Empty hull special case**: An empty hull (with no facets) is always considered
+    /// valid, since it contains no facet handles that could become stale.
+    ///
     /// # Arguments
     ///
     /// * `tds` - The triangulation data structure to check against

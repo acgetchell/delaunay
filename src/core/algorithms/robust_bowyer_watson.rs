@@ -462,6 +462,9 @@ where
 
         // Create all new cells BEFORE removing bad cells
         // Use stack allocation for typical cavity sizes (≤16 cells) - already using CellKeyBuffer
+        // Capacity assumptions:
+        // - boundary_infos.len() ≤ CLEANUP_OPERATION_BUFFER_SIZE (16) for typical cavities
+        // - cell_vertices uses MAX_PRACTICAL_DIMENSION_SIZE (8) for D+1 vertices (D≤7)
         let mut created_cell_keys = CellKeyBuffer::with_capacity(boundary_infos.len());
         for info in &boundary_infos {
             let mut cell_vertices: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -501,6 +504,7 @@ where
         // Phase 3: Save bad cells for potential restoration, then remove them
         // After this point, we must use restore_cavity_insertion_failure on error
         // Use SmallBuffer for stack allocation (typical cavity sizes ≤16 cells for D ≤ 7)
+        // CLEANUP_OPERATION_BUFFER_SIZE (16) covers typical Delaunay cavities; larger cavities spill to heap
         let mut saved_cavity_cells: SmallBuffer<_, CLEANUP_OPERATION_BUFFER_SIZE> = bad_cells
             .iter()
             .filter_map(|&ck| tds.get_cell(ck).cloned())

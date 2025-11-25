@@ -24,7 +24,7 @@ When the user asks to "write commit message" or "write commit" or "generate comm
    - **Body**: Detailed explanation organized by component/topic with bullet points
    - **Include**: Architecture decisions, performance impacts, test results
    - **Footer**: Related issues, breaking changes if applicable
-3. **Format**: Use markdown code block with no language specifier for easy copy-paste
+3. **Format**: Use Markdown code block with no language specifier for easy copy-paste
 4. **Present the message** to the user - they will run `git commit` manually
 
 **Example output format**:
