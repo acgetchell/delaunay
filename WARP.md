@@ -138,27 +138,31 @@ This project uses [just](https://github.com/casey/just) for streamlined developm
 
 ```bash
 # Quick development cycle
-just dev            # Format, lint, and test (fastest feedback loop)
+just ci               # Fast iteration (linting + lib/doc tests + bench compile)
 
 # Pre-commit workflow (recommended before pushing)
-just pre-commit     # Full quality checks + all tests + examples
+just commit-check     # Pre-commit validation (linting + all tests + examples)
+just commit-check-slow # Comprehensive with slow tests (100+ vertices)
 
 # CI simulation
-just ci             # Run what CI runs (quality + release tests + benchmark compile)
+just ci               # Fast iteration (linting + lib/doc tests + bench compile)
+just ci-baseline      # CI + save performance baseline
 
 # Comprehensive quality check
-just quality        # All formatting, linting, validation, and spell checking
+just lint             # All linting (code + docs + config)
 
 # Common individual commands
-just fmt            # Format code
-just clippy         # Rust linting
-just test           # Standard tests
-just test-all       # All tests (Rust + Python)
-just examples       # Run all examples
-just coverage       # Generate coverage report
+just fmt              # Format code
+just clippy           # Rust linting
+just test             # Lib and doc tests only (fast, used by CI)
+just test-integration # All integration tests (includes proptests)
+just test-all         # All tests (lib + doc + integration + Python)
+just examples         # Run all examples
+just coverage         # Generate coverage report
 
 # View all available commands
-just --list         # or just help-workflows
+just --list           # Show all commands
+just help-workflows   # Show common workflow patterns
 ```
 
 ### ⚠️ **CI Performance Impact Warning**
@@ -175,11 +179,10 @@ Run these commands after making changes to ensure code quality (the assistant mu
 modified, added, or staged, and then focus the quality tools on those specific files.
 
 ```bash
-# Comprehensive quality check (recommended - runs all checks below)
-just quality
+# Comprehensive linting (recommended - runs all checks below)
+just lint          # All linting: code + documentation + configuration
 
 # Linting hierarchy (comprehensive to specific)
-just lint          # All linting: code + documentation + configuration
 just lint-code     # Code linting: Rust (fmt, clippy, docs) + Python (ruff) + Shell
 just lint-docs     # Documentation linting: Markdown + spell checking
 just lint-config   # Configuration validation: JSON, TOML, GitHub Actions workflows
@@ -195,20 +198,23 @@ just spell-check   # Spell checking (only checks modified files)
 just validate-json # JSON validation
 just validate-toml # TOML validation
 just action-lint   # GitHub Actions workflow validation
-
 ```
 
 ### Testing and Validation
 
 ```bash
 # Comprehensive testing
-just test-all      # Run all tests (Rust + Python)
-just pre-commit    # Full pre-commit checks (quality + tests + examples)
+just test-all         # All tests (lib + doc + integration + Python)
+just commit-check     # Pre-commit validation (linting + all tests + examples)
+just commit-check-slow # Comprehensive with slow tests (100+ vertices)
 
 # Rust testing
-just test          # Standard library and doc tests
-just test-release  # All tests in release mode (recommended for performance)
-just test-debug    # Debug tools with output (circumsphere_debug_tools)
+just test             # Lib and doc tests only (fast, used by CI)
+just test-integration # All integration tests (includes proptests)
+just test-release     # All tests in release mode
+just test-slow        # Run slow/stress tests with --features slow-tests
+just test-slow-release # Slow tests in release mode (faster)
+just test-debug       # Debug tools with output (circumsphere_debug_tools)
 just test-allocation  # Memory allocation profiling tests
 
 # Python testing
@@ -218,7 +224,8 @@ just test-python   # Run pytest for Python scripts
 just examples      # Run all examples (validates functionality)
 
 # Coverage analysis
-just coverage      # Generate HTML coverage report (excludes benchmarks/examples/integration tests)
+just coverage      # Generate HTML coverage report (5-min timeout per test)
+just coverage-ci   # Generate XML coverage for CI (5-min timeout per test)
 # View coverage report: open target/tarpaulin/tarpaulin-report.html
 ```
 
@@ -228,30 +235,36 @@ just coverage      # Generate HTML coverage report (excludes benchmarks/examples
 # Benchmark execution
 just bench-compile # Compile benchmarks without running
 just bench         # Run all benchmarks
-just bench-ci      # CI regression benchmarks (fast, suitable for CI)
+just bench-ci      # CI regression benchmarks (fast, ~5-10 min)
 
 # Performance baseline management
-just bench-baseline  # Generate performance baseline
+just bench-baseline     # Generate performance baseline
+just bench-perf-summary # Generate performance summary for releases (~30-45 min)
 
 # Performance comparison
-just bench-compare   # Compare against baseline
-just bench-dev       # Development mode (10x faster for iteration)
-just bench-quick     # Quick benchmark validation with minimal samples
+just bench-compare # Compare against baseline
+just bench-dev     # Development mode (10x faster, ~1-2 min)
+just bench-quick   # Quick validation (minimal samples, ~30 sec)
 
 # Phase 4 SlotMap evaluation (storage backend comparison)
-just bench-phase4        # Full Phase 4 benchmark suite (~10-30 min)
-just bench-phase4-quick  # Fast subset for iteration (~90 seconds)
-just bench-phase4-large  # Large dataset Phase 4 suite (long-running, ~2-3 hours)
+just bench-phase4       # Run Phase 4 benchmarks (~10-30 min default)
+just bench-phase4-quick # Quick validation tests (~90 seconds)
+just bench-phase4-large # Large scale with BENCH_LARGE_SCALE=1 (~2-3 hours)
 
 # Storage backend comparison
-just compare-storage       # Compare SlotMap vs DenseSlotMap performance (~4-6 hours)
+just compare-storage       # Compare SlotMap vs DenseSlotMap (~4-6 hours)
 just compare-storage-large # Large scale comparison (~8-12 hours, compute cluster)
 
 # Performance analysis framework
-just perf-baseline [tag]   # Create performance baseline
-just perf-compare file     # Compare against baseline file
+just perf-help          # Show performance analysis commands
+just perf-baseline [tag] # Save current performance as baseline
 just perf-check [threshold] # Check for regressions (default 5% threshold)
-just perf-help            # Show performance framework help
+just perf-compare <file> # Compare with specific baseline file
+
+# Profiling
+just profile       # Profile full triangulation_scaling benchmark
+just profile-dev   # Profile 3D dev mode (faster iteration)
+just profile-mem   # Profile memory allocations (with count-allocations feature)
 ```
 
 **Performance Warning**: Phase 4 and storage comparison benchmarks are time-intensive. Use `bench-phase4-quick` for rapid iteration during development.
@@ -265,9 +278,9 @@ just perf-help            # Show performance framework help
 - **FOR NEW ENTRIES**: Write clear, descriptive commit messages - they become changelog entries
 
 ```bash
-# Generate enhanced changelog with AI categorization
-just changelog       # Generate changelog
-just changelog-update # Generate changelog with success message
+# Generate enhanced changelog
+just changelog            # Generate changelog
+just changelog-update     # Generate changelog with success message
 
 # Create git tag with changelog content (user-only; WARP must not execute)
 # Run manually from your terminal:

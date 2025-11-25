@@ -412,12 +412,12 @@ fn test_default_hull() {
     assert_eq!(hull.facet_count(), 0, "Default hull has zero facets");
     assert_eq!(hull.dimension(), 3, "Default hull preserves dimension");
 
-    // Default hull should be invalid for any TDS
+    // Empty hull is always considered valid (has no facets that could be stale)
     let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
 
     assert!(
-        !hull.is_valid_for_tds(&tds),
-        "Default hull should be invalid for any TDS"
+        hull.is_valid_for_tds(&tds),
+        "Empty hull should be valid for any TDS (no stale facets)"
     );
 }
 

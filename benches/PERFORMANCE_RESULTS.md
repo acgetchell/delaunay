@@ -53,9 +53,9 @@ The results are automatically generated and updated by the benchmark infrastruct
 
 ### Performance Ranking
 
-1. **insphere** - (fastest average: 161 ns) - Wins all boundary vertex cases, competitive in basic/far vertex tests
-2. **insphere_distance** - (middle: 177 ns) - ~1.1x slower than fastest, best on 3D/4D basic cases
-3. **insphere_lifted** - (slowest: 181 ns) - ~1.1x slower than fastest, best on 2D/5D basic cases
+1. **insphere** - (fastest average: 161 ns) - Wins all boundary vertex cases (3-4 ns), competitive in basic/far vertex tests
+2. **insphere_distance** - (middle: 177 ns) - ~1.1x slower than fastest, wins 3D/4D basic cases
+3. **insphere_lifted** - (slowest: 181 ns) - ~1.1x slower than fastest, wins 2D/5D basic cases
 
 ### Numerical Accuracy Analysis
 
@@ -70,10 +70,10 @@ Based on random test cases:
 
 ### Default Choice (Best Balance)
 
-- **Use `insphere`** for best overall performance and stability
-- Fastest average performance (161 ns) with excellent boundary vertex handling (3-4 ns)
+- **Use `insphere`** - it is both the fastest AND most numerically stable method
+- Fastest average performance (161 ns) with exceptional boundary vertex handling (3-4 ns)
 - Standard determinant-based approach with proven mathematical properties
-- Recommended for most applications: good performance + reliable numerical behavior
+- Recommended for most applications: combines best performance with reliable numerical behavior
 - All three methods achieve 100% agreement in correctness
 
 ### Specialized Use Cases

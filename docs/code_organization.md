@@ -154,6 +154,7 @@ delaunay/
 │   ├── proptest_cell.rs
 │   ├── proptest_convex_hull.rs
 │   ├── proptest_delaunay_condition.rs
+│   ├── proptest_duplicates.rs
 │   ├── proptest_facet_cache.rs
 │   ├── proptest_facet.rs
 │   ├── proptest_geometry.rs
@@ -387,32 +388,42 @@ The project uses [`just`](https://github.com/casey/just) as a command runner to 
 **Quick Development Cycle:**
 
 ```bash
-just dev           # Format, lint, and test (fast feedback loop)
+just ci            # Fast iteration (linting + lib/doc tests + bench compile)
 ```
 
 **Pre-Commit Checks:**
 
 ```bash
-just pre-commit    # Full quality checks, tests, and examples
+just commit-check  # Pre-commit validation (linting + all tests + examples)
+just commit-check-slow # Comprehensive with slow tests (100+ vertices)
 ```
 
 **Testing Workflows:**
 
 ```bash
-just test          # Run library and doc tests
-just test-python   # Run Python utility tests
+just test          # Lib and doc tests only (fast, used by CI)
+just test-integration # All integration tests (includes proptests)
+just test-all      # All tests (lib + doc + integration + Python)
+just test-python   # Python tests only (pytest)
+just test-release  # All tests in release mode
+just test-slow     # Run slow/stress tests with --features slow-tests
+just test-slow-release # Slow tests in release mode (faster)
 just test-debug    # Run debug tools with output
 just test-allocation  # Run allocation profiling tests
-just test-all      # All tests (Rust + Python)
 ```
 
 **Quality and Linting:**
 
 ```bash
-just quality       # All quality checks (formatting, linting, validation)
-just fmt          # Format Rust code
-just clippy       # Run Clippy with strict settings
-just python-lint  # Format and lint Python scripts
+just lint          # All linting (code + docs + config)
+just lint-code     # Code linting (Rust, Python, Shell)
+just lint-docs     # Documentation linting (Markdown, Spelling)
+just lint-config   # Configuration validation (JSON, TOML, Actions)
+just fmt           # Format Rust code
+just clippy        # Run Clippy with strict settings
+just doc-check     # Validate documentation builds
+just python-lint   # Format and lint Python scripts
+just spell-check   # Check spelling across project files
 ```
 
 **Benchmarks and Performance:**
@@ -420,25 +431,57 @@ just python-lint  # Format and lint Python scripts
 ```bash
 just bench         # Run all benchmarks
 just bench-baseline # Generate performance baseline
+just bench-ci      # CI regression benchmarks (fast, ~5-10 min)
 just bench-compare # Compare against baseline
+just bench-dev     # Development mode (10x faster, ~1-2 min)
+just bench-quick   # Quick validation (minimal samples, ~30 sec)
+just bench-perf-summary # Generate performance summary for releases (~30-45 min)
 ```
 
-**Documentation Maintenance:**
+**Phase 4 and Storage Comparison:**
 
 ```bash
-just update-tree   # Update directory tree in this document
+just bench-phase4       # Run Phase 4 benchmarks (~10-30 min default)
+just bench-phase4-large # Large scale with BENCH_LARGE_SCALE=1 (~2-3 hours)
+just bench-phase4-quick # Quick validation tests (~90 seconds)
+just compare-storage    # Compare SlotMap vs DenseSlotMap (~4-6 hours)
+```
+
+**Performance Analysis:**
+
+```bash
+just perf-help     # Show performance analysis commands
+just perf-baseline # Save current performance as baseline
+just perf-check    # Check for performance regressions
+just perf-compare  # Compare with specific baseline file
+just profile       # Profile full triangulation_scaling benchmark
+just profile-dev   # Profile 3D dev mode (faster iteration)
+just profile-mem   # Profile memory allocations
 ```
 
 **CI Simulation:**
 
 ```bash
-just ci           # Run what CI runs (quality + release tests + bench compile)
+just ci            # Fast iteration (linting + lib/doc tests + bench compile)
+just ci-baseline   # CI + save performance baseline
+```
+
+**Utilities:**
+
+```bash
+just setup         # Set up development environment
+just clean         # Clean build artifacts
+just build         # Build the project
+just build-release # Build in release mode
+just changelog     # Generate enhanced changelog
+just changelog-tag <version> # Create git tag with changelog content
+just examples      # Run all examples
 ```
 
 **Complete Command Reference:**
 
 ```bash
-just --list       # Show all available commands
+just --list        # Show all available commands
 just help-workflows # Show common workflow patterns
 ```
 

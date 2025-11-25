@@ -96,8 +96,9 @@ ci-baseline tag="ci":
     just ci
     just perf-baseline {{tag}}
 
-# CI simulation: quality checks + tests + benchmark compilation (matches .github/workflows/ci.yml)
-ci: quality test bench-compile
+# CI simulation: fast quality checks only (matches .github/workflows/ci.yml)
+# Runs: linting + lib/doc tests only (no integration tests, no proptests)
+ci: lint test bench-compile
     @echo "🎯 CI simulation complete!"
 
 # Clean build artifacts
@@ -112,8 +113,9 @@ clippy:
     cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
-# Pre-commit workflow: CI + examples (most comprehensive validation)
-commit-check: ci examples
+# Pre-commit workflow: comprehensive validation before committing
+# Runs: linting + all tests (lib + doc + integration + proptests + Python) + examples
+commit-check: lint test-all examples
     @echo "🚀 Ready to commit! All checks passed!"
 
 # Compare SlotMap vs DenseSlotMap storage backends
@@ -163,10 +165,6 @@ coverage-ci:
 default:
     @just --list
 
-# Development workflow: quick format, lint, and test cycle
-dev: fmt clippy test
-    @echo "⚡ Quick development check complete!"
-
 doc-check:
     RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --document-private-items
 
@@ -179,27 +177,26 @@ fmt:
 
 help-workflows:
     @echo "Common Just workflows:"
-    @echo "  just dev           # Quick development cycle (format, lint, test)"
-    @echo "  just quality       # All quality checks + tests (comprehensive)"
-    @echo "  just ci            # CI simulation (quality + tests + bench compile)"
-    @echo "  just commit-check  # Pre-commit validation (CI + examples) - most thorough"
-    @echo "  just ci-baseline   # CI + save performance baseline"
+    @echo "  just ci                # Fast iteration (linting + lib/doc tests + bench compile)"
+    @echo "  just commit-check      # Pre-commit validation (linting + all tests + examples)"
+    @echo "  just commit-check-slow # Comprehensive with slow tests (100+ vertices)"
+    @echo "  just ci-baseline       # CI + save performance baseline"
     @echo ""
     @echo "Testing:"
-    @echo "  just test          # Rust lib and doc tests (debug mode)"
-    @echo "  just test-all      # All tests (Rust + Python, debug mode)"
-    @echo "  just test-release  # All tests in release mode"
-    @echo "  just test-slow     # Include slow/stress tests (100+ vertices)"
+    @echo "  just test              # Lib and doc tests only (fast, used by CI)"
+    @echo "  just test-integration  # All integration tests (includes proptests)"
+    @echo "  just test-all          # All tests (lib + doc + integration + Python)"
+    @echo "  just test-python       # Python tests only (pytest)"
+    @echo "  just test-release      # All tests in release mode"
+    @echo "  just test-slow         # Run slow/stress tests with --features slow-tests"
     @echo "  just test-slow-release # Slow tests in release mode (faster)"
-    @echo "  just test-debug    # Run debug tools with output"
-    @echo "  just test-allocation # Memory allocation profiling"
-    @echo "  just examples      # Run all examples"
-    @echo "  just coverage      # Generate coverage report (HTML)"
-    @echo "  just coverage-ci   # Generate coverage for CI (XML)"
+    @echo "  just test-debug        # Run debug tools with output"
+    @echo "  just test-allocation   # Memory allocation profiling"
+    @echo "  just examples          # Run all examples"
+    @echo "  just coverage          # Generate coverage report (HTML)"
+    @echo "  just coverage-ci       # Generate coverage for CI (XML)"
     @echo ""
     @echo "Quality Check Groups:"
-    @echo "  just quality       # All quality checks + tests (standard, fast)"
-    @echo "  just quality-slow  # All quality checks + tests including slow tests"
     @echo "  just lint          # All linting (code + docs + config)"
     @echo "  just lint-code     # Code linting (Rust, Python, Shell)"
     @echo "  just lint-docs     # Documentation linting (Markdown, Spelling)"
@@ -326,13 +323,10 @@ python-lint: _ensure-uv
     uv run ruff check scripts/ --fix
     uv run ruff format scripts/
 
-# Comprehensive quality check: all linting + all tests (Rust + Python)
-quality: lint-code lint-docs lint-config test-all
-    @echo "✅ All quality checks and tests passed!"
-
-# Comprehensive quality check including slow tests (for local development/pre-commit)
-quality-slow: lint-code lint-docs lint-config test-all test-slow-release
-    @echo "✅ All quality checks and tests (including slow tests) passed!"
+# Comprehensive validation including slow/stress tests
+# Runs: commit-check + slow-tests feature (100+ vertices, stress tests)
+commit-check-slow: commit-check test-slow
+    @echo "✅ All checks including slow tests passed!"
 
 # Development setup
 setup:
@@ -438,11 +432,17 @@ spell-check:
     fi
 
 # Testing
+# test: runs only lib and doc tests (fast, used by CI and dev)
 test:
     cargo test --lib --verbose
     cargo test --doc --verbose
 
-test-all: test test-python
+# test-integration: runs all integration tests (includes proptests)
+test-integration:
+    cargo test --tests --verbose
+
+# test-all: runs lib, doc, integration, and Python tests (comprehensive)
+test-all: test test-integration test-python
     @echo "✅ All tests passed!"
 
 test-allocation:
