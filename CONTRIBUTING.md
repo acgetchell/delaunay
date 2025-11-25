@@ -361,7 +361,8 @@ just commit-check     # CI + examples validation
 # Testing workflows
 just test-all         # All tests (Rust + Python)
 just test-release     # Tests in release mode (performance)
-just coverage         # Generate HTML coverage report
+just coverage         # Generate HTML coverage report (local, 5-min timeout per test)
+just coverage-ci      # Generate XML coverage for CI (5-min timeout per test)
 
 # Benchmark workflows
 just bench-baseline   # Generate performance baseline
@@ -486,7 +487,7 @@ The project uses comprehensive CI workflows:
 - **Security** (`.github/workflows/audit.yml`): Dependency vulnerability scanning
 - **Code Quality** (`.github/workflows/rust-clippy.yml`): Strict linting
 - **Codacy** (`.github/workflows/codacy.yml`): Code quality analysis using project configurations
-- **Coverage** (`.github/workflows/codecov.yml`): Test coverage tracking
+- **Coverage** (`.github/workflows/codecov.yml`): Test coverage tracking with 5-minute per-test timeout
 
 All PRs must pass CI checks before merging.
 

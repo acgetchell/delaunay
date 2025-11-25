@@ -126,6 +126,8 @@ compare-storage-large: _ensure-uv
     BENCH_LARGE_SCALE=1 uv run compare-storage-backends --bench large_scale_performance
 
 # Common tarpaulin arguments for all coverage runs
+# Note: -t 300 sets per-test timeout to 5 minutes (needed for slow CI environments)
+#       test_cavity_boundary_error can take ~3 min locally, longer in CI (was hitting default 60s timeout)
 _coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/*' --lib \
   --test allocation_api \
   --test circumsphere_debug_tools \
@@ -146,7 +148,7 @@ _coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/
   --test test_insertion_algorithm_utils \
   --test test_robust_fallbacks \
   --test test_tds_edge_cases \
-  --workspace --timeout 600 --verbose --implicit-test-threads'''
+  --workspace -t 300 --verbose --implicit-test-threads'''
 
 # Coverage analysis for local development (HTML output)
 coverage:
