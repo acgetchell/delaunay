@@ -53,9 +53,9 @@ The results are automatically generated and updated by the benchmark infrastruct
 
 ### Performance Ranking
 
-1. **insphere** - (fastest average) - Best performance on boundary vertex cases, competitive on others
-2. **insphere_distance** - (middle) - ~1.1x slower than fastest, best on 3D/4D basic cases
-3. **insphere_lifted** - (slowest) - ~1.1x slower than fastest, best on 2D/5D basic cases
+1. **insphere** - (fastest average: 161 ns) - Wins all boundary vertex cases, competitive in basic/far vertex tests
+2. **insphere_distance** - (middle: 177 ns) - ~1.1x slower than fastest, best on 3D/4D basic cases
+3. **insphere_lifted** - (slowest: 181 ns) - ~1.1x slower than fastest, best on 2D/5D basic cases
 
 ### Numerical Accuracy Analysis
 
@@ -68,18 +68,19 @@ Based on random test cases:
 
 ## Recommendations
 
-### For Performance-Critical Applications
+### Default Choice (Best Balance)
 
-- **Use `insphere`** for maximum performance
-- Best choice for batch processing and high-frequency queries
-- Recommended for applications requiring millions of containment tests
-
-### For Numerical Stability
-
-- **Use `insphere`** for most reliable results
+- **Use `insphere`** for best overall performance and stability
+- Fastest average performance (161 ns) with excellent boundary vertex handling (3-4 ns)
 - Standard determinant-based approach with proven mathematical properties
-- Good balance of performance and numerical stability
-- Recommended for applications where correctness is paramount
+- Recommended for most applications: good performance + reliable numerical behavior
+- All three methods achieve 100% agreement in correctness
+
+### Specialized Use Cases
+
+- **2D/5D applications**: Consider `insphere_lifted` for slightly better performance in basic cases
+- **3D/4D applications**: Consider `insphere_distance` for slightly better performance in basic cases
+- Note: Performance differences are small (~10-20%) and insphere handles boundary cases much better
 
 ### For Educational/Research Purposes
 
@@ -98,10 +99,11 @@ Based on current benchmarks:
 
 ## Conclusion
 
-The `insphere` method provides the best performance while maintaining reasonable numerical behavior.
-For most applications requiring high-performance circumsphere containment tests, it should be the preferred choice.
-
-The standard `insphere` method remains the most numerically stable option when correctness is prioritized over performance.
+All three methods achieve 100% agreement on correctness. The `insphere` method provides
+the best average performance (161 ns) and is the recommended default choice. While
+`insphere_lifted` and `insphere_distance` may be slightly faster in specific dimensional
+scenarios, `insphere`'s superior boundary vertex performance (3-4 ns vs 78-366 ns) and
+balanced numerical properties make it the most practical choice for general use.
 
 ## Historical Version Comparison
 
