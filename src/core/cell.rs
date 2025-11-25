@@ -1568,8 +1568,9 @@ where
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         // Fast comparison using vertex keys (just u64 comparisons)
-        let mut self_keys: Vec<_> = self.vertices.iter().copied().collect();
-        let mut other_keys: Vec<_> = other.vertices.iter().copied().collect();
+        // Use CellVertexBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
+        let mut self_keys: CellVertexBuffer = self.vertices.iter().copied().collect();
+        let mut other_keys: CellVertexBuffer = other.vertices.iter().copied().collect();
         self_keys.sort_unstable();
         other_keys.sort_unstable();
         self_keys == other_keys
@@ -1593,8 +1594,9 @@ where
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         // Fast comparison using vertex keys
-        let mut self_keys: Vec<_> = self.vertices.iter().copied().collect();
-        let mut other_keys: Vec<_> = other.vertices.iter().copied().collect();
+        // Use CellVertexBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
+        let mut self_keys: CellVertexBuffer = self.vertices.iter().copied().collect();
+        let mut other_keys: CellVertexBuffer = other.vertices.iter().copied().collect();
         self_keys.sort_unstable();
         other_keys.sort_unstable();
         self_keys.partial_cmp(&other_keys)
@@ -1639,7 +1641,8 @@ where
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash sorted vertex keys for consistent ordering
-        let mut sorted_keys: Vec<_> = self.vertices.iter().copied().collect();
+        // Use CellVertexBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
+        let mut sorted_keys: CellVertexBuffer = self.vertices.iter().copied().collect();
         sorted_keys.sort_unstable();
         for key in sorted_keys {
             key.hash(state);
