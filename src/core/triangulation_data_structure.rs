@@ -1986,13 +1986,13 @@ where
     /// # Related
     ///
     /// This method is optimized for **removal/rollback operations** where the result
-    /// is consumed once for batch removal. For **set operations** (intersection, union)
-    /// or custom filtering during traversal, use `find_cells_containing_vertex_by_key`
-    /// which returns an iterator without allocating a buffer.
+    /// is consumed once for batch removal. For **set operations** (intersection, union,
+    /// membership testing), use `find_cells_containing_vertex_by_key` which returns a
+    /// `CellKeySet` (hash set) optimized for O(1) lookups and set operations.
     ///
     /// The two methods serve different use cases:
-    /// - This method: Buffer collection → optimized for removal
-    /// - `find_cells_containing_vertex_by_key`: Iterator → optimized for set operations
+    /// - This method: Stack-allocated buffer → optimized for sequential removal
+    /// - `find_cells_containing_vertex_by_key`: Hash set → optimized for set operations
     fn find_cells_containing_vertex(&self, vertex_key: VertexKey) -> CellRemovalBuffer {
         self.cells()
             .filter_map(|(cell_key, cell)| {
@@ -4210,16 +4210,17 @@ where
         let mut unique_cells: FastHashMap<CellVertexUuidBuffer, CellKey> = FastHashMap::default();
         let mut duplicates = Vec::new();
 
-        for (cell_key, _cell) in &self.cells {
-            // Phase 1: Use direct key-based method to avoid UUID→Key lookups
-            // The error is already TriangulationValidationError, so just propagate it
-            let vertices = self.get_cell_vertices(cell_key)?;
+        for (cell_key, cell) in &self.cells {
+            // Use Cell::vertex_uuids() helper to avoid duplicating VertexKey→UUID mapping logic
+            // Convert CellValidationError to TriangulationValidationError for propagation
+            let mut vertex_uuids = cell.vertex_uuids(self).map_err(|e| {
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Failed to get vertex UUIDs for cell {cell_key:?}: {e}"),
+                }
+            })?;
 
-            // Canonicalize by vertex UUIDs for backend-agnostic equality
+            // Canonicalize by sorting UUIDs for backend-agnostic equality
             // Note: Don't sort by VertexKey as slotmap::Key's Ord is implementation-defined
-            // Use CellVertexUuidBuffer for stack allocation (D+1 UUIDs fit on stack for D ≤ 7)
-            let mut vertex_uuids: CellVertexUuidBuffer =
-                vertices.iter().map(|&k| self.vertices[k].uuid()).collect();
             vertex_uuids.sort_unstable();
 
             // Use buffer directly as HashMap key (keeps stack allocation, avoids Vec copy)
@@ -7510,12 +7511,13 @@ mod tests {
         match result.unwrap_err() {
             TriangulationValidationError::InconsistentDataStructure { message } => {
                 assert!(
-                    message.contains("references non-existent vertex key"),
+                    message.contains("not found in TDS")
+                        || message.contains("references non-existent vertex key"),
                     "Error message should describe the invalid vertex key, got: {}",
                     message
                 );
                 println!(
-                    "✓ Successfully caught data structure corruption via get_cell_vertices(): {}",
+                    "✓ Successfully caught data structure corruption via cell.vertex_uuids(): {}",
                     message
                 );
             }
@@ -7572,12 +7574,13 @@ mod tests {
         match result.unwrap_err() {
             TriangulationValidationError::InconsistentDataStructure { message } => {
                 assert!(
-                    message.contains("references non-existent vertex key"),
+                    message.contains("not found in TDS")
+                        || message.contains("references non-existent vertex key"),
                     "Error message should describe the invalid vertex key, got: {}",
                     message
                 );
                 println!(
-                    "✓ Successfully caught data structure corruption via get_cell_vertices(): {}",
+                    "✓ Successfully caught data structure corruption via cell.vertex_uuids(): {}",
                     message
                 );
             }

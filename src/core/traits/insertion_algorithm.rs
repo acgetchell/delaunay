@@ -2075,7 +2075,10 @@ where
     ///
     /// # Returns
     ///
-    /// A vector of bad cell keys on success.
+    /// A stack-allocated buffer of bad cell keys on success.
+    /// Uses `SmallBuffer<CellKey, 16>` which provides stack allocation for typical cavities
+    /// (≤16 bad cells) and automatically falls back to heap for larger cavities.
+    /// The buffer derefs to `&[CellKey]` for convenient slice access.
     ///
     /// # Errors
     ///

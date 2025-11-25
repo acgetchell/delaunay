@@ -4,10 +4,10 @@
 //! into the Bowyer-Watson triangulation algorithm to address the
 //! "No cavity boundary facets found" error.
 
-use crate::core::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use crate::core::collections::{
-    CellKeyBuffer, CellKeySet, FacetInfoBuffer, FacetSharingCellsBuffer, FacetToCellsMap,
-    FastHashMap, FastHashSet, SmallBuffer, fast_hash_set_with_capacity,
+    CLEANUP_OPERATION_BUFFER_SIZE, CellKeyBuffer, CellKeySet, FacetInfoBuffer,
+    FacetSharingCellsBuffer, FacetToCellsMap, FastHashMap, FastHashSet,
+    MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, fast_hash_set_with_capacity,
 };
 use crate::core::facet::FacetHandle;
 use crate::core::traits::facet_cache::FacetCacheProvider;
@@ -396,9 +396,6 @@ where
         f64: From<T>,
         nalgebra::OPoint<T, nalgebra::Const<D>>: From<[f64; D]>,
     {
-        // Capacity for cavity cell backup (matches CLEANUP_OPERATION_BUFFER_SIZE)
-        const CAVITY_BACKUP_CAPACITY: usize = 16;
-
         // Use the trait's cavity-based insertion which includes iterative refinement.
         // The trait implementation now properly maintains the Delaunay property.
         // We add robust predicate fallbacks if the standard method fails.
@@ -504,7 +501,7 @@ where
         // Phase 3: Save bad cells for potential restoration, then remove them
         // After this point, we must use restore_cavity_insertion_failure on error
         // Use SmallBuffer for stack allocation (typical cavity sizes ≤16 cells for D ≤ 7)
-        let mut saved_cavity_cells: SmallBuffer<_, CAVITY_BACKUP_CAPACITY> = bad_cells
+        let mut saved_cavity_cells: SmallBuffer<_, CLEANUP_OPERATION_BUFFER_SIZE> = bad_cells
             .iter()
             .filter_map(|&ck| tds.get_cell(ck).cloned())
             .collect();

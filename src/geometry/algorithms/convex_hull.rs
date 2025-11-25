@@ -51,6 +51,18 @@ pub enum ConvexHullValidationError {
         /// Positions of all duplicate vertices (groups of positions that have the same vertex).
         positions: Vec<Vec<usize>>,
     },
+    /// Convex hull validation failed because the hull is stale.
+    #[error(
+        "ConvexHull validation failed: hull is stale and cannot be validated against this TDS. \
+         The TDS has been modified since the hull was created (hull generation: {hull_generation}, \
+         TDS generation: {tds_generation}). Create a new ConvexHull by calling from_triangulation()."
+    )]
+    StaleHull {
+        /// The generation counter of the hull at creation time.
+        hull_generation: u64,
+        /// The current generation counter of the TDS.
+        tds_generation: u64,
+    },
 }
 
 /// Errors that can occur during convex hull construction.
@@ -515,10 +527,10 @@ where
     #[must_use]
     pub fn is_valid_for_tds(&self, tds: &Tds<T, U, V, D>) -> bool {
         // Use creation_generation (immutable) for validity check, not cached_generation (mutable)
-        // Default hull (with creation_generation unset) is invalid for any TDS
+        // Empty hull (with creation_generation unset) is always valid - it has no facets to be stale
         self.creation_generation
             .get()
-            .is_some_and(|&g| g == tds.generation())
+            .map_or(self.is_empty(), |&g| g == tds.generation())
     }
 
     /// Invalidates the internal facet-to-cells cache and resets the cached generation counter
@@ -1391,6 +1403,16 @@ where
     /// assert!(empty_hull.validate(&tds).is_ok());
     /// ```
     pub fn validate(&self, tds: &Tds<T, U, V, D>) -> Result<(), ConvexHullValidationError> {
+        // Check staleness first - validate() should explicitly fail on stale hulls
+        // This makes the test behavior robust: validate() fails due to staleness check,
+        // not because facet handles happen to point to removed cells
+        if !self.is_valid_for_tds(tds) {
+            return Err(ConvexHullValidationError::StaleHull {
+                hull_generation: self.creation_generation.get().copied().unwrap_or(0),
+                tds_generation: tds.generation(),
+            });
+        }
+
         // Check that all facets have exactly D vertices (for D-dimensional triangulation,
         // facets are (D-1)-dimensional and have D vertices)
         for (index, facet_handle) in self.hull_facets.iter().enumerate() {

@@ -408,7 +408,10 @@ pub type CellVertexKeysMap = FastHashMap<CellKey, CellVertexBuffer>;
 
 /// Size constant for operations that may affect multiple cells during cleanup.
 /// 16 provides generous headroom for duplicate removal and topology repair operations.
-const CLEANUP_OPERATION_BUFFER_SIZE: usize = 16;
+///
+/// This constant is publicly exposed to allow external modules to derive buffer sizes
+/// from it, ensuring consistent sizing across the codebase.
+pub const CLEANUP_OPERATION_BUFFER_SIZE: usize = 16;
 
 /// Size constant for operations that work with a small number of valid cells.
 /// 4 is sufficient since valid facets are shared by at most 2 cells, with some headroom.
