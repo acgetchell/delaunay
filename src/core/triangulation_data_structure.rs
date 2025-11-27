@@ -3132,6 +3132,10 @@ where
 
     /// Performs the Bowyer-Watson algorithm to construct a Delaunay triangulation.
     ///
+    /// **INTERNAL DEPRECATED**: This method will be removed in v0.7.0 when the deprecated
+    /// `Tds::new()` method is removed. New code should use `DelaunayTriangulation::new()`
+    /// which uses incremental insertion instead.
+    ///
     /// This method uses the unified fast → robust → skip pipeline internally and
     /// discards diagnostics about unsalvageable vertices. For detailed diagnostics,
     /// use [`Tds::bowyer_watson_with_diagnostics`].
@@ -3144,10 +3148,25 @@ where
 
     /// Performs the Bowyer-Watson algorithm and returns per-vertex diagnostics.
     ///
+    /// # Deprecation Notice
+    ///
+    /// **This method is deprecated** and will be removed in v0.7.0. The Bowyer-Watson
+    /// batch construction algorithm is being replaced with incremental insertion for
+    /// better performance and architectural clarity.
+    ///
+    /// **Migration Guide**:
+    /// - Use `DelaunayTriangulation::new()` instead, which uses efficient incremental insertion
+    /// - For diagnostic information, use the new incremental insertion API (coming in v0.7.0)
+    ///
+    /// This follows the CGAL architecture where Tds is purely combinatorial and
+    /// Delaunay-specific construction lives in the `DelaunayTriangulation` layer.
+    ///
+    /// # Original Documentation
+    ///
     /// This method uses the unified Stage 1 + Stage 2 pipeline:
     ///
     /// - Stage 1: robust initial simplex search with duplicate/degenerate handling.
-    /// - Stage 2: per-vertex fast 9 robust 9 skip insertion using a shared
+    /// - Stage 2: per-vertex fast → robust → skip insertion using a shared
     ///   internal unified insertion pipeline.
     ///
     /// On success, the triangulation satisfies the structural invariants and the
@@ -3180,6 +3199,10 @@ where
     /// // In typical well-behaved inputs there are no unsalvageable vertices.
     /// assert!(diagnostics.is_empty());
     /// ```
+    #[deprecated(
+        since = "0.6.0",
+        note = "Internal Bowyer-Watson construction will be replaced with incremental insertion in v0.7.0. Use `DelaunayTriangulation::new()` instead."
+    )]
     pub fn bowyer_watson_with_diagnostics(
         &mut self,
     ) -> Result<TriangulationDiagnostics<T, U, D>, TriangulationConstructionError>
@@ -3194,11 +3217,25 @@ where
     /// parameterless `bowyer_watson_with_diagnostics` simply defaults to
     /// `DelaunayCheckPolicy::EndOnly`.
     ///
+    /// # Deprecation Notice
+    ///
+    /// **This method is deprecated** and will be removed in v0.7.0. The Bowyer-Watson
+    /// batch construction algorithm is being replaced with incremental insertion for
+    /// better performance and architectural clarity.
+    ///
+    /// **Migration Guide**:
+    /// - Use `DelaunayTriangulation::new()` instead for construction
+    /// - Validation policies will be integrated into the new incremental insertion API in v0.7.0
+    ///
     /// # Errors
     ///
     /// Returns a [`TriangulationConstructionError`] if triangulation construction fails
     /// due to invalid input, structural invariants being violated, or Delaunay
     /// validation failures.
+    #[deprecated(
+        since = "0.6.0",
+        note = "Internal Bowyer-Watson construction will be replaced with incremental insertion in v0.7.0. Use `DelaunayTriangulation::new()` instead."
+    )]
     pub fn bowyer_watson_with_diagnostics_and_policy(
         &mut self,
         policy: DelaunayCheckPolicy,

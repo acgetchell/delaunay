@@ -1,14 +1,13 @@
-#![expect(deprecated)]
 //! Microbenchmarks for key delaunay methods
 //!
 //! This benchmark suite focuses on measuring the performance of individual key methods
 //! in the delaunay triangulation library, particularly those that are performance-critical:
 //!
-//! 1. **`Tds::new` (Bowyer-Watson triangulation)**: Complete triangulation creation
+//! 1. **`DelaunayTriangulation::with_kernel`**: Complete triangulation creation
 //! 2. **`remove_duplicate_cells`**: Duplicate cell removal and cleanup
 //! 3. **`is_valid`**: Complete triangulation validation performance
 //! 4. **Individual validation components**: Mapping validation, duplicate detection, etc.
-//! 5. **Incremental construction**: Performance of `add()` method for vertex insertion
+//! 5. **Incremental construction**: Performance of `insert()` method for vertex insertion
 //! 6. **Memory usage patterns**: Allocation and deallocation patterns
 //!
 //! **Note:** `assign_neighbors` benchmarks have been moved to `assign_neighbors_performance.rs`
@@ -37,6 +36,8 @@
 #![allow(missing_docs)] // Criterion macros generate undocumented functions
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::*;
 use delaunay::vertex;
@@ -69,19 +70,19 @@ fn get_benchmark_seed() -> u64 {
 macro_rules! generate_dimensional_benchmarks {
     ($dim:literal) => {
         pastey::paste! {
-            /// Benchmark Bowyer-Watson triangulation for [<$dim>]D
-            fn [<benchmark_bowyer_watson_triangulation_ $dim d>](c: &mut Criterion) {
+            /// Benchmark incremental Delaunay triangulation for [<$dim>]D
+            fn [<benchmark_delaunay_triangulation_ $dim d>](c: &mut Criterion) {
                 let point_counts = [10, 25, 50, 100, 250];
                 let seed = get_benchmark_seed(); // Cache seed locally for consistency across iterations
 
-                let mut group = c.benchmark_group(concat!("bowyer_watson_triangulation_", stringify!([<$dim>]), "d"));
+                let mut group = c.benchmark_group(concat!("delaunay_triangulation_", stringify!([<$dim>]), "d"));
 
                 for &n_points in &point_counts {
                     let throughput = n_points as u64;
                     group.throughput(Throughput::Elements(throughput));
 
                     group.bench_with_input(
-                        BenchmarkId::new("tds_new", n_points),
+                        BenchmarkId::new("with_kernel", n_points),
                         &n_points,
                         |b, &n_points| {
                             b.iter_batched(
@@ -89,7 +90,7 @@ macro_rules! generate_dimensional_benchmarks {
                                     let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                                     points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                                 },
-                                |vertices| black_box(Tds::<f64, (), (), $dim>::new(&vertices).unwrap()),
+                                |vertices| black_box(DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &vertices).unwrap()),
                                 BatchSize::LargeInput,
                             );
                         },
@@ -119,7 +120,7 @@ macro_rules! generate_dimensional_benchmarks {
                                     let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                                     // Note: tds must be mutable for insert_cell_unchecked() calls below
-                                    let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
+                                    let mut dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &vertices).unwrap();
 
                                     // ============================================================
                                     // BENCH-ONLY INVARIANT VIOLATION ZONE - DO NOT COPY
@@ -136,6 +137,7 @@ macro_rules! generate_dimensional_benchmarks {
                                     // bench-only invariant violation. No additional cfg guard is needed.
                                     #[allow(deprecated)]
                                     {
+                                        let tds = dt.tds_mut();
                                         // Clone an existing cell from the TDS to ensure VertexKeys remain valid
                                         // This avoids creating cells with dangling keys from temporary TDS instances
                                         let cell_to_duplicate = tds.cell_keys()
@@ -153,11 +155,11 @@ macro_rules! generate_dimensional_benchmarks {
                                     // ============================================================
                                     // END INVARIANT VIOLATION ZONE
                                     // ============================================================
-                                    tds
+                                    dt
                                 },
-                                |mut tds| {
-                                    let removed = tds.remove_duplicate_cells().expect("remove_duplicate_cells failed");
-                                    black_box((tds, removed));
+                                |mut dt| {
+                                    let removed = dt.tds_mut().remove_duplicate_cells().expect("remove_duplicate_cells failed");
+                                    black_box((dt, removed));
                                 },
                                 BatchSize::LargeInput,
                             );
@@ -197,8 +199,8 @@ macro_rules! generate_memory_usage_benchmarks {
                                 // Measure complete triangulation creation and destruction
                                 let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
-                                black_box((tds.number_of_vertices(), tds.number_of_cells()))
+                                let dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &vertices).unwrap();
+                                black_box((dt.tds().number_of_vertices(), dt.tds().number_of_cells()))
                             });
                         },
                     );
@@ -239,11 +241,11 @@ macro_rules! generate_validation_benchmarks {
                                 || {
                                     let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                    Tds::<f64, (), (), $dim>::new(&vertices).unwrap()
+                                    DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &vertices).unwrap()
                                 },
-                                |tds| {
-                                    tds.is_valid().unwrap();
-                                    black_box(tds);
+                                |dt| {
+                                    dt.is_valid().unwrap();
+                                    black_box(dt);
                                 },
                                 BatchSize::LargeInput,
                             );
@@ -260,13 +262,13 @@ macro_rules! generate_validation_benchmarks {
                 let n_points = if $dim <= 3 { 50 } else { 25 }; // Fixed size for component benchmarks
                 let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
+                let dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &vertices).unwrap();
 
                 let mut group = c.benchmark_group(&format!("validation_components_{}d", $dim));
 
                 group.bench_function("validate_vertex_mappings", |b| {
                     b.iter(|| {
-                        tds.validate_vertex_mappings().unwrap();
+                        dt.validate_vertex_mappings().unwrap();
                         // Black box to prevent dead code elimination
                         black_box(());
                     });
@@ -274,7 +276,7 @@ macro_rules! generate_validation_benchmarks {
 
                 group.bench_function("validate_cell_mappings", |b| {
                     b.iter(|| {
-                        tds.validate_cell_mappings().unwrap();
+                        dt.validate_cell_mappings().unwrap();
                         // Black box to prevent dead code elimination
                         black_box(());
                     });
@@ -331,10 +333,10 @@ macro_rules! generate_incremental_construction_benchmarks {
 
                 group.bench_function("single_vertex_addition", |b| {
                     b.iter_batched(
-                        || Tds::<f64, (), (), $dim>::new(&initial_vertices).unwrap(),
-                        |mut tds| {
-                            tds.add(additional_vertex).unwrap();
-                            black_box(tds);
+                        || DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &initial_vertices).unwrap(),
+                        |mut dt| {
+                            dt.insert(additional_vertex).unwrap();
+                            black_box(dt);
                         },
                         BatchSize::SmallInput,
                     );
@@ -349,17 +351,17 @@ macro_rules! generate_incremental_construction_benchmarks {
                         |b, &count| {
                             b.iter_batched(
                                 || {
-                                    let tds = Tds::<f64, (), (), $dim>::new(&initial_vertices).unwrap();
+                                    let dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &initial_vertices).unwrap();
                                     let additional_points: Vec<Point<f64, $dim>> = generate_random_points_seeded(count, (-100.0, 100.0), seed).unwrap();
                                     let additional_vertices: Vec<_> =
                                         additional_points.iter().map(|p| vertex!(*p)).collect();
-                                    (tds, additional_vertices)
+                                    (dt, additional_vertices)
                                 },
-                                |(mut tds, additional_vertices)| {
+                                |(mut dt, additional_vertices)| {
                                     for vertex in additional_vertices {
-                                        tds.add(vertex).unwrap();
+                                        dt.insert(vertex).unwrap();
                                     }
-                                    black_box(tds);
+                                    black_box(dt);
                                 },
                                 BatchSize::SmallInput,
                             );
@@ -426,10 +428,10 @@ criterion_group!(
     config = bench_config();
     targets =
         // Core triangulation benchmarks (2D-5D)
-        benchmark_bowyer_watson_triangulation_2d,
-        benchmark_bowyer_watson_triangulation_3d,
-        benchmark_bowyer_watson_triangulation_4d,
-        benchmark_bowyer_watson_triangulation_5d,
+        benchmark_delaunay_triangulation_2d,
+        benchmark_delaunay_triangulation_3d,
+        benchmark_delaunay_triangulation_4d,
+        benchmark_delaunay_triangulation_5d,
         benchmark_remove_duplicate_cells_2d,
         benchmark_remove_duplicate_cells_3d,
         benchmark_remove_duplicate_cells_4d,

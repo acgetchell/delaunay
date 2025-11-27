@@ -15,6 +15,8 @@ use crate::core::algorithms::incremental_insertion::{
 use crate::core::algorithms::locate::{
     LocateResult, extract_cavity_boundary, find_conflict_region, locate,
 };
+use crate::core::cell::Cell;
+use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::triangulation_data_structure::{
@@ -130,7 +132,7 @@ where
     /// - Specialized kernel implementations
     ///
     /// This uses the efficient cavity-based algorithm:
-    /// 1. Build initial simplex (D+1 vertices) using Bowyer-Watson
+    /// 1. Build initial simplex (D+1 vertices) directly
     /// 2. Insert remaining vertices incrementally with locate → conflict → cavity → wire
     ///
     /// # Errors
@@ -177,9 +179,9 @@ where
             });
         }
 
-        // Build initial simplex using existing Tds::new (Bowyer-Watson)
+        // Build initial simplex directly (no Bowyer-Watson)
         let initial_vertices = &vertices[..=D];
-        let tds = Tds::new(initial_vertices)?;
+        let tds = Self::build_initial_simplex(initial_vertices)?;
 
         let mut dt = Self {
             tri: Triangulation { kernel, tds },
@@ -195,6 +197,71 @@ where
         }
 
         Ok(dt)
+    }
+
+    /// Build initial D-simplex from D+1 vertices without using Bowyer-Watson.
+    ///
+    /// This creates a Tds with a single cell containing all D+1 vertices,
+    /// with no neighbor relationships (all boundary facets).
+    ///
+    /// # Arguments
+    /// - `vertices`: Exactly D+1 vertices to form the initial simplex
+    ///
+    /// # Returns
+    /// A Tds containing one D-cell with all vertices, ready for incremental insertion.
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Wrong number of vertices (must be exactly D+1)
+    /// - Vertex or cell insertion fails
+    /// - Duplicate UUIDs detected
+    fn build_initial_simplex(
+        vertices: &[Vertex<K::Scalar, U, D>],
+    ) -> Result<Tds<K::Scalar, U, V, D>, TriangulationConstructionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        if vertices.len() != D + 1 {
+            return Err(TriangulationConstructionError::InsufficientVertices {
+                dimension: D,
+                source: crate::core::cell::CellValidationError::InsufficientVertices {
+                    actual: vertices.len(),
+                    expected: D + 1,
+                    dimension: D,
+                },
+            });
+        }
+
+        // Create empty Tds
+        let mut tds = Tds::empty();
+
+        // Insert all vertices and collect their keys
+        let mut vertex_keys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+        for vertex in vertices {
+            let vkey = tds.insert_vertex_with_mapping(*vertex)?;
+            vertex_keys.push(vkey);
+        }
+
+        // Create single D-cell from all vertices
+        // Note: Cell::new() handles vertex ordering/orientation internally
+        let cell = Cell::new(vertex_keys, None).map_err(|e| {
+            TriangulationConstructionError::FailedToCreateCell {
+                message: format!("Failed to create initial simplex cell: {e}"),
+            }
+        })?;
+
+        // Insert the cell
+        let _cell_key = tds.insert_cell_with_mapping(cell)?;
+
+        // Assign incident cells to vertices (each vertex points to this one cell)
+        // This is required for proper Tds structure
+        tds.assign_incident_cells()
+            .map_err(TriangulationConstructionError::ValidationError)?;
+
+        // Cache the initial cell key for first insert() hint
+        // (This will be returned but caller will set last_inserted_cell)
+
+        Ok(tds)
     }
 
     /// Returns the number of vertices in the triangulation.
@@ -274,6 +341,67 @@ where
     #[must_use]
     pub fn dim(&self) -> i32 {
         self.tri.dim()
+    }
+
+    /// Returns a reference to the underlying triangulation data structure.
+    ///
+    /// This provides access to the purely combinatorial Tds layer for
+    /// advanced operations and performance testing.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
+    /// assert_eq!(tds.number_of_vertices(), 5);
+    /// ```
+    #[must_use]
+    pub const fn tds(&self) -> &Tds<K::Scalar, U, V, D> {
+        &self.tri.tds
+    }
+
+    /// Returns a mutable reference to the underlying triangulation data structure.
+    ///
+    /// # Safety Note
+    ///
+    /// Directly modifying the Tds can break Delaunay invariants. This method
+    /// is primarily intended for advanced use cases and performance testing.
+    /// After modifications, consider calling `validate_delaunay()` to verify
+    /// correctness.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let mut dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds_mut();
+    /// // Advanced Tds operations...
+    /// ```
+    pub const fn tds_mut(&mut self) -> &mut Tds<K::Scalar, U, V, D> {
+        &mut self.tri.tds
     }
 
     /// Insert a vertex into the Delaunay triangulation using incremental cavity-based algorithm.
@@ -381,6 +509,68 @@ where
         Ok(v_key)
     }
 
+    /// Validate the combinatorial structure of the triangulation.
+    ///
+    /// This validates the underlying Tds topology including:
+    /// - Vertex and cell mapping consistency
+    /// - Neighbor relationships
+    /// - Facet sharing
+    /// - No duplicate cells
+    ///
+    /// # Errors
+    ///
+    /// Returns error if any structural invariant is violated.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// // Verify triangulation structure is valid
+    /// assert!(dt.is_valid().is_ok());
+    /// ```
+    pub fn is_valid(&self) -> Result<(), TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        self.tri.tds.is_valid()
+    }
+
+    /// Validate vertex mapping consistency.
+    ///
+    /// Checks that all vertex keys in cells correspond to valid vertices
+    /// and that the incident cell pointers are correct.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if vertex mappings are inconsistent.
+    pub fn validate_vertex_mappings(&self) -> Result<(), TriangulationValidationError> {
+        self.tri.tds.validate_vertex_mappings()
+    }
+
+    /// Validate cell mapping consistency.
+    ///
+    /// Checks that all cell neighbor pointers are valid and correspond
+    /// to existing cells.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if cell mappings are inconsistent.
+    pub fn validate_cell_mappings(&self) -> Result<(), TriangulationValidationError> {
+        self.tri.tds.validate_cell_mappings()
+    }
+
     /// Validate that the triangulation satisfies the Delaunay property.
     ///
     /// This checks that no vertex is inside the circumsphere of any cell,
@@ -470,6 +660,10 @@ pub enum DelaunayCheckPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::vertex::VertexBuilder;
+    use crate::geometry::kernel::{FastKernel, RobustKernel};
+    use crate::geometry::point::Point;
+    use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
 
     /// Macro to generate incremental insertion tests across dimensions.
@@ -558,8 +752,6 @@ mod tests {
 
     #[test]
     fn test_new_empty_creates_empty_triangulation() {
-        use crate::geometry::kernel::FastKernel;
-
         let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
             DelaunayTriangulation::new_empty(FastKernel::new());
 
@@ -571,8 +763,6 @@ mod tests {
 
     #[test]
     fn test_new_empty_then_construct() {
-        use crate::geometry::kernel::FastKernel;
-
         let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
             DelaunayTriangulation::new_empty(FastKernel::new());
 
@@ -588,8 +778,6 @@ mod tests {
 
     #[test]
     fn test_with_kernel_fast_kernel() {
-        use crate::geometry::kernel::FastKernel;
-
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -605,8 +793,6 @@ mod tests {
 
     #[test]
     fn test_with_kernel_robust_kernel() {
-        use crate::geometry::kernel::RobustKernel;
-
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -622,8 +808,6 @@ mod tests {
 
     #[test]
     fn test_with_kernel_insufficient_vertices_2d() {
-        use crate::geometry::kernel::FastKernel;
-
         let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0])];
 
         let result: Result<DelaunayTriangulation<FastKernel<f64>, (), (), 2>, _> =
@@ -640,8 +824,6 @@ mod tests {
 
     #[test]
     fn test_with_kernel_insufficient_vertices_3d() {
-        use crate::geometry::kernel::FastKernel;
-
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -662,8 +844,6 @@ mod tests {
 
     #[test]
     fn test_with_kernel_f32_coordinates() {
-        use crate::geometry::kernel::FastKernel;
-
         let vertices = vec![
             vertex!([0.0f32, 0.0f32]),
             vertex!([1.0f32, 0.0f32]),
@@ -675,6 +855,188 @@ mod tests {
 
         assert_eq!(dt.number_of_vertices(), 3);
         assert_eq!(dt.number_of_cells(), 1);
+    }
+
+    // =========================================================================
+    // build_initial_simplex() tests
+    // =========================================================================
+
+    /// Macro to generate `build_initial_simplex` tests across dimensions.
+    ///
+    /// This macro generates tests that verify `build_initial_simplex` by:
+    /// 1. Creating D+1 affinely independent vertices
+    /// 2. Calling `build_initial_simplex` directly
+    /// 3. Verifying the Tds has correct structure (vertices, cells, dimension)
+    ///
+    /// # Usage
+    /// ```ignore
+    /// test_build_initial_simplex!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+    /// ```
+    macro_rules! test_build_initial_simplex {
+        ($dim:expr, [$($simplex_coords:expr),+ $(,)?]) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_build_initial_simplex_ $dim d>]() {
+                    // Build initial simplex (D+1 vertices)
+                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
+                        $(vertex!($simplex_coords)),+
+                    ];
+
+                    let expected_vertices = vertices.len();
+                    assert_eq!(expected_vertices, $dim + 1,
+                        "Test must provide exactly D+1 vertices for {}D simplex", $dim);
+
+                    let tds = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
+                        .unwrap();
+
+                    // Verify structure
+                    assert_eq!(tds.number_of_vertices(), expected_vertices,
+                        "{}D: Expected {} vertices", $dim, expected_vertices);
+                    assert_eq!(tds.number_of_cells(), 1,
+                        "{}D: Expected 1 cell", $dim);
+                    assert_eq!(tds.dim(), $dim as i32,
+                        "{}D: Expected dimension {}", $dim, $dim);
+
+                    // Verify all vertices are present
+                    assert_eq!(tds.vertices().count(), expected_vertices,
+                        "{}D: All vertices should be in Tds", $dim);
+
+                    // Verify the single cell has correct number of vertices
+                    let (_, cell) = tds.cells().next()
+                        .expect(&format!("{}D: Should have exactly one cell", $dim));
+                    assert_eq!(cell.number_of_vertices(), expected_vertices,
+                        "{}D: Cell should have {} vertices", $dim, expected_vertices);
+
+                    // Verify incident cells are assigned
+                    for (_, vertex) in tds.vertices() {
+                        assert!(vertex.incident_cell.is_some(),
+                            "{}D: All vertices should have incident cell assigned", $dim);
+                    }
+
+                    // Verify initial simplex has no neighbors (all boundary facets)
+                    if let Some(neighbors) = cell.neighbors() {
+                        assert!(neighbors.iter().all(|n| n.is_none()),
+                            "{}D: Initial simplex should have no neighbors (all boundary)", $dim);
+                    }
+                }
+            }
+        };
+    }
+
+    // 2D: Triangle
+    test_build_initial_simplex!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+
+    // 3D: Tetrahedron
+    test_build_initial_simplex!(
+        3,
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0]
+        ]
+    );
+
+    // 4D: 4-simplex
+    test_build_initial_simplex!(
+        4,
+        [
+            [0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ]
+    );
+
+    // 5D: 5-simplex
+    test_build_initial_simplex!(
+        5,
+        [
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0]
+        ]
+    );
+
+    #[test]
+    fn test_build_initial_simplex_insufficient_vertices() {
+        // Try to build 3D simplex with only 2 vertices (need 4)
+        let vertices = vec![vertex!([0.0, 0.0, 0.0]), vertex!([1.0, 0.0, 0.0])];
+
+        let result =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices);
+
+        assert!(result.is_err());
+        match result {
+            Err(TriangulationConstructionError::InsufficientVertices { dimension, .. }) => {
+                assert_eq!(dimension, 3);
+            }
+            _ => panic!("Expected InsufficientVertices error"),
+        }
+    }
+
+    #[test]
+    fn test_build_initial_simplex_too_many_vertices() {
+        // Try to build 2D simplex with 4 vertices (need exactly 3)
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([0.5, 0.5]),
+        ];
+
+        let result =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
+
+        assert!(result.is_err());
+        match result {
+            Err(TriangulationConstructionError::InsufficientVertices { .. }) => {}
+            _ => panic!("Expected InsufficientVertices error for wrong count"),
+        }
+    }
+
+    #[test]
+    fn test_build_initial_simplex_with_user_data() {
+        // Build vertices with user data
+        let v1 = VertexBuilder::default()
+            .point(Point::new([0.0, 0.0]))
+            .data(42_usize)
+            .build()
+            .unwrap();
+        let v2 = VertexBuilder::default()
+            .point(Point::new([1.0, 0.0]))
+            .data(43_usize)
+            .build()
+            .unwrap();
+        let v3 = VertexBuilder::default()
+            .point(Point::new([0.0, 1.0]))
+            .data(44_usize)
+            .build()
+            .unwrap();
+
+        let vertices = vec![v1, v2, v3];
+        let tds = DelaunayTriangulation::<FastKernel<f64>, usize, (), 2>::build_initial_simplex(
+            &vertices,
+        )
+        .unwrap();
+
+        assert_eq!(tds.number_of_vertices(), 3);
+        assert_eq!(tds.number_of_cells(), 1);
+
+        // Verify user data is preserved
+        let data_values: Vec<_> = tds
+            .vertices()
+            .filter_map(|(_, v)| v.data.as_ref())
+            .copied()
+            .collect();
+        assert_eq!(data_values.len(), 3);
+        assert!(data_values.contains(&42));
+        assert!(data_values.contains(&43));
+        assert!(data_values.contains(&44));
     }
 
     // =========================================================================
@@ -884,5 +1246,93 @@ mod tests {
             DelaunayTriangulation::new(&vertices_3d).unwrap();
         assert_eq!(dt_3d.number_of_vertices(), 4);
         assert_eq!(dt_3d.number_of_cells(), 1);
+    }
+
+    #[test]
+    fn test_tds_accessor_provides_readonly_access() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Access TDS via immutable reference
+        let tds = dt.tds();
+        assert_eq!(tds.number_of_vertices(), 3);
+        assert_eq!(tds.number_of_cells(), 1);
+
+        // Verify we can call other TDS methods
+        assert!(tds.is_valid().is_ok());
+        assert!(tds.cell_keys().next().is_some());
+    }
+
+    #[test]
+    fn test_tds_mut_accessor_provides_mutable_access() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        assert_eq!(dt.number_of_vertices(), 4);
+
+        // Access TDS via mutable reference and perform operations
+        let tds = dt.tds_mut();
+        assert_eq!(tds.number_of_vertices(), 4);
+        assert_eq!(tds.number_of_cells(), 1);
+
+        // Can call mutating methods like remove_duplicate_cells
+        let result = tds.remove_duplicate_cells();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tds_accessor_reflects_insertions() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Before insertion
+        assert_eq!(dt.tds().number_of_vertices(), 3);
+
+        // Insert a new vertex
+        dt.insert(vertex!([0.3, 0.3])).unwrap();
+
+        // After insertion, TDS accessor reflects the change
+        assert_eq!(dt.tds().number_of_vertices(), 4);
+        assert!(dt.tds().number_of_cells() > 1);
+    }
+
+    #[test]
+    fn test_tds_accessors_maintain_validation_invariants() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 4> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Verify TDS is valid through accessor
+        assert!(dt.tds().is_valid().is_ok());
+
+        // Insert additional vertex
+        dt.insert(vertex!([0.2, 0.2, 0.2, 0.2])).unwrap();
+
+        // TDS should still be valid after mutation
+        assert!(dt.tds().is_valid().is_ok());
+        assert!(dt.tds().validate_vertex_mappings().is_ok());
+        assert!(dt.tds().validate_cell_mappings().is_ok());
     }
 }
