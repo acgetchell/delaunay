@@ -661,15 +661,154 @@ where
 // =============================================================================
 
 // =============================================================================
-// LIGHTWEIGHT ACCESSOR METHODS
+// PURE COMBINATORIAL METHODS (No geometric operations)
 // =============================================================================
+// These methods work with the combinatorial structure only - vertices, cells,
+// neighbors, facets, keys, and UUIDs. They do NOT require coordinate operations
+// and are designed to be independent of geometry.
+//
+// Following CGAL's Triangulation_data_structure pattern, these methods operate
+// on topology independently of geometry.
+//
+// NOTE: Currently T: CoordinateScalar is required because Cell and Vertex structs
+// have this bound. In Phase 1.2, we will relax Cell/Vertex bounds to complete
+// the separation.
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar,
+    T: CoordinateScalar, // TODO: Remove in Phase 1.2 after relaxing Cell/Vertex bounds
     U: DataType,
     V: DataType,
 {
+    /// Assigns neighbor relationships between cells based on shared facets with semantic ordering.
+    ///
+    /// This method efficiently builds neighbor relationships by using the `facet_key_from_vertices`
+    /// function to compute unique keys for facets. Two cells are considered neighbors if they share
+    /// exactly one facet (which contains D vertices for a D-dimensional triangulation).
+    ///
+    /// **Note**: This is a purely combinatorial operation that does not perform any coordinate
+    /// operations. It works entirely with vertex keys, cell keys, and topological relationships.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TriangulationValidationError` if neighbor assignment fails due to inconsistent
+    /// data structures or invalid facet sharing patterns.
+    pub fn assign_neighbors(&mut self) -> Result<(), TriangulationValidationError> {
+        use crate::core::facet::facet_key_from_vertices;
+
+        // Build facet mapping with vertex index information using optimized collections
+        // facet_key -> [(cell_key, vertex_index_opposite_to_facet)]
+        type FacetInfo = (CellKey, usize);
+        // Use saturating arithmetic to avoid potential overflow on adversarial inputs
+        let cap = self.cells.len().saturating_mul(D.saturating_add(1));
+        let mut facet_map: FastHashMap<u64, SmallBuffer<FacetInfo, 2>> =
+            fast_hash_map_with_capacity(cap);
+
+        for (cell_key, cell) in &self.cells {
+            let vertices = self.get_cell_vertices(cell_key).map_err(|err| {
+                TriangulationValidationError::VertexKeyRetrievalFailed {
+                    cell_id: cell.uuid(),
+                    message: format!(
+                        "Failed to retrieve vertex keys for cell during neighbor assignment: {err}"
+                    ),
+                }
+            })?;
+
+            let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::with_capacity(vertices.len().saturating_sub(1));
+            for i in 0..vertices.len() {
+                facet_vertices.clear();
+                for (j, &key) in vertices.iter().enumerate() {
+                    if j != i {
+                        facet_vertices.push(key);
+                    }
+                }
+                let facet_key = facet_key_from_vertices(&facet_vertices);
+                let facet_entry = facet_map.entry(facet_key).or_default();
+                // Detect degenerate case early: more than 2 cells sharing a facet
+                // Note: Check happens before push, so len() reflects current sharing count
+                if facet_entry.len() >= 2 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Facet with key {} already shared by {} cells; cannot add cell {} (would violate 2-manifold property)",
+                            facet_key,
+                            facet_entry.len(),
+                            cell.uuid()
+                        ),
+                    });
+                }
+                facet_entry.push((cell_key, i));
+            }
+        }
+
+        // For each cell, build an ordered neighbor array where neighbors[i] is opposite vertices[i]
+        let mut cell_neighbors: FastHashMap<
+            CellKey,
+            SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>,
+        > = fast_hash_map_with_capacity(self.cells.len());
+
+        // Initialize each cell with a SmallBuffer of None values (one per vertex)
+        for (cell_key, cell) in &self.cells {
+            let vertex_count = cell.number_of_vertices();
+            if vertex_count > MAX_PRACTICAL_DIMENSION_SIZE {
+                return Err(TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {} has {} vertices, which exceeds MAX_PRACTICAL_DIMENSION_SIZE={}. \
+                         This would overflow the neighbors buffer.",
+                        cell.uuid(),
+                        vertex_count,
+                        MAX_PRACTICAL_DIMENSION_SIZE
+                    ),
+                });
+            }
+            let mut neighbors = SmallBuffer::with_capacity(vertex_count);
+            neighbors.resize(vertex_count, None);
+            cell_neighbors.insert(cell_key, neighbors);
+        }
+
+        // For each facet that is shared by exactly two cells, establish neighbor relationships
+        // Note: >2 cells per facet already caught by early check during map build (above)
+        for (_facet_key, facet_infos) in facet_map {
+            if facet_infos.len() != 2 {
+                continue;
+            }
+
+            let (cell_key1, vertex_index1) = facet_infos[0];
+            let (cell_key2, vertex_index2) = facet_infos[1];
+
+            // Set neighbors with semantic constraint: neighbors[i] is opposite vertices[i]
+            cell_neighbors.get_mut(&cell_key1).ok_or_else(|| {
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Cell key {cell_key1:?} not found in cell neighbors map"),
+                }
+            })?[vertex_index1] = Some(cell_key2);
+
+            cell_neighbors.get_mut(&cell_key2).ok_or_else(|| {
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("Cell key {cell_key2:?} not found in cell neighbors map"),
+                }
+            })?[vertex_index2] = Some(cell_key1);
+        }
+
+        // Apply updates
+        for (cell_key, neighbors) in &cell_neighbors {
+            if let Some(cell) = self.cells.get_mut(*cell_key) {
+                if neighbors.iter().all(Option::is_none) {
+                    cell.neighbors = None;
+                } else {
+                    let mut neighbor_buffer = SmallBuffer::new();
+                    neighbor_buffer.extend(neighbors.iter().copied());
+                    cell.neighbors = Some(neighbor_buffer);
+                }
+            }
+        }
+
+        // Topology changed; invalidate caches.
+        self.bump_generation();
+
+        Ok(())
+    }
+
     /// Returns an iterator over all cells in the triangulation.
     ///
     /// This method provides read-only access to the cells collection without
@@ -838,148 +977,6 @@ where
         self.vertices.contains_key(key)
     }
 
-    /// Assigns neighbor relationships between cells based on shared facets with semantic ordering.
-    ///
-    /// This method efficiently builds neighbor relationships by using the `facet_key_from_vertices`
-    /// function to compute unique keys for facets. Two cells are considered neighbors if they share
-    /// exactly one facet (which contains D vertices for a D-dimensional triangulation).
-    ///
-    /// **Note**: This method has minimal trait bounds and only requires basic TDS functionality.
-    /// It does not perform any coordinate operations.
-    ///
-    /// # Errors
-    ///
-    /// Returns `TriangulationValidationError` if neighbor assignment fails due to inconsistent
-    /// data structures or invalid facet sharing patterns.
-    pub fn assign_neighbors(&mut self) -> Result<(), TriangulationValidationError> {
-        use crate::core::facet::facet_key_from_vertices;
-
-        // Build facet mapping with vertex index information using optimized collections
-        // facet_key -> [(cell_key, vertex_index_opposite_to_facet)]
-        type FacetInfo = (CellKey, usize);
-        // Use saturating arithmetic to avoid potential overflow on adversarial inputs
-        let cap = self.cells.len().saturating_mul(D.saturating_add(1));
-        let mut facet_map: FastHashMap<u64, SmallBuffer<FacetInfo, 2>> =
-            fast_hash_map_with_capacity(cap);
-
-        for (cell_key, cell) in &self.cells {
-            let vertices = self.get_cell_vertices(cell_key).map_err(|err| {
-                TriangulationValidationError::VertexKeyRetrievalFailed {
-                    cell_id: cell.uuid(),
-                    message: format!(
-                        "Failed to retrieve vertex keys for cell during neighbor assignment: {err}"
-                    ),
-                }
-            })?;
-
-            let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-                SmallBuffer::with_capacity(vertices.len().saturating_sub(1));
-            for i in 0..vertices.len() {
-                facet_vertices.clear();
-                for (j, &key) in vertices.iter().enumerate() {
-                    if j != i {
-                        facet_vertices.push(key);
-                    }
-                }
-                let facet_key = facet_key_from_vertices(&facet_vertices);
-                let facet_entry = facet_map.entry(facet_key).or_default();
-                // Detect degenerate case early: more than 2 cells sharing a facet
-                // Note: Check happens before push, so len() reflects current sharing count
-                if facet_entry.len() >= 2 {
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Facet with key {} already shared by {} cells; cannot add cell {} (would violate 2-manifold property)",
-                            facet_key,
-                            facet_entry.len(),
-                            cell.uuid()
-                        ),
-                    });
-                }
-                facet_entry.push((cell_key, i));
-            }
-        }
-
-        // For each cell, build an ordered neighbor array where neighbors[i] is opposite vertices[i]
-        let mut cell_neighbors: FastHashMap<
-            CellKey,
-            SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>,
-        > = fast_hash_map_with_capacity(self.cells.len());
-
-        // Initialize each cell with a SmallBuffer of None values (one per vertex)
-        for (cell_key, cell) in &self.cells {
-            let vertex_count = cell.number_of_vertices();
-            if vertex_count > MAX_PRACTICAL_DIMENSION_SIZE {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Cell {} has {} vertices, which exceeds MAX_PRACTICAL_DIMENSION_SIZE={}. \
-                         This would overflow the neighbors buffer.",
-                        cell.uuid(),
-                        vertex_count,
-                        MAX_PRACTICAL_DIMENSION_SIZE
-                    ),
-                });
-            }
-            let mut neighbors = SmallBuffer::with_capacity(vertex_count);
-            neighbors.resize(vertex_count, None);
-            cell_neighbors.insert(cell_key, neighbors);
-        }
-
-        // For each facet that is shared by exactly two cells, establish neighbor relationships
-        // Note: >2 cells per facet already caught by early check during map build (above)
-        for (_facet_key, facet_infos) in facet_map {
-            if facet_infos.len() != 2 {
-                continue;
-            }
-
-            let (cell_key1, vertex_index1) = facet_infos[0];
-            let (cell_key2, vertex_index2) = facet_infos[1];
-
-            // Set neighbors with semantic constraint: neighbors[i] is opposite vertices[i]
-            cell_neighbors.get_mut(&cell_key1).ok_or_else(|| {
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!("Cell key {cell_key1:?} not found in cell neighbors map"),
-                }
-            })?[vertex_index1] = Some(cell_key2);
-
-            cell_neighbors.get_mut(&cell_key2).ok_or_else(|| {
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!("Cell key {cell_key2:?} not found in cell neighbors map"),
-                }
-            })?[vertex_index2] = Some(cell_key1);
-        }
-
-        // Apply updates
-        for (cell_key, neighbors) in &cell_neighbors {
-            if let Some(cell) = self.cells.get_mut(*cell_key) {
-                if neighbors.iter().all(Option::is_none) {
-                    cell.neighbors = None;
-                } else {
-                    let mut neighbor_buffer = SmallBuffer::new();
-                    neighbor_buffer.extend(neighbors.iter().copied());
-                    cell.neighbors = Some(neighbor_buffer);
-                }
-            }
-        }
-
-        // Topology changed; invalidate caches.
-        self.bump_generation();
-
-        Ok(())
-    }
-}
-
-// =============================================================================
-// CORE API METHODS - READ-ONLY ACCESSORS
-// =============================================================================
-// These methods have minimal trait bounds since they only read data structures
-// without performing any coordinate operations.
-
-impl<T, U, V, const D: usize> Tds<T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
     /// The function returns the number of vertices in the triangulation
     /// data structure.
     ///
@@ -1196,6 +1193,35 @@ where
     pub fn number_of_cells(&self) -> usize {
         self.cells.len()
     }
+
+    /// Increments the generation counter to invalidate dependent caches.
+    ///
+    /// This method should be called whenever the triangulation structure is modified
+    /// (vertices added, cells created/removed, etc.). It uses relaxed memory ordering
+    /// since it's just an invalidation counter.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe due to the use of `Arc<AtomicU64>`.
+    #[inline]
+    fn bump_generation(&self) {
+        // Relaxed is fine for an invalidation counter
+        self.generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Gets the current generation value.
+    ///
+    /// This can be used by external code to detect when the triangulation has changed.
+    /// The generation counter is incremented on any structural modification.
+    ///
+    /// # Returns
+    ///
+    /// The current generation counter value.
+    #[inline]
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
+    }
 }
 
 // =============================================================================
@@ -1266,35 +1292,6 @@ where
     )]
     pub fn insert_cell_unchecked(&mut self, cell: Cell<T, U, V, D>) -> CellKey {
         self.cells.insert(cell)
-    }
-
-    /// Increments the generation counter to invalidate dependent caches.
-    ///
-    /// This method should be called whenever the triangulation structure is modified
-    /// (vertices added, cells created/removed, etc.). It uses relaxed memory ordering
-    /// since it's just an invalidation counter.
-    ///
-    /// # Thread Safety
-    ///
-    /// This method is thread-safe due to the use of `Arc<AtomicU64>`.
-    #[inline]
-    fn bump_generation(&self) {
-        // Relaxed is fine for an invalidation counter
-        self.generation.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Gets the current generation value.
-    ///
-    /// This can be used by external code to detect when the triangulation has changed.
-    /// The generation counter is incremented on any structural modification.
-    ///
-    /// # Returns
-    ///
-    /// The current generation counter value.
-    #[inline]
-    #[must_use]
-    pub fn generation(&self) -> u64 {
-        self.generation.load(Ordering::Relaxed)
     }
 
     /// Atomically inserts a vertex and creates the UUID-to-key mapping.
@@ -3217,6 +3214,11 @@ where
         match InsertionAlgorithm::triangulate(&mut pipeline, self, &vertices) {
             Ok(()) => {
                 self.construction_state = TriangulationConstructionState::Constructed;
+
+                // Assign neighbor relationships for complete triangulation
+                // Required for algorithms like facet walking (point location)
+                self.assign_neighbors()?;
+
                 let statistics = pipeline.unified_statistics();
                 self.last_triangulation_statistics = Some(statistics.clone());
                 let unsalvageable_vertices = pipeline.take_unsalvageable_reports();

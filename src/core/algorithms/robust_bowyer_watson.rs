@@ -1660,8 +1660,7 @@ where
                 // No remaining violations – run final global validator to be sure
                 if log_enabled {
                     eprintln!(
-                        "[REPAIR] Iteration {}: No violations found, repair complete",
-                        iteration
+                        "[REPAIR] Iteration {iteration}: No violations found, repair complete"
                     );
                 }
                 return <Self as InsertionAlgorithm<T, U, V, D>>::validate_no_delaunay_violations(
@@ -1671,10 +1670,7 @@ where
 
             let num_violations = violating_cells.len();
             if log_enabled {
-                eprintln!(
-                    "[REPAIR] Iteration {}: Found {} violating cells",
-                    iteration, num_violations
-                );
+                eprintln!("[REPAIR] Iteration {iteration}: Found {num_violations} violating cells");
             }
 
             let mut repairs_performed = 0_usize;
@@ -1759,8 +1755,7 @@ where
                     // No suitable witness found for this cell – skip and try the next one
                     if log_enabled {
                         eprintln!(
-                            "[REPAIR] Iteration {}: No witness vertex found for cell {:?}",
-                            iteration, cell_key
+                            "[REPAIR] Iteration {iteration}: No witness vertex found for cell {cell_key:?}"
                         );
                     }
                     continue;
@@ -1782,7 +1777,12 @@ where
                         if log_enabled {
                             eprintln!(
                                 "[REPAIR] Iteration {}: Successfully repaired cell {:?} (strategy: {:?}, cells +{} -{}, total repairs: {})",
-                                iteration, cell_key, info.strategy, info.cells_created, info.cells_removed, repairs_performed
+                                iteration,
+                                cell_key,
+                                info.strategy,
+                                info.cells_created,
+                                info.cells_removed,
+                                repairs_performed
                             );
                         }
                     }
@@ -1814,7 +1814,9 @@ where
                             if log_enabled {
                                 eprintln!(
                                     "[REPAIR] Iteration {}: Removing unsalvageable witness vertex at {:?} (error: {})",
-                                    iteration, witness_vertex.point(), e
+                                    iteration,
+                                    witness_vertex.point(),
+                                    e
                                 );
                             }
                             self.unsalvageable_vertices.push(witness_vertex);
@@ -1859,8 +1861,7 @@ where
                 // surface a comprehensive validation error.
                 if log_enabled {
                     eprintln!(
-                        "[REPAIR] Iteration {}: No progress made ({} violations remain, 0 repairs performed)",
-                        iteration, num_violations
+                        "[REPAIR] Iteration {iteration}: No progress made ({num_violations} violations remain, 0 repairs performed)"
                     );
                 }
                 return Err(TriangulationConstructionError::ValidationError(
@@ -1874,10 +1875,7 @@ where
             }
 
             if log_enabled {
-                eprintln!(
-                    "[REPAIR] Iteration {}: Completed {} repairs",
-                    iteration, repairs_performed
-                );
+                eprintln!("[REPAIR] Iteration {iteration}: Completed {repairs_performed} repairs");
             }
         }
 

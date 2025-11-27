@@ -427,6 +427,10 @@ pub mod core {
     pub mod algorithms {
         /// Pure incremental Bowyer-Watson algorithm for Delaunay triangulation
         pub mod bowyer_watson;
+        /// Bistellar flip operations - Phase 3 TODO
+        pub mod flips;
+        /// Point location algorithms (facet walking) - Phase 3 TODO
+        pub mod locate;
         /// Robust Bowyer-Watson implementation with enhanced numerical stability
         pub mod robust_bowyer_watson;
         /// Internal unified fast+robust insertion pipeline for Stage 2
@@ -438,7 +442,11 @@ pub mod core {
     pub mod cell;
     /// High-performance collection types optimized for computational geometry
     pub mod collections;
+    /// Delaunay triangulation layer with incremental insertion - Phase 3 TODO
+    pub mod delaunay_triangulation;
     pub mod facet;
+    /// Generic triangulation combining kernel + Tds - Phase 2 TODO
+    pub mod triangulation;
     pub mod triangulation_data_structure;
     pub mod util;
     pub mod vertex;
@@ -478,6 +486,8 @@ pub mod geometry {
         pub mod convex_hull;
         pub use convex_hull::*;
     }
+    /// Geometric kernel abstraction (CGAL-style) - Phase 2 TODO
+    pub mod kernel;
     pub mod matrix;
     pub mod point;
     pub mod predicates;
