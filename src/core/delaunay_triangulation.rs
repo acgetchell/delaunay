@@ -89,6 +89,28 @@ where
     pub fn new(vertices: &[Vertex<f64, U, D>]) -> Result<Self, TriangulationConstructionError> {
         Self::with_kernel(FastKernel::<f64>::new(), vertices)
     }
+
+    /// Create an empty Delaunay triangulation using default settings (f64, fast predicates).
+    ///
+    /// This creates a triangulation with no vertices or cells. Use [`insert`](Self::insert)
+    /// to add vertices incrementally.
+    ///
+    /// This is the recommended constructor for empty triangulations. It uses the same defaults
+    /// as [`new`](Self::new): f64 coordinates with fast floating-point predicates.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// assert_eq!(dt.number_of_vertices(), 0);
+    /// assert_eq!(dt.number_of_cells(), 0);
+    /// ```
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::with_empty_kernel(FastKernel::<f64>::new())
+    }
 }
 
 // Generic implementation for all kernels
@@ -99,7 +121,10 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Create an empty Delaunay triangulation with the given kernel.
+    /// Create an empty Delaunay triangulation with the given kernel (advanced usage).
+    ///
+    /// Most users should use [`DelaunayTriangulation::empty()`] instead, which uses fast predicates
+    /// by default. Use this method only if you need custom coordinate precision or specialized kernels.
     ///
     /// This creates a triangulation with no vertices or cells. Use [`insert`](Self::insert)
     /// to add vertices incrementally.
@@ -108,15 +133,15 @@ where
     ///
     /// ```rust
     /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-    /// use delaunay::geometry::kernel::FastKernel;
+    /// use delaunay::geometry::kernel::RobustKernel;
     ///
-    /// let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 4> =
-    ///     DelaunayTriangulation::new_empty(FastKernel::new());
+    /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 4> =
+    ///     DelaunayTriangulation::with_empty_kernel(RobustKernel::new());
     /// assert_eq!(dt.number_of_vertices(), 0);
     /// assert_eq!(dt.number_of_cells(), 0);
     /// ```
     #[must_use]
-    pub fn new_empty(kernel: K) -> Self {
+    pub fn with_empty_kernel(kernel: K) -> Self {
         Self {
             tri: Triangulation::new_empty(kernel),
             last_inserted_cell: None,
@@ -402,6 +427,34 @@ where
     /// ```
     pub const fn tds_mut(&mut self) -> &mut Tds<K::Scalar, U, V, D> {
         &mut self.tri.tds
+    }
+
+    /// Returns a reference to the underlying `Triangulation` (kernel + tds).
+    ///
+    /// This is useful when you need to pass the triangulation to methods that
+    /// expect a `&Triangulation`, such as `ConvexHull::from_triangulation()`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices: Vec<_> = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
+    /// assert_eq!(hull.facet_count(), 4);
+    /// ```
+    #[must_use]
+    pub const fn triangulation(&self) -> &Triangulation<K, U, V, D> {
+        &self.tri
     }
 
     /// Insert a vertex into the Delaunay triangulation using incremental cavity-based algorithm.
@@ -747,13 +800,12 @@ mod tests {
     );
 
     // =========================================================================
-    // new_empty() tests
+    // empty() / with_empty_kernel() tests
     // =========================================================================
 
     #[test]
-    fn test_new_empty_creates_empty_triangulation() {
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
-            DelaunayTriangulation::new_empty(FastKernel::new());
+    fn test_empty_creates_empty_triangulation() {
+        let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
         assert_eq!(dt.number_of_vertices(), 0);
         assert_eq!(dt.number_of_cells(), 0);
@@ -762,9 +814,8 @@ mod tests {
     }
 
     #[test]
-    fn test_new_empty_then_construct() {
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::new_empty(FastKernel::new());
+    fn test_empty_then_construct() {
+        let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
 
         assert_eq!(dt.number_of_vertices(), 0);
 

@@ -272,7 +272,7 @@ fn test_generation_tracking_through_insertions() {
 #[test]
 fn test_convex_hull_cache_during_construction() {
     // Use vertices that form a proper convex hull (tetrahedron + points on hull surface)
-    let vertices = vec![
+    let vertices: Vec<delaunay::core::Vertex<f64, Option<()>, 3>> = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([2.0, 0.0, 0.0]),
         vertex!([0.0, 2.0, 0.0]),
@@ -281,25 +281,30 @@ fn test_convex_hull_cache_during_construction() {
         vertex!([1.0, 0.0, 1.0]), // On face of hull
     ];
 
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let dt: delaunay::core::delaunay_triangulation::DelaunayTriangulation<
+        _,
+        Option<()>,
+        Option<()>,
+        3,
+    > = delaunay::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     // Access cache multiple times
     for _ in 0..5 {
-        let cache = hull.try_get_or_build_facet_cache(&tds).unwrap();
+        let cache = hull.try_get_or_build_facet_cache(dt.tds()).unwrap();
         assert!(!cache.is_empty());
     }
 
     // Invalidate and rebuild
     hull.invalidate_facet_cache();
-    let cache_after_invalidation = hull.try_get_or_build_facet_cache(&tds).unwrap();
+    let cache_after_invalidation = hull.try_get_or_build_facet_cache(dt.tds()).unwrap();
     assert!(!cache_after_invalidation.is_empty());
 
     // Verify cached generation matches TDS
     assert_eq!(
         hull.cached_generation()
             .load(std::sync::atomic::Ordering::Acquire),
-        tds.generation()
+        dt.tds().generation()
     );
 }
 

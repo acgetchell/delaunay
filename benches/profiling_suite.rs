@@ -57,6 +57,7 @@
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::core::collections::SmallBuffer;
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::geometry::util::{
     generate_grid_points, generate_poisson_points, generate_random_points_seeded,
     safe_usize_to_scalar,
@@ -752,11 +753,11 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
                             DEFAULT_SEED,
                         );
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        Tds::<f64, (), (), 3>::new(&vertices).unwrap()
+                        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).unwrap()
                     },
-                    |tds| {
+                    |dt| {
                         let boundary_facets =
-                            tds.boundary_facets().expect("boundary_facets failed");
+                            dt.tds().boundary_facets().expect("boundary_facets failed");
                         black_box(boundary_facets);
                     },
                     BatchSize::LargeInput,
@@ -777,10 +778,10 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
                             DEFAULT_SEED,
                         );
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        Tds::<f64, (), (), 3>::new(&vertices).unwrap()
+                        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).unwrap()
                     },
-                    |tds| {
-                        let hull = delaunay::geometry::algorithms::convex_hull::ConvexHull::from_triangulation(&tds).unwrap();
+                    |dt| {
+                        let hull = delaunay::geometry::algorithms::convex_hull::ConvexHull::from_triangulation(dt.triangulation()).unwrap();
                         black_box(hull);
                     },
                     BatchSize::LargeInput,

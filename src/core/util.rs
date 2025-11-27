@@ -1039,31 +1039,34 @@ where
 ///
 /// ```
 /// use delaunay::core::util::extract_hull_facet_set;
+/// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-/// use delaunay::core::Tds;
 /// use delaunay::vertex;
 ///
-/// let vertices = vec![
+/// let vertices: Vec<_> = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-/// let hull = ConvexHull::from_triangulation(&tds).unwrap();
+/// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+///     DelaunayTriangulation::new(&vertices).unwrap();
+/// let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 ///
-/// let facet_set = extract_hull_facet_set(&hull, &tds).unwrap();
+/// let facet_set = extract_hull_facet_set(&hull, dt.triangulation()).unwrap();
 /// assert_eq!(facet_set.len(), 4);
 /// ```
-pub fn extract_hull_facet_set<T, U, V, const D: usize>(
-    hull: &ConvexHull<T, U, V, D>,
-    tds: &Tds<T, U, V, D>,
+pub fn extract_hull_facet_set<K, U, V, const D: usize>(
+    hull: &ConvexHull<K, U, V, D>,
+    tri: &crate::core::triangulation::Triangulation<K, U, V, D>,
 ) -> Result<HashSet<u64>, FacetError>
 where
-    T: CoordinateScalar + std::ops::AddAssign<T> + std::ops::SubAssign<T> + std::iter::Sum,
+    K: crate::geometry::kernel::Kernel<D>,
+    K::Scalar: CoordinateScalar + std::ops::AddAssign + std::ops::SubAssign + std::iter::Sum,
     U: DataType,
     V: DataType,
 {
+    let tds = &tri.tds;
     let mut facet_ids = HashSet::new();
 
     for facet_handle in hull.facets() {
@@ -3620,9 +3623,13 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let hull = ConvexHull::from_triangulation(&tds).unwrap();
+        let tri = crate::core::triangulation::Triangulation {
+            kernel: crate::geometry::kernel::FastKernel::new(),
+            tds,
+        };
+        let hull = ConvexHull::from_triangulation(&tri).unwrap();
 
-        let facet_set = extract_hull_facet_set(&hull, &tds).unwrap();
+        let facet_set = extract_hull_facet_set(&hull, &tri).unwrap();
         // Hull of a tetrahedron has 4 facets
         assert_eq!(facet_set.len(), 4, "Hull should have 4 facets");
     }

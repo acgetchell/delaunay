@@ -28,9 +28,10 @@
 //! - Validation results
 //! - Performance metrics
 
-#![allow(deprecated)]
-
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::core::facet::FacetView;
+use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+use delaunay::geometry::kernel::FastKernel;
 use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::*;
 use num_traits::cast::cast;
@@ -50,16 +51,16 @@ fn main() {
     );
     let start = Instant::now();
 
-    let tds: Tds<f64, (), (), 3> = match generate_random_triangulation(
+    let dt = match generate_random_triangulation(
         20,          // Number of points
         (-3.0, 3.0), // Coordinate bounds
         None,        // No vertex data
         Some(666),   // Fixed seed for reproducibility (matches tested configuration)
     ) {
-        Ok(triangulation) => {
+        Ok(dt) => {
             let construction_time = start.elapsed();
             println!("✓ Triangulation created successfully in {construction_time:?}");
-            triangulation
+            dt
         }
         Err(e) => {
             println!("✗ Failed to create triangulation: {e}");
@@ -68,10 +69,10 @@ fn main() {
     };
 
     // Display some vertex information
-    let vertex_count = tds.number_of_vertices();
+    let vertex_count = dt.tds().number_of_vertices();
     println!("Generated {vertex_count} vertices");
     println!("First few vertices:");
-    for (displayed, (_key, vertex)) in tds.vertices().enumerate() {
+    for (displayed, (_key, vertex)) in dt.tds().vertices().enumerate() {
         if displayed >= 10 {
             break;
         }
@@ -86,19 +87,19 @@ fn main() {
     }
 
     // Display triangulation properties
-    analyze_triangulation(&tds);
+    analyze_triangulation(&dt);
 
     // Extract and analyze convex hull
-    extract_and_analyze_convex_hull(&tds);
+    extract_and_analyze_convex_hull(&dt);
 
     // Test point containment
-    test_point_containment(&tds, &[]);
+    test_point_containment(&dt, &[]);
 
     // Analyze visible facets
-    analyze_visible_facets(&tds);
+    analyze_visible_facets(&dt);
 
     // Performance analysis
-    performance_analysis(&tds);
+    performance_analysis(&dt);
 
     println!("\n=================================================================");
     println!("Example completed successfully!");
@@ -106,16 +107,16 @@ fn main() {
 }
 
 /// Analyze and display triangulation properties
-fn analyze_triangulation(tds: &Tds<f64, (), (), 3>) {
+fn analyze_triangulation(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) {
     println!("Triangulation Analysis:");
     println!("======================");
-    println!("  Number of vertices: {}", tds.number_of_vertices());
-    println!("  Number of cells:    {}", tds.number_of_cells());
-    println!("  Dimension:          {}", tds.dim());
+    println!("  Number of vertices: {}", dt.tds().number_of_vertices());
+    println!("  Number of cells:    {}", dt.tds().number_of_cells());
+    println!("  Dimension:          {}", dt.tds().dim());
 
     // Validate the triangulation
     let start = Instant::now();
-    match tds.is_valid() {
+    match dt.tds().is_valid() {
         Ok(()) => {
             let validation_time = start.elapsed();
             println!("  Validation:         ✓ VALID ({validation_time:?})");
@@ -130,12 +131,12 @@ fn analyze_triangulation(tds: &Tds<f64, (), (), 3>) {
 }
 
 /// Extract and analyze the convex hull from the triangulation
-fn extract_and_analyze_convex_hull(tds: &Tds<f64, (), (), 3>) {
+fn extract_and_analyze_convex_hull(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) {
     println!("Convex Hull Extraction:");
     println!("=======================");
 
     let start = Instant::now();
-    let hull: ConvexHull<f64, (), (), 3> = match ConvexHull::from_triangulation(tds) {
+    let hull = match ConvexHull::from_triangulation(dt.triangulation()) {
         Ok(convex_hull) => {
             let extraction_time = start.elapsed();
             println!("✓ Convex hull extracted successfully in {extraction_time:?}");
@@ -156,7 +157,7 @@ fn extract_and_analyze_convex_hull(tds: &Tds<f64, (), (), 3>) {
 
     // Validate the convex hull
     let start = Instant::now();
-    match hull.validate(tds) {
+    match hull.validate(dt.triangulation()) {
         Ok(()) => {
             let validation_time = start.elapsed();
             println!("  Validation:         ✓ VALID ({validation_time:?})");
@@ -176,9 +177,11 @@ fn extract_and_analyze_convex_hull(tds: &Tds<f64, (), (), 3>) {
 
         for (i, facet_handle) in facets.iter().take(sample_size).enumerate() {
             // Create FacetView to access facet properties
-            if let Ok(facet_view) =
-                FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index())
-            {
+            if let Ok(facet_view) = FacetView::new(
+                dt.tds(),
+                facet_handle.cell_key(),
+                facet_handle.facet_index(),
+            ) {
                 let vertex_count = facet_view.vertices().map(Iterator::count).unwrap_or(0);
                 let facet_key = facet_view.key().unwrap_or(0);
                 println!(
@@ -200,14 +203,14 @@ fn extract_and_analyze_convex_hull(tds: &Tds<f64, (), (), 3>) {
 
 /// Test point containment with various points (updated to work with generated triangulation)
 fn test_point_containment(
-    tds: &Tds<f64, (), (), 3>,
+    dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>,
     _original_vertices: &[()], // Not needed anymore since we access vertices from tds
 ) {
     println!("Point Containment Tests:");
     println!("=======================");
 
     // Extract convex hull for containment tests
-    let hull: ConvexHull<f64, (), (), 3> = match ConvexHull::from_triangulation(tds) {
+    let hull = match ConvexHull::from_triangulation(dt.triangulation()) {
         Ok(h) => h,
         Err(e) => {
             println!("✗ Failed to extract convex hull for containment tests: {e}");
@@ -220,8 +223,8 @@ fn test_point_containment(
 
     // Calculate centroid of triangulation vertices
     let mut centroid = [0.0f64; 3];
-    let vertex_count = tds.number_of_vertices();
-    for (_, vertex) in tds.vertices() {
+    let vertex_count = dt.tds().number_of_vertices();
+    for (_, vertex) in dt.tds().vertices() {
         let coords: [f64; 3] = vertex.into();
         for (i, &coord) in coords.iter().enumerate() {
             centroid[i] += coord;
@@ -233,34 +236,34 @@ fn test_point_containment(
     }
 
     let centroid_point = Point::new(centroid);
-    test_point_containment_single(&hull, &centroid_point, "Centroid", tds);
+    test_point_containment_single(&hull, &centroid_point, "Centroid", dt);
 
     // Test slightly offset from centroid (should still be inside)
     let near_centroid = Point::new([centroid[0] + 0.1, centroid[1] + 0.1, centroid[2] + 0.1]);
-    test_point_containment_single(&hull, &near_centroid, "Near centroid", tds);
+    test_point_containment_single(&hull, &near_centroid, "Near centroid", dt);
 
     // Test 2: Points clearly outside the convex hull
     println!("\n  Testing exterior points:");
 
     let far_point = Point::new([50.0, 50.0, 50.0]);
-    test_point_containment_single(&hull, &far_point, "Far exterior", tds);
+    test_point_containment_single(&hull, &far_point, "Far exterior", dt);
 
     let axis_point = Point::new([20.0, 0.0, 0.0]);
-    test_point_containment_single(&hull, &axis_point, "X-axis exterior", tds);
+    test_point_containment_single(&hull, &axis_point, "X-axis exterior", dt);
 
     let negative_point = Point::new([-20.0, -20.0, -20.0]);
-    test_point_containment_single(&hull, &negative_point, "Negative exterior", tds);
+    test_point_containment_single(&hull, &negative_point, "Negative exterior", dt);
 
     // Test 3: Sample triangulation vertices (should be on boundary or inside)
     println!("\n  Testing triangulation vertices:");
     let sample_vertices = std::cmp::min(3, vertex_count);
-    for (i, (_, vertex)) in tds.vertices().enumerate().take(sample_vertices) {
+    for (i, (_, vertex)) in dt.tds().vertices().enumerate().take(sample_vertices) {
         let point: Point<f64, 3> = vertex.into();
         test_point_containment_single(
             &hull,
             &point,
             &format!("Triangulation vertex {}", i + 1),
-            tds,
+            dt,
         );
     }
 
@@ -269,15 +272,15 @@ fn test_point_containment(
 
 /// Test containment for a single point and display results
 fn test_point_containment_single(
-    hull: &ConvexHull<f64, (), (), 3>,
+    hull: &ConvexHull<FastKernel<f64>, (), (), 3>,
     point: &Point<f64, 3>,
     description: &str,
-    tds: &Tds<f64, (), (), 3>,
+    dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>,
 ) {
     let coords = point.coords();
 
     let start = Instant::now();
-    match hull.is_point_outside(point, tds) {
+    match hull.is_point_outside(point, dt.triangulation()) {
         Ok(is_outside) => {
             let test_time = start.elapsed();
             let status = if is_outside {
@@ -300,12 +303,12 @@ fn test_point_containment_single(
 }
 
 /// Analyze visible facets from external points
-fn analyze_visible_facets(tds: &Tds<f64, (), (), 3>) {
+fn analyze_visible_facets(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) {
     println!("Visible Facet Analysis:");
     println!("======================");
 
     // Extract convex hull for visible facet analysis
-    let hull: ConvexHull<f64, (), (), 3> = match ConvexHull::from_triangulation(tds) {
+    let hull = match ConvexHull::from_triangulation(dt.triangulation()) {
         Ok(h) => h,
         Err(e) => {
             println!("✗ Failed to extract convex hull for visible facet analysis: {e}");
@@ -329,7 +332,7 @@ fn analyze_visible_facets(tds: &Tds<f64, (), (), 3>) {
         let coords = point.coords();
 
         let start = Instant::now();
-        match hull.find_visible_facets(&point, tds) {
+        match hull.find_visible_facets(&point, dt.triangulation()) {
             Ok(visible_facets) => {
                 let query_time = start.elapsed();
                 let visible_count = visible_facets.len();
@@ -366,7 +369,7 @@ fn analyze_visible_facets(tds: &Tds<f64, (), (), 3>) {
     let coords = test_point.coords();
 
     let start = Instant::now();
-    match hull.find_nearest_visible_facet(&test_point, tds) {
+    match hull.find_nearest_visible_facet(&test_point, dt.triangulation()) {
         Ok(Some(nearest_facet_index)) => {
             let query_time = start.elapsed();
             println!(
@@ -394,7 +397,7 @@ fn analyze_visible_facets(tds: &Tds<f64, (), (), 3>) {
 }
 
 /// Perform performance analysis and benchmarking
-fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
+fn performance_analysis(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) {
     println!("Performance Analysis:");
     println!("====================");
 
@@ -402,7 +405,7 @@ fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
     let extraction_times: Vec<_> = (0..5)
         .map(|_| {
             let start = Instant::now();
-            let _ = ConvexHull::from_triangulation(tds);
+            let _ = ConvexHull::from_triangulation(dt.triangulation());
             start.elapsed()
         })
         .collect();
@@ -419,13 +422,13 @@ fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
     println!("    • Max time:     {max_extraction_time:?}");
 
     // Benchmark point containment queries
-    let hull = ConvexHull::from_triangulation(tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     let test_point = Point::new([5.0, 5.0, 5.0]);
 
     let containment_times: Vec<_> = (0..10)
         .map(|_| {
             let start = Instant::now();
-            let _ = hull.is_point_outside(&test_point, tds);
+            let _ = hull.is_point_outside(&test_point, dt.triangulation());
             start.elapsed()
         })
         .collect();
@@ -443,7 +446,7 @@ fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
     let visibility_times: Vec<_> = (0..5)
         .map(|_| {
             let start = Instant::now();
-            let _ = hull.find_visible_facets(&external_point, tds);
+            let _ = hull.find_visible_facets(&external_point, dt.triangulation());
             start.elapsed()
         })
         .collect();
@@ -456,7 +459,7 @@ fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
     println!("    • Average time: {avg_visibility_time:?}");
 
     // Performance per vertex ratios
-    let vertex_count = tds.number_of_vertices();
+    let vertex_count = dt.tds().number_of_vertices();
     let facet_count = hull.facet_count();
 
     if vertex_count > 0 && facet_count > 0 {
@@ -473,7 +476,7 @@ fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
     }
 
     // Memory usage estimation
-    let hull_size = std::mem::size_of::<ConvexHull<f64, Option<()>, Option<()>, 3>>();
+    let hull_size = std::mem::size_of::<ConvexHull<FastKernel<f64>, Option<()>, Option<()>, 3>>();
     // Phase 3C: Facets are now lightweight (CellKey, u8) tuples
     let facet_handle_size = std::mem::size_of::<(delaunay::core::CellKey, u8)>();
     let estimated_hull_memory = hull_size + (facet_count * facet_handle_size);

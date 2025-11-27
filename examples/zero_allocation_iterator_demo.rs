@@ -6,7 +6,6 @@
 //! `vertex_uuids()` method that allocates a Vec.
 
 use delaunay::geometry::util::generate_random_triangulation;
-use delaunay::prelude::*;
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -19,15 +18,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // NOTE: The (n_points, bounds, seed) triple matches the 4D configuration used in
     // `test_generate_random_triangulation_dimensions` so that this example exercises
     // a realistic 4D triangulation without triggering extreme Delaunay repair in CI.
-    let tds: Tds<f64, (), (), 4> = generate_random_triangulation(
-        12,          // Number of points (fewer for faster demo)
-        (-1.0, 1.0), // Coordinate bounds
-        None,        // No vertex data
-        Some(777),   // Fixed seed for reproducibility (matches tested configuration)
-    )?;
+    let dt: delaunay::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 4> =
+        generate_random_triangulation(
+            12,          // Number of points (fewer for faster demo)
+            (-1.0, 1.0), // Coordinate bounds
+            None,        // No vertex data
+            Some(777),   // Fixed seed for reproducibility (matches tested configuration)
+        )?;
 
     // Get the first cell from the triangulation
-    let Some(cell) = tds.cells().map(|(_, cell)| cell).next() else {
+    let Some(cell) = dt.tds().cells().map(|(_, cell)| cell).next() else {
         eprintln!("No cells in triangulation; nothing to demo.");
         return Ok(());
     };
@@ -40,8 +40,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Functional Equivalence Test:");
     println!("===========================");
 
-    let vec_uuids = cell.vertex_uuids(&tds)?;
-    let iter_uuids: Vec<_> = cell.vertex_uuid_iter(&tds).collect::<Result<Vec<_>, _>>()?;
+    let vec_uuids = cell.vertex_uuids(dt.tds())?;
+    let iter_uuids: Vec<_> = cell
+        .vertex_uuid_iter(dt.tds())
+        .collect::<Result<Vec<_>, _>>()?;
 
     println!("  vertex_uuids() returned {} UUIDs", vec_uuids.len());
     println!(
@@ -67,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..iterations {
         // Note: Errors are intentionally ignored in this timing loop for fair comparison.
         // In a well-formed triangulation with valid cell references, errors should not occur.
-        if let Ok(uuids) = cell.vertex_uuids(&tds) {
+        if let Ok(uuids) = cell.vertex_uuids(dt.tds()) {
             // Allocates Vec
             total_count += black_box(uuids.len()); // Prevent optimization
         }
@@ -80,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..iterations {
         // Note: count() on Iterator<Item = Result<Uuid, _>> counts all items (both Ok and Err).
         // This is appropriate for performance comparison since errors should not occur here.
-        let count = cell.vertex_uuid_iter(&tds).count(); // No allocation
+        let count = cell.vertex_uuid_iter(dt.tds()).count(); // No allocation
         total_count_iter += black_box(count);
     }
     let iter_duration = start.elapsed();
@@ -104,12 +106,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ExactSizeIterator
     // Note: len() returns the total number of items (including any errors in Results)
-    let iter = cell.vertex_uuid_iter(&tds);
+    let iter = cell.vertex_uuid_iter(dt.tds());
     println!("  Length via ExactSizeIterator: {}", iter.len());
 
     // Can be used in for loops
     let mut count = 0;
-    for uuid in cell.vertex_uuid_iter(&tds).flatten() {
+    for uuid in cell.vertex_uuid_iter(dt.tds()).flatten() {
         if !uuid.is_nil() {
             count += 1;
         }
@@ -118,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Can be chained with other iterator methods
     let valid_uuid_count = cell
-        .vertex_uuid_iter(&tds)
+        .vertex_uuid_iter(dt.tds())
         .filter_map(Result::ok)
         .filter(|uuid| !uuid.is_nil())
         .count();
@@ -126,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Can be used with iterator combinators
     // Note: take(3).count() counts items in the iterator (including Results with Err if any)
-    let first_few_count = cell.vertex_uuid_iter(&tds).take(3).count();
+    let first_few_count = cell.vertex_uuid_iter(dt.tds()).take(3).count();
     println!("  First 3 UUIDs: {first_few_count} collected");
 
     println!("\n=================================================================");

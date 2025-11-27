@@ -28,7 +28,7 @@ macro_rules! generate_memory_analysis {
                     Some(seed),
                 )
             });
-            let tds = match tds_res {
+            let dt = match tds_res {
                 Ok(t) => t,
                 Err(e) => {
                     eprintln!("✗ Failed to build triangulation: {e}");
@@ -37,13 +37,13 @@ macro_rules! generate_memory_analysis {
             };
             let construction_time = start.elapsed();
 
-            let num_vertices = tds.number_of_vertices();
-            let num_cells = tds.number_of_cells();
+            let num_vertices = dt.tds().number_of_vertices();
+            let num_cells = dt.tds().number_of_cells();
 
             // Measure convex hull extraction
             let start = Instant::now();
             let (hull_res, hull_info) = measure_with_result(|| {
-                ConvexHull::from_triangulation(&tds)
+                ConvexHull::from_triangulation(dt.triangulation())
             });
             let hull = match hull_res {
                 Ok(h) => h,

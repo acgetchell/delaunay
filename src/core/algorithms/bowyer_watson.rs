@@ -104,7 +104,7 @@ use crate::core::{
     triangulation_data_structure::Tds,
     vertex::Vertex,
 };
-use crate::geometry::{algorithms::convex_hull::ConvexHull, traits::coordinate::CoordinateScalar};
+use crate::geometry::traits::coordinate::CoordinateScalar;
 use arc_swap::ArcSwapOption;
 use num_traits::NumCast;
 use std::{
@@ -131,9 +131,6 @@ where
 
     /// Reusable buffers for performance
     buffers: InsertionBuffers<T, U, V, D>,
-
-    /// Cached convex hull for hull extension
-    hull: Option<ConvexHull<T, U, V, D>>,
 
     /// Cache for facet-to-cells mapping
     facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
@@ -182,7 +179,6 @@ where
             stats: InsertionStatistics::new(),
             // Scale buffer capacity with dimension for better performance
             buffers: InsertionBuffers::with_capacity(D * 10),
-            hull: None,
             facet_to_cells_cache: ArcSwapOption::empty(),
             cached_generation: Arc::new(AtomicU64::new(0)),
         }
@@ -350,7 +346,6 @@ where
         // Reset statistics and clear buffers
         self.stats.reset();
         self.buffers.clear_all();
-        self.hull = None;
         // Clear facet cache to prevent serving stale mappings across runs
         self.invalidate_facet_cache();
     }

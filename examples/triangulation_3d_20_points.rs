@@ -25,8 +25,6 @@
 //! - Boundary analysis
 //! - Performance metrics
 
-#![allow(deprecated)]
-
 use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::*;
 use num_traits::cast::cast;
@@ -46,7 +44,7 @@ fn main() {
     );
     let start = Instant::now();
 
-    let tds: Tds<f64, (), (), 3> = match generate_random_triangulation(
+    let dt = match generate_random_triangulation(
         20,          // Number of points
         (-3.0, 3.0), // Coordinate bounds
         None,        // No vertex data
@@ -64,10 +62,10 @@ fn main() {
     };
 
     // Display some vertex information by accessing the triangulation's vertices
-    let vertex_count = tds.number_of_vertices();
+    let vertex_count = dt.tds().number_of_vertices();
     println!("Generated {vertex_count} vertices");
     println!("First few vertices:");
-    for (i, (_key, vertex)) in tds.vertices().take(10).enumerate() {
+    for (i, (_key, vertex)) in dt.tds().vertices().take(10).enumerate() {
         let coords: [f64; 3] = *vertex.point().coords();
         println!(
             "  v{:2}: [{:8.3}, {:8.3}, {:8.3}]",
@@ -81,16 +79,16 @@ fn main() {
     println!();
 
     // Display triangulation properties
-    analyze_triangulation(&tds);
+    analyze_triangulation(dt.tds());
 
     // Validate the triangulation
-    validate_triangulation(&tds);
+    validate_triangulation(dt.tds());
 
     // Analyze boundary properties
-    analyze_boundary_properties(&tds);
+    analyze_boundary_properties(dt.tds());
 
     // Performance analysis
-    performance_analysis(&tds);
+    performance_analysis(dt.tds());
 
     println!("\n=================================================================");
     println!("Example completed successfully!");

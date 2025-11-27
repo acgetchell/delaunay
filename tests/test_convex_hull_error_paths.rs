@@ -19,7 +19,7 @@
 //! These tests complement existing integration and property tests by focusing on
 //! error conditions that are difficult to trigger through normal usage.
 
-use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::algorithms::convex_hull::{ConvexHull, ConvexHullConstructionError};
 use delaunay::geometry::point::Point;
@@ -60,11 +60,10 @@ fn simplex_4d() -> [Vertex<f64, Option<()>, 4>; 5] {
 /// **Coverage target:** Lines checking `tds.number_of_vertices() == 0` in `from_triangulation()`
 #[test]
 fn test_insufficient_data_no_vertices() {
-    // Create an empty TDS (no cells, no vertices)
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+    // Create an empty DelaunayTriangulation (no cells, no vertices)
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::empty();
 
-    let result = ConvexHull::from_triangulation(&tds);
-
+    let result = ConvexHull::from_triangulation(dt.triangulation());
     assert!(result.is_err(), "Creating hull from empty TDS should fail");
 
     match result.unwrap_err() {
@@ -86,11 +85,10 @@ fn test_insufficient_data_no_vertices() {
 /// The code path exists for defensive validation.
 #[test]
 fn test_insufficient_data_no_cells() {
-    // Use empty TDS which has no cells
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+    // Use empty DelaunayTriangulation which has no cells
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::empty();
 
-    let result = ConvexHull::from_triangulation(&tds);
-
+    let result = ConvexHull::from_triangulation(dt.triangulation());
     assert!(
         result.is_err(),
         "Creating hull from TDS with no cells should fail"
@@ -114,28 +112,29 @@ fn test_insufficient_data_no_cells() {
 /// **Coverage target:** Lines checking `creation_gen != tds_gen` in `is_facet_visible_from_point()`
 #[test]
 fn test_stale_hull_detection_visibility() {
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
+    let mut dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+        DelaunayTriangulation::new(&simplex_3d()).unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     assert!(
-        hull.is_valid_for_tds(&tds),
+        hull.is_valid_for_triangulation(dt.triangulation()),
         "Hull should be valid initially"
     );
 
-    // Modify the TDS to invalidate the hull
-    tds.add(vertex!([0.5, 0.5, 0.5])).unwrap();
+    // Modify the triangulation to invalidate the hull
+    dt.tds_mut().add(vertex!([0.5, 0.5, 0.5])).unwrap();
 
     // Verify staleness is detected
     assert!(
-        !hull.is_valid_for_tds(&tds),
-        "Hull should be invalid after TDS modification"
+        !hull.is_valid_for_triangulation(dt.triangulation()),
+        "Hull should be invalid after triangulation modification"
     );
 
     // Try to use stale hull for visibility check - should return StaleHull error
     let facet = hull.get_facet(0).unwrap();
     let test_point = Point::new([2.0, 2.0, 2.0]);
 
-    let result = hull.is_facet_visible_from_point(facet, &test_point, &tds);
+    let result = hull.is_facet_visible_from_point(facet, &test_point, dt.triangulation());
 
     assert!(result.is_err(), "Stale hull usage should fail");
 
@@ -158,15 +157,16 @@ fn test_stale_hull_detection_visibility() {
 /// **Coverage target:** Staleness check in `find_visible_facets()` method
 #[test]
 fn test_stale_hull_detection_find_visible() {
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
+    let mut dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+        DelaunayTriangulation::new(&simplex_3d()).unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
-    // Modify TDS to make hull stale
-    tds.add(vertex!([1.5, 1.5, 1.5])).unwrap();
+    // Modify triangulation to make hull stale
+    dt.tds_mut().add(vertex!([1.5, 1.5, 1.5])).unwrap();
 
     let test_point = Point::new([3.0, 3.0, 3.0]);
-    let result = hull.find_visible_facets(&test_point, &tds);
+    let result = hull.find_visible_facets(&test_point, dt.triangulation());
 
     assert!(
         result.is_err(),
@@ -190,15 +190,16 @@ fn test_stale_hull_detection_find_visible() {
 /// **Coverage target:** `invalidate_cache()` method and cache rebuild logic
 #[test]
 fn test_cache_invalidation() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+        DelaunayTriangulation::new(&simplex_3d()).unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     // Perform visibility check to populate cache
     let facet = hull.get_facet(0).unwrap();
     let test_point = Point::new([2.0, 2.0, 2.0]);
 
-    let result1 = hull.is_facet_visible_from_point(facet, &test_point, &tds);
+    let result1 = hull.is_facet_visible_from_point(facet, &test_point, dt.triangulation());
     assert!(
         result1.is_ok(),
         "First visibility check should succeed: {result1:?}"
@@ -207,14 +208,14 @@ fn test_cache_invalidation() {
     // Invalidate cache
     hull.invalidate_cache();
 
-    // Verify hull is still valid for TDS (invalidate_cache doesn't affect validity)
+    // Verify hull is still valid for triangulation (invalidate_cache doesn't affect validity)
     assert!(
-        hull.is_valid_for_tds(&tds),
+        hull.is_valid_for_triangulation(dt.triangulation()),
         "Hull should remain valid after cache invalidation"
     );
 
     // Perform another visibility check - should rebuild cache and succeed
-    let result2 = hull.is_facet_visible_from_point(facet, &test_point, &tds);
+    let result2 = hull.is_facet_visible_from_point(facet, &test_point, dt.triangulation());
     assert!(
         result2.is_ok(),
         "Visibility check after cache invalidation should succeed: {result2:?}"
@@ -237,9 +238,10 @@ fn test_cache_invalidation() {
 /// **Coverage target:** Orientation comparison logic and degenerate case handling
 #[test]
 fn test_visibility_various_positions() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+        DelaunayTriangulation::new(&simplex_3d()).unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     // Test multiple facets and points to maximize coverage
     let test_cases = vec![
@@ -254,7 +256,7 @@ fn test_visibility_various_positions() {
     for (point, description) in test_cases {
         for facet_idx in 0..hull.facet_count() {
             let facet = hull.get_facet(facet_idx).unwrap();
-            let result = hull.is_facet_visible_from_point(facet, &point, &tds);
+            let result = hull.is_facet_visible_from_point(facet, &point, dt.triangulation());
 
             assert!(
                 result.is_ok(),
@@ -269,13 +271,16 @@ fn test_visibility_various_positions() {
 /// **Coverage target:** Batch visibility checking logic
 #[test]
 fn test_find_visible_facets_various_positions() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+        DelaunayTriangulation::new(&simplex_3d()).unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     // Inside point should see no facets
     let inside_point = Point::new([0.25, 0.25, 0.25]);
-    let visible_inside = hull.find_visible_facets(&inside_point, &tds).unwrap();
+    let visible_inside = hull
+        .find_visible_facets(&inside_point, dt.triangulation())
+        .unwrap();
     assert!(
         visible_inside.is_empty(),
         "Inside point should see no facets, but saw {}",
@@ -284,7 +289,9 @@ fn test_find_visible_facets_various_positions() {
 
     // Outside point should see some facets
     let outside_point = Point::new([3.0, 3.0, 3.0]);
-    let visible_outside = hull.find_visible_facets(&outside_point, &tds).unwrap();
+    let visible_outside = hull
+        .find_visible_facets(&outside_point, dt.triangulation())
+        .unwrap();
     assert!(
         !visible_outside.is_empty(),
         "Outside point should see at least one facet"
@@ -309,9 +316,10 @@ fn test_find_visible_facets_various_positions() {
 /// **Coverage target:** Simple getter methods that may not be exercised by integration tests
 #[test]
 fn test_hull_accessors() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+        DelaunayTriangulation::new(&simplex_3d()).unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     // Test facet_count()
     assert_eq!(hull.facet_count(), 4, "3D tetrahedron has 4 facets");
@@ -335,7 +343,12 @@ fn test_hull_accessors() {
     // Test is_empty()
     assert!(!hull.is_empty(), "Non-empty hull should return false");
 
-    let empty_hull: ConvexHull<f64, Option<()>, Option<()>, 3> = ConvexHull::default();
+    let empty_hull: ConvexHull<
+        delaunay::geometry::kernel::FastKernel<f64>,
+        Option<()>,
+        Option<()>,
+        3,
+    > = ConvexHull::default();
     assert!(empty_hull.is_empty(), "Empty hull should return true");
 
     // Test dimension()
@@ -347,6 +360,12 @@ fn test_hull_accessors() {
         4,
         "Facets iterator should yield 4 facets"
     );
+
+    // Test is_valid_for_triangulation
+    assert!(
+        hull.is_valid_for_triangulation(dt.triangulation()),
+        "Hull should be valid for its triangulation"
+    );
 }
 
 /// Test 2D convex hull construction and accessors.
@@ -354,22 +373,25 @@ fn test_hull_accessors() {
 /// **Coverage target:** Dimension-specific code paths for 2D case
 #[test]
 fn test_2d_convex_hull() {
-    let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&[
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 2> = DelaunayTriangulation::new(&[
         vertex!([0.0, 0.0]),
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ])
     .unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     assert_eq!(hull.dimension(), 2, "2D hull dimension");
     assert_eq!(hull.facet_count(), 3, "2D triangle has 3 edges");
-    assert!(hull.is_valid_for_tds(&tds), "2D hull should be valid");
+    assert!(
+        hull.is_valid_for_triangulation(dt.triangulation()),
+        "2D hull should be valid"
+    );
 
     // Test visibility in 2D
     let outside_point = Point::new([2.0, 2.0]);
-    let result = hull.find_visible_facets(&outside_point, &tds);
+    let result = hull.find_visible_facets(&outside_point, dt.triangulation());
     assert!(
         result.is_ok(),
         "2D visibility check should succeed: {result:?}"
@@ -381,17 +403,21 @@ fn test_2d_convex_hull() {
 /// **Coverage target:** Higher-dimensional code paths
 #[test]
 fn test_4d_convex_hull() {
-    let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&simplex_4d()).unwrap();
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 4> =
+        DelaunayTriangulation::new(&simplex_4d()).unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     assert_eq!(hull.dimension(), 4, "4D hull dimension");
     assert_eq!(hull.facet_count(), 5, "4-simplex has 5 facets");
-    assert!(hull.is_valid_for_tds(&tds), "4D hull should be valid");
+    assert!(
+        hull.is_valid_for_triangulation(dt.triangulation()),
+        "4D hull should be valid"
+    );
 
     // Test visibility in 4D
     let outside_point = Point::new([2.0, 2.0, 2.0, 2.0]);
-    let result = hull.find_visible_facets(&outside_point, &tds);
+    let result = hull.find_visible_facets(&outside_point, dt.triangulation());
     assert!(
         result.is_ok(),
         "4D visibility check should succeed: {result:?}"
@@ -407,18 +433,20 @@ fn test_4d_convex_hull() {
 /// **Coverage target:** Default trait implementation and empty hull behavior
 #[test]
 fn test_default_hull() {
-    let hull: ConvexHull<f64, Option<()>, Option<()>, 3> = ConvexHull::default();
+    use delaunay::geometry::kernel::FastKernel;
+    let hull: ConvexHull<FastKernel<f64>, Option<()>, Option<()>, 3> = ConvexHull::default();
 
     assert!(hull.is_empty(), "Default hull should be empty");
     assert_eq!(hull.facet_count(), 0, "Default hull has zero facets");
     assert_eq!(hull.dimension(), 3, "Default hull preserves dimension");
 
     // Empty hull is always considered valid (has no facets that could be stale)
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+        DelaunayTriangulation::new(&simplex_3d()).unwrap();
 
     assert!(
-        hull.is_valid_for_tds(&tds),
-        "Empty hull should be valid for any TDS (no stale facets)"
+        hull.is_valid_for_triangulation(dt.triangulation()),
+        "Empty hull should be valid for any triangulation (no stale facets)"
     );
 }
 
@@ -435,7 +463,7 @@ fn test_default_hull() {
 #[test]
 fn test_near_degenerate_visibility() {
     // Create a flat configuration (nearly coplanar in 3D)
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&[
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),
         vertex!([0.0, 1.0, 0.0]),
@@ -443,7 +471,7 @@ fn test_near_degenerate_visibility() {
     ])
     .unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     // Test visibility from various points
     let test_points = [
@@ -453,7 +481,7 @@ fn test_near_degenerate_visibility() {
     ];
 
     for (i, point) in test_points.iter().enumerate() {
-        let result = hull.find_visible_facets(point, &tds);
+        let result = hull.find_visible_facets(point, dt.triangulation());
         assert!(
             result.is_ok(),
             "Near-degenerate visibility check {i} should succeed: {result:?}"
@@ -467,7 +495,7 @@ fn test_near_degenerate_visibility() {
 #[test]
 fn test_large_coordinates_visibility() {
     let scale = 1e8;
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&[
         vertex!([0.0, 0.0, 0.0]),
         vertex!([scale, 0.0, 0.0]),
         vertex!([0.0, scale, 0.0]),
@@ -475,11 +503,11 @@ fn test_large_coordinates_visibility() {
     ])
     .unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     // Test with large-scale points
     let test_point = Point::new([scale * 2.0, scale * 2.0, scale * 2.0]);
-    let result = hull.find_visible_facets(&test_point, &tds);
+    let result = hull.find_visible_facets(&test_point, dt.triangulation());
 
     assert!(
         result.is_ok(),
@@ -496,13 +524,14 @@ fn test_large_coordinates_visibility() {
 /// **Coverage target:** Lines 1227-1303 in `convex_hull.rs`
 #[test]
 fn test_find_nearest_visible_facet() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+        DelaunayTriangulation::new(&simplex_3d()).unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     // Outside point should find a nearest visible facet
     let outside_point = Point::new([2.0, 2.0, 2.0]);
-    let result = hull.find_nearest_visible_facet(&outside_point, &tds);
+    let result = hull.find_nearest_visible_facet(&outside_point, dt.triangulation());
     assert!(
         result.is_ok(),
         "find_nearest_visible_facet should succeed for outside point: {result:?}"
@@ -514,7 +543,7 @@ fn test_find_nearest_visible_facet() {
 
     // Inside point should find no visible facets
     let inside_point = Point::new([0.25, 0.25, 0.25]);
-    let result = hull.find_nearest_visible_facet(&inside_point, &tds);
+    let result = hull.find_nearest_visible_facet(&inside_point, dt.triangulation());
     assert!(
         result.is_ok(),
         "find_nearest_visible_facet should succeed for inside point: {result:?}"
@@ -530,15 +559,16 @@ fn test_find_nearest_visible_facet() {
 /// **Coverage target:** Staleness check in `find_nearest_visible_facet`
 #[test]
 fn test_find_nearest_visible_facet_stale() {
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
+    let mut dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+        DelaunayTriangulation::new(&simplex_3d()).unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
-    // Modify TDS to make hull stale
-    tds.add(vertex!([2.0, 2.0, 2.0])).unwrap();
+    // Modify triangulation to make hull stale
+    dt.tds_mut().add(vertex!([2.0, 2.0, 2.0])).unwrap();
 
     let test_point = Point::new([3.0, 3.0, 3.0]);
-    let result = hull.find_nearest_visible_facet(&test_point, &tds);
+    let result = hull.find_nearest_visible_facet(&test_point, dt.triangulation());
 
     assert!(
         result.is_err(),
@@ -558,13 +588,14 @@ fn test_find_nearest_visible_facet_stale() {
 /// **Coverage target:** Lines 1350-1357 in `convex_hull.rs`
 #[test]
 fn test_is_point_outside() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+        DelaunayTriangulation::new(&simplex_3d()).unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     // Inside point should return false
     let inside_point = Point::new([0.25, 0.25, 0.25]);
-    let result = hull.is_point_outside(&inside_point, &tds);
+    let result = hull.is_point_outside(&inside_point, dt.triangulation());
     assert!(
         result.is_ok(),
         "is_point_outside should succeed: {result:?}"
@@ -576,7 +607,7 @@ fn test_is_point_outside() {
 
     // Outside point should return true
     let outside_point = Point::new([3.0, 3.0, 3.0]);
-    let result = hull.is_point_outside(&outside_point, &tds);
+    let result = hull.is_point_outside(&outside_point, dt.triangulation());
     assert!(
         result.is_ok(),
         "is_point_outside should succeed: {result:?}"
@@ -589,12 +620,13 @@ fn test_is_point_outside() {
 /// **Coverage target:** Lines 1394-1459 in `convex_hull.rs`
 #[test]
 fn test_validate_valid_hull() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+        DelaunayTriangulation::new(&simplex_3d()).unwrap();
 
-    let hull = ConvexHull::from_triangulation(&tds).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     // Validate should pass for a well-formed hull
-    let result = hull.validate(&tds);
+    let result = hull.validate(dt.triangulation());
     assert!(
         result.is_ok(),
         "Validation should succeed for well-formed hull: {result:?}"
@@ -606,12 +638,18 @@ fn test_validate_valid_hull() {
 /// **Coverage target:** Empty hull validation path
 #[test]
 fn test_validate_empty_hull() {
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&simplex_3d()).unwrap();
+    let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+        DelaunayTriangulation::new(&simplex_3d()).unwrap();
 
-    let empty_hull: ConvexHull<f64, Option<()>, Option<()>, 3> = ConvexHull::default();
+    let empty_hull: ConvexHull<
+        delaunay::geometry::kernel::FastKernel<f64>,
+        Option<()>,
+        Option<()>,
+        3,
+    > = ConvexHull::default();
 
     // Empty hull should validate successfully (no facets to check)
-    let result = empty_hull.validate(&tds);
+    let result = empty_hull.validate(dt.triangulation());
     assert!(
         result.is_ok(),
         "Empty hull validation should succeed: {result:?}"
@@ -624,25 +662,26 @@ fn test_validate_empty_hull() {
 #[test]
 fn test_validate_multiple_dimensions() {
     // 2D validation
-    let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&[
+    let dt_2d: DelaunayTriangulation<_, Option<()>, Option<()>, 2> = DelaunayTriangulation::new(&[
         vertex!([0.0, 0.0]),
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ])
     .unwrap();
 
-    let hull_2d = ConvexHull::from_triangulation(&tds_2d).unwrap();
+    let hull_2d = ConvexHull::from_triangulation(dt_2d.triangulation()).unwrap();
     assert!(
-        hull_2d.validate(&tds_2d).is_ok(),
+        hull_2d.validate(dt_2d.triangulation()).is_ok(),
         "2D hull validation should succeed"
     );
 
     // 4D validation
-    let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&simplex_4d()).unwrap();
+    let dt_4d: DelaunayTriangulation<_, Option<()>, Option<()>, 4> =
+        DelaunayTriangulation::new(&simplex_4d()).unwrap();
 
-    let hull_4d = ConvexHull::from_triangulation(&tds_4d).unwrap();
+    let hull_4d = ConvexHull::from_triangulation(dt_4d.triangulation()).unwrap();
     assert!(
-        hull_4d.validate(&tds_4d).is_ok(),
+        hull_4d.validate(dt_4d.triangulation()).is_ok(),
         "4D hull validation should succeed"
     );
 }

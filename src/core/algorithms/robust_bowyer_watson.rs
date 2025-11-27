@@ -30,7 +30,6 @@ use crate::core::{
     vertex::Vertex,
 };
 use crate::geometry::{
-    algorithms::convex_hull::ConvexHull,
     point::Point,
     predicates::{InSphere, Orientation, simplex_orientation},
     robust_predicates::{RobustPredicateConfig, config_presets, robust_insphere},
@@ -55,8 +54,6 @@ where
     stats: InsertionStatistics,
     /// Reusable buffers for performance
     buffers: InsertionBuffers<T, U, V, D>,
-    /// Cached convex hull for hull extension
-    hull: Option<ConvexHull<T, U, V, D>>,
     /// Cache for facet-to-cells mapping
     facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
     /// Generation counter for cache invalidation
@@ -150,7 +147,6 @@ where
             predicate_config: config_presets::general_triangulation::<T>(),
             stats: InsertionStatistics::new(),
             buffers: InsertionBuffers::with_capacity(D * 10), // Scale capacity with dimension
-            hull: None,
             facet_to_cells_cache: ArcSwapOption::empty(),
             cached_generation: Arc::new(AtomicU64::new(0)),
             unsalvageable_vertices: Vec::new(),
@@ -196,7 +192,6 @@ where
             predicate_config: config,
             stats: InsertionStatistics::new(),
             buffers: InsertionBuffers::with_capacity(D * 10), // Scale capacity with dimension
-            hull: None,
             facet_to_cells_cache: ArcSwapOption::empty(),
             cached_generation: Arc::new(AtomicU64::new(0)),
             unsalvageable_vertices: Vec::new(),
@@ -227,7 +222,6 @@ where
             predicate_config: config_presets::degenerate_robust::<T>(),
             stats: InsertionStatistics::new(),
             buffers: InsertionBuffers::with_capacity(D * 10), // Scale capacity with dimension
-            hull: None,
             facet_to_cells_cache: ArcSwapOption::empty(),
             cached_generation: Arc::new(AtomicU64::new(0)),
             unsalvageable_vertices: Vec::new(),
@@ -2433,7 +2427,6 @@ strategy={strategy:?}, created={created}, removed={removed}, success={success}, 
     fn reset(&mut self) {
         self.stats.reset();
         self.buffers.clear_all();
-        self.hull = None;
         self.unsalvageable_vertices.clear();
         // Clear facet cache to prevent serving stale mappings across runs
         self.invalidate_facet_cache();

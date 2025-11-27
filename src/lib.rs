@@ -45,16 +45,15 @@
 //!
 //! Extract d-dimensional convex hulls from Delaunay triangulations:
 //!
-//! ```rust
-//! use delaunay::core::triangulation_data_structure::Tds;
+//! ```no_run
+//! use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 //! use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 //! use delaunay::geometry::point::Point;
 //! use delaunay::geometry::traits::coordinate::Coordinate;
 //! use delaunay::vertex;
 //!
 //! // Create two tetrahedrons sharing a triangular facet (double tetrahedron)
-//! // Note: ConvexHull currently requires Tds directly
-//! let vertices = vec![
+//! let vertices: Vec<_> = vec![
 //!     // Shared triangular facet vertices (forms base of both tetrahedrons)
 //!     vertex!([0.0, 0.0, 0.0]),    // Shared vertex A
 //!     vertex!([2.0, 0.0, 0.0]),    // Shared vertex B
@@ -65,11 +64,11 @@
 //!     vertex!([1.0, 0.7, -1.5]),   // Second tet apex
 //! ];
 //!
-//! let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+//! let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+//!     DelaunayTriangulation::new(&vertices).unwrap();
 //!
 //! // Extract the convex hull (boundary facets of the triangulation)
-//! let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-//!     ConvexHull::from_triangulation(&tds).unwrap();
+//! let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 //!
 //! println!("Convex hull has {} facets in {}D", hull.facet_count(), hull.dimension());
 //!
@@ -77,24 +76,24 @@
 //! let inside_point = Point::new([1.0, 0.5, 0.5]);
 //! let outside_point = Point::new([3.0, 3.0, 3.0]);
 //!
-//! assert!(!hull.is_point_outside(&inside_point, &tds).unwrap());  // Inside the hull
-//! assert!(hull.is_point_outside(&outside_point, &tds).unwrap());   // Outside the hull
+//! assert!(!hull.is_point_outside(&inside_point, dt.triangulation()).unwrap());  // Inside the hull
+//! assert!(hull.is_point_outside(&outside_point, dt.triangulation()).unwrap());   // Outside the hull
 //!
 //! // Find visible facets from an external point (useful for incremental construction)
-//! let visible_facets = hull.find_visible_facets(&outside_point, &tds).unwrap();
+//! let visible_facets = hull.find_visible_facets(&outside_point, dt.triangulation()).unwrap();
 //! println!("Point sees {} out of {} facets", visible_facets.len(), hull.facet_count());
 //!
 //! // Works in any dimension!
-//! let vertices_4d = vec![
+//! let vertices_4d: Vec<_> = vec![
 //!     vertex!([0.0, 0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0, 0.0]),
 //!     vertex!([0.0, 1.0, 0.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 0.0, 1.0]),
 //! ];
-//! let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
-//! let hull_4d: ConvexHull<f64, Option<()>, Option<()>, 4> =
-//!     ConvexHull::from_triangulation(&tds_4d).unwrap();
+//! let dt_4d: DelaunayTriangulation<_, Option<()>, Option<()>, 4> =
+//!     DelaunayTriangulation::new(&vertices_4d).unwrap();
+//! let hull_4d = ConvexHull::from_triangulation(dt_4d.triangulation()).unwrap();
 //!
 //! assert_eq!(hull_4d.facet_count(), 5);  // 4-simplex has 5 boundary facets
 //! assert_eq!(hull_4d.dimension(), 4);     // 4D convex hull
