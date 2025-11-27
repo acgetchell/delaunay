@@ -69,7 +69,7 @@ macro_rules! test_robust_integration {
                     $dim
                 );
 
-                let delaunay_result = tds.validate_delaunay();
+                let delaunay_result = delaunay::core::util::is_delaunay(&tds);
                 if let Err(err) = delaunay_result {
                     eprintln!(
                         "{}D: Final TDS failed global Delaunay validation: {err:?}",
@@ -136,7 +136,7 @@ macro_rules! test_robust_integration {
                 }
 
                 assert!(
-                    tds.validate_delaunay().is_ok(),
+                    delaunay::core::util::is_delaunay(&tds).is_ok(),
                     "{}D: Final TDS should be globally Delaunay after exterior insertions",
                     $dim
                 );
@@ -180,7 +180,7 @@ macro_rules! test_robust_integration {
                     $dim
                 );
                 assert!(
-                    tds_cluster.validate_delaunay().is_ok(),
+                    delaunay::core::util::is_delaunay(&tds_cluster).is_ok(),
                     "{}D: After clustered insertions, TDS should be globally Delaunay before scattering",
                     $dim
                 );
@@ -209,7 +209,7 @@ macro_rules! test_robust_integration {
                     $dim
                 );
                 assert!(
-                    tds_all.validate_delaunay().is_ok(),
+                    delaunay::core::util::is_delaunay(&tds_all).is_ok(),
                     "{}D: Final TDS should be globally Delaunay after clustered+scattered insertions",
                     $dim
                 );
@@ -309,7 +309,7 @@ fn test_mixed_interior_exterior_insertions_3d() {
         "3D: Final TDS should be structurally valid after mixed interior/exterior insertions"
     );
     assert!(
-        tds.validate_delaunay().is_ok(),
+        delaunay::core::util::is_delaunay(&tds).is_ok(),
         "3D: Final TDS should be globally Delaunay after mixed interior/exterior insertions"
     );
 
@@ -354,7 +354,7 @@ fn test_grid_pattern_insertion_2d() {
         "2D: Final TDS should be structurally valid for grid pattern"
     );
     assert!(
-        tds.validate_delaunay().is_ok(),
+        delaunay::core::util::is_delaunay(&tds).is_ok(),
         "2D: Final TDS should be globally Delaunay for grid pattern"
     );
 
@@ -405,7 +405,7 @@ fn test_degenerate_robust_configuration_3d() {
                 "3D: TDS should remain valid for near-degenerate configuration"
             );
             assert!(
-                tds.validate_delaunay().is_ok(),
+                delaunay::core::util::is_delaunay(&tds).is_ok(),
                 "3D: Final TDS should be globally Delaunay for near-degenerate configuration"
             );
             println!(
@@ -448,7 +448,7 @@ fn test_algorithm_reset_and_reuse() {
         });
 
     assert!(
-        tds1.validate_delaunay().is_ok(),
+        delaunay::core::util::is_delaunay(&tds1).is_ok(),
         "3D: First run TDS should be globally Delaunay"
     );
 
@@ -502,7 +502,7 @@ fn test_algorithm_reset_and_reuse() {
         });
 
     assert!(
-        tds2.validate_delaunay().is_ok(),
+        delaunay::core::util::is_delaunay(&tds2).is_ok(),
         "3D: Second run TDS should be globally Delaunay"
     );
 

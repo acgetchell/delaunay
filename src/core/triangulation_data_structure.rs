@@ -4421,6 +4421,19 @@ where
     /// This is a convenience wrapper around `core::util::is_delaunay` that maps
     /// `DelaunayValidationError` into `TriangulationValidationError`.
     ///
+    /// # Deprecation Notice
+    ///
+    /// **This method is deprecated** and will be removed in a future version.
+    /// The Delaunay validation logic belongs in the `DelaunayTriangulation` layer,
+    /// not in the generic `Tds` (Triangulation Data Structure) layer.
+    ///
+    /// **Migration Guide**:
+    /// - If using `DelaunayTriangulation`, call `dt.validate_delaunay()` instead
+    /// - If using `Tds` directly, call `crate::core::util::is_delaunay(&tds)` instead
+    ///
+    /// This deprecation follows CGAL's architecture where Tds is purely combinatorial
+    /// and Delaunay-specific operations live in the Delaunay triangulation layer.
+    ///
     /// # Errors
     ///
     /// Returns a [`TriangulationValidationError`] if the triangulation violates
@@ -4430,6 +4443,10 @@ where
     /// [`Tds::validation_report`](Self::validation_report). It is **not** enabled by
     /// default in [`Tds::is_valid`](Self::is_valid) and must be requested via
     /// [`ValidationOptions::check_delaunay`] or by calling this method directly.
+    #[deprecated(
+        since = "0.6.0",
+        note = "Use `DelaunayTriangulation::validate_delaunay()` or `crate::core::util::is_delaunay()` instead. Tds should be purely combinatorial."
+    )]
     pub fn validate_delaunay(&self) -> Result<(), TriangulationValidationError>
     where
         T: std::ops::AddAssign<T> + std::ops::SubAssign<T> + std::iter::Sum + num_traits::NumCast,

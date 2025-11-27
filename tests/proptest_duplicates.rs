@@ -125,7 +125,7 @@ proptest! {
 
         // Structural and global Delaunay validity for the kept subset.
         prop_assert!(tds.is_valid().is_ok());
-        prop_assert!(tds.validate_delaunay().is_ok());
+        prop_assert!(delaunay::core::util::is_delaunay(&tds).is_ok());
 
         // Run a diagnostic Bowyer–Watson pass on the same input set to verify
         // that any unsalvageable vertices (if present) originate from the
@@ -182,7 +182,7 @@ proptest! {
 
         // Structural and global Delaunay validity for the kept subset.
         prop_assert!(tds.is_valid().is_ok());
-        prop_assert!(tds.validate_delaunay().is_ok());
+        prop_assert!(delaunay::core::util::is_delaunay(&tds).is_ok());
 
         // Run a diagnostic Bowyer–Watson pass on the same input set to verify
         // that any unsalvageable vertices (if present) originate from the

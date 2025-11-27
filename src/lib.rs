@@ -532,6 +532,7 @@ pub mod prelude {
     // Re-export from core
     pub use crate::core::{
         cell::*,
+        delaunay_triangulation::DelaunayCheckPolicy,
         facet::*,
         traits::{boundary_analysis::*, data_type::*, insertion_algorithm::*},
         triangulation_data_structure::*,

@@ -43,7 +43,7 @@ fn test_tds_creates_one_cell() {
     assert_eq!(tds.number_of_vertices(), 4, "Should have 4 vertices");
     assert_eq!(tds.number_of_cells(), 1, "Should have 1 cell");
     assert!(
-        tds.validate_delaunay().is_ok(),
+        delaunay::core::util::is_delaunay(&tds).is_ok(),
         "Single-cell triangulation should be globally Delaunay"
     );
 }
@@ -70,7 +70,7 @@ fn test_tds_creates_two_cells() {
     assert_eq!(tds.number_of_vertices(), 5, "Should have 5 vertices");
     assert_eq!(tds.number_of_cells(), 2, "Should have 2 cells");
     assert!(
-        tds.validate_delaunay().is_ok(),
+        delaunay::core::util::is_delaunay(&tds).is_ok(),
         "Two-cell triangulation should be globally Delaunay"
     );
 }
@@ -114,7 +114,7 @@ fn test_initial_simplex_has_neighbors() {
             println!("Expected: 4 (for a single tetrahedron, all 4 faces are boundary)");
             assert_eq!(count, 4, "Single tetrahedron should have 4 boundary facets");
             assert!(
-                tds.validate_delaunay().is_ok(),
+                delaunay::core::util::is_delaunay(&tds).is_ok(),
                 "Single tetrahedron triangulation should be globally Delaunay"
             );
         }
@@ -175,7 +175,7 @@ fn test_two_cells_share_facet() {
                 "Two cells sharing a facet should have 6 boundary facets"
             );
             assert!(
-                tds.validate_delaunay().is_ok(),
+                delaunay::core::util::is_delaunay(&tds).is_ok(),
                 "Two-cell triangulation should be globally Delaunay"
             );
         }

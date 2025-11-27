@@ -5,6 +5,7 @@
 
 use core::iter::Sum;
 use core::ops::{AddAssign, SubAssign};
+use std::num::NonZeroUsize;
 
 use num_traits::NumCast;
 
@@ -17,10 +18,11 @@ use crate::core::algorithms::locate::{
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::triangulation_data_structure::{
-    CellKey, Tds, TriangulationConstructionError, VertexKey,
+    CellKey, Tds, TriangulationConstructionError, TriangulationValidationError, VertexKey,
 };
+use crate::core::util::DelaunayValidationError;
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::Kernel;
+use crate::geometry::kernel::{FastKernel, Kernel};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
 /// Delaunay triangulation with incremental insertion support.
@@ -50,7 +52,7 @@ where
 }
 
 // Simplified API for common case (f64 with FastKernel)
-impl<U, V, const D: usize> DelaunayTriangulation<crate::geometry::kernel::FastKernel<f64>, U, V, D>
+impl<U, V, const D: usize> DelaunayTriangulation<FastKernel<f64>, U, V, D>
 where
     U: DataType,
     V: DataType,
@@ -83,7 +85,7 @@ where
     /// assert_eq!(dt.number_of_vertices(), 5);
     /// ```
     pub fn new(vertices: &[Vertex<f64, U, D>]) -> Result<Self, TriangulationConstructionError> {
-        Self::with_kernel(crate::geometry::kernel::FastKernel::new(), vertices)
+        Self::with_kernel(FastKernel::<f64>::new(), vertices)
     }
 }
 
@@ -378,6 +380,91 @@ where
 
         Ok(v_key)
     }
+
+    /// Validate that the triangulation satisfies the Delaunay property.
+    ///
+    /// This checks that no vertex is inside the circumsphere of any cell,
+    /// which is the defining property of a Delaunay triangulation.
+    ///
+    /// # Performance Warning
+    ///
+    /// This is an **O(N×V)** operation where N is the number of cells and V is the
+    /// number of vertices. Use primarily for testing and validation, not in hot paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - A cell violates the Delaunay property
+    /// - The triangulation has structural issues
+    /// - Geometric predicates fail
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// // Verify Delaunay property holds
+    /// assert!(dt.validate_delaunay().is_ok());
+    /// ```
+    pub fn validate_delaunay(&self) -> Result<(), TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        crate::core::util::is_delaunay(&self.tri.tds).map_err(|err| match err {
+            DelaunayValidationError::DelaunayViolation { cell_key } => {
+                let cell_uuid = self
+                    .tri
+                    .tds
+                    .cell_uuid_from_key(cell_key)
+                    .unwrap_or_else(uuid::Uuid::nil);
+                TriangulationValidationError::DelaunayViolation {
+                    message: format!(
+                        "Cell {cell_uuid} (key: {cell_key:?}) violates Delaunay property"
+                    ),
+                }
+            }
+            DelaunayValidationError::TriangulationState { source } => source,
+            DelaunayValidationError::InvalidCell { source } => {
+                TriangulationValidationError::InvalidCell {
+                    cell_id: uuid::Uuid::nil(),
+                    source,
+                }
+            }
+            DelaunayValidationError::NumericPredicateError {
+                cell_key,
+                vertex_key,
+                source,
+            } => TriangulationValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Numeric predicate failure while validating Delaunay property for cell {cell_key:?}, vertex {vertex_key:?}: {source}"
+                ),
+            },
+        })
+    }
+}
+
+/// Policy controlling when global Delaunay validation runs during triangulation.
+///
+/// This policy is interpreted by insertion algorithms to schedule validation passes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DelaunayCheckPolicy {
+    /// Run global Delaunay validation only at the end of triangulation.
+    #[default]
+    EndOnly,
+    /// Run global Delaunay validation after every N successful insertions,
+    /// in addition to a final pass at the end.
+    EveryN(NonZeroUsize),
 }
 
 #[cfg(test)]
