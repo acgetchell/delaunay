@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Integration tests for `InsertionAlgorithm` trait public API
 //!
 //! This test module focuses on PUBLIC API methods that are not covered by unit tests

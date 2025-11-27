@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Property-based tests for geometric quality metrics.
 //!
 //! This module uses proptest to verify fundamental properties of quality

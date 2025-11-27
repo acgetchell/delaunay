@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Property-based tests for random point clouds containing duplicates and
 //! near-duplicates.
 //!

@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Property-based tests for Delaunay-specific properties.
 //!
 //! - Empty circumcircle/circumsphere condition (no vertex strictly inside)

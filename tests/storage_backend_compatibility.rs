@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Storage Backend Compatibility Tests
 //!
 //! This test suite verifies that both `SlotMap` (default) and `DenseSlotMap` (feature flag)

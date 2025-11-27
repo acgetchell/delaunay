@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Property-based tests for Cell operations.
 //!
 //! This module uses proptest to verify fundamental properties of Cell

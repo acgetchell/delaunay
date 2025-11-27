@@ -1,3 +1,4 @@
+#![cfg_attr(feature = "slow-tests", expect(deprecated))]
 //! Integration tests for `RobustBowyerWatson` algorithm.
 //!
 //! These tests verify end-to-end behavior of the robust insertion algorithm

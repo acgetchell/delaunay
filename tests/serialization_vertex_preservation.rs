@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Integration test for vertex preservation during serialization/deserialization.
 //!
 //! This test investigates whether vertices are properly preserved through the full lifecycle:

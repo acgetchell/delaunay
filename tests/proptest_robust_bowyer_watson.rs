@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Property-based tests for `RobustBowyerWatson` algorithm.
 //!
 //! This module uses proptest to verify fundamental properties of the robust

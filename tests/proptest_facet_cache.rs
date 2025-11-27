@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Property-based tests for `FacetCache` trait behavior.
 //!
 //! This module uses proptest to verify fundamental properties of `FacetCacheProvider`

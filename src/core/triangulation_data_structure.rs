@@ -2664,6 +2664,10 @@ where
     /// assert_eq!(tds.number_of_vertices(), 3);
     /// assert_eq!(tds.dim(), 2);
     /// ```
+    #[deprecated(
+        since = "0.6.0",
+        note = "Use `DelaunayTriangulation::new()` instead. This method uses inefficient global neighbor assignment."
+    )]
     pub fn new(vertices: &[Vertex<T, U, D>]) -> Result<Self, TriangulationConstructionError>
     where
         T: NumCast,
@@ -2869,6 +2873,10 @@ where
     /// assert_eq!(tds.dim(), 3);
     /// assert!(tds.is_valid().is_ok());  // Triangulation remains valid
     /// ```
+    #[deprecated(
+        since = "0.6.0",
+        note = "Use `DelaunayTriangulation::insert()` instead. This method uses inefficient global neighbor assignment and is insertion-order dependent."
+    )]
     pub fn add(&mut self, vertex: Vertex<T, U, D>) -> Result<(), TriangulationConstructionError>
     where
         T: NumCast,

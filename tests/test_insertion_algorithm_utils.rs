@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Integration tests for insertion algorithm utility types.
 //!
 //! Tests the `InsertionBuffers` and `InsertionStatistics` helper types that support

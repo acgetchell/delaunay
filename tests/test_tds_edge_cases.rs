@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Edge case integration tests for Triangulation Data Structure (TDS)
 //!
 //! This module tests TDS operations that are not covered by unit tests or basic integration tests:

@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Basic integration tests for TDS creation, neighbor assignment, and validation.
 //!
 //! This module contains fundamental integration tests that verify correct behavior of

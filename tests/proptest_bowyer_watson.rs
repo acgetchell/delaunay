@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Property-based tests for Bowyer-Watson insertion algorithm.
 //!
 //! This module uses proptest to verify fundamental properties of the

@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Property-based tests for triangulation invariants.
 //!
 //! This module uses proptest to verify structural properties of Delaunay

@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Configuration API tests for `RobustBowyerWatson` algorithm.
 //!
 //! This module documents and tests the configuration API for `RobustBowyerWatson`,

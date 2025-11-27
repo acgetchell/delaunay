@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Property-based tests for Facet operations.
 //!
 //! This module uses proptest to verify fundamental properties of Facet

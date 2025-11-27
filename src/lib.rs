@@ -17,32 +17,29 @@
 //! This library handles **arbitrary dimensions** (subject to numerical issues). Here's a 4D triangulation example:
 //!
 //! ```rust
-//! use delaunay::core::triangulation_data_structure::Tds;
+//! use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 //! use delaunay::vertex;
 //!
-//! // Create a 4D triangulation (4-dimensional space!)
-//! let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
+//! // Create a 4D Delaunay triangulation (4-dimensional space!)
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 0.0, 1.0]),  // 5 vertices (D+1) creates first 4-simplex
+//!     vertex!([0.2, 0.2, 0.2, 0.2]),  // Additional vertex uses incremental insertion
+//! ];
 //!
-//! // Add vertices incrementally - triangulation evolves automatically
-//! tds.add(vertex!([0.0, 0.0, 0.0, 0.0])).unwrap();  // 1 vertex, 0 cells
-//! tds.add(vertex!([1.0, 0.0, 0.0, 0.0])).unwrap();  // 2 vertices, 0 cells
-//! tds.add(vertex!([0.0, 1.0, 0.0, 0.0])).unwrap();  // 3 vertices, 0 cells
-//! tds.add(vertex!([0.0, 0.0, 1.0, 0.0])).unwrap();  // 4 vertices, 0 cells
-//! assert_eq!(tds.number_of_cells(), 0);
-//! tds.add(vertex!([0.0, 0.0, 0.0, 1.0])).unwrap();  // 5 vertices, 1 cell (first 4-simplex!)
-//! tds.add(vertex!([0.2, 0.2, 0.2, 0.2])).unwrap();  // 6 vertices, multiple cells
+//! let dt: DelaunayTriangulation<_, (), (), 4> =
+//!     DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! assert_eq!(tds.number_of_vertices(), 6);
-//! assert_eq!(tds.dim(), 4);                    // Full 4D triangulation
-//! assert!(tds.number_of_cells() > 1);          // Bowyer-Watson creates additional 4-simplices
-//! assert!(tds.is_valid().is_ok());             // Structural invariants hold for the triangulation
-//! // Optional (expensive): validate global Delaunay property
-//! // tds.validate_delaunay().unwrap();
+//! assert_eq!(dt.number_of_vertices(), 6);
+//! assert_eq!(dt.dim(), 4);                    // Full 4D triangulation
+//! assert!(dt.number_of_cells() > 1);          // Cavity-based insertion creates additional 4-simplices
 //! ```
 //!
-//! **Key insight**: The transition happens at D+1 vertices (5 vertices for 4D), where the first
-//! 4-simplex (5-vertex cell) is created. Additional vertices trigger the Bowyer-Watson algorithm
-//! to maintain the 4D Delaunay triangulation.
+//! **Key insight**: The triangulation uses efficient incremental cavity-based insertion after
+//! building an initial simplex from the first D+1 vertices (5 vertices for 4D).
 //!
 //! # Convex Hull Extraction
 //!
@@ -56,6 +53,7 @@
 //! use delaunay::vertex;
 //!
 //! // Create two tetrahedrons sharing a triangular facet (double tetrahedron)
+//! // Note: ConvexHull currently requires Tds directly
 //! let vertices = vec![
 //!     // Shared triangular facet vertices (forms base of both tetrahedrons)
 //!     vertex!([0.0, 0.0, 0.0]),    // Shared vertex A
@@ -263,9 +261,11 @@
 //! triangulation is always described entirely by the kept subset of vertices.
 //!
 //! ```rust
-//! use delaunay::core::triangulation_data_structure::{Tds, TriangulationStatistics};
+//! use delaunay::core::triangulation_data_structure::Tds;
 //! use delaunay::vertex;
 //!
+//! // Note: For new code, use DelaunayTriangulation instead of Tds::new()
+//! // Diagnostics API is currently only available on Tds via bowyer_watson_with_diagnostics()
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0]),
@@ -277,7 +277,7 @@
 //! let diagnostics = tds.bowyer_watson_with_diagnostics().unwrap();
 //!
 //! // Aggregated statistics for this triangulation run.
-//! let stats: &TriangulationStatistics = &diagnostics.statistics;
+//! let stats = &diagnostics.statistics;
 //! assert!(stats.fast_path_successes + stats.robust_path_successes >= 0);
 //! assert!(
 //!     stats.global_delaunay_validation_runs >= 1,
@@ -362,34 +362,40 @@
 //!    these issues, but extreme coordinate values or ill-conditioned point sets may still cause
 //!    problems.
 //!
-//! ## Error Handling
+//! ## Simple API Usage
 //!
 //! ```rust
-//! use delaunay::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
+//! use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 //! use delaunay::vertex;
 //!
-//! let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
+//! // Create 4D triangulation - uses fast predicates by default (f64)
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 0.0, 1.0]),
+//! ];
 //!
-//! // Add initial vertices
-//! tds.add(vertex!([0.0, 0.0, 0.0, 0.0])).unwrap();
-//! tds.add(vertex!([1.0, 0.0, 0.0, 0.0])).unwrap();
+//! let dt: DelaunayTriangulation<_, (), (), 4> =
+//!     DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! // Attempt to add a duplicate vertex - will fail gracefully
-//! match tds.add(vertex!([1.0, 0.0, 0.0, 0.0])) {
-//!     Ok(_) => println!("Insertion succeeded"),
-//!     Err(TriangulationConstructionError::DuplicateCoordinates { coordinates }) => {
-//!         println!("Duplicate vertex detected: {}", coordinates);
-//!         // Triangulation remains valid - can continue with other vertices
-//!     }
-//!     Err(TriangulationConstructionError::GeometricDegeneracy { message }) => {
-//!         println!("Geometry too degenerate: {}", message);
-//!         // Triangulation remains valid - insertion was rejected
-//!     }
-//!     Err(e) => println!("Other error: {}", e),
-//! }
+//! assert_eq!(dt.number_of_vertices(), 5);
+//! assert_eq!(dt.dim(), 4);
+//! assert_eq!(dt.number_of_cells(), 1);  // Single 4-simplex
 //!
-//! // Triangulation remains valid regardless of insertion outcome
-//! assert!(tds.is_valid().is_ok());
+//! // Also works in 2D
+//! let vertices_2d = vec![
+//!     vertex!([0.0, 0.0]),
+//!     vertex!([1.0, 0.0]),
+//!     vertex!([0.5, 1.0]),
+//! ];
+//!
+//! let dt_2d: DelaunayTriangulation<_, (), (), 2> =
+//!     DelaunayTriangulation::new(&vertices_2d).unwrap();
+//!
+//! assert_eq!(dt_2d.number_of_vertices(), 3);
+//! assert_eq!(dt_2d.dim(), 2);
 //! ```
 //!
 //! For implementation details on invariant validation and error handling, see
@@ -410,7 +416,9 @@
 
 // Allow multiple crate versions due to transitive dependencies
 #![expect(clippy::multiple_crate_versions)]
-// Temporarily allow deprecated warnings during Facet -> FacetView migration
+// Temporarily allow deprecated warnings during API migration (v0.6.0)
+// - Facet -> FacetView migration
+// - Tds::new()/add() -> DelaunayTriangulation::new()/insert()
 #![expect(deprecated)]
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
@@ -429,7 +437,9 @@ pub mod core {
         pub mod bowyer_watson;
         /// Bistellar flip operations - Phase 3 TODO
         pub mod flips;
-        /// Point location algorithms (facet walking) - Phase 3 TODO
+        /// Incremental cavity-based insertion (Phase 3.6)
+        pub mod incremental_insertion;
+        /// Point location algorithms (facet walking)
         pub mod locate;
         /// Robust Bowyer-Watson implementation with enhanced numerical stability
         pub mod robust_bowyer_watson;
@@ -614,7 +624,7 @@ mod tests {
         use crate::prelude::*;
 
         // Test that quality functions are accessible from prelude
-        // Create a simple 2D triangle
+        // Note: Quality functions still work with Tds
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),

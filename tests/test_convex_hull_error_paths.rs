@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Error path tests for `ConvexHull` module.
 //!
 //! This module targets uncovered error paths in `src/geometry/algorithms/convex_hull.rs`

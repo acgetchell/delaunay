@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Focused showcase demonstrating specific cases where robust predicates succeed
 //! where standard predicates fail, directly addressing "No cavity boundary facets found" errors.
 

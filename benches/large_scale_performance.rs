@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Large-scale triangulation performance benchmarks
 //!
 //! This benchmark suite measures performance characteristics of Delaunay triangulation

@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Comprehensive test comparing robust predicates vs standard predicates
 //!
 //! This test demonstrates the improvements in numerical stability and robustness

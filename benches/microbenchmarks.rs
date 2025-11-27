@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Microbenchmarks for key delaunay methods
 //!
 //! This benchmark suite focuses on measuring the performance of individual key methods

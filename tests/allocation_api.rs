@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Test file to figure out allocation-counter API with Delaunay triangulation testing
 //!
 //! This module provides comprehensive testing utilities for memory allocation tracking

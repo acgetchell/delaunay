@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Property-based tests for serialization/deserialization roundtrips.
 //!
 //! This module uses proptest to verify that serialization and deserialization

@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Minimal reproduction test for Delaunay repair performance issue
 //!
 //! These tests demonstrate that the current global repair algorithm is fundamentally

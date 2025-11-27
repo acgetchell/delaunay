@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Property-based tests for documented invariants (src/lib.rs).
 //! - Duplicate coordinate rejection
 //! - Cell vertex count (D+1)

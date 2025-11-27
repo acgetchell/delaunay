@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Test cases for reproducing and debugging cavity boundary facet errors
 //!
 //! This module contains tests that reproduce geometric configurations that commonly

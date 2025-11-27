@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Integration tests for facet cache behavior under real-world usage
 //!
 //! These tests exercise the facet cache implementation through actual algorithm

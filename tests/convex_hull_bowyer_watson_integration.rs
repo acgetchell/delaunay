@@ -1,3 +1,4 @@
+#![expect(deprecated)]
 //! Integration tests for `ConvexHull` and Bowyer-Watson algorithm integration
 //!
 //! This module contains focused integration tests that verify the proper

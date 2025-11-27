@@ -34,10 +34,6 @@ where
     V: DataType,
 {
     /// The geometric kernel for predicates.
-    #[expect(
-        dead_code,
-        reason = "Phase 2 TODO: Will be used for geometric operations"
-    )]
     pub(crate) kernel: K,
     /// The combinatorial triangulation data structure.
     pub(crate) tds: Tds<K::Scalar, U, V, D>,
