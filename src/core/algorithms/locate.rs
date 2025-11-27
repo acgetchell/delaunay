@@ -17,12 +17,15 @@
 //!   International Journal of Foundations of Computer Science, 2001.
 //! - CGAL Triangulation_3 documentation
 
-use crate::core::collections::{FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
+use crate::core::collections::{
+    CellKeyBuffer, CellSecondaryMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+};
+use crate::core::facet::FacetHandle;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::CoordinateConversionError;
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 
 /// Result of point location query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +72,34 @@ pub enum LocateError {
     },
 }
 
+/// Error during conflict region finding.
+#[derive(Debug, thiserror::Error)]
+pub enum ConflictError {
+    /// Starting cell is invalid
+    #[error("Invalid starting cell: {cell_key:?}")]
+    InvalidStartCell {
+        /// The invalid cell key
+        cell_key: CellKey,
+    },
+
+    /// Geometric predicate failed
+    #[error("Predicate error: {source}")]
+    PredicateError {
+        #[from]
+        /// The underlying coordinate conversion error
+        source: CoordinateConversionError,
+    },
+
+    /// Failed to retrieve cell vertices
+    #[error("Failed to get vertices for cell {cell_key:?}: {message}")]
+    VertexRetrievalFailed {
+        /// The cell key that failed
+        cell_key: CellKey,
+        /// Error message
+        message: String,
+    },
+}
+
 /// Locate a point in the triangulation using facet walking.
 ///
 /// # Arguments
@@ -91,7 +122,7 @@ pub enum LocateError {
 ///
 /// # Examples
 ///
-/// Basic point location in a 3D tetrahedron:
+/// Basic point location in a 4D simplex:
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::{locate, LocateResult};
@@ -101,18 +132,19 @@ pub enum LocateError {
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 /// use delaunay::vertex;
 ///
-/// // Create a 3D tetrahedron
+/// // Create a 4D simplex (5 vertices)
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     vertex!([0.0, 0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
 /// let kernel = FastKernel::<f64>::new();
 ///
-/// // Point inside the tetrahedron
-/// let inside_point = Point::new([0.25, 0.25, 0.25]);
+/// // Point inside the 4-simplex
+/// let inside_point = Point::new([0.2, 0.2, 0.2, 0.2]);
 /// match locate(&tds, &kernel, &inside_point, None) {
 ///     Ok(LocateResult::InsideCell(cell_key)) => {
 ///         assert!(tds.contains_cell(cell_key));
@@ -121,7 +153,7 @@ pub enum LocateError {
 /// }
 ///
 /// // Point outside the convex hull
-/// let outside_point = Point::new([2.0, 2.0, 2.0]);
+/// let outside_point = Point::new([2.0, 2.0, 2.0, 2.0]);
 /// match locate(&tds, &kernel, &outside_point, None) {
 ///     Ok(LocateResult::Outside) => { /* Expected */ }
 ///     _ => panic!("Expected point to be outside convex hull"),
@@ -138,17 +170,20 @@ pub enum LocateError {
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 /// use delaunay::vertex;
 ///
+/// // Create a 4D simplex
 /// let vertices = vec![
-///     vertex!([0.0, 0.0]),
-///     vertex!([1.0, 0.0]),
-///     vertex!([0.0, 1.0]),
+///     vertex!([0.0, 0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
 /// let kernel = RobustKernel::<f64>::default();
 ///
-/// // Get a cell to use as hint
+/// // Get a cell to use as hint (spatially close to query point)
 /// let hint_cell = tds.cell_keys().next().unwrap();
-/// let query_point = Point::new([0.3, 0.3]);
+/// let query_point = Point::new([0.15, 0.15, 0.15, 0.15]);
 ///
 /// match locate(&tds, &kernel, &query_point, Some(hint_cell)) {
 ///     Ok(LocateResult::InsideCell(_)) => { /* Success */ }
@@ -314,12 +349,273 @@ where
     Ok(Some(cell_orientation * query_orientation < 0))
 }
 
+/// Find all cells whose circumspheres contain the query point (conflict region).
+///
+/// Uses BFS traversal starting from a located cell to find all cells in conflict.
+/// A cell is in conflict if the query point lies strictly inside its circumsphere.
+///
+/// # Arguments
+///
+/// * `tds` - The triangulation data structure
+/// * `kernel` - Geometric kernel for `in_sphere` tests
+/// * `point` - Query point to test
+/// * `start_cell` - Starting cell (typically from `locate()`)
+///
+/// # Returns
+///
+/// Returns a buffer of all `CellKey`s whose circumspheres contain the point.
+///
+/// # Errors
+///
+/// Returns `ConflictError` if:
+/// - The starting cell is invalid
+/// - Geometric predicates fail
+/// - Cannot retrieve cell vertices
+///
+/// # Algorithm
+///
+/// 1. Start BFS from the located cell
+/// 2. For each cell, test `kernel.in_sphere()`
+/// 3. If point is inside circumsphere (sign > 0), add to conflict region
+/// 4. Expand search to neighbors of conflicting cells
+/// 5. Track visited cells with `CellSecondaryMap` for O(1) lookups
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::locate::{locate, find_conflict_region, LocateResult};
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::geometry::kernel::FastKernel;
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::vertex;
+///
+/// // Create a 4D simplex (5 vertices forming a 4-simplex)
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 0.0, 1.0]),
+/// ];
+/// let mut tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
+/// tds.assign_neighbors().unwrap();
+///
+/// let kernel = FastKernel::<f64>::new();
+/// // Point inside the 4-simplex
+/// let query_point = Point::new([0.2, 0.2, 0.2, 0.2]);
+///
+/// // First locate the point
+/// let location = locate(&tds, &kernel, &query_point, None).unwrap();
+/// if let LocateResult::InsideCell(cell_key) = location {
+///     // Find all cells whose circumspheres contain the point
+///     let conflict_cells = find_conflict_region(&tds, &kernel, &query_point, cell_key).unwrap();
+///     assert_eq!(conflict_cells.len(), 1); // Single 4-simplex contains the point
+/// }
+/// ```
+pub fn find_conflict_region<K, U, V, const D: usize>(
+    tds: &Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    point: &Point<K::Scalar, D>,
+    start_cell: CellKey,
+) -> Result<CellKeyBuffer, ConflictError>
+where
+    K: Kernel<D>,
+    K::Scalar: std::iter::Sum,
+    U: DataType,
+    V: DataType,
+{
+    // Validate start cell exists
+    if !tds.contains_cell(start_cell) {
+        return Err(ConflictError::InvalidStartCell {
+            cell_key: start_cell,
+        });
+    }
+
+    // Result buffer for conflicting cells
+    let mut conflict_cells = CellKeyBuffer::new();
+
+    // BFS work queue
+    let mut queue = CellKeyBuffer::new();
+    queue.push(start_cell);
+
+    // Track visited cells with SparseSecondaryMap (idiomatic for SlotMap)
+    let mut visited = CellSecondaryMap::new();
+
+    while let Some(cell_key) = queue.pop() {
+        // Skip if already visited
+        if visited.contains_key(cell_key) {
+            continue;
+        }
+        visited.insert(cell_key, ());
+
+        // Get cell vertices for in_sphere test
+        let cell = tds
+            .get_cell(cell_key)
+            .ok_or(ConflictError::InvalidStartCell { cell_key })?;
+
+        // Collect cell vertex points
+        let simplex_points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> = cell
+            .vertices()
+            .iter()
+            .filter_map(|&vkey| tds.get_vertex_by_key(vkey).map(|v| *v.point()))
+            .collect();
+
+        if simplex_points.len() != D + 1 {
+            return Err(ConflictError::VertexRetrievalFailed {
+                cell_key,
+                message: format!("Expected {} vertices, got {}", D + 1, simplex_points.len()),
+            });
+        }
+
+        // Test if point is inside circumsphere
+        let sign = kernel.in_sphere(&simplex_points, point)?;
+
+        if sign > 0 {
+            // Point is inside circumsphere - cell is in conflict
+            conflict_cells.push(cell_key);
+
+            // Add neighbors to queue for exploration
+            if let Some(neighbors) = cell.neighbors() {
+                for &neighbor_opt in neighbors {
+                    if let Some(neighbor_key) = neighbor_opt
+                        && !visited.contains_key(neighbor_key)
+                    {
+                        queue.push(neighbor_key);
+                    }
+                }
+            }
+        }
+        // If sign <= 0, cell is not in conflict, don't explore further in this direction
+    }
+
+    Ok(conflict_cells)
+}
+
+/// Extract boundary facets of a conflict region (cavity).
+///
+/// Finds all facets where exactly one adjacent cell is in the conflict region.
+/// These boundary facets form the surface that will be connected to the new point.
+///
+/// # Arguments
+///
+/// * `tds` - The triangulation data structure
+/// * `conflict_cells` - Buffer of cell keys in the conflict region
+///
+/// # Returns
+///
+/// Returns a buffer of `FacetHandle`s representing the cavity boundary.
+/// Each facet is oriented such that its `cell_key` is in the conflict region.
+///
+/// # Errors
+///
+/// Returns `ConflictError` if:
+/// - A conflict cell cannot be retrieved from the TDS
+/// - Cell neighbor data is inconsistent
+///
+/// # Algorithm
+///
+/// 1. Convert `conflict_cells` to a `FastHashSet` for O(1) lookups
+/// 2. For each cell in the conflict region:
+///    - Iterate through all facets (opposite each vertex)
+///    - Check if the neighbor across that facet is also in conflict
+///    - If neighbor is NOT in conflict (or is None/hull), it's a boundary facet
+/// 3. Return all boundary facets as `FacetHandle`s
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::locate::{locate, find_conflict_region, extract_cavity_boundary, LocateResult};
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::geometry::kernel::FastKernel;
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::vertex;
+///
+/// // Create a 4D simplex
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 0.0, 1.0]),
+/// ];
+/// let mut tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
+/// tds.assign_neighbors().unwrap();
+///
+/// let kernel = FastKernel::<f64>::new();
+/// let query_point = Point::new([0.2, 0.2, 0.2, 0.2]);
+///
+/// // Locate and find conflict region
+/// let location = locate(&tds, &kernel, &query_point, None).unwrap();
+/// if let LocateResult::InsideCell(cell_key) = location {
+///     let conflict_cells = find_conflict_region(&tds, &kernel, &query_point, cell_key).unwrap();
+///     
+///     // Extract cavity boundary
+///     let boundary_facets = extract_cavity_boundary(&tds, &conflict_cells).unwrap();
+///     
+///     // For a single 4-simplex, all 5 facets are on the boundary (convex hull)
+///     assert_eq!(boundary_facets.len(), 5);
+/// }
+/// ```
+pub fn extract_cavity_boundary<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    conflict_cells: &CellKeyBuffer,
+) -> Result<SmallBuffer<FacetHandle, 64>, ConflictError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // Convert conflict cells to set for O(1) lookup
+    let conflict_set: FastHashSet<CellKey> = conflict_cells.iter().copied().collect();
+
+    // Result buffer for boundary facets
+    let mut boundary_facets = SmallBuffer::new();
+
+    // Examine each cell in the conflict region
+    for &cell_key in conflict_cells {
+        let cell = tds
+            .get_cell(cell_key)
+            .ok_or(ConflictError::InvalidStartCell { cell_key })?;
+
+        // Check each facet of the cell
+        let facet_count = cell.number_of_vertices(); // D+1 facets
+        for facet_idx in 0..facet_count {
+            // Get neighbor across this facet
+            let neighbor_opt = cell
+                .neighbors()
+                .and_then(|neighbors| neighbors.get(facet_idx))
+                .and_then(|&opt_key| opt_key);
+
+            // Boundary facet if:
+            // 1. No neighbor (hull facet), OR
+            // 2. Neighbor exists but is NOT in conflict
+            let is_boundary =
+                neighbor_opt.is_none_or(|neighbor_key| !conflict_set.contains(&neighbor_key));
+
+            if is_boundary {
+                // Create facet handle oriented with conflict cell
+                let facet_idx_u8 =
+                    u8::try_from(facet_idx).map_err(|_| ConflictError::VertexRetrievalFailed {
+                        cell_key,
+                        message: format!("Facet index {facet_idx} exceeds u8::MAX"),
+                    })?;
+                boundary_facets.push(FacetHandle::new(cell_key, facet_idx_u8));
+            }
+        }
+    }
+
+    Ok(boundary_facets)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
+    use slotmap::KeyData;
 
     #[test]
     fn test_orientation_logic_manual() {
@@ -589,22 +885,299 @@ mod tests {
         }
     }
 
+    // Macro to test locate across dimensions
+    macro_rules! test_locate_dimension {
+        ($dim:literal, $inside_point:expr, $($coords:expr),+ $(,)?) => {{
+            let vertices: Vec<_> = vec![
+                $(vertex!($coords)),+
+            ];
+            let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
+            let kernel = FastKernel::<f64>::new();
+
+            let point = Point::new($inside_point);
+            let result = locate(&tds, &kernel, &point, None);
+
+            assert!(
+                matches!(result, Ok(LocateResult::InsideCell(_))),
+                "Expected point to be inside a cell in {}-simplex",
+                $dim
+            );
+        }};
+    }
+
+    #[test]
+    fn test_locate_2d() {
+        test_locate_dimension!(2, [0.3, 0.3], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0],);
+    }
+
+    #[test]
+    fn test_locate_3d() {
+        test_locate_dimension!(
+            3,
+            [0.25, 0.25, 0.25],
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        );
+    }
+
     #[test]
     fn test_locate_4d() {
+        test_locate_dimension!(
+            4,
+            [0.2, 0.2, 0.2, 0.2],
+            [0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        );
+    }
+
+    #[test]
+    fn test_locate_5d() {
+        test_locate_dimension!(
+            5,
+            [0.15, 0.15, 0.15, 0.15, 0.15],
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        );
+    }
+
+    // Macro to test find_conflict_region across dimensions
+    macro_rules! test_find_conflict_region_dimension {
+        ($dim:literal, $inside_point:expr, $($coords:expr),+ $(,)?) => {{
+            let vertices: Vec<_> = vec![
+                $(vertex!($coords)),+
+            ];
+            let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
+            let kernel = FastKernel::<f64>::new();
+
+            let start_cell = tds.cell_keys().next().unwrap();
+            let point = Point::new($inside_point);
+
+            let conflict_cells = find_conflict_region(&tds, &kernel, &point, start_cell).unwrap();
+
+            assert_eq!(
+                conflict_cells.len(),
+                1,
+                "Expected 1 cell in conflict for point inside single {}-simplex",
+                $dim
+            );
+        }};
+    }
+
+    #[test]
+    fn test_find_conflict_region_2d() {
+        test_find_conflict_region_dimension!(2, [0.3, 0.3], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0],);
+    }
+
+    #[test]
+    fn test_find_conflict_region_3d() {
+        test_find_conflict_region_dimension!(
+            3,
+            [0.25, 0.25, 0.25],
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        );
+    }
+
+    #[test]
+    fn test_find_conflict_region_4d() {
+        test_find_conflict_region_dimension!(
+            4,
+            [0.2, 0.2, 0.2, 0.2],
+            [0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        );
+    }
+
+    #[test]
+    fn test_find_conflict_region_5d() {
+        test_find_conflict_region_dimension!(
+            5,
+            [0.15, 0.15, 0.15, 0.15, 0.15],
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        );
+    }
+
+    #[test]
+    fn test_find_conflict_region_outside_point() {
+        // Point outside - should find zero cells in conflict
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        // Point inside the 4-simplex
-        let point = Point::new([0.2, 0.2, 0.2, 0.2]);
-        let result = locate(&tds, &kernel, &point, None);
+        let start_cell = tds.cell_keys().next().unwrap();
+        let point = Point::new([10.0, 10.0, 10.0]); // Far outside
 
-        assert!(matches!(result, Ok(LocateResult::InsideCell(_))));
+        let conflict_cells = find_conflict_region(&tds, &kernel, &point, start_cell).unwrap();
+
+        // Should find zero cells in conflict
+        assert_eq!(
+            conflict_cells.len(),
+            0,
+            "Expected 0 cells in conflict for point far outside"
+        );
+    }
+
+    #[test]
+    fn test_find_conflict_region_invalid_start_cell() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+
+        // Create invalid cell key
+        let invalid_cell = CellKey::from(KeyData::from_ffi(999_999));
+        let point = Point::new([0.3, 0.3]);
+
+        let result = find_conflict_region(&tds, &kernel, &point, invalid_cell);
+
+        assert!(
+            matches!(result, Err(ConflictError::InvalidStartCell { .. })),
+            "Expected InvalidStartCell error"
+        );
+    }
+
+    #[test]
+    fn test_find_conflict_region_with_robust_kernel() {
+        // Test with robust kernel
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+        let kernel = RobustKernel::<f64>::default();
+
+        let start_cell = tds.cell_keys().next().unwrap();
+        let point = Point::new([0.3, 0.3]);
+
+        let conflict_cells = find_conflict_region(&tds, &kernel, &point, start_cell).unwrap();
+
+        assert_eq!(
+            conflict_cells.len(),
+            1,
+            "Robust kernel should also find 1 cell in conflict"
+        );
+    }
+
+    // Macro to test cavity boundary extraction across dimensions
+    macro_rules! test_cavity_boundary_dimension {
+        ($dim:literal, $expected_facets:expr, $($coords:expr),+ $(,)?) => {{
+            let vertices: Vec<_> = vec![
+                $(vertex!($coords)),+
+            ];
+            let mut tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
+            tds.assign_neighbors().unwrap();
+
+            let start_cell = tds.cell_keys().next().unwrap();
+            let mut conflict_cells = CellKeyBuffer::new();
+            conflict_cells.push(start_cell);
+
+            let boundary = extract_cavity_boundary(&tds, &conflict_cells).unwrap();
+
+            assert_eq!(
+                boundary.len(),
+                $expected_facets,
+                "Expected {} boundary facets for single {}-simplex",
+                $expected_facets,
+                $dim
+            );
+        }};
+    }
+
+    #[test]
+    fn test_extract_cavity_boundary_2d() {
+        // 2D triangle - single simplex has 3 edges (facets) on boundary
+        test_cavity_boundary_dimension!(2, 3, [0.0, 0.0], [1.0, 0.0], [0.0, 1.0],);
+    }
+
+    #[test]
+    fn test_extract_cavity_boundary_3d() {
+        // 3D tetrahedron - single simplex has 4 triangular facets on boundary
+        test_cavity_boundary_dimension!(
+            3,
+            4,
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        );
+    }
+
+    #[test]
+    fn test_extract_cavity_boundary_4d() {
+        // 4D simplex - single simplex has 5 tetrahedral facets on boundary
+        test_cavity_boundary_dimension!(
+            4,
+            5,
+            [0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        );
+    }
+
+    #[test]
+    fn test_extract_cavity_boundary_5d() {
+        // 5D simplex - single simplex has 6 4-simplicial facets on boundary
+        test_cavity_boundary_dimension!(
+            5,
+            6,
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        );
+    }
+
+    #[test]
+    fn test_extract_cavity_boundary_empty_conflict() {
+        // Empty conflict region should produce empty boundary
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+        tds.assign_neighbors().unwrap();
+
+        let conflict_cells = CellKeyBuffer::new(); // Empty
+
+        let boundary = extract_cavity_boundary(&tds, &conflict_cells).unwrap();
+
+        assert_eq!(
+            boundary.len(),
+            0,
+            "Expected 0 boundary facets for empty conflict region"
+        );
     }
 }
