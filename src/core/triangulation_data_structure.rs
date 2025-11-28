@@ -958,25 +958,6 @@ where
         self.cells.contains_key(key)
     }
 
-    /// Checks if a vertex key exists in the triangulation.
-    ///
-    /// # Deprecation
-    ///
-    /// Use [`contains_vertex_key`](Self::contains_vertex_key) instead for consistency
-    /// with other key-based methods.
-    ///
-    /// # Returns
-    ///
-    /// `true` if the key exists, `false` otherwise.
-    #[deprecated(
-        since = "0.5.2",
-        note = "Use `contains_vertex_key` instead for API consistency"
-    )]
-    #[must_use]
-    pub fn contains_vertex(&self, key: VertexKey) -> bool {
-        self.vertices.contains_key(key)
-    }
-
     /// The function returns the number of vertices in the triangulation
     /// data structure.
     ///
@@ -1253,45 +1234,6 @@ where
     #[doc(hidden)]
     pub(crate) const fn cells_mut(&mut self) -> &mut StorageMap<CellKey, Cell<T, U, V, D>> {
         &mut self.cells
-    }
-
-    /// Test/benchmark helper: Insert cell without updating UUID mappings.
-    ///
-    /// # ⚠️ DANGER: VIOLATES INVARIANTS - DO NOT USE
-    ///
-    /// This method intentionally bypasses UUID mapping and is **ONLY** for:
-    /// - Internal benchmarks testing `remove_duplicate_cells()` performance
-    /// - Creating intentionally corrupted test scenarios
-    ///
-    /// **This method is deprecated and will be removed in v0.6.0.**
-    /// It exists only for backward compatibility with existing benchmarks.
-    ///
-    /// # Why This Exists
-    ///
-    /// Performance benchmarks for `remove_duplicate_cells()` need to create
-    /// duplicate cells without triggering UUID uniqueness checks. This method
-    /// allows benchmarks to create invalid states for performance testing.
-    ///
-    /// # Safety
-    ///
-    /// This method:
-    /// - Does NOT update UUID mappings
-    /// - Does NOT maintain triangulation invariants  
-    /// - WILL corrupt the triangulation if used incorrectly
-    /// - Should NEVER be used in production code
-    ///
-    /// # Alternatives
-    ///
-    /// Use the validated insertion methods:
-    /// - [`add()`](Self::add) for vertex insertion
-    /// - [`insert_cell_with_mapping()`](Self::insert_cell_with_mapping) for cells (internal)
-    #[doc(hidden)]
-    #[deprecated(
-        since = "0.5.2",
-        note = "This method violates invariants and will be removed in v0.6.0. Only use in controlled benchmarks."
-    )]
-    pub fn insert_cell_unchecked(&mut self, cell: Cell<T, U, V, D>) -> CellKey {
-        self.cells.insert(cell)
     }
 
     /// Atomically inserts a vertex and creates the UUID-to-key mapping.
@@ -1757,28 +1699,6 @@ where
     // =========================================================================
     // These methods work directly with keys to avoid UUID lookups in hot paths.
     // They complement the existing UUID-based methods for internal algorithm use.
-
-    /// Gets a cell directly by its key without UUID lookup.
-    ///
-    /// **Deprecated**: Use [`get_cell()`](Self::get_cell) instead. This method is identical to `get_cell()`
-    /// and exists only for backward compatibility. It will be removed in v0.6.0.
-    ///
-    /// # Arguments
-    ///
-    /// * `cell_key` - The key of the cell to retrieve
-    ///
-    /// # Returns
-    ///
-    /// An `Option` containing a reference to the cell if it exists, `None` otherwise.
-    #[deprecated(
-        since = "0.5.2",
-        note = "Use `get_cell()` instead. This method is identical and will be removed in v0.6.0."
-    )]
-    #[inline]
-    #[must_use]
-    pub fn get_cell_by_key(&self, cell_key: CellKey) -> Option<&Cell<T, U, V, D>> {
-        self.get_cell(cell_key)
-    }
 
     /// Gets a mutable reference to a cell directly by its key.
     ///
@@ -3423,155 +3343,6 @@ where
         Ok(duplicate_count)
     }
 
-    /// Builds a `FacetToCellsMap` mapping facet keys to the cells and facet indices that contain them.
-    ///
-    /// This is a lenient version that skips cells with missing vertex keys rather than
-    /// returning an error. For correctness-critical code, prefer using
-    /// `build_facet_to_cells_map` which propagates errors.
-    ///
-    /// # Returns
-    ///
-    /// A `FacetToCellsMap` where:
-    /// - The key is the canonical facet key (u64) computed from the facet's vertices
-    /// - The value is a vector of tuples containing:
-    ///   - `CellKey`: The `storage map` key of the cell containing this facet
-    ///   - `FacetIndex`: The index of this facet within the cell (0-based)
-    ///
-    /// # Note
-    ///
-    /// This method will skip cells with missing vertex keys and continue processing.
-    /// If you need to ensure all cells are processed, use `build_facet_to_cells_map` instead.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
-    ///
-    /// // Create a simple 3D triangulation
-    /// let points = [
-    ///     Point::new([0.0, 0.0, 0.0]),
-    ///     Point::new([1.0, 0.0, 0.0]),
-    ///     Point::new([0.0, 1.0, 0.0]),
-    ///     Point::new([0.0, 0.0, 1.0]),
-    /// ];
-    ///
-    /// let vertices = Vertex::from_points(&points);
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
-    ///
-    /// // Build the facet-to-cells mapping (prefer build_facet_to_cells_map or FacetCacheProvider)
-    /// #[allow(deprecated)]
-    /// let facet_map = tds.build_facet_to_cells_map_lenient();
-    ///
-    /// // Each facet key should map to the cells that contain it
-    /// for (facet_key, cell_facet_pairs) in &facet_map {
-    ///     println!("Facet key {} is contained in {} cell(s)", facet_key, cell_facet_pairs.len());
-    ///     
-    ///     for facet_handle in cell_facet_pairs {
-    ///         println!("  - Cell {:?} at facet index {}", facet_handle.cell_key(), facet_handle.facet_index());
-    ///     }
-    /// }
-    /// ```
-    ///
-    /// # Performance
-    ///
-    /// This method has O(N×F) time complexity where N is the number of cells and F is the
-    /// number of facets per cell (typically D+1 for D-dimensional cells). The space
-    /// complexity is O(T) where T is the total number of facets across all cells.
-    ///
-    /// # Requirements
-    ///
-    /// This function requires that D ≤ 255, ensuring that facet indices (0..=D) fit within
-    /// `FacetIndex` (u8) range. This constraint is enforced by debug assertions.
-    ///
-    /// # Note
-    ///
-    /// Unlike `build_facet_to_cells_map`, this method logs warnings but continues
-    /// processing when cells have missing vertex keys. For strict error handling that fails
-    /// on any missing data, use `build_facet_to_cells_map` instead.
-    ///
-    /// NOTE: This method is deprecated and will be removed in v0.6.0.
-    /// Use `build_facet_to_cells_map` for strict error handling or
-    /// `FacetCacheProvider` trait methods for cached access.
-    #[deprecated(
-        since = "0.5.1",
-        note = "Use FacetCacheProvider trait methods (try_get_or_build_facet_cache) for cached access, or build_facet_to_cells_map for direct computation. This method will be removed in v0.6.0."
-    )]
-    #[must_use]
-    pub fn build_facet_to_cells_map_lenient(&self) -> FacetToCellsMap {
-        // Ensure facet indices fit in u8 range
-        debug_assert!(
-            D <= 255,
-            "Dimension D must be <= 255 to fit facet indices in u8 (indices 0..=D)"
-        );
-
-        let cap = self.cells.len().saturating_mul(D.saturating_add(1));
-        let mut facet_to_cells: FacetToCellsMap = fast_hash_map_with_capacity(cap);
-
-        // Use SmallBuffer to avoid heap allocations for facet vertices (same as assign_neighbors)
-        let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::with_capacity(D);
-        #[cfg(debug_assertions)]
-        let mut skipped_cells = 0usize;
-
-        // Iterate over all cells and their facets
-        for (cell_id, _cell) in &self.cells {
-            // Phase 1: Use direct key-based method to avoid UUID→Key lookups
-            // Note: We skip cells with missing vertex keys for backwards compatibility
-            let Ok(vertices) = self.get_cell_vertices(cell_id) else {
-                #[cfg(debug_assertions)]
-                {
-                    skipped_cells += 1;
-                    eprintln!(
-                        "debug: skipping cell {cell_id:?} due to missing vertex keys in facet mapping"
-                    );
-                }
-                continue; // Skip cells with missing vertex keys
-            };
-
-            // Phase 3A: Use vertices.len() (keys buffer length) instead of any UUID-based length
-            for i in 0..vertices.len() {
-                // Clear and reuse the buffer instead of allocating a new one
-                facet_vertices.clear();
-                for (j, &key) in vertices.iter().enumerate() {
-                    if i != j {
-                        facet_vertices.push(key);
-                    }
-                }
-
-                let facet_key = facet_key_from_vertices(&facet_vertices);
-                let Ok(facet_index_u8) = usize_to_u8(i, facet_vertices.len()) else {
-                    // Log warning about skipped facet in debug builds
-                    #[cfg(debug_assertions)]
-                    {
-                        eprintln!(
-                            "Warning: Skipping facet index {i} for cell {cell_id:?} - exceeds u8 range (D={D} > 255)"
-                        );
-                        skipped_cells += 1; // Count this as a skipped operation
-                    }
-                    continue;
-                };
-
-                facet_to_cells
-                    .entry(facet_key)
-                    .or_default()
-                    .push(FacetHandle::new(cell_id, facet_index_u8));
-            }
-        }
-
-        // Log warning if cells were skipped (useful for debugging data issues)
-        #[cfg(debug_assertions)]
-        if skipped_cells > 0 {
-            eprintln!(
-                "debug: Skipped {skipped_cells} cell(s) during facet mapping due to missing vertex keys"
-            );
-        }
-
-        facet_to_cells
-    }
-
     /// Builds a `FacetToCellsMap` with strict error handling.
     ///
     /// This method returns an error if any cell has missing vertex keys, ensuring
@@ -3703,19 +3474,20 @@ where
             }
 
             // There are facet sharing issues, proceed with the fix
-            // Use try_build for strict error handling, but fall back to build if it fails
-            // If strict build fails, use the lenient version for repair
-            // This allows us to fix what we can even with partial data
-            let facet_to_cells = self.build_facet_to_cells_map().unwrap_or_else(|e| {
-                // Log the error in debug builds for troubleshooting
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "Warning: Strict facet map build failed during repair: {e}. \
-                     Falling back to lenient builder to attempt recovery."
-                );
-                #[allow(deprecated)] // Internal fallback for repair - lenient version needed
-                self.build_facet_to_cells_map_lenient()
-            });
+            // Use strict build - if it fails, we can't reliably repair the triangulation
+            // The facet map is essential for identifying shared facets
+            let facet_to_cells = match self.build_facet_to_cells_map() {
+                Ok(map) => map,
+                Err(e) => {
+                    // If we can't build a facet map, we can't reliably repair
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Warning: Facet map build failed during repair: {e}. \
+                         Cannot safely repair without valid facet mapping."
+                    );
+                    return Err(e);
+                }
+            };
             let mut cells_to_remove: CellKeySet = CellKeySet::default();
 
             // Find facets that are shared by more than 2 cells and validate which ones are correct
@@ -5045,8 +4817,8 @@ where
 #[expect(clippy::uninlined_format_args, clippy::similar_names)]
 mod tests {
     use super::*;
-    use crate::cell;
     use crate::core::{
+        cell::Cell,
         collections::{FastHashMap, FastHashSet},
         facet::FacetView,
         traits::{boundary_analysis::BoundaryAnalysis, insertion_algorithm::VertexClassification},
@@ -9140,9 +8912,8 @@ mod tests {
         // Build a map of facet keys to the cells that contain them
         let mut facet_map: FastHashMap<u64, Vec<Uuid>> = FastHashMap::default();
         for (cell_key, cell) in &tds.cells {
-            for facet_view in cell
-                .facet_views(&tds, cell_key)
-                .expect("Should get cell facets")
+            for facet_view in
+                Cell::facet_views_from_tds(&tds, cell_key).expect("Should get cell facets")
             {
                 if let Ok(facet_key) = facet_view.key() {
                     facet_map.entry(facet_key).or_default().push(cell.uuid());
@@ -9277,25 +9048,18 @@ mod tests {
             }
 
             // Create three cells that all share the same facet
+            // Get vertex keys for cell construction
+            let vk1 = *tds.uuid_to_vertex_key.get(&shared_vertex1.uuid()).unwrap();
+            let vk2 = *tds.uuid_to_vertex_key.get(&shared_vertex2.uuid()).unwrap();
+            let vk3 = *tds.uuid_to_vertex_key.get(&shared_vertex3.uuid()).unwrap();
+            let vk_u1 = *tds.uuid_to_vertex_key.get(&unique_vertex1.uuid()).unwrap();
+            let vk_u2 = *tds.uuid_to_vertex_key.get(&unique_vertex2.uuid()).unwrap();
+            let vk_u3 = *tds.uuid_to_vertex_key.get(&unique_vertex3.uuid()).unwrap();
+
             let cells = [
-                cell!([
-                    shared_vertex1,
-                    shared_vertex2,
-                    shared_vertex3,
-                    unique_vertex1
-                ]),
-                cell!([
-                    shared_vertex1,
-                    shared_vertex2,
-                    shared_vertex3,
-                    unique_vertex2
-                ]),
-                cell!([
-                    shared_vertex1,
-                    shared_vertex2,
-                    shared_vertex3,
-                    unique_vertex3
-                ]),
+                Cell::new(vec![vk1, vk2, vk3, vk_u1], None).unwrap(),
+                Cell::new(vec![vk1, vk2, vk3, vk_u2], None).unwrap(),
+                Cell::new(vec![vk1, vk2, vk3, vk_u3], None).unwrap(),
             ];
 
             // Insert cells into the TDS
@@ -9354,24 +9118,17 @@ mod tests {
         }
 
         // Create three cells that all share the same facet (shared_vertex1, shared_vertex2, shared_vertex3)
-        let cell1 = cell!([
-            shared_vertex1,
-            shared_vertex2,
-            shared_vertex3,
-            unique_vertex1
-        ]);
-        let cell2 = cell!([
-            shared_vertex1,
-            shared_vertex2,
-            shared_vertex3,
-            unique_vertex2
-        ]);
-        let cell3 = cell!([
-            shared_vertex1,
-            shared_vertex2,
-            shared_vertex3,
-            unique_vertex3
-        ]);
+        // Get vertex keys for cell construction
+        let vk1 = *tds.uuid_to_vertex_key.get(&shared_vertex1.uuid()).unwrap();
+        let vk2 = *tds.uuid_to_vertex_key.get(&shared_vertex2.uuid()).unwrap();
+        let vk3 = *tds.uuid_to_vertex_key.get(&shared_vertex3.uuid()).unwrap();
+        let vk_u1 = *tds.uuid_to_vertex_key.get(&unique_vertex1.uuid()).unwrap();
+        let vk_u2 = *tds.uuid_to_vertex_key.get(&unique_vertex2.uuid()).unwrap();
+        let vk_u3 = *tds.uuid_to_vertex_key.get(&unique_vertex3.uuid()).unwrap();
+
+        let cell1 = Cell::new(vec![vk1, vk2, vk3, vk_u1], None).unwrap();
+        let cell2 = Cell::new(vec![vk1, vk2, vk3, vk_u2], None).unwrap();
+        let cell3 = Cell::new(vec![vk1, vk2, vk3, vk_u3], None).unwrap();
 
         // Insert cells into the TDS
         let cell1_key = tds.cells.insert(cell1);
@@ -9458,24 +9215,17 @@ mod tests {
         }
 
         // Create three cells that share a facet to trigger the fix logic
-        let cell1 = cell!([
-            shared_vertex1,
-            shared_vertex2,
-            shared_vertex3,
-            unique_vertex1
-        ]);
-        let cell2 = cell!([
-            shared_vertex1,
-            shared_vertex2,
-            shared_vertex3,
-            unique_vertex2
-        ]);
-        let cell3 = cell!([
-            shared_vertex1,
-            shared_vertex2,
-            shared_vertex3,
-            unique_vertex3
-        ]);
+        // Get vertex keys for cell construction
+        let vk1 = *tds.uuid_to_vertex_key.get(&shared_vertex1.uuid()).unwrap();
+        let vk2 = *tds.uuid_to_vertex_key.get(&shared_vertex2.uuid()).unwrap();
+        let vk3 = *tds.uuid_to_vertex_key.get(&shared_vertex3.uuid()).unwrap();
+        let vk_u1 = *tds.uuid_to_vertex_key.get(&unique_vertex1.uuid()).unwrap();
+        let vk_u2 = *tds.uuid_to_vertex_key.get(&unique_vertex2.uuid()).unwrap();
+        let vk_u3 = *tds.uuid_to_vertex_key.get(&unique_vertex3.uuid()).unwrap();
+
+        let cell1 = Cell::new(vec![vk1, vk2, vk3, vk_u1], None).unwrap();
+        let cell2 = Cell::new(vec![vk1, vk2, vk3, vk_u2], None).unwrap();
+        let cell3 = Cell::new(vec![vk1, vk2, vk3, vk_u3], None).unwrap();
 
         let cell1_key = tds.cells.insert(cell1);
         let cell1_uuid = tds.cells[cell1_key].uuid();
@@ -9548,9 +9298,15 @@ mod tests {
         }
 
         // Create cells that share facets to trigger the repair logic
-        let cell1 = cell!(&vertices[0..4]);
-        let cell2 = cell!([vertices[0], vertices[1], vertices[2], vertices[4]]);
-        let cell3 = cell!([vertices[0], vertices[1], vertices[3], vertices[4]]);
+        // Get vertex keys for cell construction
+        let vks: Vec<VertexKey> = vertices
+            .iter()
+            .map(|v| *tds.uuid_to_vertex_key.get(&v.uuid()).unwrap())
+            .collect();
+
+        let cell1 = Cell::new(vec![vks[0], vks[1], vks[2], vks[3]], None).unwrap();
+        let cell2 = Cell::new(vec![vks[0], vks[1], vks[2], vks[4]], None).unwrap();
+        let cell3 = Cell::new(vec![vks[0], vks[1], vks[3], vks[4]], None).unwrap();
 
         let cell1_key = tds.cells.insert(cell1);
         let cell1_uuid = tds.cells[cell1_key].uuid();
@@ -10225,11 +9981,6 @@ mod tests {
         // Normal case should work
         let facet_map = tds.build_facet_to_cells_map();
         assert!(facet_map.is_ok());
-
-        // Test the deprecated lenient version
-        #[allow(deprecated)]
-        let lenient_map = tds.build_facet_to_cells_map_lenient();
-        assert!(!lenient_map.is_empty());
     }
 
     #[test]

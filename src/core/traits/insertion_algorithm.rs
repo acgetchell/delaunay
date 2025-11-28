@@ -79,7 +79,6 @@ use num_traits::{One, Zero, cast};
 use smallvec::SmallVec;
 use std::iter::Sum;
 use std::marker::PhantomData;
-use std::num::NonZeroUsize;
 use std::ops::{Add, AddAssign, Div, Sub, SubAssign};
 use thiserror::Error;
 
@@ -1623,23 +1622,8 @@ where
     }
 }
 
-/// Policy controlling when global Delaunay validation/repair runs for a triangulation.
-///
-/// The policy itself does not perform validation; it is interpreted by insertion
-/// algorithms and pipelines (for example, the unified insertion pipeline used by
-/// `Tds::bowyer_watson_with_diagnostics_and_policy`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DelaunayCheckPolicy {
-    /// Run a single global Delaunay validation/repair pass at the end of
-    /// triangulation. This matches the legacy behavior.
-    #[default]
-    EndOnly,
-    /// Run global Delaunay validation/repair after every N successful insertions,
-    /// in addition to a final pass at the end. The unified insertion pipeline
-    /// uses this to schedule periodic calls into the global validator while
-    /// preserving the final validation step.
-    EveryN(NonZeroUsize),
-}
+// Re-export DelaunayCheckPolicy from delaunay_triangulation module where it logically belongs
+pub use crate::core::delaunay_triangulation::DelaunayCheckPolicy;
 
 /// Test-only counter tracking how many times global Delaunay validation was
 /// invoked via `run_global_delaunay_validation_with_policy`.

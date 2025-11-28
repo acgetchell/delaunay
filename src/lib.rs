@@ -472,6 +472,7 @@ pub mod core {
     }
     // Re-export the `core` modules.
     pub use cell::*;
+    pub use delaunay_triangulation::*;
     pub use facet::*;
     pub use traits::*;
     pub use triangulation_data_structure::*;
@@ -531,7 +532,7 @@ pub mod prelude {
     // Re-export from core
     pub use crate::core::{
         cell::*,
-        delaunay_triangulation::DelaunayCheckPolicy,
+        delaunay_triangulation::*,
         facet::*,
         traits::{boundary_analysis::*, data_type::*, insertion_algorithm::*},
         triangulation_data_structure::*,
@@ -553,7 +554,7 @@ pub mod prelude {
     };
 
     // Convenience macros
-    pub use crate::{cell, vertex};
+    pub use crate::vertex;
 }
 
 /// The function `is_normal` checks that structs implement `auto` traits.

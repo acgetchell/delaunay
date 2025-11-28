@@ -14,15 +14,11 @@
 //! - **Optional Data Storage**: Supports attaching arbitrary user data of type `V`
 //! - **Serialization Support**: Manual serde for `uuid` and `data`; vertex/neighbor keys are
 //!   omitted and reconstructed during TDS (de)serialization
-//! - **Macro-based Construction**: Convenient cell creation using the `cell!` macro.
 //!
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::core::cell::Cell;
-//! use delaunay::geometry::point::Point;
-//! use delaunay::geometry::traits::coordinate::Coordinate;
-//! use delaunay::{cell, vertex};
+//! use delaunay::prelude::*;
 //!
 //! // Create vertices for a tetrahedron
 //! let vertices = vec![
@@ -32,8 +28,11 @@
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
 //!
-//! // Create a 3D cell (tetrahedron)
-//! let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
+//! // Create a 3D triangulation with cells
+//! let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+//!     DelaunayTriangulation::new(&vertices).unwrap();
+//! let (cell_key, cell) = dt.tds().cells().next().unwrap();
+//! assert_eq!(cell.number_of_vertices(), 4);
 //! ```
 
 #![allow(clippy::similar_names)]
@@ -137,96 +136,6 @@ pub enum CellValidationError {
 // =============================================================================
 // CONVENIENCE MACROS AND HELPERS
 // =============================================================================
-
-/// Convenience macro for creating cells with less boilerplate.
-///
-/// # ⚠️ Deprecated
-///
-/// **This macro is deprecated and will be removed in v0.6.0.**
-///
-/// ## Why It's Being Removed
-///
-/// In Phase 3A, cells store `VertexKey`s that are only valid within a specific TDS context.
-/// This macro creates a temporary TDS, clones a cell with its keys, then discards the TDS,
-/// leaving a cell with "dangling" keys that cannot be used with any TDS operations.
-///
-/// This violates the Phase 3A architecture where **cells cannot exist independently from a TDS**.
-///
-/// ## Migration Guide
-///
-/// Instead of:
-/// ```rust,ignore
-/// use delaunay::{cell, vertex};
-/// let vertices = vec![vertex!([0.0, 0.0, 0.0]), ...];
-/// let c: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
-/// // c.vertices() contains keys that reference a dropped TDS!
-/// ```
-///
-/// Use:
-/// ```rust
-/// use delaunay::{vertex, core::triangulation_data_structure::Tds};
-///
-/// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
-/// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-/// let (cell_key, cell) = tds.cells().next().unwrap();
-/// // Now cell's keys are valid within tds context
-/// ```
-///
-/// # For Existing Code
-///
-/// This macro still works for basic property testing (UUID, dimension, etc.) but
-/// **DO NOT use the returned cell's `VertexKeys` with any TDS operations** - they
-/// reference a TDS that no longer exists.
-///
-/// # ⚠️ Tests Only
-///
-/// **This macro should only be used in tests.** It creates cells with dangling keys
-/// that reference a dropped TDS. Use `Tds::new()` for all production code.
-#[deprecated(
-    since = "0.5.2",
-    note = "Cells cannot exist independently from a TDS in Phase 3A. \
-            Create cells through Tds::new() and work with them in TDS context. \
-            This macro will be removed in v0.6.0. See macro documentation for migration guide."
-)]
-#[macro_export]
-macro_rules! cell {
-    // Pattern 1: Just vertices - creates via TDS
-    // Accepts any expression that can be borrowed as a slice: &[...], arrays, or existing slices
-    ($vertices:expr) => {{
-        use $crate::core::triangulation_data_structure::Tds;
-        // Borrow as slice to accept both owned and borrowed forms
-        let vertices_slice = &$vertices;
-        let tds = Tds::new(vertices_slice).expect("Failed to create triangulation from vertices");
-        tds.cells()
-            .map(|(_, cell)| cell)
-            .next()
-            .expect("No cells created - need at least D+1 vertices")
-            .clone()
-    }};
-
-    // Pattern 2: Vertices with data - creates via TDS then sets data
-    ($vertices:expr, $data:expr) => {{
-        use $crate::core::triangulation_data_structure::Tds;
-        let vertices_slice = &$vertices;
-        let tds = Tds::new(vertices_slice).expect("Failed to create triangulation from vertices");
-        let mut cell = tds
-            .cells()
-            .map(|(_, cell)| cell)
-            .next()
-            .expect("No cells created - need at least D+1 vertices")
-            .clone();
-        cell.data = Some($data);
-        cell
-    }};
-}
-
-// Re-export the macro at the crate level for convenience
-pub use crate::cell;
 
 // =============================================================================
 // CELL STRUCT DEFINITION
@@ -778,8 +687,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::{cell, vertex};
-    /// use delaunay::core::cell::Cell;
+    /// use delaunay::prelude::*;
     /// use uuid::Uuid;
     ///
     /// let vertices = vec![
@@ -788,7 +696,9 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0]),
     /// ];
-    /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
+    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let (_, cell) = dt.tds().cells().next().unwrap();
     /// assert_ne!(cell.uuid(), Uuid::nil());
     /// ```
     #[inline]
@@ -936,8 +846,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::{cell, vertex};
-    /// use delaunay::core::cell::Cell;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -945,62 +854,14 @@ where
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0]),
     /// ];
-    /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices);
+    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let (_, cell) = dt.tds().cells().next().unwrap();
     /// assert_eq!(cell.dim(), 3);
     /// ```
     #[inline]
     pub const fn dim(&self) -> usize {
         D
-    }
-
-    /// Deprecated alias for `has_vertex_in_common`.
-    ///
-    /// This method will be removed in v0.6.0. Use `has_vertex_in_common` instead.
-    ///
-    /// # Arguments
-    ///
-    /// * `other` - The other cell to check against
-    ///
-    /// # Returns
-    ///
-    /// `true` if the cells share at least one vertex.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use delaunay::{vertex, core::triangulation_data_structure::Tds};
-    ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    ///     vertex!([1.0, 1.0]),
-    /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    /// let mut cells_iter = tds.cells().map(|(_, cell)| cell);
-    /// let cell1 = cells_iter.next().unwrap();
-    /// let cell2 = cells_iter.next().unwrap();
-    ///
-    /// #[allow(deprecated)]
-    /// {
-    ///     // Old API (deprecated)
-    ///     if cell1.contains_vertex_of(cell2) {
-    ///         println!("Cells share vertices");
-    ///     }
-    /// }
-    ///
-    /// // New API (preferred)
-    /// if cell1.has_vertex_in_common(cell2) {
-    ///     println!("Cells share vertices");
-    /// }
-    /// ```
-    #[deprecated(
-        since = "0.5.1",
-        note = "Use `has_vertex_in_common` instead. This method will be removed in v0.6.0."
-    )]
-    #[inline]
-    pub fn contains_vertex_of(&self, other: &Self) -> bool {
-        self.has_vertex_in_common(other)
     }
 
     /// Converts a vector of cells into a `FastHashMap` indexed by their UUIDs.
@@ -1021,11 +882,10 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::{cell, vertex};
+    /// use delaunay::prelude::*;
     /// use delaunay::core::cell::Cell;
-    /// use uuid::Uuid;
     ///
-    /// // Create some cells (need 4 vertices each for 3D simplices)
+    /// // Create two separate triangulations
     /// let vertices1 = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
@@ -1038,8 +898,12 @@ where
     ///     vertex!([1.0, 2.0, 1.0]),
     ///     vertex!([1.0, 1.0, 2.0]),
     /// ];
-    /// let cell1: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices1);
-    /// let cell2: Cell<f64, Option<()>, Option<()>, 3> = cell!(vertices2);
+    /// let dt1: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+    ///     DelaunayTriangulation::new(&vertices1).unwrap();
+    /// let dt2: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+    ///     DelaunayTriangulation::new(&vertices2).unwrap();
+    /// let cell1 = dt1.tds().cells().next().unwrap().1.clone();
+    /// let cell2 = dt2.tds().cells().next().unwrap().1.clone();
     ///
     /// let cells = vec![cell1.clone(), cell2.clone()];
     /// let cell_map = Cell::into_hashmap(cells);
@@ -1051,7 +915,6 @@ where
     /// ```
     ///
     /// ```
-    /// use delaunay::{cell, vertex};
     /// use delaunay::core::cell::Cell;
     ///
     /// // Empty vector produces empty FastHashMap
@@ -1096,15 +959,17 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::{cell, vertex};
-    /// use delaunay::core::cell::Cell;
-    /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::prelude::*;
     ///
-    /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
-    /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
-    /// let vertex3: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
-    /// let vertex4: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
-    /// let cell: Cell<f64, Option<()>, Option<()>, 3> = cell!(vec![vertex1, vertex2, vertex3, vertex4]);
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let (_, cell) = dt.tds().cells().next().unwrap();
     /// assert!(cell.is_valid().is_ok());
     /// ```
     /// Phase 3A: Updated to use vertices (validation without full vertex data)
@@ -1213,71 +1078,6 @@ where
     ///
     /// Note: For properly constructed cells with D+1 distinct vertices, this method
     /// should not fail under normal circumstances.
-    ///
-    /// # Examples
-    ///
-    /// Returns all facets of this cell as lightweight `FacetView` objects.
-    ///
-    /// This method provides a more efficient alternative to `facets()` by returning
-    /// lightweight `FacetView` objects instead of owned `Facet` objects.
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - Reference to the triangulation data structure
-    /// * `cell_key` - The key of this cell in the TDS
-    ///
-    /// # Returns
-    ///
-    /// A `Result<Vec<FacetView>, FacetError>` containing all facets of the cell.
-    /// Each facet is represented as a `FacetView` which provides efficient access
-    /// to facet properties without cloning cell data.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`FacetError`] if facet creation fails during the construction
-    /// of `FacetView` objects.
-    ///
-    /// # Notes
-    ///
-    /// Returns an error if the facet index cannot be represented as `u8`.
-    /// This should never happen in practice since facet indices are bounded
-    /// by the dimension `D`, which is typically small (≤ 255).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::{core::triangulation_data_structure::Tds, vertex};
-    ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    ///
-    /// let cell_key = tds.cell_keys().next().unwrap();
-    /// let cell = tds.get_cell(cell_key).unwrap();
-    /// let facet_views = cell.facet_views(&tds, cell_key).expect("Failed to get facet views");
-    ///
-    /// // Each facet should have 3 vertices (triangular faces of tetrahedron)
-    /// for facet_view in &facet_views {
-    ///     assert_eq!(facet_view.vertices().unwrap().count(), 3);
-    /// }
-    /// ```
-    #[deprecated(
-        since = "0.5.2",
-        note = "Use `Cell::facet_views_from_tds(tds, cell_key)` instead. This instance method will be removed in 0.6.0. The static method is more direct and avoids redundant parameters."
-    )]
-    pub fn facet_views<'tds>(
-        &self,
-        tds: &'tds Tds<T, U, V, D>,
-        cell_key: CellKey,
-    ) -> Result<Vec<crate::core::facet::FacetView<'tds, T, U, V, D>>, FacetError> {
-        // Delegate to the static method to avoid code duplication
-        Self::facet_views_from_tds(tds, cell_key)
-    }
-
     /// Returns all facets of a cell as lightweight `FacetView` objects using only TDS and cell key.
     ///
     /// This is a static method that provides a more robust alternative to `facet_views()` by avoiding
@@ -2230,8 +2030,8 @@ mod tests {
     }
 
     #[test]
-    fn cell_contains_vertex_of() {
-        // Create two triangulations to test contains_vertex_of
+    fn cell_has_vertex_in_common() {
+        // Test has_vertex_in_common (replacement for deprecated contains_vertex_of)
         let vertices1 = vec![
             vertex!([0.0, 0.0, 1.0], 1),
             vertex!([0.0, 1.0, 0.0], 1),
@@ -2254,7 +2054,7 @@ mod tests {
         let mut cell2 = cell2_ref.clone();
         cell2.data = Some(43);
 
-        assert!(cell.contains_vertex_of(&cell2));
+        assert!(cell.has_vertex_in_common(&cell2));
 
         // Human readable output for cargo test -- --nocapture
         println!("Cell: {cell:?}");
@@ -2275,11 +2075,8 @@ mod tests {
         // Create TDS to get proper cell and facet views
         let tds = Tds::<f64, i32, i32, 3>::new(&vertices).unwrap();
         let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
 
-        let facets = cell
-            .facet_views(&tds, cell_key)
-            .expect("Failed to get facets");
+        let facets = Cell::facet_views_from_tds(&tds, cell_key).expect("Failed to get facets");
 
         assert_eq!(facets.len(), 4);
         for facet in &facets {
@@ -2287,7 +2084,7 @@ mod tests {
             let facet_vertices_vec: Vec<_> = facet_vertices.collect();
 
             assert!(
-                cell.facet_views(&tds, cell_key)
+                Cell::facet_views_from_tds(&tds, cell_key)
                     .expect("Failed to get facets")
                     .iter()
                     .any(|f| f.vertices().is_ok_and(|fv| {
@@ -3061,40 +2858,8 @@ mod tests {
         assert!(outside_key.is_none() || !cell.contains_vertex(outside_key.unwrap()));
     }
 
-    #[test]
-    fn cell_contains_vertex_of_false() {
-        // Phase 3A: Test deprecated contains_vertex_of method
-        // Create two separate cells to test the method works
-        // Note: In Phase 3A, cells should ideally be created within a TDS, but for this
-        // simple test of the contains_vertex_of method, we can use cell! macro
-
-        let vertices1 = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let vertices2 = vec![
-            vertex!([10.0, 10.0, 10.0]),
-            vertex!([11.0, 10.0, 10.0]),
-            vertex!([10.0, 11.0, 10.0]),
-            vertex!([10.0, 10.0, 11.0]),
-        ];
-
-        let tds1 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices1).unwrap();
-        let (_, cell1) = tds1.cells().next().unwrap();
-        let tds2 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices2).unwrap();
-        let (_, cell2) = tds2.cells().next().unwrap();
-
-        // Note: This test may give false positives due to VertexKey collisions across
-        // different TDS instances, but it tests the method's basic functionality
-        #[allow(deprecated)]
-        let result = cell1.contains_vertex_of(cell2);
-
-        // We can't reliably assert the result due to potential key collisions,
-        // but we verify the method executes without panicking
-        println!("contains_vertex_of returned: {result}");
-    }
+    // Test removed: contains_vertex_of was deprecated in v0.5 and removed
+    // Replacement: has_vertex_in_common() is tested in cell_has_vertex_in_common test
 
     #[test]
     fn cell_validation_max_vertices() {
@@ -3222,11 +2987,8 @@ mod tests {
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
         let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
 
-        let facets = cell
-            .facet_views(&tds, cell_key)
-            .expect("Failed to get facets");
+        let facets = Cell::facet_views_from_tds(&tds, cell_key).expect("Failed to get facets");
         assert_eq!(facets.len(), 4); // A tetrahedron should have 4 facets
 
         // Each facet should have 3 vertices (for 3D tetrahedron)
@@ -3287,12 +3049,10 @@ mod tests {
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
         let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Test that we can get facet views for all facets
-        let facet_views = cell
-            .facet_views(&tds, cell_key)
-            .expect("Failed to get facet views");
+        let facet_views =
+            Cell::facet_views_from_tds(&tds, cell_key).expect("Failed to get facet views");
         assert_eq!(facet_views.len(), 4, "3D cell should have 4 facets");
 
         // Each facet should have 3 vertices (for 3D)
@@ -3306,6 +3066,7 @@ mod tests {
         }
 
         // Verify opposite vertices are correct
+        let cell = tds.get_cell(cell_key).unwrap();
         for (i, facet_view) in facet_views.iter().enumerate() {
             let opposite_vertex = facet_view
                 .opposite_vertex()
@@ -3332,12 +3093,10 @@ mod tests {
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
         let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
 
         // Get all facet views
-        let facet_views = cell
-            .facet_views(&tds, cell_key)
-            .expect("Failed to get facet views");
+        let facet_views =
+            Cell::facet_views_from_tds(&tds, cell_key).expect("Failed to get facet views");
 
         for facet_view in &facet_views {
             let opposite_vertex = facet_view
@@ -3404,7 +3163,7 @@ mod tests {
         assert_eq!(cell.number_of_vertices(), 6);
         assert_eq!(cell.dim(), 5);
         assert_eq!(
-            cell.facet_views(&tds, cell_key)
+            Cell::facet_views_from_tds(&tds, cell_key)
                 .expect("Failed to get facets")
                 .len(),
             6
@@ -3462,9 +3221,8 @@ mod tests {
         assert_eq!(cell.data.unwrap(), 42u32);
 
         // Also verify we can access vertex data through facet_views
-        let facet_views = cell
-            .facet_views(&tds, cell_key)
-            .expect("Failed to get facet views");
+        let facet_views =
+            Cell::facet_views_from_tds(&tds, cell_key).expect("Failed to get facet views");
         for facet_view in &facet_views {
             // Get vertices from the facet view
             let vertices = facet_view.vertices().expect("Failed to get facet vertices");
@@ -4076,13 +3834,11 @@ mod tests {
             assert_eq!(vertex_count, 3, "Facet {i} should have 3 vertices");
         }
 
-        // Test with the instance method for comparison
-        let cell = tds.get_cell(cell_key).unwrap();
-        let instance_facet_views = cell
-            .facet_views(&tds, cell_key)
-            .expect("Failed to get facet views from instance method");
+        // Test with the static method a second time to verify consistency
+        let instance_facet_views = Cell::facet_views_from_tds(&tds, cell_key)
+            .expect("Failed to get facet views from static method");
 
-        // Both methods should return the same number of facets
+        // Both calls should return the same number of facets
         assert_eq!(static_facet_views.len(), instance_facet_views.len());
 
         println!("✓ facet_views_from_tds static method works correctly");

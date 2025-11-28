@@ -99,76 +99,6 @@ macro_rules! generate_dimensional_benchmarks {
 
                 group.finish();
             }
-
-            /// Benchmark `remove_duplicate_cells` for [<$dim>]D
-            fn [<benchmark_remove_duplicate_cells_ $dim d>](c: &mut Criterion) {
-                let point_counts = [10, 25, 50, 100];
-                let seed = get_benchmark_seed(); // Cache seed locally for consistency across iterations
-
-                let mut group = c.benchmark_group(concat!("remove_duplicate_cells_", stringify!([<$dim>]), "d"));
-
-                for &n_points in &point_counts {
-                    let throughput = n_points as u64;
-                    group.throughput(Throughput::Elements(throughput));
-
-                    group.bench_with_input(
-                        BenchmarkId::new("remove_duplicate_cells", n_points),
-                        &n_points,
-                        |b, &n_points| {
-                            b.iter_batched(
-                                || {
-                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
-                                    let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                    // Note: tds must be mutable for insert_cell_unchecked() calls below
-                                    let mut dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &vertices).unwrap();
-
-                                    // ============================================================
-                                    // BENCH-ONLY INVARIANT VIOLATION ZONE - DO NOT COPY
-                                    // ============================================================
-                                    // WARNING: This code intentionally violates TDS invariants by
-                                    // directly inserting duplicate cells without updating UUID mappings.
-                                    // This is ONLY for performance testing of `remove_duplicate_cells`.
-                                    // DO NOT use this pattern in:
-                                    // - Production code
-                                    // - Correctness tests
-                                    // - Examples
-                                    // - Documentation
-                                    // Note: This code only runs in benchmarks and is clearly documented as
-                                    // bench-only invariant violation. No additional cfg guard is needed.
-                                    #[allow(deprecated)]
-                                    {
-                                        let tds = dt.tds_mut();
-                                        // Clone an existing cell from the TDS to ensure VertexKeys remain valid
-                                        // This avoids creating cells with dangling keys from temporary TDS instances
-                                        let cell_to_duplicate = tds.cell_keys()
-                                            .next()
-                                            .and_then(|key| tds.get_cell(key).cloned());
-
-                                        if let Some(cell_to_dup) = cell_to_duplicate {
-                                            // SAFETY(BENCH-ONLY): Deliberately create duplicates for perf testing
-                                            for _ in 0..3 {
-                                                let _cell_key = tds.insert_cell_unchecked(cell_to_dup.clone());
-                                                // Intentionally not updating UUID mappings to create true duplicates
-                                            }
-                                        }
-                                    }
-                                    // ============================================================
-                                    // END INVARIANT VIOLATION ZONE
-                                    // ============================================================
-                                    dt
-                                },
-                                |mut dt| {
-                                    let removed = dt.tds_mut().remove_duplicate_cells().expect("remove_duplicate_cells failed");
-                                    black_box((dt, removed));
-                                },
-                                BatchSize::LargeInput,
-                            );
-                        },
-                    );
-                }
-
-                group.finish();
-            }
         }
     };
 }
@@ -432,10 +362,6 @@ criterion_group!(
         benchmark_delaunay_triangulation_3d,
         benchmark_delaunay_triangulation_4d,
         benchmark_delaunay_triangulation_5d,
-        benchmark_remove_duplicate_cells_2d,
-        benchmark_remove_duplicate_cells_3d,
-        benchmark_remove_duplicate_cells_4d,
-        benchmark_remove_duplicate_cells_5d,
 
         // Memory usage benchmarks (2D-5D)
         benchmark_memory_usage_2d,

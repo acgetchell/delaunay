@@ -540,30 +540,24 @@ mod tests {
     // ============================================================================
 
     /// Count boundary facets (shared by 1 cell)
-    #[allow(deprecated)] // Test helper - deprecation doesn't apply to tests
     fn count_boundary_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
-        tds.build_facet_to_cells_map_lenient()
-            .values()
-            .filter(|cells| cells.len() == 1)
-            .count()
+        tds.build_facet_to_cells_map().ok().map_or(0, |map| {
+            map.values().filter(|cells| cells.len() == 1).count()
+        })
     }
 
     /// Count internal facets (shared by 2 cells)
-    #[allow(deprecated)] // Test helper - deprecation doesn't apply to tests
     fn count_internal_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
-        tds.build_facet_to_cells_map_lenient()
-            .values()
-            .filter(|cells| cells.len() == 2)
-            .count()
+        tds.build_facet_to_cells_map().ok().map_or(0, |map| {
+            map.values().filter(|cells| cells.len() == 2).count()
+        })
     }
 
     /// Count invalid facets (shared by 3+ cells)
-    #[allow(deprecated)] // Test helper - deprecation doesn't apply to tests
     fn count_invalid_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
-        tds.build_facet_to_cells_map_lenient()
-            .values()
-            .filter(|cells| cells.len() > 2)
-            .count()
+        tds.build_facet_to_cells_map().ok().map_or(0, |map| {
+            map.values().filter(|cells| cells.len() > 2).count()
+        })
     }
 
     // ============================================================================
@@ -634,8 +628,9 @@ mod tests {
 
             // Detailed facet sharing analysis
             eprintln!("\n=== FACET SHARING ANALYSIS ===");
-            #[allow(deprecated)] // Test diagnostic - OK to use deprecated method
-            let facet_to_cells = tds.build_facet_to_cells_map_lenient();
+            let facet_to_cells = tds
+                .build_facet_to_cells_map()
+                .expect("facet map should build");
 
             let mut invalid_sharing = 0;
             let mut boundary_facets = 0;
@@ -706,8 +701,9 @@ mod tests {
         }
 
         // Critical issue detection
-        #[allow(deprecated)] // Test diagnostic - OK to use deprecated method
-        let facet_to_cells = tds.build_facet_to_cells_map_lenient();
+        let facet_to_cells = tds
+            .build_facet_to_cells_map()
+            .expect("facet map should build");
         let mut invalid_sharing = 0;
         let mut boundary_facets = 0;
 
