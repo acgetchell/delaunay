@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Property-based tests for `RobustBowyerWatson` algorithm.
 //!
 //! This module uses proptest to verify fundamental properties of the robust
@@ -51,7 +50,7 @@ macro_rules! test_robust_algorithm_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     test_coords in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         let mut algorithm = RobustBowyerWatson::new();
                         let test_vertex = Vertex::from_points(&[Point::new(test_coords)])
                             .into_iter()
@@ -84,7 +83,7 @@ macro_rules! test_robust_algorithm_properties {
                         1..5_usize
                     )
                 ) {
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         let mut algorithm = RobustBowyerWatson::new();
 
                         let mut prev_processed = 0;
@@ -132,7 +131,7 @@ macro_rules! test_robust_algorithm_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     test_coords in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         let mut algorithm = RobustBowyerWatson::new();
                         let test_vertex = Vertex::from_points(&[Point::new(test_coords)])
                             .into_iter()
@@ -165,7 +164,7 @@ macro_rules! test_robust_algorithm_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         let mut algorithm = RobustBowyerWatson::new();
 
                         // Create interior point (average of existing vertices)
@@ -213,7 +212,7 @@ macro_rules! test_robust_algorithm_properties {
                         1..5_usize
                     )
                 ) {
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         let mut algorithm = RobustBowyerWatson::new();
 
                         let initial_gen = algorithm.cached_generation().load(Ordering::Acquire);
@@ -246,7 +245,7 @@ macro_rules! test_robust_algorithm_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     test_coords in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         let mut algorithm = RobustBowyerWatson::new();
 
                         // Insert a vertex to potentially change state
@@ -292,8 +291,8 @@ macro_rules! test_robust_algorithm_properties {
                         scaled_points.push(Point::new(coords));
                     }
 
-                    let vertices: Vec<Vertex<f64, Option<()>, $dim>> = Vertex::from_points(&scaled_points);
-                    let mut algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, $dim> = RobustBowyerWatson::new();
+                    let vertices: Vec<Vertex<f64, (), $dim>> = Vertex::from_points(&scaled_points);
+                    let mut algorithm: RobustBowyerWatson<f64, (), (), $dim> = RobustBowyerWatson::new();
                     let tds_result = algorithm.new_triangulation(&vertices);
 
                     if let Ok(mut tds) = tds_result {
@@ -337,7 +336,7 @@ proptest! {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Spherical coordinates
         let x = distance * angle_phi.sin() * angle_theta.cos();
@@ -371,7 +370,7 @@ proptest! {
             vertex!([0.5, 0.5, perturbation + 1e-12]),
         ];
 
-        let mut algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
+        let mut algorithm: RobustBowyerWatson<f64, (), (), 3> =
             RobustBowyerWatson::for_degenerate_cases();
         let tds_result = algorithm.new_triangulation(&initial_vertices);
 
@@ -399,7 +398,7 @@ proptest! {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         let exterior_vertex = vertex!([exterior_distance, 0.0, 0.0]);
 

@@ -102,7 +102,7 @@ where
     /// use delaunay::vertex;
     ///
     /// // Build a small 3D triangulation that may contain difficult vertices
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+    /// let mut tds: Tds<f64, (), (), 3> = Tds::empty();
     /// let mut algorithm = RobustBowyerWatson::new();
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -134,7 +134,7 @@ where
     /// use delaunay::core::algorithms::robust_bowyer_watson::RobustBowyerWatson;
     /// use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
     ///
-    /// let algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> = RobustBowyerWatson::new();
+    /// let algorithm: RobustBowyerWatson<f64, (), (), 3> = RobustBowyerWatson::new();
     /// // Algorithm should be properly initialized with general triangulation config
     /// let (processed, created, removed) = algorithm.get_statistics();
     /// assert_eq!(processed, 0); // No vertices processed yet
@@ -174,7 +174,7 @@ where
     /// use delaunay::geometry::robust_predicates::config_presets;
     ///
     /// let config = config_presets::high_precision::<f64>();
-    /// let algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
+    /// let algorithm: RobustBowyerWatson<f64, (), (), 3> =
     ///     RobustBowyerWatson::with_config(config);
     /// ```
     pub fn with_config(config: RobustPredicateConfig<T>) -> Self
@@ -210,7 +210,7 @@ where
     /// use delaunay::core::algorithms::robust_bowyer_watson::RobustBowyerWatson;
     /// use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
     ///
-    /// let algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
+    /// let algorithm: RobustBowyerWatson<f64, (), (), 3> =
     ///     RobustBowyerWatson::for_degenerate_cases();
     /// // Algorithm should be properly initialized for degenerate cases
     /// let (processed, created, removed) = algorithm.get_statistics();
@@ -2610,10 +2610,10 @@ mod tests {
     /// that lies strictly inside its circumsphere using `robust_insphere`.
     ///
     /// This generic version works for any dimension `D` with `f64` coordinates and
-    /// `Option<()>` data types, matching the configuration used in the macro-based
+    /// `()` data types, matching the configuration used in the macro-based
     /// robust Bowyer–Watson tests.
     fn debug_print_first_delaunay_violation_pair_generic<const D: usize>(
-        tds: &Tds<f64, Option<()>, Option<()>, D>,
+        tds: &Tds<f64, (), (), D>,
         context: &str,
     ) {
         use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
@@ -2726,10 +2726,7 @@ mod tests {
     }
 
     /// Convenience wrapper for the original 3D diagnostics helper.
-    fn debug_print_first_delaunay_violation_pair(
-        tds: &Tds<f64, Option<()>, Option<()>, 3>,
-        context: &str,
-    ) {
+    fn debug_print_first_delaunay_violation_pair(tds: &Tds<f64, (), (), 3>, context: &str) {
         debug_print_first_delaunay_violation_pair_generic::<3>(tds, context);
     }
 
@@ -2757,9 +2754,9 @@ mod tests {
                 #[test]
                 fn $test_name() {
                     // Test basic algorithm functionality in this dimension
-                    let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, $dim>::new();
+                    let mut algorithm = RobustBowyerWatson::<f64, (), (), $dim>::new();
                     let initial_vertices = $initial_vertices;
-                    let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
 
                     assert!(tds.is_valid().is_ok(), "{}D initial TDS should be valid", $dim);
                     assert_eq!(tds.dim(), $dim as i32, "{}D TDS should have dimension {}", $dim, $dim);
@@ -2838,9 +2835,9 @@ mod tests {
                     #[test]
                     fn [<$test_name _with_degenerate_config>]() {
                         // Test with degenerate-robust configuration
-                        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, $dim>::for_degenerate_cases();
+                        let mut algorithm = RobustBowyerWatson::<f64, (), (), $dim>::for_degenerate_cases();
                         let initial_vertices = $initial_vertices;
-                        let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let mut tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
 
                         let test_vertex = $test_vertex;
                         let result = algorithm.insert_vertex(&mut tds, test_vertex);
@@ -2859,9 +2856,9 @@ mod tests {
                     #[test]
                     fn [<$test_name _reset>]() {
                         // Test algorithm reset functionality
-                        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, $dim>::new();
+                        let mut algorithm = RobustBowyerWatson::<f64, (), (), $dim>::new();
                         let initial_vertices = $initial_vertices;
-                        let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let mut tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
 
                         // Insert a vertex
                         let test_vertex = $test_vertex;
@@ -2884,9 +2881,9 @@ mod tests {
                     #[test]
                     fn [<$test_name _multiple_insertions>]() {
                         // Test multiple vertex insertions
-                        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, $dim>::new();
+                        let mut algorithm = RobustBowyerWatson::<f64, (), (), $dim>::new();
                         let initial_vertices = $initial_vertices;
-                        let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let mut tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
 
                         let initial_vertex_count = tds.number_of_vertices();
 
@@ -2912,9 +2909,9 @@ mod tests {
                     #[test]
                     fn [<$test_name _fallback_strategies>]() {
                         // Test fallback strategies with near-degenerate configuration
-                        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, $dim>::for_degenerate_cases();
+                        let mut algorithm = RobustBowyerWatson::<f64, (), (), $dim>::for_degenerate_cases();
                         let initial_vertices = $initial_vertices;
-                        let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let mut tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
 
                         // Insert near-degenerate point (very small coordinates)
                         let near_zero_coords = [1e-10; $dim];
@@ -2974,11 +2971,10 @@ mod tests {
     /// `test_default_implementation_consistency`, `test_default_has_proper_buffer_capacity`,
     /// `test_algorithm_configuration_presets`, `test_configuration_validation_paths`
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines)]
     fn test_algorithm_configuration_comprehensive() {
         // Test 1: Basic construction with new()
-        let algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
-            RobustBowyerWatson::new();
+        let algorithm: RobustBowyerWatson<f64, (), (), 3> = RobustBowyerWatson::new();
         assert_eq!(
             algorithm.stats.vertices_processed, 0,
             "New algorithm should have zero vertices processed"
@@ -2990,7 +2986,7 @@ mod tests {
 
         // Test 2: Construction with custom config (with_config)
         let config = config_presets::high_precision::<f64>();
-        let custom_algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
+        let custom_algorithm: RobustBowyerWatson<f64, (), (), 3> =
             RobustBowyerWatson::with_config(config.clone());
         assert!(
             custom_algorithm.predicate_config.base_tolerance <= config.base_tolerance,
@@ -3002,8 +2998,8 @@ mod tests {
         assert_eq!(removed, 0);
 
         // Test 3: Default::default() consistency with new()
-        let default_algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::default();
-        let new_algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let default_algorithm = RobustBowyerWatson::<f64, (), (), 3>::default();
+        let new_algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
         approx::assert_relative_eq!(
             default_algorithm.predicate_config.base_tolerance,
             new_algorithm.predicate_config.base_tolerance,
@@ -3025,8 +3021,7 @@ mod tests {
         );
 
         // Test 4: Default has proper buffer capacity (functional test)
-        let mut default_func_algorithm =
-            RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::default();
+        let mut default_func_algorithm = RobustBowyerWatson::<f64, (), (), 3>::default();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3065,8 +3060,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         for (name, config) in configs {
-            let mut algorithm =
-                RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(config);
+            let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::with_config(config);
             let mut tds = Tds::new(&test_vertices).expect("TDS creation should succeed");
             assert!(
                 tds.is_valid().is_ok(),
@@ -3084,14 +3078,12 @@ mod tests {
         // Test 6: Extreme tolerance configurations
         let mut extreme_config = config_presets::general_triangulation::<f64>();
         extreme_config.base_tolerance = f64::MIN_POSITIVE;
-        let extreme_algorithm =
-            RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(extreme_config);
-        let _tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&test_vertices).unwrap();
+        let extreme_algorithm = RobustBowyerWatson::<f64, (), (), 3>::with_config(extreme_config);
+        let _tds: Tds<f64, (), (), 3> = Tds::new(&test_vertices).unwrap();
         let _stats = extreme_algorithm.get_statistics();
 
         // Test 7: Degenerate cases configuration
-        let degenerate_algorithm =
-            RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::for_degenerate_cases();
+        let degenerate_algorithm = RobustBowyerWatson::<f64, (), (), 3>::for_degenerate_cases();
         let _stats = degenerate_algorithm.get_statistics();
     }
 
@@ -3099,7 +3091,7 @@ mod tests {
     fn test_no_double_counting_statistics() {
         debug_println!("Testing that robust vertex insertion statistics are not double counted");
 
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Create initial triangulation with exactly 4 vertices (minimum for a tetrahedron)
         let initial_vertices = vec![
@@ -3108,7 +3100,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // After initial creation, algorithm stats should be zero since no insertions have been performed yet
         let (insertions_after_initial, created_after_initial, removed_after_initial) =
@@ -3204,7 +3196,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         debug_println!("Initial TDS has {} cells", tds.number_of_cells());
 
@@ -3350,7 +3342,7 @@ mod tests {
             vertex!([0.0, 2.0, 0.0]),
             vertex!([0.0, 0.0, 2.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Verify initial TDS is valid
         assert!(tds.is_valid().is_ok(), "Initial TDS should be valid");
@@ -3496,7 +3488,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Verify initial TDS is valid
         assert!(tds.is_valid().is_ok(), "Initial TDS should be valid");
@@ -3688,7 +3680,7 @@ mod tests {
             vertex!([0.0, 3.0, 0.0]),
             vertex!([0.0, 0.0, 3.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Test a sequence of insertions that could create inconsistencies without proper finalization
         let test_sequence = [
@@ -3840,7 +3832,7 @@ mod tests {
         println!("Testing create_perturbed_vertex error handling for invalid coordinates");
 
         // Test 1: Normal case - should succeed
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
         let normal_vertex = vertex!([1.0, 2.0, 3.0]);
 
         let result = algorithm.create_perturbed_vertex(&normal_vertex);
@@ -3882,8 +3874,7 @@ mod tests {
             crate::geometry::robust_predicates::config_presets::general_triangulation::<f64>();
         extreme_config.perturbation_scale = f64::MAX / 10.0; // Very large perturbation scale
 
-        let extreme_algorithm =
-            RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(extreme_config);
+        let extreme_algorithm = RobustBowyerWatson::<f64, (), (), 3>::with_config(extreme_config);
         let large_vertex = vertex!([f64::MAX / 2.0, 1.0, 1.0]);
 
         // This should either succeed with a valid result or fail gracefully
@@ -3969,8 +3960,8 @@ mod tests {
             vertex!([0.5, 0.5, 0.5]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&points).unwrap();
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&points).unwrap();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Test 1: Initial cache state
         assert!(
@@ -4015,7 +4006,7 @@ mod tests {
         // Create a new triangulation with an additional vertex to simulate modification
         let mut modified_points = points;
         modified_points.push(vertex!([0.25, 0.25, 0.25]));
-        let tds_modified: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&modified_points).unwrap();
+        let tds_modified: Tds<f64, (), (), 3> = Tds::new(&modified_points).unwrap();
 
         // Generation should be different for new TDS
         let new_generation = tds_modified.generation();
@@ -4104,8 +4095,8 @@ mod tests {
         println!("Testing robust error handling paths...");
 
         // Test 1: Empty vertex list
-        let empty_vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![];
-        let result = Tds::<f64, Option<()>, Option<()>, 3>::new(&empty_vertices);
+        let empty_vertices: Vec<Vertex<f64, (), 3>> = vec![];
+        let result = Tds::<f64, (), (), 3>::new(&empty_vertices);
         // Empty vertex list is actually valid - just creates an empty TDS
         if result.is_ok() {
             println!("  ✓ Empty vertex list creates valid empty TDS");
@@ -4118,7 +4109,7 @@ mod tests {
 
         // Test 2: Insufficient vertices for dimension
         let insufficient = vec![vertex!([0.0, 0.0, 0.0])];
-        let result = Tds::<f64, Option<()>, Option<()>, 3>::new(&insufficient);
+        let result = Tds::<f64, (), (), 3>::new(&insufficient);
         assert!(result.is_err(), "Insufficient vertices should fail");
         println!("  ✓ Insufficient vertices handled correctly");
 
@@ -4130,7 +4121,7 @@ mod tests {
             vertex!([3.0, 0.0, 0.0]),
             vertex!([4.0, 0.0, 0.0]),
         ];
-        let result = Tds::<f64, Option<()>, Option<()>, 3>::new(&coplanar);
+        let result = Tds::<f64, (), (), 3>::new(&coplanar);
         // Should either succeed with robust handling or fail gracefully
         match result {
             Ok(tds) => {
@@ -4167,16 +4158,15 @@ mod tests {
                 0.333_333_333_333_333_3
             ]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
-        let algorithm =
-            RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::for_degenerate_cases();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::for_degenerate_cases();
 
         // Test fallback facet mapping
         let initial_stats = algorithm.get_statistics();
 
         // Try to trigger fallback scenarios with a problematic vertex
-        let _problematic_vertex: Vertex<f64, Option<()>, 3> =
+        let _problematic_vertex: Vertex<f64, (), 3> =
             vertex!([f64::EPSILON, f64::EPSILON, f64::EPSILON]);
 
         // Should not panic and should handle gracefully
@@ -4207,7 +4197,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([2.0, f64::EPSILON]),
         ];
-        let result_2d = Tds::<f64, Option<()>, Option<()>, 2>::new(&nearly_collinear_2d);
+        let result_2d = Tds::<f64, (), (), 2>::new(&nearly_collinear_2d);
         match result_2d {
             Ok(tds) => {
                 // Robust handling may create empty or partial triangulation for degenerate inputs
@@ -4227,7 +4217,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.5, 0.5, f64::EPSILON]),
         ];
-        let result_3d = Tds::<f64, Option<()>, Option<()>, 3>::new(&nearly_coplanar_3d);
+        let result_3d = Tds::<f64, (), (), 3>::new(&nearly_coplanar_3d);
         match result_3d {
             Ok(tds) => {
                 // Robust handling may create empty or partial triangulation for degenerate inputs
@@ -4247,7 +4237,7 @@ mod tests {
             vertex!([0.0, f64::MAX / 1e6, 0.0]),
             vertex!([0.0, 0.0, f64::MAX / 1e6]),
         ];
-        let result_extreme = Tds::<f64, Option<()>, Option<()>, 3>::new(&extreme_coords);
+        let result_extreme = Tds::<f64, (), (), 3>::new(&extreme_coords);
         match result_extreme {
             Ok(tds) => {
                 // Robust handling may create empty or partial triangulation for degenerate inputs
@@ -4261,8 +4251,7 @@ mod tests {
         }
 
         // Test 4: Perturbation edge cases
-        let mut algorithm =
-            RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::for_degenerate_cases();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::for_degenerate_cases();
 
         // Test with zero coordinates
         let zero_vertex = vertex!([0.0, 0.0, 0.0]);
@@ -4380,10 +4369,9 @@ mod tests {
             ];
 
             for (config_name, config) in configs {
-                let algorithm =
-                    RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(config);
+                let algorithm = RobustBowyerWatson::<f64, (), (), 3>::with_config(config);
 
-                match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+                match Tds::<f64, (), (), 3>::new(&vertices) {
                     Ok(tds) => {
                         // Test basic functionality
                         let cache = algorithm
@@ -4427,8 +4415,7 @@ mod tests {
         tight_config.base_tolerance = 1e-15;
         tight_config.perturbation_scale = 1e-10;
 
-        let mut algorithm =
-            RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(tight_config);
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::with_config(tight_config);
 
         // Create vertices that would be problematic with loose tolerance
         let vertices = [
@@ -4457,8 +4444,7 @@ mod tests {
         loose_config.base_tolerance = 1e-6;
         loose_config.perturbation_scale = 1e-3;
 
-        let mut algorithm_loose =
-            RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(loose_config);
+        let mut algorithm_loose = RobustBowyerWatson::<f64, (), (), 3>::with_config(loose_config);
         let mut tds_loose = Tds::new(&vertices[..4]).expect("Initial TDS creation should succeed");
         let result_loose = algorithm_loose.insert_vertex(&mut tds_loose, vertices[4]);
 
@@ -4504,8 +4490,7 @@ mod tests {
         ];
 
         for (i, config) in invalid_configs.into_iter().enumerate() {
-            let mut algorithm =
-                RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(config);
+            let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::with_config(config);
             let mut tds = Tds::new(&vertices).expect("Initial TDS creation should succeed");
 
             let test_vertex = vertex!([0.5, 0.5, 0.5]);
@@ -4531,7 +4516,7 @@ mod tests {
     #[test]
 
     fn test_cache_invalidation_and_recovery() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -4581,7 +4566,7 @@ mod tests {
 
     #[test]
     fn test_geometric_configurations_regular_patterns() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Test 1: Cubic lattice points
         #[expect(clippy::cast_precision_loss)] // Small integers (0..3) convert exactly to f64
@@ -4671,7 +4656,7 @@ mod tests {
     #[test]
     #[allow(unused_variables)]
     fn test_geometric_configurations_extreme_coordinates() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Test with very large coordinates
         let large_vertices = [
@@ -4771,7 +4756,7 @@ mod tests {
     /// Test `vertex_needs_robust_handling` heuristics (lines 1108-1166)
     #[test]
     fn test_vertex_needs_robust_handling() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Create a TDS for testing
         let vertices = vec![
@@ -4780,7 +4765,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Test vertex with small coordinates (should trigger robust handling)
         let small_vertex = vertex!([1e-15, 1e-15, 1e-15]);
@@ -4807,7 +4792,7 @@ mod tests {
     /// Test `build_validated_facet_mapping` error paths (lines 734-776)
     #[test]
     fn test_build_validated_facet_mapping() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Create a valid TDS
         let vertices = vec![
@@ -4816,7 +4801,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Test validated facet mapping build
         let result = algorithm.build_validated_facet_mapping(&tds);
@@ -4848,10 +4833,8 @@ mod tests {
         // Test with empty boundary facets but non-zero bad cell count (should error)
         // Use SmallBuffer for consistency (even though empty)
         let empty_handles: SmallBuffer<FacetHandle, 16> = SmallBuffer::new();
-        let result = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::validate_boundary_facets(
-            &empty_handles,
-            3,
-        );
+        let result =
+            RobustBowyerWatson::<f64, (), (), 3>::validate_boundary_facets(&empty_handles, 3);
         assert!(
             result.is_err(),
             "Should error when no boundary facets found but bad cells exist"
@@ -4875,7 +4858,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         let boundary_facets = tds.boundary_facets().unwrap();
 
         // Collect lightweight boundary facet handles
@@ -4884,10 +4867,8 @@ mod tests {
             .map(|fv| FacetHandle::new(fv.cell_key(), fv.facet_index()))
             .collect();
 
-        let result = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::validate_boundary_facets(
-            &boundary_handles,
-            1,
-        );
+        let result =
+            RobustBowyerWatson::<f64, (), (), 3>::validate_boundary_facets(&boundary_handles, 1);
         assert!(result.is_ok(), "Should succeed with valid boundary facets");
     }
 
@@ -4899,8 +4880,7 @@ mod tests {
         let mut extreme_config = config_presets::general_triangulation::<f64>();
         extreme_config.base_tolerance = f64::MAX; // Extreme tolerance
 
-        let algorithm =
-            RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(extreme_config);
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::with_config(extreme_config);
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -4908,7 +4888,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Test with extreme coordinates that might cause predicate computation issues
         // Use the most extreme valid values to test robustness
@@ -4938,7 +4918,7 @@ mod tests {
     #[test]
     #[allow(unused_variables)]
     fn test_is_facet_visible_degenerate_handling() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -4946,7 +4926,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Get a boundary facet
         let boundary_facets = tds.boundary_facets().unwrap();
@@ -4966,10 +4946,8 @@ mod tests {
             .iter()
             .filter_map(|v| tds.vertex_key_from_uuid(&v.uuid()))
             .collect();
-        let key = derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(
-            &test_facet_vertex_keys,
-        )
-        .expect("Should derive facet key");
+        let key = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&test_facet_vertex_keys)
+            .expect("Should derive facet key");
         let adjacent_cell_key = facet_to_cells
             .get(&key)
             .and_then(|cells| (cells.len() == 1).then_some(cells[0].cell_key()))
@@ -4991,7 +4969,7 @@ mod tests {
     /// Test `safe_usize_to_scalar` conversion in `fallback_visibility_heuristic` (lines 1032-1034)
     #[test]
     fn test_fallback_visibility_safe_conversion() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Create a facet with a very large number of vertices to test conversion edge case
         // Note: This is artificial since real facets in 3D have exactly 3 vertices
@@ -5001,7 +4979,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         let boundary_facets = tds.boundary_facets().unwrap();
 
         let test_vertex = vertex!([10.0, 10.0, 10.0]);
@@ -5020,7 +4998,7 @@ mod tests {
     /// Test fallback strategy in `robust_insert_vertex_impl` (lines 228-240, 244)
     #[test]
     fn test_robust_insert_fallback_strategies() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Create a TDS with an interior vertex that might cause fallback scenarios
         let vertices = vec![
@@ -5029,7 +5007,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Insert a vertex that might trigger fallback strategies
         let challenging_vertex = vertex!([0.25, 0.25, 0.25]); // Interior point
@@ -5063,7 +5041,7 @@ mod tests {
     /// Test fallback in `insert_vertex_fallback` method (lines 286-298)
     #[test]
     fn test_insert_vertex_fallback() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5071,7 +5049,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Test fallback insertion with a vertex that should work
         let vertex_to_insert = vertex!([0.5, 0.5, 0.5]);
@@ -5094,7 +5072,7 @@ mod tests {
     /// Test error paths in `find_visible_boundary_facets_with_robust_fallback` (lines 499-505)
     #[test]
     fn test_find_visible_boundary_facets_fallback() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5102,7 +5080,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Test with exterior vertex (should find visible facets)
         let exterior_vertex = vertex!([2.0, 2.0, 2.0]);
@@ -5148,7 +5126,7 @@ mod tests {
     /// Test boundary detection in `robust_find_cavity_boundary_facets` (lines 533-539)
     #[test]
     fn test_robust_boundary_detection_edge_cases() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5156,7 +5134,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Get a subset of cells as "bad cells"
         // Use SmallBuffer for stack allocation (small number of cell keys)
@@ -5200,21 +5178,11 @@ mod tests {
     #[test]
     fn test_is_cavity_boundary_facet_logic() {
         // Test the boundary facet detection logic
-        assert!(
-            RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_cavity_boundary_facet(1, 1)
-        );
-        assert!(
-            RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_cavity_boundary_facet(1, 2)
-        );
-        assert!(
-            !RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_cavity_boundary_facet(0, 1)
-        );
-        assert!(
-            !RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_cavity_boundary_facet(2, 2)
-        );
-        assert!(
-            !RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_cavity_boundary_facet(1, 3)
-        );
+        assert!(RobustBowyerWatson::<f64, (), (), 3>::is_cavity_boundary_facet(1, 1));
+        assert!(RobustBowyerWatson::<f64, (), (), 3>::is_cavity_boundary_facet(1, 2));
+        assert!(!RobustBowyerWatson::<f64, (), (), 3>::is_cavity_boundary_facet(0, 1));
+        assert!(!RobustBowyerWatson::<f64, (), (), 3>::is_cavity_boundary_facet(2, 2));
+        assert!(!RobustBowyerWatson::<f64, (), (), 3>::is_cavity_boundary_facet(1, 3));
     }
 
     /// Test conservative boundary cell inclusion (lines 536-539)
@@ -5224,7 +5192,7 @@ mod tests {
         let mut config = config_presets::degenerate_robust::<f64>();
         config.base_tolerance = 1e-6; // Larger than default to trigger conservative path
 
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::with_config(config);
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::with_config(config);
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5232,7 +5200,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Test with a vertex on the boundary of the circumsphere
         let boundary_vertex = vertex!([0.5, 0.5, 0.5]);
@@ -5250,7 +5218,7 @@ mod tests {
     /// Test error paths in `robust_insert_vertex_impl` for better coverage
     #[test]
     fn test_robust_insert_error_paths() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5258,7 +5226,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test insertion with extreme coordinates that might trigger fallback paths
         let extreme_vertex = vertex!([f64::MAX / 1e10, f64::MAX / 1e10, f64::MAX / 1e10]);
@@ -5283,7 +5251,7 @@ mod tests {
     /// Test cavity-based insertion with various failure scenarios
     #[test]
     fn test_cavity_based_insertion_error_scenarios() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5291,7 +5259,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test insertion of vertex very close to existing vertex
         let close_vertex = vertex!([1e-15, 1e-15, 1e-15]);
@@ -5312,7 +5280,7 @@ mod tests {
     /// Test hull extension insertion with various scenarios
     #[test]
     fn test_hull_extension_insertion_scenarios() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5320,7 +5288,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test with exterior vertex
         let exterior_vertex = vertex!([5.0, 5.0, 5.0]);
@@ -5342,7 +5310,7 @@ mod tests {
     /// Test bad cells detection with robust fallback
     #[test]
     fn test_find_bad_cells_with_robust_fallback_coverage() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5350,7 +5318,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test with vertex that should be inside circumsphere
         let interior_vertex = vertex!([0.25, 0.25, 0.25]);
@@ -5370,7 +5338,7 @@ mod tests {
     /// Actual TDS corruption detection is tested in integration tests.
     #[test]
     fn test_find_bad_cells_no_false_corruption_errors() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5378,7 +5346,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let test_vertex = vertex!([0.25, 0.25, 0.25]);
 
         // Verify that valid TDS operations don't produce false TDS corruption errors
@@ -5394,11 +5362,11 @@ mod tests {
 
     #[test]
     fn test_find_bad_cells_no_cells_error_path() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Create an empty TDS
-        let empty_vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&empty_vertices).unwrap();
+        let empty_vertices: Vec<Vertex<f64, (), 3>> = vec![];
+        let tds: Tds<f64, (), (), 3> = Tds::new(&empty_vertices).unwrap();
 
         let test_vertex = vertex!([0.25, 0.25, 0.25]);
         let result = algorithm.find_bad_cells_with_robust_fallback(&tds, &test_vertex);
@@ -5430,7 +5398,7 @@ mod tests {
     /// Test visible boundary facets detection with robust fallback
     #[test]
     fn test_find_visible_boundary_facets_comprehensive() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5438,7 +5406,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test with clearly exterior vertex
         let exterior_vertex = vertex!([2.0, 2.0, 2.0]);
@@ -5494,7 +5462,7 @@ mod tests {
     /// Test error handling in `ensure_vertex_in_tds` calls
     #[test]
     fn test_ensure_vertex_in_tds_error_handling() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5502,7 +5470,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Create a vertex that already exists in TDS
         let duplicate_vertex = vertex!([0.0, 0.0, 0.0]); // Same as first vertex
@@ -5522,7 +5490,7 @@ mod tests {
     /// Test `finalize_after_insertion` error handling
     #[test]
     fn test_finalize_after_insertion_error_paths() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5530,7 +5498,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Insert a normal vertex first to create a scenario where finalization might be tested
         let normal_vertex = vertex!([0.1, 0.1, 0.1]);
@@ -5553,7 +5521,7 @@ mod tests {
     /// Test statistics tracking in various error scenarios
     #[test]
     fn test_statistics_tracking_comprehensive() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Initial statistics should be zero
         let (initial_processed, initial_created, initial_removed) = algorithm.get_statistics();
@@ -5567,7 +5535,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Try multiple insertions to test statistics accumulation
         let test_vertices = [
@@ -5610,7 +5578,7 @@ mod tests {
     fn test_atomic_vertex_insert_and_remove_cells() {
         println!("Testing atomic_vertex_insert_and_remove_cells");
 
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Create initial triangulation with a few vertices
         let initial_vertices = vec![
@@ -5620,7 +5588,7 @@ mod tests {
             vertex!([0.0, 0.0, 2.0]),
             vertex!([1.0, 1.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         let initial_vertex_count = tds.number_of_vertices();
         let initial_cell_count = tds.number_of_cells();
@@ -5807,13 +5775,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Test with a vertex that might cause insertion issues
         // Create a vertex with the same UUID as an existing vertex (should cause duplicate error)
         let existing_vertex = initial_vertices[0];
-        let _duplicate_vertex: Vertex<f64, Option<()>, 3> = vertex!([99.0, 99.0, 99.0]); // Different coordinates...
+        let _duplicate_vertex: Vertex<f64, (), 3> = vertex!([99.0, 99.0, 99.0]); // Different coordinates...
 
         // Manually set the UUID to match existing vertex to force a conflict
         // Note: This is a conceptual test - actual implementation might handle this differently
@@ -5874,7 +5842,7 @@ mod tests {
             vertex!([0.0, 2.0, 0.0]),
             vertex!([0.0, 0.0, 2.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         debug_println!("\nInitial TDS:");
         debug_println!("  Vertices: {}", tds.number_of_vertices());
@@ -5943,8 +5911,7 @@ mod tests {
 
         // Now test the full insertion including cell creation
         debug_println!("\n=== Testing Full Cavity-Based Insertion ===");
-        let mut tds_for_insertion: Tds<f64, Option<()>, Option<()>, 3> =
-            Tds::new(&initial_vertices).unwrap();
+        let mut tds_for_insertion: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
         let mut algorithm_for_insertion = RobustBowyerWatson::new();
 
         let interior_vertex_for_insertion = vertex!([0.5, 0.5, 0.5]);
@@ -5984,7 +5951,7 @@ mod tests {
     fn test_atomic_cavity_based_insertion_guarantees() {
         println!("Testing atomic cavity-based insertion guarantees");
 
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Create initial triangulation
         let initial_vertices = vec![
@@ -5993,7 +5960,7 @@ mod tests {
             vertex!([0.0, 2.0, 0.0]),
             vertex!([0.0, 0.0, 2.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Capture initial state
         let initial_vertex_count = tds.number_of_vertices();
@@ -6134,7 +6101,7 @@ mod tests {
     /// Test that valid TDS operations in `robust_find_bad_cells` don't trigger false positives
     #[test]
     fn test_robust_find_bad_cells_no_false_positives() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -6142,7 +6109,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Test with various vertices - should never return TDS corruption errors on valid TDS
         let test_vertices = [
@@ -6174,7 +6141,7 @@ mod tests {
     /// Test that valid TDS operations in `is_facet_visible_from_vertex_robust` don't trigger errors
     #[test]
     fn test_is_facet_visible_no_false_positives() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -6182,7 +6149,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Get boundary facets
         let boundary_facets: Vec<_> = tds.boundary_facets().unwrap().collect();
@@ -6218,7 +6185,7 @@ mod tests {
     /// Test that valid TDS operations in `fallback_visibility_heuristic` don't trigger errors
     #[test]
     fn test_fallback_visibility_heuristic_no_false_positives() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -6226,7 +6193,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Get boundary facets
         let boundary_facets: Vec<_> = tds.boundary_facets().unwrap().collect();
@@ -6292,7 +6259,7 @@ mod tests {
     /// Test that error propagation chain works correctly through insertion
     #[test]
     fn test_tds_corruption_error_propagation() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -6300,7 +6267,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Normal insertion should work without TDS corruption errors
         let test_vertex = vertex!([0.5, 0.5, 0.5]);
@@ -6336,7 +6303,7 @@ mod tests {
     /// Test that all three refactored methods properly return Result types
     #[test]
     fn test_refactored_methods_return_results() {
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -6344,7 +6311,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         let test_vertex = vertex!([0.5, 0.5, 0.5]);
 
         // Test 1: robust_find_bad_cells returns Result<Vec<CellKey>, InsertionError>
@@ -6383,7 +6350,7 @@ mod tests {
     /// vertex insertions. Performance regression detection should use the benchmark suite.
     #[test]
     fn test_result_based_error_handling_with_multiple_insertions() {
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -6391,7 +6358,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         let test_vertices = [
             vertex!([0.1, 0.1, 0.1]),
@@ -6428,9 +6395,9 @@ mod tests {
     fn test_error_propagation_with_question_mark_operator() {
         // This test verifies the ergonomics of the Result-based API
         fn test_helper(
-            algorithm: &RobustBowyerWatson<f64, Option<()>, Option<()>, 3>,
-            tds: &Tds<f64, Option<()>, Option<()>, 3>,
-            vertex: &Vertex<f64, Option<()>, 3>,
+            algorithm: &RobustBowyerWatson<f64, (), (), 3>,
+            tds: &Tds<f64, (), (), 3>,
+            vertex: &Vertex<f64, (), 3>,
         ) -> Result<bool, InsertionError> {
             // Test that ? operator works correctly with our Result types
             let bad_cells = algorithm.robust_find_bad_cells(tds, vertex)?;
@@ -6454,14 +6421,14 @@ mod tests {
             Ok(false)
         }
 
-        let algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         let test_vertex = vertex!([0.5, 0.5, 0.5]);
 
         let result = test_helper(&algorithm, &tds, &test_vertex);
@@ -6490,7 +6457,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Insert a vertex with very small coordinates (near-degenerate)
         let degenerate_vertex = vertex!([1e-10, 1e-10, 1e-10]);
@@ -6524,7 +6491,7 @@ mod tests {
             vertex!([0.0, 10.0, 0.0]),
             vertex!([0.0, 0.0, 10.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         let initial_stats = algorithm.get_statistics();
 
@@ -6562,7 +6529,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Insert vertex at center (should find bad cells and boundary)
         let center_vertex = vertex!([0.25, 0.25, 0.25]);
@@ -6594,7 +6561,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Insert exterior point (far from convex hull)
         let exterior_vertex = vertex!([10.0, 10.0, 10.0]);
@@ -6628,7 +6595,7 @@ mod tests {
             vertex!([0.0, 10.0, 0.0]),
             vertex!([0.0, 0.0, 1e-8]), // Nearly coplanar
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Insert exterior point
         let exterior_vertex = vertex!([5.0, 5.0, 2.0]);
@@ -6652,7 +6619,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Insert very distant point (should clearly be exterior)
         let distant_vertex = vertex!([100.0, 100.0, 100.0]);
@@ -6674,7 +6641,7 @@ mod tests {
 
     /// Deterministic 10-point 3D configuration that triggers Delaunay violations
     /// in `tds_small_triangulation`.
-    fn small_triangulation_vertices() -> Vec<Vertex<f64, Option<()>, 3>> {
+    fn small_triangulation_vertices() -> Vec<Vertex<f64, (), 3>> {
         vec![
             vertex!([
                 52.655_740_900_277_38,
@@ -6740,15 +6707,15 @@ mod tests {
     fn debug_small_triangulation_robust_triangulate() {
         let vertices = small_triangulation_vertices();
 
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
-        let result = <RobustBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
-            f64,
-            Option<()>,
-            Option<()>,
-            3,
-        >>::triangulate(&mut algorithm, &mut tds, &vertices);
+        let result =
+            <RobustBowyerWatson<f64, (), (), 3> as InsertionAlgorithm<f64, (), (), 3>>::triangulate(
+                &mut algorithm,
+                &mut tds,
+                &vertices,
+            );
 
         println!("Robust triangulate result: {result:?}");
         println!(
@@ -6795,7 +6762,7 @@ mod tests {
     fn regression_small_triangulation_is_globally_delaunay() {
         let vertices = small_triangulation_vertices();
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).expect(
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).expect(
             "Robust Bowyer-Watson fallback should succeed for 10-point regression configuration",
         );
 
@@ -6815,15 +6782,14 @@ mod tests {
         let vertices = small_triangulation_vertices();
 
         // Run robust triangulation explicitly so we can inspect the algorithm state
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
-        <RobustBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
-            f64,
-            Option<()>,
-            Option<()>,
-            3,
-        >>::triangulate(&mut algorithm, &mut tds, &vertices)
+        <RobustBowyerWatson<f64, (), (), 3> as InsertionAlgorithm<f64, (), (), 3>>::triangulate(
+            &mut algorithm,
+            &mut tds,
+            &vertices,
+        )
         .expect("Robust triangulation should succeed for 10-point configuration");
 
         // Final triangulation must be globally Delaunay
@@ -6882,8 +6848,8 @@ mod tests {
     fn debug_small_triangulation_robust_stepwise() {
         let vertices = small_triangulation_vertices();
 
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 3>::new();
 
         // Track when each cell key is first created and which strategy was used.
         // Step 0 = initial simplex; steps 1..=N correspond to subsequent vertex insertions.
@@ -6894,14 +6860,13 @@ mod tests {
         let mut step_strategies: HashMap<usize, InsertionStrategy> = HashMap::new();
 
         // Create initial simplex from the first 4 vertices (D+1 in 3D)
-        let initial_vertices: Vec<Vertex<f64, Option<()>, 3>> = vertices[0..4].to_vec();
-        let init_result =
-            <RobustBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
-                f64,
-                Option<()>,
-                Option<()>,
-                3,
-            >>::create_initial_simplex(&mut tds, initial_vertices);
+        let initial_vertices: Vec<Vertex<f64, (), 3>> = vertices[0..4].to_vec();
+        let init_result = <RobustBowyerWatson<f64, (), (), 3> as InsertionAlgorithm<
+            f64,
+            (),
+            (),
+            3,
+        >>::create_initial_simplex(&mut tds, initial_vertices);
 
         println!("Initial simplex result: {init_result:?}");
         println!(
@@ -6984,13 +6949,12 @@ mod tests {
         }
 
         println!("\n== Running final finalize_triangulation ==");
-        let finalize_result =
-            <RobustBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
-                f64,
-                Option<()>,
-                Option<()>,
-                3,
-            >>::finalize_triangulation(&mut tds);
+        let finalize_result = <RobustBowyerWatson<f64, (), (), 3> as InsertionAlgorithm<
+            f64,
+            (),
+            (),
+            3,
+        >>::finalize_triangulation(&mut tds);
         println!("finalize_triangulation result: {finalize_result:?}");
 
         match crate::core::util::find_delaunay_violations(&tds, None) {
@@ -7041,13 +7005,13 @@ mod tests {
     fn debug_2d_cavity_insertion_interior_point() {
         use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
 
-        let mut algorithm = RobustBowyerWatson::<f64, Option<()>, Option<()>, 2>::new();
+        let mut algorithm = RobustBowyerWatson::<f64, (), (), 2>::new();
         let initial_vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([10.0, 0.0]),
             vertex!([0.0, 10.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 2> = Tds::new(&initial_vertices).unwrap();
 
         let test_vertex = vertex!([5.531_148_180_055_476, 5.854_504_198_062_877]);
 
@@ -7068,13 +7032,14 @@ mod tests {
         println!("2D debug: find_bad_cells = {bad_cells_result:?}");
 
         // Try the shared cavity-based insertion implementation directly
-        let cavity_result =
-            <RobustBowyerWatson<f64, Option<()>, Option<()>, 2> as InsertionAlgorithm<
-                f64,
-                Option<()>,
-                Option<()>,
-                2,
-            >>::insert_vertex_cavity_based(&mut algorithm, &mut tds, &test_vertex);
+        let cavity_result = <RobustBowyerWatson<f64, (), (), 2> as InsertionAlgorithm<
+            f64,
+            (),
+            (),
+            2,
+        >>::insert_vertex_cavity_based(
+            &mut algorithm, &mut tds, &test_vertex
+        );
 
         println!("2D debug: insert_vertex_cavity_based result = {cavity_result:?}");
         println!(
@@ -7110,7 +7075,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Trigger cache build by inserting vertex (which uses facet mapping internally)
         let test_vertex = vertex!([0.5, 0.5, 0.5]);
@@ -7137,7 +7102,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Build facet mapping - should succeed for valid TDS
         let result = algorithm.build_validated_facet_mapping(&tds);
@@ -7158,7 +7123,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Get the initial state
         let initial_cell_count = tds.number_of_cells();
@@ -7166,12 +7131,11 @@ mod tests {
 
         // Add a new vertex to get a vertex key for rollback testing
         let test_vertex = vertex!([0.5, 0.5, 0.5]);
-        let _algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
-            RobustBowyerWatson::new();
-        let _ = <RobustBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
+        let _algorithm: RobustBowyerWatson<f64, (), (), 3> = RobustBowyerWatson::new();
+        let _ = <RobustBowyerWatson<f64, (), (), 3> as InsertionAlgorithm<
             f64,
-            Option<()>,
-            Option<()>,
+            (),
+            (),
             3,
         >>::ensure_vertex_in_tds(&mut tds, &test_vertex);
 
@@ -7191,7 +7155,7 @@ mod tests {
         );
 
         // Call the rollback helper
-        let result = RobustBowyerWatson::<f64, Option<()>, Option<()>, 3>::rollback_cavity_and_err(
+        let result = RobustBowyerWatson::<f64, (), (), 3>::rollback_cavity_and_err(
             &mut tds,
             &saved_cells,
             &created_keys,

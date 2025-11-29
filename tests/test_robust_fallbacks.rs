@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Configuration API tests for `RobustBowyerWatson` algorithm.
 //!
 //! This module documents and tests the configuration API for `RobustBowyerWatson`,
@@ -30,7 +29,7 @@ use delaunay::vertex;
 /// **Coverage target:** `new()` method and default config initialization
 #[test]
 fn test_default_constructor_uses_general_config() {
-    let algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> = RobustBowyerWatson::new();
+    let algorithm: RobustBowyerWatson<f64, (), (), 3> = RobustBowyerWatson::new();
 
     // Verify initialization
     let (processed, created, removed) = algorithm.get_statistics();
@@ -49,7 +48,7 @@ fn test_default_constructor_uses_general_config() {
 fn test_with_config_constructor() {
     // Test with high_precision config
     let config_hp = config_presets::high_precision::<f64>();
-    let algorithm_hp: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
+    let algorithm_hp: RobustBowyerWatson<f64, (), (), 3> =
         RobustBowyerWatson::with_config(config_hp);
 
     let (processed, created, removed) = algorithm_hp.get_statistics();
@@ -68,7 +67,7 @@ fn test_with_config_constructor() {
 
     // Test with general_triangulation config
     let config_gen = config_presets::general_triangulation::<f64>();
-    let algorithm_gen: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
+    let algorithm_gen: RobustBowyerWatson<f64, (), (), 3> =
         RobustBowyerWatson::with_config(config_gen);
 
     let stats_gen = algorithm_gen.get_statistics();
@@ -83,8 +82,7 @@ fn test_with_config_constructor() {
 /// **Coverage target:** `for_degenerate_cases()` method and `degenerate_robust` config
 #[test]
 fn test_for_degenerate_cases_constructor() {
-    let algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
-        RobustBowyerWatson::for_degenerate_cases();
+    let algorithm: RobustBowyerWatson<f64, (), (), 3> = RobustBowyerWatson::for_degenerate_cases();
 
     let (processed, created, removed) = algorithm.get_statistics();
     assert_eq!(
@@ -112,7 +110,7 @@ fn test_custom_tolerance_configuration() {
     custom_config.base_tolerance = 1e-10;
     custom_config.relative_tolerance_factor = 1e-12;
 
-    let mut algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
+    let mut algorithm: RobustBowyerWatson<f64, (), (), 3> =
         RobustBowyerWatson::with_config(custom_config);
 
     // Create simple TDS
@@ -122,7 +120,7 @@ fn test_custom_tolerance_configuration() {
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
     ];
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+    let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
     // Insert a test vertex
     let test_vertex = vertex!([0.5, 0.5, 0.5]);
@@ -151,7 +149,7 @@ fn test_degenerate_config_2d() {
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&initial_vertices).unwrap();
+    let mut tds: Tds<f64, (), (), 2> = Tds::new(&initial_vertices).unwrap();
 
     // Insert points with varying precision
     let test_points = [
@@ -177,8 +175,7 @@ fn test_degenerate_config_2d() {
 #[test]
 fn test_high_precision_config_4d() {
     let config = config_presets::high_precision::<f64>();
-    let mut algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 4> =
-        RobustBowyerWatson::with_config(config);
+    let mut algorithm: RobustBowyerWatson<f64, (), (), 4> = RobustBowyerWatson::with_config(config);
 
     let initial_vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -187,7 +184,7 @@ fn test_high_precision_config_4d() {
         vertex!([0.0, 0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 0.0, 1.0]),
     ];
-    let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&initial_vertices).unwrap();
+    let mut tds: Tds<f64, (), (), 4> = Tds::new(&initial_vertices).unwrap();
 
     // Insert test vertices
     let test_vertex = vertex!([0.25, 0.25, 0.25, 0.25]);
@@ -217,7 +214,7 @@ fn test_algorithm_reset_preserves_config() {
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
     ];
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+    let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
     // Insert some vertices
     let test_vertices = [vertex!([0.5, 0.5, 0.5]), vertex!([1.5, 1.5, 1.5])];
@@ -244,7 +241,7 @@ fn test_algorithm_reset_preserves_config() {
     assert_eq!(removed_after, 0, "Removed count should be 0 after reset");
 
     // Verify algorithm still works with same config after reset
-    let mut new_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+    let mut new_tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
     let test_vertex = vertex!([2.0, 2.0, 2.0]);
     let result = algorithm.insert_vertex(&mut new_tds, test_vertex);
 
@@ -268,7 +265,7 @@ fn test_algorithm_reuse_different_tds() {
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
     ];
-    let mut tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+    let mut tds1: Tds<f64, (), (), 3> = Tds::new(&vertices1).unwrap();
 
     let _ = algorithm.insert_vertex(&mut tds1, vertex!([0.5, 0.5, 0.5]));
 
@@ -285,7 +282,7 @@ fn test_algorithm_reuse_different_tds() {
         vertex!([10.0, 11.0, 10.0]),
         vertex!([10.0, 10.0, 11.0]),
     ];
-    let mut tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+    let mut tds2: Tds<f64, (), (), 3> = Tds::new(&vertices2).unwrap();
 
     let _ = algorithm.insert_vertex(&mut tds2, vertex!([10.5, 10.5, 10.5]));
 

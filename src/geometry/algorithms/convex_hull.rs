@@ -184,7 +184,7 @@ pub enum ConvexHullConstructionError {
 /// # use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 /// # use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 /// # use delaunay::vertex;
-/// # let mut dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vec![
+/// # let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
 /// #     vertex!([0.0, 0.0, 0.0]),
 /// #     vertex!([1.0, 0.0, 0.0]),
 /// #     vertex!([0.0, 1.0, 0.0]),
@@ -212,7 +212,7 @@ pub enum ConvexHullConstructionError {
 /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 /// use delaunay::vertex;
 ///
-/// let mut dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vec![
+/// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
@@ -324,7 +324,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     ///
@@ -359,7 +359,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     ///
@@ -389,7 +389,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     ///
@@ -420,7 +420,7 @@ where
     /// use delaunay::vertex;
     ///
     /// // Empty hull
-    /// let empty_hull: ConvexHull<delaunay::geometry::kernel::FastKernel<f64>, Option<()>, Option<()>, 3> = ConvexHull::default();
+    /// let empty_hull: ConvexHull<delaunay::geometry::kernel::FastKernel<f64>, (), (), 3> = ConvexHull::default();
     /// assert!(empty_hull.is_empty());
     ///
     /// // Non-empty hull
@@ -430,7 +430,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     /// assert!(!hull.is_empty());
@@ -457,7 +457,7 @@ where
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt_2d: DelaunayTriangulation<_, Option<()>, Option<()>, 2> = DelaunayTriangulation::new(&vertices_2d).unwrap();
+    /// let dt_2d: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices_2d).unwrap();
     /// let hull_2d =
     ///     ConvexHull::from_triangulation(dt_2d.triangulation()).unwrap();
     /// assert_eq!(hull_2d.dimension(), 2);
@@ -468,7 +468,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt_3d: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vertices_3d).unwrap();
+    /// let dt_3d: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices_3d).unwrap();
     /// let hull_3d =
     ///     ConvexHull::from_triangulation(dt_3d.triangulation()).unwrap();
     /// assert_eq!(hull_3d.dimension(), 3);
@@ -502,7 +502,7 @@ where
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::vertex;
     ///
-    /// let mut dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vec![
+    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
@@ -588,7 +588,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     ///
@@ -660,8 +660,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt_3d: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vertices_3d).unwrap();
-    /// let hull_3d: ConvexHull<FastKernel<f64>, Option<()>, Option<()>, 3> =
+    /// let dt_3d: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices_3d).unwrap();
+    /// let hull_3d: ConvexHull<FastKernel<f64>, (), (), 3> =
     ///     ConvexHull::from_triangulation(dt_3d.triangulation()).unwrap();
     /// assert_eq!(hull_3d.facet_count(), 4); // Tetrahedron has 4 faces
     ///
@@ -673,7 +673,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
-    /// let dt_4d: DelaunayTriangulation<_, Option<()>, Option<()>, 4> = DelaunayTriangulation::new(&vertices_4d).unwrap();
+    /// let dt_4d: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::new(&vertices_4d).unwrap();
     /// let hull_4d =
     ///     ConvexHull::from_triangulation(dt_4d.triangulation()).unwrap();
     /// assert_eq!(hull_4d.facet_count(), 5); // 4-simplex has 5 facets
@@ -788,7 +788,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     ///
@@ -1173,7 +1173,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     ///
@@ -1249,7 +1249,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     ///
@@ -1371,7 +1371,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     ///
@@ -1415,7 +1415,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     ///
@@ -1423,7 +1423,7 @@ where
     /// assert!(hull.validate(dt.triangulation()).is_ok());
     ///
     /// // Empty hull should also validate
-    /// let empty_hull: ConvexHull<delaunay::geometry::kernel::FastKernel<f64>, Option<()>, Option<()>, 3> = ConvexHull::default();
+    /// let empty_hull: ConvexHull<delaunay::geometry::kernel::FastKernel<f64>, (), (), 3> = ConvexHull::default();
     /// // Note: validate() requires a TDS, so use an empty TDS for validation
     /// assert!(empty_hull.validate(dt.triangulation()).is_ok());
     /// ```
@@ -1652,12 +1652,12 @@ mod tests {
                 #[test]
                 fn $test_name() {
                     let vertices = $vertices;
-                    let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                    let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
                     let tri = Triangulation {
                         kernel: crate::geometry::kernel::FastKernel::new(),
                         tds,
                     };
-                    let hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, Option<()>, Option<()>, $dim> =
+                    let hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), $dim> =
                         ConvexHull::from_triangulation(&tri).unwrap();
 
                     assert_eq!(
@@ -1687,12 +1687,12 @@ mod tests {
                     #[test]
                     fn [<$test_name _facet_access>]() {
                         let vertices = $vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
                         let tri = Triangulation {
                             kernel: crate::geometry::kernel::FastKernel::new(),
                             tds,
                         };
-                        let hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, Option<()>, Option<()>, $dim> =
+                        let hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), $dim> =
                             ConvexHull::from_triangulation(&tri).unwrap();
 
                         // Test facet iterator
@@ -1720,12 +1720,12 @@ mod tests {
                     #[test]
                     fn [<$test_name _point_containment>]() {
                         let vertices = $vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
                         let tri = Triangulation {
                             kernel: crate::geometry::kernel::FastKernel::new(),
                             tds,
                         };
-                        let hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, Option<()>, Option<()>, $dim> =
+                        let hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), $dim> =
                             ConvexHull::from_triangulation(&tri).unwrap();
 
                         // Test with inside point (scaled to ensure it's inside the unit simplex)
@@ -1805,18 +1805,15 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
+        let tds_3d: Tds<f64, (), (), 3> = Tds::new(&vertices_3d).unwrap();
         let tri_3d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_3d,
         };
 
         // Test empty hull (default constructor)
-        let empty_hull: ConvexHull3D<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-        > = ConvexHull::default();
+        let empty_hull: ConvexHull3D<crate::geometry::kernel::FastKernel<f64>, (), ()> =
+            ConvexHull::default();
 
         // Basic empty hull properties
         assert_eq!(
@@ -1883,16 +1880,13 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+        let tds_2d: Tds<f64, (), (), 2> = Tds::new(&vertices_2d).unwrap();
         let tri_2d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_2d,
         };
-        let hull_2d: ConvexHull2D<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-        > = ConvexHull::from_triangulation(&tri_2d).unwrap();
+        let hull_2d: ConvexHull2D<crate::geometry::kernel::FastKernel<f64>, (), ()> =
+            ConvexHull::from_triangulation(&tri_2d).unwrap();
 
         let inside_point_2d = Point::new([0.1, 0.1]);
         let outside_point_2d = Point::new([2.0, 2.0]);
@@ -1936,16 +1930,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
+        let tds_3d: Tds<f64, (), (), 3> = Tds::new(&vertices_3d).unwrap();
         let tri_3d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_3d,
         };
-        let hull_3d: ConvexHull3D<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-        > = ConvexHull::from_triangulation(&tri_3d).unwrap();
+        let hull_3d: ConvexHull3D<crate::geometry::kernel::FastKernel<f64>, (), ()> =
+            ConvexHull::from_triangulation(&tri_3d).unwrap();
 
         let inside_point_3d = Point::new([0.2, 0.2, 0.2]);
         let outside_point_3d = Point::new([2.0, 2.0, 2.0]);
@@ -2100,16 +2091,13 @@ mod tests {
             vertex!([0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
-        let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+        let tds_4d: Tds<f64, (), (), 4> = Tds::new(&vertices_4d).unwrap();
         let tri_4d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_4d,
         };
-        let hull_4d: ConvexHull4D<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-        > = ConvexHull::from_triangulation(&tri_4d).unwrap();
+        let hull_4d: ConvexHull4D<crate::geometry::kernel::FastKernel<f64>, (), ()> =
+            ConvexHull::from_triangulation(&tri_4d).unwrap();
 
         let inside_point_4d = Point::new([0.1, 0.1, 0.1, 0.1]);
         let outside_point_4d = Point::new([2.0, 2.0, 2.0, 2.0]);
@@ -2137,17 +2125,13 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
         ];
-        let tds_5d: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices_5d).unwrap();
+        let tds_5d: Tds<f64, (), (), 5> = Tds::new(&vertices_5d).unwrap();
         let tri_5d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_5d,
         };
-        let hull_5d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            5,
-        > = ConvexHull::from_triangulation(&tri_5d).unwrap();
+        let hull_5d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 5> =
+            ConvexHull::from_triangulation(&tri_5d).unwrap();
 
         let inside_point_5d = Point::new([0.1, 0.1, 0.1, 0.1, 0.1]);
         let outside_point_5d = Point::new([2.0, 2.0, 2.0, 2.0, 2.0]);
@@ -2185,7 +2169,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -2207,8 +2191,8 @@ mod tests {
         for (point, description) in &distance_test_points {
             let is_visible = ConvexHull::<
                 crate::geometry::kernel::FastKernel<f64>,
-                Option<()>,
-                Option<()>,
+                (),
+                (),
                 3,
             >::fallback_visibility_test(&test_facet_vertices, point)
             .unwrap();
@@ -2237,8 +2221,8 @@ mod tests {
         for (point, description) in degenerate_points {
             let result = ConvexHull::<
                 crate::geometry::kernel::FastKernel<f64>,
-                Option<()>,
-                Option<()>,
+                (),
+                (),
                 3,
             >::fallback_visibility_test(&test_facet_vertices, &point);
             assert!(
@@ -2253,7 +2237,7 @@ mod tests {
         let consistency_point = Point::new([2.0, 2.0, 2.0]);
         let consistency_results: Vec<bool> = (0..5)
             .map(|_| {
-                ConvexHull::<crate::geometry::kernel::FastKernel<f64>, Option<()>, Option<()>, 3>::fallback_visibility_test(
+                ConvexHull::<crate::geometry::kernel::FastKernel<f64>, (), (), 3>::fallback_visibility_test(
                     &test_facet_vertices,
                     &consistency_point,
                 )
@@ -2293,8 +2277,8 @@ mod tests {
         for point in precise_points {
             let result = ConvexHull::<
                 crate::geometry::kernel::FastKernel<f64>,
-                Option<()>,
-                Option<()>,
+                (),
+                (),
                 3,
             >::fallback_visibility_test(&test_facet_vertices, &point);
             assert!(
@@ -2316,24 +2300,20 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+        let tds_2d: Tds<f64, (), (), 2> = Tds::new(&vertices_2d).unwrap();
         let tri_2d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_2d,
         };
-        let hull_2d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            2,
-        > = ConvexHull::from_triangulation(&tri_2d).unwrap();
+        let hull_2d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 2> =
+            ConvexHull::from_triangulation(&tri_2d).unwrap();
         let test_facet_2d_vertices =
             extract_facet_vertices(&hull_2d.hull_facets[0], &tri_2d).unwrap();
         let test_point_2d = Point::new([2.0, 2.0]);
         let result_2d = ConvexHull::<
             crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
+            (),
+            (),
             2,
         >::fallback_visibility_test(&test_facet_2d_vertices, &test_point_2d);
         assert!(result_2d.is_ok(), "2D fallback should work");
@@ -2347,24 +2327,20 @@ mod tests {
             vertex!([0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
-        let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+        let tds_4d: Tds<f64, (), (), 4> = Tds::new(&vertices_4d).unwrap();
         let tri_4d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_4d,
         };
-        let hull_4d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            4,
-        > = ConvexHull::from_triangulation(&tri_4d).unwrap();
+        let hull_4d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 4> =
+            ConvexHull::from_triangulation(&tri_4d).unwrap();
         let test_facet_4d_vertices =
             extract_facet_vertices(&hull_4d.hull_facets[0], &tri_4d).unwrap();
         let test_point_4d = Point::new([2.0, 2.0, 2.0, 2.0]);
         let result_4d = ConvexHull::<
             crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
+            (),
+            (),
             4,
         >::fallback_visibility_test(&test_facet_4d_vertices, &test_point_4d);
         assert!(result_4d.is_ok(), "4D fallback should work");
@@ -2391,7 +2367,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -2411,7 +2387,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -2438,12 +2414,8 @@ mod tests {
         // Most validation edge cases are covered by the existing comprehensive tests
 
         // Test empty hull validation (should pass)
-        let empty_hull: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::default();
+        let empty_hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::default();
         // Create a dummy TDS for validation
         let dummy_vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -2451,7 +2423,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let dummy_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&dummy_vertices).unwrap();
+        let dummy_tds: Tds<f64, (), (), 3> = Tds::new(&dummy_vertices).unwrap();
         let dummy_tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: dummy_tds,
@@ -2468,7 +2440,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -2500,18 +2472,13 @@ mod tests {
 
         // Test 1D hull (empty hull validation)
         let dummy_vertices_1d = vec![vertex!([0.0]), vertex!([1.0])];
-        let dummy_tds_1d: Tds<f64, Option<()>, Option<()>, 1> =
-            Tds::new(&dummy_vertices_1d).unwrap();
+        let dummy_tds_1d: Tds<f64, (), (), 1> = Tds::new(&dummy_vertices_1d).unwrap();
         let dummy_tri_1d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: dummy_tds_1d,
         };
-        let hull_1d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            1,
-        > = ConvexHull::default();
+        let hull_1d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 1> =
+            ConvexHull::default();
         assert!(
             hull_1d.validate(&dummy_tri_1d).is_ok(),
             "1D empty hull should validate"
@@ -2524,17 +2491,13 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+        let tds_2d: Tds<f64, (), (), 2> = Tds::new(&vertices_2d).unwrap();
         let tri_2d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_2d,
         };
-        let hull_2d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            2,
-        > = ConvexHull::from_triangulation(&tri_2d).unwrap();
+        let hull_2d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 2> =
+            ConvexHull::from_triangulation(&tri_2d).unwrap();
         assert!(
             hull_2d.validate(&tri_2d).is_ok(),
             "Valid 2D hull should validate successfully"
@@ -2553,12 +2516,8 @@ mod tests {
         println!("    2D hull: {} facets validated", hull_2d.facet_count());
 
         // Test empty 2D hull validation
-        let empty_hull_2d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            2,
-        > = ConvexHull::default();
+        let empty_hull_2d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 2> =
+            ConvexHull::default();
         assert!(
             empty_hull_2d.validate(&tri_2d).is_ok(),
             "2D empty hull should validate successfully"
@@ -2571,17 +2530,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
+        let tds_3d: Tds<f64, (), (), 3> = Tds::new(&vertices_3d).unwrap();
         let tri_3d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_3d,
         };
-        let hull_3d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::from_triangulation(&tri_3d).unwrap();
+        let hull_3d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::from_triangulation(&tri_3d).unwrap();
         assert!(
             hull_3d.validate(&tri_3d).is_ok(),
             "Valid 3D hull should validate successfully"
@@ -2600,12 +2555,8 @@ mod tests {
         println!("    3D hull: {} facets validated", hull_3d.facet_count());
 
         // Test empty 3D hull validation
-        let empty_hull_3d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::default();
+        let empty_hull_3d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::default();
         assert!(
             empty_hull_3d.validate(&tri_3d).is_ok(),
             "3D empty hull should validate successfully"
@@ -2619,17 +2570,13 @@ mod tests {
             vertex!([0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
-        let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+        let tds_4d: Tds<f64, (), (), 4> = Tds::new(&vertices_4d).unwrap();
         let tri_4d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_4d,
         };
-        let hull_4d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            4,
-        > = ConvexHull::from_triangulation(&tri_4d).unwrap();
+        let hull_4d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 4> =
+            ConvexHull::from_triangulation(&tri_4d).unwrap();
         assert!(
             hull_4d.validate(&tri_4d).is_ok(),
             "Valid 4D hull should validate successfully"
@@ -2648,12 +2595,8 @@ mod tests {
         println!("    4D hull: {} facets validated", hull_4d.facet_count());
 
         // Test empty 4D hull validation
-        let empty_hull_4d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            4,
-        > = ConvexHull::default();
+        let empty_hull_4d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 4> =
+            ConvexHull::default();
         assert!(
             empty_hull_4d.validate(&tri_4d).is_ok(),
             "4D empty hull should validate successfully"
@@ -2668,17 +2611,13 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
         ];
-        let tds_5d: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices_5d).unwrap();
+        let tds_5d: Tds<f64, (), (), 5> = Tds::new(&vertices_5d).unwrap();
         let tri_5d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_5d,
         };
-        let hull_5d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            5,
-        > = ConvexHull::from_triangulation(&tri_5d).unwrap();
+        let hull_5d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 5> =
+            ConvexHull::from_triangulation(&tri_5d).unwrap();
         assert!(
             hull_5d.validate(&tri_5d).is_ok(),
             "Valid 5D hull should validate successfully"
@@ -2697,12 +2636,8 @@ mod tests {
         println!("    5D hull: {} facets validated", hull_5d.facet_count());
 
         // Test empty 5D hull validation
-        let empty_hull_5d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            5,
-        > = ConvexHull::default();
+        let empty_hull_5d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 5> =
+            ConvexHull::default();
         assert!(
             empty_hull_5d.validate(&tri_5d).is_ok(),
             "5D empty hull should validate successfully"
@@ -2723,12 +2658,12 @@ mod tests {
             vertex!([0.0, 1.0, 0.0], 3i32),
             vertex!([0.0, 0.0, 1.0], 4i32),
         ];
-        let tds_int: Tds<f64, i32, Option<()>, 3> = Tds::new(&vertices_int).unwrap();
+        let tds_int: Tds<f64, i32, (), 3> = Tds::new(&vertices_int).unwrap();
         let tri_int = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_int,
         };
-        let hull_int: ConvexHull<crate::geometry::kernel::FastKernel<f64>, i32, Option<()>, 3> =
+        let hull_int: ConvexHull<crate::geometry::kernel::FastKernel<f64>, i32, (), 3> =
             ConvexHull::from_triangulation(&tri_int).unwrap();
         assert!(
             hull_int.validate(&tri_int).is_ok(),
@@ -2742,12 +2677,12 @@ mod tests {
             vertex!([0.0, 1.0, 0.0], 'C'),
             vertex!([0.0, 0.0, 1.0], 'D'),
         ];
-        let tds_char: Tds<f64, char, Option<()>, 3> = Tds::new(&vertices_char).unwrap();
+        let tds_char: Tds<f64, char, (), 3> = Tds::new(&vertices_char).unwrap();
         let tri_char = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_char,
         };
-        let hull_char: ConvexHull<crate::geometry::kernel::FastKernel<f64>, char, Option<()>, 3> =
+        let hull_char: ConvexHull<crate::geometry::kernel::FastKernel<f64>, char, (), 3> =
             ConvexHull::from_triangulation(&tri_char).unwrap();
         assert!(
             hull_char.validate(&tri_char).is_ok(),
@@ -2794,10 +2729,8 @@ mod tests {
         ];
 
         for (vertices, desc) in extreme_vertices {
-            let tds_result: Result<
-                Tds<f64, Option<()>, Option<()>, 3>,
-                TriangulationConstructionError,
-            > = Tds::new(&vertices);
+            let tds_result: Result<Tds<f64, (), (), 3>, TriangulationConstructionError> =
+                Tds::new(&vertices);
 
             match tds_result {
                 Ok(tds) => {
@@ -2805,12 +2738,8 @@ mod tests {
                         kernel: crate::geometry::kernel::FastKernel::new(),
                         tds,
                     };
-                    let hull: ConvexHull<
-                        crate::geometry::kernel::FastKernel<f64>,
-                        Option<()>,
-                        Option<()>,
-                        3,
-                    > = ConvexHull::from_triangulation(&tri).unwrap();
+                    let hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+                        ConvexHull::from_triangulation(&tri).unwrap();
                     assert!(
                         hull.validate(&tri).is_ok(),
                         "Hull with {desc} coordinates should validate successfully"
@@ -2907,12 +2836,8 @@ mod tests {
         }
 
         // Test validation with empty hull
-        let empty_hull: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::default();
+        let empty_hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::default();
         assert!(
             empty_hull.validate(&tri_3d).is_ok(),
             "Empty hull validation should succeed"
@@ -2925,17 +2850,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let perf_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&perf_vertices).unwrap();
+        let perf_tds: Tds<f64, (), (), 3> = Tds::new(&perf_vertices).unwrap();
         let perf_tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: perf_tds,
         };
-        let perf_hull: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::from_triangulation(&perf_tri).unwrap();
+        let perf_hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::from_triangulation(&perf_tri).unwrap();
 
         let start_time = std::time::Instant::now();
         for i in 0..100 {
@@ -2969,7 +2890,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3023,7 +2944,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3078,17 +2999,13 @@ mod tests {
             vertex!([0.0f64, 1.0f64, 0.0f64]),
             vertex!([0.0f64, 0.0f64, 1.0f64]),
         ];
-        let tds_f64: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_f64).unwrap();
+        let tds_f64: Tds<f64, (), (), 3> = Tds::new(&vertices_f64).unwrap();
         let tri_f64 = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_f64,
         };
-        let hull_f64: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::from_triangulation(&tri_f64).unwrap();
+        let hull_f64: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::from_triangulation(&tri_f64).unwrap();
 
         assert_eq!(hull_f64.facet_count(), 4);
         assert!(!hull_f64.is_empty());
@@ -3105,18 +3022,13 @@ mod tests {
             vertex!([0.0, 1.000_000_000_000_001, 0.0]),
             vertex!([0.0, 0.0, 1.000_000_000_000_001]),
         ];
-        let tds_hp: Tds<f64, Option<()>, Option<()>, 3> =
-            Tds::new(&vertices_high_precision).unwrap();
+        let tds_hp: Tds<f64, (), (), 3> = Tds::new(&vertices_high_precision).unwrap();
         let tri_hp = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_hp,
         };
-        let hull_hp: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::from_triangulation(&tri_hp).unwrap();
+        let hull_hp: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::from_triangulation(&tri_hp).unwrap();
 
         assert_eq!(hull_hp.facet_count(), 4);
         assert_eq!(hull_hp.dimension(), 3);
@@ -3130,12 +3042,12 @@ mod tests {
             vertex!([0.0, 1.0, 0.0], 3i32),
             vertex!([0.0, 0.0, 1.0], 4i32),
         ];
-        let tds_int: Tds<f64, i32, Option<()>, 3> = Tds::new(&vertices_int).unwrap();
+        let tds_int: Tds<f64, i32, (), 3> = Tds::new(&vertices_int).unwrap();
         let tri_int = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_int,
         };
-        let hull_int: ConvexHull<crate::geometry::kernel::FastKernel<f64>, i32, Option<()>, 3> =
+        let hull_int: ConvexHull<crate::geometry::kernel::FastKernel<f64>, i32, (), 3> =
             ConvexHull::from_triangulation(&tri_int).unwrap();
 
         assert_eq!(hull_int.facet_count(), 4);
@@ -3149,12 +3061,12 @@ mod tests {
             vertex!([0.0, 1.0, 0.0], 'C'),
             vertex!([0.0, 0.0, 1.0], 'D'),
         ];
-        let tds_char: Tds<f64, char, Option<()>, 3> = Tds::new(&vertices_char).unwrap();
+        let tds_char: Tds<f64, char, (), 3> = Tds::new(&vertices_char).unwrap();
         let tri_char = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_char,
         };
-        let hull_char: ConvexHull<crate::geometry::kernel::FastKernel<f64>, char, Option<()>, 3> =
+        let hull_char: ConvexHull<crate::geometry::kernel::FastKernel<f64>, char, (), 3> =
             ConvexHull::from_triangulation(&tri_char).unwrap();
 
         assert_eq!(hull_char.facet_count(), 4);
@@ -3168,8 +3080,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0], Some(3)),
             vertex!([0.0, 0.0, 1.0], Some(4)),
         ];
-        let tds_with_data: Tds<f64, Option<i32>, Option<()>, 3> =
-            Tds::new(&vertices_with_data).unwrap();
+        let tds_with_data: Tds<f64, Option<i32>, (), 3> = Tds::new(&vertices_with_data).unwrap();
         let tri_with_data = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_with_data,
@@ -3177,7 +3088,7 @@ mod tests {
         let hull_with_data: ConvexHull<
             crate::geometry::kernel::FastKernel<f64>,
             Option<i32>,
-            Option<()>,
+            (),
             3,
         > = ConvexHull::from_triangulation(&tri_with_data).unwrap();
 
@@ -3194,17 +3105,13 @@ mod tests {
             vertex!([0.0, 1e6, 0.0]),
             vertex!([0.0, 0.0, 1e6]),
         ];
-        let tds_large: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_large).unwrap();
+        let tds_large: Tds<f64, (), (), 3> = Tds::new(&vertices_large).unwrap();
         let tri_large = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_large,
         };
-        let hull_large: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::from_triangulation(&tri_large).unwrap();
+        let hull_large: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::from_triangulation(&tri_large).unwrap();
 
         assert_eq!(hull_large.facet_count(), 4);
         assert!(hull_large.validate(&tri_large).is_ok());
@@ -3232,17 +3139,13 @@ mod tests {
             vertex!([0.0, 1e-3, 0.0]),
             vertex!([0.0, 0.0, 1e-3]),
         ];
-        let tds_small: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_small).unwrap();
+        let tds_small: Tds<f64, (), (), 3> = Tds::new(&vertices_small).unwrap();
         let tri_small = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_small,
         };
-        let hull_small: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::from_triangulation(&tri_small).unwrap();
+        let hull_small: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::from_triangulation(&tri_small).unwrap();
 
         assert_eq!(hull_small.facet_count(), 4);
         assert!(hull_small.validate(&tri_small).is_ok());
@@ -3256,7 +3159,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3284,29 +3187,20 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let dummy_tds_2d: Tds<f64, Option<()>, Option<()>, 2> =
-            Tds::new(&dummy_vertices_2d).unwrap();
+        let dummy_tds_2d: Tds<f64, (), (), 2> = Tds::new(&dummy_vertices_2d).unwrap();
         let dummy_tri_2d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: dummy_tds_2d,
         };
-        let hull_2d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            2,
-        > = ConvexHull::default();
+        let hull_2d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 2> =
+            ConvexHull::default();
         assert!(hull_2d.is_empty());
         assert_eq!(hull_2d.facet_count(), 0);
         assert_eq!(hull_2d.dimension(), 2);
         assert!(hull_2d.validate(&dummy_tri_2d).is_ok());
 
-        let hull_3d_default: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::default();
+        let hull_3d_default: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::default();
         assert!(hull_3d_default.is_empty());
         assert_eq!(hull_3d_default.facet_count(), 0);
         assert_eq!(hull_3d_default.dimension(), 3);
@@ -3319,18 +3213,13 @@ mod tests {
             vertex!([0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
-        let dummy_tds_4d: Tds<f64, Option<()>, Option<()>, 4> =
-            Tds::new(&dummy_vertices_4d).unwrap();
+        let dummy_tds_4d: Tds<f64, (), (), 4> = Tds::new(&dummy_vertices_4d).unwrap();
         let dummy_tri_4d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: dummy_tds_4d,
         };
-        let hull_4d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            4,
-        > = ConvexHull::default();
+        let hull_4d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 4> =
+            ConvexHull::default();
         assert!(hull_4d.is_empty());
         assert_eq!(hull_4d.facet_count(), 0);
         assert_eq!(hull_4d.dimension(), 4);
@@ -3345,16 +3234,13 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
         };
-        let _hull_2d: ConvexHull2D<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-        > = ConvexHull::from_triangulation(&tri).unwrap();
+        let _hull_2d: ConvexHull2D<crate::geometry::kernel::FastKernel<f64>, (), ()> =
+            ConvexHull::from_triangulation(&tri).unwrap();
 
         let vertices_3d = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -3362,16 +3248,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
+        let tds_3d: Tds<f64, (), (), 3> = Tds::new(&vertices_3d).unwrap();
         let tri_3d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_3d,
         };
-        let _hull_3d: ConvexHull3D<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-        > = ConvexHull::from_triangulation(&tri_3d).unwrap();
+        let _hull_3d: ConvexHull3D<crate::geometry::kernel::FastKernel<f64>, (), ()> =
+            ConvexHull::from_triangulation(&tri_3d).unwrap();
 
         let vertices_4d = vec![
             vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -3380,16 +3263,13 @@ mod tests {
             vertex!([0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
-        let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+        let tds_4d: Tds<f64, (), (), 4> = Tds::new(&vertices_4d).unwrap();
         let tri_4d = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_4d,
         };
-        let _hull_4d: ConvexHull4D<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-        > = ConvexHull::from_triangulation(&tri_4d).unwrap();
+        let _hull_4d: ConvexHull4D<crate::geometry::kernel::FastKernel<f64>, (), ()> =
+            ConvexHull::from_triangulation(&tri_4d).unwrap();
     }
 
     // =========================================================================
@@ -3399,7 +3279,7 @@ mod tests {
     #[test]
     fn test_from_triangulation_empty_vertices_error() {
         // Test error path when triangulation has no vertices
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let empty_tds: Tds<f64, (), (), 3> = Tds::empty();
         let empty_tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: empty_tds,
@@ -3425,7 +3305,7 @@ mod tests {
     #[test]
     fn test_from_triangulation_no_cells_error() {
         // Create a TDS with vertices but no cells (manually constructed)
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
         let vertex = vertex!([0.0, 0.0, 0.0]);
         let _ = tds.insert_vertex_with_mapping(vertex);
         let tri = Triangulation {
@@ -3454,7 +3334,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3474,7 +3354,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3502,7 +3382,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3524,8 +3404,8 @@ mod tests {
             let close_point = Point::new([0.1, 0.1, 0.1]);
             let result = ConvexHull::<
                 crate::geometry::kernel::FastKernel<f64>,
-                Option<()>,
-                Option<()>,
+                (),
+                (),
                 3,
             >::fallback_visibility_test(&facet_vertices, &close_point);
             assert!(result.is_ok());
@@ -3534,8 +3414,8 @@ mod tests {
             let far_point = Point::new([10.0, 10.0, 10.0]);
             let result = ConvexHull::<
                 crate::geometry::kernel::FastKernel<f64>,
-                Option<()>,
-                Option<()>,
+                (),
+                (),
                 3,
             >::fallback_visibility_test(&facet_vertices, &far_point);
             assert!(result.is_ok());
@@ -3553,7 +3433,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3580,7 +3460,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3602,7 +3482,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3633,7 +3513,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3657,7 +3537,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3721,7 +3601,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3782,44 +3662,24 @@ mod tests {
     #[test]
     fn test_dimensional_consistency() {
         // Test that dimension() always returns D regardless of hull state
-        let empty_hull_1d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            1,
-        > = ConvexHull::default();
+        let empty_hull_1d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 1> =
+            ConvexHull::default();
         assert_eq!(empty_hull_1d.dimension(), 1);
 
-        let empty_hull_2d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            2,
-        > = ConvexHull::default();
+        let empty_hull_2d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 2> =
+            ConvexHull::default();
         assert_eq!(empty_hull_2d.dimension(), 2);
 
-        let empty_hull_3d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::default();
+        let empty_hull_3d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::default();
         assert_eq!(empty_hull_3d.dimension(), 3);
 
-        let empty_hull_4d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            4,
-        > = ConvexHull::default();
+        let empty_hull_4d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 4> =
+            ConvexHull::default();
         assert_eq!(empty_hull_4d.dimension(), 4);
 
-        let empty_hull_ten_d: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            10,
-        > = ConvexHull::default();
+        let empty_hull_ten_d: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 10> =
+            ConvexHull::default();
         assert_eq!(empty_hull_ten_d.dimension(), 10);
 
         // Test with populated hull
@@ -3829,7 +3689,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3840,12 +3700,8 @@ mod tests {
 
         // Dimension is a const generic parameter, so it never changes
         // Empty hulls also preserve the dimension
-        let empty_hull: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::default();
+        let empty_hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::default();
         assert_eq!(empty_hull.dimension(), 3);
     }
 
@@ -3859,7 +3715,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3871,8 +3727,8 @@ mod tests {
         let test_point = Point::new([1e-20, 1e-20, 1e-20]);
         let result = ConvexHull::<
             crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
+            (),
+            (),
             3,
         >::fallback_visibility_test(&test_facet_vertices, &test_point);
 
@@ -3906,7 +3762,7 @@ mod tests {
             vertex!([0.0, 1e-3, 0.0]),
             vertex!([0.0, 0.0, 1e-3]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -3950,10 +3806,8 @@ mod tests {
             vertex!([0.0, 0.0, f64::MIN_POSITIVE]),
         ];
 
-        let tds_extreme_result: Result<
-            Tds<f64, Option<()>, Option<()>, 3>,
-            TriangulationConstructionError,
-        > = Tds::new(&vertices_extreme);
+        let tds_extreme_result: Result<Tds<f64, (), (), 3>, TriangulationConstructionError> =
+            Tds::new(&vertices_extreme);
 
         match tds_extreme_result {
             Ok(tds_extreme) => {
@@ -3961,12 +3815,8 @@ mod tests {
                     kernel: crate::geometry::kernel::FastKernel::new(),
                     tds: tds_extreme,
                 };
-                let hull_extreme: ConvexHull<
-                    crate::geometry::kernel::FastKernel<f64>,
-                    Option<()>,
-                    Option<()>,
-                    3,
-                > = ConvexHull::from_triangulation(&tri_extreme).unwrap();
+                let hull_extreme: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+                    ConvexHull::from_triangulation(&tri_extreme).unwrap();
 
                 // Test visibility with extreme coordinates
                 let test_point = Point::new([
@@ -3985,8 +3835,8 @@ mod tests {
                     extract_facet_vertices(&hull_extreme.hull_facets[0], &tri_extreme).unwrap();
                 let fallback_result = ConvexHull::<
                     crate::geometry::kernel::FastKernel<f64>,
-                    Option<()>,
-                    Option<()>,
+                    (),
+                    (),
                     3,
                 >::fallback_visibility_test(
                     &facet_vertices, &test_point
@@ -4015,17 +3865,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds_max: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_max).unwrap();
+        let tds_max: Tds<f64, (), (), 3> = Tds::new(&vertices_max).unwrap();
         let tri_max = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: tds_max,
         };
-        let hull_max: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::from_triangulation(&tri_max).unwrap();
+        let hull_max: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::from_triangulation(&tri_max).unwrap();
 
         let max_point = Point::new([f64::MAX / 2.0, f64::MAX / 2.0, f64::MAX / 2.0]);
         let result = hull_max.is_point_outside(&max_point, &tri_max);
@@ -4047,7 +3893,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -4105,7 +3951,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let mut tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -4202,12 +4048,8 @@ mod tests {
         // IMPORTANT: After TDS modification, the old hull's facet handles are invalid!
         // We must rebuild the hull to get fresh facet handles
         println!("  Rebuilding hull after TDS modification...");
-        let new_hull: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::from_triangulation(&tri).unwrap();
+        let new_hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::from_triangulation(&tri).unwrap();
 
         // The new hull should be valid and have matching generation
         assert!(
@@ -4353,7 +4195,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let mut tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -4457,7 +4299,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -4490,9 +4332,7 @@ mod tests {
                 .collect();
 
             let derived_key_result =
-                derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(
-                    &facet_vertex_keys,
-                );
+                derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys);
 
             if let Ok(derived_key) = derived_key_result {
                 if cache.contains_key(&derived_key) {
@@ -4555,7 +4395,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -4612,7 +4452,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]), // Y axis
             vertex!([0.0, 0.0, 1.0]), // Z axis
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -4711,7 +4551,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -4813,7 +4653,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -4910,7 +4750,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -4981,7 +4821,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -5365,7 +5205,7 @@ mod tests {
             vertex!([1e10, 1e10, 1e10]),
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&large_vertices) {
+        match Tds::<f64, (), (), 3>::new(&large_vertices) {
             Ok(large_tds) => {
                 let large_tri = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -5412,7 +5252,7 @@ mod tests {
             vertex!([1e-15, 1e-15, 1e-15]),
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&small_vertices) {
+        match Tds::<f64, (), (), 3>::new(&small_vertices) {
             Ok(small_tds) => {
                 let small_tri = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -5438,17 +5278,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let normal_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&normal_vertices).unwrap();
+        let normal_tds: Tds<f64, (), (), 3> = Tds::new(&normal_vertices).unwrap();
         let normal_tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds: normal_tds,
         };
-        let normal_hull: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::from_triangulation(&normal_tri).unwrap();
+        let normal_hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::from_triangulation(&normal_tri).unwrap();
         let test_facet_vertices =
             extract_facet_vertices(normal_hull.get_facet(0).unwrap(), &normal_tri).unwrap();
 
@@ -5461,8 +5297,8 @@ mod tests {
         for (i, point) in extreme_points.iter().enumerate() {
             let fallback_result = ConvexHull::<
                 crate::geometry::kernel::FastKernel<f64>,
-                Option<()>,
-                Option<()>,
+                (),
+                (),
                 3,
             >::fallback_visibility_test(
                 &test_facet_vertices, point
@@ -5498,7 +5334,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -5539,8 +5375,8 @@ mod tests {
         for (point, description, category) in test_cases {
             let fallback_result = ConvexHull::<
                 crate::geometry::kernel::FastKernel<f64>,
-                Option<()>,
-                Option<()>,
+                (),
+                (),
                 3,
             >::fallback_visibility_test(
                 &test_facet_vertices, &point
@@ -5598,7 +5434,7 @@ mod tests {
             vertex!([0.5, 0.5, 1.0]),   // Out of plane
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&near_collinear_vertices) {
+        match Tds::<f64, (), (), 3>::new(&near_collinear_vertices) {
             Ok(collinear_tds) => {
                 let collinear_tri = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -5617,8 +5453,8 @@ mod tests {
 
                         let collinear_result = ConvexHull::<
                             crate::geometry::kernel::FastKernel<f64>,
-                            Option<()>,
-                            Option<()>,
+                            (),
+                            (),
                             3,
                         >::fallback_visibility_test(
                             &collinear_facet_vertices, &test_point
@@ -5654,7 +5490,7 @@ mod tests {
             vertex!([0.0, 0.0, 1e-6]),
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&tiny_area_vertices) {
+        match Tds::<f64, (), (), 3>::new(&tiny_area_vertices) {
             Ok(tiny_tds) => {
                 let tiny_tri = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -5671,8 +5507,8 @@ mod tests {
 
                         let tiny_result = ConvexHull::<
                             crate::geometry::kernel::FastKernel<f64>,
-                            Option<()>,
-                            Option<()>,
+                            (),
+                            (),
                             3,
                         >::fallback_visibility_test(
                             &tiny_facet_vertices, &test_point
@@ -5713,7 +5549,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -5736,8 +5572,8 @@ mod tests {
 
             let result = ConvexHull::<
                 crate::geometry::kernel::FastKernel<f64>,
-                Option<()>,
-                Option<()>,
+                (),
+                (),
                 3,
             >::fallback_visibility_test(&test_facet_vertices, &test_point);
 
@@ -5821,7 +5657,7 @@ mod tests {
         for (description, vertices) in edge_test_cases {
             println!("    Testing {description}...");
 
-            match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+            match Tds::<f64, (), (), 3>::new(&vertices) {
                 Ok(edge_tds) => {
                     let edge_tri = Triangulation {
                         kernel: crate::geometry::kernel::FastKernel::new(),
@@ -5836,8 +5672,8 @@ mod tests {
 
                             let edge_result = ConvexHull::<
                                 crate::geometry::kernel::FastKernel<f64>,
-                                Option<()>,
-                                Option<()>,
+                                (),
+                                (),
                                 3,
                             >::fallback_visibility_test(
                                 &edge_facet_vertices, &test_point
@@ -5885,7 +5721,7 @@ mod tests {
             vertex!([2.0, 0.0]), // Collinear with first two
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 2>::new(&collinear_2d_vertices) {
+        match Tds::<f64, (), (), 2>::new(&collinear_2d_vertices) {
             Ok(collinear_tds) => {
                 let collinear_tri = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -5942,7 +5778,7 @@ mod tests {
             vertex!([2.0, -1e-12]), // Nearly on the line y=0
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 2>::new(&nearly_collinear_vertices) {
+        match Tds::<f64, (), (), 2>::new(&nearly_collinear_vertices) {
             Ok(nearly_tds) => {
                 let nearly_tri = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -5987,7 +5823,7 @@ mod tests {
             vertex!([3.0, 3.0, 3.0]), // Also collinear
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&collinear_3d_vertices) {
+        match Tds::<f64, (), (), 3>::new(&collinear_3d_vertices) {
             Ok(_) => {
                 println!("    Warning: 3D collinear TDS constructed (unexpected but handled)");
             }
@@ -6014,7 +5850,7 @@ mod tests {
             vertex!([1.0, 1.0, 0.0]), // All in z=0 plane
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&coplanar_3d_vertices) {
+        match Tds::<f64, (), (), 3>::new(&coplanar_3d_vertices) {
             Ok(_) => {
                 println!(
                     "    Warning: Coplanar 3D TDS constructed (may indicate insufficient degeneracy detection)"
@@ -6034,7 +5870,7 @@ mod tests {
             vertex!([1.0, 1.0, 1e-10]),
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&nearly_coplanar_vertices) {
+        match Tds::<f64, (), (), 3>::new(&nearly_coplanar_vertices) {
             Ok(nearly_coplanar_tds) => {
                 let nearly_coplanar_tri = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -6119,7 +5955,7 @@ mod tests {
             vertex!([1.0, 1.0, 1.0, 0.0]), // All in w=0 hyperplane
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 4>::new(&coplanar_4d_vertices) {
+        match Tds::<f64, (), (), 4>::new(&coplanar_4d_vertices) {
             Ok(_) => {
                 println!(
                     "    Warning: Coplanar 4D TDS constructed (may indicate insufficient degeneracy detection)"
@@ -6147,7 +5983,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0]), // Exact duplicate of first vertex
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&duplicate_vertices) {
+        match Tds::<f64, (), (), 3>::new(&duplicate_vertices) {
             Ok(dup_tds) => {
                 println!("    Duplicate vertices TDS constructed");
                 let dup_tri = Triangulation {
@@ -6197,7 +6033,7 @@ mod tests {
             vertex!([1e-15, 1e-15, 1e-15]), // Nearly coincident with first
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&nearly_coincident_vertices) {
+        match Tds::<f64, (), (), 3>::new(&nearly_coincident_vertices) {
             Ok(nearly_coin_tds) => {
                 let nearly_coin_tri = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -6261,7 +6097,7 @@ mod tests {
             vertex!([0.1, 0.1, 0.1, 0.1, 0.1, 0.1]), // Interior point to make it non-degenerate
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 6>::new(&vertices_6d) {
+        match Tds::<f64, (), (), 6>::new(&vertices_6d) {
             Ok(tds_6d) => {
                 let tri_6d = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -6321,7 +6157,7 @@ mod tests {
             vertex!([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]),
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 7>::new(&vertices_7d) {
+        match Tds::<f64, (), (), 7>::new(&vertices_7d) {
             Ok(tds_7d) => {
                 let tri_7d = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -6358,7 +6194,7 @@ mod tests {
             vertex!([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]),
         ];
 
-        match Tds::<f64, Option<()>, Option<()>, 8>::new(&vertices_8d) {
+        match Tds::<f64, (), (), 8>::new(&vertices_8d) {
             Ok(tds_8d) => {
                 let tri_8d = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -6414,7 +6250,7 @@ mod tests {
 
         let start_time = std::time::Instant::now();
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&large_vertices) {
+        match Tds::<f64, (), (), 3>::new(&large_vertices) {
             Ok(large_tds) => {
                 let tds_construction_time = start_time.elapsed();
                 println!("    TDS construction took: {tds_construction_time:?}");
@@ -6490,7 +6326,7 @@ mod tests {
 
         let start_2d = std::time::Instant::now();
 
-        match Tds::<f64, Option<()>, Option<()>, 2>::new(&large_2d_vertices) {
+        match Tds::<f64, (), (), 2>::new(&large_2d_vertices) {
             Ok(large_2d_tds) => {
                 let large_2d_tri = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -6538,7 +6374,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let mut tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -6639,7 +6475,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -6779,7 +6615,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,
@@ -6818,9 +6654,9 @@ mod tests {
         println!("  Testing multiple hull instances with shared TDS...");
 
         // Create multiple hull instances from the same TDS
-        let hull1: ConvexHull<crate::geometry::kernel::FastKernel<f64>, Option<()>, Option<()>, 3> =
+        let hull1: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
             ConvexHull::from_triangulation(&tri).unwrap();
-        let hull2: ConvexHull<crate::geometry::kernel::FastKernel<f64>, Option<()>, Option<()>, 3> =
+        let hull2: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
             ConvexHull::from_triangulation(&tri).unwrap();
 
         // Each should have independent cache
@@ -6881,7 +6717,7 @@ mod tests {
         println!("Testing stale hull detection after invalidate_cache (regression test)");
 
         // Step 1: Create hull from initial TDS
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+        let tds: Tds<f64, (), (), 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -6961,12 +6797,8 @@ mod tests {
         );
 
         // Step 6: Verify that creating a new hull works correctly
-        let new_hull: ConvexHull<
-            crate::geometry::kernel::FastKernel<f64>,
-            Option<()>,
-            Option<()>,
-            3,
-        > = ConvexHull::from_triangulation(&tri).unwrap();
+        let new_hull: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
+            ConvexHull::from_triangulation(&tri).unwrap();
         assert!(
             new_hull.is_valid_for_triangulation(&tri),
             "New hull should be valid for modified TDS"
@@ -6991,7 +6823,7 @@ mod tests {
     fn test_stale_hull_all_operations_fail() {
         println!("Testing that all hull operations fail on stale hull");
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+        let tds: Tds<f64, (), (), 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -7063,7 +6895,7 @@ mod tests {
         println!("Testing fallback visibility check for degenerate facets");
 
         // Create hull with nearly coplanar points (z << x,y) but still valid simplex
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+        let tds: Tds<f64, (), (), 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 1e-6]),
             vertex!([0.0, 1.0, 1e-6]),
@@ -7093,7 +6925,7 @@ mod tests {
         println!("Testing convex hull with extreme aspect ratio facets");
 
         // Create a very flat triangulation (extreme aspect ratio)
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+        let tds: Tds<f64, (), (), 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1000.0, 0.0, 0.0]), // Very long in x
             vertex!([0.0, 0.001, 0.0]),  // Very short in y
@@ -7126,7 +6958,7 @@ mod tests {
     fn test_point_exactly_on_hull_surface() {
         println!("Testing points exactly on hull surface");
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+        let tds: Tds<f64, (), (), 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -7166,7 +6998,7 @@ mod tests {
     fn test_point_very_close_to_surface() {
         println!("Testing points very close to hull surface (epsilon distance)");
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+        let tds: Tds<f64, (), (), 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -7206,8 +7038,7 @@ mod tests {
                 // Origin - use nested macro to get correct type
                 macro_rules! make_vertex {
                     ($coords:expr) => {{
-                        let v: crate::core::vertex::Vertex<f64, Option<()>, $dim> =
-                            vertex!($coords);
+                        let v: crate::core::vertex::Vertex<f64, (), $dim> = vertex!($coords);
                         v
                     }};
                 }
@@ -7230,7 +7061,7 @@ mod tests {
                     $dim,
                     vertices_vec.len()
                 );
-                let tds = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices_vec)
+                let tds = Tds::<f64, (), (), $dim>::new(&vertices_vec)
                     .expect(&format!("Failed to create {}D TDS", $dim));
                 let tri = Triangulation {
                     kernel: crate::geometry::kernel::FastKernel::new(),
@@ -7323,7 +7154,7 @@ mod tests {
     fn test_cache_lifecycle_multiple_operations() {
         println!("Testing cache lifecycle through multiple operations");
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+        let tds: Tds<f64, (), (), 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -7403,7 +7234,7 @@ mod tests {
     fn test_cache_independence_multiple_hulls() {
         println!("Testing cache independence between multiple hull instances");
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+        let tds: Tds<f64, (), (), 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -7416,13 +7247,13 @@ mod tests {
         };
 
         println!("  Creating first hull and building cache...");
-        let hull1: ConvexHull<crate::geometry::kernel::FastKernel<f64>, Option<()>, Option<()>, 3> =
+        let hull1: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
             ConvexHull::from_triangulation(&tri).unwrap();
         let test_point = Point::new([2.0, 2.0, 2.0]);
         hull1.find_visible_facets(&test_point, &tri).unwrap();
 
         println!("  Creating second hull from same TDS...");
-        let hull2: ConvexHull<crate::geometry::kernel::FastKernel<f64>, Option<()>, Option<()>, 3> =
+        let hull2: ConvexHull<crate::geometry::kernel::FastKernel<f64>, (), (), 3> =
             ConvexHull::from_triangulation(&tri).unwrap();
 
         println!("  Second hull also has cache built during construction...");

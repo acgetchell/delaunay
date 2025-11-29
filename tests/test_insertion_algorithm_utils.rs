@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Integration tests for insertion algorithm utility types.
 //!
 //! Tests the `InsertionBuffers` and `InsertionStatistics` helper types that support
@@ -18,7 +17,7 @@ use delaunay::vertex;
 
 #[test]
 fn test_insertion_buffers_new() {
-    let buffers: InsertionBuffers<f64, Option<()>, Option<()>, 3> = InsertionBuffers::new();
+    let buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::new();
 
     // All buffers should be empty
     assert!(buffers.bad_cells_buffer().is_empty());
@@ -29,7 +28,7 @@ fn test_insertion_buffers_new() {
 
 #[test]
 fn test_insertion_buffers_default() {
-    let buffers: InsertionBuffers<f64, Option<()>, Option<()>, 3> = InsertionBuffers::default();
+    let buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::default();
 
     // Default should behave like new()
     assert!(buffers.bad_cells_buffer().is_empty());
@@ -40,8 +39,7 @@ fn test_insertion_buffers_default() {
 
 #[test]
 fn test_insertion_buffers_with_capacity() {
-    let buffers: InsertionBuffers<f64, Option<()>, Option<()>, 3> =
-        InsertionBuffers::with_capacity(10);
+    let buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::with_capacity(10);
 
     // All buffers should be empty but have capacity
     assert!(buffers.bad_cells_buffer().is_empty());
@@ -61,7 +59,7 @@ fn test_insertion_buffers_with_capacity() {
 
 #[test]
 fn test_insertion_buffers_clear_all() {
-    let mut buffers: InsertionBuffers<f64, Option<()>, Option<()>, 3> = InsertionBuffers::new();
+    let mut buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::new();
 
     // Add some data to all buffers
     buffers.bad_cells_buffer_mut().push(CellKey::default());
@@ -93,7 +91,7 @@ fn test_insertion_buffers_clear_all() {
 
 #[test]
 fn test_insertion_buffers_prepare_methods() {
-    let mut buffers: InsertionBuffers<f64, Option<()>, Option<()>, 3> = InsertionBuffers::new();
+    let mut buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::new();
 
     // Add data to all buffers
     buffers.bad_cells_buffer_mut().push(CellKey::default());
@@ -141,7 +139,7 @@ fn test_insertion_buffers_prepare_methods() {
 
 #[test]
 fn test_insertion_buffers_vec_compatibility() {
-    let mut buffers: InsertionBuffers<f64, Option<()>, Option<()>, 3> = InsertionBuffers::new();
+    let mut buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::new();
 
     // Test bad_cells_as_vec and set_bad_cells_from_vec
     let cell_keys = vec![CellKey::default(), CellKey::default()];
@@ -182,9 +180,9 @@ fn test_insertion_buffers_facet_views() {
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
     ];
-    let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
-    let mut buffers: InsertionBuffers<f64, Option<()>, Option<()>, 3> = InsertionBuffers::new();
+    let mut buffers: InsertionBuffers<f64, (), (), 3> = InsertionBuffers::new();
 
     // Get a valid cell key from the triangulation
     let (cell_key, _cell) = tds.cells().next().unwrap();

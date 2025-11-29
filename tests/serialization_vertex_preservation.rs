@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Integration test for vertex preservation during serialization/deserialization.
 //!
 //! This test investigates whether vertices are properly preserved through the full lifecycle:
@@ -30,15 +29,14 @@ fn test_vertex_preservation_with_duplicates_3d() {
         // Duplicate coordinate
         Point::new([0.0, 0.0, 0.0]),
     ];
-    let vertices = Vertex::<f64, Option<()>, 3>::from_points(&points);
+    let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
     let input_coords: HashSet<_> = vertices.iter().map(|v| *v.point()).collect();
     println!("Input vertices: {}", vertices.len());
     println!("Unique input coordinates: {}", input_coords.len());
 
     // Construct triangulation
-    let tds =
-        Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).expect("Tds construction failed");
+    let tds = Tds::<f64, (), (), 3>::new(&vertices).expect("Tds construction failed");
 
     let tds_vertex_count = tds.vertices().count();
     let tds_coords = extract_vertex_coordinate_set(&tds);
@@ -53,7 +51,7 @@ fn test_vertex_preservation_with_duplicates_3d() {
     println!("JSON size: {} bytes", json.len());
 
     // Deserialize
-    let deserialized: Tds<f64, Option<()>, Option<()>, 3> =
+    let deserialized: Tds<f64, (), (), 3> =
         serde_json::from_str(&json).expect("Deserialization failed");
 
     let deser_vertex_count = deserialized.vertices().count();
@@ -107,12 +105,11 @@ fn test_vertex_preservation_without_duplicates_3d() {
         Point::new([0.0, 0.0, 1.0]),
         Point::new([0.5, 0.5, 0.5]),
     ];
-    let vertices = Vertex::<f64, Option<()>, 3>::from_points(&points);
+    let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
     println!("Input vertices (no duplicates): {}", vertices.len());
 
-    let tds =
-        Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).expect("Tds construction failed");
+    let tds = Tds::<f64, (), (), 3>::new(&vertices).expect("Tds construction failed");
     let tds_vertex_count = tds.vertices().count();
     println!("Vertices after Tds construction: {tds_vertex_count}");
 
@@ -120,7 +117,7 @@ fn test_vertex_preservation_without_duplicates_3d() {
     let before_coords = extract_vertex_coordinate_set(&tds);
 
     let json = serde_json::to_string(&tds).expect("Serialization failed");
-    let deserialized: Tds<f64, Option<()>, Option<()>, 3> =
+    let deserialized: Tds<f64, (), (), 3> =
         serde_json::from_str(&json).expect("Deserialization failed");
 
     let deser_vertex_count = deserialized.vertices().count();
@@ -157,15 +154,14 @@ fn test_vertex_preservation_many_duplicates_3d() {
         points.push(base_point);
     }
 
-    let vertices = Vertex::<f64, Option<()>, 3>::from_points(&points);
+    let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
     println!("Input vertices (with many duplicates): {}", vertices.len());
     let unique_coords: HashSet<_> = vertices.iter().map(|v| *v.point()).collect();
     let unique_coords_len = unique_coords.len();
     println!("Unique coordinates: {unique_coords_len}");
 
-    let tds =
-        Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).expect("Tds construction failed");
+    let tds = Tds::<f64, (), (), 3>::new(&vertices).expect("Tds construction failed");
     let tds_vertex_count = tds.vertices().count();
     println!("Vertices after Tds construction: {tds_vertex_count}");
 
@@ -173,7 +169,7 @@ fn test_vertex_preservation_many_duplicates_3d() {
     let before_coords = extract_vertex_coordinate_set(&tds);
 
     let json = serde_json::to_string(&tds).expect("Serialization failed");
-    let deserialized: Tds<f64, Option<()>, Option<()>, 3> =
+    let deserialized: Tds<f64, (), (), 3> =
         serde_json::from_str(&json).expect("Deserialization failed");
 
     let deser_vertex_count = deserialized.vertices().count();
@@ -202,16 +198,15 @@ fn test_vertex_coordinate_preservation_3d() {
         Point::new([0.0, 1.0, 0.0]),
         Point::new([0.0, 0.0, 1.0]),
     ];
-    let vertices = Vertex::<f64, Option<()>, 3>::from_points(&points);
+    let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
-    let tds =
-        Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).expect("Tds construction failed");
+    let tds = Tds::<f64, (), (), 3>::new(&vertices).expect("Tds construction failed");
 
     // Extract original vertex coordinates using canonical extraction
     let original_coords = extract_vertex_coordinate_set(&tds);
 
     let json = serde_json::to_string(&tds).expect("Serialization failed");
-    let deserialized: Tds<f64, Option<()>, Option<()>, 3> =
+    let deserialized: Tds<f64, (), (), 3> =
         serde_json::from_str(&json).expect("Deserialization failed");
 
     // Extract deserialized vertex coordinates

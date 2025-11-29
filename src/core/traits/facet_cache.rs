@@ -195,7 +195,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     /// let algorithm = IncrementalBowyerWatson::new();
     ///
     /// let cache = algorithm.try_get_or_build_facet_cache(&tds)?;
@@ -314,7 +314,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     /// let algorithm = IncrementalBowyerWatson::new();
     ///
     /// // Build cache
@@ -366,7 +366,7 @@ mod tests {
         }
     }
 
-    impl FacetCacheProvider<f64, Option<()>, Option<()>, 3> for TestCacheProvider {
+    impl FacetCacheProvider<f64, (), (), 3> for TestCacheProvider {
         fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
             &self.facet_to_cells_cache
         }
@@ -377,7 +377,7 @@ mod tests {
     }
 
     /// Create a simple test triangulation for testing
-    fn create_test_triangulation() -> Tds<f64, Option<()>, Option<()>, 3> {
+    fn create_test_triangulation() -> Tds<f64, (), (), 3> {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -829,7 +829,7 @@ mod tests {
         let provider = TestCacheProvider::new();
 
         // Create an empty triangulation
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let tds: Tds<f64, (), (), 3> = Tds::empty();
 
         // Should handle empty triangulation gracefully
         let cache = provider.try_get_or_build_facet_cache(&tds).unwrap();

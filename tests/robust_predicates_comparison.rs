@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Comprehensive test comparing robust predicates vs standard predicates
 //!
 //! This test demonstrates the improvements in numerical stability and robustness
@@ -191,7 +190,7 @@ fn test_vertex_insertion_robustness() {
         vertex!([0.0, 0.0, 1.0]),
     ];
 
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = match Tds::new(&initial_vertices) {
+    let mut tds: Tds<f64, (), (), 3> = match Tds::new(&initial_vertices) {
         Ok(tds) => tds,
         Err(e) => {
             println!("Failed to create initial TDS: {e:?}");

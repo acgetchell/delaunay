@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Integration tests for `InsertionAlgorithm` trait public API
 //!
 //! This test module focuses on PUBLIC API methods that are not covered by unit tests
@@ -355,9 +354,9 @@ fn test_incremental_bowyer_watson_insert_vertex_is_transactional_on_duplicate() 
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
     ];
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
-    let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+    let mut algorithm = IncrementalBowyerWatson::<f64, (), (), 3>::new();
 
     let vertices_before = tds.number_of_vertices();
     let cells_before = tds.number_of_cells();

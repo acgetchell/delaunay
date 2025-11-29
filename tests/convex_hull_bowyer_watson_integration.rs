@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Integration tests for `ConvexHull` and Bowyer-Watson algorithm integration
 //!
 //! This module contains focused integration tests that verify the proper
@@ -20,7 +19,7 @@ use delaunay::vertex;
 
 /// Helper function to analyze facet sharing from a single map computation
 /// Returns (`boundary_count`, `internal_count`, `invalid_count`)
-fn analyze_facet_sharing(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> (usize, usize, usize) {
+fn analyze_facet_sharing(tds: &Tds<f64, (), (), 3>) -> (usize, usize, usize) {
     let facet_to_cells = tds
         .build_facet_to_cells_map()
         .expect("facet map should build successfully in integration test");
@@ -42,7 +41,7 @@ fn analyze_facet_sharing(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> (usize, u
 }
 
 /// Helper function to analyze triangulation state
-fn analyze_triangulation_state(tds: &Tds<f64, Option<()>, Option<()>, 3>, label: &str) {
+fn analyze_triangulation_state(tds: &Tds<f64, (), (), 3>, label: &str) {
     // Use the optimized function that computes the map once
     let (boundary_count, internal_count, invalid_count) = analyze_facet_sharing(tds);
 
@@ -72,7 +71,7 @@ fn test_comprehensive_hull_extension_execution() {
         vertex!([0.0, 0.0, 1.0]),
     ];
 
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+    let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
     let mut algorithm = IncrementalBowyerWatson::new();
 
     // Verify initial state is valid and analyze facet structure
@@ -240,7 +239,7 @@ fn test_mixed_insertion_strategies() {
         vertex!([0.0, 0.0, 1.0]),
     ];
 
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+    let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
     let mut algorithm = IncrementalBowyerWatson::new();
 
     // Focused test with minimal vertices to verify both main insertion strategies
@@ -302,7 +301,7 @@ fn test_algorithm_state_management() {
         vertex!([0.0, 0.0, 1.0]),
     ];
 
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+    let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
     let mut algorithm = IncrementalBowyerWatson::new();
 
     // Perform insertions to populate internal state and statistics

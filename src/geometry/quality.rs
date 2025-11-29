@@ -208,7 +208,7 @@ where
 ///     vertex!([1.0, 0.0]),
 ///     vertex!([0.5, 0.866]), // approximately sqrt(3)/2
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
 /// let cell_key = tds.cell_keys().next().unwrap();
 ///
 /// let ratio = radius_ratio(&tds, cell_key).unwrap();
@@ -304,7 +304,7 @@ where
 ///     vertex!([1.0, 0.0]),
 ///     vertex!([0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
 /// let cell_key = tds.cell_keys().next().unwrap();
 ///
 /// let norm_vol = normalized_volume(&tds, cell_key).unwrap();
@@ -405,7 +405,7 @@ mod tests {
                 #[test]
                 fn $test_name() {
                     let vertices = $vertices;
-                    let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                    let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
                     let cell_key = tds.cell_keys().next().unwrap();
 
                     // Test radius_ratio
@@ -426,7 +426,7 @@ mod tests {
                     fn [<$test_name _scale_invariance>]() {
                         // Test scale invariance by scaling coordinates
                         let vertices_base = $vertices;
-                        let tds_base: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices_base).unwrap();
+                        let tds_base: Tds<f64, (), (), $dim> = Tds::new(&vertices_base).unwrap();
                         let key_base = tds_base.cell_keys().next().unwrap();
 
                         // Scale by 10x
@@ -434,7 +434,7 @@ mod tests {
                             let coords: [f64; $dim] = v.point().coords().iter().map(|&c| c * 10.0).collect::<Vec<_>>().try_into().unwrap();
                             vertex!(coords)
                         }).collect();
-                        let tds_scaled: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices_scaled).unwrap();
+                        let tds_scaled: Tds<f64, (), (), $dim> = Tds::new(&vertices_scaled).unwrap();
                         let key_scaled = tds_scaled.cell_keys().next().unwrap();
 
                         let ratio_base = radius_ratio(&tds_base, key_base).unwrap();
@@ -450,7 +450,7 @@ mod tests {
                     fn [<$test_name _translation_invariance>]() {
                         // Test translation invariance
                         let vertices_base = $vertices;
-                        let tds_base: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices_base).unwrap();
+                        let tds_base: Tds<f64, (), (), $dim> = Tds::new(&vertices_base).unwrap();
                         let key_base = tds_base.cell_keys().next().unwrap();
 
                         // Translate by [5.0, 5.0, ...]
@@ -458,7 +458,7 @@ mod tests {
                             let coords: [f64; $dim] = v.point().coords().iter().map(|&c| c + 5.0).collect::<Vec<_>>().try_into().unwrap();
                             vertex!(coords)
                         }).collect();
-                        let tds_translated: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices_translated).unwrap();
+                        let tds_translated: Tds<f64, (), (), $dim> = Tds::new(&vertices_translated).unwrap();
                         let key_translated = tds_translated.cell_keys().next().unwrap();
 
                         let ratio_base = radius_ratio(&tds_base, key_base).unwrap();
@@ -562,7 +562,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([2.0, 0.001]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Test radius_ratio
@@ -627,7 +627,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.5, 0.866_025]),
         ];
-        let tds_good: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_good).unwrap();
+        let tds_good: Tds<f64, (), (), 2> = Tds::new(&vertices_good).unwrap();
         let cell_key_good = tds_good.cell_keys().next().unwrap();
 
         // Poor quality triangle (very flat)
@@ -636,7 +636,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.5, 0.01]), // Nearly flat
         ];
-        let tds_poor: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_poor).unwrap();
+        let tds_poor: Tds<f64, (), (), 2> = Tds::new(&vertices_poor).unwrap();
         let cell_key_poor = tds_poor.cell_keys().next().unwrap();
 
         let ratio_good = radius_ratio(&tds_good, cell_key_good).unwrap();
@@ -663,7 +663,7 @@ mod tests {
             vertex!([1.0f32, 0.0f32]),
             vertex!([0.5f32, 0.866f32]), // approximately sqrt(3)/2
         ];
-        let tds: Tds<f32, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f32, (), (), 2> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Test radius_ratio
@@ -691,10 +691,8 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([2.0, 0.0]), // Collinear
         ];
-        let tds_result: Result<
-            Tds<f64, Option<()>, Option<()>, 2>,
-            TriangulationConstructionError,
-        > = Tds::new(&vertices);
+        let tds_result: Result<Tds<f64, (), (), 2>, TriangulationConstructionError> =
+            Tds::new(&vertices);
 
         assert!(
             matches!(
@@ -713,7 +711,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([1.000_000_1, 0.000_000_1]), // Nearly duplicate
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Either should error or produce very poor quality
@@ -730,7 +728,7 @@ mod tests {
             vertex!([1e10, 0.0]),
             vertex!([1e-10, 1e10]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Should compute without panicking
@@ -758,7 +756,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 6> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 6> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         let ratio = radius_ratio(&tds, cell_key).unwrap();
@@ -780,7 +778,7 @@ mod tests {
                 #[test]
                 fn $test_name() {
                     let vertices = $vertices;
-                    let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                    let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
                     let cell_key = tds.cell_keys().next().unwrap();
 
                     if let Ok(ratio) = radius_ratio(&tds, cell_key) {
@@ -858,7 +856,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.5, 0.866_025]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
 
         // Create an invalid key (not in the SlotMap)
         let invalid_key = CellKey::from(KeyData::from_ffi(u64::MAX));
@@ -909,7 +907,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.5, 0.866_025]),
         ];
-        let tds_best: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_best).unwrap();
+        let tds_best: Tds<f64, (), (), 2> = Tds::new(&vertices_best).unwrap();
         let key_best = tds_best.cell_keys().next().unwrap();
 
         // Medium: right triangle (acceptable quality)
@@ -918,7 +916,7 @@ mod tests {
             vertex!([3.0, 0.0]),
             vertex!([0.0, 4.0]),
         ];
-        let tds_medium: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_medium).unwrap();
+        let tds_medium: Tds<f64, (), (), 2> = Tds::new(&vertices_medium).unwrap();
         let key_medium = tds_medium.cell_keys().next().unwrap();
 
         // Worst: very flat (poor quality)
@@ -927,7 +925,7 @@ mod tests {
             vertex!([10.0, 0.0]),
             vertex!([5.0, 0.1]),
         ];
-        let tds_worst: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_worst).unwrap();
+        let tds_worst: Tds<f64, (), (), 2> = Tds::new(&vertices_worst).unwrap();
         let key_worst = tds_worst.cell_keys().next().unwrap();
 
         let ratio_best = radius_ratio(&tds_best, key_best).unwrap();
@@ -962,7 +960,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds_right: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_right).unwrap();
+        let tds_right: Tds<f64, (), (), 2> = Tds::new(&vertices_right).unwrap();
         let key_right = tds_right.cell_keys().next().unwrap();
         let ratio_right = radius_ratio(&tds_right, key_right).unwrap();
         assert_relative_eq!(ratio_right, 1.0 + 2.0_f64.sqrt(), epsilon = 0.1);
@@ -973,7 +971,7 @@ mod tests {
             vertex!([2.0, 0.0]),
             vertex!([1.0, 2.0]),
         ];
-        let tds_iso: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_iso).unwrap();
+        let tds_iso: Tds<f64, (), (), 2> = Tds::new(&vertices_iso).unwrap();
         let key_iso = tds_iso.cell_keys().next().unwrap();
         let ratio_iso = radius_ratio(&tds_iso, key_iso).unwrap();
         assert!(ratio_iso > 2.0 && ratio_iso < 5.0);
@@ -991,7 +989,7 @@ mod tests {
             vertex!([1.0f32, 0.0f32]),
             vertex!([0.5f32, 0.866f32]),
         ];
-        let tds_f32: Tds<f32, Option<()>, Option<()>, 2> = Tds::new(&vertices_f32).unwrap();
+        let tds_f32: Tds<f32, (), (), 2> = Tds::new(&vertices_f32).unwrap();
         let key_f32 = tds_f32.cell_keys().next().unwrap();
 
         let vertices_f64 = vec![
@@ -999,7 +997,7 @@ mod tests {
             vertex!([1.0f64, 0.0f64]),
             vertex!([0.5f64, 0.866_025f64]),
         ];
-        let tds_f64: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_f64).unwrap();
+        let tds_f64: Tds<f64, (), (), 2> = Tds::new(&vertices_f64).unwrap();
         let key_f64 = tds_f64.cell_keys().next().unwrap();
 
         let ratio_f32 = radius_ratio(&tds_f32, key_f32).unwrap();
@@ -1022,7 +1020,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.5, 0.866_025]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         let points = cell_points(&tds, cell_key).unwrap();
@@ -1037,7 +1035,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.5, 0.866_025]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
         let invalid_key = CellKey::from(KeyData::from_ffi(u64::MAX));
 
         let result = cell_points(&tds, invalid_key);
@@ -1116,7 +1114,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.5, 0.866_025]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Normal case should succeed
@@ -1133,7 +1131,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Should succeed with correct count
@@ -1149,10 +1147,8 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.5, 1e-15]), // Very small but non-zero height
         ];
-        let tds_result: Result<
-            Tds<f64, Option<()>, Option<()>, 2>,
-            TriangulationConstructionError,
-        > = Tds::new(&vertices);
+        let tds_result: Result<Tds<f64, (), (), 2>, TriangulationConstructionError> =
+            Tds::new(&vertices);
 
         match tds_result {
             Ok(tds) => {
@@ -1184,10 +1180,8 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1e-14]), // Very small but non-zero
         ];
-        let tds_result: Result<
-            Tds<f64, Option<()>, Option<()>, 3>,
-            TriangulationConstructionError,
-        > = Tds::new(&vertices);
+        let tds_result: Result<Tds<f64, (), (), 3>, TriangulationConstructionError> =
+            Tds::new(&vertices);
 
         match tds_result {
             Ok(tds) => {
@@ -1231,10 +1225,8 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([2.0, 1e-20]), // Nearly collinear
         ];
-        let tds_result: Result<
-            Tds<f64, Option<()>, Option<()>, 2>,
-            TriangulationConstructionError,
-        > = Tds::new(&vertices);
+        let tds_result: Result<Tds<f64, (), (), 2>, TriangulationConstructionError> =
+            Tds::new(&vertices);
 
         match tds_result {
             Ok(tds) => {

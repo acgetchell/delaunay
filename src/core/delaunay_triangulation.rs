@@ -27,6 +27,8 @@ use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{FastKernel, Kernel};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 /// Delaunay triangulation with incremental insertion support.
 ///
 /// # Type Parameters
@@ -41,6 +43,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 /// - Conflict region computation (local BFS)
 /// - Cavity extraction and filling
 /// - Local neighbor wiring (no global `assign_neighbors`)
+#[derive(Clone, Debug)]
 pub struct DelaunayTriangulation<K, U, V, const D: usize>
 where
     K: Kernel<D>,
@@ -53,17 +56,17 @@ where
     last_inserted_cell: Option<CellKey>,
 }
 
-// Simplified API for common case (f64 with FastKernel)
-impl<U, V, const D: usize> DelaunayTriangulation<FastKernel<f64>, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
-    /// Create a Delaunay triangulation from vertices using default settings (f64, fast predicates).
+// Most common case: f64 with FastKernel, no vertex or cell data
+impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
+    /// Create a Delaunay triangulation from vertices with no data (most common case).
     ///
-    /// This is the recommended constructor for most users. It uses efficient cavity-based insertion:
-    /// 1. Build initial simplex (D+1 vertices) using Bowyer-Watson
-    /// 2. Insert remaining vertices incrementally with locate → conflict → cavity → wire
+    /// This is the simplest constructor for the most common use case:
+    /// - f64 coordinates
+    /// - Fast floating-point predicates  
+    /// - No vertex data
+    /// - No cell data
+    ///
+    /// No type annotations needed! The compiler can infer everything.
     ///
     /// # Errors
     /// Returns error if initial simplex cannot be constructed or insertion fails.
@@ -71,41 +74,35 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
-    /// assert_eq!(dt.number_of_vertices(), 5);
+    /// // No type annotations needed!
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// assert_eq!(dt.number_of_vertices(), 4);
     /// ```
-    pub fn new(vertices: &[Vertex<f64, U, D>]) -> Result<Self, TriangulationConstructionError> {
+    pub fn new(vertices: &[Vertex<f64, (), D>]) -> Result<Self, TriangulationConstructionError> {
         Self::with_kernel(FastKernel::<f64>::new(), vertices)
     }
 
-    /// Create an empty Delaunay triangulation using default settings (f64, fast predicates).
+    /// Create an empty Delaunay triangulation with no data (most common case).
     ///
-    /// This creates a triangulation with no vertices or cells. Use [`insert`](Self::insert)
-    /// to add vertices incrementally.
-    ///
-    /// This is the recommended constructor for empty triangulations. It uses the same defaults
-    /// as [`new`](Self::new): f64 coordinates with fast floating-point predicates.
+    /// No type annotations needed! The compiler can infer everything.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     ///
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     /// assert_eq!(dt.number_of_vertices(), 0);
-    /// assert_eq!(dt.number_of_cells(), 0);
     /// ```
     #[must_use]
     pub fn empty() -> Self {
@@ -368,6 +365,39 @@ where
         self.tri.dim()
     }
 
+    /// Returns an iterator over all cells in the triangulation.
+    ///
+    /// This method provides access to the cells stored in the underlying
+    /// triangulation data structure. The iterator yields `(CellKey, &Cell)`
+    /// pairs for each cell in the triangulation.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over `(CellKey, &Cell<K::Scalar, U, V, D>)` pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// for (cell_key, cell) in dt.cells() {
+    ///     println!("Cell {:?} has {} vertices", cell_key, cell.number_of_vertices());
+    /// }
+    /// ```
+    pub fn cells(&self) -> impl Iterator<Item = (CellKey, &Cell<K::Scalar, U, V, D>)> {
+        self.tri.tds.cells()
+    }
+
     /// Returns a reference to the underlying triangulation data structure.
     ///
     /// This provides access to the purely combinatorial Tds layer for
@@ -612,6 +642,45 @@ where
         self.tri.tds.validate_vertex_mappings()
     }
 
+    /// Create a `DelaunayTriangulation` from a deserialized `Tds` with a default kernel.
+    ///
+    /// This is useful when you've serialized just the `Tds` and want to reconstruct
+    /// the `DelaunayTriangulation` with default kernel settings.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::geometry::kernel::FastKernel;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// // Serialize just the Tds
+    /// let json = serde_json::to_string(dt.tds()).unwrap();
+    ///
+    /// // Deserialize Tds and reconstruct DelaunayTriangulation
+    /// let tds: Tds<f64, (), (), 4> = serde_json::from_str(&json).unwrap();
+    /// let reconstructed = DelaunayTriangulation::from_tds(tds, FastKernel::new());
+    /// assert_eq!(reconstructed.number_of_vertices(), 5);
+    /// ```
+    #[must_use]
+    pub const fn from_tds(tds: Tds<K::Scalar, U, V, D>, kernel: K) -> Self {
+        Self {
+            tri: Triangulation { kernel, tds },
+            last_inserted_cell: None,
+        }
+    }
+
     /// Validate cell mapping consistency.
     ///
     /// Checks that all cell neighbor pointers are valid and correspond
@@ -694,6 +763,36 @@ where
                 ),
             },
         })
+    }
+}
+
+// Custom Serialize implementation that only serializes the Tds
+impl<K, U, V, const D: usize> Serialize for DelaunayTriangulation<K, U, V, D>
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Only serialize the Tds; kernel can be reconstructed on deserialization
+        self.tri.tds.serialize(serializer)
+    }
+}
+
+// Custom Deserialize for the common case: FastKernel<f64>
+impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<FastKernel<f64>, (), (), D>
+where
+    Tds<f64, (), (), D>: Deserialize<'de>,
+{
+    fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
+    where
+        De: Deserializer<'de>,
+    {
+        let tds = Tds::deserialize(deserializer)?;
+        Ok(Self::from_tds(tds, FastKernel::new()))
     }
 }
 

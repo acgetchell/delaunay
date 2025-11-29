@@ -29,9 +29,9 @@
 //! ];
 //!
 //! // Create a 3D triangulation with cells
-//! let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+//! let dt: DelaunayTriangulation<_, (), (), 3> =
 //!     DelaunayTriangulation::new(&vertices).unwrap();
-//! let (cell_key, cell) = dt.tds().cells().next().unwrap();
+//! let (cell_key, cell) = dt.cells().next().unwrap();
 //! assert_eq!(cell.number_of_vertices(), 4);
 //! ```
 
@@ -170,7 +170,7 @@ pub enum CellValidationError {
 ///     vertex!([1.0, 0.0]),
 ///     vertex!([0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
 ///
 /// // Get first cell and iterate over vertex keys
 /// let (cell_key, cell) = tds.cells().next().unwrap();
@@ -440,7 +440,7 @@ where
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// let (_, cell) = tds.cells().next().unwrap();
     /// let vkey = cell.vertices()[0];
     ///
@@ -476,7 +476,7 @@ where
     ///     vertex!([0.0, 1.0]),
     ///     vertex!([1.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// let mut cells_iter = tds.cells().map(|(_, cell)| cell);
     /// let cell1 = cells_iter.next().unwrap();
     /// let cell2 = cells_iter.next().unwrap();
@@ -510,7 +510,7 @@ where
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// let (_, cell) = tds.cells().next().unwrap();
     ///
     /// for (idx, &vkey) in cell.vertices_enumerated() {
@@ -543,7 +543,7 @@ where
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// let (_, cell) = tds.cells().next().unwrap();
     ///
     /// if let Some(neighbors) = cell.neighbors() {
@@ -573,7 +573,7 @@ where
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// let (_, cell) = tds.cells().next().unwrap();
     ///
     /// for &vkey in cell.vertices() {
@@ -668,7 +668,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     /// let cell_key = tds.cells().next().unwrap().0;
     /// let cell = &tds.get_cell(cell_key).unwrap();
     /// assert_eq!(cell.number_of_vertices(), 4);
@@ -696,11 +696,11 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (_, cell) = dt.tds().cells().next().unwrap();
-    /// assert_ne!(cell.uuid(), Uuid::nil());
-    /// ```
+/// let dt: DelaunayTriangulation<_, (), (), 3> =
+///     DelaunayTriangulation::new(&vertices).unwrap();
+/// let (_, cell) = dt.cells().next().unwrap();
+/// assert_ne!(cell.uuid(), Uuid::nil());
+/// ```
     #[inline]
     pub const fn uuid(&self) -> Uuid {
         self.uuid
@@ -727,7 +727,7 @@ where
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let mut tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// // Use clear_all_neighbors() which is the public API for this operation
     /// tds.clear_all_neighbors();
     /// let cell_key = tds.cells().next().unwrap().0;
@@ -769,7 +769,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     /// let cell_key = tds.cells().next().unwrap().0;
     /// let cell = &tds.get_cell(cell_key).unwrap();
     /// let uuids = cell.vertex_uuids(&tds).unwrap();
@@ -819,7 +819,7 @@ where
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// let cell_key = tds.cells().next().unwrap().0;
     /// let cell = &tds.get_cell(cell_key).unwrap();
     /// let uuids: Vec<_> = cell.vertex_uuid_iter(&tds).collect::<Result<Vec<_>, _>>().unwrap();
@@ -854,11 +854,11 @@ where
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (_, cell) = dt.tds().cells().next().unwrap();
-    /// assert_eq!(cell.dim(), 3);
-    /// ```
+/// let dt: DelaunayTriangulation<_, (), (), 3> =
+///     DelaunayTriangulation::new(&vertices).unwrap();
+/// let (_, cell) = dt.cells().next().unwrap();
+/// assert_eq!(cell.dim(), 3);
+/// ```
     #[inline]
     pub const fn dim(&self) -> usize {
         D
@@ -898,9 +898,9 @@ where
     ///     vertex!([1.0, 2.0, 1.0]),
     ///     vertex!([1.0, 1.0, 2.0]),
     /// ];
-    /// let dt1: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+    /// let dt1: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulation::new(&vertices1).unwrap();
-    /// let dt2: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+    /// let dt2: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulation::new(&vertices2).unwrap();
     /// let cell1 = dt1.tds().cells().next().unwrap().1.clone();
     /// let cell2 = dt2.tds().cells().next().unwrap().1.clone();
@@ -918,7 +918,7 @@ where
     /// use delaunay::core::cell::Cell;
     ///
     /// // Empty vector produces empty FastHashMap
-    /// let empty_cells: Vec<Cell<f64, Option<()>, Option<()>, 3>> = vec![];
+    /// let empty_cells: Vec<Cell<f64, (), (), 3>> = vec![];
     /// let empty_map = Cell::into_hashmap(empty_cells);
     /// assert!(empty_map.is_empty());
     /// ```
@@ -967,11 +967,11 @@ where
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (_, cell) = dt.tds().cells().next().unwrap();
-    /// assert!(cell.is_valid().is_ok());
-    /// ```
+/// let dt: DelaunayTriangulation<_, (), (), 3> =
+///     DelaunayTriangulation::new(&vertices).unwrap();
+/// let (_, cell) = dt.cells().next().unwrap();
+/// assert!(cell.is_valid().is_ok());
+/// ```
     /// Phase 3A: Updated to use vertices (validation without full vertex data)
     /// For full validation including vertex data, use `is_valid_with_tds(&tds)`
     pub fn is_valid(&self) -> Result<(), CellValidationError> {
@@ -1113,7 +1113,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// let cell_key = tds.cell_keys().next().unwrap();
     /// let facet_views = Cell::facet_views_from_tds(&tds, cell_key).expect("Failed to get facet views");
@@ -1181,8 +1181,8 @@ where
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let tds1: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    /// let tds2: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds1: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+    /// let tds2: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     ///
     /// let cell1 = tds1.cells().next().unwrap().1;
     /// let cell2 = tds2.cells().next().unwrap().1;
@@ -1205,8 +1205,8 @@ where
     ///     vertex!([2.0, 0.0]),  // Different coordinate
     ///     vertex!([0.0, 2.0]),  // Different coordinate
     /// ];
-    /// let tds1: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices1).unwrap();
-    /// let tds2: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices2).unwrap();
+    /// let tds1: Tds<f64, (), (), 2> = Tds::new(&vertices1).unwrap();
+    /// let tds2: Tds<f64, (), (), 2> = Tds::new(&vertices2).unwrap();
     ///
     /// let cell1 = tds1.cells().next().unwrap().1;
     /// let cell2 = tds2.cells().next().unwrap().1;
@@ -1285,7 +1285,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// let cell_key = tds.cell_keys().next().unwrap();
     /// let facet_iter = Cell::facet_view_iter(&tds, cell_key).expect("Failed to get facet iterator");
@@ -1309,7 +1309,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// let cell_key = tds.cell_keys().next().unwrap();
     /// let facet_iter = Cell::facet_view_iter(&tds, cell_key).expect("Failed to get facet iterator");
@@ -1467,815 +1467,23 @@ mod tests {
     use super::*;
     use crate::core::vertex::vertex;
     use crate::geometry::point::Point;
-    use crate::geometry::predicates::{insphere, insphere_distance};
+    use crate::geometry::predicates::insphere;
     use crate::geometry::util::{circumcenter, circumradius, circumradius_with_center};
     use approx::assert_relative_eq;
-    use slotmap::KeyData;
     use std::{cmp, collections::hash_map::DefaultHasher, hash::Hasher};
 
     // Type aliases for commonly used types to reduce repetition
-    type TestVertex3D = Vertex<f64, Option<()>, 3>;
-    type TestVertex2D = Vertex<f64, Option<()>, 2>;
+    type TestVertex3D = Vertex<f64, (), 3>;
+    type TestVertex2D = Vertex<f64, (), 2>;
 
-    use crate::core::triangulation_data_structure::Tds;
-
-    // =============================================================================
-    // HELPER FUNCTIONS
-    // =============================================================================
-
-    /// Simplified helper function to test basic cell properties
-    fn assert_cell_properties<T, U, V, const D: usize>(
-        cell: &Cell<T, U, V, D>,
-        expected_vertices: usize,
-        expected_dim: usize,
-    ) where
-        T: CoordinateScalar,
-        U: DataType,
-        V: DataType,
-    {
-        assert_eq!(cell.number_of_vertices(), expected_vertices);
-        assert_eq!(cell.dim(), expected_dim);
-        assert!(!cell.uuid().is_nil());
-    }
-
-    // Helper functions for creating common test data
-    fn create_test_vertices_3d() -> Vec<TestVertex3D> {
-        vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ]
-    }
-
-    fn create_test_vertices_2d() -> Vec<TestVertex2D> {
-        vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ]
-    }
-
-    /// Helper to create a TDS with a standard 3D tetrahedron and return (TDS, `CellKey`, Cell reference)
-    fn create_test_tds_3d() -> (Tds<f64, Option<()>, Option<()>, 3>, CellKey) {
-        let vertices = create_test_vertices_3d();
-        let tds = Tds::new(&vertices).expect("Failed to create TDS");
-        let cell_key = tds.cell_keys().next().expect("No cells in TDS");
-        (tds, cell_key)
-    }
-
-    /// Helper to create a TDS with a standard 2D triangle and return (TDS, `CellKey`)
-    fn create_test_tds_2d() -> (Tds<f64, Option<()>, Option<()>, 2>, CellKey) {
-        let vertices = create_test_vertices_2d();
-        let tds = Tds::new(&vertices).expect("Failed to create TDS");
-        let cell_key = tds.cell_keys().next().expect("No cells in TDS");
-        (tds, cell_key)
-    }
-
-    /// Helper to create a TDS with custom 3D vertices and cell data
-    #[allow(dead_code)]
-    fn create_test_tds_3d_with_cell_data<V: DataType>(
-        cell_data: V,
-    ) -> (Tds<f64, Option<()>, V, 3>, CellKey) {
-        let vertices = create_test_vertices_3d();
-        let mut tds = Tds::new(&vertices).expect("Failed to create TDS");
-        let cell_key = tds.cell_keys().next().expect("No cells in TDS");
-        // Set cell data
-        if let Some(cell) = tds.cells_mut().get_mut(cell_key) {
-            cell.data = Some(cell_data);
-        }
-        (tds, cell_key)
-    }
+    use crate::geometry::kernel::FastKernel;
+    use crate::prelude::DelaunayTriangulation;
 
     // =============================================================================
-    // CONVENIENCE MACRO TESTS
+    // DIMENSION-PARAMETERIZED TEST MACRO
     // =============================================================================
-    // Tests covering the cell! macro functionality to ensure it works correctly
-    // with different scenarios including vertex arrays and optional data.
-
-    #[test]
-    fn cell_macro_without_data() {
-        // Test the cell! macro without data (explicit type annotation required)
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]), // Need 4 vertices for 3D cell
-        ];
-
-        // Phase 3A: Create TDS to get cell with context
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
-
-        assert_eq!(cell.number_of_vertices(), 4);
-        assert_eq!(cell.dim(), 3);
-        assert!(cell.data.is_none());
-        assert!(!cell.uuid().is_nil());
-
-        // Verify vertices match what we put in - need TDS to resolve keys
-        for (original, &vkey) in vertices.iter().zip(cell.vertices().iter()) {
-            let result = &tds.get_vertex_by_key(vkey).unwrap();
-            assert_relative_eq!(
-                original.point().coords().as_slice(),
-                result.point().coords().as_slice(),
-                epsilon = f64::EPSILON
-            );
-        }
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Cell without data: {cell:?}");
-    }
-
-    // =============================================================================
-    // CELL EQUALITY TESTS
-    // =============================================================================
-
-    #[test]
-    fn test_eq_by_vertices_same_coordinates_different_tds() {
-        println!("Testing eq_by_vertices with same coordinates across different TDS");
-
-        // Create two separate TDS instances with identical vertex coordinates
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        let cell1 = tds1.cells().next().unwrap().1;
-        let cell2 = tds2.cells().next().unwrap().1;
-
-        // Despite different TDS instances (and thus different vertex keys),
-        // cells should be equal by coordinates
-        assert!(cell1.eq_by_vertices(&tds1, cell2, &tds2));
-        println!("  ✓ Cells from different TDS with same coordinates are equal");
-    }
-
-    #[test]
-    fn test_eq_by_vertices_different_coordinates() {
-        println!("Testing eq_by_vertices with different coordinates");
-
-        let vertices1 = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let vertices2 = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([2.0, 0.0, 0.0]), // Different
-            vertex!([0.0, 2.0, 0.0]), // Different
-            vertex!([0.0, 0.0, 2.0]), // Different
-        ];
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
-
-        let cell1 = tds1.cells().next().unwrap().1;
-        let cell2 = tds2.cells().next().unwrap().1;
-
-        // Cells with different coordinates should not be equal
-        assert!(!cell1.eq_by_vertices(&tds1, cell2, &tds2));
-        println!("  ✓ Cells with different coordinates are not equal");
-    }
-
-    #[test]
-    fn test_eq_by_vertices_2d() {
-        println!("Testing eq_by_vertices in 2D");
-
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
-        let tds1: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-
-        let cell1 = tds1.cells().next().unwrap().1;
-        let cell2 = tds2.cells().next().unwrap().1;
-
-        assert!(cell1.eq_by_vertices(&tds1, cell2, &tds2));
-        println!("  ✓ 2D cells with same coordinates are equal");
-    }
-
-    #[test]
-    fn test_eq_by_vertices_order_independence() {
-        println!("Testing eq_by_vertices is order-independent");
-
-        // Create two TDS with vertices in different orders
-        let vertices1 = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        // Different order but same coordinates
-        let vertices2 = vec![
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-        ];
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
-
-        // Both should create the same cell structure (same simplex)
-        let cell1 = tds1.cells().next().unwrap().1;
-        let cell2 = tds2.cells().next().unwrap().1;
-
-        // Should be equal regardless of vertex order in input
-        assert!(cell1.eq_by_vertices(&tds1, cell2, &tds2));
-        println!("  ✓ Cell comparison is order-independent");
-    }
-
-    #[test]
-    fn test_eq_by_vertices_same_tds() {
-        println!("Testing eq_by_vertices on cells from same TDS");
-
-        // Create TDS with multiple cells
-        // Use an interior vertex that is offset from the tetrahedron's circumcenter
-        // to avoid pathological degeneracy in robust Delaunay insertion.
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.2, 0.2, 0.2]), // Interior vertex to create multiple cells without circumcenter degeneracy
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        // Get two different cells
-        let mut cells = tds.cells();
-        let cell1 = cells.next().unwrap().1;
-        let cell2 = cells.next().unwrap().1;
-
-        // They should not be equal (different vertex sets)
-        assert!(!cell1.eq_by_vertices(&tds, cell2, &tds));
-
-        // A cell should be equal to itself
-        assert!(cell1.eq_by_vertices(&tds, cell1, &tds));
-        println!("  ✓ Cell equality within same TDS works correctly");
-    }
-
-    #[test]
-    fn test_eq_by_vertices_with_floating_point_precision() {
-        println!("Testing eq_by_vertices respects Vertex::PartialEq precision");
-
-        // Vertex::PartialEq uses ordered_equals which handles floating point comparison
-        let vertices1 = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        // Exact same coordinates
-        let vertices2 = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
-
-        let cell1 = tds1.cells().next().unwrap().1;
-        let cell2 = tds2.cells().next().unwrap().1;
-
-        assert!(cell1.eq_by_vertices(&tds1, cell2, &tds2));
-        println!("  ✓ Exact floating point values are equal");
-    }
-
-    #[test]
-    fn cell_macro_with_data() {
-        // Test the cell! macro with data by creating TDS, cloning cell, and modifying
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-
-        // Build TDS, then clone the first cell and set data
-        let tds: Tds<f64, Option<()>, i32, 3> = Tds::new(&vertices).unwrap();
-        let (_, cell_ref) = tds.cells().next().unwrap();
-        let mut cell = cell_ref.clone();
-        cell.data = Some(42);
-
-        assert_eq!(cell.number_of_vertices(), 4);
-        assert_eq!(cell.dim(), 3);
-        assert_eq!(cell.data.unwrap(), 42);
-        assert!(!cell.uuid().is_nil());
-
-        // Verify against the same TDS instance
-        for (original, &vkey) in vertices.iter().zip(cell.vertices().iter()) {
-            let result = &tds.get_vertex_by_key(vkey).unwrap();
-            assert_relative_eq!(
-                original.point().coords().as_slice(),
-                result.point().coords().as_slice(),
-                epsilon = f64::EPSILON
-            );
-        }
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Cell with data: {cell:?}");
-    }
-
-    #[test]
-    fn cell_with_vertex_data() {
-        // Phase 3A: Test cells with vertex data through TDS
-        // Don't use cell! macro since we need TDS context for vertex data access
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0], 1),
-            vertex!([1.0, 0.0, 0.0], 2),
-            vertex!([0.0, 1.0, 0.0], 3),
-            vertex!([0.0, 0.0, 1.0], 4), // Need 4 vertices for 3D cell
-        ];
-
-        // Create TDS which creates cells from vertices
-        let tds: Tds<f64, i32, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
-
-        assert_eq!(cell.number_of_vertices(), 4);
-        assert_eq!(cell.dim(), 3);
-
-        // Check vertex data through TDS - vertices() returns keys
-        for (expected_data, &vkey) in [1, 2, 3, 4].iter().zip(cell.vertices().iter()) {
-            let vertex = &tds.get_vertex_by_key(vkey).unwrap();
-            assert_eq!(vertex.data.unwrap(), *expected_data);
-        }
-    }
-
-    // Phase 3A: CellBuilder test removed
-    // CellBuilder is deprecated in Phase 3A. Cells should be created through TDS.
-    // The cell! macro now creates a temporary TDS internally for testing purposes.
-
-    // =============================================================================
-    // TRAIT IMPLEMENTATION TESTS
-    // =============================================================================
-    // Tests covering core Rust traits like PartialEq, PartialOrd, Hash, Clone
-
-    #[test]
-    fn cell_partial_eq() {
-        // Phase 3A: Test PartialEq using cells from TDS
-        let vertices = vec![
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0]),
-        ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell1) = tds.cells().next().unwrap();
-        let cell2 = cell1.clone();
-
-        // Test equality
-        assert_eq!(*cell1, cell2);
-        assert_eq!(cell1.uuid(), cell2.uuid()); // Same cell, same UUID after clone
-        assert_eq!(cell1.vertices(), cell2.vertices());
-
-        // Test cloned cell
-        let cell3 = cell1.clone();
-        assert_eq!(*cell1, cell3);
-    }
-
-    #[test]
-    fn cell_partial_ord() {
-        // Phase 3A: Test PartialOrd using TDS with multiple cells
-        let all_vertices = vec![
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 1.0, 1.0]),
-        ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&all_vertices).unwrap();
-        let cells: Vec<_> = tds.cells().map(|(_, cell)| cell).collect();
-
-        if cells.len() >= 2 {
-            // Test ordering between different cells
-            let cell1 = cells[0];
-            let cell2 = cells[1];
-
-            // At least one ordering relationship should hold
-            let has_ordering = cell1 != cell2 || cell1 == cell2;
-            assert!(has_ordering, "Cells should have some ordering relationship");
-        }
-    }
-
-    #[test]
-    fn cell_hash() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0]),
-        ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell1) = tds.cells().next().unwrap();
-        let cell2 = cell1.clone();
-
-        let mut hasher1 = DefaultHasher::new();
-        let mut hasher2 = DefaultHasher::new();
-
-        cell1.hash(&mut hasher1);
-        cell2.hash(&mut hasher2);
-
-        // Same vertices should produce same hash (Eq/Hash contract)
-        assert_eq!(*cell1, cell2); // They are equal by vertices
-        assert_eq!(hasher1.finish(), hasher2.finish()); // Therefore hashes must be equal
-        // Note: UUID is same since cell2 is a clone
-        assert_eq!(cell1.uuid(), cell2.uuid());
-    }
-
-    // Phase 3A: Test removed - neighbors now use CellKey not UUID
-    // Neighbors can only be set through TDS methods, not directly.
-    // The hash implementation correctly ignores neighbors for Eq/Hash contract.
-
-    #[test]
-    fn cell_hash_distinct_data() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0]),
-        ];
-        let tds = Tds::<f64, Option<()>, i32, 3>::new(&vertices).unwrap();
-        let (_, cell_ref) = tds.cells().next().unwrap();
-        let mut cell1 = cell_ref.clone();
-        cell1.data = Some(42);
-        let mut cell2 = cell_ref.clone();
-        cell2.data = Some(24);
-
-        let mut hasher1 = DefaultHasher::new();
-        let mut hasher2 = DefaultHasher::new();
-
-        cell1.hash(&mut hasher1);
-        cell2.hash(&mut hasher2);
-
-        // Same vertices should produce same hash despite different data (Eq/Hash contract)
-        assert_eq!(cell1, cell2); // They are equal by vertices
-        assert_eq!(hasher1.finish(), hasher2.finish()); // Therefore hashes must be equal
-        // Note: Data is different but excluded from hashing to maintain Eq/Hash contract
-        assert_ne!(cell1.data, cell2.data);
-    }
-
-    #[test]
-    fn cell_clone() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 1.0], 1),
-            vertex!([0.0, 1.0, 0.0], 1),
-            vertex!([1.0, 0.0, 0.0], 1),
-            vertex!([1.0, 1.0, 1.0], 2),
-        ];
-        let tds = Tds::<f64, i32, i32, 3>::new(&vertices).unwrap();
-        let (_, cell_ref) = tds.cells().next().unwrap();
-        let mut cell1 = cell_ref.clone();
-        cell1.data = Some(42);
-        let cell2 = cell1.clone();
-
-        assert_eq!(cell1, cell2);
-    }
-
-    #[test]
-    fn cell_eq_trait() {
-        // Phase 3A: Test Eq trait using TDS
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell1) = tds.cells().next().unwrap();
-
-        // Test Eq trait (reflexivity)
-        assert_eq!(cell1, cell1); // reflexive
-
-        // Test cloned cell equals original
-        let cell1_clone = cell1.clone();
-        assert_eq!(*cell1, cell1_clone); // same vertex keys after clone
-    }
-
-    #[test]
-    fn cell_ordering_edge_cases() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell1) = tds.cells().next().unwrap();
-        let cell2 = cell1.clone();
-
-        // Test that equal cells are not less than each other
-        assert_ne!(cell1.partial_cmp(&cell2), Some(cmp::Ordering::Less));
-        assert_ne!(cell2.partial_cmp(cell1), Some(cmp::Ordering::Less));
-        assert!(*cell1 <= cell2);
-        assert!(cell2 <= *cell1);
-        assert!(*cell1 >= cell2);
-        assert!(cell2 >= *cell1);
-    }
-    // =============================================================================
-    // CORE CELL METHODS TESTS
-    // =============================================================================
-    // Tests covering core cell functionality including basic properties, containment
-    // checks, facet operations, and other fundamental cell methods.
-
-    #[test]
-    fn cell_number_of_vertices() {
-        let (tds_2d, cell_key_2d) = create_test_tds_2d();
-        let triangle = tds_2d.get_cell(cell_key_2d).unwrap();
-        assert_eq!(triangle.number_of_vertices(), 3);
-
-        let (tds_3d, cell_key_3d) = create_test_tds_3d();
-        let tetrahedron = tds_3d.get_cell(cell_key_3d).unwrap();
-        assert_eq!(tetrahedron.number_of_vertices(), 4);
-    }
-
-    #[test]
-    fn cell_dim() {
-        let (tds_2d, cell_key_2d) = create_test_tds_2d();
-        let triangle = tds_2d.get_cell(cell_key_2d).unwrap();
-        assert_eq!(triangle.dim(), 2);
-
-        let (tds_3d, cell_key_3d) = create_test_tds_3d();
-        let tetrahedron = tds_3d.get_cell(cell_key_3d).unwrap();
-        assert_eq!(tetrahedron.dim(), 3);
-    }
-
-    #[test]
-    fn cell_contains_vertex() {
-        let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
-        let vertex2 = vertex!([0.0, 1.0, 0.0], 1);
-        let vertex3 = vertex!([1.0, 0.0, 0.0], 1);
-        let vertex4 = vertex!([1.0, 1.0, 1.0], 2);
-
-        // Create TDS to get VertexKeys
-        let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let tds = Tds::<f64, i32, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
-
-        // Get vertex keys from TDS
-        let vertex_keys: Vec<_> = tds.vertices().map(|(k, _)| k).collect();
-
-        assert!(cell.contains_vertex(vertex_keys[0]));
-        assert!(cell.contains_vertex(vertex_keys[1]));
-        assert!(cell.contains_vertex(vertex_keys[2]));
-        assert!(cell.contains_vertex(vertex_keys[3]));
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Cell: {cell:?}");
-    }
-
-    #[test]
-    fn cell_has_vertex_in_common() {
-        // Test has_vertex_in_common (replacement for deprecated contains_vertex_of)
-        let vertices1 = vec![
-            vertex!([0.0, 0.0, 1.0], 1),
-            vertex!([0.0, 1.0, 0.0], 1),
-            vertex!([1.0, 0.0, 0.0], 1),
-            vertex!([1.0, 1.0, 1.0], 2),
-        ];
-        let tds1 = Tds::<f64, i32, i32, 3>::new(&vertices1).unwrap();
-        let (_, cell_ref) = tds1.cells().next().unwrap();
-        let mut cell = cell_ref.clone();
-        cell.data = Some(42);
-
-        let vertices2 = vec![
-            vertex!([0.0, 0.0, 1.0], 1),
-            vertex!([0.0, 1.0, 0.0], 1),
-            vertex!([1.0, 0.0, 0.0], 1),
-            vertex!([0.0, 0.0, 0.0], 0),
-        ];
-        let tds2 = Tds::<f64, i32, i32, 3>::new(&vertices2).unwrap();
-        let (_, cell2_ref) = tds2.cells().next().unwrap();
-        let mut cell2 = cell2_ref.clone();
-        cell2.data = Some(43);
-
-        assert!(cell.has_vertex_in_common(&cell2));
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Cell: {cell:?}");
-    }
-
-    // Phase 3A: Test removed - neighbors now use CellKey and can only be set through TDS
-    // The clear_neighbors() method still exists and is tested through TDS operations.
-
-    #[test]
-    fn cell_facets_contains() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 1.0], 1),
-            vertex!([0.0, 1.0, 0.0], 1),
-            vertex!([1.0, 0.0, 0.0], 1),
-            vertex!([1.0, 1.0, 1.0], 2),
-        ];
-
-        // Create TDS to get proper cell and facet views
-        let tds = Tds::<f64, i32, i32, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-
-        let facets = Cell::facet_views_from_tds(&tds, cell_key).expect("Failed to get facets");
-
-        assert_eq!(facets.len(), 4);
-        for facet in &facets {
-            let facet_vertices = facet.vertices().expect("Failed to get facet vertices");
-            let facet_vertices_vec: Vec<_> = facet_vertices.collect();
-
-            assert!(
-                Cell::facet_views_from_tds(&tds, cell_key)
-                    .expect("Failed to get facets")
-                    .iter()
-                    .any(|f| f.vertices().is_ok_and(|fv| {
-                        let fv_vec: Vec<_> = fv.collect();
-                        fv_vec == facet_vertices_vec
-                    }))
-            );
-        }
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Facets: {facets:?}");
-    }
-
-    // =============================================================================
-    // VERTEX_UUIDS METHOD TESTS
-    // =============================================================================
-    // Comprehensive tests for the vertex_uuids method covering different scenarios.
-
-    #[test]
-    fn test_vertex_uuids_success() {
-        // Test the vertex_uuids method returns correct vertex UUIDs vector
-        let vertex1 = vertex!([0.0, 0.0, 0.0], 10);
-        let vertex2 = vertex!([1.0, 0.0, 0.0], 20);
-        let vertex3 = vertex!([0.0, 1.0, 0.0], 30);
-        let vertex4 = vertex!([0.0, 0.0, 1.0], 40);
-
-        let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let tds = Tds::<f64, i32, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
-
-        // Get vertex UUIDs
-        let vertex_uuids = cell.vertex_uuids(&tds).unwrap();
-        assert_eq!(cell.vertex_uuid_iter(&tds).count(), 4);
-
-        // Verify UUIDs match the cell's vertices using iterator
-        for (expected_uuid, returned_uuid) in cell.vertex_uuid_iter(&tds).zip(vertex_uuids.iter()) {
-            assert_eq!(expected_uuid.unwrap(), *returned_uuid);
-        }
-
-        // Verify all UUIDs are unique
-        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
-        assert_eq!(unique_uuids.len(), vertex_uuids.len());
-
-        // Verify no nil UUIDs using iterator
-        for uuid in cell.vertex_uuid_iter(&tds) {
-            assert_ne!(uuid.unwrap(), Uuid::nil());
-        }
-
-        println!("✓ vertex_uuids method returns correct vertex UUIDs");
-    }
-
-    #[test]
-    fn test_vertex_uuids_empty_cell_fails() {
-        // Test that TDS creation fails gracefully with insufficient vertices for dimension
-        // Phase 3A: Now tested through TDS which is the user-facing API
-
-        let vertices = vec![vertex!([0.0, 0.0, 0.0])];
-        let result = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices);
-
-        assert!(result.is_err());
-        let error = result.unwrap_err();
-        assert!(error.to_string().contains("Insufficient vertices"));
-
-        println!("✓ TDS construction properly validates vertex count");
-    }
-
-    #[test]
-    fn test_vertex_uuids_2d_cell() {
-        // Test vertex_uuids with a 2D cell (triangle)
-        let vertex1 = vertex!([0.0, 0.0], 1);
-        let vertex2 = vertex!([1.0, 0.0], 2);
-        let vertex3 = vertex!([0.5, 1.0], 3);
-
-        let vertices = vec![vertex1, vertex2, vertex3];
-        let tds = Tds::<f64, i32, Option<()>, 2>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
-
-        // Get vertex UUIDs
-        let vertex_uuids = cell.vertex_uuids(&tds).unwrap();
-        assert_eq!(cell.vertex_uuid_iter(&tds).count(), 3);
-
-        // Verify UUIDs match the cell's vertices using iterator
-        for (expected_uuid, returned_uuid) in cell.vertex_uuid_iter(&tds).zip(vertex_uuids.iter()) {
-            assert_eq!(expected_uuid.unwrap(), *returned_uuid);
-        }
-
-        // Verify all UUIDs are unique
-        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
-        assert_eq!(unique_uuids.len(), vertex_uuids.len());
-
-        // Verify no nil UUIDs using iterator
-        for uuid in cell.vertex_uuid_iter(&tds) {
-            assert_ne!(uuid.unwrap(), Uuid::nil());
-        }
-
-        println!("✓ vertex_uuids works correctly for 2D cells");
-    }
-
-    #[test]
-    fn test_vertex_uuids_4d_cell() {
-        // Test vertex_uuids with a 4D cell (4-simplex) using integer data
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0], 1),
-            vertex!([1.0, 0.0, 0.0, 0.0], 2),
-            vertex!([0.0, 1.0, 0.0, 0.0], 3),
-            vertex!([0.0, 0.0, 1.0, 0.0], 4),
-            vertex!([0.0, 0.0, 0.0, 1.0], 5),
-        ];
-
-        let tds = Tds::<f64, i32, Option<()>, 4>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
-
-        // Get vertex UUIDs
-        let vertex_uuids = cell.vertex_uuids(&tds).unwrap();
-        assert_eq!(cell.vertex_uuid_iter(&tds).count(), 5);
-
-        // Verify UUIDs match the cell's vertices using iterator
-        for (expected_uuid, returned_uuid) in cell.vertex_uuid_iter(&tds).zip(vertex_uuids.iter()) {
-            assert_eq!(expected_uuid.unwrap(), *returned_uuid);
-        }
-
-        // Verify all UUIDs are unique
-        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
-        assert_eq!(unique_uuids.len(), vertex_uuids.len());
-
-        // Verify vertex data integrity alongside UUIDs
-        for (i, vertex_key) in cell.vertices().iter().enumerate() {
-            let vertex = &tds.get_vertex_by_key(*vertex_key).unwrap();
-            assert_eq!(vertex.data, Some(i32::try_from(i + 1).unwrap()));
-        }
-
-        // Verify no nil UUIDs using iterator
-        for uuid in cell.vertex_uuid_iter(&tds) {
-            assert_ne!(uuid.unwrap(), Uuid::nil());
-        }
-
-        println!("✓ vertex_uuids works correctly for 4D cells");
-    }
-
-    #[test]
-    fn test_vertex_uuids_with_f32_coordinates() {
-        // Test vertex_uuids with f32 coordinates
-        let vertices = vec![
-            vertex!([0.0f32, 0.0f32, 0.0f32]),
-            vertex!([1.0f32, 0.0f32, 0.0f32]),
-            vertex!([0.0f32, 1.0f32, 0.0f32]),
-            vertex!([0.0f32, 0.0f32, 1.0f32]),
-        ];
-
-        let tds = Tds::<f32, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
-
-        // Get vertex UUIDs
-        let vertex_uuids = cell.vertex_uuids(&tds).unwrap();
-        assert_eq!(cell.vertex_uuid_iter(&tds).count(), 4);
-
-        // Verify coordinate type is preserved
-        let first_vertex_key = cell.vertices()[0];
-        let first_vertex = &tds.get_vertex_by_key(first_vertex_key).unwrap();
-        assert_relative_eq!(
-            first_vertex.point().coords()[0],
-            0.0f32,
-            epsilon = f32::EPSILON
-        );
-
-        // Verify UUIDs match the cell's vertices using iterator
-        for (expected_uuid, returned_uuid) in cell.vertex_uuid_iter(&tds).zip(vertex_uuids.iter()) {
-            assert_eq!(expected_uuid.unwrap(), *returned_uuid);
-        }
-
-        // Verify all UUIDs are unique
-        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
-        assert_eq!(unique_uuids.len(), vertex_uuids.len());
-
-        // Verify no nil UUIDs using iterator
-        for uuid in cell.vertex_uuid_iter(&tds) {
-            assert_ne!(uuid.unwrap(), Uuid::nil());
-        }
-
-        println!("✓ vertex_uuids works correctly with f32 coordinates");
-    }
-
-    // =============================================================================
-    // DIMENSIONAL TESTS
-    // =============================================================================
-    // Tests covering cells in different dimensions (1D, 2D, 3D, 4D+) and
-    // various coordinate types (f32, f64) to ensure dimensional flexibility.
+    // This macro generates comprehensive tests for each dimension (2D-5D)
+    // Keep this at the top so it's not forgotten when adding new tests!
 
     /// Macro to generate dimension-specific cell tests for dimensions 2D-5D.
     ///
@@ -2301,18 +1509,19 @@ mod tests {
                 fn $test_name() {
                     // Test basic cell creation
                     let vertices = $vertices;
-                    let tds = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices).unwrap();
-                    let (_, cell) = tds.cells().next().unwrap();
+                    let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                    let (_, cell) = dt.cells().next().unwrap();
                     assert_cell_properties(cell, $dim + 1, $dim);
                 }
 
                 pastey::paste! {
                     #[test]
                     fn [<$test_name _with_data>]() {
-                        // Test cell with data
+                        // Test cell with data - need generic constructor for non-() cell data
                         let vertices = $vertices;
-                        let tds = Tds::<f64, Option<()>, i32, $dim>::new(&vertices).unwrap();
-                        let (_, cell_ref) = tds.cells().next().unwrap();
+                        let dt: DelaunayTriangulation<FastKernel<f64>, (), i32, $dim> =
+                            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+                        let (_, cell_ref) = dt.cells().next().unwrap();
                         let mut cell = cell_ref.clone();
                         cell.data = Some(42);
                         assert_cell_properties(&cell, $dim + 1, $dim);
@@ -2321,39 +1530,40 @@ mod tests {
 
                     #[test]
                     fn [<$test_name _serialization_roundtrip>]() {
-                        // Test serialization with Some data
+                        // Test serialization with Some data - use generic constructor
                         let vertices = $vertices;
-                        let tds: Tds<f64, Option<()>, i32, $dim> = Tds::new(&vertices).unwrap();
-                        let (_, cell) = tds.cells().next().unwrap();
+                        let dt: DelaunayTriangulation<FastKernel<f64>, (), i32, $dim> =
+                            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+                        let (_, cell) = dt.cells().next().unwrap();
                         let mut cell = cell.clone();
                         cell.data = Some(99);
 
                         let serialized = serde_json::to_string(&cell).unwrap();
-                        assert!(serialized.contains("\"data\":"));
-                        let deserialized: Cell<f64, Option<()>, i32, $dim> = serde_json::from_str(&serialized).unwrap();
+                        assert!(serialized.contains("\"{data}\":"));
+                        let deserialized: Cell<f64, (), i32, $dim> = serde_json::from_str(&serialized).unwrap();
                         assert_eq!(deserialized.data, Some(99));
                         assert_eq!(deserialized.uuid(), cell.uuid());
 
-                        // Test serialization with None data
+                        // Test serialization with None data - use simple constructor
                         let vertices = $vertices;
-                        let tds: Tds<f64, Option<()>, Option<i32>, $dim> = Tds::new(&vertices).unwrap();
-                        let (_, cell) = tds.cells().next().unwrap();
+                        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                        let (_, cell) = dt.cells().next().unwrap();
 
                         let serialized = serde_json::to_string(&cell).unwrap();
-                        assert!(!serialized.contains("\"data\":"));
-                        let deserialized: Cell<f64, Option<()>, Option<i32>, $dim> = serde_json::from_str(&serialized).unwrap();
+                        assert!(!serialized.contains("\"{data}\":"));
+                        let deserialized: Cell<f64, (), Option<i32>, $dim> = serde_json::from_str(&serialized).unwrap();
                         assert_eq!(deserialized.data, None);
                     }
 
                     #[test]
                     fn [<$test_name _uuid_uniqueness>]() {
-                        // Test UUID uniqueness by creating two separate TDS instances
+                        // Test UUID uniqueness by creating two separate triangulations
                         let vertices1 = $vertices;
                         let vertices2 = $vertices;
-                        let tds1 = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices1).unwrap();
-                        let (_, cell1) = tds1.cells().next().unwrap();
-                        let tds2 = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices2).unwrap();
-                        let (_, cell2) = tds2.cells().next().unwrap();
+                        let dt1 = DelaunayTriangulation::new(&vertices1).unwrap();
+                        let (_, cell1) = dt1.cells().next().unwrap();
+                        let dt2 = DelaunayTriangulation::new(&vertices2).unwrap();
+                        let (_, cell2) = dt2.cells().next().unwrap();
                         assert_ne!(cell1.uuid(), cell2.uuid());
                         assert!(!cell1.uuid().is_nil());
                         assert!(!cell2.uuid().is_nil());
@@ -2393,12 +1603,601 @@ mod tests {
         ],
     }
 
+    // =============================================================================
+    // HELPER FUNCTIONS
+    // =============================================================================
+
+    /// Simplified helper function to test basic cell properties
+    fn assert_cell_properties<T, U, V, const D: usize>(
+        cell: &Cell<T, U, V, D>,
+        expected_vertices: usize,
+        expected_dim: usize,
+    ) where
+        T: CoordinateScalar,
+        U: DataType,
+        V: DataType,
+    {
+        assert_eq!(cell.number_of_vertices(), expected_vertices);
+        assert_eq!(cell.dim(), expected_dim);
+        assert!(!cell.uuid().is_nil());
+    }
+
+    // Helper functions for creating common test data
+    fn create_test_vertices_3d() -> Vec<TestVertex3D> {
+        vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ]
+    }
+
+    fn create_test_vertices_2d() -> Vec<TestVertex2D> {
+        vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ]
+    }
+
+    // Tests covering the cell! macro functionality to ensure it works correctly
+    // with different scenarios including vertex arrays and optional data.
+
+    #[test]
+    fn cell_macro_without_data() {
+        // Test the cell! macro without data (explicit type annotation required)
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]), // Need 4 vertices for 3D cell
+        ];
+
+        // Phase 3A: Create DT to get cell with context
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell) = dt.cells().next().unwrap();
+
+        assert_eq!(cell.number_of_vertices(), 4);
+        assert_eq!(cell.dim(), 3);
+        assert!(cell.data.is_none());
+        assert!(!cell.uuid().is_nil());
+
+        // Verify vertices match what we put in - need TDS to resolve keys
+        for (original, &vkey) in vertices.iter().zip(cell.vertices().iter()) {
+            let result = &dt.tds().get_vertex_by_key(vkey).unwrap();
+            assert_relative_eq!(
+                original.point().coords().as_slice(),
+                result.point().coords().as_slice(),
+                epsilon = f64::EPSILON
+            );
+        }
+
+        // Human readable output for cargo test -- --nocapture
+        println!("Cell without data: {cell:?}");
+    }
+
+    // =============================================================================
+    // CELL EQUALITY TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_eq_by_vertices_same_coordinates_different_tds() {
+        println!("Testing eq_by_vertices with same coordinates across different TDS");
+
+        // Create two separate TDS instances with identical vertex coordinates
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt1 = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt2 = DelaunayTriangulation::new(&vertices).unwrap();
+
+        let cell1 = dt1.cells().next().unwrap().1;
+        let cell2 = dt2.cells().next().unwrap().1;
+
+        // Despite different DT instances (and thus different vertex keys),
+        // cells should be equal by coordinates
+        assert!(cell1.eq_by_vertices(dt1.tds(), cell2, dt2.tds()));
+        println!("  ✓ Cells from different DT with same coordinates are equal");
+    }
+
+    #[test]
+    fn test_eq_by_vertices_2d() {
+        println!("Testing eq_by_vertices in 2D");
+
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt1 = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt2 = DelaunayTriangulation::new(&vertices).unwrap();
+
+        let cell1 = dt1.cells().next().unwrap().1;
+        let cell2 = dt2.cells().next().unwrap().1;
+
+        assert!(cell1.eq_by_vertices(dt1.tds(), cell2, dt2.tds()));
+        println!("  ✓ 2D cells with same coordinates are equal");
+    }
+
+    #[test]
+    fn cell_macro_with_data() {
+        // Test the cell! macro with data by creating TDS, cloning cell, and modifying
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        // Build DT with integer cell data type
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), i32, 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
+        let mut cell = cell_ref.clone();
+        cell.data = Some(42);
+
+        assert_eq!(cell.number_of_vertices(), 4);
+        assert_eq!(cell.dim(), 3);
+        assert_eq!(cell.data.unwrap(), 42);
+        assert!(!cell.uuid().is_nil());
+
+        // Verify against the same DT instance
+        for (original, &vkey) in vertices.iter().zip(cell.vertices().iter()) {
+            let result = &dt.tds().get_vertex_by_key(vkey).unwrap();
+            assert_relative_eq!(
+                original.point().coords().as_slice(),
+                result.point().coords().as_slice(),
+                epsilon = f64::EPSILON
+            );
+        }
+
+        // Human readable output for cargo test -- --nocapture
+        println!("Cell with data: {cell:?}");
+    }
+
+    #[test]
+    fn cell_with_vertex_data() {
+        // Phase 3A: Test cells with vertex data through TDS
+        // Don't use cell! macro since we need TDS context for vertex data access
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0], 1),
+            vertex!([1.0, 0.0, 0.0], 2),
+            vertex!([0.0, 1.0, 0.0], 3),
+            vertex!([0.0, 0.0, 1.0], 4), // Need 4 vertices for 3D cell
+        ];
+
+        // Create DT with vertex data - simple constructor works since cell data is ()
+        let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let (_, cell) = dt.cells().next().unwrap();
+
+        assert_eq!(cell.number_of_vertices(), 4);
+        assert_eq!(cell.dim(), 3);
+
+        // Check vertex data through DT - vertices() returns keys
+        for (expected_data, &vkey) in [1, 2, 3, 4].iter().zip(cell.vertices().iter()) {
+            let vertex = &dt.tds().get_vertex_by_key(vkey).unwrap();
+            assert_eq!(vertex.data.unwrap(), *expected_data);
+        }
+    }
+
+    // =============================================================================
+    // TRAIT IMPLEMENTATION TESTS
+    // =============================================================================
+    // Tests covering core Rust traits like PartialEq, PartialOrd, Hash, Clone
+
+    #[test]
+    fn cell_partial_eq() {
+        // Phase 3A: Test PartialEq using cells from TDS
+        let vertices = vec![
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell1) = dt.cells().next().unwrap();
+        let cell2 = cell1.clone();
+
+        // Test equality
+        assert_eq!(*cell1, cell2);
+        assert_eq!(cell1.uuid(), cell2.uuid()); // Same cell, same UUID after clone
+        assert_eq!(cell1.vertices(), cell2.vertices());
+
+        // Test cloned cell
+        let cell3 = cell1.clone();
+        assert_eq!(*cell1, cell3);
+    }
+
+    #[test]
+    fn cell_partial_ord() {
+        // Phase 3A: Test PartialOrd using TDS with multiple cells
+        let all_vertices = vec![
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 1.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&all_vertices).unwrap();
+        let cells: Vec<_> = dt.cells().map(|(_, cell)| cell).collect();
+
+        if cells.len() >= 2 {
+            // Test ordering between different cells
+            let cell1 = cells[0];
+            let cell2 = cells[1];
+
+            // At least one ordering relationship should hold
+            let has_ordering = cell1 != cell2 || cell1 == cell2;
+            assert!(has_ordering, "Cells should have some ordering relationship");
+        }
+    }
+
+    #[test]
+    fn cell_hash() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell1) = dt.cells().next().unwrap();
+        let cell2 = cell1.clone();
+
+        let mut hasher1 = DefaultHasher::new();
+        let mut hasher2 = DefaultHasher::new();
+
+        cell1.hash(&mut hasher1);
+        cell2.hash(&mut hasher2);
+
+        // Same vertices should produce same hash (Eq/Hash contract)
+        assert_eq!(*cell1, cell2); // They are equal by vertices
+        assert_eq!(hasher1.finish(), hasher2.finish()); // Therefore hashes must be equal
+        // Note: UUID is same since cell2 is a clone
+        assert_eq!(cell1.uuid(), cell2.uuid());
+    }
+
+    #[test]
+    fn cell_clone() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 1.0], 1),
+            vertex!([0.0, 1.0, 0.0], 1),
+            vertex!([1.0, 0.0, 0.0], 1),
+            vertex!([1.0, 1.0, 1.0], 2),
+        ];
+        let dt: DelaunayTriangulation<FastKernel<f64>, i32, i32, 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
+        let mut cell1 = cell_ref.clone();
+        cell1.data = Some(42);
+        let cell2 = cell1.clone();
+
+        assert_eq!(cell1, cell2);
+    }
+
+    #[test]
+    fn cell_ordering_edge_cases() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell1) = dt.cells().next().unwrap();
+        let cell2 = cell1.clone();
+
+        // Test that equal cells are not less than each other
+        assert_ne!(cell1.partial_cmp(&cell2), Some(cmp::Ordering::Less));
+        assert_ne!(cell2.partial_cmp(cell1), Some(cmp::Ordering::Less));
+        assert!(*cell1 <= cell2);
+        assert!(cell2 <= *cell1);
+        assert!(*cell1 >= cell2);
+        assert!(cell2 >= *cell1);
+    }
+    // =============================================================================
+    // CORE CELL METHODS TESTS
+    // =============================================================================
+    // Tests covering core cell functionality including basic properties, containment
+    // checks, facet operations, and other fundamental cell methods.
+
+    #[test]
+    fn cell_number_of_vertices() {
+        let vertices_2d = create_test_vertices_2d();
+        let dt_2d = DelaunayTriangulation::new(&vertices_2d).unwrap();
+        let cell_key_2d = dt_2d.tds().cell_keys().next().unwrap();
+        let triangle = dt_2d.tds().get_cell(cell_key_2d).unwrap();
+        assert_eq!(triangle.number_of_vertices(), 3);
+
+        let vertices_3d = create_test_vertices_3d();
+        let dt_3d = DelaunayTriangulation::new(&vertices_3d).unwrap();
+        let cell_key_3d = dt_3d.tds().cell_keys().next().unwrap();
+        let tetrahedron = dt_3d.tds().get_cell(cell_key_3d).unwrap();
+        assert_eq!(tetrahedron.number_of_vertices(), 4);
+    }
+
+    #[test]
+    fn cell_dim() {
+        let vertices_2d = create_test_vertices_2d();
+        let dt_2d = DelaunayTriangulation::new(&vertices_2d).unwrap();
+        let cell_key_2d = dt_2d.tds().cell_keys().next().unwrap();
+        let triangle = dt_2d.tds().get_cell(cell_key_2d).unwrap();
+        assert_eq!(triangle.dim(), 2);
+
+        let vertices_3d = create_test_vertices_3d();
+        let dt_3d = DelaunayTriangulation::new(&vertices_3d).unwrap();
+        let cell_key_3d = dt_3d.tds().cell_keys().next().unwrap();
+        let tetrahedron = dt_3d.tds().get_cell(cell_key_3d).unwrap();
+        assert_eq!(tetrahedron.dim(), 3);
+    }
+
+    #[test]
+    fn cell_contains_vertex() {
+        let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
+        let vertex2 = vertex!([0.0, 1.0, 0.0], 1);
+        let vertex3 = vertex!([1.0, 0.0, 0.0], 1);
+        let vertex4 = vertex!([1.0, 1.0, 1.0], 2);
+
+        // Create DT to get VertexKeys - use generic constructor for vertex data
+        let vertices = vec![vertex1, vertex2, vertex3, vertex4];
+        let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
+        let cell = &dt.tds().get_cell(cell_key).unwrap();
+
+        // Get vertex keys from DT
+        let vertex_keys: Vec<_> = dt.tds().vertices().map(|(k, _)| k).collect();
+
+        assert!(cell.contains_vertex(vertex_keys[0]));
+        assert!(cell.contains_vertex(vertex_keys[1]));
+        assert!(cell.contains_vertex(vertex_keys[2]));
+        assert!(cell.contains_vertex(vertex_keys[3]));
+
+        // Human readable output for cargo test -- --nocapture
+        println!("Cell: {cell:?}");
+    }
+
+    #[test]
+    fn cell_has_vertex_in_common() {
+        // Test has_vertex_in_common (replacement for deprecated contains_vertex_of)
+        let vertices1 = vec![
+            vertex!([0.0, 0.0, 1.0], 1),
+            vertex!([0.0, 1.0, 0.0], 1),
+            vertex!([1.0, 0.0, 0.0], 1),
+            vertex!([1.0, 1.0, 1.0], 2),
+        ];
+        let tds1: DelaunayTriangulation<FastKernel<f64>, i32, i32, 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices1).unwrap();
+        let (_, cell_ref) = tds1.cells().next().unwrap();
+        let mut cell = cell_ref.clone();
+        cell.data = Some(42);
+
+        let vertices2 = vec![
+            vertex!([0.0, 0.0, 1.0], 1),
+            vertex!([0.0, 1.0, 0.0], 1),
+            vertex!([1.0, 0.0, 0.0], 1),
+            vertex!([0.0, 0.0, 0.0], 0),
+        ];
+        let tds2: DelaunayTriangulation<FastKernel<f64>, i32, i32, 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices2).unwrap();
+        let (_, cell2_ref) = tds2.cells().next().unwrap();
+        let mut cell2 = cell2_ref.clone();
+        cell2.data = Some(43);
+
+        assert!(cell.has_vertex_in_common(&cell2));
+
+        // Human readable output for cargo test -- --nocapture
+        println!("Cell: {cell:?}");
+    }
+
+    // Removed: cell_facets_contains - redundant with cell_facet_views_comprehensive
+
+    // =============================================================================
+    // VERTEX_UUIDS METHOD TESTS
+    // =============================================================================
+    // Comprehensive tests for the vertex_uuids method covering different scenarios.
+
+    #[test]
+    fn test_vertex_uuids_success() {
+        // Test the vertex_uuids method returns correct vertex UUIDs vector
+        let vertex1 = vertex!([0.0, 0.0, 0.0], 10);
+        let vertex2 = vertex!([1.0, 0.0, 0.0], 20);
+        let vertex3 = vertex!([0.0, 1.0, 0.0], 30);
+        let vertex4 = vertex!([0.0, 0.0, 1.0], 40);
+
+        let vertices = vec![vertex1, vertex2, vertex3, vertex4];
+        let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
+        let cell = &dt.tds().get_cell(cell_key).unwrap();
+
+        // Get vertex UUIDs
+        let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
+        assert_eq!(cell.vertex_uuid_iter(dt.tds()).count(), 4);
+
+        // Verify UUIDs match the cell's vertices using iterator
+        for (expected_uuid, returned_uuid) in
+            cell.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
+        {
+            assert_eq!(expected_uuid.unwrap(), *returned_uuid);
+        }
+
+        // Verify all UUIDs are unique
+        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        assert_eq!(unique_uuids.len(), vertex_uuids.len());
+
+        // Verify no nil UUIDs using iterator
+        for uuid in cell.vertex_uuid_iter(dt.tds()) {
+            assert_ne!(uuid.unwrap(), Uuid::nil());
+        }
+
+        println!("✓ vertex_uuids method returns correct vertex UUIDs");
+    }
+
+    #[test]
+    fn test_vertex_uuids_empty_cell_fails() {
+        // Test that TDS creation fails gracefully with insufficient vertices for dimension
+        // Phase 3A: Now tested through TDS which is the user-facing API
+
+        let vertices = vec![vertex!([0.0, 0.0, 0.0])];
+        let result = DelaunayTriangulation::new(&vertices);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Insufficient vertices"));
+
+        println!("✓ DT construction properly validates vertex count");
+    }
+
+    #[test]
+    fn test_vertex_uuids_2d_cell() {
+        // Test vertex_uuids with a 2D cell (triangle)
+        let vertex1 = vertex!([0.0, 0.0], 1);
+        let vertex2 = vertex!([1.0, 0.0], 2);
+        let vertex3 = vertex!([0.5, 1.0], 3);
+
+        let vertices = vec![vertex1, vertex2, vertex3];
+        let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 2> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
+        let cell = &dt.tds().get_cell(cell_key).unwrap();
+
+        // Get vertex UUIDs
+        let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
+        assert_eq!(cell.vertex_uuid_iter(dt.tds()).count(), 3);
+
+        // Verify UUIDs match the cell's vertices using iterator
+        for (expected_uuid, returned_uuid) in
+            cell.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
+        {
+            assert_eq!(expected_uuid.unwrap(), *returned_uuid);
+        }
+
+        // Verify all UUIDs are unique
+        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        assert_eq!(unique_uuids.len(), vertex_uuids.len());
+
+        // Verify no nil UUIDs using iterator
+        for uuid in cell.vertex_uuid_iter(dt.tds()) {
+            assert_ne!(uuid.unwrap(), Uuid::nil());
+        }
+
+        println!("✓ vertex_uuids works correctly for 2D cells");
+    }
+
+    #[test]
+    fn test_vertex_uuids_4d_cell() {
+        // Test vertex_uuids with a 4D cell (4-simplex) using integer data
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0], 1),
+            vertex!([1.0, 0.0, 0.0, 0.0], 2),
+            vertex!([0.0, 1.0, 0.0, 0.0], 3),
+            vertex!([0.0, 0.0, 1.0, 0.0], 4),
+            vertex!([0.0, 0.0, 0.0, 1.0], 5),
+        ];
+
+        let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 4> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
+        let cell = &dt.tds().get_cell(cell_key).unwrap();
+
+        // Get vertex UUIDs
+        let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
+        assert_eq!(cell.vertex_uuid_iter(dt.tds()).count(), 5);
+
+        // Verify UUIDs match the cell's vertices using iterator
+        for (expected_uuid, returned_uuid) in
+            cell.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
+        {
+            assert_eq!(expected_uuid.unwrap(), *returned_uuid);
+        }
+
+        // Verify all UUIDs are unique
+        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        assert_eq!(unique_uuids.len(), vertex_uuids.len());
+
+        // Verify vertex data integrity alongside UUIDs
+        for (i, vertex_key) in cell.vertices().iter().enumerate() {
+            let vertex = &dt.tds().get_vertex_by_key(*vertex_key).unwrap();
+            assert_eq!(vertex.data, Some(i32::try_from(i + 1).unwrap()));
+        }
+
+        // Verify no nil UUIDs using iterator
+        for uuid in cell.vertex_uuid_iter(dt.tds()) {
+            assert_ne!(uuid.unwrap(), Uuid::nil());
+        }
+
+        println!("✓ vertex_uuids works correctly for 4D cells");
+    }
+
+    #[test]
+    fn test_vertex_uuids_with_f32_coordinates() {
+        // Test vertex_uuids with f32 coordinates
+        let vertices = vec![
+            vertex!([0.0f32, 0.0f32, 0.0f32]),
+            vertex!([1.0f32, 0.0f32, 0.0f32]),
+            vertex!([0.0f32, 1.0f32, 0.0f32]),
+            vertex!([0.0f32, 0.0f32, 1.0f32]),
+        ];
+
+        // Note: DelaunayTriangulation::new() creates FastKernel<f64> by default
+        // We need to use with_kernel to get FastKernel<f32> for f32 vertices
+        let dt: DelaunayTriangulation<FastKernel<f32>, (), (), 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
+        let cell = &dt.tds().get_cell(cell_key).unwrap();
+
+        // Get vertex UUIDs
+        let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
+        assert_eq!(cell.vertex_uuid_iter(dt.tds()).count(), 4);
+
+        // Verify coordinate type is preserved
+        let first_vertex_key = cell.vertices()[0];
+        let first_vertex = &dt.tds().get_vertex_by_key(first_vertex_key).unwrap();
+        assert_relative_eq!(
+            first_vertex.point().coords()[0],
+            0.0f32,
+            epsilon = f32::EPSILON
+        );
+
+        // Verify UUIDs match the cell's vertices using iterator
+        for (expected_uuid, returned_uuid) in
+            cell.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
+        {
+            assert_eq!(expected_uuid.unwrap(), *returned_uuid);
+        }
+
+        // Verify all UUIDs are unique
+        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        assert_eq!(unique_uuids.len(), vertex_uuids.len());
+
+        // Verify no nil UUIDs using iterator
+        for uuid in cell.vertex_uuid_iter(dt.tds()) {
+            assert_ne!(uuid.unwrap(), Uuid::nil());
+        }
+
+        println!("✓ vertex_uuids works correctly with f32 coordinates");
+    }
+
+    // =============================================================================
+    // DIMENSIONAL TESTS
+    // =============================================================================
+    // Tests covering cells in different dimensions (1D, 2D, 3D, 4D+) and
+    // various coordinate types (f32, f64) to ensure dimensional flexibility.
+    //
+    // NOTE: The main dimension tests (cell_2d, cell_3d, cell_4d, cell_5d) are
+    // generated by the test_cell_dimensions! macro at the top of this test module.
+
     // Keep 1D test separate as it's less common
     #[test]
     fn cell_1d() {
         let vertices = vec![vertex!([0.0]), vertex!([1.0])];
-        let tds = Tds::<f64, Option<()>, Option<()>, 1>::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell) = dt.cells().next().unwrap();
         assert_cell_properties(cell, 2, 1);
     }
 
@@ -2409,8 +2208,9 @@ mod tests {
             vertex!([1.0f32, 0.0f32]),
             vertex!([0.0f32, 1.0f32]),
         ];
-        let tds = Tds::<f32, Option<()>, Option<()>, 2>::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
+        let dt: DelaunayTriangulation<FastKernel<f32>, (), (), 2> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let (_, cell) = dt.cells().next().unwrap();
 
         assert_eq!(cell.number_of_vertices(), 3);
         assert_eq!(cell.dim(), 2);
@@ -2422,33 +2222,13 @@ mod tests {
         // Test that creating a 3D triangulation with insufficient vertices fails validation
         // Phase 3A: Now tested through TDS which is the user-facing API
         let vertices = vec![vertex!([0.0, 0.0, 0.0])];
-        let result = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices);
+        let result = DelaunayTriangulation::new(&vertices);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(error_msg.contains("Insufficient vertices"));
         assert!(error_msg.contains('1'));
         assert!(error_msg.contains('4'));
-    }
-
-    #[test]
-    fn cell_uuid_uniqueness() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        // Create two separate TDS instances to get different UUIDs
-        let tds1 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell1) = tds1.cells().next().unwrap();
-        let tds2 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell2) = tds2.cells().next().unwrap();
-
-        // Same vertices but different UUIDs (different TDS instances)
-        assert_ne!(cell1.uuid(), cell2.uuid());
-        assert!(!cell1.uuid().is_nil());
-        assert!(!cell2.uuid().is_nil());
     }
 
     #[test]
@@ -2459,8 +2239,8 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell) = dt.cells().next().unwrap();
 
         // Note: neighbors may be set by TDS construction, this tests cell structure
         assert!(cell.neighbors.is_some() || cell.neighbors.is_none());
@@ -2474,8 +2254,8 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell) = dt.cells().next().unwrap();
 
         assert!(cell.data.is_none());
     }
@@ -2488,8 +2268,9 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, i32, 3>::new(&vertices).unwrap();
-        let (_, cell_ref) = tds.cells().next().unwrap();
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), i32, 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
         let mut cell = cell_ref.clone();
         cell.data = Some(42);
 
@@ -2498,7 +2279,7 @@ mod tests {
 
     #[test]
     fn cell_into_hashmap_empty() {
-        let cells: Vec<Cell<f64, Option<()>, Option<()>, 3>> = Vec::new();
+        let cells: Vec<Cell<f64, (), (), 3>> = Vec::new();
         let hashmap = Cell::into_hashmap(cells);
 
         assert!(hashmap.is_empty());
@@ -2513,10 +2294,10 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
             vertex!([1.0, 1.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        // Collect cells from TDS
-        let cells_vec: Vec<_> = tds.cells().map(|(_, cell)| cell.clone()).collect();
+        // Collect cells from DT
+        let cells_vec: Vec<_> = dt.cells().map(|(_, cell)| cell.clone()).collect();
         assert!(cells_vec.len() >= 2, "Need at least 2 cells for this test");
 
         let uuid1 = cells_vec[0].uuid();
@@ -2530,7 +2311,7 @@ mod tests {
 
     #[test]
     fn cell_debug_format() {
-        // Use a simple non-degenerate 3D tetrahedron so `Tds::new` can construct
+        // Use a simple non-degenerate 3D tetrahedron so `DelaunayTriangulation::new` can construct
         // a valid simplex for debug-format testing.
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -2538,8 +2319,9 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds = Tds::<f64, Option<()>, i32, 3>::new(&vertices).unwrap();
-        let (_, cell_ref) = tds.cells().next().unwrap();
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), i32, 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
         let mut cell = cell_ref.clone();
         cell.data = Some(42);
         let debug_str = format!("{cell:?}");
@@ -2561,7 +2343,7 @@ mod tests {
     #[test]
     fn cell_to_and_from_json() {
         // Phase 3A: Test serialization through TDS context (proper way)
-        // Use a non-degenerate 3D tetrahedron so `Tds::new` can construct a
+        // Use a non-degenerate 3D tetrahedron so `DelaunayTriangulation::new` can construct a
         // valid initial simplex.
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -2569,25 +2351,25 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        // Serialize the entire TDS (includes cells with proper context)
-        let serialized = serde_json::to_string(&tds).unwrap();
+        // Serialize the entire DT (includes cells with proper context)
+        let serialized = serde_json::to_string(&dt).unwrap();
         assert!(serialized.contains("vertices"));
         assert!(serialized.contains("cells"));
 
-        // Deserialize back to TDS
-        let deserialized: Tds<f64, Option<()>, Option<()>, 3> =
+        // Deserialize back to DT
+        let deserialized: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
             serde_json::from_str(&serialized).unwrap();
 
-        // Verify TDS properties match
-        assert_eq!(deserialized.number_of_vertices(), tds.number_of_vertices());
-        assert_eq!(deserialized.number_of_cells(), tds.number_of_cells());
-        assert_eq!(deserialized.dim(), tds.dim());
+        // Verify DT properties match
+        assert_eq!(deserialized.number_of_vertices(), dt.number_of_vertices());
+        assert_eq!(deserialized.number_of_cells(), dt.number_of_cells());
+        assert_eq!(deserialized.dim(), dt.dim());
 
-        // Verify cells within TDS can be accessed
+        // Verify cells within DT can be accessed
         assert_ne!(deserialized.number_of_cells(), 0);
-        for (_cell_key, cell) in deserialized.cells() {
+        for (_cell_key, cell) in deserialized.tds().cells() {
             assert_eq!(cell.dim(), 3);
             assert_eq!(cell.number_of_vertices(), 4);
         }
@@ -2601,7 +2383,7 @@ mod tests {
 
         // Test missing required field (uuid)
         let invalid_json_missing_uuid = r#"{"data": null}"#;
-        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
+        let result: Result<Cell<f64, (), (), 3>, _> =
             serde_json::from_str(invalid_json_missing_uuid);
         assert!(result.is_err(), "Missing UUID should cause error");
         let error = result.unwrap_err().to_string();
@@ -2612,20 +2394,17 @@ mod tests {
 
         // Test invalid UUID format
         let invalid_json_bad_uuid = r#"{"uuid": "not-a-valid-uuid"}"#;
-        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(invalid_json_bad_uuid);
+        let result: Result<Cell<f64, (), (), 3>, _> = serde_json::from_str(invalid_json_bad_uuid);
         assert!(result.is_err(), "Invalid UUID format should cause error");
 
         // Test completely invalid JSON syntax
         let invalid_json_syntax = r"{this is not valid JSON}";
-        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(invalid_json_syntax);
+        let result: Result<Cell<f64, (), (), 3>, _> = serde_json::from_str(invalid_json_syntax);
         assert!(result.is_err(), "Invalid JSON syntax should cause error");
 
         // Test empty JSON object (missing required uuid)
         let empty_json = r"{}";
-        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(empty_json);
+        let result: Result<Cell<f64, (), (), 3>, _> = serde_json::from_str(empty_json);
         assert!(result.is_err(), "Empty JSON should fail (missing uuid)");
 
         // Test deserialization with unknown fields (should succeed - ignored)
@@ -2634,112 +2413,66 @@ mod tests {
             "unknown_field": "value",
             "another_unknown": 123
         }"#;
-        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(json_unknown_field);
+        let result: Result<Cell<f64, (), (), 3>, _> = serde_json::from_str(json_unknown_field);
         assert!(result.is_ok(), "Unknown fields should be ignored");
     }
 
     #[test]
-    fn cell_deserialization_minimal_valid() {
-        // Test deserialization with minimal valid JSON
-        // Only uuid is required; vertices and neighbors are skipped fields
+    fn cell_serialization_data_field_handling() {
+        // Comprehensive test for data field serialization behavior
+
+        // Test 1: Minimal valid JSON (only uuid required)
         let minimal_valid_json = r#"{"uuid": "550e8400-e29b-41d4-a716-446655440000"}"#;
-        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(minimal_valid_json);
+        let result: Result<Cell<f64, (), (), 3>, _> = serde_json::from_str(minimal_valid_json);
         assert!(
             result.is_ok(),
             "Minimal valid JSON with just UUID should succeed"
         );
-
         let cell = result.unwrap();
         assert_eq!(
             cell.uuid().to_string(),
             "550e8400-e29b-41d4-a716-446655440000"
         );
-        assert_eq!(cell.number_of_vertices(), 0); // No vertices since field is skipped
         assert!(cell.data.is_none());
 
-        // Test with data field included
-        let json_with_data = r#"{
-            "uuid": "550e8400-e29b-41d4-a716-446655440001",
-            "data": null
-        }"#;
-        let result: Result<Cell<f64, Option<()>, Option<()>, 3>, _> =
-            serde_json::from_str(json_with_data);
-        assert!(result.is_ok(), "JSON with null data should succeed");
-    }
-
-    #[test]
-    fn cell_serialization_with_some_data_includes_field() {
-        // Test that when data is Some, the JSON includes the data field
-        // Use a non-degenerate 3D tetrahedron so `Tds::new` can construct a valid simplex.
+        // Test 2: Serialization with Some(data) includes field
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, i32, 3> = Tds::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
-        let mut cell = cell.clone();
-        cell.data = Some(42);
-
-        let serialized = serde_json::to_string(&cell).unwrap();
-
-        // Verify JSON contains "data" field
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), i32, 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
+        let mut cell_with_data = cell_ref.clone();
+        cell_with_data.data = Some(42);
+        let serialized = serde_json::to_string(&cell_with_data).unwrap();
         assert!(
             serialized.contains("\"data\":"),
-            "JSON should include data field when Some"
+            "Some(data) should include data field"
         );
-        assert!(serialized.contains("42"), "JSON should include data value");
-
-        // Roundtrip test
-        let deserialized: Cell<f64, Option<()>, i32, 3> =
-            serde_json::from_str(&serialized).unwrap();
+        assert!(serialized.contains("42"));
+        let deserialized: Cell<f64, (), i32, 3> = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized.data, Some(42));
-        assert_eq!(deserialized.uuid(), cell.uuid());
-    }
 
-    #[test]
-    fn cell_serialization_with_none_data_omits_field() {
-        // Test that when data is None, the JSON omits the data field entirely
-        // Use a non-degenerate 3D tetrahedron so `Tds::new` can construct a valid simplex.
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<i32>, 3> = Tds::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
-
-        let serialized = serde_json::to_string(&cell).unwrap();
-
-        // Verify JSON does NOT contain "data" field (optimization)
+        // Test 3: Serialization with None data omits field (optimization)
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell_none) = dt.cells().next().unwrap();
+        let serialized_none = serde_json::to_string(&cell_none).unwrap();
         assert!(
-            !serialized.contains("\"data\":"),
-            "JSON should omit data field when None"
+            !serialized_none.contains("\"data\":"),
+            "None should omit data field"
         );
+        let deserialized_none: Cell<f64, (), Option<i32>, 3> =
+            serde_json::from_str(&serialized_none).unwrap();
+        assert_eq!(deserialized_none.data, None);
 
-        // Roundtrip test - missing data field should deserialize as None
-        let deserialized: Cell<f64, Option<()>, Option<i32>, 3> =
-            serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized.data, None);
-        assert_eq!(deserialized.uuid(), cell.uuid());
-    }
-
-    #[test]
-    fn cell_deserialization_with_explicit_null_data() {
-        // Test backward compatibility: explicit "data": null should still work
+        // Test 4: Backward compatibility - explicit "data": null works
         let json_with_null = r#"{"uuid":"550e8400-e29b-41d4-a716-446655440000","data":null}"#;
-        let cell: Cell<f64, Option<()>, Option<i32>, 3> =
+        let cell_explicit_null: Cell<f64, (), Option<i32>, 3> =
             serde_json::from_str(json_with_null).unwrap();
-
-        assert_eq!(cell.data, None);
-        assert_eq!(
-            cell.uuid().to_string(),
-            "550e8400-e29b-41d4-a716-446655440000"
-        );
+        assert_eq!(cell_explicit_null.data, None);
     }
 
     // =============================================================================
@@ -2748,54 +2481,44 @@ mod tests {
     // Tests for geometric properties and validation of cells
 
     #[test]
-    fn cell_negative_coordinates() {
-        // Use a non-degenerate tetrahedron fully in the negative octant.
-        let vertices = vec![
+    fn cell_coordinate_ranges() {
+        // Test triangulation construction with various coordinate ranges
+
+        // Negative coordinates: fully in negative octant
+        let negative_vertices = vec![
             vertex!([-1.0, -1.0, -1.0]),
             vertex!([-2.0, -1.0, -1.0]),
             vertex!([-1.0, -2.0, -1.0]),
             vertex!([-1.0, -1.0, -2.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
+        let dt_neg = DelaunayTriangulation::new(&negative_vertices).unwrap();
+        let (_, cell_neg) = dt_neg.tds().cells().next().unwrap();
+        assert_eq!(cell_neg.number_of_vertices(), 4);
+        assert_eq!(cell_neg.dim(), 3);
 
-        assert_eq!(cell.number_of_vertices(), 4);
-        assert_eq!(cell.dim(), 3);
-    }
-
-    #[test]
-    fn cell_large_coordinates() {
-        // Use a non-degenerate tetrahedron with large-magnitude coordinates.
-        let vertices = vec![
+        // Large coordinates: large-magnitude coordinates
+        let large_vertices = vec![
             vertex!([1e6, 1e6, 1e6]),
             vertex!([2e6, 1e6, 1e6]),
             vertex!([1e6, 2e6, 1e6]),
             vertex!([1e6, 1e6, 2e6]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
+        let dt_large = DelaunayTriangulation::new(&large_vertices).unwrap();
+        let (_, cell_large) = dt_large.tds().cells().next().unwrap();
+        assert_eq!(cell_large.number_of_vertices(), 4);
+        assert_eq!(cell_large.dim(), 3);
 
-        assert_eq!(cell.number_of_vertices(), 4);
-        assert_eq!(cell.dim(), 3);
-    }
-
-    #[test]
-    fn cell_small_coordinates() {
-        // Use a scaled-down non-degenerate tetrahedron to exercise small
-        // coordinate behavior without introducing degeneracy. Coordinates are
-        // small but not so close to zero that robust orientation treats them
-        // as numerically degenerate.
-        let vertices = vec![
+        // Small coordinates: scaled-down tetrahedron without degeneracy
+        let small_vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1e-3, 0.0, 0.0]),
             vertex!([0.0, 1e-3, 0.0]),
             vertex!([0.0, 0.0, 1e-3]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
-
-        assert_eq!(cell.number_of_vertices(), 4);
-        assert_eq!(cell.dim(), 3);
+        let dt_small = DelaunayTriangulation::new(&small_vertices).unwrap();
+        let (_, cell_small) = dt_small.tds().cells().next().unwrap();
+        assert_eq!(cell_small.number_of_vertices(), 4);
+        assert_eq!(cell_small.dim(), 3);
     }
 
     #[test]
@@ -2805,15 +2528,15 @@ mod tests {
         let vertex3 = vertex!([0.0, 1.0]);
 
         let vertices = vec![vertex1, vertex2, vertex3];
-        let tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
+        let cell = &dt.tds().get_cell(cell_key).unwrap();
 
         // Resolve VertexKeys to actual vertices
         let vertex_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
+            .map(|vk| *dt.tds().get_vertex_by_key(*vk).unwrap().point())
             .collect();
         let circumradius = circumradius(&vertex_points).unwrap();
 
@@ -2823,62 +2546,21 @@ mod tests {
     }
 
     #[test]
-    fn cell_mixed_positive_negative_coordinates() {
-        // Use a translated 4D simplex with both positive and negative
-        // coordinates to avoid affine degeneracy.
-        let vertices = vec![
-            vertex!([1.0, -1.0, 1.0, -1.0]),
-            vertex!([2.0, -1.0, 1.0, -1.0]),
-            vertex!([1.0, -2.0, 1.0, -1.0]),
-            vertex!([1.0, -1.0, 2.0, -1.0]),
-            vertex!([1.0, -1.0, 1.0, -2.0]),
-        ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
-
-        assert_eq!(cell.number_of_vertices(), 5);
-        assert_eq!(cell.dim(), 4);
-    }
-
-    #[test]
     fn cell_contains_vertex_false() {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
         let vertex3 = vertex!([0.0, 1.0, 0.0]);
         let vertex4 = vertex!([0.0, 0.0, 1.0]); // 4th vertex to complete 3D cell
-        let vertex_outside: Vertex<f64, Option<()>, 3> = vertex!([2.0, 2.0, 2.0]);
+        let vertex_outside: Vertex<f64, (), 3> = vertex!([2.0, 2.0, 2.0]);
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
+        let cell = &dt.tds().get_cell(cell_key).unwrap();
 
         // Create a vertex key for the outside vertex - it won't be in the cell
-        let outside_key = tds.vertex_key_from_uuid(&vertex_outside.uuid());
+        let outside_key = dt.tds().vertex_key_from_uuid(&vertex_outside.uuid());
         assert!(outside_key.is_none() || !cell.contains_vertex(outside_key.unwrap()));
-    }
-
-    // Test removed: contains_vertex_of was deprecated in v0.5 and removed
-    // Replacement: has_vertex_in_common() is tested in cell_has_vertex_in_common test
-
-    #[test]
-    fn cell_validation_max_vertices() {
-        // Test that creating a 2D triangulation with correct vertex count succeeds
-        // Phase 3A: Now tested through TDS which is the user-facing API
-        let vertex1 = vertex!([0.0, 0.0]);
-        let vertex2 = vertex!([1.0, 0.0]);
-        let vertex3 = vertex!([0.0, 1.0]);
-
-        // This should work (3 vertices for 2D)
-        let tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&[vertex1, vertex2, vertex3]);
-
-        assert!(tds.is_ok());
-        let tds = tds.unwrap();
-        assert_eq!(tds.number_of_vertices(), 3);
-        // Should create one 2D cell
-        assert_eq!(tds.number_of_cells(), 1);
-        let cell = tds.cells().map(|(_, cell)| cell).next().unwrap();
-        assert_eq!(cell.number_of_vertices(), 3);
     }
 
     #[test]
@@ -2891,9 +2573,10 @@ mod tests {
         let vertex4 = vertex!([0.0, 0.0, 1.0], 2);
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let tds = Tds::<f64, i32, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
+        let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
+        let cell = &dt.tds().get_cell(cell_key).unwrap();
 
         // Test vertex clearly outside circumsphere
         let vertex_far_outside: Vertex<f64, i32, 3> = vertex!([10.0, 10.0, 10.0], 4);
@@ -2901,7 +2584,7 @@ mod tests {
         let vertex_points: Vec<Point<f64, 3>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
+            .map(|vk| *dt.tds().get_vertex_by_key(*vk).unwrap().point())
             .collect();
         let result = insphere(&vertex_points, *vertex_far_outside.point());
         assert!(result.is_ok());
@@ -2911,7 +2594,7 @@ mod tests {
         let vertex_points: Vec<Point<f64, 3>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
+            .map(|vk| *dt.tds().get_vertex_by_key(*vk).unwrap().point())
             .collect();
         let result_origin = insphere(&vertex_points, *origin.point());
         assert!(result_origin.is_ok());
@@ -2925,26 +2608,26 @@ mod tests {
         let vertex3 = vertex!([0.0, 1.0]);
 
         let vertices = vec![vertex1, vertex2, vertex3];
-        let tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
+        let cell = &dt.tds().get_cell(cell_key).unwrap();
 
         // Test vertex far outside circumcircle
-        let vertex_far_outside: Vertex<f64, Option<()>, 2> = vertex!([10.0, 10.0]);
+        let vertex_far_outside: Vertex<f64, (), 2> = vertex!([10.0, 10.0]);
         let vertex_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
+            .map(|vk| *dt.tds().get_vertex_by_key(*vk).unwrap().point())
             .collect();
         let result = insphere(&vertex_points, *vertex_far_outside.point());
         assert!(result.is_ok());
 
         // Test with center of triangle (should be inside)
-        let center: Vertex<f64, Option<()>, 2> = vertex!([0.33, 0.33]);
+        let center: Vertex<f64, (), 2> = vertex!([0.33, 0.33]);
         let vertex_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
+            .map(|vk| *dt.tds().get_vertex_by_key(*vk).unwrap().point())
             .collect();
         let result_center = insphere(&vertex_points, *center.point());
         assert!(result_center.is_ok());
@@ -2959,14 +2642,14 @@ mod tests {
         let vertex4 = vertex!([0.0, 0.0, 1.0]);
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
+        let cell = &dt.tds().get_cell(cell_key).unwrap();
 
         let vertex_points: Vec<Point<f64, 3>> = cell
             .vertices()
             .iter()
-            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
+            .map(|vk| *dt.tds().get_vertex_by_key(*vk).unwrap().point())
             .collect();
 
         let circumcenter = circumcenter(&vertex_points).unwrap();
@@ -2974,66 +2657,6 @@ mod tests {
         let radius_direct = circumradius(&vertex_points).unwrap();
 
         assert_relative_eq!(radius_with_center.unwrap(), radius_direct, epsilon = 1e-10);
-    }
-
-    #[test]
-    fn cell_facets_completeness() {
-        // Test that facets are generated correctly and completely
-        let vertex1 = vertex!([0.0, 0.0, 0.0]);
-        let vertex2 = vertex!([1.0, 0.0, 0.0]);
-        let vertex3 = vertex!([0.0, 1.0, 0.0]);
-        let vertex4 = vertex!([0.0, 0.0, 1.0]);
-
-        let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-
-        let facets = Cell::facet_views_from_tds(&tds, cell_key).expect("Failed to get facets");
-        assert_eq!(facets.len(), 4); // A tetrahedron should have 4 facets
-
-        // Each facet should have 3 vertices (for 3D tetrahedron)
-        for facet in &facets {
-            assert_eq!(facet.vertices().unwrap().count(), 3);
-        }
-
-        // All original vertices should be represented in facets
-        let all_facet_vertex_uuids: std::collections::HashSet<_> = facets
-            .iter()
-            .flat_map(|f| f.vertices().unwrap())
-            .map(super::super::vertex::Vertex::uuid)
-            .collect();
-        assert!(all_facet_vertex_uuids.contains(&vertex1.uuid()));
-        assert!(all_facet_vertex_uuids.contains(&vertex2.uuid()));
-        assert!(all_facet_vertex_uuids.contains(&vertex3.uuid()));
-        assert!(all_facet_vertex_uuids.contains(&vertex4.uuid()));
-    }
-
-    #[test]
-    fn cell_builder_validation_edge_cases() {
-        // Test builder validation with exactly D+1 vertices (should work)
-        let vertex1 = vertex!([0.0, 0.0, 0.0]);
-        let vertex2 = vertex!([1.0, 0.0, 0.0]);
-        let vertex3 = vertex!([0.0, 1.0, 0.0]);
-        let vertex4 = vertex!([0.0, 0.0, 1.0]);
-
-        // Exactly 4 vertices for 3D (D+1 = 3+1 = 4) should work
-        // Phase 3A: Create via TDS
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&[vertex1, vertex2, vertex3, vertex4])
-            .unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
-        assert!(cell.is_valid().is_ok());
-
-        // Test with insufficient vertices (should fail)
-        let insufficient_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-        ];
-        let tds_result = Tds::<f64, Option<()>, Option<()>, 3>::new(&insufficient_vertices);
-        assert!(
-            tds_result.is_err(),
-            "Insufficient vertices (3) should fail for 3D triangulation (needs 4)"
-        );
     }
 
     // Phase 3A: Test updated to test facet_views instead of from_facet_and_vertex
@@ -3047,12 +2670,12 @@ mod tests {
         let vertex4 = vertex!([0.0, 0.0, 1.0]);
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
 
         // Test that we can get facet views for all facets
         let facet_views =
-            Cell::facet_views_from_tds(&tds, cell_key).expect("Failed to get facet views");
+            Cell::facet_views_from_tds(dt.tds(), cell_key).expect("Failed to get facet views");
         assert_eq!(facet_views.len(), 4, "3D cell should have 4 facets");
 
         // Each facet should have 3 vertices (for 3D)
@@ -3066,13 +2689,16 @@ mod tests {
         }
 
         // Verify opposite vertices are correct
-        let cell = tds.get_cell(cell_key).unwrap();
+        let cell = dt.tds().get_cell(cell_key).unwrap();
         for (i, facet_view) in facet_views.iter().enumerate() {
             let opposite_vertex = facet_view
                 .opposite_vertex()
                 .expect("Failed to get opposite vertex");
             // The opposite vertex should be one of the cell's vertices (by VertexKey)
-            let opposite_key = tds.vertex_key_from_uuid(&opposite_vertex.uuid()).unwrap();
+            let opposite_key = dt
+                .tds()
+                .vertex_key_from_uuid(&opposite_vertex.uuid())
+                .unwrap();
             assert!(
                 cell.vertices().contains(&opposite_key),
                 "Facet {i} opposite vertex key should be in cell"
@@ -3091,23 +2717,26 @@ mod tests {
         let vertex4 = vertex!([1.0, 1.0, 1.0]);
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
 
         // Get all facet views
         let facet_views =
-            Cell::facet_views_from_tds(&tds, cell_key).expect("Failed to get facet views");
+            Cell::facet_views_from_tds(dt.tds(), cell_key).expect("Failed to get facet views");
 
         for facet_view in &facet_views {
             let opposite_vertex = facet_view
                 .opposite_vertex()
                 .expect("Failed to get opposite vertex");
-            let opposite_vertex_key = tds.vertex_key_from_uuid(&opposite_vertex.uuid()).unwrap();
+            let opposite_vertex_key = dt
+                .tds()
+                .vertex_key_from_uuid(&opposite_vertex.uuid())
+                .unwrap();
             let facet_vertices = facet_view.vertices().expect("Failed to get facet vertices");
 
             // Collect facet vertex keys
             let facet_vertex_keys: Vec<_> = facet_vertices
-                .map(|v| tds.vertex_key_from_uuid(&v.uuid()).unwrap())
+                .map(|v| dt.tds().vertex_key_from_uuid(&v.uuid()).unwrap())
                 .collect();
 
             // Verify the opposite vertex key is NOT in the facet vertices
@@ -3137,10 +2766,8 @@ mod tests {
         let vertex2_f32 = vertex!([1.0f32, 0.0f32]);
         let vertex3_f32 = vertex!([0.0f32, 1.0f32]);
 
-        let tds_f32 =
-            Tds::<f32, Option<()>, Option<()>, 2>::new(&[vertex1_f32, vertex2_f32, vertex3_f32])
-                .unwrap();
-        let (_, cell_f32) = tds_f32.cells().next().unwrap();
+        let dt_f32 = DelaunayTriangulation::new(&[vertex1_f32, vertex2_f32, vertex3_f32]).unwrap();
+        let (_, cell_f32) = dt_f32.cells().next().unwrap();
         assert_eq!(cell_f32.number_of_vertices(), 3);
         assert_eq!(cell_f32.dim(), 2);
     }
@@ -3156,14 +2783,14 @@ mod tests {
         let vertex6 = vertex!([0.0, 0.0, 0.0, 0.0, 1.0]);
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4, vertex5, vertex6];
-        let tds = Tds::<f64, Option<()>, Option<()>, 5>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
+        let cell = &dt.tds().get_cell(cell_key).unwrap();
 
         assert_eq!(cell.number_of_vertices(), 6);
         assert_eq!(cell.dim(), 5);
         assert_eq!(
-            Cell::facet_views_from_tds(&tds, cell_key)
+            Cell::facet_views_from_tds(dt.tds(), cell_key)
                 .expect("Failed to get facets")
                 .len(),
             6
@@ -3179,40 +2806,45 @@ mod tests {
         let vertex4 = vertex!([0.0, 0.0, 1.0], 4); // Need 4 vertices for 3D cell
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let mut tds = Tds::<f64, i32, u32, 3>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, i32, u32, 3> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        let cell_key = dt.cells().next().unwrap().0;
 
         // Set the cell data to a known value
-        if let Some(cell) = tds.cells_mut().get_mut(cell_key) {
+        if let Some(cell) = dt.tds_mut().cells_mut().get_mut(cell_key) {
             cell.data = Some(42u32);
         }
 
-        let cell = &tds.get_cell(cell_key).unwrap();
+        let cell = &dt.tds().get_cell(cell_key).unwrap();
 
         // Resolve VertexKeys to vertices to check data using the key-based API
         assert_eq!(
-            tds.get_vertex_by_key(cell.vertices()[0])
+            dt.tds()
+                .get_vertex_by_key(cell.vertices()[0])
                 .unwrap()
                 .data
                 .unwrap(),
             1
         );
         assert_eq!(
-            tds.get_vertex_by_key(cell.vertices()[1])
+            dt.tds()
+                .get_vertex_by_key(cell.vertices()[1])
                 .unwrap()
                 .data
                 .unwrap(),
             2
         );
         assert_eq!(
-            tds.get_vertex_by_key(cell.vertices()[2])
+            dt.tds()
+                .get_vertex_by_key(cell.vertices()[2])
                 .unwrap()
                 .data
                 .unwrap(),
             3
         );
         assert_eq!(
-            tds.get_vertex_by_key(cell.vertices()[3])
+            dt.tds()
+                .get_vertex_by_key(cell.vertices()[3])
                 .unwrap()
                 .data
                 .unwrap(),
@@ -3222,7 +2854,7 @@ mod tests {
 
         // Also verify we can access vertex data through facet_views
         let facet_views =
-            Cell::facet_views_from_tds(&tds, cell_key).expect("Failed to get facet views");
+            Cell::facet_views_from_tds(dt.tds(), cell_key).expect("Failed to get facet views");
         for facet_view in &facet_views {
             // Get vertices from the facet view
             let vertices = facet_view.vertices().expect("Failed to get facet vertices");
@@ -3239,352 +2871,129 @@ mod tests {
         }
     }
 
+    // =============================================================================
+    // CELL VALIDATION TESTS
+    // =============================================================================
+    // Tests covering cell validation logic for success and error cases
+
     #[test]
-    fn cell_circumsphere_edge_cases() {
-        // Test circumsphere containment with simple cases
-        let vertex1 = vertex!([0.0, 0.0]);
-        let vertex2 = vertex!([1.0, 0.0]);
-        let vertex3 = vertex!([0.0, 1.0]);
+    fn cell_validation_success_cases() {
+        // Test various valid cell configurations
 
-        let vertices = vec![vertex1, vertex2, vertex3];
-        let tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
-        let cell = &tds.get_cell(cell_key).unwrap();
+        // Valid 3D cell with correct vertex count (D+1 = 4)
+        let vertices_3d = vec![
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices_3d).unwrap();
+        let (_, cell_3d) = dt.cells().next().unwrap();
+        assert!(
+            cell_3d.is_valid().is_ok(),
+            "Valid 3D cell should pass validation"
+        );
 
-        // Test that the methods run without error
-        let test_point: Vertex<f64, Option<()>, 2> = vertex!([0.5, 0.5]);
+        // Valid 2D cell with correct vertex count (D+1 = 3)
+        let vertices_2d = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices_2d).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
+        let mut cell_2d = cell_ref.clone();
+        assert!(
+            cell_2d.is_valid().is_ok(),
+            "Valid 2D cell should pass validation"
+        );
 
-        let vertex_points: Vec<Point<f64, 2>> = cell
-            .vertices()
-            .iter()
-            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
-            .collect();
+        // Cell with None neighbors is valid
+        cell_2d.neighbors = None;
+        assert!(
+            cell_2d.is_valid().is_ok(),
+            "Cell with no neighbors should be valid"
+        );
 
-        let circumsphere_result = insphere_distance(&vertex_points, *test_point.point());
-        assert!(circumsphere_result.is_ok());
-
-        let determinant_result = insphere(&vertex_points, *test_point.point());
-        assert!(determinant_result.is_ok());
-
-        // At minimum, both methods should give the same result for the same input
-        let far_point: Vertex<f64, Option<()>, 2> = vertex!([100.0, 100.0]);
-
-        let vertex_points: Vec<Point<f64, 2>> = cell
-            .vertices()
-            .iter()
-            .map(|vk| *tds.get_vertex_by_key(*vk).unwrap().point())
-            .collect();
-
-        let circumsphere_far = insphere_distance(&vertex_points, *far_point.point());
-        let determinant_far = insphere(&vertex_points, *far_point.point());
-
-        assert!(circumsphere_far.is_ok());
-        assert!(determinant_far.is_ok());
+        // Cell with correct neighbors length is valid
+        cell_2d.neighbors = Some(vec![None, None, None].into());
+        assert!(
+            cell_2d.is_valid().is_ok(),
+            "Cell with correct neighbors length should be valid"
+        );
     }
 
     #[test]
-    fn cell_is_valid_correct_cell() {
-        // Test cell is_valid with valid vertices (exactly D+1 = 4 vertices for 3D)
+    fn cell_validation_error_cases() {
+        // Test various invalid cell configurations
+
+        // Invalid UUID (nil)
         let vertices = vec![
             vertex!([0.0, 0.0, 1.0]),
             vertex!([0.0, 1.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 0.0, 0.0]),
         ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell) = tds.cells().next().unwrap();
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Valid Cell: {cell:?}");
-        assert!(cell.is_valid().is_ok());
-    }
-
-    // Phase 3A: Test removed - Cells are now constructed through TDS, not manually
-    // Cell validation is handled at the TDS level, not at individual Cell level
-
-    #[test]
-    fn cell_is_valid_invalid_uuid_error() {
-        // Test cell is_valid with nil UUID
-        let vertex1 = vertex!([0.0, 0.0, 1.0]);
-        let vertex2 = vertex!([0.0, 1.0, 0.0]);
-        let vertex3 = vertex!([1.0, 0.0, 0.0]);
-        let vertex4 = vertex!([0.0, 0.0, 0.0]);
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&[vertex1, vertex2, vertex3, vertex4])
-            .unwrap();
-        let (_, cell_ref) = tds.cells().next().unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
         let mut invalid_uuid_cell = cell_ref.clone();
-
-        // Manually set the UUID to nil to trigger the InvalidUuid error
         invalid_uuid_cell.uuid = uuid::Uuid::nil();
+        assert!(
+            matches!(
+                invalid_uuid_cell.is_valid(),
+                Err(CellValidationError::InvalidUuid { .. })
+            ),
+            "Nil UUID should fail validation"
+        );
 
-        let invalid_uuid_result = invalid_uuid_cell.is_valid();
-        assert!(invalid_uuid_result.is_err());
-
-        // Verify that we get the correct error type for invalid UUID
-        match invalid_uuid_result {
-            Err(CellValidationError::InvalidUuid { source: _ }) => {
-                println!("✓ Correctly detected invalid UUID");
-            }
-            Err(other_error) => {
-                panic!("Expected InvalidUuid error, but got: {other_error:?}");
-            }
-            Ok(()) => {
-                panic!("Expected error for invalid UUID, but validation passed");
-            }
-        }
-    }
-
-    // Phase 3A: Test removed - Cells are now constructed through TDS, not manually
-    // Duplicate vertex detection is handled at the TDS level during construction
-
-    #[test]
-    fn cell_is_valid_insufficient_vertices_error() {
-        // Test that TDS fails when creating a 3D triangulation with insufficient vertices
+        // Insufficient vertices (TDS construction fails)
         let insufficient_vertices = vec![vertex!([0.0, 0.0, 1.0]), vertex!([0.0, 1.0, 0.0])];
-
-        // Phase 3A: Use TDS to test validation failure (CellBuilder is internal)
-        let result = Tds::<f64, Option<()>, Option<()>, 3>::new(&insufficient_vertices);
-
+        let result = DelaunayTriangulation::new(&insufficient_vertices);
         assert!(
             result.is_err(),
             "TDS should fail with insufficient vertices"
         );
-        let error_msg = result.unwrap_err().to_string();
-        // TDS should report insufficient vertices for 3D triangulation
-        assert!(
-            error_msg.contains("vertices") || error_msg.contains('4'),
-            "Error should mention vertices or the required count: {error_msg}"
-        );
 
-        println!("✓ Correctly detected insufficient vertices during triangulation");
-    }
-
-    #[test]
-    fn test_cell_is_valid_neighbors_length_validation() {
-        // Test that is_valid checks neighbors length matches D+1
-        let vertices = vec![
+        // Invalid neighbors length (too few)
+        let vertices_2d = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-
-        // Create a valid 2D cell (triangle)
-        let tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices).unwrap();
-        let (_, cell_ref) = tds.cells().next().unwrap();
-        let mut cell = cell_ref.clone();
-        assert!(cell.is_valid().is_ok(), "Valid cell should pass validation");
-
-        // Manually set neighbors with correct length (D+1 = 3)
-        cell.neighbors = Some(vec![None, None, None].into());
+        let dt = DelaunayTriangulation::new(&vertices_2d).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
+        let mut cell_wrong_neighbors = cell_ref.clone();
+        cell_wrong_neighbors.neighbors = Some(vec![None, None].into());
         assert!(
-            cell.is_valid().is_ok(),
-            "Cell with correct neighbors length should pass validation"
+            matches!(
+                cell_wrong_neighbors.is_valid(),
+                Err(CellValidationError::InvalidNeighborsLength {
+                    actual: 2,
+                    expected: 3,
+                    dimension: 2
+                })
+            ),
+            "Wrong neighbors count should fail validation"
         );
 
-        // Set neighbors with incorrect length (too few)
-        cell.neighbors = Some(vec![None, None].into());
-        let result = cell.is_valid();
+        // Invalid neighbors length (too many)
+        cell_wrong_neighbors.neighbors = Some(vec![None, None, None, None].into());
         assert!(
-            result.is_err(),
-            "Cell with too few neighbors should fail validation"
+            matches!(
+                cell_wrong_neighbors.is_valid(),
+                Err(CellValidationError::InvalidNeighborsLength {
+                    actual: 4,
+                    expected: 3,
+                    dimension: 2
+                })
+            ),
+            "Wrong neighbors count should fail validation"
         );
-
-        if let Err(CellValidationError::InvalidNeighborsLength {
-            actual,
-            expected,
-            dimension,
-        }) = result
-        {
-            assert_eq!(actual, 2);
-            assert_eq!(expected, 3);
-            assert_eq!(dimension, 2);
-        } else {
-            panic!("Expected InvalidNeighborsLength error, got: {result:?}");
-        }
-
-        // Set neighbors with incorrect length (too many)
-        cell.neighbors = Some(vec![None, None, None, None].into());
-        let result = cell.is_valid();
-        assert!(
-            result.is_err(),
-            "Cell with too many neighbors should fail validation"
-        );
-
-        if let Err(CellValidationError::InvalidNeighborsLength {
-            actual,
-            expected,
-            dimension,
-        }) = result
-        {
-            assert_eq!(actual, 4);
-            assert_eq!(expected, 3);
-            assert_eq!(dimension, 2);
-        } else {
-            panic!("Expected InvalidNeighborsLength error, got: {result:?}");
-        }
-
-        println!("✓ Cell neighbors length validation works correctly");
-    }
-
-    #[test]
-    fn test_cell_is_valid_neighbors_length_3d() {
-        // Test neighbors length validation for 3D cells
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell_ref) = tds.cells().next().unwrap();
-        let mut cell = cell_ref.clone();
-
-        // Set neighbors with correct length (D+1 = 4)
-        cell.neighbors = Some(vec![None, None, None, None].into());
-        assert!(
-            cell.is_valid().is_ok(),
-            "3D cell with correct neighbors length should pass validation"
-        );
-
-        // Set neighbors with incorrect length
-        cell.neighbors = Some(vec![None, None, None].into());
-        let result = cell.is_valid();
-        assert!(
-            result.is_err(),
-            "3D cell with wrong neighbors length should fail validation"
-        );
-
-        if let Err(CellValidationError::InvalidNeighborsLength {
-            actual,
-            expected,
-            dimension,
-        }) = result
-        {
-            assert_eq!(actual, 3);
-            assert_eq!(expected, 4);
-            assert_eq!(dimension, 3);
-        } else {
-            panic!("Expected InvalidNeighborsLength error, got: {result:?}");
-        }
-
-        println!("✓ 3D cell neighbors length validation works correctly");
-    }
-
-    #[test]
-    fn test_cell_is_valid_no_neighbors_is_valid() {
-        // Test that cells with no neighbors (None) are still valid
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
-
-        let tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices).unwrap();
-        let (_, cell_ref) = tds.cells().next().unwrap();
-        let mut cell = cell_ref.clone();
-
-        // Explicitly set neighbors to None
-        cell.neighbors = None;
-        assert!(
-            cell.is_valid().is_ok(),
-            "Cell with no neighbors should be valid"
-        );
-
-        println!("✓ Cell with no neighbors passes validation");
     }
 
     // =============================================================================
     // CELL PARTIALEQ AND EQ TESTS
     // =============================================================================
-
-    #[test]
-    fn test_cell_partial_eq_identical_cells() {
-        // Test that cells with identical vertices are equal
-        let vertices1 = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds1 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices1).unwrap();
-        let (_, cell1) = tds1.cells().next().unwrap();
-
-        let vertices2 = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds2 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices2).unwrap();
-        let (_, cell2) = tds2.cells().next().unwrap();
-
-        // Test equality - should be true for identical cells
-        assert_eq!(
-            cell1, cell2,
-            "Cells with identical vertices should be equal"
-        );
-
-        // Test reflexive property
-        assert_eq!(cell1, cell1, "Cell should be equal to itself");
-
-        println!("✓ Identical cells are correctly identified as equal");
-    }
-
-    #[test]
-    fn test_cell_partial_eq_different_vertex_order() {
-        // Test that cells with same vertices in different order are equal
-        let vertices1 = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds1 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices1).unwrap();
-        let (_, cell1) = tds1.cells().next().unwrap();
-
-        let vertices2 = vec![
-            vertex!([1.0, 0.0, 0.0]), // Different order
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 1.0, 0.0]),
-        ];
-        let tds2 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices2).unwrap();
-        let (_, cell2) = tds2.cells().next().unwrap();
-
-        // Test equality - should be true regardless of vertex order since we sort internally
-        assert_eq!(
-            cell1, cell2,
-            "Cells with same vertices in different order should be equal"
-        );
-
-        println!("✓ Cells with same vertices in different order are correctly identified as equal");
-    }
-
-    #[test]
-    fn test_cell_partial_eq_different_vertices() {
-        // Phase 3A: Test inequality using cells from same TDS
-        let all_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([2.0, 0.0, 0.0]),
-        ];
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&all_vertices).unwrap();
-        let cells: Vec<_> = tds.cells().map(|(_, cell)| cell).collect();
-
-        // With 5 vertices in 3D, we get multiple cells with different vertex sets
-        if cells.len() >= 2 {
-            let cell1 = cells[0];
-            let cell2 = cells[1];
-
-            // Cells from different parts of triangulation should be unequal
-            assert_ne!(cell1, cell2, "Different cells should not be equal");
-        }
-
-        println!("✓ Cells with different vertices are correctly identified as unequal");
-    }
 
     #[test]
     fn test_cell_partial_eq_different_dimensions() {
@@ -3594,254 +3003,15 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds1 = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices_2d).unwrap();
-        let (_, cell_2d) = tds1.cells().next().unwrap();
-        let tds2 = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices_2d).unwrap();
-        let (_, cell_2d_copy) = tds2.cells().next().unwrap();
+        let dt1 = DelaunayTriangulation::new(&vertices_2d).unwrap();
+        let (_, cell_2d) = dt1.tds().cells().next().unwrap();
+        let dt2 = DelaunayTriangulation::new(&vertices_2d).unwrap();
+        let (_, cell_2d_copy) = dt2.tds().cells().next().unwrap();
 
         // Test equality for 2D cells
         assert_eq!(cell_2d, cell_2d_copy, "Identical 2D cells should be equal");
 
         println!("✓ 2D cells work correctly with PartialEq");
-    }
-
-    #[test]
-    fn test_cell_partial_eq_with_data() {
-        // Test that cells with same vertices but different cell data are still equal
-        // (since PartialEq only compares vertices, not data)
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds1 = Tds::<f64, Option<()>, i32, 3>::new(&vertices).unwrap();
-        let (_, cell_ref1) = tds1.cells().next().unwrap();
-        let mut cell1 = cell_ref1.clone();
-        cell1.data = Some(42);
-        let tds2 = Tds::<f64, Option<()>, i32, 3>::new(&vertices).unwrap();
-        let (_, cell_ref2) = tds2.cells().next().unwrap();
-        let mut cell2 = cell_ref2.clone();
-        cell2.data = Some(99); // Different data
-
-        // Test equality - should be true since PartialEq only compares vertices
-        assert_eq!(
-            cell1, cell2,
-            "Cells with same vertices but different data should be equal"
-        );
-
-        println!("✓ Cell equality correctly ignores data field");
-    }
-
-    #[test]
-    fn test_cell_partial_eq_with_vertex_data() {
-        // Test cells where vertices have different data but same coordinates
-        let vertices1 = vec![
-            vertex!([0.0, 0.0, 0.0], 1),
-            vertex!([1.0, 0.0, 0.0], 2),
-            vertex!([0.0, 1.0, 0.0], 3),
-            vertex!([0.0, 0.0, 1.0], 4),
-        ];
-        let tds1 = Tds::<f64, i32, Option<()>, 3>::new(&vertices1).unwrap();
-        let (_, cell1) = tds1.cells().next().unwrap();
-
-        let vertices2 = vec![
-            vertex!([0.0, 0.0, 0.0], 10), // Different vertex data
-            vertex!([1.0, 0.0, 0.0], 20),
-            vertex!([0.0, 1.0, 0.0], 30),
-            vertex!([0.0, 0.0, 1.0], 40),
-        ];
-        let tds2 = Tds::<f64, i32, Option<()>, 3>::new(&vertices2).unwrap();
-        let (_, cell2) = tds2.cells().next().unwrap();
-
-        // Test equality - should be true since vertex PartialEq compares coordinates,
-        // and cell PartialEq uses vertex PartialEq
-        assert_eq!(
-            cell1, cell2,
-            "Cells with same vertex coordinates but different vertex data should be equal"
-        );
-
-        println!("✓ Cell equality correctly ignores vertex data field");
-    }
-
-    #[test]
-    fn test_cell_partial_eq_different_vertex_count() {
-        // Test cells with different numbers of vertices (different dimensions)
-        let vertices_3d = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds_3d = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices_3d).unwrap();
-        let (_, cell_3d) = tds_3d.cells().next().unwrap();
-
-        let vertices_2d = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
-        let tds_2d = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices_2d).unwrap();
-        let (_, cell_2d) = tds_2d.cells().next().unwrap();
-
-        // Note: We can't directly compare cells of different dimensions with ==
-        // since they are different types, but this test documents the expected behavior
-        assert_eq!(cell_3d.number_of_vertices(), 4);
-        assert_eq!(cell_2d.number_of_vertices(), 3);
-
-        println!("✓ Cells of different dimensions have different vertex counts as expected");
-    }
-
-    #[test]
-    fn test_cell_partial_eq_uuid_neighbors_ignored() {
-        // Test that UUID and neighbors are ignored in equality comparison
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds1 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell_ref1) = tds1.cells().next().unwrap();
-        let mut cell1 = cell_ref1.clone();
-        let tds2 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
-        let (_, cell_ref2) = tds2.cells().next().unwrap();
-        let mut cell2 = cell_ref2.clone();
-
-        // Add different neighbors to the cells (3D cell needs exactly 4 neighbor slots)
-        // Note: neighbors now use CellKey not Uuid, but for this test we just need to set the length
-        // These will be invalid CellKeys but that's ok for testing equality comparison
-        let dummy_key1 = CellKey::from(KeyData::from_ffi(1));
-        let dummy_key2 = CellKey::from(KeyData::from_ffi(2));
-        let dummy_key3 = CellKey::from(KeyData::from_ffi(3));
-        cell1.neighbors = Some(vec![Some(dummy_key1), Some(dummy_key2), None, None].into());
-        cell2.neighbors = Some(vec![Some(dummy_key3), None, None, None].into()); // Different neighbors
-
-        // Cells should still be equal since PartialEq only compares vertices
-        assert_eq!(
-            cell1, cell2,
-            "Cells with same vertices but different neighbors should be equal"
-        );
-
-        // UUIDs are different but cells should still be equal
-        assert_ne!(
-            cell1.uuid(),
-            cell2.uuid(),
-            "Cells should have different UUIDs"
-        );
-        assert_eq!(
-            cell1, cell2,
-            "Cells with different UUIDs but same vertices should be equal"
-        );
-
-        println!("✓ Cell equality correctly ignores UUID and neighbors fields");
-    }
-
-    #[test]
-    fn test_cell_partial_eq_symmetry() {
-        // Test that equality is symmetric: if a == b, then b == a
-        let vertices1 = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds1 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices1).unwrap();
-        let (_, cell1) = tds1.cells().next().unwrap();
-
-        let vertices2 = vec![
-            vertex!([1.0, 0.0, 0.0]), // Different order
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 1.0, 0.0]),
-        ];
-        let tds2 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices2).unwrap();
-        let (_, cell2) = tds2.cells().next().unwrap();
-
-        // Test symmetry
-        assert_eq!(
-            cell1 == cell2,
-            cell2 == cell1,
-            "Equality should be symmetric"
-        );
-        assert!(cell1 == cell2, "Cells should be equal");
-        assert!(cell2 == cell1, "Equality should be symmetric");
-
-        println!("✓ Cell equality is symmetric");
-    }
-
-    #[test]
-    fn test_cell_partial_eq_transitivity() {
-        // Test that equality is transitive: if a == b and b == c, then a == c
-        let vertices1 = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds1 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices1).unwrap();
-        let (_, cell1) = tds1.cells().next().unwrap();
-
-        let vertices2 = vec![
-            vertex!([1.0, 0.0, 0.0]), // Different order
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds2 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices2).unwrap();
-        let (_, cell2) = tds2.cells().next().unwrap();
-
-        let vertices3 = vec![
-            vertex!([0.0, 1.0, 0.0]), // Another different order
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-        ];
-        let tds3 = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices3).unwrap();
-        let (_, cell3) = tds3.cells().next().unwrap();
-
-        // Test transitivity
-        assert!(cell1 == cell2, "cell1 should equal cell2");
-        assert!(cell2 == cell3, "cell2 should equal cell3");
-        assert!(cell1 == cell3, "cell1 should equal cell3 (transitivity)");
-
-        println!("✓ Cell equality is transitive");
-    }
-
-    #[test]
-    fn test_facet_views_from_tds() {
-        // Test the static facet_views_from_tds method
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        let cell_key = tds.cell_keys().next().unwrap();
-
-        // Test the static method
-        let static_facet_views = Cell::facet_views_from_tds(&tds, cell_key)
-            .expect("Failed to get facet views from static method");
-
-        // Should have 4 facets for a 3D tetrahedron
-        assert_eq!(static_facet_views.len(), 4);
-
-        // Each facet should have 3 vertices
-        for (i, facet_view) in static_facet_views.iter().enumerate() {
-            let vertex_count = facet_view.vertices().unwrap().count();
-            assert_eq!(vertex_count, 3, "Facet {i} should have 3 vertices");
-        }
-
-        // Test with the static method a second time to verify consistency
-        let instance_facet_views = Cell::facet_views_from_tds(&tds, cell_key)
-            .expect("Failed to get facet views from static method");
-
-        // Both calls should return the same number of facets
-        assert_eq!(static_facet_views.len(), instance_facet_views.len());
-
-        println!("✓ facet_views_from_tds static method works correctly");
     }
 
     #[test]
@@ -3853,13 +3023,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        let cell_key = tds.cell_keys().next().unwrap();
+        let cell_key = dt.tds().cell_keys().next().unwrap();
 
         // Test the iterator method
         let facet_iter =
-            Cell::facet_view_iter(&tds, cell_key).expect("Failed to get facet iterator");
+            Cell::facet_view_iter(dt.tds(), cell_key).expect("Failed to get facet iterator");
 
         // Should know the exact count upfront (implements ExactSizeIterator)
         assert_eq!(
@@ -3883,7 +3053,7 @@ mod tests {
 
         // Test iterator is zero-allocation by using it without collect
         let facet_iter2 =
-            Cell::facet_view_iter(&tds, cell_key).expect("Failed to get second facet iterator");
+            Cell::facet_view_iter(dt.tds(), cell_key).expect("Failed to get second facet iterator");
 
         let mut count = 0;
         for facet_result in facet_iter2 {
@@ -3894,7 +3064,7 @@ mod tests {
 
         // Test iterator combinators work correctly
         let facet_iter3 =
-            Cell::facet_view_iter(&tds, cell_key).expect("Failed to get third facet iterator");
+            Cell::facet_view_iter(dt.tds(), cell_key).expect("Failed to get third facet iterator");
 
         let successful_facets: Vec<_> = facet_iter3.filter_map(Result::ok).collect();
         assert_eq!(
@@ -3905,7 +3075,7 @@ mod tests {
 
         // Compare with Vec-based method to ensure same results
         let vec_facets =
-            Cell::facet_views_from_tds(&tds, cell_key).expect("Vec-based method should work");
+            Cell::facet_views_from_tds(dt.tds(), cell_key).expect("Vec-based method should work");
         assert_eq!(
             successful_facets.len(),
             vec_facets.len(),
@@ -3915,68 +3085,7 @@ mod tests {
         println!("✓ facet_view_iter zero-allocation iterator works correctly");
     }
 
-    #[test]
-    fn test_facet_view_memory_efficiency_comparison() {
-        // Demonstrate the memory efficiency difference between Vec and iterator approaches
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
-
-        // Vec-based approach: allocates memory for all FacetViews upfront
-        let vec_facets =
-            Cell::facet_views_from_tds(&tds, cell_key).expect("Vec method should work");
-        println!(
-            "Vec approach: {} FacetViews allocated in memory",
-            vec_facets.len()
-        );
-
-        // Iterator approach: zero allocation, processes one at a time
-        let facet_iter =
-            Cell::facet_view_iter(&tds, cell_key).expect("Iterator method should work");
-
-        println!(
-            "Iterator approach: processing {} facets with zero upfront allocation",
-            facet_iter.len()
-        );
-
-        let mut processed_count = 0;
-        for (i, facet_result) in facet_iter.enumerate() {
-            let facet_view = facet_result.expect("Facet creation should succeed");
-            // At this point, we only have ONE FacetView in memory, not all of them
-            let vertex_count = facet_view.vertices().unwrap().count();
-            processed_count += 1;
-            println!(
-                "  Processed facet {i}: {vertex_count} vertices (only this one FacetView in memory)"
-            );
-            // FacetView is dropped here, freeing memory before the next iteration
-        }
-
-        assert_eq!(processed_count, vec_facets.len());
-
-        // Demonstrate early termination benefit: iterator can be stopped early without
-        // creating all FacetViews
-        let facet_iter2 =
-            Cell::facet_view_iter(&tds, cell_key).expect("Iterator method should work");
-
-        let first_two_facets: Vec<_> = facet_iter2
-            .take(2) // Only process first 2 facets
-            .filter_map(Result::ok)
-            .collect();
-
-        assert_eq!(first_two_facets.len(), 2);
-        println!(
-            "Early termination: processed only {} out of {} facets",
-            first_two_facets.len(),
-            4
-        );
-
-        println!("✓ Memory efficiency comparison demonstrates iterator benefits");
-    }
+    // Removed: test_facet_view_memory_efficiency_comparison - covered by test_facet_view_iter
 
     #[test]
     #[cfg(feature = "bench")]
@@ -4001,15 +3110,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: crate::core::triangulation_data_structure::Tds<f64, Option<()>, Option<()>, 3> =
-            crate::core::triangulation_data_structure::Tds::new(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
-        let cell = &tds.get_cell(cell_key).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_cell_key, cell) = dt.cells().next().unwrap();
 
         println!("\nAPI Ergonomics Test:");
 
         // Test 1: Direct comparison (by value - current implementation)
-        let first_uuid = cell.vertex_uuid_iter(&tds).next().unwrap().unwrap();
+        let first_uuid = cell.vertex_uuid_iter(dt.tds()).next().unwrap().unwrap();
         assert_ne!(first_uuid, Uuid::nil());
         println!("  ✓ By value: Direct comparison works: uuid != Uuid::nil()");
 
@@ -4018,7 +3125,7 @@ mod tests {
         let uuid_values: Vec<Uuid> = cell
             .vertices()
             .iter()
-            .map(|&vkey| tds.get_vertex_by_key(vkey).unwrap().uuid())
+            .map(|&vkey| dt.tds().get_vertex_by_key(vkey).unwrap().uuid())
             .collect();
         let uuid_refs: Vec<&Uuid> = uuid_values.iter().collect();
         let first_uuid_ref = uuid_refs[0];
@@ -4032,7 +3139,7 @@ mod tests {
         let start = Instant::now();
         let mut by_value_count = 0;
         for _ in 0..iterations {
-            for uuid in cell.vertex_uuid_iter(&tds) {
+            for uuid in cell.vertex_uuid_iter(dt.tds()) {
                 if uuid.unwrap() != Uuid::nil() {
                     by_value_count += 1;
                 }
@@ -4048,7 +3155,7 @@ mod tests {
             let uuid_values: Vec<Uuid> = cell
                 .vertices()
                 .iter()
-                .map(|&vkey| tds.get_vertex_by_key(vkey).unwrap().uuid())
+                .map(|&vkey| dt.tds().get_vertex_by_key(vkey).unwrap().uuid())
                 .collect();
             for uuid_ref in &uuid_values {
                 if *uuid_ref != Uuid::nil() {
@@ -4097,11 +3204,11 @@ mod tests {
         println!("    5. 16 bytes is small enough to copy efficiently");
 
         // Validate current API works as expected
-        assert_eq!(cell.vertex_uuid_iter(&tds).count(), 4);
+        assert_eq!(cell.vertex_uuid_iter(dt.tds()).count(), 4);
 
         // Test that we can directly use values in hashmaps, comparisons, etc.
         let unique_uuids: HashSet<_> = cell
-            .vertex_uuid_iter(&tds)
+            .vertex_uuid_iter(dt.tds())
             .collect::<Result<HashSet<_>, _>>()
             .unwrap();
         assert_eq!(unique_uuids.len(), 4);
@@ -4118,10 +3225,10 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
         // Get a cell and clone it (since we need mutable access)
-        let (_cell_key, original_cell) = tds.cells().next().unwrap();
+        let (_cell_key, original_cell) = dt.cells().next().unwrap();
         let mut test_cell = original_cell.clone();
 
         // Verify the cell has 4 vertices initially

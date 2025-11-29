@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Test file to figure out allocation-counter API with Delaunay triangulation testing
 //!
 //! This module provides comprehensive testing utilities for memory allocation tracking
@@ -86,7 +85,7 @@ pub mod test_helpers {
     ///
     /// Panics if TDS creation fails.
     #[must_use]
-    pub fn create_test_tds() -> Tds<f64, Option<()>, Option<()>, 4> {
+    pub fn create_test_tds() -> Tds<f64, (), (), 4> {
         // Create an empty TDS with no vertices
         Tds::empty()
     }
@@ -97,7 +96,7 @@ pub mod test_helpers {
     ///
     /// Panics if TDS creation with vertices fails.
     #[must_use]
-    pub fn create_test_tds_with_vertices() -> Tds<f64, Option<()>, Option<()>, 3> {
+    pub fn create_test_tds_with_vertices() -> Tds<f64, (), (), 3> {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),

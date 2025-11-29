@@ -31,7 +31,7 @@ use std::ops::{AddAssign, SubAssign};
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 ///
 /// // Use the trait methods
 /// let boundary_facets = tds.boundary_facets().expect("Failed to get boundary facets");
@@ -74,7 +74,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // A single tetrahedron has 4 boundary facets (all facets are on the boundary)
     /// let boundary_facets_iter = tds.boundary_facets().expect("Failed to get boundary facets iterator");
@@ -116,7 +116,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get a boundary facet using the new iterator API
     /// let boundary_facets = tds.boundary_facets().unwrap();
@@ -164,7 +164,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Build the facet map once for multiple queries (efficient for batch operations)
     /// let facet_to_cells = tds.build_facet_to_cells_map().expect("facet map should build");
@@ -212,7 +212,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // A single tetrahedron has 4 boundary facets
     /// assert_eq!(tds.number_of_boundary_facets().unwrap(), 4);

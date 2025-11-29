@@ -126,7 +126,7 @@ pub enum ConflictError {
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::{locate, LocateResult};
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::triangulation::DelaunayTriangulation;
 /// use delaunay::geometry::kernel::FastKernel;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -140,21 +140,21 @@ pub enum ConflictError {
 ///     vertex!([0.0, 0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
 /// let kernel = FastKernel::<f64>::new();
 ///
 /// // Point inside the 4-simplex
 /// let inside_point = Point::new([0.2, 0.2, 0.2, 0.2]);
-/// match locate(&tds, &kernel, &inside_point, None) {
+/// match locate(dt.tds(), &kernel, &inside_point, None) {
 ///     Ok(LocateResult::InsideCell(cell_key)) => {
-///         assert!(tds.contains_cell(cell_key));
+///         assert!(dt.tds().contains_cell(cell_key));
 ///     }
 ///     _ => panic!("Expected point to be inside a cell"),
 /// }
 ///
 /// // Point outside the convex hull
 /// let outside_point = Point::new([2.0, 2.0, 2.0, 2.0]);
-/// match locate(&tds, &kernel, &outside_point, None) {
+/// match locate(dt.tds(), &kernel, &outside_point, None) {
 ///     Ok(LocateResult::Outside) => { /* Expected */ }
 ///     _ => panic!("Expected point to be outside convex hull"),
 /// }
@@ -164,7 +164,7 @@ pub enum ConflictError {
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::{locate, LocateResult};
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::triangulation::DelaunayTriangulation;
 /// use delaunay::geometry::kernel::RobustKernel;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -178,14 +178,14 @@ pub enum ConflictError {
 ///     vertex!([0.0, 0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
 /// let kernel = RobustKernel::<f64>::default();
 ///
 /// // Get a cell to use as hint (spatially close to query point)
-/// let hint_cell = tds.cell_keys().next().unwrap();
+/// let hint_cell = dt.tds().cell_keys().next().unwrap();
 /// let query_point = Point::new([0.15, 0.15, 0.15, 0.15]);
 ///
-/// match locate(&tds, &kernel, &query_point, Some(hint_cell)) {
+/// match locate(dt.tds(), &kernel, &query_point, Some(hint_cell)) {
 ///     Ok(LocateResult::InsideCell(_)) => { /* Success */ }
 ///     _ => panic!("Expected to find cell"),
 /// }
@@ -384,7 +384,7 @@ where
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::{locate, find_conflict_region, LocateResult};
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::triangulation::DelaunayTriangulation;
 /// use delaunay::geometry::kernel::FastKernel;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -398,18 +398,17 @@ where
 ///     vertex!([0.0, 0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 0.0, 1.0]),
 /// ];
-/// let mut tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
-/// tds.assign_neighbors().unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
 ///
 /// let kernel = FastKernel::<f64>::new();
 /// // Point inside the 4-simplex
 /// let query_point = Point::new([0.2, 0.2, 0.2, 0.2]);
 ///
 /// // First locate the point
-/// let location = locate(&tds, &kernel, &query_point, None).unwrap();
+/// let location = locate(dt.tds(), &kernel, &query_point, None).unwrap();
 /// if let LocateResult::InsideCell(cell_key) = location {
 ///     // Find all cells whose circumspheres contain the point
-///     let conflict_cells = find_conflict_region(&tds, &kernel, &query_point, cell_key).unwrap();
+///     let conflict_cells = find_conflict_region(dt.tds(), &kernel, &query_point, cell_key).unwrap();
 ///     assert_eq!(conflict_cells.len(), 1); // Single 4-simplex contains the point
 /// }
 /// ```
@@ -526,7 +525,7 @@ where
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::{locate, find_conflict_region, extract_cavity_boundary, LocateResult};
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::triangulation::DelaunayTriangulation;
 /// use delaunay::geometry::kernel::FastKernel;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -540,19 +539,18 @@ where
 ///     vertex!([0.0, 0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 0.0, 1.0]),
 /// ];
-/// let mut tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
-/// tds.assign_neighbors().unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
 ///
 /// let kernel = FastKernel::<f64>::new();
 /// let query_point = Point::new([0.2, 0.2, 0.2, 0.2]);
 ///
 /// // Locate and find conflict region
-/// let location = locate(&tds, &kernel, &query_point, None).unwrap();
+/// let location = locate(dt.tds(), &kernel, &query_point, None).unwrap();
 /// if let LocateResult::InsideCell(cell_key) = location {
-///     let conflict_cells = find_conflict_region(&tds, &kernel, &query_point, cell_key).unwrap();
+///     let conflict_cells = find_conflict_region(dt.tds(), &kernel, &query_point, cell_key).unwrap();
 ///     
 ///     // Extract cavity boundary
-///     let boundary_facets = extract_cavity_boundary(&tds, &conflict_cells).unwrap();
+///     let boundary_facets = extract_cavity_boundary(dt.tds(), &conflict_cells).unwrap();
 ///     
 ///     // For a single 4-simplex, all 5 facets are on the boundary (convex hull)
 ///     assert_eq!(boundary_facets.len(), 5);
@@ -614,6 +612,7 @@ mod tests {
     use super::*;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
+    use crate::prelude::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -627,19 +626,19 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
-        tds.assign_neighbors().unwrap();
+        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+        dt.tds_mut().assign_neighbors().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Get the single cell
-        let cell_key = tds.cell_keys().next().unwrap();
-        let cell = tds.get_cell(cell_key).unwrap();
+        let cell_key = dt.tds().cell_keys().next().unwrap();
+        let cell = dt.tds().get_cell(cell_key).unwrap();
 
         // Get cell vertices in order
         let cell_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|&vkey| *tds.get_vertex_by_key(vkey).unwrap().point())
+            .map(|&vkey| *dt.tds().get_vertex_by_key(vkey).unwrap().point())
             .collect();
 
         println!("Cell vertices: {cell_points:?}");
@@ -653,7 +652,8 @@ mod tests {
 
         // For each facet, test if point is outside using the actual function
         for facet_idx in 0..3 {
-            let result = is_point_outside_facet(&tds, &kernel, cell_key, facet_idx, &query_inside);
+            let result =
+                is_point_outside_facet(dt.tds(), &kernel, cell_key, facet_idx, &query_inside);
             let is_outside = result.unwrap() == Some(true);
 
             println!("Facet {facet_idx} (opposite to vertex {facet_idx}): is_outside={is_outside}");
@@ -670,7 +670,8 @@ mod tests {
         let mut found_outside_facet = false;
 
         for facet_idx in 0..3 {
-            let result = is_point_outside_facet(&tds, &kernel, cell_key, facet_idx, &query_outside);
+            let result =
+                is_point_outside_facet(dt.tds(), &kernel, cell_key, facet_idx, &query_outside);
             let is_outside = result.unwrap() == Some(true);
 
             println!("Outside point - Facet {facet_idx}: is_outside={is_outside}");
@@ -704,16 +705,16 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point inside the triangle
         let point = Point::new([0.3, 0.3]);
-        let result = locate(&tds, &kernel, &point, None);
+        let result = locate(dt.tds(), &kernel, &point, None);
 
         match result {
             Ok(LocateResult::InsideCell(cell_key)) => {
-                assert!(tds.contains_cell(cell_key));
+                assert!(dt.tds().contains_cell(cell_key));
             }
             _ => panic!("Expected point to be inside a cell, got {result:?}"),
         }
@@ -727,16 +728,16 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point inside the tetrahedron
         let point = Point::new([0.25, 0.25, 0.25]);
-        let result = locate(&tds, &kernel, &point, None);
+        let result = locate(dt.tds(), &kernel, &point, None);
 
         match result {
             Ok(LocateResult::InsideCell(cell_key)) => {
-                assert!(tds.contains_cell(cell_key));
+                assert!(dt.tds().contains_cell(cell_key));
             }
             _ => panic!("Expected point to be inside a cell, got {result:?}"),
         }
@@ -749,12 +750,12 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point far outside the triangle
         let point = Point::new([10.0, 10.0]);
-        let result = locate(&tds, &kernel, &point, None);
+        let result = locate(dt.tds(), &kernel, &point, None);
 
         assert!(matches!(result, Ok(LocateResult::Outside)));
     }
@@ -767,12 +768,12 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point far outside the tetrahedron
         let point = Point::new([2.0, 2.0, 2.0]);
-        let result = locate(&tds, &kernel, &point, None);
+        let result = locate(dt.tds(), &kernel, &point, None);
 
         assert!(matches!(result, Ok(LocateResult::Outside)));
     }
@@ -785,14 +786,14 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Get a valid cell as hint
-        let hint_cell = tds.cell_keys().next().unwrap();
+        let hint_cell = dt.tds().cell_keys().next().unwrap();
         let point = Point::new([0.25, 0.25, 0.25]);
 
-        let result = locate(&tds, &kernel, &point, Some(hint_cell));
+        let result = locate(dt.tds(), &kernel, &point, Some(hint_cell));
         assert!(matches!(result, Ok(LocateResult::InsideCell(_))));
     }
 
@@ -803,11 +804,11 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = RobustKernel::<f64>::default();
 
         let point = Point::new([0.3, 0.3]);
-        let result = locate(&tds, &kernel, &point, None);
+        let result = locate(dt.tds(), &kernel, &point, None);
 
         assert!(matches!(result, Ok(LocateResult::InsideCell(_))));
     }
@@ -820,15 +821,15 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        let cell_key = tds.cell_keys().next().unwrap();
+        let cell_key = dt.tds().cell_keys().next().unwrap();
         let point = Point::new([0.25, 0.25, 0.25]); // Inside tetrahedron
 
         // Test all facets - point should not be outside any of them
         for facet_idx in 0..4 {
-            let result = is_point_outside_facet(&tds, &kernel, cell_key, facet_idx, &point);
+            let result = is_point_outside_facet(dt.tds(), &kernel, cell_key, facet_idx, &point);
             assert!(matches!(result, Ok(Some(false) | None)));
         }
     }
@@ -841,17 +842,17 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        let cell_key = tds.cell_keys().next().unwrap();
+        let cell_key = dt.tds().cell_keys().next().unwrap();
         let point = Point::new([2.0, 2.0, 2.0]); // Outside tetrahedron
 
         // At least one facet should show the point as outside
         let mut found_outside = false;
         for facet_idx in 0..4 {
             if matches!(
-                is_point_outside_facet(&tds, &kernel, cell_key, facet_idx, &point),
+                is_point_outside_facet(dt.tds(), &kernel, cell_key, facet_idx, &point),
                 Ok(Some(true))
             ) {
                 found_outside = true;
@@ -871,12 +872,12 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = RobustKernel::<f64>::default();
 
         // Point very close to an edge but still inside
         let point = Point::new([0.01, 0.01]);
-        let result = locate(&tds, &kernel, &point, None);
+        let result = locate(dt.tds(), &kernel, &point, None);
 
         // Should either be inside or on the edge, not outside
         match result {
@@ -891,11 +892,11 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(vertex!($coords)),+
             ];
-            let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::new(&vertices).unwrap();
             let kernel = FastKernel::<f64>::new();
 
             let point = Point::new($inside_point);
-            let result = locate(&tds, &kernel, &point, None);
+            let result = locate(dt.tds(), &kernel, &point, None);
 
             assert!(
                 matches!(result, Ok(LocateResult::InsideCell(_))),
@@ -955,13 +956,13 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(vertex!($coords)),+
             ];
-            let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::new(&vertices).unwrap();
             let kernel = FastKernel::<f64>::new();
 
-            let start_cell = tds.cell_keys().next().unwrap();
+            let start_cell = dt.tds().cell_keys().next().unwrap();
             let point = Point::new($inside_point);
 
-            let conflict_cells = find_conflict_region(&tds, &kernel, &point, start_cell).unwrap();
+            let conflict_cells = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
 
             assert_eq!(
                 conflict_cells.len(),
@@ -1025,13 +1026,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        let start_cell = tds.cell_keys().next().unwrap();
+        let start_cell = dt.tds().cell_keys().next().unwrap();
         let point = Point::new([10.0, 10.0, 10.0]); // Far outside
 
-        let conflict_cells = find_conflict_region(&tds, &kernel, &point, start_cell).unwrap();
+        let conflict_cells = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
 
         // Should find zero cells in conflict
         assert_eq!(
@@ -1048,14 +1049,14 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Create invalid cell key
         let invalid_cell = CellKey::from(KeyData::from_ffi(999_999));
         let point = Point::new([0.3, 0.3]);
 
-        let result = find_conflict_region(&tds, &kernel, &point, invalid_cell);
+        let result = find_conflict_region(dt.tds(), &kernel, &point, invalid_cell);
 
         assert!(
             matches!(result, Err(ConflictError::InvalidStartCell { .. })),
@@ -1071,13 +1072,13 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = RobustKernel::<f64>::default();
 
-        let start_cell = tds.cell_keys().next().unwrap();
+        let start_cell = dt.tds().cell_keys().next().unwrap();
         let point = Point::new([0.3, 0.3]);
 
-        let conflict_cells = find_conflict_region(&tds, &kernel, &point, start_cell).unwrap();
+        let conflict_cells = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
 
         assert_eq!(
             conflict_cells.len(),
@@ -1092,14 +1093,14 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(vertex!($coords)),+
             ];
-            let mut tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
-            tds.assign_neighbors().unwrap();
+            let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+            dt.tds_mut().assign_neighbors().unwrap();
 
-            let start_cell = tds.cell_keys().next().unwrap();
+            let start_cell = dt.tds().cell_keys().next().unwrap();
             let mut conflict_cells = CellKeyBuffer::new();
             conflict_cells.push(start_cell);
 
-            let boundary = extract_cavity_boundary(&tds, &conflict_cells).unwrap();
+            let boundary = extract_cavity_boundary(dt.tds(), &conflict_cells).unwrap();
 
             assert_eq!(
                 boundary.len(),
@@ -1167,12 +1168,12 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
-        tds.assign_neighbors().unwrap();
+        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+        dt.tds_mut().assign_neighbors().unwrap();
 
         let conflict_cells = CellKeyBuffer::new(); // Empty
 
-        let boundary = extract_cavity_boundary(&tds, &conflict_cells).unwrap();
+        let boundary = extract_cavity_boundary(dt.tds(), &conflict_cells).unwrap();
 
         assert_eq!(
             boundary.len(),

@@ -476,7 +476,7 @@ fn performance_analysis(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) 
     }
 
     // Memory usage estimation
-    let hull_size = std::mem::size_of::<ConvexHull<FastKernel<f64>, Option<()>, Option<()>, 3>>();
+    let hull_size = std::mem::size_of::<ConvexHull<FastKernel<f64>, (), (), 3>>();
     // Phase 3C: Facets are now lightweight (CellKey, u8) tuples
     let facet_handle_size = std::mem::size_of::<(delaunay::core::CellKey, u8)>();
     let estimated_hull_memory = hull_size + (facet_count * facet_handle_size);

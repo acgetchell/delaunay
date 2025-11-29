@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Focused showcase demonstrating specific cases where robust predicates succeed
 //! where standard predicates fail, directly addressing "No cavity boundary facets found" errors.
 
@@ -390,7 +389,7 @@ fn triangulation_scenario_demo() {
         vertex!([0.0, 0.0, 1.0]),
     ];
 
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> =
+    let mut tds: Tds<f64, (), (), 3> =
         Tds::new(&initial_vertices).expect("Should be able to create basic tetrahedron");
 
     println!(

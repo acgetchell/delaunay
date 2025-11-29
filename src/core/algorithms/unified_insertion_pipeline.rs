@@ -441,11 +441,11 @@ mod tests {
     use crate::vertex;
 
     fn run_stepwise_unified_insertion_debug<const D: usize>(
-        base_vertices: &[Vertex<f64, Option<()>, D>],
-        new_vertex: Vertex<f64, Option<()>, D>,
+        base_vertices: &[Vertex<f64, (), D>],
+        new_vertex: Vertex<f64, (), D>,
         context: &str,
     ) {
-        let mut tds: Tds<f64, Option<()>, Option<()>, D> =
+        let mut tds: Tds<f64, (), (), D> =
             Tds::new(base_vertices).expect("base triangulation should construct");
 
         assert!(
@@ -467,16 +467,15 @@ mod tests {
 
         // Insert the new vertex via the unified pipeline with EndOnly policy,
         // mirroring the behavior of `Tds::new`'s Bowyer–Watson stage.
-        let mut pipeline: UnifiedInsertionPipeline<f64, Option<()>, Option<()>, D> =
+        let mut pipeline: UnifiedInsertionPipeline<f64, (), (), D> =
             UnifiedInsertionPipeline::with_policy(DelaunayCheckPolicy::EndOnly);
 
-        let insert_info =
-            <UnifiedInsertionPipeline<f64, Option<()>, Option<()>, D> as InsertionAlgorithm<
-                f64,
-                Option<()>,
-                Option<()>,
-                D,
-            >>::insert_vertex(&mut pipeline, &mut tds, new_vertex);
+        let insert_info = <UnifiedInsertionPipeline<f64, (), (), D> as InsertionAlgorithm<
+            f64,
+            (),
+            (),
+            D,
+        >>::insert_vertex(&mut pipeline, &mut tds, new_vertex);
 
         // After tightening unified-pipeline semantics, hard geometric failures from
         // the fast path (e.g., stalled cavity refinement) are treated as
@@ -517,13 +516,12 @@ mod tests {
         }
 
         // Run the same finalization step that `triangulate` would invoke at the end.
-        let finalize_result =
-            <UnifiedInsertionPipeline<f64, Option<()>, Option<()>, D> as InsertionAlgorithm<
-                f64,
-                Option<()>,
-                Option<()>,
-                D,
-            >>::finalize_triangulation(&mut tds);
+        let finalize_result = <UnifiedInsertionPipeline<f64, (), (), D> as InsertionAlgorithm<
+            f64,
+            (),
+            (),
+            D,
+        >>::finalize_triangulation(&mut tds);
 
         if let Err(err) = finalize_result {
             eprintln!(

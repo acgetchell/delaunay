@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Test cases for reproducing and debugging cavity boundary facet errors
 //!
 //! This module contains tests that reproduce geometric configurations that commonly
@@ -23,7 +22,7 @@ fn test_geometric_degeneracy_cases() {
     ];
 
     let vertices = Vertex::from_points(&near_coplanar_points);
-    match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+    match Tds::<f64, (), (), 3>::new(&vertices) {
         Ok(_) => println!("  Near-coplanar points: Success"),
         Err(e) => println!("  Near-coplanar points: Failed with {e:?}"),
     }
@@ -38,7 +37,7 @@ fn test_geometric_degeneracy_cases() {
     ];
 
     let vertices = Vertex::from_points(&flat_tetrahedron);
-    match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+    match Tds::<f64, (), (), 3>::new(&vertices) {
         Ok(_) => println!("  Flat tetrahedron: Success"),
         Err(e) => println!("  Flat tetrahedron: Failed with {e:?}"),
     }
@@ -59,7 +58,7 @@ fn test_geometric_degeneracy_cases() {
     }
 
     let vertices = Vertex::from_points(&clustered_points);
-    match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+    match Tds::<f64, (), (), 3>::new(&vertices) {
         Ok(_) => println!("  Clustered points: Success"),
         Err(e) => println!("  Clustered points: Failed with {e:?}"),
     }
@@ -79,7 +78,7 @@ fn test_geometric_degeneracy_cases() {
     ];
 
     let vertices = Vertex::from_points(&problematic_points);
-    match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+    match Tds::<f64, (), (), 3>::new(&vertices) {
         Ok(tds) => {
             println!(
                 "  Problematic configuration: Success with {} cells",
@@ -126,7 +125,7 @@ fn test_reproduce_cavity_boundary_error_fast() {
 
         let vertices = Vertex::from_points(&points);
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+        match Tds::<f64, (), (), 3>::new(&vertices) {
             Ok(_) => {
                 println!("  Attempt {attempt}: Triangulation successful");
             }
@@ -185,7 +184,7 @@ fn test_reproduce_cavity_boundary_error_comprehensive() {
 
         let vertices = Vertex::from_points(&points);
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+        match Tds::<f64, (), (), 3>::new(&vertices) {
             Ok(tds) => {
                 println!(
                     "  Success: Created triangulation with {} vertices, {} cells",

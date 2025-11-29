@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Property-based tests for Cell operations.
 //!
 //! This module uses proptest to verify fundamental properties of Cell
@@ -43,7 +42,7 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         for (_cell_key, cell) in tds.cells() {
                             let vertex_keys = cell.vertices();
                             let unique_vertices: HashSet<_> = vertex_keys.iter().collect();
@@ -60,7 +59,7 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         for (_cell_key, cell) in tds.cells() {
                             prop_assert_eq!(cell.vertices().len(), $expected_vertices);
                         }
@@ -75,7 +74,7 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         for (_cell_key, cell) in tds.cells() {
                             if let Some(neighbors) = cell.neighbors() {
                                 prop_assert!(neighbors.len() <= $max_neighbors);
@@ -92,7 +91,7 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         let mut seen_uuids = HashSet::new();
                         for (_cell_key, cell) in tds.cells() {
                             prop_assert!(seen_uuids.insert(cell.uuid()));
@@ -108,7 +107,7 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         if tds.is_valid().is_ok() {
                             for (_cell_key, cell) in tds.cells() {
                                 prop_assert_eq!(cell.vertices().len(), $expected_vertices);

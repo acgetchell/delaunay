@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Property-based tests for geometric quality metrics.
 //!
 //! This module uses proptest to verify fundamental properties of quality
@@ -63,8 +62,8 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 /// 4. Compare quality metrics between matched cells
 /// 5. Track whether any cells were successfully matched (to avoid vacuous success)
 fn compare_transformed_cells<const D: usize, F>(
-    tds_orig: &Tds<f64, Option<()>, Option<()>, D>,
-    tds_transformed: &Tds<f64, Option<()>, Option<()>, D>,
+    tds_orig: &Tds<f64, (), (), D>,
+    tds_transformed: &Tds<f64, (), (), D>,
     uuid_map: &HashMap<Uuid, Uuid>,
     _metric_name: &str,
     _dimension: usize,
@@ -197,7 +196,7 @@ macro_rules! test_quality_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         for cell_key in tds.cell_keys() {
                             if let Ok(ratio) = radius_ratio(&tds, cell_key) {
                                 prop_assert!(
@@ -278,7 +277,7 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         // Translate all vertices
                         let translated_vertices: Vec<_> = vertices
                             .iter()
@@ -294,7 +293,7 @@ macro_rules! test_quality_properties {
 
                         let translated_vertices = Vertex::from_points(&translated_vertices);
 
-                        if let Ok(tds_translated) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&translated_vertices) {
+                        if let Ok(tds_translated) = Tds::<f64, (), (), $dim>::new(&translated_vertices) {
                             // Build mapping from original UUIDs to translated UUIDs
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(translated_vertices.iter())
@@ -344,7 +343,7 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         // Translate all vertices
                         let translated_vertices: Vec<_> = vertices
                             .iter()
@@ -360,7 +359,7 @@ macro_rules! test_quality_properties {
 
                         let translated_vertices = Vertex::from_points(&translated_vertices);
 
-                        if let Ok(tds_translated) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&translated_vertices) {
+                        if let Ok(tds_translated) = Tds::<f64, (), (), $dim>::new(&translated_vertices) {
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(translated_vertices.iter())
@@ -410,7 +409,7 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     scale in 0.1f64..10.0f64
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         // Scale all vertices uniformly
                         let scaled_vertices: Vec<_> = vertices
                             .iter()
@@ -426,7 +425,7 @@ macro_rules! test_quality_properties {
 
                         let scaled_vertices = Vertex::from_points(&scaled_vertices);
 
-                        if let Ok(tds_scaled) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&scaled_vertices) {
+                        if let Ok(tds_scaled) = Tds::<f64, (), (), $dim>::new(&scaled_vertices) {
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(scaled_vertices.iter())
@@ -475,7 +474,7 @@ macro_rules! test_quality_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         for cell_key in tds.cell_keys() {
                             let rr_result = radius_ratio(&tds, cell_key);
                             let nv_result = normalized_volume(&tds, cell_key);

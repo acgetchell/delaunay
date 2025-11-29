@@ -1,4 +1,3 @@
-#![cfg_attr(feature = "slow-tests", expect(deprecated))]
 //! Integration tests for `RobustBowyerWatson` algorithm.
 //!
 //! These tests verify end-to-end behavior of the robust insertion algorithm
@@ -52,7 +51,7 @@ macro_rules! test_robust_integration {
 
                 // Triangulate using the robust algorithm's high-level API. This exercises
                 // the robust insertion pipeline together with global Delaunay repair.
-                let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::empty();
+                let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                 algorithm
                     .triangulate(&mut tds, &vertices)
                     .unwrap_or_else(|err| {
@@ -101,7 +100,7 @@ macro_rules! test_robust_integration {
                 let mut algorithm = RobustBowyerWatson::new();
 
                 let initial_vertices = create_initial_simplex::<$dim>();
-                let mut tds: Tds<f64, Option<()>, Option<()>, $dim> =
+                let mut tds: Tds<f64, (), (), $dim> =
                     Tds::new(&initial_vertices).unwrap();
 
                 let initial_cells = tds.number_of_cells();
@@ -164,7 +163,7 @@ macro_rules! test_robust_integration {
                     clustered_vertices.push(vertex!(coords));
                 }
 
-                let mut tds_cluster: Tds<f64, Option<()>, Option<()>, $dim> = Tds::empty();
+                let mut tds_cluster: Tds<f64, (), (), $dim> = Tds::empty();
                 algorithm
                     .triangulate(&mut tds_cluster, &clustered_vertices)
                     .unwrap_or_else(|err| {
@@ -193,7 +192,7 @@ macro_rules! test_robust_integration {
                     all_vertices.push(vertex!(coords));
                 }
 
-                let mut tds_all: Tds<f64, Option<()>, Option<()>, $dim> = Tds::empty();
+                let mut tds_all: Tds<f64, (), (), $dim> = Tds::empty();
                 algorithm
                     .triangulate(&mut tds_all, &all_vertices)
                     .unwrap_or_else(|err| {
@@ -230,8 +229,7 @@ macro_rules! test_robust_integration {
 
 /// Create initial simplex for dimension D
 #[cfg(feature = "slow-tests")]
-fn create_initial_simplex<const D: usize>()
--> Vec<delaunay::core::vertex::Vertex<f64, Option<()>, D>> {
+fn create_initial_simplex<const D: usize>() -> Vec<delaunay::core::vertex::Vertex<f64, (), D>> {
     let mut vertices = Vec::with_capacity(D + 1);
 
     // Add origin
@@ -297,7 +295,7 @@ fn test_mixed_interior_exterior_insertions_3d() {
         vertices.push(*vertex);
     }
 
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+    let mut tds: Tds<f64, (), (), 3> = Tds::empty();
     algorithm
         .triangulate(&mut tds, &vertices)
         .unwrap_or_else(|err| {
@@ -342,7 +340,7 @@ fn test_grid_pattern_insertion_2d() {
         }
     }
 
-    let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+    let mut tds: Tds<f64, (), (), 2> = Tds::empty();
     algorithm
         .triangulate(&mut tds, &vertices)
         .unwrap_or_else(|err| {
@@ -390,7 +388,7 @@ fn test_degenerate_robust_configuration_3d() {
 
     vertices.extend(near_degenerate_vertices.iter().copied());
 
-    let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+    let mut tds: Tds<f64, (), (), 3> = Tds::empty();
     // The algorithm should complete successfully, but may skip near-duplicate
     // vertices that violate the near-duplicate threshold.
     let result = algorithm.triangulate(&mut tds, &vertices);
@@ -439,7 +437,7 @@ fn test_algorithm_reset_and_reuse() {
         vertex!([0.0, 0.0, 1.0]),
         vertex!([0.5, 0.5, 0.5]),
     ];
-    let mut tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+    let mut tds1: Tds<f64, (), (), 3> = Tds::empty();
 
     algorithm
         .triangulate(&mut tds1, &vertices1)
@@ -493,7 +491,7 @@ fn test_algorithm_reset_and_reuse() {
         vertex!([0.0, 0.0, 2.0]),
         vertex!([1.0, 1.0, 1.0]),
     ];
-    let mut tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+    let mut tds2: Tds<f64, (), (), 3> = Tds::empty();
 
     algorithm
         .triangulate(&mut tds2, &vertices2)

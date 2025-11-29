@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Property-based tests for triangulation invariants.
 //!
 //! This module uses proptest to verify structural properties of Delaunay
@@ -47,22 +46,22 @@ fn vertex_5d() -> impl Strategy<Value = Point<f64, 5>> {
 }
 
 /// Strategy for generating a small collection of 2D vertices (4-10 vertices)
-fn small_vertex_set_2d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 2>>> {
+fn small_vertex_set_2d() -> impl Strategy<Value = Vec<Vertex<f64, (), 2>>> {
     prop::collection::vec(vertex_2d(), 4..=10).prop_map(|v| Vertex::from_points(&v))
 }
 
 /// Strategy for generating a small collection of 3D vertices (5-12 vertices)
-fn small_vertex_set_3d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 3>>> {
+fn small_vertex_set_3d() -> impl Strategy<Value = Vec<Vertex<f64, (), 3>>> {
     prop::collection::vec(vertex_3d(), 5..=12).prop_map(|v| Vertex::from_points(&v))
 }
 
 /// Strategy for generating a small collection of 4D vertices (6-14 vertices)
-fn small_vertex_set_4d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 4>>> {
+fn small_vertex_set_4d() -> impl Strategy<Value = Vec<Vertex<f64, (), 4>>> {
     prop::collection::vec(vertex_4d(), 6..=14).prop_map(|v| Vertex::from_points(&v))
 }
 
 /// Strategy for generating a small collection of 5D vertices (7-16 vertices)
-fn small_vertex_set_5d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 5>>> {
+fn small_vertex_set_5d() -> impl Strategy<Value = Vec<Vertex<f64, (), 5>>> {
     prop::collection::vec(vertex_5d(), 7..=16).prop_map(|v| Vertex::from_points(&v))
 }
 
@@ -77,7 +76,7 @@ macro_rules! gen_triangulation_validity {
             proptest! {
                 #[test]
                 fn [<prop_triangulation_from_vertices_is_valid_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         prop_assert!(tds.is_valid().is_ok(),
                             "{}D triangulation should be valid: {:?}",
                             $dim, tds.is_valid().err());
@@ -94,7 +93,7 @@ macro_rules! gen_neighbor_symmetry {
             proptest! {
                 #[test]
                 fn [<prop_neighbor_symmetry_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         for (cell_key, cell) in tds.cells() {
                             if let Some(neighbors) = cell.neighbors() {
                                 for neighbor_key in neighbors.iter().flatten() {
@@ -158,7 +157,7 @@ macro_rules! gen_neighbor_index_semantics {
                 fn [<prop_neighbor_index_semantics_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     // Use stack-allocated buffer for D facet vertices (D ≤ 7 typical)
                     use delaunay::core::collections::SimplexVertexBuffer;
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         prop_assume!(tds.is_valid().is_ok());
                         for (cell_key, cell) in tds.cells() {
                             if let Some(neighbors) = cell.neighbors() {
@@ -202,7 +201,7 @@ macro_rules! gen_cell_vertices_exist_in_tds {
                 #[test]
                 fn [<prop_cell_vertices_exist_in_tds_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     use std::collections::HashSet;
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         let all_vertex_keys: HashSet<_> = tds.vertex_keys().collect();
                         for (_cell_key, cell) in tds.cells() {
                             for vertex_key in cell.vertices() {
@@ -225,7 +224,7 @@ macro_rules! gen_no_duplicate_cells {
                 fn [<prop_no_duplicate_cells_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     use std::collections::HashSet;
                     use delaunay::core::collections::CellVertexBuffer;
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         let mut seen = HashSet::new();
                         for (_cell_key, cell) in tds.cells() {
                             // Use stack-allocated buffer for D+1 vertices (D ≤ 7 typical)
@@ -250,7 +249,7 @@ macro_rules! gen_incremental_insertion_validity {
                     additional_point in [<vertex_ $dim d>](),
                 ) {
                     let initial_vertices = Vertex::from_points(&initial_points);
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&initial_vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&initial_vertices) {
                         prop_assert!(tds.is_valid().is_ok(), "Initial {}D triangulation should be valid", $dim);
                         let additional_vertex = vertex!(additional_point);
                         if tds.add(additional_vertex).is_ok() {
@@ -269,7 +268,7 @@ macro_rules! gen_dimension_consistency {
             proptest! {
                 #[test]
                 fn [<prop_dimension_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         if tds.number_of_vertices() >= $min_vertices && tds.number_of_cells() > 0 {
                             prop_assert_eq!(tds.dim(), $dim as i32, "{}D triangulation dimension mismatch", $dim);
                         }
@@ -286,7 +285,7 @@ macro_rules! gen_vertex_count_consistency {
             proptest! {
                 #[test]
                 fn [<prop_vertex_count_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         let keys = tds.vertex_keys().count();
                         let n = tds.number_of_vertices();
                         prop_assert_eq!(keys, n, "{}D vertex keys count should match number_of_vertices", $dim);

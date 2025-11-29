@@ -164,7 +164,7 @@ where
     /// use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
     ///
     /// // Create a new 3D Bowyer-Watson algorithm instance
-    /// let algorithm: IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> =
+    /// let algorithm: IncrementalBowyerWatson<f64, (), (), 3> =
     ///     IncrementalBowyerWatson::new();
     ///
     /// // Verify initial statistics using the trait method
@@ -405,9 +405,9 @@ mod tests {
                 #[test]
                 fn $test_name() {
                     // Test basic algorithm functionality in this dimension
-                    let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::new();
+                    let mut algorithm = IncrementalBowyerWatson::<f64, (), (), $dim>::new();
                     let initial_vertices = $initial_vertices;
-                    let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
 
                     assert!(tds.is_valid().is_ok(), "{}D initial TDS should be valid", $dim);
                     assert_eq!(tds.dim(), $dim as i32, "{}D TDS should have dimension {}", $dim, $dim);
@@ -441,9 +441,9 @@ mod tests {
                     #[test]
                     fn [<$test_name _reset>]() {
                         // Test algorithm reset functionality
-                        let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::new();
+                        let mut algorithm = IncrementalBowyerWatson::<f64, (), (), $dim>::new();
                         let initial_vertices = $initial_vertices;
-                        let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let mut tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
 
                         // Insert a vertex
                         let test_vertex = $test_vertex;
@@ -466,9 +466,9 @@ mod tests {
                     #[test]
                     fn [<$test_name _multiple_insertions>]() {
                         // Test multiple vertex insertions
-                        let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::new();
+                        let mut algorithm = IncrementalBowyerWatson::<f64, (), (), $dim>::new();
                         let initial_vertices = $initial_vertices;
-                        let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let mut tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
 
                         let initial_vertex_count = tds.number_of_vertices();
 
@@ -540,21 +540,21 @@ mod tests {
     // ============================================================================
 
     /// Count boundary facets (shared by 1 cell)
-    fn count_boundary_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
+    fn count_boundary_facets(tds: &Tds<f64, (), (), 3>) -> usize {
         tds.build_facet_to_cells_map().ok().map_or(0, |map| {
             map.values().filter(|cells| cells.len() == 1).count()
         })
     }
 
     /// Count internal facets (shared by 2 cells)
-    fn count_internal_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
+    fn count_internal_facets(tds: &Tds<f64, (), (), 3>) -> usize {
         tds.build_facet_to_cells_map().ok().map_or(0, |map| {
             map.values().filter(|cells| cells.len() == 2).count()
         })
     }
 
     /// Count invalid facets (shared by 3+ cells)
-    fn count_invalid_facets(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> usize {
+    fn count_invalid_facets(tds: &Tds<f64, (), (), 3>) -> usize {
         tds.build_facet_to_cells_map().ok().map_or(0, |map| {
             map.values().filter(|cells| cells.len() > 2).count()
         })
@@ -588,7 +588,7 @@ mod tests {
         }
 
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         #[cfg(debug_assertions)]
         {
@@ -761,7 +761,7 @@ mod tests {
         ];
 
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // For a single tetrahedron, we expect:
         // - 1 cell, 4 boundary facets, 0 internal facets
@@ -807,7 +807,7 @@ mod tests {
         // Add point outside to trigger Bowyer-Watson
         points.push(Point::new([0.5, 0.5, 2.0]));
         let all_vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&all_vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&all_vertices).unwrap();
 
         // Verify triangulation invariants are maintained
         let boundary_count = count_boundary_facets(&tds);
@@ -835,7 +835,7 @@ mod tests {
         ];
 
         let vertices = Vertex::from_points(&initial_points);
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
         let new_vertex = vertex!([0.5, 0.5, 2.0]);
 
@@ -848,14 +848,13 @@ mod tests {
         );
 
         // Test bad cell detection (may be empty for exterior points with hull extension)
-        let _bad_cells =
-            <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
-                f64,
-                Option<()>,
-                Option<()>,
-                3,
-            >>::find_bad_cells(&mut algorithm, &tds, &new_vertex)
-            .expect("Bad cell detection should succeed");
+        let _bad_cells = <IncrementalBowyerWatson<f64, (), (), 3> as InsertionAlgorithm<
+            f64,
+            (),
+            (),
+            3,
+        >>::find_bad_cells(&mut algorithm, &tds, &new_vertex)
+        .expect("Bad cell detection should succeed");
 
         // Test full insertion
         let result = algorithm.insert_vertex(&mut tds, new_vertex);
@@ -881,20 +880,19 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
-        let _algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
+        let _algorithm = IncrementalBowyerWatson::<f64, (), (), 3>::new();
 
         // Add some additional complexity to the triangulation
         // (In a real scenario, this would be done through the Bowyer-Watson process)
 
         // Test finalization using trait method
-        let result =
-            <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
-                f64,
-                Option<()>,
-                Option<()>,
-                3,
-            >>::finalize_triangulation(&mut tds);
+        let result = <IncrementalBowyerWatson<f64, (), (), 3> as InsertionAlgorithm<
+            f64,
+            (),
+            (),
+            3,
+        >>::finalize_triangulation(&mut tds);
 
         assert!(
             result.is_ok(),
@@ -915,9 +913,8 @@ mod tests {
         println!("Testing Default trait implementation");
 
         // Test that Default::default() creates the same instance as new()
-        let algorithm_new = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
-        let algorithm_default =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::default();
+        let algorithm_new = IncrementalBowyerWatson::<f64, (), (), 3>::new();
+        let algorithm_default = IncrementalBowyerWatson::<f64, (), (), 3>::default();
 
         // Both should have the same initial statistics
         let (insertions_new, created_new, removed_new) = algorithm_new.get_statistics();
@@ -952,14 +949,14 @@ mod tests {
     /// Regression test for cell counting bug (double counting fix)
     #[test]
     fn test_simple_double_counting_fix() {
-        let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = IncrementalBowyerWatson::<f64, (), (), 3>::new();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 
         algorithm.triangulate(&mut tds, &vertices).unwrap();
         let (insertions, created, removed) = algorithm.get_statistics();
@@ -984,7 +981,7 @@ mod tests {
     /// Test `FacetCacheProvider` trait implementation
     #[test]
     fn test_facet_cache_provider_methods() {
-        let algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = IncrementalBowyerWatson::<f64, (), (), 3>::new();
 
         let cache_ref = algorithm.facet_cache();
         assert!(cache_ref.load().is_none(), "Initial cache should be empty");
@@ -997,7 +994,7 @@ mod tests {
     /// Test `InsertionAlgorithm` trait methods (statistics, strategy, reset)
     #[test]
     fn test_insertion_algorithm_trait_methods() {
-        let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = IncrementalBowyerWatson::<f64, (), (), 3>::new();
 
         // Test increment methods
         let initial_stats = algorithm.get_statistics();
@@ -1022,7 +1019,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         let interior_vertex = vertex!([0.25, 0.25, 0.25]);
         let strategy = algorithm.determine_strategy(&tds, &interior_vertex);
@@ -1052,14 +1049,14 @@ mod tests {
     /// Test error handling paths in insertion algorithm
     #[test]
     fn test_error_handling_in_insertion() {
-        let mut algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut algorithm = IncrementalBowyerWatson::<f64, (), (), 3>::new();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test multiple insertions (interior and exterior points)
         let test_vertices = vec![

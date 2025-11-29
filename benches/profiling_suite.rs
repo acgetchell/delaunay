@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Comprehensive Profiling Suite - Extended performance analysis for optimization work
 //!
 //! This benchmark suite provides extensive profiling capabilities for deep performance

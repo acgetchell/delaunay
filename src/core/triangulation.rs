@@ -27,6 +27,7 @@ use crate::geometry::kernel::Kernel;
 ///
 /// # Phase 2 TODO
 /// Add geometric operations that use the kernel for predicates.
+#[derive(Clone, Debug)]
 pub struct Triangulation<K, U, V, const D: usize>
 where
     K: Kernel<D>,

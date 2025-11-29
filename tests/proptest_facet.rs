@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Property-based tests for Facet operations.
 //!
 //! This module uses proptest to verify fundamental properties of Facet
@@ -44,7 +43,7 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         for cell_key in tds.cell_keys() {
                             // Each cell has D+1 facets (one opposite each vertex)
                             for facet_index in 0..=($dim as u8) {
@@ -73,7 +72,7 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         for cell_key in tds.cell_keys() {
                             if let Some(cell) = tds.get_cell(cell_key) {
                                 let cell_vertex_count = cell.vertices().len();
@@ -104,7 +103,7 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         // Check that each facet is valid
                         for cell_key in tds.cell_keys() {
                             for facet_index in 0..=($dim as u8) {
@@ -128,7 +127,7 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         for cell_key in tds.cell_keys() {
                             let mut facet_count = 0;
                             for facet_index in 0..=($dim as u8) {
@@ -170,7 +169,7 @@ macro_rules! test_facet_multiplicity {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         // Ensure we're checking a valid triangulation to avoid degenerate edge cases
                         prop_assume!(tds.is_valid().is_ok());
 

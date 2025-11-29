@@ -193,11 +193,11 @@ pub fn make_uuid() -> Uuid {
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
-/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+/// let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
 ///     .into_iter().next().unwrap();
-/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])]) // Duplicate
+/// let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])]) // Duplicate
 ///     .into_iter().next().unwrap();
-/// let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+/// let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
 ///     .into_iter().next().unwrap();
 ///
 /// let vertices = vec![v1, v2, v3];
@@ -262,11 +262,11 @@ where
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
-/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+/// let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
 ///     .into_iter().next().unwrap();
-/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1e-11, 1e-11])]) // Near duplicate
+/// let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1e-11, 1e-11])]) // Near duplicate
 ///     .into_iter().next().unwrap();
-/// let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+/// let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
 ///     .into_iter().next().unwrap();
 ///
 /// let vertices = vec![v1, v2, v3];
@@ -335,9 +335,9 @@ where
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
-/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+/// let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
 ///     .into_iter().next().unwrap();
-/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+/// let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
 ///     .into_iter().next().unwrap();
 ///
 /// let reference = vec![v1]; // Exclude origin
@@ -435,7 +435,7 @@ fn coords_within_epsilon<T: CoordinateScalar, const D: usize>(
 /// use delaunay::core::triangulation_data_structure::Tds;
 ///
 /// // This is a conceptual example - in practice you would get these from a real TDS
-/// fn example(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> Result<bool, FacetError> {
+/// fn example(tds: &Tds<f64, (), (), 3>) -> Result<bool, FacetError> {
 ///     let cell_keys: Vec<_> = tds.cell_keys().take(2).collect();
 ///     if cell_keys.len() >= 2 {
 ///         let facet1 = FacetView::new(tds, cell_keys[0], 0)?;
@@ -505,7 +505,7 @@ where
 /// use delaunay::core::triangulation_data_structure::Tds;
 ///
 /// fn extract_vertices_example(
-///     tds: &Tds<f64, Option<()>, Option<()>, 3>,
+///     tds: &Tds<f64, (), (), 3>,
 /// ) -> Result<(), Box<dyn std::error::Error>> {
 ///     let cell_key = tds.cell_keys().next().unwrap();
 ///     let facet_view = FacetView::new(tds, cell_key, 0)?;
@@ -556,7 +556,7 @@ where
 /// use delaunay::core::vertex::Vertex;
 /// use delaunay::vertex;
 ///
-/// let vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![
+/// let vertices: Vec<Vertex<f64, (), 1>> = vec![
 ///     vertex!([0.0]),
 ///     vertex!([1.0]),
 ///     vertex!([2.0]),
@@ -853,7 +853,7 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 ///
 /// let coord_set = extract_vertex_coordinate_set(&tds);
 /// assert_eq!(coord_set.len(), 4);
@@ -910,7 +910,7 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 ///
 /// let edge_set = extract_edge_set(&tds).unwrap();
 /// // A tetrahedron has 6 edges
@@ -982,7 +982,7 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 ///
 /// let facet_set = extract_facet_identifier_set(&tds).unwrap();
 /// // A tetrahedron has 4 facets
@@ -1049,7 +1049,7 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+/// let dt: DelaunayTriangulation<_, (), (), 3> =
 ///     DelaunayTriangulation::new(&vertices).unwrap();
 /// let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 ///
@@ -1279,13 +1279,13 @@ macro_rules! assert_jaccard_gte {
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 ///
 /// // Get facet vertex keys from a cell - no need to materialize Vertex objects
 /// if let Some(cell) = tds.cells().map(|(_, cell)| cell).next() {
 ///     let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect(); // Skip 1 vertex to get D vertices
 ///     assert_eq!(facet_vertex_keys.len(), 3); // For 3D triangulation, facet has 3 vertices
-///     let facet_key = derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys).unwrap();
+///     let facet_key = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys).unwrap();
 ///     println!("Facet key: {}", facet_key);
 /// }
 /// ```
@@ -1358,7 +1358,7 @@ where
 /// use delaunay::core::triangulation_data_structure::Tds;
 ///
 /// fn validate_neighbor_consistency(
-///     tds: &Tds<f64, Option<()>, Option<()>, 3>,
+///     tds: &Tds<f64, (), (), 3>,
 /// ) -> Result<(), String> {
 ///     // Get two neighboring cell keys
 ///     let cell_keys: Vec<_> = tds.cell_keys().take(2).collect();
@@ -1654,7 +1654,7 @@ where
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 ///
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 ///
 /// // Check if triangulation is Delaunay
 /// assert!(is_delaunay(&tds).is_ok());
@@ -1733,7 +1733,7 @@ where
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 ///
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 ///
 /// // Find all violating cells (should be empty for valid Delaunay triangulation)
 /// let violations = find_delaunay_violations(&tds, None).unwrap();
@@ -2184,15 +2184,15 @@ mod tests {
     #[test]
     fn test_dedup_vertices_exact_basic() {
         // Basic deduplication
-        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+        let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+        let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+        let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
             .into_iter()
             .next()
             .unwrap();
@@ -2205,17 +2205,15 @@ mod tests {
     #[test]
     fn test_dedup_vertices_exact_nan_handling() {
         // NaN should equal NaN for deduplication purposes
-        let v1: Vertex<f64, Option<()>, 2> =
-            Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
-                .into_iter()
-                .next()
-                .unwrap();
-        let v2: Vertex<f64, Option<()>, 2> =
-            Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
-                .into_iter()
-                .next()
-                .unwrap();
-        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+        let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
             .into_iter()
             .next()
             .unwrap();
@@ -2232,15 +2230,15 @@ mod tests {
     #[test]
     fn test_dedup_vertices_exact_zero_handling() {
         // +0.0 should equal -0.0 for deduplication
-        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+        let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([-0.0, -0.0])])
+        let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([-0.0, -0.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+        let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
             .into_iter()
             .next()
             .unwrap();
@@ -2257,15 +2255,15 @@ mod tests {
     #[test]
     fn test_dedup_vertices_epsilon_basic() {
         // Near-duplicates should be filtered
-        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+        let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1e-11, 1e-11])])
+        let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1e-11, 1e-11])])
             .into_iter()
             .next()
             .unwrap();
-        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+        let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
             .into_iter()
             .next()
             .unwrap();
@@ -2282,17 +2280,17 @@ mod tests {
     #[test]
     fn test_dedup_vertices_epsilon_boundary() {
         // Test strict < epsilon semantics (distance = epsilon should NOT be filtered)
-        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+        let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
         // Distance exactly epsilon (1e-10) in x direction
-        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1e-10, 0.0])])
+        let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1e-10, 0.0])])
             .into_iter()
             .next()
             .unwrap();
         // Distance slightly less than epsilon
-        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.99e-10, 0.0])])
+        let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.99e-10, 0.0])])
             .into_iter()
             .next()
             .unwrap();
@@ -2316,7 +2314,7 @@ mod tests {
             Point::new([1.0, 1.0]),
             Point::new([1.0 + 1e-11, 1.0 + 1e-11]), // Near-duplicate of third
         ];
-        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
+        let vertices: Vec<Vertex<f64, (), 2>> = Vertex::from_points(&points);
 
         let unique = dedup_vertices_epsilon(vertices, 1e-10);
         assert_eq!(unique.len(), 2, "Should keep first of each cluster");
@@ -2335,15 +2333,15 @@ mod tests {
     #[test]
     fn test_filter_vertices_excluding_basic() {
         // Basic exclusion
-        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+        let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+        let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([2.0, 2.0])])
+        let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([2.0, 2.0])])
             .into_iter()
             .next()
             .unwrap();
@@ -2362,14 +2360,13 @@ mod tests {
     #[test]
     fn test_filter_vertices_excluding_nan() {
         // NaN reference should match NaN vertices
-        let v_nan: Vertex<f64, Option<()>, 2> =
-            Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
-                .into_iter()
-                .next()
-                .unwrap();
+        let v_nan: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
+            .into_iter()
+            .next()
+            .unwrap();
 
         let reference = vec![v_nan];
-        let vertices_with_nan: Vec<Vertex<f64, Option<()>, 2>> =
+        let vertices_with_nan: Vec<Vertex<f64, (), 2>> =
             Vertex::from_points(&[Point::new([f64::NAN, f64::NAN]), Point::new([1.0, 1.0])]);
 
         let filtered = filter_vertices_excluding(vertices_with_nan, &reference);
@@ -2379,13 +2376,13 @@ mod tests {
     #[test]
     fn test_filter_vertices_excluding_zero() {
         // +0.0 reference should match -0.0 vertices
-        let v_pos_zero: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+        let v_pos_zero: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
 
         let reference = vec![v_pos_zero];
-        let vertices_with_neg_zero: Vec<Vertex<f64, Option<()>, 2>> =
+        let vertices_with_neg_zero: Vec<Vertex<f64, (), 2>> =
             Vertex::from_points(&[Point::new([-0.0, -0.0]), Point::new([1.0, 1.0])]);
 
         let filtered = filter_vertices_excluding(vertices_with_neg_zero, &reference);
@@ -2405,7 +2402,7 @@ mod tests {
             Point::new([2.0, 2.0]),
             Point::new([3.0, 3.0]),
         ];
-        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
+        let vertices: Vec<Vertex<f64, (), 2>> = Vertex::from_points(&points);
 
         let reference = vec![vertices[0], vertices[2]]; // Exclude first and third
         let filtered = filter_vertices_excluding(vertices, &reference);
@@ -2471,7 +2468,7 @@ mod tests {
     #[test]
     fn test_generate_combinations_comprehensive() {
         // Test basic functionality with 4 vertices
-        let vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![
+        let vertices: Vec<Vertex<f64, (), 1>> = vec![
             vertex!([0.0]),
             vertex!([1.0]),
             vertex!([2.0]),
@@ -2534,13 +2531,13 @@ mod tests {
         );
 
         // Test with different size - 3 vertices, choose 2
-        let small_vertices: Vec<Vertex<f64, Option<()>, 1>> =
+        let small_vertices: Vec<Vertex<f64, (), 1>> =
             vec![vertex!([1.0]), vertex!([2.0]), vertex!([3.0])];
         let combinations_small = generate_combinations(&small_vertices, 2);
         assert_eq!(combinations_small.len(), 3, "C(3,2) should equal 3");
 
         // Test larger case - 5 vertices, choose 3 to exercise inner loops
-        let large_vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![
+        let large_vertices: Vec<Vertex<f64, (), 1>> = vec![
             vertex!([1.0]),
             vertex!([2.0]),
             vertex!([3.0]),
@@ -2569,7 +2566,7 @@ mod tests {
         );
 
         // Test empty input edge cases
-        let empty_vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![];
+        let empty_vertices: Vec<Vertex<f64, (), 1>> = vec![];
         let combinations_empty_k1 = generate_combinations(&empty_vertices, 1);
         assert!(
             combinations_empty_k1.is_empty(),
@@ -2690,7 +2687,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Basic Delaunay helpers should report no violations.
         assert!(
@@ -2721,15 +2718,14 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test 1: Basic functionality - successful key derivation
         println!("  Testing basic functionality...");
         let cell = tds.cells().map(|(_, cell)| cell).next().unwrap();
         let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect();
 
-        let result =
-            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys);
+        let result = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys);
         assert!(
             result.is_ok(),
             "Facet key derivation should succeed for valid vertex keys"
@@ -2739,8 +2735,7 @@ mod tests {
         println!("    Derived facet key: {facet_key}");
 
         // Test deterministic behavior - same vertex keys produce same key
-        let result2 =
-            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys);
+        let result2 = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys);
         assert!(result2.is_ok(), "Second derivation should also succeed");
         assert_eq!(
             facet_key,
@@ -2754,9 +2749,8 @@ mod tests {
         if different_facet_vertex_keys.len() == 3
             && different_facet_vertex_keys != facet_vertex_keys
         {
-            let result3 = derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(
-                &different_facet_vertex_keys,
-            );
+            let result3 =
+                derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&different_facet_vertex_keys);
             assert!(
                 result3.is_ok(),
                 "Different facet key derivation should succeed"
@@ -2774,8 +2768,7 @@ mod tests {
 
         // Wrong vertex key count
         let single_key: Vec<VertexKey> = vec![facet_vertex_keys[0]];
-        let result_count =
-            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&single_key);
+        let result_count = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&single_key);
         assert!(
             result_count.is_err(),
             "Should return error for wrong vertex key count"
@@ -2797,8 +2790,7 @@ mod tests {
 
         // Empty vertex keys
         let empty_keys: Vec<VertexKey> = vec![];
-        let result_empty =
-            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&empty_keys);
+        let result_empty = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&empty_keys);
         assert!(
             result_empty.is_err(),
             "Empty vertex keys should fail validation"
@@ -2842,9 +2834,7 @@ mod tests {
 
                 if !facet_vertex_keys.is_empty() {
                     let key_result =
-                        derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(
-                            &facet_vertex_keys,
-                        );
+                        derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys);
                     if let Ok(derived_key) = key_result {
                         keys_tested += 1;
                         if cache.contains_key(&derived_key) {
@@ -2887,8 +2877,8 @@ mod tests {
         let mut vertices2 = shared_vertices;
         vertices2.push(vertex_b);
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+        let tds1: Tds<f64, (), (), 3> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, (), (), 3> = Tds::new(&vertices2).unwrap();
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -2949,8 +2939,8 @@ mod tests {
         let mut vertices2 = shared_edge;
         vertices2.push(vertex_d);
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices2).unwrap();
+        let tds1: Tds<f64, (), (), 2> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, (), (), 2> = Tds::new(&vertices2).unwrap();
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -2993,8 +2983,8 @@ mod tests {
         // Edge 2: shared_vertex to vertex_right
         let vertices2 = vec![shared_vertex, vertex_right];
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices2).unwrap();
+        let tds1: Tds<f64, (), (), 1> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, (), (), 1> = Tds::new(&vertices2).unwrap();
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -3038,7 +3028,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // All facets of the same tetrahedron should be different from each other
@@ -3077,7 +3067,7 @@ mod tests {
             vertex!([1.0, 1.0, 2.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         let facet1 = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -3122,8 +3112,8 @@ mod tests {
             vertex!([10.0, 10.0, 11.0]),
         ];
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+        let tds1: Tds<f64, (), (), 3> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, (), (), 3> = Tds::new(&vertices2).unwrap();
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -3152,8 +3142,8 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds1: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let tds2: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -3210,8 +3200,8 @@ mod tests {
         let mut vertices2 = shared_tetrahedron;
         vertices2.push(vertex_f);
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices2).unwrap();
+        let tds1: Tds<f64, (), (), 4> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, (), (), 4> = Tds::new(&vertices2).unwrap();
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -3262,8 +3252,8 @@ mod tests {
         let mut vertices2 = shared_4d_simplex;
         vertices2.push(vertex_h);
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices2).unwrap();
+        let tds1: Tds<f64, (), (), 5> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, (), (), 5> = Tds::new(&vertices2).unwrap();
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -3500,7 +3490,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         let coord_set = extract_vertex_coordinate_set(&tds);
         assert_eq!(coord_set.len(), 4, "Should have 4 unique coordinates");
@@ -3521,7 +3511,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         let edge_set = extract_edge_set(&tds).unwrap();
         // A tetrahedron has 6 edges (binomial(4,2))
@@ -3537,7 +3527,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         let facet_set = extract_facet_identifier_set(&tds).unwrap();
         // A tetrahedron has 4 facets
@@ -3553,7 +3543,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let tri = crate::core::triangulation::Triangulation {
             kernel: crate::geometry::kernel::FastKernel::new(),
             tds,

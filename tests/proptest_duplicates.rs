@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Property-based tests for random point clouds containing duplicates and
 //! near-duplicates.
 //!
@@ -103,6 +102,7 @@ proptest! {
     /// produce triangulations that are globally Delaunay for the kept subset
     /// and only report unsalvageable vertices drawn from the input set.
     #[test]
+    #[allow(deprecated)]
     fn prop_cloud_with_duplicates_is_delaunay_for_kept_subset_2d(
         points in cloud_with_duplicates_2d()
     ) {
@@ -110,11 +110,11 @@ proptest! {
         let unique = count_unique_coords_by_bits(&points);
         prop_assume!(unique > 2);
 
-        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
+        let vertices: Vec<Vertex<f64, (), 2>> = Vertex::from_points(&points);
 
         // First, construct via Tds::new to ensure the standard pipeline succeeds
         // and yields a globally Delaunay triangulation for the kept subset.
-        let tds: Tds<f64, Option<()>, Option<()>, 2> =
+        let tds: Tds<f64, (), (), 2> =
             if let Ok(tds) = Tds::new(&vertices) {
                 tds
             } else {
@@ -132,7 +132,7 @@ proptest! {
         // original input set.
         // Note: This should never fail since the first construction succeeded,
         // but we handle it defensively for consistency.
-        let mut tds_diag: Tds<f64, Option<()>, Option<()>, 2> =
+        let mut tds_diag: Tds<f64, (), (), 2> =
             if let Ok(tds) = Tds::new(&vertices) {
                 tds
             } else {
@@ -160,6 +160,7 @@ proptest! {
     /// produce triangulations that are globally Delaunay for the kept subset
     /// and only report unsalvageable vertices drawn from the input set.
     #[test]
+    #[allow(deprecated)]
     fn prop_cloud_with_duplicates_is_delaunay_for_kept_subset_3d(
         points in cloud_with_duplicates_3d()
     ) {
@@ -167,11 +168,11 @@ proptest! {
         let unique = count_unique_coords_by_bits(&points);
         prop_assume!(unique > 3);
 
-        let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(&points);
+        let vertices: Vec<Vertex<f64, (), 3>> = Vertex::from_points(&points);
 
         // First, construct via Tds::new to ensure the standard pipeline succeeds
         // and yields a globally Delaunay triangulation for the kept subset.
-        let tds: Tds<f64, Option<()>, Option<()>, 3> =
+        let tds: Tds<f64, (), (), 3> =
             if let Ok(tds) = Tds::new(&vertices) {
                 tds
             } else {
@@ -189,7 +190,7 @@ proptest! {
         // original input set.
         // Note: This should never fail since the first construction succeeded,
         // but we handle it defensively for consistency.
-        let mut tds_diag: Tds<f64, Option<()>, Option<()>, 3> =
+        let mut tds_diag: Tds<f64, (), (), 3> =
             if let Ok(tds) = Tds::new(&vertices) {
                 tds
             } else {

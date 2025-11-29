@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Property-based tests for Bowyer-Watson insertion algorithm.
 //!
 //! This module uses proptest to verify fundamental properties of the
@@ -44,7 +43,7 @@ macro_rules! test_bowyer_watson_properties {
                     new_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new)
                 ) {
                     // Create initial triangulation
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&initial_vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&initial_vertices) {
                         let initial_vertex_count = tds.vertices().count();
 
                         // Insert new vertex
@@ -83,7 +82,7 @@ macro_rules! test_bowyer_watson_properties {
                         1..=5
                     )
                 ) {
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&initial_vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&initial_vertices) {
                         let initial_vertex_count = tds.vertices().count();
                         let mut successful_insertions = 0;
 
@@ -125,7 +124,7 @@ macro_rules! test_bowyer_watson_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     duplicate_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new)
                 ) {
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&initial_vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&initial_vertices) {
                         // Try inserting the same point multiple times
                         for attempt in 0..3 {
                             let new_vertex = Vertex::from_points(&[duplicate_point]);
@@ -151,7 +150,7 @@ macro_rules! test_bowyer_watson_properties {
                         $min_vertices..=($max_vertices + 3)
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         if tds.is_valid().is_ok() {
                             let vertex_count = tds.vertices().count();
                             let cell_count = tds.cells().count();
@@ -198,7 +197,7 @@ macro_rules! test_bowyer_watson_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     new_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new)
                 ) {
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&initial_vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&initial_vertices) {
                         // Verify initial triangulation is valid
                         if tds.is_valid().is_ok() {
                             let initial_vertex_count = tds.vertices().count();

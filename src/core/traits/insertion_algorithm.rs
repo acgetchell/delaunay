@@ -3709,7 +3709,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let mut algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> = RobustBowyerWatson::new();
+    /// let mut algorithm: RobustBowyerWatson<f64, (), (), 3> = RobustBowyerWatson::new();
     /// let tds = algorithm.new_triangulation(&vertices)?;
     /// # Ok::<(), delaunay::core::triangulation_data_structure::TriangulationConstructionError>(())
     /// ```
@@ -5017,7 +5017,7 @@ mod tests {
                 fn $test_name() {
                     // Test basic insertion algorithm functionality in this dimension
                     let initial_vertices = $initial_vertices;
-                    let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                    let tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
                     let mut algorithm = IncrementalBowyerWatson::new();
 
                     assert!(tds.is_valid().is_ok(), "{}D: Initial TDS should be valid", $dim);
@@ -5061,7 +5061,7 @@ mod tests {
                     fn [<$test_name _cavity_boundary>]() {
                         // Test cavity boundary facet detection
                         let initial_vertices = $initial_vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
                         let algorithm = IncrementalBowyerWatson::new();
 
                         // Get the single cell as a "bad cell" for testing
@@ -5101,7 +5101,7 @@ mod tests {
                     fn [<$test_name _visible_boundary_facets>]() {
                         // Test visible boundary facet detection (lightweight)
                         let initial_vertices = $initial_vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
                         let algorithm = IncrementalBowyerWatson::new();
 
                         // Test with exterior vertex
@@ -5151,7 +5151,7 @@ mod tests {
                     fn [<$test_name _empty_bad_cells>]() {
                         // Test cavity boundary with empty bad cells list
                         let initial_vertices = $initial_vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
                         let algorithm = IncrementalBowyerWatson::new();
 
                         let bad_cells: Vec<crate::core::triangulation_data_structure::CellKey> = vec![];
@@ -5172,7 +5172,7 @@ mod tests {
                         println!("Testing deduplicate_boundary_facet_info in {}D", $dim);
 
                         let initial_vertices = $initial_vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&initial_vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&initial_vertices).unwrap();
                         let cell_key = tds.cell_keys().next().expect("Should have at least one cell");
 
                         // Get vertex keys for the simplex (should have D+1 vertices)
@@ -5222,7 +5222,7 @@ mod tests {
                         println!("  {}D: Testing with {} facets (including 1 duplicate)", $dim, facet_info_with_duplicates.len());
 
                         // Should return error with correct counts
-                        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::deduplicate_boundary_facet_info(
+                        let result = IncrementalBowyerWatson::<f64, (), (), $dim>::deduplicate_boundary_facet_info(
                             facet_info_with_duplicates.clone()
                         );
 
@@ -5254,7 +5254,7 @@ mod tests {
 
                         println!("  {}D: Testing with {} unique facets (no duplicates)", $dim, facet_info_no_duplicates.len());
 
-                        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::deduplicate_boundary_facet_info(
+                        let result = IncrementalBowyerWatson::<f64, (), (), $dim>::deduplicate_boundary_facet_info(
                             facet_info_no_duplicates.clone()
                         );
 
@@ -5292,7 +5292,7 @@ mod tests {
                         // Test is_vertex_interior classification
                         println!("Testing is_vertex_interior in {}D", $dim);
                         let vertices = $initial_vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
                         let algorithm = IncrementalBowyerWatson::new();
 
                         // Test interior vertex
@@ -5315,11 +5315,11 @@ mod tests {
                         // Test is_vertex_likely_exterior classification
                         println!("Testing is_vertex_likely_exterior in {}D", $dim);
                         let vertices = $initial_vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
 
                         // Test far exterior vertex
                         let far_exterior = $exterior_vertex;
-                        let is_exterior = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::is_vertex_likely_exterior(
+                        let is_exterior = IncrementalBowyerWatson::<f64, (), (), $dim>::is_vertex_likely_exterior(
                             &tds,
                             &far_exterior,
                         );
@@ -5327,7 +5327,7 @@ mod tests {
 
                         // Test interior vertex
                         let interior = $interior_vertex;
-                        let is_exterior = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::is_vertex_likely_exterior(
+                        let is_exterior = IncrementalBowyerWatson::<f64, (), (), $dim>::is_vertex_likely_exterior(
                             &tds,
                             &interior,
                         );
@@ -5341,7 +5341,7 @@ mod tests {
                         // Test gather_boundary_facet_info
                         println!("Testing gather_boundary_facet_info in {}D", $dim);
                         let vertices = $initial_vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
 
                         // Get boundary facets
                         let boundary_facets: Vec<_> = tds
@@ -5351,7 +5351,7 @@ mod tests {
                             .collect();
 
                         // Test gathering
-                        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, $dim>::gather_boundary_facet_info(
+                        let result = IncrementalBowyerWatson::<f64, (), (), $dim>::gather_boundary_facet_info(
                             &tds,
                             &boundary_facets,
                         );
@@ -5432,7 +5432,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
         let algorithm = IncrementalBowyerWatson::new();
 
         // Test multiple vertices at different positions
@@ -5494,7 +5494,7 @@ mod tests {
         println!("Testing find_visible_boundary_facets_lightweight with empty triangulation");
 
         // Create empty triangulation
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let tds: Tds<f64, (), (), 3> = Tds::empty();
         let algorithm = IncrementalBowyerWatson::new();
 
         // Test with any vertex
@@ -5523,7 +5523,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
         let algorithm = IncrementalBowyerWatson::new();
 
         // Get some boundary facet handles
@@ -5578,7 +5578,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         let test_vertex = vertex!([2.0, 0.0, 0.0]);
         let empty_handles: Vec<FacetHandle> = Vec::new();
@@ -5622,7 +5622,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         let test_vertex = vertex!([2.0, 0.0, 0.0]);
 
@@ -5674,7 +5674,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         let test_vertex = vertex!([2.0, 0.0, 0.0]);
 
@@ -5725,7 +5725,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
         let algorithm = IncrementalBowyerWatson::new();
 
         // Get some valid handles
@@ -5793,7 +5793,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
         let algorithm = IncrementalBowyerWatson::new();
 
         // Get some valid handles
@@ -5851,7 +5851,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Test with valid cell key but boundary facet indices (0, 1, 2, 3 for 3D tetrahedron)
         let valid_cell_key = tds
@@ -5917,7 +5917,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
         let algorithm = IncrementalBowyerWatson::new();
 
         // Get some valid handles
@@ -6042,7 +6042,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Get a boundary facet
         let boundary_facets = tds.boundary_facets().expect("Should have boundary facets");
@@ -6122,7 +6122,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         // Get a boundary facet handle (lightweight)
         let boundary_facets = tds.boundary_facets().expect("Should have boundary facets");
@@ -6139,15 +6139,14 @@ mod tests {
         // Create a new vertex that should form a valid cell with the facet
         let new_vertex = vertex!([0.5, 0.5, 1.5]);
 
-        let result =
-            <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
-                f64,
-                Option<()>,
-                Option<()>,
-                3,
-            >>::create_cell_from_facet_handle(
-                &mut tds, cell_key, facet_index, &new_vertex
-            );
+        let result = <IncrementalBowyerWatson<f64, (), (), 3> as InsertionAlgorithm<
+            f64,
+            (),
+            (),
+            3,
+        >>::create_cell_from_facet_handle(
+            &mut tds, cell_key, facet_index, &new_vertex
+        );
 
         assert!(
             result.is_ok(),
@@ -6567,14 +6566,15 @@ mod tests {
         use crate::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
         use crate::core::triangulation_data_structure::Tds;
 
-        type Alg = IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3>;
+        type Alg = IncrementalBowyerWatson<f64, (), (), 3>;
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let tds: Tds<f64, (), (), 3> = Tds::empty();
 
-        let result = <Alg as InsertionAlgorithm<f64, Option<()>, Option<()>, 3>>::run_global_delaunay_validation_with_policy(
-            &tds,
-            DelaunayCheckPolicy::EndOnly,
-        );
+        let result =
+            <Alg as InsertionAlgorithm<f64, (), (), 3>>::run_global_delaunay_validation_with_policy(
+                &tds,
+                DelaunayCheckPolicy::EndOnly,
+            );
 
         assert!(
             result.is_ok(),
@@ -6585,7 +6585,7 @@ mod tests {
     /// Test `InsertionBuffers` functionality
     #[test]
     fn test_insertion_buffers_functionality() {
-        let mut buffers = InsertionBuffers::<f64, Option<()>, Option<()>, 3>::new();
+        let mut buffers = InsertionBuffers::<f64, (), (), 3>::new();
 
         // Test initial state
         assert_eq!(buffers.bad_cells_buffer.len(), 0);
@@ -6594,8 +6594,7 @@ mod tests {
         assert_eq!(buffers.visible_facets_buffer.len(), 0);
 
         // Test with_capacity constructor
-        let buffers_with_capacity =
-            InsertionBuffers::<f64, Option<()>, Option<()>, 3>::with_capacity(10);
+        let buffers_with_capacity = InsertionBuffers::<f64, (), (), 3>::with_capacity(10);
         assert!(buffers_with_capacity.bad_cells_buffer.capacity() >= 10);
         assert!(buffers_with_capacity.boundary_facets_buffer.capacity() >= 10);
         assert!(buffers_with_capacity.vertex_points_buffer.capacity() >= 40); // 10 * (3 + 1)
@@ -6704,7 +6703,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test with extreme coordinates that might cause numerical issues in predicates
         let problematic_vertex = vertex!([f64::MAX / 1000.0, f64::MAX / 1000.0, f64::MAX / 1000.0]);
@@ -6730,7 +6729,7 @@ mod tests {
     /// Test `create_cell_from_facet_and_vertex` error cases - comprehensive
     #[test]
     fn test_create_cell_from_facet_and_vertex_failure_comprehensive() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -6750,15 +6749,14 @@ mod tests {
         // Try to create cell with vertex that would create degenerate cell
         let degenerate_vertex = vertex!([0.0, 0.0, 0.0]); // Same as existing vertex
 
-        let result =
-            <IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> as InsertionAlgorithm<
-                f64,
-                Option<()>,
-                Option<()>,
-                3,
-            >>::create_cell_from_facet_handle(
-                &mut tds, cell_key, facet_index, &degenerate_vertex
-            );
+        let result = <IncrementalBowyerWatson<f64, (), (), 3> as InsertionAlgorithm<
+            f64,
+            (),
+            (),
+            3,
+        >>::create_cell_from_facet_handle(
+            &mut tds, cell_key, facet_index, &degenerate_vertex
+        );
 
         // This should either succeed (if handled gracefully) or fail with appropriate error
         match result {
@@ -6922,11 +6920,11 @@ mod tests {
     /// controlled way without relying on the real geometric predicates.
     struct HardFailFastAlgorithm;
 
-    impl InsertionAlgorithm<f64, Option<()>, Option<()>, 3> for HardFailFastAlgorithm {
+    impl InsertionAlgorithm<f64, (), (), 3> for HardFailFastAlgorithm {
         fn insert_vertex_impl(
             &mut self,
-            _tds: &mut Tds<f64, Option<()>, Option<()>, 3>,
-            _vertex: Vertex<f64, Option<()>, 3>,
+            _tds: &mut Tds<f64, (), (), 3>,
+            _vertex: Vertex<f64, (), 3>,
         ) -> Result<InsertionInfo, InsertionError> {
             Err(InsertionError::geometric_failure(
                 "synthetic hard failure",
@@ -6952,7 +6950,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         assert!(tds.is_valid().is_ok(), "Initial TDS should be valid");
 
@@ -6965,7 +6963,7 @@ mod tests {
         let mut fast = HardFailFastAlgorithm;
         // Robust algorithm should never be called, but we pass a real instance
         // to satisfy the generic constraints.
-        let mut robust = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let mut robust = IncrementalBowyerWatson::<f64, (), (), 3>::new();
 
         let outcome =
             unified_insert_vertex_fast_robust_or_skip(&mut tds, &mut fast, &mut robust, new_vertex);
@@ -7035,10 +7033,10 @@ mod tests {
         println!("Testing InsertionStrategy determination edge cases");
 
         // Create algorithm instance for strategy determination
-        let algorithm = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+        let algorithm = IncrementalBowyerWatson::<f64, (), (), 3>::new();
 
         // Test with empty TDS
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let empty_tds: Tds<f64, (), (), 3> = Tds::empty();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
         let strategy = algorithm.determine_strategy_default(&empty_tds, &test_vertex);
@@ -7056,8 +7054,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let single_cell_tds: Tds<f64, Option<()>, Option<()>, 3> =
-            Tds::new(&single_cell_vertices).unwrap();
+        let single_cell_tds: Tds<f64, (), (), 3> = Tds::new(&single_cell_vertices).unwrap();
         assert_eq!(
             single_cell_tds.number_of_cells(),
             1,
@@ -7092,16 +7089,14 @@ mod tests {
             vertex!([0.0, 0.0, 2.0]),
             vertex!([3.6, 4.7, 5.8]), // Additional unique vertex to create more complex geometry
         ];
-        let multi_cell_tds: Tds<f64, Option<()>, Option<()>, 3> =
-            Tds::new(&multi_cell_vertices).unwrap();
+        let multi_cell_tds: Tds<f64, (), (), 3> = Tds::new(&multi_cell_vertices).unwrap();
 
         // Test exterior vertex (far outside bounding box)
         let far_exterior_vertex = vertex!([10.0, 10.0, 10.0]);
-        let is_exterior =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
-                &multi_cell_tds,
-                &far_exterior_vertex,
-            );
+        let is_exterior = IncrementalBowyerWatson::<f64, (), (), 3>::is_vertex_likely_exterior(
+            &multi_cell_tds,
+            &far_exterior_vertex,
+        );
         assert!(
             is_exterior,
             "Far exterior vertex should be identified as likely exterior"
@@ -7110,11 +7105,10 @@ mod tests {
 
         // Test interior vertex (well inside bounding box)
         let interior_vertex = vertex!([0.5, 0.5, 0.5]);
-        let is_exterior =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
-                &multi_cell_tds,
-                &interior_vertex,
-            );
+        let is_exterior = IncrementalBowyerWatson::<f64, (), (), 3>::is_vertex_likely_exterior(
+            &multi_cell_tds,
+            &interior_vertex,
+        );
         assert!(
             !is_exterior,
             "Interior vertex should not be identified as exterior"
@@ -7124,11 +7118,10 @@ mod tests {
         // Test vertex at bounding box boundary (edge case)
         // Bounding box is [0,2] x [0,2] x [0,2], expanded by 10% margin becomes [-0.2,2.2] x [-0.2,2.2] x [-0.2,2.2]
         let boundary_vertex = vertex!([2.3, 1.0, 1.0]); // Just outside expanded boundary
-        let is_exterior =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
-                &multi_cell_tds,
-                &boundary_vertex,
-            );
+        let is_exterior = IncrementalBowyerWatson::<f64, (), (), 3>::is_vertex_likely_exterior(
+            &multi_cell_tds,
+            &boundary_vertex,
+        );
         if is_exterior {
             println!("  ✓ Boundary vertex correctly identified as exterior");
         } else {
@@ -7137,11 +7130,10 @@ mod tests {
 
         // Test vertex just inside expanded boundary
         let inside_boundary_vertex = vertex!([1.8, 1.0, 1.0]); // Well inside original boundary
-        let is_exterior =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
-                &multi_cell_tds,
-                &inside_boundary_vertex,
-            );
+        let is_exterior = IncrementalBowyerWatson::<f64, (), (), 3>::is_vertex_likely_exterior(
+            &multi_cell_tds,
+            &inside_boundary_vertex,
+        );
         if is_exterior {
             println!(
                 "  ✓ Inside boundary vertex identified as exterior (acceptable for this geometry)"
@@ -7185,7 +7177,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
 
         // Test insert_vertex_cavity_based with exterior vertex (should fail)
@@ -7250,7 +7242,7 @@ mod tests {
         println!("Testing insertion strategies with potentially corrupted TDS");
 
         // Create an empty TDS to simulate corruption scenarios
-        let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut empty_tds: Tds<f64, (), (), 3> = Tds::empty();
         let mut algorithm = IncrementalBowyerWatson::new();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
@@ -7325,7 +7317,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             // Missing one vertex for 3D (need D+1 = 4)
         ];
-        let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut empty_tds: Tds<f64, (), (), 3> = Tds::empty();
         let result = algorithm.triangulate(&mut empty_tds, &insufficient_vertices);
 
         match result {
@@ -7385,7 +7377,7 @@ mod tests {
         println!("Testing create_initial_simplex edge cases");
 
         // Test with wrong number of vertices
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 
         // Too few vertices
         let too_few_vertices = vec![
@@ -7393,11 +7385,10 @@ mod tests {
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
         ];
-        let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_initial_simplex(
-                &mut tds,
-                too_few_vertices,
-            );
+        let result = IncrementalBowyerWatson::<f64, (), (), 3>::create_initial_simplex(
+            &mut tds,
+            too_few_vertices,
+        );
 
         match result {
             Err(TriangulationConstructionError::InsufficientVertices { .. }) => {
@@ -7414,11 +7405,10 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
             vertex!([1.0, 1.0, 1.0]), // Extra vertex
         ];
-        let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_initial_simplex(
-                &mut tds,
-                too_many_vertices,
-            );
+        let result = IncrementalBowyerWatson::<f64, (), (), 3>::create_initial_simplex(
+            &mut tds,
+            too_many_vertices,
+        );
 
         match result {
             Err(TriangulationConstructionError::InsufficientVertices { .. }) => {
@@ -7434,11 +7424,10 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_initial_simplex(
-                &mut tds,
-                correct_vertices,
-            );
+        let result = IncrementalBowyerWatson::<f64, (), (), 3>::create_initial_simplex(
+            &mut tds,
+            correct_vertices,
+        );
 
         assert!(
             result.is_ok(),
@@ -7469,7 +7458,10 @@ mod tests {
             },
         };
 
-        let mapped = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::map_delaunay_error_to_insertion_error(tds_error);
+        let mapped =
+            IncrementalBowyerWatson::<f64, (), (), 3>::map_delaunay_error_to_insertion_error(
+                tds_error,
+            );
         match mapped {
             InsertionError::TriangulationState(err) => {
                 assert!(err.to_string().contains("Test TDS corruption"));
@@ -7484,7 +7476,10 @@ mod tests {
             cell_key: test_cell_key,
         };
 
-        let mapped = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::map_delaunay_error_to_insertion_error(delaunay_error);
+        let mapped =
+            IncrementalBowyerWatson::<f64, (), (), 3>::map_delaunay_error_to_insertion_error(
+                delaunay_error,
+            );
         match mapped {
             InsertionError::TriangulationState(err) => {
                 // Should be wrapped in InconsistentDataStructure
@@ -7502,7 +7497,10 @@ mod tests {
             },
         };
 
-        let mapped = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::map_delaunay_error_to_insertion_error(invalid_cell_error);
+        let mapped =
+            IncrementalBowyerWatson::<f64, (), (), 3>::map_delaunay_error_to_insertion_error(
+                invalid_cell_error,
+            );
         match mapped {
             InsertionError::TriangulationState(err) => {
                 assert!(err.to_string().contains("Delaunay validation error"));
@@ -7525,7 +7523,10 @@ mod tests {
                 },
         };
 
-        let mapped = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::map_delaunay_error_to_insertion_error(numeric_error);
+        let mapped =
+            IncrementalBowyerWatson::<f64, (), (), 3>::map_delaunay_error_to_insertion_error(
+                numeric_error,
+            );
         match mapped {
             InsertionError::TriangulationState(err) => {
                 assert!(err.to_string().contains("Delaunay validation error"));
@@ -7543,7 +7544,7 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
 
-        let result = find_initial_simplex::<f64, Option<()>, 2>(&vertices);
+        let result = find_initial_simplex::<f64, (), 2>(&vertices);
 
         // All vertices are unique, no duplicates, and we should get a simplex.
         assert_eq!(result.stats.unique_vertices, 3);
@@ -7572,17 +7573,17 @@ mod tests {
     #[test]
     fn test_find_initial_simplex_filters_duplicates_and_near_duplicates() {
         // v0 is the canonical origin vertex.
-        let v0: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+        let v0: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
         // Exact duplicate of v0.
-        let v1: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+        let v1: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
         // Near-duplicate of v0 within the epsilon tolerance used by the helper.
-        let v2: Vertex<f64, Option<()>, 2> = vertex!([1e-12, 0.0]);
+        let v2: Vertex<f64, (), 2> = vertex!([1e-12, 0.0]);
         // Two additional distinct vertices forming a valid simplex.
-        let v3: Vertex<f64, Option<()>, 2> = vertex!([1.0, 0.0]);
-        let v4: Vertex<f64, Option<()>, 2> = vertex!([0.0, 1.0]);
+        let v3: Vertex<f64, (), 2> = vertex!([1.0, 0.0]);
+        let v4: Vertex<f64, (), 2> = vertex!([0.0, 1.0]);
 
         let vertices = vec![v0, v1, v2, v3, v4];
-        let result = find_initial_simplex::<f64, Option<()>, 2>(&vertices);
+        let result = find_initial_simplex::<f64, (), 2>(&vertices);
 
         // Only three unique vertices should remain after filtering: v0, v3, v4.
         assert_eq!(result.stats.unique_vertices, 3);
@@ -7615,7 +7616,7 @@ mod tests {
             vertex!([3.0, 0.0]),
         ];
 
-        let result = find_initial_simplex::<f64, Option<()>, 2>(&vertices);
+        let result = find_initial_simplex::<f64, (), 2>(&vertices);
 
         assert_eq!(result.stats.unique_vertices, 4);
         assert_eq!(result.stats.duplicate_exact, 0);
@@ -7636,7 +7637,7 @@ mod tests {
             vertex!([0.0, 0.0]),
         ];
 
-        let result = find_initial_simplex::<f64, Option<()>, 2>(&vertices);
+        let result = find_initial_simplex::<f64, (), 2>(&vertices);
 
         // Only one unique vertex remains; we cannot form a 2D simplex (need 3).
         assert_eq!(result.stats.unique_vertices, 1);
@@ -7658,13 +7659,10 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test finalization on a valid TDS
-        let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_triangulation(
-                &mut tds,
-            );
+        let result = IncrementalBowyerWatson::<f64, (), (), 3>::finalize_triangulation(&mut tds);
         assert!(
             result.is_ok(),
             "Finalization should succeed on valid TDS: {result:?}"
@@ -7672,11 +7670,9 @@ mod tests {
         println!("  ✓ Finalization succeeded on valid TDS");
 
         // Test finalization on empty TDS (should handle gracefully)
-        let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut empty_tds: Tds<f64, (), (), 3> = Tds::empty();
         let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_triangulation(
-                &mut empty_tds,
-            );
+            IncrementalBowyerWatson::<f64, (), (), 3>::finalize_triangulation(&mut empty_tds);
 
         match result {
             Ok(()) => {
@@ -7693,8 +7689,8 @@ mod tests {
     /// Test vertex classification helper on an empty triangulation (all vertices unique).
     #[test]
     fn test_vertex_classification_unique_on_empty_tds() {
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
-        let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
+        let tds: Tds<f64, (), (), 3> = Tds::empty();
+        let vertex: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
 
         let classification = classify_vertex_against_tds(&tds, &vertex);
         assert_eq!(classification, VertexClassification::Unique);
@@ -7703,14 +7699,14 @@ mod tests {
     /// Test classification of exact duplicate vertices.
     #[test]
     fn test_vertex_classification_exact_duplicate() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         // Insert a base vertex into the TDS.
-        let base: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+        let base: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
         tds.insert_vertex_with_mapping(base).unwrap();
 
         // New vertex with identical coordinates but a different UUID.
-        let duplicate: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+        let duplicate: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
 
         let classification = classify_vertex_against_tds(&tds, &duplicate);
         assert_eq!(classification, VertexClassification::DuplicateExact);
@@ -7719,14 +7715,14 @@ mod tests {
     /// Test classification of near-duplicate vertices within the epsilon tolerance.
     #[test]
     fn test_vertex_classification_near_duplicate_within_tolerance() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         // Base vertex at the origin.
-        let base: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+        let base: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
         tds.insert_vertex_with_mapping(base).unwrap();
 
         // Candidate vertex very close to the origin (within the 1e-10 tolerance).
-        let near: Vertex<f64, Option<()>, 2> = vertex!([1e-12, 0.0]);
+        let near: Vertex<f64, (), 2> = vertex!([1e-12, 0.0]);
 
         let classification = classify_vertex_against_tds(&tds, &near);
         match classification {
@@ -7745,12 +7741,12 @@ mod tests {
     /// Test that the per-coordinate tolerance mode classifies near duplicates differently from the scalar mode.
     #[test]
     fn test_vertex_classification_per_coordinate_mode() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
-        let base: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+        let base: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
         tds.insert_vertex_with_mapping(base).unwrap();
 
-        let candidate: Vertex<f64, Option<()>, 2> = vertex!([9e-3, 9e-3]);
+        let candidate: Vertex<f64, (), 2> = vertex!([9e-3, 9e-3]);
 
         let per_coordinate_tolerance = NearDuplicateTolerance {
             epsilon: 1e-2,
@@ -7782,16 +7778,16 @@ mod tests {
     /// Test classification of degenerate collinear vertices in 2D.
     #[test]
     fn test_vertex_classification_degenerate_collinear_2d() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         // Two base vertices on the x-axis.
-        let v0: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
-        let v1: Vertex<f64, Option<()>, 2> = vertex!([1.0, 0.0]);
+        let v0: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
+        let v1: Vertex<f64, (), 2> = vertex!([1.0, 0.0]);
         tds.insert_vertex_with_mapping(v0).unwrap();
         tds.insert_vertex_with_mapping(v1).unwrap();
 
         // Candidate vertex also on the x-axis, creating a collinear configuration.
-        let candidate: Vertex<f64, Option<()>, 2> = vertex!([2.0, 0.0]);
+        let candidate: Vertex<f64, (), 2> = vertex!([2.0, 0.0]);
 
         let classification = classify_vertex_against_tds(&tds, &candidate);
         assert_eq!(classification, VertexClassification::DegenerateCollinear);
@@ -7800,18 +7796,18 @@ mod tests {
     /// Test classification of degenerate coplanar vertices in 3D.
     #[test]
     fn test_vertex_classification_degenerate_coplanar_3d() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 
         // Three base vertices defining the z=0 plane.
-        let v0: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
-        let v1: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
-        let v2: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
+        let v0: Vertex<f64, (), 3> = vertex!([0.0, 0.0, 0.0]);
+        let v1: Vertex<f64, (), 3> = vertex!([1.0, 0.0, 0.0]);
+        let v2: Vertex<f64, (), 3> = vertex!([0.0, 1.0, 0.0]);
         tds.insert_vertex_with_mapping(v0).unwrap();
         tds.insert_vertex_with_mapping(v1).unwrap();
         tds.insert_vertex_with_mapping(v2).unwrap();
 
         // Candidate vertex also on the z=0 plane, creating a coplanar configuration.
-        let candidate: Vertex<f64, Option<()>, 3> = vertex!([0.25, 0.25, 0.0]);
+        let candidate: Vertex<f64, (), 3> = vertex!([0.25, 0.25, 0.0]);
 
         let classification = classify_vertex_against_tds(&tds, &candidate);
         assert_eq!(classification, VertexClassification::DegenerateCoplanar);
@@ -7820,11 +7816,11 @@ mod tests {
     /// Simple fast-path algorithm stub that always succeeds.
     struct FastSucceedingAlgorithm;
 
-    impl InsertionAlgorithm<f64, Option<()>, Option<()>, 2> for FastSucceedingAlgorithm {
+    impl InsertionAlgorithm<f64, (), (), 2> for FastSucceedingAlgorithm {
         fn insert_vertex_impl(
             &mut self,
-            _tds: &mut Tds<f64, Option<()>, Option<()>, 2>,
-            _vertex: Vertex<f64, Option<()>, 2>,
+            _tds: &mut Tds<f64, (), (), 2>,
+            _vertex: Vertex<f64, (), 2>,
         ) -> Result<InsertionInfo, InsertionError> {
             Ok(InsertionInfo {
                 strategy: InsertionStrategy::CavityBased,
@@ -7847,11 +7843,11 @@ mod tests {
     /// eligible for robust fallback.
     struct FastFailingAlgorithm;
 
-    impl InsertionAlgorithm<f64, Option<()>, Option<()>, 2> for FastFailingAlgorithm {
+    impl InsertionAlgorithm<f64, (), (), 2> for FastFailingAlgorithm {
         fn insert_vertex_impl(
             &mut self,
-            _tds: &mut Tds<f64, Option<()>, Option<()>, 2>,
-            _vertex: Vertex<f64, Option<()>, 2>,
+            _tds: &mut Tds<f64, (), (), 2>,
+            _vertex: Vertex<f64, (), 2>,
         ) -> Result<InsertionInfo, InsertionError> {
             Err(InsertionError::precision_failure(1e-10, 3))
         }
@@ -7866,11 +7862,11 @@ mod tests {
     /// Simple robust algorithm stub that always succeeds.
     struct RobustSucceedingAlgorithm;
 
-    impl InsertionAlgorithm<f64, Option<()>, Option<()>, 2> for RobustSucceedingAlgorithm {
+    impl InsertionAlgorithm<f64, (), (), 2> for RobustSucceedingAlgorithm {
         fn insert_vertex_impl(
             &mut self,
-            _tds: &mut Tds<f64, Option<()>, Option<()>, 2>,
-            _vertex: Vertex<f64, Option<()>, 2>,
+            _tds: &mut Tds<f64, (), (), 2>,
+            _vertex: Vertex<f64, (), 2>,
         ) -> Result<InsertionInfo, InsertionError> {
             Ok(InsertionInfo {
                 strategy: InsertionStrategy::HullExtension,
@@ -7893,11 +7889,11 @@ mod tests {
     /// unsalvageable vertex with a two-step error chain.
     struct RobustFailingAlgorithm;
 
-    impl InsertionAlgorithm<f64, Option<()>, Option<()>, 2> for RobustFailingAlgorithm {
+    impl InsertionAlgorithm<f64, (), (), 2> for RobustFailingAlgorithm {
         fn insert_vertex_impl(
             &mut self,
-            _tds: &mut Tds<f64, Option<()>, Option<()>, 2>,
-            _vertex: Vertex<f64, Option<()>, 2>,
+            _tds: &mut Tds<f64, (), (), 2>,
+            _vertex: Vertex<f64, (), 2>,
         ) -> Result<InsertionInfo, InsertionError> {
             Err(InsertionError::precision_failure(1e-12, 5))
         }
@@ -7912,8 +7908,8 @@ mod tests {
     /// Unified pipeline: unique vertex should succeed on fast path without invoking robust algorithm.
     #[test]
     fn test_unified_insertion_pipeline_fast_success_unique() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
-        let vertex: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let vertex: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
 
         let mut fast = FastSucceedingAlgorithm;
         let mut robust = RobustSucceedingAlgorithm;
@@ -7939,17 +7935,17 @@ mod tests {
     #[test]
     fn test_unified_insertion_pipeline_fast_success_degenerate_collinear_classification_preserved()
     {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         // Two base vertices on the x-axis.
-        let v0: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
-        let v1: Vertex<f64, Option<()>, 2> = vertex!([1.0, 0.0]);
+        let v0: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
+        let v1: Vertex<f64, (), 2> = vertex!([1.0, 0.0]);
         tds.insert_vertex_with_mapping(v0).unwrap();
         tds.insert_vertex_with_mapping(v1).unwrap();
 
         // Candidate vertex also on the x-axis, creating a collinear configuration
         // that the classifier should mark as DegenerateCollinear.
-        let candidate: Vertex<f64, Option<()>, 2> = vertex!([2.0, 0.0]);
+        let candidate: Vertex<f64, (), 2> = vertex!([2.0, 0.0]);
 
         let mut fast = FastSucceedingAlgorithm;
         let mut robust = RobustSucceedingAlgorithm;
@@ -7975,14 +7971,14 @@ mod tests {
     /// Unified pipeline: duplicate exact vertex should be skipped without any insertion attempts.
     #[test]
     fn test_unified_insertion_pipeline_skips_exact_duplicate_without_attempts() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         // Base vertex inserted into the TDS.
-        let base: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+        let base: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
         tds.insert_vertex_with_mapping(base).unwrap();
 
         // New vertex with identical coordinates but a different UUID.
-        let duplicate: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+        let duplicate: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
 
         let mut fast = FastSucceedingAlgorithm;
         let mut robust = RobustSucceedingAlgorithm;
@@ -8011,12 +8007,12 @@ mod tests {
     /// Unified pipeline: near-duplicate vertex should be skipped with `DuplicateWithinTolerance` classification.
     #[test]
     fn test_unified_insertion_pipeline_skips_near_duplicate_without_attempts() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
-        let base: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+        let base: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
         tds.insert_vertex_with_mapping(base).unwrap();
 
-        let near: Vertex<f64, Option<()>, 2> = vertex!([1e-12, 0.0]);
+        let near: Vertex<f64, (), 2> = vertex!([1e-12, 0.0]);
 
         let mut fast = FastSucceedingAlgorithm;
         let mut robust = RobustSucceedingAlgorithm;
@@ -8053,8 +8049,8 @@ mod tests {
     /// Unified pipeline: recoverable fast-path failure should fall back to robust algorithm.
     #[test]
     fn test_unified_insertion_pipeline_robust_fallback_on_recoverable_fast_error() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
-        let vertex: Vertex<f64, Option<()>, 2> = vertex!([0.5, 0.5]);
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let vertex: Vertex<f64, (), 2> = vertex!([0.5, 0.5]);
 
         let mut fast = FastFailingAlgorithm;
         let mut robust = RobustSucceedingAlgorithm;
@@ -8085,17 +8081,17 @@ mod tests {
     #[test]
     fn test_unified_insertion_pipeline_robust_success_degenerate_collinear_classification_preserved()
      {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         // Two base vertices on the x-axis.
-        let v0: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
-        let v1: Vertex<f64, Option<()>, 2> = vertex!([1.0, 0.0]);
+        let v0: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
+        let v1: Vertex<f64, (), 2> = vertex!([1.0, 0.0]);
         tds.insert_vertex_with_mapping(v0).unwrap();
         tds.insert_vertex_with_mapping(v1).unwrap();
 
         // Candidate vertex also on the x-axis, creating a collinear configuration
         // that the classifier should mark as DegenerateCollinear.
-        let candidate: Vertex<f64, Option<()>, 2> = vertex!([2.0, 0.0]);
+        let candidate: Vertex<f64, (), 2> = vertex!([2.0, 0.0]);
 
         let mut fast = FastFailingAlgorithm;
         let mut robust = RobustSucceedingAlgorithm;
@@ -8123,8 +8119,8 @@ mod tests {
     /// Unified pipeline: if both fast and robust algorithms fail with recoverable errors, vertex is marked unsalvageable.
     #[test]
     fn test_unified_insertion_pipeline_skips_after_fast_and_robust_failures() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
-        let vertex: Vertex<f64, Option<()>, 2> = vertex!([0.25, 0.75]);
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let vertex: Vertex<f64, (), 2> = vertex!([0.25, 0.75]);
 
         let mut fast = FastFailingAlgorithm;
         let mut robust = RobustFailingAlgorithm;
@@ -8149,15 +8145,15 @@ mod tests {
     #[test]
     fn test_unsalvageable_vertex_and_tds_coordinate_sets_cover_input() {
         // Base triangulation: two vertices in 2D.
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
-        let v0: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
-        let v1: Vertex<f64, Option<()>, 2> = vertex!([1.0, 0.0]);
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
+        let v1: Vertex<f64, (), 2> = vertex!([1.0, 0.0]);
         tds.insert_vertex_with_mapping(v0).unwrap();
         tds.insert_vertex_with_mapping(v1).unwrap();
 
         // Candidate vertex we will deliberately fail to insert by using algorithms
         // that always return recoverable geometric errors.
-        let candidate: Vertex<f64, Option<()>, 2> = vertex!([0.5, 1.0]);
+        let candidate: Vertex<f64, (), 2> = vertex!([0.5, 1.0]);
 
         let mut fast = FastFailingAlgorithm;
         let mut robust = RobustFailingAlgorithm;
@@ -8189,7 +8185,7 @@ mod tests {
     /// Accessors on `UnsalvageableVertexReport` should expose stable diagnostics.
     #[test]
     fn test_unsalvageable_vertex_report_accessors() {
-        let vertex: Vertex<f64, Option<()>, 2> = vertex!([0.5, 0.5]);
+        let vertex: Vertex<f64, (), 2> = vertex!([0.5, 0.5]);
         let classification = VertexClassification::Unique;
         let strategies = vec![
             InsertionStrategy::CavityBased,
@@ -8222,15 +8218,12 @@ mod tests {
         println!("Testing utility methods error handling");
 
         // Test ensure_vertex_in_tds
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
         // Test successful vertex insertion
         let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::ensure_vertex_in_tds(
-                &mut tds,
-                &test_vertex,
-            );
+            IncrementalBowyerWatson::<f64, (), (), 3>::ensure_vertex_in_tds(&mut tds, &test_vertex);
         assert!(
             result.is_ok(),
             "ensure_vertex_in_tds should succeed for valid vertex"
@@ -8243,10 +8236,7 @@ mod tests {
 
         // Test duplicate vertex insertion (should not fail)
         let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::ensure_vertex_in_tds(
-                &mut tds,
-                &test_vertex,
-            );
+            IncrementalBowyerWatson::<f64, (), (), 3>::ensure_vertex_in_tds(&mut tds, &test_vertex);
         assert!(
             result.is_ok(),
             "ensure_vertex_in_tds should handle duplicate vertices gracefully"
@@ -8266,7 +8256,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         let boundary_facets = tds.boundary_facets().expect("Should have boundary facets");
         assert!(
@@ -8283,11 +8273,13 @@ mod tests {
         let new_vertex = vertex!([2.0, 2.0, 2.0]);
 
         // Test successful cell creation using lightweight API
-        let cells_created = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_facet_handles(
-            &mut tds,
-            &boundary_facet_handles,
-            &new_vertex,
-        ).expect("Should successfully create cells from facet handles");
+        let cells_created =
+            IncrementalBowyerWatson::<f64, (), (), 3>::create_cells_from_facet_handles(
+                &mut tds,
+                &boundary_facet_handles,
+                &new_vertex,
+            )
+            .expect("Should successfully create cells from facet handles");
 
         assert!(cells_created > 0, "Should create at least one cell");
         assert!(
@@ -8299,7 +8291,7 @@ mod tests {
         // Test with empty boundary facets (should error due to early exit)
         let empty_facet_handles: Vec<FacetHandle> = vec![];
         let another_vertex = vertex!([3.0, 3.0, 3.0]);
-        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cells_from_facet_handles(
+        let result = IncrementalBowyerWatson::<f64, (), (), 3>::create_cells_from_facet_handles(
             &mut tds,
             &empty_facet_handles,
             &another_vertex,
@@ -8323,12 +8315,9 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
-        let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_after_insertion(
-                &mut tds,
-            );
+        let result = IncrementalBowyerWatson::<f64, (), (), 3>::finalize_after_insertion(&mut tds);
         assert!(
             result.is_ok(),
             "finalize_after_insertion should succeed on valid TDS: {result:?}"
@@ -8336,11 +8325,9 @@ mod tests {
         println!("  ✓ finalize_after_insertion succeeded on valid TDS");
 
         // Test with empty TDS (should handle gracefully)
-        let mut empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut empty_tds: Tds<f64, (), (), 3> = Tds::empty();
         let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::finalize_after_insertion(
-                &mut empty_tds,
-            );
+            IncrementalBowyerWatson::<f64, (), (), 3>::finalize_after_insertion(&mut empty_tds);
 
         match result {
             Ok(()) => {
@@ -8367,7 +8354,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
             vertex!([2.5, 3.7, 4.1]), // Additional unique vertex to create more cells
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         let initial_cell_count = tds.number_of_cells();
         let cell_keys: Vec<_> = tds.cell_keys().take(1).collect(); // Take one cell to remove
@@ -8378,9 +8365,7 @@ mod tests {
         );
 
         // Test cell removal
-        IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::remove_bad_cells(
-            &mut tds, &cell_keys,
-        );
+        IncrementalBowyerWatson::<f64, (), (), 3>::remove_bad_cells(&mut tds, &cell_keys);
 
         assert_eq!(
             tds.number_of_cells(),
@@ -8392,10 +8377,7 @@ mod tests {
         // Test removal with empty list (should do nothing)
         let empty_keys: Vec<crate::core::triangulation_data_structure::CellKey> = vec![];
         let cell_count_before = tds.number_of_cells();
-        IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::remove_bad_cells(
-            &mut tds,
-            &empty_keys,
-        );
+        IncrementalBowyerWatson::<f64, (), (), 3>::remove_bad_cells(&mut tds, &empty_keys);
         assert_eq!(
             tds.number_of_cells(),
             cell_count_before,
@@ -8414,7 +8396,7 @@ mod tests {
         let algorithm = IncrementalBowyerWatson::new();
 
         // Test find_visible_boundary_facets with empty TDS
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let empty_tds: Tds<f64, (), (), 3> = Tds::empty();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
         let result = algorithm.find_visible_boundary_facets_lightweight(&empty_tds, &test_vertex);
@@ -8435,7 +8417,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test with exterior vertex (should see some facets)
         let exterior_vertex = vertex!([5.0, 5.0, 5.0]);
@@ -8491,7 +8473,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         let boundary_facets = tds.boundary_facets().expect("Should have boundary facets");
         assert!(
@@ -8585,7 +8567,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let algorithm = IncrementalBowyerWatson::new();
 
         // Test is_vertex_interior method edge cases
@@ -8613,7 +8595,7 @@ mod tests {
         let mut algorithm = IncrementalBowyerWatson::new();
 
         // Test NoCells error with empty TDS
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let empty_tds: Tds<f64, (), (), 3> = Tds::empty();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
 
         let result = algorithm.find_bad_cells(&empty_tds, &test_vertex);
@@ -8631,7 +8613,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test with interior vertex (should find bad cells)
         let interior_vertex = vertex!([0.25, 0.25, 0.25]);
@@ -8789,11 +8771,10 @@ mod tests {
     fn test_new_triangulation_method_comprehensive() {
         println!("Testing new_triangulation method comprehensive scenarios");
 
-        let mut algorithm: IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> =
-            IncrementalBowyerWatson::new();
+        let mut algorithm: IncrementalBowyerWatson<f64, (), (), 3> = IncrementalBowyerWatson::new();
 
         // Test with empty vertex set
-        let empty_vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![];
+        let empty_vertices: Vec<Vertex<f64, (), 3>> = vec![];
         let result = algorithm.new_triangulation(&empty_vertices);
 
         match result {
@@ -8898,8 +8879,7 @@ mod tests {
     fn test_new_triangulation_degenerate_cases() {
         println!("Testing new_triangulation with degenerate and edge case vertices");
 
-        let mut algorithm: IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> =
-            IncrementalBowyerWatson::new();
+        let mut algorithm: IncrementalBowyerWatson<f64, (), (), 3> = IncrementalBowyerWatson::new();
 
         // Test with duplicate vertices
         let duplicate_vertices = vec![
@@ -9008,7 +8988,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
             vertex!([3.3, 2.8, 1.9]), // Additional unique vertex to create more cells
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
 
         let initial_generation = tds.generation();
@@ -9081,7 +9061,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
 
         let _initial_generation = tds.generation();
@@ -9118,7 +9098,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
 
         let initial_generation = tds.generation();
@@ -9178,7 +9158,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         assert_eq!(tds.number_of_vertices(), 4);
         assert_eq!(tds.number_of_cells(), 1);
@@ -9215,7 +9195,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
 
         let interior = vertex!([0.3, 0.3]);
         let mut algorithm = IncrementalBowyerWatson::new();
@@ -9264,7 +9244,7 @@ mod tests {
             vertex!([0.0, 2.0, 0.0]),
             vertex!([0.0, 0.0, 2.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
 
         let interior_vertices = [
@@ -9298,7 +9278,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.5, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
 
         let interior = vertex!([0.5, 0.3]);
@@ -9321,7 +9301,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
 
         let interior = vertex!([0.2, 0.2, 0.2, 0.2]);
@@ -9342,7 +9322,7 @@ mod tests {
         println!("Testing is_vertex_interior with empty TDS");
         let algorithm = IncrementalBowyerWatson::new();
 
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let empty_tds: Tds<f64, (), (), 3> = Tds::empty();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
         let result = algorithm.is_vertex_interior(&empty_tds, &test_vertex);
         assert!(result.is_ok(), "Should handle empty TDS");
@@ -9368,7 +9348,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
         let vertex_keys: Vec<_> = tds.vertex_keys().take(3).collect();
 
@@ -9398,10 +9378,9 @@ mod tests {
             },
         ];
 
-        let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::deduplicate_boundary_facet_info(
-                all_duplicates,
-            );
+        let result = IncrementalBowyerWatson::<f64, (), (), 3>::deduplicate_boundary_facet_info(
+            all_duplicates,
+        );
         // Should return error with correct duplicate count
         match result {
             Err(InsertionError::DuplicateBoundaryFacets {
@@ -9426,7 +9405,7 @@ mod tests {
     fn test_rollback_created_cells_and_vertex_verification() {
         println!("Testing rollback_created_cells_and_vertex");
 
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -9449,12 +9428,14 @@ mod tests {
         // Manually create some cells
         let mut created_cells = Vec::new();
         for handle in &boundary_facets {
-            if let Ok(cell_key) = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cell_from_facet_handle(
-                &mut tds,
-                handle.cell_key(),
-                handle.facet_index(),
-                &new_vertex,
-            ) {
+            if let Ok(cell_key) =
+                IncrementalBowyerWatson::<f64, (), (), 3>::create_cell_from_facet_handle(
+                    &mut tds,
+                    handle.cell_key(),
+                    handle.facet_index(),
+                    &new_vertex,
+                )
+            {
                 created_cells.push(cell_key);
             }
         }
@@ -9463,7 +9444,7 @@ mod tests {
         let _vertices_after_creation = tds.number_of_vertices();
 
         // Rollback with vertex_existed_before = false (vertex should be removed)
-        IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::rollback_created_cells_and_vertex(
+        IncrementalBowyerWatson::<f64, (), (), 3>::rollback_created_cells_and_vertex(
             &mut tds,
             &created_cells,
             &new_vertex,
@@ -9493,7 +9474,7 @@ mod tests {
     fn test_set_neighbor_with_validation_bounds() {
         println!("Testing set_neighbor_with_validation bounds checking");
 
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -9507,26 +9488,23 @@ mod tests {
         let cell_key = cell_keys[0];
 
         // Test valid neighbor index (0..=D)
-        let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::set_neighbor_with_validation(
-                &mut tds, cell_key, 0, cell_key,
-            );
+        let result = IncrementalBowyerWatson::<f64, (), (), 3>::set_neighbor_with_validation(
+            &mut tds, cell_key, 0, cell_key,
+        );
         assert!(result.is_ok(), "Valid neighbor index should succeed");
         println!("  ✓ Valid neighbor index (0) works");
 
         // Test boundary valid index (D)
-        let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::set_neighbor_with_validation(
-                &mut tds, cell_key, 3, cell_key,
-            );
+        let result = IncrementalBowyerWatson::<f64, (), (), 3>::set_neighbor_with_validation(
+            &mut tds, cell_key, 3, cell_key,
+        );
         assert!(result.is_ok(), "Boundary valid index (D=3) should succeed");
         println!("  ✓ Boundary valid index (3) works");
 
         // Test out of bounds index (> D)
-        let result =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::set_neighbor_with_validation(
-                &mut tds, cell_key, 4, cell_key,
-            );
+        let result = IncrementalBowyerWatson::<f64, (), (), 3>::set_neighbor_with_validation(
+            &mut tds, cell_key, 4, cell_key,
+        );
         assert!(
             result.is_err(),
             "Out of bounds index should fail: {result:?}"
@@ -9586,7 +9564,7 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
             ];
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
             let cell_key = tds.cell_keys().next().unwrap();
             let vertex_keys: Vec<_> = tds.vertex_keys().take(3).collect();
 
@@ -9607,7 +9585,7 @@ mod tests {
             }
 
             // Deduplication should detect duplicates and error
-            let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::deduplicate_boundary_facet_info(
+            let result = IncrementalBowyerWatson::<f64, (), (), 3>::deduplicate_boundary_facet_info(
                 infos,
             );
 
@@ -9630,7 +9608,7 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
             ];
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&base_vertices).unwrap();
+            let tds: Tds<f64, (), (), 3> = Tds::new(&base_vertices).unwrap();
             let cell_key = tds.cell_keys().next().unwrap();
             let vk_list: Vec<_> = tds.vertex_keys().collect();
 
@@ -9663,7 +9641,7 @@ mod tests {
                 infos_buffer.push(info);
             }
 
-            let filtered = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::filter_boundary_facets_by_valid_facet_sharing(
+            let filtered = IncrementalBowyerWatson::<f64, (), (), 3>::filter_boundary_facets_by_valid_facet_sharing(
                 &tds,
                 infos_buffer,
                 new_vk,
@@ -9712,7 +9690,7 @@ mod tests {
             vertices.push(vertex!([(i as f64) * 0.1, (i as f64) * 0.15, 0.0]));
         }
 
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices[..4]).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices[..4]).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
 
         // Try inserting coplanar points
@@ -9744,7 +9722,7 @@ mod tests {
             vertex!([0.0, 2.0, 0.0]),
             vertex!([0.0, 0.0, 2.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
 
         // Insert many interior points in rapid succession
@@ -9786,16 +9764,15 @@ mod tests {
         println!("Testing is_vertex_likely_exterior with single vertex in TDS");
 
         // Create TDS with just one vertex (empty after construction)
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
         let single_vertex = vertex!([1.0, 1.0, 1.0]);
         tds.insert_vertex_with_mapping(single_vertex).unwrap();
 
         let test_vertex = vertex!([2.0, 2.0, 2.0]);
-        let is_exterior =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
-                &tds,
-                &test_vertex,
-            );
+        let is_exterior = IncrementalBowyerWatson::<f64, (), (), 3>::is_vertex_likely_exterior(
+            &tds,
+            &test_vertex,
+        );
 
         // With only one vertex, any other vertex should be considered exterior
         // because there's no meaningful bounding box
@@ -9813,13 +9790,14 @@ mod tests {
         let vertices = vec![same_point; 4]; // All 4 vertices at same point
 
         // This will likely fail to create a valid TDS, but let's handle it
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+        match Tds::<f64, (), (), 3>::new(&vertices) {
             Ok(tds) => {
                 let test_vertex = vertex!([2.0, 2.0, 2.0]);
-                let is_exterior = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
-                    &tds,
-                    &test_vertex,
-                );
+                let is_exterior =
+                    IncrementalBowyerWatson::<f64, (), (), 3>::is_vertex_likely_exterior(
+                        &tds,
+                        &test_vertex,
+                    );
                 println!("  ✓ All same point: is_exterior = {is_exterior}");
             }
             Err(e) => {
@@ -9841,36 +9819,33 @@ mod tests {
             vertex!([0.0, 10.0, 0.0]),
             vertex!([0.0, 0.0, 10.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Bounding box is [0,10] x [0,10] x [0,10]
         // With 10% margin: [-1,11] x [-1,11] x [-1,11]
 
         // Test vertex exactly on expanded boundary
         let on_boundary = vertex!([11.0, 5.0, 5.0]);
-        let is_exterior =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
-                &tds,
-                &on_boundary,
-            );
+        let is_exterior = IncrementalBowyerWatson::<f64, (), (), 3>::is_vertex_likely_exterior(
+            &tds,
+            &on_boundary,
+        );
         println!("  ✓ On boundary [11.0, 5.0, 5.0]: is_exterior = {is_exterior}");
 
         // Test vertex just inside expanded boundary
         let just_inside = vertex!([10.5, 5.0, 5.0]);
-        let is_exterior =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
-                &tds,
-                &just_inside,
-            );
+        let is_exterior = IncrementalBowyerWatson::<f64, (), (), 3>::is_vertex_likely_exterior(
+            &tds,
+            &just_inside,
+        );
         println!("  ✓ Just inside [10.5, 5.0, 5.0]: is_exterior = {is_exterior}");
 
         // Test vertex just outside expanded boundary
         let just_outside = vertex!([11.5, 5.0, 5.0]);
-        let is_exterior =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
-                &tds,
-                &just_outside,
-            );
+        let is_exterior = IncrementalBowyerWatson::<f64, (), (), 3>::is_vertex_likely_exterior(
+            &tds,
+            &just_outside,
+        );
         assert!(
             is_exterior,
             "Vertex outside expanded bbox should be exterior"
@@ -9899,7 +9874,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let mut algorithm = IncrementalBowyerWatson::new();
 
         // Test with a vertex that should work normally
@@ -9929,7 +9904,7 @@ mod tests {
     fn test_create_cell_from_vertices_and_vertex_duplicate() {
         println!("Testing create_cell_from_vertices_and_vertex duplicate detection");
 
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&[
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -9943,11 +9918,12 @@ mod tests {
         // Try to create cell with duplicate vertex (one that's already in facet)
         let duplicate_vertex = facet_vertices[0];
 
-        let result = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::create_cell_from_vertices_and_vertex(
-            &mut tds,
-            facet_vertices,
-            &duplicate_vertex,
-        );
+        let result =
+            IncrementalBowyerWatson::<f64, (), (), 3>::create_cell_from_vertices_and_vertex(
+                &mut tds,
+                facet_vertices,
+                &duplicate_vertex,
+            );
 
         assert!(
             result.is_err(),
@@ -9971,8 +9947,7 @@ mod tests {
     fn test_invalidate_cache_atomically_callable() {
         println!("Testing invalidate_cache_atomically is callable");
 
-        let mut algorithm: IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> =
-            IncrementalBowyerWatson::new();
+        let mut algorithm: IncrementalBowyerWatson<f64, (), (), 3> = IncrementalBowyerWatson::new();
 
         // This should not panic - just verify it's callable
         algorithm.invalidate_cache_atomically();
@@ -9986,10 +9961,9 @@ mod tests {
     fn test_determine_strategy_zero_cells() {
         println!("Testing determine_strategy with zero cells");
 
-        let empty_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let empty_tds: Tds<f64, (), (), 3> = Tds::empty();
         let test_vertex = vertex!([1.0, 1.0, 1.0]);
-        let algorithm: IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> =
-            IncrementalBowyerWatson::new();
+        let algorithm: IncrementalBowyerWatson<f64, (), (), 3> = IncrementalBowyerWatson::new();
 
         let strategy = algorithm.determine_strategy(&empty_tds, &test_vertex);
 
@@ -10016,10 +9990,10 @@ mod tests {
     fn test_zero_cell_tds_recovery_via_incremental_insertion() {
         use crate::core::triangulation_data_structure::TriangulationConstructionState;
 
-        type Alg = IncrementalBowyerWatson<f64, Option<()>, Option<()>, 2>;
+        type Alg = IncrementalBowyerWatson<f64, (), (), 2>;
 
         // Start from an empty 2D TDS and a purely degenerate (collinear) input set.
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let mut algorithm: Alg = Alg::new();
 
         let degenerate_vertices = vec![
@@ -10029,7 +10003,7 @@ mod tests {
             vertex!([3.0, 0.0]),
         ];
 
-        let result = <Alg as InsertionAlgorithm<f64, Option<()>, Option<()>, 2>>::triangulate(
+        let result = <Alg as InsertionAlgorithm<f64, (), (), 2>>::triangulate(
             &mut algorithm,
             &mut tds,
             &degenerate_vertices,
@@ -10088,8 +10062,7 @@ mod tests {
     fn test_insertion_algorithm_trait_methods_comprehensive() {
         println!("Testing InsertionAlgorithm trait methods comprehensively");
 
-        let mut algorithm: IncrementalBowyerWatson<f64, Option<()>, Option<()>, 3> =
-            IncrementalBowyerWatson::new();
+        let mut algorithm: IncrementalBowyerWatson<f64, (), (), 3> = IncrementalBowyerWatson::new();
 
         // Test get_statistics
         let (insertions, created, removed) = algorithm.get_statistics();
@@ -10149,7 +10122,7 @@ mod tests {
             vertex!([0.5, 0.5, 1.0]),
         ];
 
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Add 5th vertex to create second tetrahedron
         let fifth_vertex = vertex!([10.5, 11.5, 12.0]);
@@ -10181,12 +10154,11 @@ mod tests {
         );
 
         // Gather boundary facet information (mimics real insertion flow)
-        let boundary_infos =
-            IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::gather_boundary_facet_info(
-                &tds,
-                &boundary_facets,
-            )
-            .expect("Should gather boundary facet info");
+        let boundary_infos = IncrementalBowyerWatson::<f64, (), (), 3>::gather_boundary_facet_info(
+            &tds,
+            &boundary_facets,
+        )
+        .expect("Should gather boundary facet info");
 
         // Get a vertex key for the "inserted" vertex (use one from the other cell)
         let other_cell_key = tds
@@ -10206,7 +10178,7 @@ mod tests {
         }
 
         // Apply preventive filtering (cavity-based insertion removes bad cells)
-        let filtered = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::filter_boundary_facets_by_valid_facet_sharing(
+        let filtered = IncrementalBowyerWatson::<f64, (), (), 3>::filter_boundary_facets_by_valid_facet_sharing(
             &tds,
             boundary_infos_buffer,
             inserted_vk,
@@ -10273,11 +10245,11 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
             ];
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
             let test_vertex = vertex!([x, y, z]);
 
             // Should not panic
-            let _is_exterior = IncrementalBowyerWatson::<f64, Option<()>, Option<()>, 3>::is_vertex_likely_exterior(
+            let _is_exterior = IncrementalBowyerWatson::<f64, (), (), 3>::is_vertex_likely_exterior(
                 &tds,
                 &test_vertex,
             );

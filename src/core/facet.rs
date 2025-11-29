@@ -47,7 +47,7 @@
 //! ];
 //!
 //! // Create a 3D triangulation
-//! let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+//! let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 //! let cell_key = tds.cell_keys().next().unwrap();
 //!
 //! // Create a facet view (facet 0 excludes vertex 0)
@@ -223,7 +223,7 @@ pub enum FacetError {
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 /// let cell_key = tds.cell_keys().next().unwrap();
 ///
 /// // Create a facet handle
@@ -258,7 +258,7 @@ impl FacetHandle {
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// let cell_key = tds.cell_keys().next().unwrap();
     ///
     /// let handle = FacetHandle::new(cell_key, 0);
@@ -287,7 +287,7 @@ impl FacetHandle {
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// let cell_key = tds.cell_keys().next().unwrap();
     ///
     /// let handle = FacetHandle::new(cell_key, 0);
@@ -312,7 +312,7 @@ impl FacetHandle {
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// let cell_key = tds.cell_keys().next().unwrap();
     ///
     /// let handle = FacetHandle::new(cell_key, 1);
@@ -360,7 +360,7 @@ impl FacetHandle {
 ///
 /// // This is a conceptual example showing FacetView usage
 /// // In practice, tds and cell_key would come from your triangulation
-/// fn example_usage<'a>(tds: &'a Tds<f64, Option<()>, Option<()>, 3>, cell_key: CellKey) -> Result<(), Box<dyn std::error::Error>> {
+/// fn example_usage<'a>(tds: &'a Tds<f64, (), (), 3>, cell_key: CellKey) -> Result<(), Box<dyn std::error::Error>> {
 ///     // Create a facet view for the first facet of a cell
 ///     let facet_view = FacetView::new(tds, cell_key, 0)?;
 ///
@@ -497,7 +497,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// if let Some(cell_key) = tds.cell_keys().next() {
     ///     let facet = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -1018,7 +1018,7 @@ mod tests {
     fn test_facet_error_handling() {
         // Create a 1D triangulation (2 vertices forming an edge)
         let vertices = vec![vertex!([0.0]), vertex!([1.0])];
-        let tds: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 1> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Test invalid facet index (should be 0 or 1 for 1D, facet_index >= 2 is invalid)
@@ -1037,7 +1037,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Create facet view for facet 0 (excludes vertex 0)
@@ -1061,7 +1061,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.5, 1.0]),
         ];
-        let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+        let tds_2d: Tds<f64, (), (), 2> = Tds::new(&vertices_2d).unwrap();
         let cell_key_2d = tds_2d.cell_keys().next().unwrap();
         let result_2d = FacetView::new(&tds_2d, cell_key_2d, 0);
 
@@ -1072,7 +1072,7 @@ mod tests {
 
         // Test 1D case: Create an edge (1D cell with 2 vertices)
         let vertices_1d = vec![vertex!([0.0]), vertex!([1.0])];
-        let tds_1d: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices_1d).unwrap();
+        let tds_1d: Tds<f64, (), (), 1> = Tds::new(&vertices_1d).unwrap();
         let cell_key_1d = tds_1d.cell_keys().next().unwrap();
         let result_1d = FacetView::new(&tds_1d, cell_key_1d, 0);
 
@@ -1091,7 +1091,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Test invalid facet index (3D cell has vertices 0-3, facet index 4 is invalid)
@@ -1107,7 +1107,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Create facet view for facet 0 (excludes vertex 0)
@@ -1138,7 +1138,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Create facet views with same facet index (should be equal)
@@ -1163,7 +1163,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         let facet = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -1193,7 +1193,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         let facet = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -1218,7 +1218,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0], 3),
             vertex!([0.0, 0.0, 1.0], 4),
         ];
-        let tds: Tds<f64, i32, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, i32, (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Create facet view for facet 0 (excludes vertex 0)
@@ -1257,7 +1257,7 @@ mod tests {
                 fn $test_name() {
                     // Test basic facet view creation
                     let vertices = $vertices;
-                    let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                    let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
                     let cell_key = tds.cell_keys().next().unwrap();
 
                     // Create facet view for facet 0 (excludes vertex 0)
@@ -1273,7 +1273,7 @@ mod tests {
                     fn [<$test_name _key_consistency>]() {
                         // Test FacetKey computation consistency
                         let vertices = $vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
                         let cell_key = tds.cell_keys().next().unwrap();
 
                         // Create same facet twice
@@ -1293,7 +1293,7 @@ mod tests {
                     fn [<$test_name _equality>]() {
                         // Test facet equality comparison
                         let vertices = $vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
                         let cell_key = tds.cell_keys().next().unwrap();
 
                         let facet1 = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -1308,7 +1308,7 @@ mod tests {
                     fn [<$test_name _all_facets>]() {
                         // Test iterating through all facets of a cell
                         let vertices = $vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
                         let cell_key = tds.cell_keys().next().unwrap();
 
                         // D+1 dimensional cell should have D+1 facets (one opposite each vertex)
@@ -1363,7 +1363,7 @@ mod tests {
     fn facet_1d_edge() {
         // Create 1D triangulation (edge with 2 vertices)
         let vertices = vec![vertex!([0.0]), vertex!([1.0])];
-        let tds: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 1> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Create facet view for facet 0 (excludes vertex 0)
@@ -1405,7 +1405,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Create facet views for different facets
@@ -1432,7 +1432,7 @@ mod tests {
     fn facet_vertices_empty_cell() {
         // Test edge case of minimal cell (1D edge with 2 vertices)
         let vertices = vec![vertex!([0.0]), vertex!([1.0])];
-        let tds: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 1> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Create facet with vertex 0 as opposite - should have only vertex 1 in facet
@@ -1453,7 +1453,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Create facet view for facet 2 (excludes vertex 2)
@@ -1473,7 +1473,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         let facet1 = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -1503,7 +1503,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Create two facet views that reference the same facet
@@ -1577,7 +1577,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         // Test valid facet creation
@@ -1599,7 +1599,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -1629,7 +1629,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view = FacetView::new(&tds, cell_key, 1).unwrap();
@@ -1653,7 +1653,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -1672,7 +1672,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_views = all_facets_for_cell(&tds, cell_key).unwrap();
@@ -1699,7 +1699,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view1 = FacetView::new(&tds, cell_key, 0).unwrap();
@@ -1722,7 +1722,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
 
         let facet_view = FacetView::new(&tds, cell_key, 1).unwrap();
@@ -1740,7 +1740,7 @@ mod tests {
 
         // This test demonstrates the memory efficiency of FacetView
         // The deprecated heavyweight Facet struct has been removed.
-        let lightweight_size = mem::size_of::<FacetView<f64, Option<()>, Option<()>, 3>>();
+        let lightweight_size = mem::size_of::<FacetView<f64, (), (), 3>>();
 
         println!("Lightweight FacetView size: {lightweight_size} bytes");
 

@@ -57,7 +57,10 @@ All 1102 library tests + 231 doc tests passing, 0 clippy warnings.
 - **ALLOWED** to fix auto-fixable issues (formatting, linting, etc.)
 - This includes: `cargo fmt`, `cargo clippy`, `uvx ruff format`, `uvx ruff check --fix`, `markdownlint --fix`, `shfmt`, etc.
 - Quality tools improve code without changing functionality or version control state
-- **DO NOT** use scripts or automated tools (like `sed`, `awk`) for refactoring or logic-altering edits—only for non-semantic formatting and read-only checks
+- **CRITICAL**: **NEVER** use `sed`, `awk`, `perl`, or any shell-based text manipulation for code edits
+- **REQUIRED**: **ALWAYS** use the `edit_files` tool for ALL code changes, refactoring, and logic edits
+- **REASON**: Interactive editing allows for review, precise changes, and prevents unintended modifications
+- **EXCEPTION**: Shell text tools (`sed`, `awk`, `grep`) are ONLY allowed for read-only analysis and reporting
 - **PREFERRED**: Interactive code editing using the `edit_files` tool for precise, reviewed changes
 - **IMPORTANT**: Benchmark files (in `benches/`) are Rust code and must follow the same quality standards as core library code
   (e.g., `cargo clippy --benches -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo`)

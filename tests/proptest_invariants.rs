@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Property-based tests for documented invariants (src/lib.rs).
 //! - Duplicate coordinate rejection
 //! - Cell vertex count (D+1)
@@ -26,7 +25,7 @@ macro_rules! gen_duplicate_coords_test {
                         $min..=$max
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         // Select a vertex that is actually present in the triangulation.
                         // `Tds::new` may skip some input vertices (e.g., due to degeneracy),
                         // so we must use stored vertices to test duplicate rejection.
@@ -60,7 +59,7 @@ macro_rules! gen_cell_vertex_count_test {
                         $min..=$max
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         for (_, c) in tds.cells() {
                             prop_assert_eq!(c.number_of_vertices(), $expected);
                         }

@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Property-based tests for Delaunay-specific properties.
 //!
 //! - Empty circumcircle/circumsphere condition (no vertex strictly inside)
@@ -23,9 +22,9 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 
 // Deduplicate helpers to avoid pathological degeneracies in property tests
 fn dedup_vertices_by_coords<const D: usize>(
-    vertices: Vec<Vertex<f64, Option<()>, D>>,
-) -> Vec<Vertex<f64, Option<()>, D>> {
-    let mut unique: Vec<Vertex<f64, Option<()>, D>> = Vec::with_capacity(vertices.len());
+    vertices: Vec<Vertex<f64, (), D>>,
+) -> Vec<Vertex<f64, (), D>> {
+    let mut unique: Vec<Vertex<f64, (), D>> = Vec::with_capacity(vertices.len());
     'outer: for v in vertices {
         let vc: [f64; D] = (&v).into();
         for u in &unique {
@@ -100,7 +99,7 @@ proptest! {
                     prop_assume!(!reject);
 
                     // Use Tds::new() to triangulate ALL vertices together, ensuring Delaunay property
-                    let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) else {
+                    let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) else {
                         // Degenerate geometry or insufficient vertices - skip test
                         prop_assume!(false);
                         unreachable!();
@@ -247,11 +246,11 @@ proptest! {
             }
         }
 
-        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
+        let vertices: Vec<Vertex<f64, (), 2>> = Vertex::from_points(&points);
         prop_assume!(vertices.len() >= 3);
 
         // Build first triangulation with natural order
-        let tds_a = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices);
+        let tds_a = Tds::<f64, (), (), 2>::new(&vertices);
         prop_assume!(tds_a.is_ok());  // Skip if triangulation fails (degenerate)
         let tds_a = tds_a.unwrap();
         prop_assume!(tds_a.is_valid().is_ok());  // Skip if invalid
@@ -261,7 +260,7 @@ proptest! {
         let mut vertices_shuffled = vertices;
         vertices_shuffled.shuffle(&mut rng);
 
-        let tds_b = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices_shuffled);
+        let tds_b = Tds::<f64, (), (), 2>::new(&vertices_shuffled);
         prop_assume!(tds_b.is_ok());  // Skip if triangulation fails (degenerate)
         let tds_b = tds_b.unwrap();
         prop_assume!(tds_b.is_valid().is_ok());  // Skip if invalid

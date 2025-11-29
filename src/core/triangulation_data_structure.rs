@@ -87,7 +87,7 @@
 //! ];
 //!
 //! // Create Delaunay triangulation
-//! let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+//! let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 //!
 //! // Query triangulation properties
 //! assert_eq!(tds.number_of_vertices(), 4);
@@ -110,7 +110,7 @@
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
 //!
-//! let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+//! let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 //!
 //! // Add a new vertex
 //! let new_vertex = vertex!([0.5, 0.5, 0.5]);
@@ -135,7 +135,7 @@
 //!     vertex!([0.0, 0.0, 0.0, 1.0]),  // Unit vector along fourth dimension
 //! ];
 //!
-//! let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+//! let tds_4d: Tds<f64, (), (), 4> = Tds::new(&vertices_4d).unwrap();
 //! assert_eq!(tds_4d.dim(), 4);
 //! assert_eq!(tds_4d.number_of_vertices(), 5);
 //! assert_eq!(tds_4d.number_of_cells(), 1);
@@ -368,7 +368,7 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 /// let diagnostics = tds.bowyer_watson_with_diagnostics().unwrap();
 ///
 /// for report in diagnostics.unsalvageable_vertices {
@@ -592,7 +592,7 @@ new_key_type! {
 /// ];
 ///
 /// // Create a new TDS
-/// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
 ///
 /// // Check the number of cells and vertices
 /// assert_eq!(tds.number_of_cells(), 1);
@@ -833,7 +833,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// for (cell_key, cell) in tds.cells() {
     ///     println!("Cell {:?} has {} vertices", cell_key, cell.number_of_vertices());
@@ -865,7 +865,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// for cell in tds.cells_values() {
     ///     println!("Cell has {} vertices", cell.number_of_vertices());
@@ -910,7 +910,7 @@ where
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.5, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     ///
     /// for (vertex_key, vertex) in tds.vertices() {
     ///     println!("Vertex {:?} at {:?}", vertex_key, vertex.point());
@@ -972,7 +972,7 @@ where
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
     ///
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
+    /// let tds = Tds::<f64, (), (), 3>::empty();
     /// assert_eq!(tds.number_of_vertices(), 0);
     /// ```
     ///
@@ -985,9 +985,9 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::empty();
-    /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
-    /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([4.0, 5.0, 6.0]);
+    /// let mut tds: Tds<f64, (), usize, 3> = Tds::empty();
+    /// let vertex1: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
+    /// let vertex2: Vertex<f64, (), 3> = vertex!([4.0, 5.0, 6.0]);
     ///
     /// tds.add(vertex1).unwrap();
     /// assert_eq!(tds.number_of_vertices(), 1);
@@ -1012,7 +1012,7 @@ where
     /// ];
     ///
     /// let vertices = Vertex::from_points(&points);
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+    /// let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
     /// assert_eq!(tds.number_of_vertices(), 4);
     /// ```
     #[must_use]
@@ -1036,7 +1036,7 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
+    /// let tds = Tds::<f64, (), (), 3>::empty();
     /// assert_eq!(tds.dim(), -1); // Empty triangulation
     /// ```
     ///
@@ -1049,28 +1049,28 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::empty();
+    /// let mut tds: Tds<f64, (), usize, 3> = Tds::empty();
     ///
     /// // Start empty
     /// assert_eq!(tds.dim(), -1);
     ///
     /// // Add one vertex (0-dimensional)
-    /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 0.0]);
+    /// let vertex1: Vertex<f64, (), 3> = vertex!([0.0, 0.0, 0.0]);
     /// tds.add(vertex1).unwrap();
     /// assert_eq!(tds.dim(), 0);
     ///
     /// // Add second vertex (1-dimensional)
-    /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 0.0, 0.0]);
+    /// let vertex2: Vertex<f64, (), 3> = vertex!([1.0, 0.0, 0.0]);
     /// tds.add(vertex2).unwrap();
     /// assert_eq!(tds.dim(), 1);
     ///
     /// // Add third vertex (2-dimensional)
-    /// let vertex3: Vertex<f64, Option<()>, 3> = vertex!([0.0, 1.0, 0.0]);
+    /// let vertex3: Vertex<f64, (), 3> = vertex!([0.0, 1.0, 0.0]);
     /// tds.add(vertex3).unwrap();
     /// assert_eq!(tds.dim(), 2);
     ///
     /// // Add fourth vertex (3-dimensional, capped at D=3)
-    /// let vertex4: Vertex<f64, Option<()>, 3> = vertex!([0.0, 0.0, 1.0]);
+    /// let vertex4: Vertex<f64, (), 3> = vertex!([0.0, 0.0, 1.0]);
     /// tds.add(vertex4).unwrap();
     /// assert_eq!(tds.number_of_vertices(), 4);
     /// ```
@@ -1090,7 +1090,7 @@ where
     ///     Point::new([0.5, 1.0]),
     /// ];
     /// let vertices_2d = Vertex::from_points(&points_2d);
-    /// let tds_2d: Tds<f64, usize, usize, 2> = Tds::new(&vertices_2d).unwrap();
+    /// let tds_2d = Tds::<f64, (), (), 2>::new(&vertices_2d).unwrap();
     /// assert_eq!(tds_2d.dim(), 2);
     ///
     /// // 4D triangulation with 5 vertices (minimum for 4D simplex)
@@ -1102,7 +1102,7 @@ where
     ///     Point::new([0.0, 0.0, 0.0, 1.0]),
     /// ];
     /// let vertices_4d = Vertex::from_points(&points_4d);
-    /// let tds_4d: Tds<f64, usize, usize, 4> = Tds::new(&vertices_4d).unwrap();
+    /// let tds_4d = Tds::<f64, (), (), 4>::new(&vertices_4d).unwrap();
     /// assert_eq!(tds_4d.dim(), 4);
     /// ```
     #[must_use]
@@ -1138,7 +1138,7 @@ where
     /// ];
     ///
     /// let vertices = Vertex::from_points(&points);
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+    /// let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
     /// assert_eq!(tds.number_of_cells(), 1); // Cells are automatically created via triangulation
     /// ```
     ///
@@ -1158,7 +1158,7 @@ where
     /// ];
     ///
     /// let vertices = Vertex::from_points(&points);
-    /// let triangulated: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+    /// let triangulated = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
     /// assert_eq!(triangulated.number_of_cells(), 1); // One tetrahedron for 4 points in 3D
     /// ```
     ///
@@ -1167,7 +1167,7 @@ where
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
     ///
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
+    /// let tds = Tds::<f64, (), (), 3>::empty();
     /// assert_eq!(tds.number_of_cells(), 0); // No cells for empty input
     /// ```
     #[must_use]
@@ -1457,7 +1457,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first cell and its UUID
     /// let (cell_key, cell) = tds.cells().next().unwrap();
@@ -1474,7 +1474,7 @@ where
     /// use delaunay::core::triangulation_data_structure::Tds;
     /// use uuid::Uuid;
     ///
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+    /// let tds: Tds<f64, (), (), 3> = Tds::empty();
     /// let random_uuid = Uuid::new_v4();
     ///
     /// let result = tds.cell_key_from_uuid(&random_uuid);
@@ -1517,7 +1517,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first vertex and its UUID
     /// let (vertex_key, vertex) = tds.vertices().next().unwrap();
@@ -1534,7 +1534,7 @@ where
     /// use delaunay::core::triangulation_data_structure::Tds;
     /// use uuid::Uuid;
     ///
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+    /// let tds: Tds<f64, (), (), 3> = Tds::empty();
     /// let random_uuid = Uuid::new_v4();
     ///
     /// let result = tds.vertex_key_from_uuid(&random_uuid);
@@ -1577,7 +1577,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first cell key and expected UUID
     /// let (cell_key, cell) = tds.cells().next().unwrap();
@@ -1602,7 +1602,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first cell's UUID
     /// let (_, cell) = tds.cells().next().unwrap();
@@ -1650,7 +1650,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first vertex key and expected UUID
     /// let (vertex_key, vertex) = tds.vertices().next().unwrap();
@@ -1675,7 +1675,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get the first vertex's UUID
     /// let (_, vertex) = tds.vertices().next().unwrap();
@@ -1959,7 +1959,7 @@ where
     ///     vertex!([0.0, 1.0]),
     ///     vertex!([1.0, 1.0]),
     /// ];
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let mut tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     ///
     /// // Get a vertex to remove
     /// let vertex_to_remove = tds.vertices().next().unwrap().1.clone();
@@ -2075,7 +2075,7 @@ where
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// let (cell_key, _) = tds.cells().next().unwrap();
     ///
     /// // Get neighbors for existing cell
@@ -2133,7 +2133,7 @@ where
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// let (cell_key, cell) = tds.cells().next().unwrap();
     /// let neighbors = tds.find_neighbors_by_key(cell_key);
     ///
@@ -2440,6 +2440,7 @@ where
 {
     /// Creates a new empty triangulation data structure.
     ///
+    ///
     /// This function creates an empty triangulation with no vertices and no cells.
     /// It's equivalent to calling `Tds::new(&[]).unwrap()` but more explicit about the intent
     /// and doesn't require unwrapping since empty triangulations never fail to construct.
@@ -2458,7 +2459,7 @@ where
     /// use delaunay::core::triangulation_data_structure::Tds;
     /// use delaunay::core::triangulation_data_structure::TriangulationConstructionState;
     ///
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
+    /// let tds: Tds<f64, (), (), 3> = Tds::empty();
     /// assert_eq!(tds.number_of_vertices(), 0);
     /// assert_eq!(tds.number_of_cells(), 0);
     /// assert_eq!(tds.dim(), -1);
@@ -2531,7 +2532,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+    /// let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
     ///
     /// // Check basic structure
     /// assert_eq!(tds.number_of_vertices(), 4);
@@ -2560,7 +2561,7 @@ where
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
     ///
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
+    /// let tds = Tds::<f64, (), (), 3>::empty();
     /// assert_eq!(tds.number_of_vertices(), 0);
     /// assert_eq!(tds.dim(), -1);
     /// ```
@@ -2580,14 +2581,17 @@ where
     ///     vertex!([0.5, 1.0]),
     /// ];
     ///
-    /// let tds: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
     /// assert_eq!(tds.number_of_vertices(), 3);
     /// assert_eq!(tds.dim(), 2);
     /// ```
-    #[deprecated(
-        since = "0.6.0",
-        note = "Use `DelaunayTriangulation::new()` instead. This method uses inefficient global neighbor assignment."
-    )]
+    ///
+    /// # Visibility Note
+    ///
+    /// This method is currently `pub` to support existing integration tests.
+    /// Once the new flip-based insertion algorithm is implemented and stable,
+    /// this will be changed to `pub(crate)` as part of the architectural shift
+    /// toward using `DelaunayTriangulation::new()` as the primary API.
     pub fn new(vertices: &[Vertex<T, U, D>]) -> Result<Self, TriangulationConstructionError>
     where
         T: NumCast,
@@ -2689,8 +2693,8 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::empty();
-    /// let vertex: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
+    /// let mut tds: Tds<f64, (), usize, 3> = Tds::empty();
+    /// let vertex: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
     ///
     /// let result = tds.add(vertex);
     /// assert!(result.is_ok());
@@ -2706,9 +2710,9 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::empty();
-    /// let vertex1: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]);
-    /// let vertex2: Vertex<f64, Option<()>, 3> = vertex!([1.0, 2.0, 3.0]); // Same coordinates
+    /// let mut tds: Tds<f64, (), usize, 3> = Tds::empty();
+    /// let vertex1: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
+    /// let vertex2: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]); // Same coordinates
     ///
     /// tds.add(vertex1).unwrap();
     /// let result = tds.add(vertex2);
@@ -2724,7 +2728,7 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// let mut tds: Tds<f64, Option<()>, usize, 3> = Tds::empty();
+    /// let mut tds: Tds<f64, (), usize, 3> = Tds::empty();
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2750,7 +2754,7 @@ where
     /// use delaunay::vertex;
     ///
     /// // Start with empty triangulation (3D)
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+    /// let mut tds: Tds<f64, (), (), 3> = Tds::empty();
     ///
     /// // Initially: empty, unconstructed
     /// assert_eq!(tds.number_of_vertices(), 0);
@@ -2793,10 +2797,14 @@ where
     /// assert_eq!(tds.dim(), 3);
     /// assert!(tds.is_valid().is_ok());  // Triangulation remains valid
     /// ```
-    #[deprecated(
-        since = "0.6.0",
-        note = "Use `DelaunayTriangulation::insert()` instead. This method uses inefficient global neighbor assignment and is insertion-order dependent."
-    )]
+    ///
+    /// # Visibility Note
+    ///
+    /// This method is currently `pub` to support existing integration tests.
+    /// Once the new flip-based insertion algorithm is implemented and stable,
+    /// this will be changed to `pub(crate)` as incremental insertion will be
+    /// handled through `DelaunayTriangulation::insert()` instead.
+    #[allow(dead_code)]
     pub fn add(&mut self, vertex: Vertex<T, U, D>) -> Result<(), TriangulationConstructionError>
     where
         T: NumCast,
@@ -2974,6 +2982,7 @@ where
     /// This is an internal method used for rollback after insertion failures.
     /// Users should not need to call this directly - it's automatically invoked
     /// by `add()` when vertex insertion fails.
+    #[allow(dead_code)]
     fn rollback_vertex_insertion(
         &mut self,
         vertex_key: VertexKey,
@@ -3113,7 +3122,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     /// let diagnostics = tds.bowyer_watson_with_diagnostics().unwrap();
     ///
     /// // In typical well-behaved inputs there are no unsalvageable vertices.
@@ -3865,7 +3874,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Validation should pass for a properly constructed triangulation
     /// assert!(tds.validate_vertex_mappings().is_ok());
@@ -3948,7 +3957,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Validation should pass for a properly constructed triangulation
     /// assert!(tds.validate_cell_mappings().is_ok());
@@ -4188,7 +4197,7 @@ where
     /// ];
     ///
     /// let vertices = Vertex::from_points(&points);
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+    /// let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
     /// assert!(tds.is_valid().is_ok());
     /// ```
     ///
@@ -4197,7 +4206,7 @@ where
     /// ```
     /// use delaunay::core::triangulation_data_structure::Tds;
     ///
-    /// let tds: Tds<f64, usize, usize, 3> = Tds::empty();
+    /// let tds = Tds::<f64, (), (), 3>::empty();
     /// assert!(tds.is_valid().is_ok());
     /// ```
     ///
@@ -4876,7 +4885,7 @@ mod tests {
     fn test_add_vertex_comprehensive() {
         // Test successful vertex addition
         {
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
+            let mut tds = Tds::<f64, (), (), 3>::empty();
             let vertex = vertex!([1.0, 2.0, 3.0]);
             let result = tds.add(vertex);
             assert!(result.is_ok(), "Basic vertex addition should succeed");
@@ -4885,7 +4894,7 @@ mod tests {
 
         // Test duplicate coordinates error
         {
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
+            let mut tds = Tds::<f64, (), (), 3>::empty();
             let vertex = vertex!([1.0, 2.0, 3.0]);
             tds.add(vertex).unwrap();
 
@@ -4901,7 +4910,7 @@ mod tests {
 
         // Test duplicate UUID with different coordinates
         {
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
+            let mut tds = Tds::<f64, (), (), 3>::empty();
             let vertex1 = vertex!([1.0, 2.0, 3.0]);
             let uuid1 = vertex1.uuid();
             tds.add(vertex1).unwrap();
@@ -4922,7 +4931,7 @@ mod tests {
 
         // Test vertex addition increasing counts
         {
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
+            let mut tds = Tds::<f64, (), (), 3>::empty();
             let initial_vertices = [
                 vertex!([0.0, 0.0, 0.0]),
                 vertex!([1.0, 0.0, 0.0]),
@@ -4949,7 +4958,7 @@ mod tests {
 
         // Test that added vertices are properly accessible
         {
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
+            let mut tds = Tds::<f64, (), (), 3>::empty();
             let vertex = vertex!([1.0, 2.0, 3.0]);
             let uuid = vertex.uuid();
             tds.add(vertex).unwrap();
@@ -4979,7 +4988,7 @@ mod tests {
     fn test_add_vertex_rollback_on_algorithm_failure() {
         // This test verifies that if vertex insertion fails after the vertex has been
         // added to the TDS, the vertex is properly rolled back (removed)
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
+        let mut tds = Tds::<f64, (), (), 3>::empty();
 
         // First, create a triangulation with 4 vertices to get past the initial simplex creation
         let vertices = [
@@ -5027,7 +5036,7 @@ mod tests {
         // This test verifies atomicity: if assign_neighbors() or assign_incident_cells()
         // fails after successful algorithm.insert_vertex(), the TDS is rolled back completely.
 
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
+        let mut tds = Tds::<f64, (), (), 3>::empty();
 
         // Create initial triangulation
         let vertices = [
@@ -5127,7 +5136,7 @@ mod tests {
             vertex!([0.5, 1.0]),
             vertex!([1.5, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 2>::new(&vertices).unwrap();
 
         // Verify initial state
         let initial_vertices = tds.number_of_vertices();
@@ -5194,7 +5203,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
 
         // Create a vertex that was never added
         let nonexistent_vertex = vertex!([5.0, 5.0]);
@@ -5233,7 +5242,7 @@ mod tests {
                 vertex!([0.0, 1.0]),
                 vertex!([1.0, 1.0]),
             ];
-            let mut tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+            let mut tds_2d: Tds<f64, (), (), 2> = Tds::new(&vertices_2d).unwrap();
             let vertex = *tds_2d.vertices().next().unwrap().1;
             let cells_removed = tds_2d.remove_vertex(&vertex).unwrap();
             assert!(cells_removed > 0);
@@ -5249,7 +5258,7 @@ mod tests {
                 vertex!([0.0, 0.0, 1.0]),
                 vertex!([1.0, 1.0, 1.0]),
             ];
-            let mut tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
+            let mut tds_3d: Tds<f64, (), (), 3> = Tds::new(&vertices_3d).unwrap();
             let vertex = *tds_3d.vertices().next().unwrap().1;
             let cells_removed = tds_3d.remove_vertex(&vertex).unwrap();
             assert!(cells_removed > 0);
@@ -5266,7 +5275,7 @@ mod tests {
                 vertex!([0.0, 0.0, 0.0, 1.0]),
                 vertex!([1.0, 1.0, 1.0, 1.0]),
             ];
-            let mut tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+            let mut tds_4d: Tds<f64, (), (), 4> = Tds::new(&vertices_4d).unwrap();
             let vertex = *tds_4d.vertices().next().unwrap().1;
             let cells_removed = tds_4d.remove_vertex(&vertex).unwrap();
             assert!(cells_removed > 0);
@@ -5291,7 +5300,7 @@ mod tests {
             // Interior vertex to remove; offset from circumcenter to avoid degenerate configuration
             vertex!([0.2, 0.2, 0.2]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Get a vertex to remove and its key
         let vertex_to_remove = *tds.vertices().nth(4).unwrap().1; // Get the interior vertex
@@ -5358,7 +5367,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
             vertex!([0.5, 0.5, 0.5]), // Interior vertex
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Pick a vertex known to belong to at least one cell (from an existing cell)
         let first_cell_key = tds.cell_keys().next().unwrap();
@@ -5419,7 +5428,7 @@ mod tests {
                 Point::new([0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+            let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
             assert_eq!(tds.number_of_vertices(), 4);
             assert_eq!(tds.number_of_cells(), 1);
@@ -5429,7 +5438,7 @@ mod tests {
 
         // Test empty TDS creation
         {
-            let empty_tds: Tds<f64, usize, usize, 3> = Tds::empty();
+            let empty_tds = Tds::<f64, (), (), 3>::empty();
             assert_eq!(empty_tds.number_of_vertices(), 0);
             assert_eq!(empty_tds.number_of_cells(), 0);
             assert_eq!(empty_tds.dim(), -1);
@@ -5443,7 +5452,7 @@ mod tests {
                 vertex!([1.0, 0.0]),
                 vertex!([0.0, 1.0]),
             ];
-            let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+            let tds_2d: Tds<f64, (), (), 2> = Tds::new(&vertices_2d).unwrap();
             assert_eq!(tds_2d.dim(), 2);
             assert_eq!(tds_2d.number_of_vertices(), 3);
             assert_eq!(tds_2d.number_of_cells(), 1);
@@ -5456,7 +5465,7 @@ mod tests {
                 vertex!([0.0, 0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 0.0, 1.0]),
             ];
-            let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+            let tds_4d: Tds<f64, (), (), 4> = Tds::new(&vertices_4d).unwrap();
             assert_eq!(tds_4d.dim(), 4);
             assert_eq!(tds_4d.number_of_vertices(), 5);
             assert_eq!(tds_4d.number_of_cells(), 1);
@@ -5465,7 +5474,7 @@ mod tests {
 
     #[test]
     fn test_bowyer_watson_with_diagnostics_for_unique_vertices() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut tds = Tds::<f64, (), (), 3>::empty();
 
         let vertices = [
             vertex!([0.0, 0.0, 0.0]),
@@ -5503,7 +5512,7 @@ mod tests {
 
     #[test]
     fn test_bowyer_watson_with_diagnostics_reports_duplicate_vertices() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut tds = Tds::<f64, (), (), 3>::empty();
 
         let v0 = vertex!([0.0, 0.0, 0.0]);
         let v1 = vertex!([1.0, 0.0, 0.0]);
@@ -5567,7 +5576,7 @@ mod tests {
     /// every vertex is either used by some cell or reported as unsalvageable.
     #[test]
     fn test_unsalvageable_vertex_coverage_kept_union_equals_input() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 
         // Four unique vertices plus two exact duplicates to force unsalvageable vertices.
         let v0 = vertex!([0.0, 0.0, 0.0]);
@@ -5633,7 +5642,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> =
+        let tds: Tds<f64, (), (), 3> =
             Tds::new(&vertices).expect("Tds::new should succeed for simple tetrahedron");
 
         let stats = tds
@@ -5672,7 +5681,7 @@ mod tests {
         // Reset test-only counter.
         GLOBAL_DELAUNAY_VALIDATION_CALLS.store(0, Ordering::Relaxed);
 
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 
         // Eight vertices in general position in 3D: 4 for the initial simplex
         // and 4 additional vertices that will be inserted via Stage 2.
@@ -5737,7 +5746,7 @@ mod tests {
         // Reset test-only counter for this test's thread.
         GLOBAL_DELAUNAY_VALIDATION_CALLS.store(0, Ordering::Relaxed);
 
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+        let mut tds = Tds::<f64, (), (), 3>::empty();
 
         let vertices = [
             vertex!([0.0, 0.0, 0.0]),
@@ -5780,7 +5789,7 @@ mod tests {
     fn test_empty_constructor_comprehensive() {
         // Test basic empty() constructor properties in 3D
         {
-            let tds: Tds<f64, usize, usize, 3> = Tds::empty();
+            let tds = Tds::<f64, (), (), 3>::empty();
 
             // Basic properties
             assert_eq!(
@@ -5817,32 +5826,32 @@ mod tests {
         // Test equivalency with Tds::new(&[]) across dimensions
         {
             // 2D equivalency test
-            let empty_2d_via_constructor = Tds::<f64, usize, usize, 2>::empty();
-            let empty_2d_via_new = Tds::<f64, usize, usize, 2>::new(&[]).unwrap();
+            let empty_2d_via_constructor = Tds::<f64, (), (), 2>::empty();
+            let empty_2d_via_new = Tds::<f64, (), (), 2>::new(&[]).unwrap();
             assert_eq!(
                 empty_2d_via_constructor, empty_2d_via_new,
                 "2D: empty() should equal new(&[])"
             );
 
             // 3D equivalency test
-            let empty_3d_via_constructor = Tds::<f64, usize, usize, 3>::empty();
-            let empty_3d_via_new = Tds::<f64, usize, usize, 3>::new(&[]).unwrap();
+            let empty_3d_via_constructor = Tds::<f64, (), (), 3>::empty();
+            let empty_3d_via_new = Tds::<f64, (), (), 3>::new(&[]).unwrap();
             assert_eq!(
                 empty_3d_via_constructor, empty_3d_via_new,
                 "3D: empty() should equal new(&[])"
             );
 
             // 4D equivalency test
-            let empty_4d_via_constructor = Tds::<f64, usize, usize, 4>::empty();
-            let empty_4d_via_new = Tds::<f64, usize, usize, 4>::new(&[]).unwrap();
+            let empty_4d_via_constructor = Tds::<f64, (), (), 4>::empty();
+            let empty_4d_via_new = Tds::<f64, (), (), 4>::new(&[]).unwrap();
             assert_eq!(
                 empty_4d_via_constructor, empty_4d_via_new,
                 "4D: empty() should equal new(&[])"
             );
 
             // 5D equivalency test
-            let empty_5d_via_constructor = Tds::<f64, usize, usize, 5>::empty();
-            let empty_5d_via_new = Tds::<f64, usize, usize, 5>::new(&[]).unwrap();
+            let empty_5d_via_constructor = Tds::<f64, (), (), 5>::empty();
+            let empty_5d_via_new = Tds::<f64, (), (), 5>::new(&[]).unwrap();
             assert_eq!(
                 empty_5d_via_constructor, empty_5d_via_new,
                 "5D: empty() should equal new(&[])"
@@ -5851,10 +5860,10 @@ mod tests {
 
         // Test empty() works correctly across dimensions 2-5
         {
-            let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
-            let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
-            let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
-            let tds_5d: Tds<f64, Option<()>, Option<()>, 5> = Tds::empty();
+            let tds_2d: Tds<f64, (), (), 2> = Tds::empty();
+            let tds_3d: Tds<f64, (), (), 3> = Tds::empty();
+            let tds_4d: Tds<f64, (), (), 4> = Tds::empty();
+            let tds_5d: Tds<f64, (), (), 5> = Tds::empty();
 
             // All should be empty regardless of dimension
             assert_eq!(
@@ -5926,28 +5935,28 @@ mod tests {
         // Test that empty TDS can be used for incremental vertex addition across dimensions
         {
             // 2D test
-            let mut tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+            let mut tds_2d: Tds<f64, (), (), 2> = Tds::empty();
             assert_eq!(tds_2d.number_of_vertices(), 0);
             tds_2d.add(vertex!([1.0, 2.0])).unwrap();
             assert_eq!(tds_2d.number_of_vertices(), 1);
             assert_eq!(tds_2d.dim(), 0); // 0-dimensional with one vertex
 
             // 3D test
-            let mut tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+            let mut tds_3d: Tds<f64, (), (), 3> = Tds::empty();
             assert_eq!(tds_3d.number_of_vertices(), 0);
             tds_3d.add(vertex!([1.0, 2.0, 3.0])).unwrap();
             assert_eq!(tds_3d.number_of_vertices(), 1);
             assert_eq!(tds_3d.dim(), 0);
 
             // 4D test
-            let mut tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
+            let mut tds_4d: Tds<f64, (), (), 4> = Tds::empty();
             assert_eq!(tds_4d.number_of_vertices(), 0);
             tds_4d.add(vertex!([1.0, 2.0, 3.0, 4.0])).unwrap();
             assert_eq!(tds_4d.number_of_vertices(), 1);
             assert_eq!(tds_4d.dim(), 0);
 
             // 5D test
-            let mut tds_5d: Tds<f64, Option<()>, Option<()>, 5> = Tds::empty();
+            let mut tds_5d: Tds<f64, (), (), 5> = Tds::empty();
             assert_eq!(tds_5d.number_of_vertices(), 0);
             tds_5d.add(vertex!([1.0, 2.0, 3.0, 4.0, 5.0])).unwrap();
             assert_eq!(tds_5d.number_of_vertices(), 1);
@@ -6009,7 +6018,7 @@ mod tests {
                 fn $test_name() {
                     // Test basic TDS creation
                     let vertices = $vertices;
-                    let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                    let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
 
                     assert_eq!(tds.dim(), $dim as i32,
                         "{}D triangulation should have dimension {}", $dim, $dim);
@@ -6026,10 +6035,10 @@ mod tests {
                     fn [<$test_name _serialization>]() {
                         // Test TDS serialization roundtrip
                         let vertices = $vertices;
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
 
                         let serialized = serde_json::to_string(&tds).unwrap();
-                        let deserialized: Tds<f64, Option<()>, Option<()>, $dim> =
+                        let deserialized: Tds<f64, (), (), $dim> =
                             serde_json::from_str(&serialized).unwrap();
 
                         assert_eq!(deserialized.dim(), tds.dim());
@@ -6041,7 +6050,7 @@ mod tests {
                     #[test]
                     fn [<$test_name _incremental>]() {
                         // Test incremental vertex addition
-                        let mut tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::empty();
+                        let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                         let vertices = $vertices;
 
                         for (i, vertex) in vertices.iter().enumerate() {
@@ -6063,7 +6072,7 @@ mod tests {
                     #[test]
                     fn [<$test_name _empty>]() {
                         // Test empty TDS for this dimension
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::empty();
+                        let tds: Tds<f64, (), (), $dim> = Tds::empty();
 
                         assert_eq!(tds.number_of_vertices(), 0,
                             "{}D empty TDS should have 0 vertices", $dim);
@@ -6089,7 +6098,7 @@ mod tests {
                         }
                         vertices.push(vertex!(interior_coords));
 
-                        let tds: Tds<f64, Option<()>, Option<()>, $dim> = Tds::new(&vertices).unwrap();
+                        let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
 
                         assert_eq!(tds.dim(), $dim as i32,
                             "{}D triangulation with interior point should have dimension {}", $dim, $dim);
@@ -6145,7 +6154,7 @@ mod tests {
     fn test_accessors_comprehensive() {
         // Test empty TDS accessors
         {
-            let tds: Tds<f64, usize, usize, 3> = Tds::empty();
+            let tds = Tds::<f64, (), (), 3>::empty();
             assert_eq!(
                 tds.number_of_vertices(),
                 0,
@@ -6163,7 +6172,7 @@ mod tests {
                 Point::new([0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+            let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
             // Test vertex accessor
             assert_eq!(
@@ -6193,7 +6202,7 @@ mod tests {
         // Test accessors after incremental additions
         {
             const EPSILON: f64 = 1e-12;
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::empty();
+            let mut tds = Tds::<f64, (), (), 3>::empty();
             assert_eq!(tds.number_of_vertices(), 0);
 
             let test_vertices = [
@@ -6247,7 +6256,7 @@ mod tests {
                 Point::new([0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+            let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
             assert_eq!(tds.number_of_vertices(), 4, "Should have 4 vertices");
             assert_eq!(tds.number_of_cells(), 1, "Should have 1 cell (tetrahedron)");
@@ -6271,22 +6280,22 @@ mod tests {
             );
 
             // Add vertices incrementally and check dimension growth
-            let new_vertex1: Vertex<f64, usize, 3> = vertex!([1.0, 2.0, 3.0]);
+            let new_vertex1: Vertex<f64, usize, 3> = vertex!([1.0, 2.0, 3.0], 0_usize);
             let _ = tds.add(new_vertex1);
             assert_eq!(tds.number_of_vertices(), 1, "Should have 1 vertex");
             assert_eq!(tds.dim(), 0, "Single vertex should have dimension 0");
 
-            let new_vertex2: Vertex<f64, usize, 3> = vertex!([4.0, 5.0, 6.0]);
+            let new_vertex2: Vertex<f64, usize, 3> = vertex!([4.0, 5.0, 6.0], 1_usize);
             let _ = tds.add(new_vertex2);
             assert_eq!(tds.number_of_vertices(), 2, "Should have 2 vertices");
             assert_eq!(tds.dim(), 1, "Two vertices should have dimension 1");
 
-            let new_vertex3: Vertex<f64, usize, 3> = vertex!([7.0, 8.0, 9.0]);
+            let new_vertex3: Vertex<f64, usize, 3> = vertex!([7.0, 8.0, 9.0], 2_usize);
             let _ = tds.add(new_vertex3);
             assert_eq!(tds.number_of_vertices(), 3, "Should have 3 vertices");
             assert_eq!(tds.dim(), 2, "Three vertices should have dimension 2");
 
-            let new_vertex4: Vertex<f64, usize, 3> = vertex!([10.0, 11.0, 12.0]);
+            let new_vertex4: Vertex<f64, usize, 3> = vertex!([10.0, 11.0, 12.0], 3_usize);
             let _ = tds.add(new_vertex4);
             assert_eq!(tds.number_of_vertices(), 4, "Should have 4 vertices");
             assert_eq!(
@@ -6295,7 +6304,7 @@ mod tests {
                 "Four vertices should have dimension 3 (full 3D)"
             );
 
-            let new_vertex5: Vertex<f64, usize, 3> = vertex!([13.0, 14.0, 15.0]);
+            let new_vertex5: Vertex<f64, usize, 3> = vertex!([13.0, 14.0, 15.0], 4_usize);
             let _ = tds.add(new_vertex5);
             assert_eq!(tds.number_of_vertices(), 5, "Should have 5 vertices");
             assert_eq!(
@@ -6313,14 +6322,14 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
             ];
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+            let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
             assert_eq!(tds.number_of_vertices(), 4, "Initial vertex count");
             assert_eq!(tds.cells.len(), 1, "Should have one cell");
             assert_eq!(tds.dim(), 3, "Should be 3-dimensional");
 
             // Try to add duplicate vertex (same coordinates as first vertex)
-            let duplicate_vertex: Vertex<f64, usize, 3> = vertex!([0.0, 0.0, 0.0]);
+            let duplicate_vertex = vertex!([0.0, 0.0, 0.0]);
             let result = tds.add(duplicate_vertex);
 
             assert_eq!(
@@ -6345,27 +6354,27 @@ mod tests {
         assert_eq!(tds.dim(), -1);
 
         // Test with one vertex
-        let vertex1: Vertex<f64, usize, 3> = vertex!([0.0, 0.0, 0.0]);
+        let vertex1: Vertex<f64, usize, 3> = vertex!([0.0, 0.0, 0.0], 0_usize);
         tds.add(vertex1).unwrap();
         assert_eq!(tds.dim(), 0);
 
         // Test with two vertices
-        let vertex2: Vertex<f64, usize, 3> = vertex!([1.0, 0.0, 0.0]);
+        let vertex2: Vertex<f64, usize, 3> = vertex!([1.0, 0.0, 0.0], 1_usize);
         tds.add(vertex2).unwrap();
         assert_eq!(tds.dim(), 1);
 
         // Test with three vertices
-        let vertex3: Vertex<f64, usize, 3> = vertex!([0.0, 1.0, 0.0]);
+        let vertex3: Vertex<f64, usize, 3> = vertex!([0.0, 1.0, 0.0], 2_usize);
         tds.add(vertex3).unwrap();
         assert_eq!(tds.dim(), 2);
 
         // Test with four vertices (should be capped at D=3) - use non-collinear points
-        let vertex4: Vertex<f64, usize, 3> = vertex!([0.0, 0.0, 1.0]);
+        let vertex4: Vertex<f64, usize, 3> = vertex!([0.0, 0.0, 1.0], 3_usize);
         tds.add(vertex4).unwrap();
         assert_eq!(tds.dim(), 3);
 
         // Test with five vertices (dimension should stay at 3)
-        let vertex5: Vertex<f64, usize, 3> = vertex!([13.0, 14.0, 15.0]);
+        let vertex5: Vertex<f64, usize, 3> = vertex!([13.0, 14.0, 15.0], 4_usize);
         println!("About to add vertex 5: {:?}", vertex5.point().coords());
         println!(
             "Current state - vertices: {}, cells: {}, dim: {}",
@@ -6394,7 +6403,7 @@ mod tests {
 
     #[test]
     fn test_triangulation_empty_vertices() {
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Empty triangulation should have no vertices or cells
         assert_eq!(tds.number_of_vertices(), 0);
@@ -6413,7 +6422,7 @@ mod tests {
             Point::new([50.0, 0.0, 50.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Assert that triangulation has proper structure
         assert_eq!(tds.number_of_vertices(), 4);
@@ -6449,14 +6458,14 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let result_tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let result_tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         assert_eq!(result_tds.number_of_vertices(), 4);
         assert_eq!(result_tds.number_of_cells(), 1);
     }
 
     #[test]
     fn test_is_valid_with_invalid_neighbors() {
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         let vertices = [
             vertex!([0.0, 0.0, 0.0]),
@@ -6502,7 +6511,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         // Triangulation is automatically done in Tds::new
         let mut result_tds = tds;
 
@@ -6535,7 +6544,7 @@ mod tests {
             Point::new([0.2, 0.2, 0.2]),
         ];
         let vertices = Vertex::from_points(&points);
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Get the current state of the triangulation
         let original_cells = tds.number_of_cells();
@@ -6613,7 +6622,7 @@ mod tests {
 
     #[test]
     fn test_number_of_cells() {
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
         assert_eq!(tds.number_of_cells(), 0);
 
         // Add a cell manually to test the count
@@ -6650,7 +6659,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         assert_eq!(tds.number_of_vertices(), 4);
         assert_eq!(tds.number_of_cells(), 1); // Should create one tetrahedron
@@ -6693,7 +6702,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Verify initial state is valid
         assert!(
@@ -6771,7 +6780,7 @@ mod tests {
             .collect();
 
         let vertices = Vertex::from_points(&points);
-        let tds_result: Result<Tds<f64, usize, usize, 3>, TriangulationConstructionError> =
+        let tds_result: Result<Tds<f64, (), (), 3>, TriangulationConstructionError> =
             Tds::new(&vertices);
 
         match tds_result {
@@ -6824,7 +6833,7 @@ mod tests {
             Point::new([1.5, 1.7, 1.9]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         // Triangulation is automatically done in Tds::new
         let mut result = tds;
 
@@ -6855,7 +6864,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         // Triangulation is automatically done in Tds::new
         let mut result = tds;
 
@@ -6878,7 +6887,7 @@ mod tests {
 
     #[test]
     fn test_assign_incident_cells_vertex_uuid_not_found_error() {
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Create vertices and add them to the TDS
         let vertices = [
@@ -6942,7 +6951,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Clear existing incident cells
         for vertex in tds.vertices.values_mut() {
@@ -6979,7 +6988,7 @@ mod tests {
 
     #[test]
     fn test_assign_incident_cells_vertex_key_not_found_error() {
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Create vertices and add them to the TDS
         let vertices = [
@@ -7044,7 +7053,7 @@ mod tests {
             Point::new([0.5, 0.5, -1.0]), // E - below base
         ];
         let vertices = Vertex::from_points(&points);
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Clear existing incident cells to test assignment
         for vertex in tds.vertices.values_mut() {
@@ -7104,7 +7113,7 @@ mod tests {
     #[test]
     fn test_assign_incident_cells_empty_triangulation() {
         // Test assign_incident_cells with empty triangulation (no cells)
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Add some vertices without cells
         let vertices = [vertex!([0.0, 0.0, 0.0]), vertex!([1.0, 0.0, 0.0])];
@@ -7147,7 +7156,7 @@ mod tests {
             Point::new([0.5, 0.5, -1.0]), // E
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Build the vertex-to-cells map
         let vertex_to_cells = tds
@@ -7207,7 +7216,7 @@ mod tests {
     #[test]
     fn test_build_vertex_to_cells_map_empty() {
         // Test build_vertex_to_cells_map with no cells
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Add vertices without cells
         let vertices = [
@@ -7249,7 +7258,7 @@ mod tests {
             Point::new([0.5, 0.5, -1.0]), // E - vertex 3 in cell2 (below base)
         ];
         let vertices = Vertex::from_points(&points);
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Should create exactly two adjacent tetrahedra
         assert_eq!(tds.number_of_cells(), 2, "Should have exactly two cells");
@@ -7394,7 +7403,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         let mut result = tds;
 
         result.assign_neighbors().unwrap();
@@ -7427,7 +7436,7 @@ mod tests {
     fn test_assign_neighbors_vertex_key_retrieval_failed() {
         // Phase 3A: This test validates that data structure corruption (cells referencing
         // non-existent vertices) is detected by get_cell_vertices() and propagates through is_valid()
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Create vertices and add them to the TDS
         let vertices = [
@@ -7494,7 +7503,7 @@ mod tests {
     fn test_assign_neighbors_inconsistent_data_structure() {
         // Phase 3A: This test validates that data structure corruption (multiple cells referencing
         // non-existent vertices) is detected by get_cell_vertices() and propagates through is_valid()
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Create vertices and add them to the TDS
         let vertices = [
@@ -7569,7 +7578,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Get the first cell key
         let cell_key = tds.cells.keys().next().unwrap();
@@ -7734,7 +7743,7 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
             ];
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             assert!(
                 tds.validate_vertex_mappings().is_ok(),
@@ -7750,7 +7759,7 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
             ];
-            let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             // Manually add an extra entry to create a count mismatch
             tds.uuid_to_vertex_key
@@ -7774,7 +7783,7 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
             ];
-            let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             // Manually remove a mapping to create an inconsistency
             let vertex_uuid = tds.vertices.values().next().unwrap().uuid();
@@ -7798,7 +7807,7 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
             ];
-            let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             // Manually create an inconsistent mapping
             let keys: Vec<VertexKey> = tds.vertices.keys().collect();
@@ -7820,7 +7829,7 @@ mod tests {
     }
     #[test]
     fn test_validation_improper_neighbor_count() {
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Create vertices and add to TDS
         let vertices = [
@@ -7900,7 +7909,7 @@ mod tests {
 
     #[test]
     fn test_validation_with_non_mutual_neighbors() {
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Create vertices and add them to TDS
         let vertices1 = [
@@ -7975,7 +7984,7 @@ mod tests {
         ];
 
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         // Triangulation is automatically done in Tds::new
         let result = tds;
 
@@ -8015,7 +8024,7 @@ mod tests {
         ];
 
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Verify triangulation handles extreme coordinates correctly
         assert_eq!(tds.number_of_vertices(), 4);
@@ -8066,7 +8075,7 @@ mod tests {
             Point::new([5.0, 5.0, 10.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Verify triangulation structure
         assert_eq!(tds.number_of_vertices(), 4);
@@ -8125,7 +8134,7 @@ mod tests {
             Point::new([2.3, 0.3, 2.4]),
         ];
         let vertices = Vertex::from_points(&points);
-        let result: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let result = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         // let result = tds.bowyer_watson().unwrap();
 
         // Robust construction may discard some vertices; require at least a valid 3D simplex
@@ -8206,7 +8215,7 @@ mod tests {
             Point::new([1.7, 1.9, 2.1]),
         ];
         let vertices = Vertex::from_points(&points);
-        let mut result: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let mut result = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         // let mut result = tds.bowyer_watson().unwrap();
 
         // Clear existing neighbors to test assignment logic
@@ -8245,7 +8254,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let mut result: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let mut result = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         // let mut result = tds.bowyer_watson().unwrap();
 
         // Clear existing incident cells to test assignment logic
@@ -8283,7 +8292,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let mut result: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let mut result = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
         // let mut result = tds.bowyer_watson().unwrap();
 
         // Add multiple duplicate cells manually
@@ -8347,7 +8356,7 @@ mod tests {
     #[test]
     fn test_validation_edge_cases() {
         // Test validation with cells that have exactly D neighbors
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         let vertices = [
             vertex!([0.0, 0.0, 0.0]),
@@ -8390,7 +8399,7 @@ mod tests {
 
     #[test]
     fn test_validation_shared_facet_count() {
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Create unique vertices (no duplicates)
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
@@ -8470,7 +8479,7 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
             ];
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             assert!(
                 tds.validate_cell_mappings().is_ok(),
@@ -8486,7 +8495,7 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
             ];
-            let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             // Manually add an extra entry to create a count mismatch
             tds.uuid_to_cell_key
@@ -8510,7 +8519,7 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
             ];
-            let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             // Manually remove a mapping to create an inconsistency
             let cell_uuid = tds.cells.values().next().unwrap().uuid();
@@ -8534,7 +8543,7 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
             ];
-            let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             // Create a fake cell key to create an inconsistent mapping
             if let Some(first_cell_key) = tds.cells.keys().next() {
@@ -8577,8 +8586,8 @@ mod tests {
         vertices2.push(vertex5);
 
         // Create TDS with these vertices
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+        let tds1: Tds<f64, (), (), 3> = Tds::new(&vertices1).unwrap();
+        let tds2: Tds<f64, (), (), 3> = Tds::new(&vertices2).unwrap();
 
         // Get cell keys
         let cell1_key = tds1.cell_keys().next().unwrap();
@@ -8616,7 +8625,7 @@ mod tests {
             vertex!([10.0, 10.0, 11.0]),
         ];
 
-        let tds3: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices3).unwrap();
+        let tds3: Tds<f64, (), (), 3> = Tds::new(&vertices3).unwrap();
         let cell3_key = tds3.cell_keys().next().unwrap();
 
         let mut found_adjacent2 = false;
@@ -8656,7 +8665,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let tds1: Tds<f64, (), (), 3> = Tds::new(&vertices1).unwrap();
 
         let vertices2 = [
             vertex!([0.0, 0.0, 0.0]),
@@ -8664,7 +8673,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+        let tds2: Tds<f64, (), (), 3> = Tds::new(&vertices2).unwrap();
 
         // Test equality - should be true for identical triangulations
         assert_eq!(tds1, tds2, "Identical triangulations should be equal");
@@ -8684,7 +8693,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let tds1: Tds<f64, (), (), 3> = Tds::new(&vertices1).unwrap();
 
         let vertices2 = [
             vertex!([0.0, 0.0, 0.0]),
@@ -8692,7 +8701,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+        let tds2: Tds<f64, (), (), 3> = Tds::new(&vertices2).unwrap();
 
         // Test inequality - should be false for different triangulations
         assert_ne!(tds1, tds2, "Different triangulations should not be equal");
@@ -8709,7 +8718,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let tds1: Tds<f64, (), (), 3> = Tds::new(&vertices1).unwrap();
 
         let vertices2 = [
             vertex!([1.0, 0.0, 0.0]), // Different order
@@ -8717,7 +8726,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+        let tds2: Tds<f64, (), (), 3> = Tds::new(&vertices2).unwrap();
 
         // Test equality - should be true regardless of vertex order since we sort internally
         assert_eq!(
@@ -8739,8 +8748,8 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds_2d: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
-        let tds_2d_copy: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices_2d).unwrap();
+        let tds_2d: Tds<f64, (), (), 2> = Tds::new(&vertices_2d).unwrap();
+        let tds_2d_copy: Tds<f64, (), (), 2> = Tds::new(&vertices_2d).unwrap();
         assert_eq!(
             tds_2d, tds_2d_copy,
             "Identical 2D triangulations should be equal"
@@ -8753,8 +8762,8 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds_3d: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
-        let tds_3d_copy: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices_3d).unwrap();
+        let tds_3d: Tds<f64, (), (), 3> = Tds::new(&vertices_3d).unwrap();
+        let tds_3d_copy: Tds<f64, (), (), 3> = Tds::new(&vertices_3d).unwrap();
         assert_eq!(
             tds_3d, tds_3d_copy,
             "Identical 3D triangulations should be equal"
@@ -8768,8 +8777,8 @@ mod tests {
             vertex!([0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
-        let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
-        let tds_4d_copy: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
+        let tds_4d: Tds<f64, (), (), 4> = Tds::new(&vertices_4d).unwrap();
+        let tds_4d_copy: Tds<f64, (), (), 4> = Tds::new(&vertices_4d).unwrap();
         assert_eq!(
             tds_4d, tds_4d_copy,
             "Identical 4D triangulations should be equal"
@@ -8787,7 +8796,7 @@ mod tests {
             vertex!([0.5, 1.0, 0.0]),
             vertex!([0.5, 0.5, 1.0]),
         ];
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let tds1: Tds<f64, (), (), 3> = Tds::new(&vertices1).unwrap();
 
         let vertices2 = [
             vertex!([0.0, 0.0, 0.0]),
@@ -8796,7 +8805,7 @@ mod tests {
             vertex!([0.5, 0.5, 1.0]),
             vertex!([0.5, 0.5, -1.0]), // Additional vertex - different size
         ];
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+        let tds2: Tds<f64, (), (), 3> = Tds::new(&vertices2).unwrap();
 
         // Test inequality - should be false for different sized triangulations
         assert_ne!(
@@ -8810,11 +8819,11 @@ mod tests {
     #[test]
     fn test_tds_partial_eq_empty_triangulations() {
         // Create two empty triangulations
-        let vertices1: Vec<Vertex<f64, Option<()>, 3>> = [].to_vec();
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
+        let vertices1: Vec<Vertex<f64, (), 3>> = [].to_vec();
+        let tds1: Tds<f64, (), (), 3> = Tds::new(&vertices1).unwrap();
 
-        let vertices2: Vec<Vertex<f64, Option<()>, 3>> = [].to_vec();
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+        let vertices2: Vec<Vertex<f64, (), 3>> = [].to_vec();
+        let tds2: Tds<f64, (), (), 3> = Tds::new(&vertices2).unwrap();
 
         // Test equality - empty triangulations should be equal
         assert_eq!(tds1, tds2, "Empty triangulations should be equal");
@@ -8836,7 +8845,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         assert_eq!(tds.number_of_cells(), 1, "Should contain one cell");
 
@@ -8869,7 +8878,7 @@ mod tests {
             Point::new([0.5, 0.5, -1.0]), // E - below base
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         println!("Created triangulation with {} cells", tds.number_of_cells());
         for (i, (_cell_key, cell)) in tds.cells.iter().enumerate() {
@@ -8976,7 +8985,7 @@ mod tests {
     fn test_validate_facet_sharing_comprehensive() {
         // Test 1: Empty triangulation - should pass validation
         {
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
+            let tds: Tds<f64, (), (), 3> = Tds::new(&[]).unwrap();
             assert!(
                 tds.validate_facet_sharing().is_ok(),
                 "Empty triangulation should pass facet sharing validation"
@@ -8992,7 +9001,7 @@ mod tests {
                 Point::new([0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             assert_eq!(tds.number_of_cells(), 1, "Should have exactly one cell");
             assert!(
@@ -9011,7 +9020,7 @@ mod tests {
                 Point::new([0.5, 0.5, -1.0]), // E - below base
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             // This should create two adjacent tetrahedra sharing one facet
             assert_eq!(tds.number_of_cells(), 2, "Should have exactly two cells");
@@ -9023,7 +9032,7 @@ mod tests {
 
         // Test 4: Invalid triple sharing - should fail validation
         {
-            let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+            let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
             // Create 3 cells that all share the same facet (geometrically impossible)
             let shared_vertex1 = vertex!([0.0, 0.0, 0.0]);
@@ -9092,7 +9101,7 @@ mod tests {
     #[test]
     fn test_fix_invalid_facet_sharing_returns_correct_count() {
         // Test that fix_invalid_facet_sharing returns the correct count of removed cells
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Create 3 cells that all share the same facet (which is geometrically impossible)
         // This mimics the test_validate_facet_sharing_invalid_triple_sharing setup
@@ -9189,7 +9198,7 @@ mod tests {
     #[test]
     fn test_fix_invalid_facet_sharing_facet_error_handling() {
         // Test that fix_invalid_facet_sharing properly converts FacetError to TriangulationValidationError
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Create a pathological case where facets() might fail
         // We'll create a cell with corrupted vertex data that might cause facet creation to fail
@@ -9280,7 +9289,7 @@ mod tests {
     #[test]
     fn test_fix_invalid_facet_sharing_neighbor_assignment_errors() {
         // Test that neighbor assignment errors are properly propagated
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Create a scenario that will trigger neighbor assignment after cell removal
         let vertices = [
@@ -9337,7 +9346,7 @@ mod tests {
     fn test_is_valid_detects_improper_facet_sharing() {
         // This test verifies that tds.is_valid() now properly detects improper facet sharing
         // (testing our recent addition of facet sharing validation to is_valid)
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Create 3 cells that all share the same facet (geometrically impossible)
         let shared_vertex1 = vertex!([0.0, 0.0, 0.0]);
@@ -9591,7 +9600,7 @@ mod tests {
             Point::new([0.5, 0.5, 0.5]),
         ];
         let vertices = Vertex::from_points(&points);
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Ensure neighbors are assigned
         tds.assign_neighbors().unwrap();
@@ -9626,7 +9635,7 @@ mod tests {
     #[test]
     fn test_clear_all_neighbors_empty_triangulation() {
         // Create an empty triangulation
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Call clear_all_neighbors on empty triangulation (shouldn't panic)
         tds.clear_all_neighbors();
@@ -9656,7 +9665,7 @@ mod tests {
             Point::new([0.5, 0.5, -1.0]), // E - below base
         ];
         let vertices = Vertex::from_points(&points);
-        let original_tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let original_tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Verify the original triangulation is valid
         assert!(
@@ -9679,7 +9688,7 @@ mod tests {
         println!("Serialized TDS JSON length: {} bytes", serialized.len());
 
         // Deserialize the TDS from JSON
-        let deserialized_tds: Tds<f64, Option<()>, Option<()>, 3> =
+        let deserialized_tds: Tds<f64, (), (), 3> =
             serde_json::from_str(&serialized).expect("Failed to deserialize TDS from JSON");
 
         // Verify the deserialized triangulation has the same properties
@@ -9778,7 +9787,7 @@ mod tests {
 
     #[test]
     fn test_insert_vertex_with_mapping() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&[]).unwrap();
         let vertex = vertex!([1.0, 2.0, 3.0]);
         let vertex_uuid = vertex.uuid();
 
@@ -9818,7 +9827,7 @@ mod tests {
 
     #[test]
     fn test_insert_cell_with_mapping() {
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&[]).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&[]).unwrap();
 
         // Create vertices for a tetrahedron
         let vertices = [
@@ -9976,7 +9985,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Normal case should work
         let facet_map = tds.build_facet_to_cells_map();
@@ -9993,7 +10002,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Should return 0 fixes since no issues exist
         let fixes = tds.fix_invalid_facet_sharing().unwrap();
@@ -10009,7 +10018,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Should pass validation
         let result = tds.validate_facet_sharing();
@@ -10026,7 +10035,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Should pass validation since cells can have no neighbors
         let result = tds.validate_neighbors();
@@ -10034,14 +10043,14 @@ mod tests {
     }
 
     #[test]
-    fn test_tds_generation_counter() {
+    fn test_generation_tracking() {
         let vertices = [
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
 
-        let mut tds: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
+        let mut tds = Tds::<f64, (), (), 2>::new(&vertices).unwrap();
 
         let initial_gen = tds.generation();
 
@@ -10062,7 +10071,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Test with valid cell key
         if let Some((cell_key, _)) = tds.cells().next() {
@@ -10075,7 +10084,7 @@ mod tests {
 
     #[test]
     fn test_insert_vertex_with_mapping_duplicate_error() {
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         let vertex = vertex!([1.0, 2.0, 3.0]);
 
@@ -10097,7 +10106,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, usize, usize, 3> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Test all validation methods on the same tetrahedron
         assert!(tds.validate_vertex_mappings().is_ok());
@@ -10109,7 +10118,7 @@ mod tests {
     #[test]
     fn test_construction_state_transitions() {
         // Test that construction state transitions work properly
-        let mut tds: Tds<f64, usize, usize, 3> = Tds::new(&[]).unwrap();
+        let mut tds = Tds::<f64, (), (), 3>::new(&[]).unwrap();
 
         // Should start as incomplete with 0 vertices
         assert!(matches!(
@@ -10147,7 +10156,7 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 2>::new(&vertices).unwrap();
         let cloned_tds = tds.clone();
 
         // Cloned TDS should be equal to original
@@ -10166,7 +10175,7 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, usize, usize, 2> = Tds::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 2>::new(&vertices).unwrap();
         let debug_str = format!("{:?}", tds);
 
         // Debug should contain the struct name
@@ -10190,17 +10199,17 @@ mod tests {
                     let mut vertices = vec![];
 
                     // First vertex at origin
-                    let coords = [0.0; $dim];
+                    let coords = [0.0f64; $dim];
                     vertices.push(vertex!(coords));
 
                     // D more vertices, each with 1.0 in one dimension
                     for i in 0..$dim {
-                        let mut coords = [0.0; $dim];
+                        let mut coords = [0.0f64; $dim];
                         coords[i] = 1.0;
                         vertices.push(vertex!(coords));
                     }
 
-                    let tds: Tds<f64, usize, usize, $dim> = Tds::new(&vertices).unwrap();
+                    let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
 
                     assert_eq!(tds.dim(), $dim, concat!(stringify!($dim), "D triangulation dimension"));
                     assert_eq!(
@@ -10232,7 +10241,7 @@ mod tests {
     #[test]
     fn test_incremental_construction_various_dimensions() {
         // Test incremental construction for 2D
-        let mut tds_2d: Tds<f64, usize, usize, 2> = Tds::new(&[]).unwrap();
+        let mut tds_2d: Tds<f64, (), (), 2> = Tds::new(&[]).unwrap();
 
         tds_2d.add(vertex!([0.0, 0.0])).unwrap();
         assert_eq!(tds_2d.number_of_vertices(), 1);
@@ -10246,7 +10255,7 @@ mod tests {
         assert!(tds_2d.is_valid().is_ok());
 
         // Test incremental construction for 4D
-        let mut tds_4d: Tds<f64, usize, usize, 4> = Tds::new(&[]).unwrap();
+        let mut tds_4d: Tds<f64, (), (), 4> = Tds::new(&[]).unwrap();
 
         for i in 0..=4 {
             let mut coords = [0.0f64; 4];
@@ -10263,7 +10272,7 @@ mod tests {
 
     #[test]
     fn test_large_vertex_addition_2d() {
-        let mut tds: Tds<f64, usize, usize, 2> = Tds::new(&[]).unwrap();
+        let mut tds: Tds<f64, (), (), 2> = Tds::new(&[]).unwrap();
 
         // Add vertices in a grid pattern
         for i in 0..10 {
@@ -10294,19 +10303,19 @@ mod tests {
     #[test]
     fn test_dimension_boundary_cases() {
         // Test with insufficient vertices for dimension
-        let vertices_1d_insufficient = [vertex!([0.0])];
-        let result_1d = Tds::<f64, usize, usize, 1>::new(&vertices_1d_insufficient);
+        let vertices_1d_insufficient: [Vertex<f64, (), 1>; 1] = [vertex!([0.0])];
+        let result_1d: Result<Tds<f64, (), (), 1>, _> = Tds::new(&vertices_1d_insufficient);
         // With insufficient vertices, triangulation construction should fail
         assert!(result_1d.is_err());
 
         // Test with exact minimum vertices for dimension
-        let vertices_3d_exact = [
+        let vertices_3d_exact: [Vertex<f64, (), 3>; 4] = [
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds_3d: Tds<f64, usize, usize, 3> = Tds::new(&vertices_3d_exact).unwrap();
+        let tds_3d: Tds<f64, (), (), 3> = Tds::new(&vertices_3d_exact).unwrap();
         assert_eq!(tds_3d.number_of_vertices(), 4);
         assert_eq!(tds_3d.number_of_cells(), 1);
         assert!(tds_3d.is_valid().is_ok());
@@ -10318,7 +10327,7 @@ mod tests {
         // This tests the error path when trying to create cells with too many neighbors
 
         // First verify that 7D works (at the limit)
-        let vertices_7d = [
+        let vertices_7d: [Vertex<f64, (), 7>; 8] = [
             vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
@@ -10329,7 +10338,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
         ];
 
-        let tds_7d: Tds<f64, usize, usize, 7> = Tds::new(&vertices_7d).unwrap();
+        let tds_7d: Tds<f64, (), (), 7> = Tds::new(&vertices_7d).unwrap();
         assert_eq!(tds_7d.dim(), 7);
         assert_eq!(tds_7d.number_of_vertices(), 8);
         assert_eq!(tds_7d.number_of_cells(), 1);
@@ -10353,7 +10362,7 @@ mod tests {
             vertex!([0.0, 3.0, 0.0]),
             vertex!([0.0, 0.0, 3.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         assert_eq!(tds.number_of_cells(), 1, "Should start with 1 cell");
         assert_eq!(tds.number_of_vertices(), 4, "Should start with 4 vertices");
@@ -10425,7 +10434,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&initial_vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 3> = Tds::new(&initial_vertices).unwrap();
 
         assert_eq!(tds.number_of_cells(), 1, "Should start with 1 cell");
         assert_eq!(tds.number_of_vertices(), 4, "Should start with 4 vertices");
@@ -10528,7 +10537,7 @@ mod tests {
         ]
         .to_vec();
 
-        let tds = Tds::<f64, Option<()>, Option<()>, 4>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 4>::new(&vertices).unwrap();
 
         // Verify each UUID maps to exactly one key
         let mut seen_uuids = std::collections::HashSet::new();
@@ -10566,7 +10575,7 @@ mod tests {
         let vertices = [v1, v2, v3, v4, v5];
 
         // Should succeed, silently skipping duplicate coordinates
-        let result = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices);
+        let result = Tds::<f64, (), (), 3>::new(&vertices);
         assert!(
             result.is_ok(),
             "Should handle duplicate coordinates: {:?}",
@@ -10592,7 +10601,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices).unwrap();
+        let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
 
         // Verify every vertex UUID maps to exactly one key
         for (i, vertex) in vertices.iter().enumerate() {
@@ -10634,7 +10643,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let mut tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
 
         // Sanity: we have at least one cell, and incident_cell is set for all vertices.
         assert!(

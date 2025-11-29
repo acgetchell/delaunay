@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Minimal reproduction test for Delaunay repair performance issue
 //!
 //! These tests demonstrate that the current global repair algorithm is fundamentally
@@ -28,7 +27,7 @@ fn test_2d_1000v_seed42_range100() {
 
     // This should succeed but currently fails with:
     // "Global Delaunay repair exceeded the maximum of 128 iterations"
-    let result = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices);
+    let result = Tds::<f64, (), (), 2>::new(&vertices);
 
     match result {
         Ok(_tds) => {
@@ -53,8 +52,7 @@ fn test_2d_1000v_different_seed() {
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
 
-    let _tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices)
-        .expect("Failed to create triangulation");
+    let _tds = Tds::<f64, (), (), 2>::new(&vertices).expect("Failed to create triangulation");
 
     println!("✓ Triangulation with seed {seed} succeeded");
 }
@@ -71,8 +69,7 @@ fn test_2d_500v_seed42() {
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
 
-    let _tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices)
-        .expect("Failed to create triangulation");
+    let _tds = Tds::<f64, (), (), 2>::new(&vertices).expect("Failed to create triangulation");
 
     println!("✓ Triangulation with {n_points} vertices succeeded");
 }

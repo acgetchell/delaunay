@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Performance benchmark for `assign_neighbors` method
 //!
 //! This benchmark measures the runtime of the `assign_neighbors` method before and after

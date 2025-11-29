@@ -1566,7 +1566,7 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 ///
 /// // Get boundary facets as FacetViews
 /// let boundary_facets = tds.boundary_facets().unwrap().collect::<Vec<_>>();
@@ -3372,7 +3372,7 @@ mod tests {
     #[test]
     fn test_surface_measure_empty_facets() {
         // Test with empty facet collection
-        let facets: Vec<FacetView<'_, f64, Option<()>, Option<()>, 3>> = vec![];
+        let facets: Vec<FacetView<'_, f64, (), (), 3>> = vec![];
         let result = surface_measure(&facets).unwrap();
 
         assert_relative_eq!(result, 0.0, epsilon = 1e-10);
@@ -3387,19 +3387,15 @@ mod tests {
         // Test with single triangular facet using TDS boundary facets
 
         // Create a right triangle tetrahedron
-        let vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]), // v1
             vertex!([3.0, 0.0, 0.0]), // v2
             vertex!([0.0, 4.0, 0.0]), // v3
             vertex!([0.0, 0.0, 1.0]), // v4
         ];
 
-        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<
-            _,
-            Option<()>,
-            Option<()>,
-            3,
-        > = crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 3> =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         // Find the facet opposite to v4 (contains vertices v1, v2, v3)
@@ -3435,7 +3431,7 @@ mod tests {
         // Test that surface_measure sum equals sum of individual facet_measures
         // Create a triangulation with 5 vertices and 2 tetrahedra to get both boundary and internal facets
 
-        let vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]), // v1
             vertex!([1.0, 0.0, 0.0]), // v2
             vertex!([0.0, 1.0, 0.0]), // v3
@@ -3443,12 +3439,8 @@ mod tests {
             vertex!([1.0, 1.0, 1.0]), // v5
         ];
 
-        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<
-            _,
-            Option<()>,
-            Option<()>,
-            3,
-        > = crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 3> =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         // Take first two boundary facets for testing
@@ -3778,18 +3770,14 @@ mod tests {
         // Test with facets of different sizes using triangulations with known boundary facets
 
         // Create first triangulation with small right triangle (area = 0.5)
-        let vertices1: Vec<Vertex<f64, Option<()>, 3>> = vec![
+        let vertices1: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]), // v1
             vertex!([1.0, 0.0, 0.0]), // v2
             vertex!([0.0, 1.0, 0.0]), // v3
             vertex!([0.0, 0.0, 1.0]), // v4
         ];
-        let dt1: crate::core::delaunay_triangulation::DelaunayTriangulation<
-            _,
-            Option<()>,
-            Option<()>,
-            3,
-        > = crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt1: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 3> =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
         let boundary_facets1: Vec<_> = dt1.tds().boundary_facets().unwrap().collect();
 
         // Find the facet opposite to v4 (triangle with v1, v2, v3) - area = 0.5
@@ -3814,18 +3802,14 @@ mod tests {
             .expect("Should find small triangle facet");
 
         // Create second triangulation with large right triangle (area = 24.0)
-        let vertices2: Vec<Vertex<f64, Option<()>, 3>> = vec![
+        let vertices2: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]), // v5
             vertex!([6.0, 0.0, 0.0]), // v6
             vertex!([0.0, 8.0, 0.0]), // v7
             vertex!([0.0, 0.0, 1.0]), // v8
         ];
-        let dt2: crate::core::delaunay_triangulation::DelaunayTriangulation<
-            _,
-            Option<()>,
-            Option<()>,
-            3,
-        > = crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let dt2: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 3> =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
         let boundary_facets2: Vec<_> = dt2.tds().boundary_facets().unwrap().collect();
 
         // Find the facet opposite to v8 (triangle with v5, v6, v7) - area = 24.0
@@ -3864,18 +3848,14 @@ mod tests {
         // Test 2D surface measure (perimeter of polygon)
 
         // Create 2D triangle (3-4-5 right triangle)
-        let vertices: Vec<Vertex<f64, Option<()>, 2>> = vec![
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
             vertex!([0.0, 0.0]), // v1
             vertex!([3.0, 0.0]), // v2
             vertex!([0.0, 4.0]), // v3
         ];
 
-        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<
-            _,
-            Option<()>,
-            Option<()>,
-            2,
-        > = crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 2> =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         // In 2D, boundary facets are edges
@@ -3890,7 +3870,7 @@ mod tests {
         // Test 4D surface measure (3D boundary facets)
 
         // Create 4D simplex (5 vertices)
-        let vertices: Vec<Vertex<f64, Option<()>, 4>> = vec![
+        let vertices: Vec<Vertex<f64, (), 4>> = vec![
             vertex!([0.0, 0.0, 0.0, 0.0]), // v1
             vertex!([1.0, 0.0, 0.0, 0.0]), // v2
             vertex!([0.0, 1.0, 0.0, 0.0]), // v3
@@ -3898,12 +3878,8 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 1.0]), // v5
         ];
 
-        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<
-            _,
-            Option<()>,
-            Option<()>,
-            4,
-        > = crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 4> =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         let total_surface = surface_measure(&boundary_facets).unwrap();
@@ -3926,19 +3902,15 @@ mod tests {
         // Test error handling when facet measure calculation fails
 
         // Create a valid triangulation
-        let vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]), // v1
             vertex!([1.0, 0.0, 0.0]), // v2
             vertex!([0.0, 1.0, 0.0]), // v3
             vertex!([0.0, 0.0, 1.0]), // v4
         ];
 
-        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<
-            _,
-            Option<()>,
-            Option<()>,
-            3,
-        > = crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 3> =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         // Test with valid facets - should work
@@ -3991,19 +3963,15 @@ mod tests {
     fn test_surface_measure_many_facets() {
         // Test with many facets from a simple tetrahedral triangulation
         // Use a simple tetrahedron to avoid degenerate boundary facets
-        let vertices: Vec<Vertex<f64, Option<()>, 3>> = vec![
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([2.0, 0.0, 0.0]),
             vertex!([0.0, 2.0, 0.0]),
             vertex!([0.0, 0.0, 2.0]),
         ];
 
-        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<
-            _,
-            Option<()>,
-            Option<()>,
-            3,
-        > = crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 3> =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         // Tetrahedron has exactly 4 boundary facets

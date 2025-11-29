@@ -64,7 +64,7 @@
 //!     vertex!([1.0, 0.7, -1.5]),   // Second tet apex
 //! ];
 //!
-//! let dt: DelaunayTriangulation<_, Option<()>, Option<()>, 3> =
+//! let dt: DelaunayTriangulation<_, (), (), 3> =
 //!     DelaunayTriangulation::new(&vertices).unwrap();
 //!
 //! // Extract the convex hull (boundary facets of the triangulation)
@@ -91,7 +91,7 @@
 //!     vertex!([0.0, 0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 0.0, 1.0]),
 //! ];
-//! let dt_4d: DelaunayTriangulation<_, Option<()>, Option<()>, 4> =
+//! let dt_4d: DelaunayTriangulation<_, (), (), 4> =
 //!     DelaunayTriangulation::new(&vertices_4d).unwrap();
 //! let hull_4d = ConvexHull::from_triangulation(dt_4d.triangulation()).unwrap();
 //!
@@ -272,7 +272,7 @@
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
 //!
-//! let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+//! let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 //! let diagnostics = tds.bowyer_watson_with_diagnostics().unwrap();
 //!
 //! // Aggregated statistics for this triangulation run.
@@ -310,7 +310,7 @@
 //! };
 //! use delaunay::vertex;
 //!
-//! type Alg = IncrementalBowyerWatson<f64, Option<()>, Option<()>, 2>;
+//! type Alg = IncrementalBowyerWatson<f64, (), (), 2>;
 //!
 //! // All points lie on a line in 2D: no non-degenerate simplex exists.
 //! let degenerate = vec![
@@ -320,7 +320,7 @@
 //!     vertex!([3.0, 0.0]),
 //! ];
 //!
-//! let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
+//! let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 //! let mut algorithm: Alg = Alg::new();
 //!
 //! let result = <Alg as InsertionAlgorithm<_, _, _, 2>>::triangulate(
@@ -585,9 +585,9 @@ mod tests {
     fn normal_types() {
         assert!(is_normal::<Point<f64, 3>>());
         assert!(is_normal::<Point<f32, 3>>());
-        assert!(is_normal::<Vertex<f64, Option<()>, 3>>());
-        assert!(is_normal::<Cell<f64, Option<()>, Option<()>, 4>>());
-        assert!(is_normal::<Tds<f64, Option<()>, Option<()>, 4>>());
+        assert!(is_normal::<Vertex<f64, (), 3>>());
+        assert!(is_normal::<Cell<f64, (), (), 4>>());
+        assert!(is_normal::<Tds<f64, (), (), 4>>());
     }
 
     #[test]
@@ -631,7 +631,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
 
         // Get a cell to test quality functions
         let (cell_key, _) = tds.cells().next().unwrap();

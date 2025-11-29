@@ -67,7 +67,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // A single tetrahedron has 4 boundary facets (all facets are on the boundary)
     /// let boundary_facets_iter = tds.boundary_facets().unwrap();
@@ -115,7 +115,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Get boundary facets using the new iterator API
     /// let boundary_facets = tds.boundary_facets().unwrap();
@@ -160,7 +160,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // Build the facet map once for multiple queries
     /// let facet_to_cells = tds.build_facet_to_cells_map()
@@ -218,7 +218,7 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
     ///
     /// // A single tetrahedron has 4 boundary facets
     /// assert_eq!(tds.number_of_boundary_facets().unwrap(), 4);
@@ -255,7 +255,7 @@ mod tests {
                 Point::new([0.5, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+            let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
 
             assert_eq!(tds.number_of_cells(), 1, "2D triangle should have 1 cell");
             assert_eq!(tds.dim(), 2, "Should be 2-dimensional");
@@ -288,7 +288,7 @@ mod tests {
                 Point::new([0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             assert_eq!(
                 tds.number_of_cells(),
@@ -326,7 +326,7 @@ mod tests {
                 Point::new([0.0, 0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
+            let tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
 
             assert_eq!(tds.number_of_cells(), 1, "4D simplex should have 1 cell");
             assert_eq!(tds.dim(), 4, "Should be 4-dimensional");
@@ -357,7 +357,7 @@ mod tests {
 
         // Test Case 4: Empty triangulation
         {
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
+            let tds: Tds<f64, (), (), 3> = Tds::empty();
             assert_eq!(
                 tds.number_of_cells(),
                 0,
@@ -395,7 +395,7 @@ mod tests {
                 Point::new([0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             // Test boundary_facets() normal path
             let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
@@ -426,7 +426,7 @@ mod tests {
                 Point::new([0.5, 0.5, 0.5]), // Interior point
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+            let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
             // After robust cleanup and facet-sharing filtering, we may end up with a single cell
             assert!(
@@ -473,7 +473,7 @@ mod tests {
         ];
 
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         if tds.number_of_cells() > 0 {
             println!(
@@ -577,7 +577,7 @@ mod tests {
             let vertices = Vertex::from_points(&points);
 
             // Use robust Bowyer-Watson algorithm to create triangulation from scratch
-            let mut robust_algorithm: RobustBowyerWatson<f64, Option<()>, Option<()>, 3> =
+            let mut robust_algorithm: RobustBowyerWatson<f64, (), (), 3> =
                 RobustBowyerWatson::new();
 
             // Create triangulation using robust algorithm
@@ -693,7 +693,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Build facet map
         let facet_to_cells = tds.build_facet_to_cells_map().expect("Should build map");
@@ -748,7 +748,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test that build_facet_to_cells_map succeeds on valid triangulation
         let map_result = tds.build_facet_to_cells_map();
@@ -788,7 +788,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
 
         // Test both methods return consistent results
         let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");

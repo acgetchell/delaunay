@@ -1,4 +1,3 @@
-#![expect(deprecated)]
 //! Property-based tests for serialization/deserialization roundtrips.
 //!
 //! This module uses proptest to verify that serialization and deserialization
@@ -51,12 +50,12 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         // Serialize to JSON
                         let json = serde_json::to_string(&tds).expect("Serialization failed");
 
                         // Deserialize from JSON
-                        let deserialized: Tds<f64, Option<()>, Option<()>, $dim> =
+                        let deserialized: Tds<f64, (), (), $dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
 
                         // Verify structure preservation
@@ -89,11 +88,11 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         if tds.is_valid().is_ok() {
                             // Serialize and deserialize
                             let json = serde_json::to_string(&tds).expect("Serialization failed");
-                            let deserialized: Tds<f64, Option<()>, Option<()>, $dim> =
+                            let deserialized: Tds<f64, (), (), $dim> =
                                 serde_json::from_str(&json).expect("Deserialization failed");
 
                             // Deserialized triangulation should also be valid
@@ -115,7 +114,7 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         // Filter: Skip minimal/degenerate configurations
                         // Need more than minimal simplex (D+1) to have meaningful serialization test
                         prop_assume!(tds.number_of_vertices() > $dim + 1);
@@ -129,7 +128,7 @@ macro_rules! test_serialization_properties {
 
                         // Serialize and deserialize
                         let json = serde_json::to_string(&tds).expect("Serialization failed");
-                        let deserialized: Tds<f64, Option<()>, Option<()>, $dim> =
+                        let deserialized: Tds<f64, (), (), $dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
 
                         // Collect deserialized vertex points
@@ -169,7 +168,7 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
                         // Ensure neighbor relationships are fully assigned before comparison.
                         tds.assign_neighbors()
                             .expect("assign_neighbors should succeed for constructed Tds");
@@ -184,7 +183,7 @@ macro_rules! test_serialization_properties {
 
                         // Serialize and deserialize
                         let json = serde_json::to_string(&tds).expect("Serialization failed");
-                        let deserialized: Tds<f64, Option<()>, Option<()>, $dim> =
+                        let deserialized: Tds<f64, (), (), $dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
 
                         // Count deserialized neighbor relationships
@@ -237,8 +236,8 @@ fn debug_neighbor_preservation_2d_regression() {
         Point::new([0.0, 0.0]),
     ];
 
-    let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
-    let mut tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices)
+    let vertices: Vec<Vertex<f64, (), 2>> = Vertex::from_points(&points);
+    let mut tds = Tds::<f64, (), (), 2>::new(&vertices)
         .expect("regression case should construct a valid Tds");
     tds.assign_neighbors()
         .expect("assign_neighbors should succeed for constructed Tds");
@@ -263,7 +262,7 @@ fn debug_neighbor_preservation_2d_regression() {
     println!("Original neighbor count: {original_neighbor_count}");
 
     let json = serde_json::to_string(&tds).expect("Serialization failed");
-    let deserialized: Tds<f64, Option<()>, Option<()>, 2> =
+    let deserialized: Tds<f64, (), (), 2> =
         serde_json::from_str(&json).expect("Deserialization failed");
 
     println!(
