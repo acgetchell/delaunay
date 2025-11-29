@@ -4977,6 +4977,7 @@ where
 }
 
 #[cfg(test)]
+#[expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
 mod tests {
     use super::*;
     use crate::core::algorithms::bowyer_watson::IncrementalBowyerWatson;

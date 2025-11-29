@@ -9,6 +9,8 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+#![expect(deprecated)] // Tests use deprecated tds.add() until migration to DelaunayTriangulation
+
 use delaunay::assert_jaccard_gte;
 use delaunay::core::Vertex;
 use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;

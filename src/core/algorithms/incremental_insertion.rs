@@ -14,11 +14,16 @@ use crate::core::collections::{
     CellKeyBuffer, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::facet::FacetHandle;
+use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
     CellKey, Tds, TriangulationConstructionError, VertexKey,
 };
+use crate::geometry::kernel::Kernel;
+use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
+use std::iter::Sum;
+use std::ops::{AddAssign, SubAssign};
 
 /// Error during incremental insertion.
 #[derive(Debug, thiserror::Error)]
@@ -291,6 +296,147 @@ fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
         vkey.hash(&mut hasher);
     }
     hasher.finish()
+}
+
+/// Extend the convex hull by connecting an exterior vertex to visible boundary facets.
+///
+/// This function is used when a vertex is outside the current convex hull.
+/// It finds all visible boundary facets and creates new cells connecting them to the new vertex.
+///
+/// # Arguments
+/// - `tds` - Mutable triangulation data structure
+/// - `kernel` - Geometric kernel for orientation tests
+/// - `new_vertex_key` - Key of the newly inserted vertex
+/// - `point` - Coordinates of the new vertex
+///
+/// # Returns
+/// Buffer of newly created cell keys
+///
+/// # Errors
+/// Returns error if:
+/// - Finding visible facets fails
+/// - Cavity filling or neighbor wiring fails
+pub fn extend_hull<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    new_vertex_key: VertexKey,
+    point: &Point<K::Scalar, D>,
+) -> Result<CellKeyBuffer, InsertionError>
+where
+    K: Kernel<D>,
+    K::Scalar: AddAssign + SubAssign + Sum,
+    U: DataType,
+    V: DataType,
+{
+    // Find visible boundary facets
+    let visible_facets = find_visible_boundary_facets(tds, kernel, point)?;
+
+    if visible_facets.is_empty() {
+        return Err(InsertionError::CavityFilling {
+            message: "No visible boundary facets found for exterior vertex".to_string(),
+        });
+    }
+
+    // Fill cavity with new cells
+    let new_cells = fill_cavity(tds, new_vertex_key, &visible_facets)?;
+
+    // Wire neighbors
+    wire_cavity_neighbors(tds, &new_cells, &visible_facets)?;
+
+    Ok(new_cells)
+}
+
+/// Find all boundary facets visible from a point.
+///
+/// A boundary facet is visible from a point if the point is on the positive side
+/// of the facet's supporting hyperplane (determined by orientation test).
+///
+/// # Arguments
+/// - `tds` - The triangulation data structure
+/// - `kernel` - Geometric kernel for orientation tests
+/// - `point` - The query point
+///
+/// # Returns
+/// Vector of facet handles representing visible boundary facets
+///
+/// # Errors
+/// Returns error if boundary facets cannot be retrieved or orientation tests fail
+fn find_visible_boundary_facets<K, U, V, const D: usize>(
+    tds: &Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    point: &Point<K::Scalar, D>,
+) -> Result<Vec<FacetHandle>, InsertionError>
+where
+    K: Kernel<D>,
+    K::Scalar: AddAssign + SubAssign + Sum,
+    U: DataType,
+    V: DataType,
+{
+    let mut visible_facets = Vec::new();
+
+    // Get all boundary facets
+    let boundary_facets = tds
+        .boundary_facets()
+        .map_err(|e| InsertionError::CavityFilling {
+            message: format!("Failed to get boundary facets: {e}"),
+        })?;
+
+    // Test each boundary facet for visibility
+    for facet_view in boundary_facets {
+        let cell_key = facet_view.cell_key();
+        let facet_index = facet_view.facet_index();
+
+        // Get the cell and its vertices
+        let cell = tds
+            .get_cell(cell_key)
+            .ok_or_else(|| InsertionError::CavityFilling {
+                message: format!("Boundary facet cell {cell_key:?} not found"),
+            })?;
+
+        // Collect points for the simplex: facet vertices + opposite vertex
+        let mut simplex_points =
+            SmallBuffer::<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+
+        for &vkey in cell.vertices() {
+            let vertex =
+                tds.get_vertex_by_key(vkey)
+                    .ok_or_else(|| InsertionError::CavityFilling {
+                        message: format!("Vertex {vkey:?} not found in TDS"),
+                    })?;
+            simplex_points.push(*vertex.point());
+        }
+
+        // Test orientation: if point is on same side as inside of hull, facet is visible
+        // For a boundary facet, we want to know if the new point is on the "outside" side
+        // The facet vertices are ordered such that the opposite vertex (at facet_index) is "inside"
+        // So we test if replacing the opposite vertex with our point gives opposite orientation
+        let orientation_with_opposite =
+            kernel
+                .orientation(&simplex_points)
+                .map_err(|e| InsertionError::CavityFilling {
+                    message: format!("Orientation test failed: {e}"),
+                })?;
+
+        // Replace opposite vertex with query point
+        simplex_points[usize::from(facet_index)] = *point;
+        let orientation_with_point =
+            kernel
+                .orientation(&simplex_points)
+                .map_err(|e| InsertionError::CavityFilling {
+                    message: format!("Orientation test failed: {e}"),
+                })?;
+
+        // Facet is visible if orientations have opposite sign (point is on opposite side)
+        // orientation() returns i32: positive, negative, or zero
+        let is_visible = (orientation_with_opposite > 0 && orientation_with_point < 0)
+            || (orientation_with_opposite < 0 && orientation_with_point > 0);
+
+        if is_visible {
+            visible_facets.push(FacetHandle::new(cell_key, facet_index));
+        }
+    }
+
+    Ok(visible_facets)
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@
 //! optimizations to confirm reduced overhead on representative triangulations.
 
 #![expect(missing_docs)]
+#![expect(deprecated)] // Benchmark uses deprecated Tds::new() until migration to DelaunayTriangulation
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::geometry::util::generate_random_points;

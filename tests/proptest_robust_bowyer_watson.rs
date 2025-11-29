@@ -11,6 +11,8 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::core::algorithms::robust_bowyer_watson::RobustBowyerWatson;
 use delaunay::core::traits::facet_cache::FacetCacheProvider;
 use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;

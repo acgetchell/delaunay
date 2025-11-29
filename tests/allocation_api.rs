@@ -3,6 +3,8 @@
 //! This module provides comprehensive testing utilities for memory allocation tracking
 //! in Delaunay triangulation operations.
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 // Import Delaunay triangulation crate components
 use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::geometry::Point;

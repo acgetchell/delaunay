@@ -25,7 +25,7 @@
 //!
 //! ## Large-Scale Tests
 //!
-//! Large-scale tests (Phase 4) can be gated with environment variables:
+//! Large-Scale tests (Phase 4) can be gated with environment variables:
 //! ```bash
 //! RUN_LARGE_SCALE_TESTS=1 cargo test --test storage_backend_compatibility -- --ignored
 //! ```
@@ -46,6 +46,8 @@
 //! - Neighbor relationships (pointer chasing performance)
 //! - Large-scale operations
 //! - Serialization/deserialization
+
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
 
 use delaunay::assert_jaccard_gte;
 use delaunay::core::util::extract_edge_set;

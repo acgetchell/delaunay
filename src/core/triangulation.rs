@@ -130,6 +130,12 @@ where
     ///
     /// An iterator yielding `FacetView` objects for boundary facets only.
     ///
+    /// # Panics
+    ///
+    /// Panics if the triangulation data structure is corrupted (cells have invalid
+    /// neighbor relationships or facet information). This indicates a bug in the
+    /// library and should never happen with a properly constructed triangulation.
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -150,7 +156,9 @@ where
     pub fn boundary_facets(&self) -> BoundaryFacetsIter<'_, K::Scalar, U, V, D> {
         // build_facet_to_cells_map only fails if cells have invalid structure,
         // which should never happen in a valid triangulation
-        let facet_map = self.tds.build_facet_to_cells_map()
+        let facet_map = self
+            .tds
+            .build_facet_to_cells_map()
             .expect("Failed to build facet map - triangulation structure is corrupted");
         BoundaryFacetsIter::new(&self.tds, facet_map)
     }

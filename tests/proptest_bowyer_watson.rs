@@ -9,6 +9,8 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() and tds.add() until migration to DelaunayTriangulation
+
 use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;

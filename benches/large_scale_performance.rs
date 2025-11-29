@@ -77,6 +77,7 @@
 //! **Query performance:** Directly measures `SlotMap` iteration efficiency
 
 #![allow(missing_docs)]
+#![expect(deprecated)] // Benchmark uses deprecated Tds::new() until migration to DelaunayTriangulation
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::core::triangulation_data_structure::Tds;

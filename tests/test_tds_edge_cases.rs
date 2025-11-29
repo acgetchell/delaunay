@@ -9,6 +9,8 @@
 //! - `tds_basic_integration.rs` - Basic TDS construction and neighbor assignment
 //! - Unit tests in source - Validation, neighbor symmetry, error handling
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::core::triangulation_data_structure::{CellKey, Tds};
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;

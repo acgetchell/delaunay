@@ -2586,12 +2586,24 @@ where
     /// assert_eq!(tds.dim(), 2);
     /// ```
     ///
+    /// # Deprecation Notice
+    ///
+    /// **This method is deprecated** and will be removed in v0.7.0. The internal
+    /// Bowyer-Watson batch construction algorithm is being replaced with efficient
+    /// incremental insertion.
+    ///
+    /// **Migration Guide**:
+    /// - Use `DelaunayTriangulation::new()` for creating triangulations from vertices
+    /// - This provides the same functionality with better performance and architecture
+    ///
     /// # Visibility Note
     ///
     /// This method is currently `pub` to support existing integration tests.
-    /// Once the new flip-based insertion algorithm is implemented and stable,
-    /// this will be changed to `pub(crate)` as part of the architectural shift
-    /// toward using `DelaunayTriangulation::new()` as the primary API.
+    /// Once the migration to `DelaunayTriangulation` is complete, this will be removed.
+    #[deprecated(
+        since = "0.6.0",
+        note = "Use `DelaunayTriangulation::new()` instead. This method uses the old Bowyer-Watson algorithm and will be removed in v0.7.0."
+    )]
     pub fn new(vertices: &[Vertex<T, U, D>]) -> Result<Self, TriangulationConstructionError>
     where
         T: NumCast,
@@ -2798,12 +2810,23 @@ where
     /// assert!(tds.is_valid().is_ok());  // Triangulation remains valid
     /// ```
     ///
+    /// # Deprecation Notice
+    ///
+    /// **This method is deprecated** and will be removed in v0.7.0. The internal
+    /// Bowyer-Watson algorithm is being replaced with efficient incremental insertion.
+    ///
+    /// **Migration Guide**:
+    /// - Use `DelaunayTriangulation::insert()` for incremental vertex insertion
+    /// - Use `DelaunayTriangulation::new()` for batch construction from vertices
+    ///
     /// # Visibility Note
     ///
     /// This method is currently `pub` to support existing integration tests.
-    /// Once the new flip-based insertion algorithm is implemented and stable,
-    /// this will be changed to `pub(crate)` as incremental insertion will be
-    /// handled through `DelaunayTriangulation::insert()` instead.
+    /// Once the migration to `DelaunayTriangulation` is complete, this will be removed.
+    #[deprecated(
+        since = "0.6.0",
+        note = "Use `DelaunayTriangulation::insert()` instead. This method uses the old Bowyer-Watson algorithm and will be removed in v0.7.0."
+    )]
     #[allow(dead_code)]
     pub fn add(&mut self, vertex: Vertex<T, U, D>) -> Result<(), TriangulationConstructionError>
     where
@@ -4824,6 +4847,7 @@ where
 
 #[cfg(test)]
 #[expect(clippy::uninlined_format_args, clippy::similar_names)]
+#[expect(deprecated)] // Tests use deprecated Tds::new() and Tds::add() until migration to DelaunayTriangulation
 mod tests {
     use super::*;
     use crate::core::{

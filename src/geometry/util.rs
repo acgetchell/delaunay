@@ -4794,7 +4794,6 @@ mod tests {
     // =============================================================================
 
     #[test]
-    #[ignore = "Requires hull extension implementation (Issue #TBD)"]
     fn test_generate_random_triangulation_basic() {
         // Test 2D triangulation creation
         let triangulation_2d =
@@ -4863,7 +4862,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires hull extension implementation (Issue #TBD)"]
+    #[ignore = "Needs to be reviewed"]
     fn test_generate_random_triangulation_error_cases() {
         // Test invalid bounds
         let result = generate_random_triangulation::<f64, (), (), 2>(
@@ -4884,7 +4883,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires hull extension implementation (Issue #TBD)"]
     fn test_generate_random_triangulation_reproducibility() {
         // Same seed should produce identical triangulations
         let triangulation1 =
@@ -4908,7 +4906,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires hull extension implementation (Issue #TBD)"]
+    #[ignore = "Needs to be reviewed"]
     fn test_generate_random_triangulation_dimensions() {
         // Test different dimensional triangulations with parameter sets that are
         // also reused by examples. These (n_points, bounds, seed) triples have been
@@ -4946,7 +4944,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires hull extension implementation (Issue #TBD)"]
     fn test_generate_random_triangulation_with_data() {
         // Test with different data types for vertices
 

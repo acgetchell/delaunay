@@ -10,6 +10,8 @@
 //! These tests focus on simple, well-understood geometries to establish baseline
 //! functionality. For more complex scenarios, see other integration tests in this directory.
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
 use delaunay::core::triangulation_data_structure::{Tds, TriangulationConstructionState};
 use delaunay::core::vertex::Vertex;

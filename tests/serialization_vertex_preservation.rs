@@ -9,6 +9,8 @@
 //! The test helps determine if vertex loss is expected behavior (duplicate removal)
 //! or a bug in serialization/deserialization.
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::assert_jaccard_gte;
 use delaunay::core::Tds;
 use delaunay::core::util::extract_vertex_coordinate_set;

@@ -7,6 +7,8 @@
 //! - Clustered point patterns
 //! - Algorithm reset and reuse
 
+#![allow(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::core::algorithms::robust_bowyer_watson::RobustBowyerWatson;
 use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
 use delaunay::core::triangulation_data_structure::Tds;

@@ -4,6 +4,8 @@
 //! when dealing with challenging geometric configurations that often cause
 //! "No cavity boundary facets found" errors in Delaunay triangulation.
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::core::{
     algorithms::robust_bowyer_watson::RobustBowyerWatson, triangulation_data_structure::Tds,
 };

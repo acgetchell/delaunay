@@ -11,6 +11,8 @@
 //! Note: Basic functionality (new, reset, record methods) is covered by comprehensive
 //! unit tests in `src/core/traits/insertion_algorithm.rs` and is not duplicated here.
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use approx::assert_relative_eq;
 use delaunay::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
 use delaunay::core::facet::FacetHandle;

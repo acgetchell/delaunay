@@ -10,13 +10,13 @@ use std::num::NonZeroUsize;
 use num_traits::NumCast;
 
 use crate::core::algorithms::incremental_insertion::{
-    InsertionError, fill_cavity, wire_cavity_neighbors,
+    InsertionError, extend_hull, fill_cavity, wire_cavity_neighbors,
 };
 use crate::core::algorithms::locate::{
     LocateResult, extract_cavity_boundary, find_conflict_region, locate,
 };
 use crate::core::cell::Cell;
-use crate::core::collections::{SmallBuffer, MAX_PRACTICAL_DIMENSION_SIZE};
+use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
@@ -600,7 +600,8 @@ where
         let v_key = self.tri.tds.insert_vertex_with_mapping(vertex)?;
 
         // 2. Locate containing cell
-        let point = self
+        // Copy the point before borrowing tds mutably
+        let point = *self
             .tri
             .tds
             .get_vertex_by_key(v_key)
@@ -611,46 +612,52 @@ where
         let location = locate(
             &self.tri.tds,
             &self.tri.kernel,
-            point,
+            &point,
             self.last_inserted_cell,
         )?;
 
-        let start_cell = match location {
-            LocateResult::InsideCell(cell_key) => cell_key,
+        // Handle different location results
+        match location {
+            LocateResult::InsideCell(start_cell) => {
+                // Interior vertex: use cavity-based insertion
+
+                // 3. Find conflict region
+                let conflict_cells =
+                    find_conflict_region(&self.tri.tds, &self.tri.kernel, &point, start_cell)?;
+
+                // 4. Extract cavity boundary
+                let boundary_facets = extract_cavity_boundary(&self.tri.tds, &conflict_cells)?;
+
+                // 5. Fill cavity BEFORE removing old cells (so boundary cells still exist)
+                let new_cells = fill_cavity(&mut self.tri.tds, v_key, &boundary_facets)?;
+
+                // 6. Wire neighbors (while both old and new cells exist)
+                wire_cavity_neighbors(&mut self.tri.tds, &new_cells, &boundary_facets)?;
+
+                // 7. Remove conflict cells (now that new cells are wired up)
+                let _removed_count = self.tri.tds.remove_cells_by_keys(&conflict_cells);
+
+                // 8. Cache last inserted cell for next locate hint
+                self.last_inserted_cell = new_cells.first().copied();
+
+                Ok(v_key)
+            }
             LocateResult::Outside => {
-                // TODO: Handle hull extension
-                return Err(InsertionError::CavityFilling {
-                    message: "Point outside hull - hull extension not yet implemented".to_string(),
-                });
+                // Exterior vertex: extend convex hull
+                let new_cells = extend_hull(&mut self.tri.tds, &self.tri.kernel, v_key, &point)?;
+
+                // Cache last inserted cell for next locate hint
+                self.last_inserted_cell = new_cells.first().copied();
+
+                Ok(v_key)
             }
             _ => {
                 // TODO: Handle other cases (OnFacet, OnEdge, OnVertex)
-                return Err(InsertionError::CavityFilling {
+                Err(InsertionError::CavityFilling {
                     message: format!("Unhandled location result: {location:?}"),
-                });
+                })
             }
-        };
-
-        // 3. Find conflict region
-        let conflict_cells =
-            find_conflict_region(&self.tri.tds, &self.tri.kernel, point, start_cell)?;
-
-        // 4. Extract cavity boundary
-        let boundary_facets = extract_cavity_boundary(&self.tri.tds, &conflict_cells)?;
-
-        // 5. Fill cavity BEFORE removing old cells (so boundary cells still exist)
-        let new_cells = fill_cavity(&mut self.tri.tds, v_key, &boundary_facets)?;
-
-        // 6. Wire neighbors (while both old and new cells exist)
-        wire_cavity_neighbors(&mut self.tri.tds, &new_cells, &boundary_facets)?;
-
-        // 7. Remove conflict cells (now that new cells are wired up)
-        let _removed_count = self.tri.tds.remove_cells_by_keys(&conflict_cells);
-
-        // 8. Cache last inserted cell for next locate hint
-        self.last_inserted_cell = new_cells.first().copied();
-
-        Ok(v_key)
+        }
     }
 
     /// Validate the combinatorial structure of the triangulation.

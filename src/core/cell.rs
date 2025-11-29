@@ -1539,7 +1539,7 @@ mod tests {
                         cell.data = Some(99);
 
                         let serialized = serde_json::to_string(&cell).unwrap();
-                        assert!(serialized.contains("\"{data}\":"));
+                        assert!(serialized.contains("\"data\":"));
                         let deserialized: Cell<f64, (), i32, $dim> = serde_json::from_str(&serialized).unwrap();
                         assert_eq!(deserialized.data, Some(99));
                         assert_eq!(deserialized.uuid(), cell.uuid());
@@ -1550,7 +1550,7 @@ mod tests {
                         let (_, cell) = dt.cells().next().unwrap();
 
                         let serialized = serde_json::to_string(&cell).unwrap();
-                        assert!(!serialized.contains("\"{data}\":"));
+                        assert!(!serialized.contains("\"data\":"));
                         let deserialized: Cell<f64, (), Option<i32>, $dim> = serde_json::from_str(&serialized).unwrap();
                         assert_eq!(deserialized.data, None);
                     }

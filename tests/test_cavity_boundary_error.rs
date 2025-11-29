@@ -3,6 +3,8 @@
 //! This module contains tests that reproduce geometric configurations that commonly
 //! cause "No cavity boundary facets found" errors in Delaunay triangulation.
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::prelude::*;
 use rand::Rng;
 

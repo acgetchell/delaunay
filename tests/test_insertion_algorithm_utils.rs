@@ -3,6 +3,8 @@
 //! Tests the `InsertionBuffers` and `InsertionStatistics` helper types that support
 //! insertion algorithms in the Delaunay triangulation.
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use approx::assert_relative_eq;
 use delaunay::core::facet::FacetHandle;
 use delaunay::core::traits::insertion_algorithm::{InsertionBuffers, InsertionStatistics};

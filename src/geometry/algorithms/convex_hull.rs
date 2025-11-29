@@ -180,7 +180,7 @@ pub enum ConvexHullConstructionError {
 ///
 /// Use `is_valid_for_triangulation()` to check if a hull is still valid for a given TDS:
 ///
-/// ```rust,should_panic
+/// ```rust
 /// # use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 /// # use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 /// # use delaunay::vertex;
@@ -193,7 +193,7 @@ pub enum ConvexHullConstructionError {
 /// let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 /// assert!(hull.is_valid_for_triangulation(dt.triangulation())); // Valid initially
 ///
-/// // Note: Hull extension not yet implemented - inserting outside points will panic
+/// // Hull extension is now implemented - inserting outside points works!
 /// dt.insert(vertex!([2.0, 2.0, 2.0])).unwrap();
 /// ```
 ///
@@ -207,7 +207,7 @@ pub enum ConvexHullConstructionError {
 ///
 /// ## Example: Correct Usage Pattern
 ///
-/// ```rust,should_panic
+/// ```rust
 /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 /// use delaunay::vertex;
@@ -224,10 +224,11 @@ pub enum ConvexHullConstructionError {
 /// assert_eq!(hull.facet_count(), 4);
 /// assert!(hull.is_valid_for_triangulation(dt.triangulation()));
 ///
-/// // Note: Hull extension not yet implemented - inserting outside points will panic
-/// // This example demonstrates that the hull would become invalid after modification
+/// // Hull extension is now implemented - inserting outside points works!
+/// // Note: The hull becomes invalid after modification and needs to be recreated
 /// let new_vertex = vertex!([2.0, 2.0, 2.0]);
-/// dt.insert(new_vertex).unwrap(); // Panics: hull extension not implemented
+/// dt.insert(new_vertex).unwrap(); // Now works with hull extension!
+/// assert!(!hull.is_valid_for_triangulation(dt.triangulation())); // Hull is stale
 /// ```
 ///
 /// # Type Parameters
@@ -1554,6 +1555,7 @@ pub type ConvexHull3D<K, U, V> = ConvexHull<K, U, V, 3>;
 pub type ConvexHull4D<K, U, V> = ConvexHull<K, U, V, 4>;
 
 #[cfg(test)]
+#[expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
 mod tests {
     use super::*;
     use crate::core::traits::facet_cache::FacetCacheProvider;

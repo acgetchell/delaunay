@@ -126,7 +126,7 @@ pub enum ConflictError {
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::{locate, LocateResult};
-/// use delaunay::core::triangulation::DelaunayTriangulation;
+/// use delaunay::prelude::DelaunayTriangulation;
 /// use delaunay::geometry::kernel::FastKernel;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -164,7 +164,7 @@ pub enum ConflictError {
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::{locate, LocateResult};
-/// use delaunay::core::triangulation::DelaunayTriangulation;
+/// use delaunay::prelude::DelaunayTriangulation;
 /// use delaunay::geometry::kernel::RobustKernel;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -384,7 +384,7 @@ where
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::{locate, find_conflict_region, LocateResult};
-/// use delaunay::core::triangulation::DelaunayTriangulation;
+/// use delaunay::prelude::DelaunayTriangulation;
 /// use delaunay::geometry::kernel::FastKernel;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -525,7 +525,7 @@ where
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::{locate, find_conflict_region, extract_cavity_boundary, LocateResult};
-/// use delaunay::core::triangulation::DelaunayTriangulation;
+/// use delaunay::prelude::DelaunayTriangulation;
 /// use delaunay::geometry::kernel::FastKernel;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;

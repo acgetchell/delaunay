@@ -8,6 +8,8 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::core::facet::FacetView;
 use delaunay::core::facet::facet_key_from_vertices;
 use delaunay::core::triangulation_data_structure::Tds;

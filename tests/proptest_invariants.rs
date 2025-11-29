@@ -2,6 +2,8 @@
 //! - Duplicate coordinate rejection
 //! - Cell vertex count (D+1)
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() and tds.add() until migration to DelaunayTriangulation
+
 use delaunay::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;

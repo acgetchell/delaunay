@@ -7,6 +7,8 @@
 //! - No duplicate cells in valid triangulations
 //! - Triangulation remains valid after vertex insertion
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() and tds.add() until migration to DelaunayTriangulation
+
 use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::core::util::jaccard_index;
 use delaunay::core::vertex::Vertex;

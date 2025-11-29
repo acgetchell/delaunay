@@ -65,7 +65,6 @@ macro_rules! test_regression_config {
 }
 
 // 2D regression: base triangle with interior and exterior point
-// NOTE: Ignored - requires hull extension (exterior point)
 test_regression_config!(
     regression_2d_canonical,
     2,
@@ -75,8 +74,7 @@ test_regression_config!(
         vertex!([0.0, 2.0]),
         vertex!([0.8, 0.7]),   // interior
         vertex!([-0.5, -0.4]), // exterior
-    ],
-    ignore = "Requires hull extension for exterior points"
+    ]
 );
 
 // 3D regression: tetrahedron with interior point
@@ -107,7 +105,6 @@ test_regression_config!(
 );
 
 // 5D regression: known configuration that previously failed
-// NOTE: Ignored - requires hull extension
 test_regression_config!(
     regression_5d_known_config,
     5,
@@ -161,8 +158,7 @@ test_regression_config!(
             -51.622_382_706_243_18,
             -26.000_263_271_298_543,
         ]),
-    ],
-    ignore = "Requires hull extension - some points outside initial simplex"
+    ]
 );
 
 // =========================================================================
@@ -261,7 +257,6 @@ fn test_multiple_interior_points_3d() {
 // =========================================================================
 
 #[test]
-#[ignore = "Requires hull extension - square vertices may be outside initial simplex"]
 fn test_square_with_center_2d() {
     // Square vertices with center point
     let vertices = vec![
@@ -319,7 +314,6 @@ fn test_large_coordinates_2d() {
 }
 
 #[test]
-#[ignore = "Requires hull extension - interior point outside initial simplex"]
 fn test_small_coordinates_3d() {
     let vertices = vec![
         vertex!([0.001, 0.001, 0.001]),

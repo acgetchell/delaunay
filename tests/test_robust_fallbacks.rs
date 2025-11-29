@@ -14,6 +14,8 @@
 //! **Note**: Coverage impact is minimal (+0%) as existing integration/property tests already
 //! cover the implementation. These tests focus on documenting public API contracts.
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::core::algorithms::robust_bowyer_watson::RobustBowyerWatson;
 use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
 use delaunay::core::triangulation_data_structure::Tds;

@@ -9,6 +9,8 @@
 //!
 //! See plan: "Implement Bistellar Flips for Efficient Delaunay Repair (v0.6.0)"
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::vertex;

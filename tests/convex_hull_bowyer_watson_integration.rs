@@ -10,6 +10,8 @@
 //! - Algorithm statistics and cache behavior
 //! - Performance characteristics of the integration
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::core::{
     algorithms::bowyer_watson::IncrementalBowyerWatson,
     traits::insertion_algorithm::{InsertionAlgorithm, InsertionStrategy},

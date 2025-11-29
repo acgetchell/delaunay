@@ -1,6 +1,8 @@
 //! Focused showcase demonstrating specific cases where robust predicates succeed
 //! where standard predicates fail, directly addressing "No cavity boundary facets found" errors.
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::core::{
     algorithms::robust_bowyer_watson::RobustBowyerWatson, triangulation_data_structure::Tds,
 };

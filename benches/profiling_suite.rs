@@ -53,6 +53,7 @@
 //! ```
 
 #![allow(missing_docs)]
+#![expect(deprecated)] // Benchmark uses deprecated Tds::new() until migration to DelaunayTriangulation
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::core::collections::SmallBuffer;

@@ -1983,7 +1983,11 @@ mod tests {
         // Sub-test: UUID format validation
         let uuid = make_uuid();
         let uuid_string = uuid.to_string();
-        assert_eq!(uuid_string.len(), 36, "UUID should be 36 chars (with hyphens)");
+        assert_eq!(
+            uuid_string.len(),
+            36,
+            "UUID should be 36 chars (with hyphens)"
+        );
         assert_eq!(
             uuid_string.chars().filter(|&c| c == '-').count(),
             4,
@@ -2346,7 +2350,11 @@ mod tests {
         let vertices_with_nan: Vec<Vertex<f64, (), 2>> =
             Vertex::from_points(&[Point::new([f64::NAN, f64::NAN]), Point::new([1.0, 1.0])]);
         let filtered_nan = filter_vertices_excluding(vertices_with_nan, &reference_nan);
-        assert_eq!(filtered_nan.len(), 1, "NaN reference should exclude NaN vertex");
+        assert_eq!(
+            filtered_nan.len(),
+            1,
+            "NaN reference should exclude NaN vertex"
+        );
 
         // Sub-test: Zero exclusion - +0.0 reference should match -0.0 vertices
         let v_pos_zero: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
@@ -3296,7 +3304,11 @@ mod tests {
         // Sub-test: Different facet_count values
         let facet_counts = [1, 10, 100, 255, 256, 1000, usize::MAX];
         for &count in &facet_counts {
-            assert_eq!(usize_to_u8(0, count), Ok(0), "Valid conversion should succeed");
+            assert_eq!(
+                usize_to_u8(0, count),
+                Ok(0),
+                "Valid conversion should succeed"
+            );
             let result_invalid = usize_to_u8(256, count);
             assert!(result_invalid.is_err(), "Invalid conversion should fail");
             if let Err(FacetError::InvalidFacetIndexOverflow { facet_count, .. }) = result_invalid {
@@ -3306,10 +3318,18 @@ mod tests {
 
         // Sub-test: Deterministic behavior
         for i in 0..10 {
-            assert_eq!(usize_to_u8(i, 20), usize_to_u8(i, 20), "Should be deterministic");
+            assert_eq!(
+                usize_to_u8(i, 20),
+                usize_to_u8(i, 20),
+                "Should be deterministic"
+            );
         }
         for i in [256, 1000, usize::MAX] {
-            assert_eq!(usize_to_u8(i, 100), usize_to_u8(i, 100), "Error cases should be deterministic");
+            assert_eq!(
+                usize_to_u8(i, 100),
+                usize_to_u8(i, 100),
+                "Error cases should be deterministic"
+            );
         }
     }
 
@@ -3318,7 +3338,11 @@ mod tests {
         // Sub-test: Basic error cases
         let result = usize_to_u8(256, 10);
         assert!(result.is_err());
-        if let Err(FacetError::InvalidFacetIndexOverflow { original_index, facet_count }) = result {
+        if let Err(FacetError::InvalidFacetIndexOverflow {
+            original_index,
+            facet_count,
+        }) = result
+        {
             assert_eq!(original_index, 256);
             assert_eq!(facet_count, 10);
         } else {
@@ -3327,7 +3351,11 @@ mod tests {
 
         let result = usize_to_u8(usize::MAX, 5);
         assert!(result.is_err());
-        if let Err(FacetError::InvalidFacetIndexOverflow { original_index, facet_count }) = result {
+        if let Err(FacetError::InvalidFacetIndexOverflow {
+            original_index,
+            facet_count,
+        }) = result
+        {
             assert_eq!(original_index, usize::MAX);
             assert_eq!(facet_count, 5);
         } else {
@@ -3335,12 +3363,21 @@ mod tests {
         }
 
         // Sub-test: Error consistency across various inputs
-        let test_cases = [(256, 100), (300, 500), (1000, 1500), (usize::MAX, 42), (65536, 10)];
+        let test_cases = [
+            (256, 100),
+            (300, 500),
+            (1000, 1500),
+            (usize::MAX, 42),
+            (65536, 10),
+        ];
         for &(idx, count) in &test_cases {
             let result = usize_to_u8(idx, count);
             assert!(result.is_err(), "Should fail for index {idx}");
             match result {
-                Err(FacetError::InvalidFacetIndexOverflow { original_index, facet_count }) => {
+                Err(FacetError::InvalidFacetIndexOverflow {
+                    original_index,
+                    facet_count,
+                }) => {
                     assert_eq!(original_index, idx, "Should preserve original index");
                     assert_eq!(facet_count, count, "Should preserve facet_count");
                 }
@@ -3353,7 +3390,11 @@ mod tests {
         for &val in &large_values {
             let result = usize_to_u8(val, val);
             assert!(result.is_err(), "Should fail for value {val}");
-            if let Err(FacetError::InvalidFacetIndexOverflow { original_index, facet_count }) = result {
+            if let Err(FacetError::InvalidFacetIndexOverflow {
+                original_index,
+                facet_count,
+            }) = result
+            {
                 assert_eq!(original_index, val);
                 assert_eq!(facet_count, val);
             }
@@ -3371,7 +3412,11 @@ mod tests {
         }
 
         let result = usize_to_u8(usize::MAX, 7);
-        if let Err(FacetError::InvalidFacetIndexOverflow { original_index, facet_count }) = result {
+        if let Err(FacetError::InvalidFacetIndexOverflow {
+            original_index,
+            facet_count,
+        }) = result
+        {
             assert_eq!(original_index, usize::MAX);
             assert_eq!(facet_count, 7);
         } else {
@@ -3405,7 +3450,11 @@ mod tests {
             results
         });
         for (i, result) in result.iter().enumerate() {
-            assert_eq!(*result, Ok(u8::try_from(i).unwrap()), "Result should be correct for {i}");
+            assert_eq!(
+                *result,
+                Ok(u8::try_from(i).unwrap()),
+                "Result should be correct for {i}"
+            );
         }
 
         // Sub-test: Thread safety
@@ -3481,5 +3530,4 @@ mod tests {
         let hull_facet_set = extract_hull_facet_set(&hull, &tri).unwrap();
         assert_eq!(hull_facet_set.len(), 4, "Hull should have 4 facets");
     }
-
 }

@@ -3,6 +3,8 @@
 //! - Empty circumcircle/circumsphere condition (no vertex strictly inside)
 //! - Insertion-order robustness (2D): edge set is independent of insertion order
 
+#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
+
 use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;

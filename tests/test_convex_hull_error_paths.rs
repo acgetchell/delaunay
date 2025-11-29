@@ -18,6 +18,8 @@
 //! These tests complement existing integration and property tests by focusing on
 //! error conditions that are difficult to trigger through normal usage.
 
+#![expect(deprecated)] // Tests use deprecated tds.add() until migration to DelaunayTriangulation
+
 use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::algorithms::convex_hull::{ConvexHull, ConvexHullConstructionError};
