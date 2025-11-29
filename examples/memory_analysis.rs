@@ -3,9 +3,7 @@
 //! This example demonstrates basic memory usage analysis for Delaunay triangulations
 //! using the existing allocation counter infrastructure from the tests.
 
-use delaunay::core::util::measure_with_result;
-use delaunay::geometry::algorithms::ConvexHull;
-use delaunay::geometry::util::generate_random_triangulation;
+use delaunay::prelude::*;
 use std::time::Instant;
 
 /// Bounds for random triangulation (min, max) - consistent with benchmarks

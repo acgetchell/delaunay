@@ -3,16 +3,13 @@
 //! - Empty circumcircle/circumsphere condition (no vertex strictly inside)
 //! - Insertion-order robustness (2D): edge set is independent of insertion order
 
-#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
-
-use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+use delaunay::core::util::is_delaunay;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
-use delaunay::geometry::predicates::InSphere;
 use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::geometry::util::{circumcenter, circumradius};
 use proptest::prelude::*;
-use std::collections::HashSet;
 
 // =============================================================================
 // TEST CONFIGURATION
@@ -100,69 +97,15 @@ proptest! {
                     for &count in &axis_counts { if count > $dim { reject = true; break; } }
                     prop_assume!(!reject);
 
-                    // Use Tds::new() to triangulate ALL vertices together, ensuring Delaunay property
-                    let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) else {
+                    // Use DelaunayTriangulation::new() to triangulate ALL vertices together
+                    let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) else {
                         // Degenerate geometry or insufficient vertices - skip test
                         prop_assume!(false);
                         unreachable!();
                     };
 
-                    // Robust insphere config
-                    let config = delaunay::geometry::robust_predicates::config_presets::general_triangulation::<f64>();
-
-                    for (_ckey, cell) in tds.cells() {
-                            // Check all cells - with Tds::new(), the entire triangulation should be Delaunay
-                            // Only check interior facets (neighbors present)
-                            if let Some(neigh) = cell.neighbors() {
-                                // Build this cell's simplex once
-                                let mut simplex: Vec<Point<f64, $dim>> = Vec::with_capacity($dim + 1);
-                                for &vk in cell.vertices() {
-                                    let v = tds.get_vertex_by_key(vk).expect("vertex exists");
-                                    simplex.push(*v.point());
-                                }
-
-                                for (facet_idx, neighbor_key_opt) in neigh.iter().enumerate() {
-                                    if let Some(neighbor_key) = neighbor_key_opt {
-                                        let neighbor = tds.get_cell(*neighbor_key).expect("neighbor exists");
-
-                                        // Compute shared facet by UUID intersection
-                                        let mut cell_uuid_set = HashSet::with_capacity($dim + 1);
-                                        for &vk in cell.vertices() {
-                                            let v = tds.get_vertex_by_key(vk).expect("vertex exists");
-                                            cell_uuid_set.insert(v.uuid());
-                                        }
-                                        let mut shared_uuids = HashSet::with_capacity($dim);
-                                        let mut neighbor_opposite: Option<Point<f64, $dim>> = None;
-                                        for &nvk in neighbor.vertices() {
-                                            let nv = tds.get_vertex_by_key(nvk).expect("vertex exists");
-                                            if cell_uuid_set.contains(&nv.uuid()) {
-                                                shared_uuids.insert(nv.uuid());
-                                            } else {
-                                                neighbor_opposite = Some(*nv.point());
-                                            }
-                                        }
-
-                                        // Must share exactly D vertices; otherwise skip (degenerate or mismatch)
-                                        if shared_uuids.len() == $dim {
-                                            if let Some(opp_point) = neighbor_opposite {
-                                                // Local Delaunay condition: neighbor's opposite vertex is OUTSIDE or BOUNDARY of this cell's circumsphere
-                                                // Use a conservative check: require BOTH robust and standard predicates to classify as INSIDE
-                                                let robust_class = delaunay::geometry::robust_predicates::robust_insphere(&simplex, &opp_point, &config);
-                                                let standard_class = delaunay::geometry::predicates::insphere(&simplex, opp_point);
-                                                if let (Ok(rc), Ok(sc)) = (robust_class, standard_class) {
-                                                    prop_assert!(
-                                                        !(rc == InSphere::INSIDE && sc == InSphere::INSIDE),
-                                                        "{}D: Local Delaunay violation across interior facet {}",
-                                                        $dim,
-                                                        facet_idx
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    // Verify the triangulation satisfies the Delaunay property
+                    is_delaunay(dt.tds()).unwrap();
                 }
             }
         }
@@ -252,20 +195,20 @@ proptest! {
         prop_assume!(vertices.len() >= 3);
 
         // Build first triangulation with natural order
-        let tds_a = Tds::<f64, (), (), 2>::new(&vertices);
-        prop_assume!(tds_a.is_ok());  // Skip if triangulation fails (degenerate)
-        let tds_a = tds_a.unwrap();
-        prop_assume!(tds_a.is_valid().is_ok());  // Skip if invalid
+        let dt_a = DelaunayTriangulation::<_, (), (), 2>::new(&vertices);
+        prop_assume!(dt_a.is_ok());  // Skip if triangulation fails (degenerate)
+        let dt_a = dt_a.unwrap();
+        prop_assume!(dt_a.is_valid().is_ok());  // Skip if invalid
 
         // Build second triangulation with shuffled order
         let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
         let mut vertices_shuffled = vertices;
         vertices_shuffled.shuffle(&mut rng);
 
-        let tds_b = Tds::<f64, (), (), 2>::new(&vertices_shuffled);
-        prop_assume!(tds_b.is_ok());  // Skip if triangulation fails (degenerate)
-        let tds_b = tds_b.unwrap();
-        prop_assume!(tds_b.is_valid().is_ok());  // Skip if invalid
+        let dt_b = DelaunayTriangulation::<_, (), (), 2>::new(&vertices_shuffled);
+        prop_assume!(dt_b.is_ok());  // Skip if triangulation fails (degenerate)
+        let dt_b = dt_b.unwrap();
+        prop_assume!(dt_b.is_valid().is_ok());  // Skip if invalid
 
         // Topology-based comparison (per issue #120): both triangulations should be valid
         // and have similar structure, but exact edge-by-edge matching is too strict for
@@ -277,14 +220,14 @@ proptest! {
 
         // 1) Both valid (already verified via prop_assume)
         // 2) Vertex counts must match exactly (same input points)
-        let verts_a = tds_a.number_of_vertices();
-        let verts_b = tds_b.number_of_vertices();
+        let verts_a = dt_a.number_of_vertices();
+        let verts_b = dt_b.number_of_vertices();
         prop_assert_eq!(verts_a, verts_b, "Vertex counts must match");
 
         // 3) Cell counts should be within reasonable range (±20% or ±2, whichever is larger)
         // Different valid triangulations can have different cell counts
-        let cells_a = tds_a.number_of_cells();
-        let cells_b = tds_b.number_of_cells();
+        let cells_a = dt_a.number_of_cells();
+        let cells_b = dt_b.number_of_cells();
         let max_cells = cells_a.max(cells_b);
         let diff = cells_a.abs_diff(cells_b);
         let tolerance = (max_cells / 5).max(2);  // 20% or 2 cells

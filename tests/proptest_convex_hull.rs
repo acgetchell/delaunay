@@ -9,8 +9,6 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
-#![expect(deprecated)] // Tests use deprecated tds.add() until migration to DelaunayTriangulation
-
 use delaunay::assert_jaccard_gte;
 use delaunay::core::Vertex;
 use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
@@ -147,9 +145,9 @@ macro_rules! test_convex_hull_properties {
                                 $dim
                             );
 
-                            // Modify the TDS
+                            // Modify the triangulation by inserting a new vertex
                             let new_vertex = Vertex::from_points(&[new_point]);
-                            if dt.tds_mut().add(new_vertex[0].clone()).is_ok() {
+                            if dt.insert(new_vertex[0].clone()).is_ok() {
                                 // Filter: Skip if modification resulted in degenerate configuration
                                 let modified_boundary_count = dt.tds().number_of_boundary_facets().unwrap_or(0);
                                 prop_assume!(modified_boundary_count > 0);

@@ -2811,7 +2811,7 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Set the cell data to a known value
-        if let Some(cell) = dt.tds_mut().cells_mut().get_mut(cell_key) {
+        if let Some(cell) = dt.tri.tds.cells_mut().get_mut(cell_key) {
             cell.data = Some(42u32);
         }
 

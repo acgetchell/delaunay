@@ -627,7 +627,7 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
         let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
-        dt.tds_mut().assign_neighbors().unwrap();
+        dt.tri.tds.assign_neighbors().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Get the single cell
@@ -1094,7 +1094,7 @@ mod tests {
                 $(vertex!($coords)),+
             ];
             let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
-            dt.tds_mut().assign_neighbors().unwrap();
+            dt.tri.tds.assign_neighbors().unwrap();
 
             let start_cell = dt.tds().cell_keys().next().unwrap();
             let mut conflict_cells = CellKeyBuffer::new();
@@ -1169,7 +1169,7 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
         let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
-        dt.tds_mut().assign_neighbors().unwrap();
+        dt.tri.tds.assign_neighbors().unwrap();
 
         let conflict_cells = CellKeyBuffer::new(); // Empty
 

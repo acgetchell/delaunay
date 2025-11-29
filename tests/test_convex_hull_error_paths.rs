@@ -18,8 +18,6 @@
 //! These tests complement existing integration and property tests by focusing on
 //! error conditions that are difficult to trigger through normal usage.
 
-#![expect(deprecated)] // Tests use deprecated tds.add() until migration to DelaunayTriangulation
-
 use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::algorithms::convex_hull::{ConvexHull, ConvexHullConstructionError};
@@ -123,7 +121,7 @@ fn test_stale_hull_detection_visibility() {
     );
 
     // Modify the triangulation to invalidate the hull
-    dt.tds_mut().add(vertex!([0.5, 0.5, 0.5])).unwrap();
+    dt.insert(vertex!([0.5, 0.5, 0.5])).unwrap();
 
     // Verify staleness is detected
     assert!(
@@ -164,7 +162,7 @@ fn test_stale_hull_detection_find_visible() {
     let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     // Modify triangulation to make hull stale
-    dt.tds_mut().add(vertex!([1.5, 1.5, 1.5])).unwrap();
+    dt.insert(vertex!([1.5, 1.5, 1.5])).unwrap();
 
     let test_point = Point::new([3.0, 3.0, 3.0]);
     let result = hull.find_visible_facets(&test_point, dt.triangulation());
@@ -562,7 +560,7 @@ fn test_find_nearest_visible_facet_stale() {
     let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
     // Modify triangulation to make hull stale
-    dt.tds_mut().add(vertex!([2.0, 2.0, 2.0])).unwrap();
+    dt.insert(vertex!([2.0, 2.0, 2.0])).unwrap();
 
     let test_point = Point::new([3.0, 3.0, 3.0]);
     let result = hull.find_nearest_visible_facet(&test_point, dt.triangulation());

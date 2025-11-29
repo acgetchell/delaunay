@@ -28,11 +28,6 @@
 //! - Validation results
 //! - Performance metrics
 
-use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-use delaunay::core::facet::FacetView;
-use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-use delaunay::geometry::kernel::FastKernel;
-use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::*;
 use num_traits::cast::cast;
 use std::time::Instant;

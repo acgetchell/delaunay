@@ -21,7 +21,8 @@ use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::triangulation_data_structure::{
-    CellKey, Tds, TriangulationConstructionError, TriangulationValidationError, VertexKey,
+    CellKey, Tds, TriangulationConstructionError, TriangulationValidationError,
+    TriangulationValidationReport, ValidationOptions, VertexKey,
 };
 use crate::core::util::DelaunayValidationError;
 use crate::core::vertex::Vertex;
@@ -38,12 +39,21 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// - `V`: User data type for cells
 /// - `D`: Dimension of the triangulation
 ///
-/// # Phase 3 TODO
-/// Implement incremental insertion with:
-/// - Point location (facet walking)
-/// - Conflict region computation (local BFS)
-/// - Cavity extraction and filling
-/// - Local neighbor wiring (no global `assign_neighbors`)
+/// # Implementation
+///
+/// Uses efficient incremental cavity-based insertion algorithm:
+/// - ✅ Point location (facet walking) - [`locate`]
+/// - ✅ Conflict region computation (local BFS) - [`find_conflict_region`]
+/// - ✅ Cavity extraction and filling - [`extract_cavity_boundary`], [`fill_cavity`]
+/// - ✅ Local neighbor wiring - [`wire_cavity_neighbors`]
+/// - ✅ Hull extension for outside points - [`extend_hull`]
+///
+/// [`locate`]: crate::core::algorithms::locate::locate
+/// [`find_conflict_region`]: crate::core::algorithms::locate::find_conflict_region
+/// [`extract_cavity_boundary`]: crate::core::algorithms::locate::extract_cavity_boundary
+/// [`fill_cavity`]: crate::core::algorithms::incremental_insertion::fill_cavity
+/// [`wire_cavity_neighbors`]: crate::core::algorithms::incremental_insertion::wire_cavity_neighbors
+/// [`extend_hull`]: crate::core::algorithms::incremental_insertion::extend_hull
 #[derive(Clone, Debug)]
 pub struct DelaunayTriangulation<K, U, V, const D: usize>
 where
@@ -52,7 +62,7 @@ where
     V: DataType,
 {
     /// The underlying generic triangulation.
-    tri: Triangulation<K, U, V, D>,
+    pub(crate) tri: Triangulation<K, U, V, D>,
     /// Hint for next `locate()` call (last inserted cell)
     last_inserted_cell: Option<CellKey>,
 }
@@ -428,38 +438,6 @@ where
         &self.tri.tds
     }
 
-    /// Returns a mutable reference to the underlying triangulation data structure.
-    ///
-    /// # Safety Note
-    ///
-    /// Directly modifying the Tds can break Delaunay invariants. This method
-    /// is primarily intended for advanced use cases and performance testing.
-    /// After modifications, consider calling `validate_delaunay()` to verify
-    /// correctness.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
-    ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
-    /// ];
-    ///
-    /// let mut dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tds = dt.tds_mut();
-    /// // Advanced Tds operations...
-    /// ```
-    pub const fn tds_mut(&mut self) -> &mut Tds<K::Scalar, U, V, D> {
-        &mut self.tri.tds
-    }
-
     /// Returns a reference to the underlying `Triangulation` (kernel + tds).
     ///
     /// This is useful when you need to pass the triangulation to methods that
@@ -759,6 +737,71 @@ where
     /// Returns error if cell mappings are inconsistent.
     pub fn validate_cell_mappings(&self) -> Result<(), TriangulationValidationError> {
         self.tri.tds.validate_cell_mappings()
+    }
+
+    /// Validate that there are no duplicate cells.
+    ///
+    /// Checks that no two cells share the exact same set of vertices.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if duplicate cells are found.
+    pub fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        self.tri.tds.validate_no_duplicate_cells()
+    }
+
+    /// Validate facet sharing invariants.
+    ///
+    /// Checks that each facet is shared by at most 2 cells (1 for boundary facets,
+    /// 2 for interior facets).
+    ///
+    /// # Errors
+    ///
+    /// Returns error if facet sharing invariants are violated.
+    pub fn validate_facet_sharing(&self) -> Result<(), TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        self.tri.tds.validate_facet_sharing()
+    }
+
+    /// Validate neighbor consistency.
+    ///
+    /// Checks that neighbor relationships are mutual and reference shared facets.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if neighbor relationships are inconsistent.
+    pub fn validate_neighbors(&self) -> Result<(), TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        self.tri.tds.validate_neighbors()
+    }
+
+    /// Generate a comprehensive validation report.
+    ///
+    /// This runs all validation checks and returns detailed diagnostics.
+    /// Use this for debugging triangulation issues.
+    ///
+    /// # Parameters
+    ///
+    /// - `options`: Configuration for validation (e.g., whether to check Delaunay property)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if any validation check fails.
+    pub fn validation_report(
+        &self,
+        options: ValidationOptions,
+    ) -> Result<(), TriangulationValidationReport>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        self.tri.tds.validation_report(options)
     }
 
     /// Validate that the triangulation satisfies the Delaunay property.
@@ -1487,7 +1530,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tds_mut_accessor_provides_mutable_access() {
+    fn test_internal_tds_access() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -1499,8 +1542,8 @@ mod tests {
 
         assert_eq!(dt.number_of_vertices(), 4);
 
-        // Access TDS via mutable reference and perform operations
-        let tds = dt.tds_mut();
+        // Internal code can access TDS directly for mutations
+        let tds = &mut dt.tri.tds;
         assert_eq!(tds.number_of_vertices(), 4);
         assert_eq!(tds.number_of_cells(), 1);
 
