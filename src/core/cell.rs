@@ -696,11 +696,11 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0]),
     /// ];
-/// let dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulation::new(&vertices).unwrap();
-/// let (_, cell) = dt.cells().next().unwrap();
-/// assert_ne!(cell.uuid(), Uuid::nil());
-/// ```
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let (_, cell) = dt.cells().next().unwrap();
+    /// assert_ne!(cell.uuid(), Uuid::nil());
+    /// ```
     #[inline]
     pub const fn uuid(&self) -> Uuid {
         self.uuid
@@ -854,11 +854,11 @@ where
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0]),
     /// ];
-/// let dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulation::new(&vertices).unwrap();
-/// let (_, cell) = dt.cells().next().unwrap();
-/// assert_eq!(cell.dim(), 3);
-/// ```
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let (_, cell) = dt.cells().next().unwrap();
+    /// assert_eq!(cell.dim(), 3);
+    /// ```
     #[inline]
     pub const fn dim(&self) -> usize {
         D
@@ -967,11 +967,11 @@ where
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0]),
     /// ];
-/// let dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulation::new(&vertices).unwrap();
-/// let (_, cell) = dt.cells().next().unwrap();
-/// assert!(cell.is_valid().is_ok());
-/// ```
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let (_, cell) = dt.cells().next().unwrap();
+    /// assert!(cell.is_valid().is_ok());
+    /// ```
     /// Phase 3A: Updated to use vertices (validation without full vertex data)
     /// For full validation including vertex data, use `is_valid_with_tds(&tds)`
     pub fn is_valid(&self) -> Result<(), CellValidationError> {

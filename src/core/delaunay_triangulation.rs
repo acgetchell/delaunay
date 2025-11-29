@@ -16,7 +16,8 @@ use crate::core::algorithms::locate::{
     LocateResult, extract_cavity_boundary, find_conflict_region, locate,
 };
 use crate::core::cell::Cell;
-use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
+use crate::core::collections::{SmallBuffer, MAX_PRACTICAL_DIMENSION_SIZE};
+use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::triangulation_data_structure::{
@@ -485,6 +486,66 @@ where
     #[must_use]
     pub const fn triangulation(&self) -> &Triangulation<K, U, V, D> {
         &self.tri
+    }
+
+    /// Returns an iterator over all facets in the triangulation.
+    ///
+    /// Delegates to the underlying `Triangulation` layer. This provides
+    /// efficient access to all facets without pre-allocating a vector.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding `FacetView` objects for all facets.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// let facet_count = dt.facets().count();
+    /// assert_eq!(facet_count, 4); // Tetrahedron has 4 facets
+    /// ```
+    pub fn facets(&self) -> AllFacetsIter<'_, K::Scalar, U, V, D> {
+        self.tri.facets()
+    }
+
+    /// Returns an iterator over boundary (hull) facets in the triangulation.
+    ///
+    /// Boundary facets are those that belong to exactly one cell. This method
+    /// computes the facet-to-cells map internally for convenience.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding `FacetView` objects for boundary facets only.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// let boundary_count = dt.boundary_facets().count();
+    /// assert_eq!(boundary_count, 4); // All facets are on boundary
+    /// ```
+    pub fn boundary_facets(&self) -> BoundaryFacetsIter<'_, K::Scalar, U, V, D> {
+        self.tri.boundary_facets()
     }
 
     /// Insert a vertex into the Delaunay triangulation using incremental cavity-based algorithm.

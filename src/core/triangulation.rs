@@ -12,6 +12,7 @@ use core::ops::{AddAssign, SubAssign};
 use num_traits::NumCast;
 
 use crate::core::cell::Cell;
+use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::core::vertex::Vertex;
@@ -86,6 +87,72 @@ where
     #[must_use]
     pub fn dim(&self) -> i32 {
         self.tds.dim()
+    }
+
+    /// Returns an iterator over all facets in the triangulation.
+    ///
+    /// This provides efficient access to all facets without pre-allocating a vector.
+    /// Each facet is represented as a lightweight `FacetView` that references the
+    /// underlying triangulation data.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding `FacetView` objects for all facets in the triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// // Iterate over all facets
+    /// let facet_count = dt.triangulation().facets().count();
+    /// assert_eq!(facet_count, 4); // Tetrahedron has 4 facets
+    /// ```
+    pub fn facets(&self) -> AllFacetsIter<'_, K::Scalar, U, V, D> {
+        AllFacetsIter::new(&self.tds)
+    }
+
+    /// Returns an iterator over boundary (hull) facets in the triangulation.
+    ///
+    /// Boundary facets are those that belong to exactly one cell. This method
+    /// computes the facet-to-cells map internally for convenience.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding `FacetView` objects for boundary facets only.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// let boundary_count = dt.triangulation().boundary_facets().count();
+    /// assert_eq!(boundary_count, 4); // All facets are on boundary
+    /// ```
+    pub fn boundary_facets(&self) -> BoundaryFacetsIter<'_, K::Scalar, U, V, D> {
+        // build_facet_to_cells_map only fails if cells have invalid structure,
+        // which should never happen in a valid triangulation
+        let facet_map = self.tds.build_facet_to_cells_map()
+            .expect("Failed to build facet map - triangulation structure is corrupted");
+        BoundaryFacetsIter::new(&self.tds, facet_map)
     }
 
     // Phase 2 TODO: Add geometric operations using kernel predicates
